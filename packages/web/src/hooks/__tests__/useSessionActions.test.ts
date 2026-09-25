@@ -321,6 +321,45 @@ describe('useSessionActions', () => {
       expect(mockArchiveSession).toHaveBeenLastCalledWith('session-1', true, 'cascade');
     });
 
+    it('tells the user to act on the agent when the chat is an agent primary session', async () => {
+      const onDeleteModalClose = vi.fn();
+      mockDeleteSession.mockResolvedValue({
+        success: false,
+        reason: 'agent_primary_session',
+        agentName: 'Scout',
+      });
+      mockArchiveSession.mockResolvedValue({
+        success: false,
+        reason: 'agent_primary_session',
+        agentName: 'Scout',
+      });
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose,
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleDeleteSession();
+      });
+      await act(async () => {
+        await result.current.handleArchiveClick();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        'This chat belongs to the agent "Scout". Delete the agent instead.'
+      );
+      expect(mockToastError).toHaveBeenCalledWith(
+        'This chat belongs to the agent "Scout". Archive the agent instead.'
+      );
+      expect(onDeleteModalClose).toHaveBeenCalled();
+      expect(result.current.cloneChoiceDialog).toBeNull();
+      expect(mockListSessions).not.toHaveBeenCalled();
+    });
+
     it('asks for a clone choice before deleting', async () => {
       const onDeleteModalClose = vi.fn();
       mockDeleteSession

@@ -400,11 +400,14 @@ export async function getGitBranches(path: string): Promise<GitBranchesResponse>
   return await hub.request<GitBranchesResponse>('git.branches', { path });
 }
 
-export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
+export async function getGitSessionStatus(
+  sessionId: string,
+  includeGitHub = true
+): Promise<GitSessionStatusResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GitSessionStatusResponse>(
     'git.sessionStatus',
-    { sessionId },
+    { sessionId, includeGitHub },
     { timeout: 25_000 }
   );
 }

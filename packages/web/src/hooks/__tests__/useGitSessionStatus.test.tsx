@@ -57,7 +57,7 @@ describe('useGitSessionStatus', () => {
 
   it('fetches git status on mount and sets loading', () => {
     render(<Harness sessionId="s1" />);
-    expect(mockGetStatus).toHaveBeenCalledWith('s1');
+    expect(mockGetStatus).toHaveBeenCalledWith('s1', true);
     expect(mockGetStatus).toHaveBeenCalledTimes(1);
     expect(last?.loading).toBe(true);
   });
@@ -83,6 +83,32 @@ describe('useGitSessionStatus', () => {
     expect(mockGetStatus).toHaveBeenCalledTimes(1);
   });
 
+  it('asks for GitHub data on mount and manual refresh only, keeping it across silent polls', async () => {
+    const withPr = {
+      ...STATUS,
+      review: {
+        ...STATUS.review,
+        pullRequest: { number: 7 } as unknown as GitSessionStatusResponse['review']['pullRequest'],
+        checks: [{ name: 'ci' }] as unknown as GitSessionStatusResponse['review']['checks'],
+      },
+    };
+    mockGetStatus.mockResolvedValueOnce(withPr);
+    render(<Harness sessionId="s1" />);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(last?.status?.review.pullRequest).toEqual({ number: 7 });
+
+    mockGetStatus.mockResolvedValueOnce({ ...STATUS, isDirty: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockGetStatus).toHaveBeenLastCalledWith('s1', false);
+    expect(last?.status?.isDirty).toBe(true);
+    expect(last?.status?.review.pullRequest).toEqual({ number: 7 });
+    expect(last?.status?.review.checks).toEqual([{ name: 'ci' }]);
+
+    last?.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockGetStatus).toHaveBeenLastCalledWith('s1', true);
+  });
+
   it('manual refresh triggers an additional fetch', async () => {
     render(<Harness sessionId="s1" />);
     await vi.advanceTimersByTimeAsync(0);
@@ -95,11 +121,11 @@ describe('useGitSessionStatus', () => {
   it('refetches when the session changes', async () => {
     const { rerender } = render(<Harness sessionId="s1" />);
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockGetStatus).toHaveBeenLastCalledWith('s1');
+    expect(mockGetStatus).toHaveBeenLastCalledWith('s1', true);
 
     rerender(<Harness sessionId="s2" />);
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockGetStatus).toHaveBeenLastCalledWith('s2');
+    expect(mockGetStatus).toHaveBeenLastCalledWith('s2', true);
   });
 
   it('queues a manual refresh behind an in-flight poll and runs it on settle', async () => {
@@ -144,12 +170,12 @@ describe('useGitSessionStatus', () => {
 
     const { rerender } = render(<Harness sessionId="a" />);
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockGetStatus).toHaveBeenCalledWith('a');
+    expect(mockGetStatus).toHaveBeenCalledWith('a', true);
 
     rerender(<Harness sessionId="b" />);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(mockGetStatus).toHaveBeenCalledWith('b');
+    expect(mockGetStatus).toHaveBeenCalledWith('b', true);
     expect(last?.loading).toBe(false);
     expect(last?.status?.sessionId).toBe('b');
 

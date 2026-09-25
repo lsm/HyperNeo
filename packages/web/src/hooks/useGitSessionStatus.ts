@@ -4,6 +4,22 @@ import { getGitSessionStatus } from '../lib/api-helpers.ts';
 
 const POLL_INTERVAL_MS = 10_000;
 
+function keepGitHubReview(
+  previous: GitSessionStatusResponse | null,
+  fetched: GitSessionStatusResponse
+): GitSessionStatusResponse {
+  if (!previous) return fetched;
+  return {
+    ...fetched,
+    review: {
+      ...fetched.review,
+      pullRequest: previous.review.pullRequest,
+      checks: previous.review.checks,
+      githubError: previous.review.githubError,
+    },
+  };
+}
+
 export interface UseGitSessionStatusResult {
   status: GitSessionStatusResponse | null;
   loading: boolean;
@@ -34,9 +50,10 @@ export function useGitSessionStatus(sessionId: string | null): UseGitSessionStat
       const requestId = ++requestSeq.current;
       inFlight.current = true;
       if (!opts.silent) setLoading(true);
-      getGitSessionStatus(sessionId)
-        .then((nextStatus) => {
+      getGitSessionStatus(sessionId, !opts.silent)
+        .then((fetched) => {
           if (requestId !== requestSeq.current) return;
+          const nextStatus = opts.silent ? keepGitHubReview(statusRef.current, fetched) : fetched;
           statusRef.current = nextStatus;
           setStatus(nextStatus);
           setError(null);

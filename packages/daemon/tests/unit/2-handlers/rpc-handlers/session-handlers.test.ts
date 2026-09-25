@@ -856,6 +856,45 @@ describe('Session RPC Handlers — models.list', () => {
       expect(done.success).toBe(true);
     });
 
+    it('refuses to archive or delete an agent primary session', async () => {
+      const hub = createMockMessageHub();
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      const deleteResourcesMock = mock(async () => {});
+      const sessionManager = {
+        getSessionFromDB: mock(() => ({ id: 'sess-1', status: 'active', context: {} })),
+        getSession: mock(() => null),
+        archiveSessionResources: archiveResourcesMock,
+        deleteSessionResources: deleteResourcesMock,
+      } as unknown as SessionManager;
+      setupSessionHandlers(hub.hub, sessionManager, eventBus, {} as SpaceManager, undefined, {
+        ensureSession: async () => ({
+          kind: 'unresolved',
+          reason: 'session_resolution_unavailable',
+        }),
+        primaryAgentFor: (sessionId) =>
+          sessionId === 'sess-1' ? { id: 'agent-1', displayName: 'Scout' } : null,
+      });
+
+      const archived = await hub.handlers.get('session.archive')!(
+        { sessionId: 'sess-1', confirmed: true },
+        {}
+      );
+      const deleted = await hub.handlers.get('session.delete')!({ sessionId: 'sess-1' }, {});
+
+      const refusal = {
+        success: false,
+        reason: 'agent_primary_session',
+        agentId: 'agent-1',
+        agentName: 'Scout',
+      };
+      expect(archived).toEqual(refusal);
+      expect(deleted).toEqual(refusal);
+      expect(archiveResourcesMock).not.toHaveBeenCalled();
+      expect(deleteResourcesMock).not.toHaveBeenCalled();
+    });
+
     it('refuses to archive a parent with clones until a choice is made, then passes it on', async () => {
       const resolveClones = mock(async (_id: string, choice?: string) =>
         choice

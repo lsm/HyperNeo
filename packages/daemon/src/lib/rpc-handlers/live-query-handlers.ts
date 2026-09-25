@@ -3609,7 +3609,8 @@ SELECT
   s.visible_message_count as messageCount,
   (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt,
   s.parent_id as parentSessionId,
-  json_extract(s.metadata, '$.clone.returnedAt') as returnedAt
+  json_extract(s.metadata, '$.clone.returnedAt') as returnedAt,
+  json_extract(s.session_context, '$.taskId') as taskId
 FROM sessions s
 WHERE s.space_id = ? AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
@@ -3625,6 +3626,7 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
     lastActiveAt: Number(row.lastActiveAt ?? 0),
     parentSessionId: (row.parentSessionId as string | null) ?? null,
     returnedAt: (row.returnedAt as string | null) ?? null,
+    taskId: (row.taskId as string | null) ?? null,
   };
 }
 

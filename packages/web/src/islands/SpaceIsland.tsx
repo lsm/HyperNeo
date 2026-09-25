@@ -9,6 +9,7 @@ import {
   closeOverlayHistory,
   navigateBack,
   navigateToSpace,
+  navigateToSpaceAgent,
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -30,6 +31,7 @@ import {
 } from '../lib/signals';
 import { spaceStore } from '../lib/space-store';
 import ChatContainer from './ChatContainer';
+import { SpaceAgentChat } from './SpaceAgentChat';
 
 const SpaceConfigurePage = lazy(() =>
   import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
@@ -192,6 +194,21 @@ export default function SpaceIsland({
   const handleSessionBack = useCallback(() => {
     navigateBack(() => navigateToSpace(navigationSpaceId));
   }, [navigationSpaceId]);
+
+  const primaryAgentHandle = sessionViewId
+    ? (spaceStore.agents.value.find((a) => a.sessionId === sessionViewId)?.handle ?? null)
+    : null;
+  useEffect(() => {
+    if (!primaryAgentHandle) return;
+    const redirect = () => navigateToSpaceAgent(navigationSpaceId, primaryAgentHandle, true);
+    redirect();
+    const retry = setTimeout(() => {
+      if (currentSpaceAgentHandleSignal.value !== primaryAgentHandle) redirect();
+    }, 0);
+    return () => clearTimeout(retry);
+  }, [primaryAgentHandle, navigationSpaceId]);
+
+  if (sessionViewId && primaryAgentHandle) return lazyFallback;
 
   if (sessionViewId) {
     const isAgentSession = spaceStore.isAgentOwnedSession(sessionViewId);
@@ -368,6 +385,27 @@ export default function SpaceIsland({
         >
           <SpaceSessionsPage spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
         </GlassRouteShell>
+        {overlay}
+      </>
+    );
+  }
+
+  if (viewMode === 'agents' && space && selectedAgentHandle) {
+    return (
+      <>
+        <div
+          class="flex-1 min-h-0 flex flex-col"
+          data-testid="space-base-session-layer"
+          {...baseLayerProps}
+        >
+          <SpaceAgentChat
+            key={selectedAgentHandle}
+            spaceId={spaceId}
+            navigationSpaceId={navigationSpaceId}
+            handle={selectedAgentHandle}
+            onBack={handleSessionBack}
+          />
+        </div>
         {overlay}
       </>
     );

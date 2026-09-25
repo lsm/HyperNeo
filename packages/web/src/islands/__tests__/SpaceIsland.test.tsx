@@ -38,10 +38,15 @@ const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
   }),
 }));
 
-const { mockNavigateToSpaceSession, mockNavigateToSpaceTask } = vi.hoisted(() => ({
-  mockNavigateToSpaceSession: vi.fn(),
-  mockNavigateToSpaceTask: vi.fn(),
-}));
+const { mockNavigateToSpaceSession, mockNavigateToSpaceTask, mockNavigateToSpaceAgent } =
+  vi.hoisted(() => ({
+    mockNavigateToSpaceSession: vi.fn(),
+    mockNavigateToSpaceTask: vi.fn(),
+    mockNavigateToSpaceAgent: vi.fn(),
+  }));
+const mockEnsureAgentSession = vi.fn();
+const mockRefreshAgents = vi.fn().mockResolvedValue(undefined);
+const mockAgentListState = signal<'loading' | 'loaded' | 'error'>('loaded');
 
 const { mockCreateSession } = vi.hoisted(() => ({
   mockCreateSession: vi.fn(),
@@ -296,7 +301,9 @@ vi.mock('../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
-      refreshAgents: vi.fn().mockResolvedValue(undefined),
+      refreshAgents: mockRefreshAgents,
+      agentListState: mockAgentListState,
+      ensureAgentSession: (id: string) => mockEnsureAgentSession(id),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
       workflowVersions: signal(new Map()),
@@ -328,6 +335,7 @@ vi.mock('../../lib/router', () => ({
   navigateToSpace: vi.fn(),
   navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
+  navigateToSpaceAgent: mockNavigateToSpaceAgent,
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
   pushOverlayHistory: vi.fn(),
   closeOverlayHistory: vi.fn(),
@@ -434,6 +442,10 @@ beforeEach(() => {
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
   mockNavigateToSpaceTask.mockClear();
+  mockNavigateToSpaceAgent.mockClear();
+  mockEnsureAgentSession.mockReset();
+  mockRefreshAgents.mockClear();
+  mockAgentListState.value = 'loaded';
   mockCreateSession.mockClear();
   mockToastError.mockClear();
   connectMockHub.current = null;
@@ -851,7 +863,7 @@ describe('SpaceIsland — agents view', () => {
     expect(getByRole('heading', { name: 'Agents' })).toBeTruthy();
   });
 
-  it('passes the selected agent handle to the agents page', async () => {
+  it('renders the agent chat for the agent route', async () => {
     mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
     mockAgents.value = [
       {
@@ -860,18 +872,129 @@ describe('SpaceIsland — agents view', () => {
         name: 'Reviewer',
         handle: 'reviewer',
         status: 'active',
+        sessionId: 'sess-reviewer',
         customPrompt: 'Review code.',
         createdAt: 0,
         updatedAt: 0,
       },
     ];
 
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="agents" />
+    );
+
+    const chat = await findByTestId('chat-container');
+    expect(chat.getAttribute('data-session-id')).toBe('sess-reviewer');
+    expect(queryByTestId('space-agents-view-body')).toBeNull();
+  });
+
+  it('starts the session for an agent without one and shows it once known', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'fresh';
+    mockAgents.value = [
+      {
+        id: 'agent-2',
+        spaceId: 'space-1',
+        name: 'Fresh',
+        handle: 'fresh',
+        status: 'active',
+        sessionId: null,
+        customPrompt: '',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockEnsureAgentSession.mockImplementation(async () => {
+      mockAgents.value = mockAgents.value.map((a) =>
+        a.id === 'agent-2' ? { ...a, sessionId: 'sess-fresh' } : a
+      );
+      return 'sess-fresh';
+    });
+
     const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
 
-    const agentsPage = await findByTestId('space-agents-view-body');
-    expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
-    expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
-    expect(agentsPage.getAttribute('data-space-agent')).toBe('reviewer');
+    const chat = await findByTestId('chat-container');
+    expect(chat.getAttribute('data-session-id')).toBe('sess-fresh');
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('agent-2');
+  });
+
+  it('offers a retry instead of "not found" when the agent list failed to load', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
+    mockAgents.value = [];
+    mockAgentListState.value = 'error';
+
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="agents" />
+    );
+
+    const unavailable = await findByTestId('space-agent-detail-unavailable');
+    expect(unavailable.textContent).toContain('Could not load the agents of this space.');
+    expect(queryByTestId('space-agent-detail-missing')).toBeNull();
+    fireEvent.click(await findByTestId('space-agent-detail-retry'));
+    expect(mockRefreshAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the session-start error with a retry that re-runs ensure', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'fresh';
+    mockAgents.value = [
+      {
+        id: 'agent-2',
+        spaceId: 'space-1',
+        name: 'Fresh',
+        handle: 'fresh',
+        status: 'active',
+        sessionId: null,
+        customPrompt: '',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockEnsureAgentSession.mockRejectedValueOnce(new Error('Space is paused'));
+    mockEnsureAgentSession.mockImplementation(async () => {
+      mockAgents.value = mockAgents.value.map((a) =>
+        a.id === 'agent-2' ? { ...a, sessionId: 'sess-fresh' } : a
+      );
+      return 'sess-fresh';
+    });
+
+    const { findByTestId, findByText } = render(
+      <SpaceIsland spaceId="space-1" viewMode="agents" />
+    );
+
+    await findByText('Space is paused');
+    fireEvent.click(await findByTestId('space-agent-detail-retry'));
+    const chat = await findByTestId('chat-container');
+    expect(chat.getAttribute('data-session-id')).toBe('sess-fresh');
+    expect(mockEnsureAgentSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('redirects an agent primary session route to the agent route', async () => {
+    mockAgents.value = [
+      {
+        id: 'agent-1',
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        handle: 'reviewer',
+        status: 'active',
+        sessionId: 'sess-reviewer',
+        customPrompt: '',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+
+    const { queryByTestId } = render(
+      <SpaceIsland
+        spaceId="space-1"
+        routeSpaceId="space-slug"
+        viewMode="overview"
+        sessionViewId="sess-reviewer"
+      />
+    );
+
+    await waitFor(() =>
+      expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug', 'reviewer', true)
+    );
+    expect(queryByTestId('chat-container')).toBeNull();
   });
 
   it('passes the route space id to agent session navigation', async () => {

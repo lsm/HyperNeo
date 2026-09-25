@@ -148,7 +148,11 @@ export class WorktreeManager {
     return { isGitRepo: true, gitRoot, currentBranch, defaultBranch, branches, isDirty };
   }
 
-  async getSessionGitStatus(session: Session): Promise<GitSessionStatusResponse> {
+  async getSessionGitStatus(
+    session: Session,
+    options: { includeGitHub?: boolean } = {}
+  ): Promise<GitSessionStatusResponse> {
+    const includeGitHub = options.includeGitHub !== false;
     const mode = session.worktree ? 'worktree' : session.workspacePath ? 'direct' : 'none';
     const workspacePath = session.workspacePath ?? null;
     const worktreePath = session.worktree?.worktreePath ?? null;
@@ -223,7 +227,13 @@ export class WorktreeManager {
         behindCount = 0;
       }
 
-      review = await this.getReviewSummary(repoInfo.gitRoot, baseBranch, branch, files);
+      review = await this.getReviewSummary(
+        repoInfo.gitRoot,
+        baseBranch,
+        branch,
+        files,
+        includeGitHub
+      );
     } catch (error) {
       return {
         ...empty,
@@ -357,7 +367,8 @@ export class WorktreeManager {
     gitRoot: string,
     baseBranch: string | null,
     branch: string | null,
-    workingTreeFiles: GitChangedFile[]
+    workingTreeFiles: GitChangedFile[],
+    includeGitHub = true
   ): Promise<GitReviewSummary> {
     const git = this.getGit(gitRoot);
     const reviewFiles = new Map<string, GitReviewFile>();
@@ -369,7 +380,9 @@ export class WorktreeManager {
     await this.addWorkingTreeReviewFiles(git, reviewFiles, workingTreeFiles);
 
     const files = [...reviewFiles.values()].sort((a, b) => a.path.localeCompare(b.path));
-    const github = await this.getGitHubReviewSummary(gitRoot);
+    const github = includeGitHub
+      ? await this.getGitHubReviewSummary(gitRoot)
+      : { pullRequest: null, checks: [], error: undefined };
 
     return {
       files,

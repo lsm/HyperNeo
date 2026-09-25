@@ -300,8 +300,25 @@ export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
   },
 };
 
+export type SessionProgressStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface SessionProgressItem {
+  id: string;
+  content: string;
+  status: SessionProgressStatus;
+  activeForm?: string;
+}
+
+export interface SessionProgress {
+  source: 'todo' | 'task';
+  items: SessionProgressItem[];
+  updatedAt: string;
+  pendingTaskIds?: Record<string, string>;
+}
+
 export interface SessionMetadata {
   messageCount: number;
+  progress?: SessionProgress;
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;

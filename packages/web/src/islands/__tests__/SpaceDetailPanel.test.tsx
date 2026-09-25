@@ -47,6 +47,7 @@ const mockSpawnAgentClone = vi.fn(() => Promise.resolve('clone-new'));
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
+let mockCurrentSpaceAgentHandleSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockCurrentSpaceViewModeSignal!: Signal<string>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
@@ -62,6 +63,7 @@ function initSignals() {
   mockGoalsSignal = signal([]);
   mockActiveRunsSignal = signal([]);
   mockCurrentSpaceSessionIdSignal = signal(null);
+  mockCurrentSpaceAgentHandleSignal = signal(null);
   mockCurrentSpaceTaskIdSignal = signal(null);
   mockCurrentSpaceViewModeSignal = signal('overview');
   mockSpaceOverlaySessionIdSignal = signal(null);
@@ -103,6 +105,9 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     ...actual,
     get currentSpaceSessionIdSignal() {
       return mockCurrentSpaceSessionIdSignal;
+    },
+    get currentSpaceAgentHandleSignal() {
+      return mockCurrentSpaceAgentHandleSignal;
     },
     get currentSpaceTaskIdSignal() {
       return mockCurrentSpaceTaskIdSignal;
@@ -332,7 +337,7 @@ describe('SpaceDetailPanel', () => {
     expect(screen.queryByText('manual-s')).toBeNull();
   });
 
-  it('opens an agent session on click and calls onNavigate', () => {
+  it('opens the agent route on click and calls onNavigate', () => {
     const onNavigate = vi.fn();
     mockAgentsSignal.value = [
       { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
@@ -340,8 +345,21 @@ describe('SpaceDetailPanel', () => {
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByText('Lead'));
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'sess-a1');
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1', 'lead');
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
     expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('highlights the agent row for the agent route', () => {
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    mockCurrentSpaceAgentHandleSignal.value = 'lead';
+    render(<SpaceDetailPanel spaceId="space-1" />);
+
+    expect(screen.getByTestId('space-detail-agent-row').parentElement?.className).toContain(
+      'bg-fill-soft'
+    );
   });
 
   it('nests clones under their agent, marks returned ones, and opens them on click', () => {

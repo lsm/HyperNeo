@@ -196,6 +196,11 @@ export interface GitReviewSummary {
   githubError?: string;
 }
 
+export interface GitSessionStatusRequest {
+  sessionId: string;
+  includeGitHub?: boolean;
+}
+
 export interface GitSessionStatusResponse {
   sessionId: string;
   mode: GitSessionMode;
@@ -249,14 +254,16 @@ export interface ArchiveSessionResponse {
   requiresConfirmation?: boolean;
   commitStatus?: WorktreeCommitStatus;
   commitsRemoved?: number;
-  reason?: 'has_clones';
+  reason?: 'has_clones' | 'agent_primary_session';
   clones?: CloneSummary[];
+  agentName?: string;
 }
 
 export interface DeleteSessionResponse {
   success: boolean;
-  reason?: 'has_clones';
+  reason?: 'has_clones' | 'agent_primary_session';
   clones?: CloneSummary[];
+  agentName?: string;
 }
 
 export interface SendMessageRequest {

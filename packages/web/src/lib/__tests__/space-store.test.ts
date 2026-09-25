@@ -2223,6 +2223,7 @@ describe('SpaceStore — CRUD methods', () => {
       thinkingLevel: undefined,
       settingSources: undefined,
       tools: [],
+      sessionId: undefined,
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'new-agent')).toBe(true);
   });

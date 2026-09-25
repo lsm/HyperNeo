@@ -14,7 +14,7 @@ import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-sc
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -1109,6 +1109,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (id) => deps.db.getSession(id)
   );
+  const stampProvenance = (
+    sessionId: string,
+    promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
+  ) => {
+    const current = deps.db.getSession(sessionId);
+    if (current) {
+      deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+      deps.db.notifyChange('sessions', { sessionId });
+    }
+  };
+  spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
     detach: (sessionId) => {
@@ -1135,13 +1146,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       }
       return agent;
     },
-    stampProvenance: (sessionId, promptProvenance) => {
-      const current = deps.db.getSession(sessionId);
-      if (current) {
-        deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
-        deps.db.notifyChange('sessions', { sessionId });
-      }
-    },
+    stampProvenance,
     ...cloneLifecycle,
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
@@ -1178,6 +1183,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       ensureSession: (target) => ensureSession(target, sessionResolutionDeps),
       resolveClones,
       listClones: (parentId) => deps.db.listChildSessions(parentId),
+      primaryAgentFor: (sessionId) => {
+        const agent = spaceAgentRepo.getBySessionId(sessionId);
+        return agent ? { id: agent.id, displayName: agent.displayName } : null;
+      },
     }
   );
 
