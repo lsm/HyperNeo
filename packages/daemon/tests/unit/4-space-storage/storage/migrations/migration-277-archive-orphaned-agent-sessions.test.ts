@@ -22,6 +22,10 @@ function insert(db: BunDatabase, id: string, spaceId: string | null, agentId: st
 }
 
 function status(db: BunDatabase, id: string) {
+  return db.prepare(`SELECT status FROM sessions WHERE id = ?`).get(id) as { status: string };
+}
+
+function archived(db: BunDatabase, id: string) {
   return db.prepare(`SELECT status, archived_at FROM sessions WHERE id = ?`).get(id) as {
     status: string;
     archived_at: string | null;
@@ -35,10 +39,21 @@ describe('migration 277: archive sessions whose agent no longer exists', () => {
 
     runMigration277(db, '2026-09-24T00:00:00.000Z');
 
-    expect(status(db, 'orphan')).toEqual({
+    expect(archived(db, 'orphan')).toEqual({
       status: 'archived',
       archived_at: '2026-09-24T00:00:00.000Z',
     });
+  });
+
+  test('is a no-op on a sessions table without the metadata column', () => {
+    const db = new BunDatabase(':memory:');
+    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, space_id TEXT, status TEXT)`);
+    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY)`);
+    db.exec(`INSERT INTO sessions VALUES ('s', 'space-1', 'active')`);
+
+    runMigration277(db);
+
+    expect(status(db, 's').status).toBe('active');
   });
 
   test('leaves sessions of live agents, unstamped sessions, and non-space sessions alone', () => {
