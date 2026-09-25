@@ -120,12 +120,12 @@ export class SpaceAgentStore {
   }
 
   async update(id: string, changes: UpdateSpaceAgentParams): Promise<SpaceAgent> {
-    const { agent } = await this.hub().request<{ agent: SpaceAgent }>('spaceAgentV2.update', {
-      id,
-      ...changes,
-    });
-    this.upsert(agent);
-    return agent;
+    const response = await this.hub().request<
+      { agent: SpaceAgent } | { accepted: false; reason: string }
+    >('spaceAgentV2.update', { id, ...changes });
+    if ('accepted' in response) throw new Error(`Agent update refused: ${response.reason}`);
+    this.upsert(response.agent);
+    return response.agent;
   }
 
   async remove(id: string): Promise<void> {

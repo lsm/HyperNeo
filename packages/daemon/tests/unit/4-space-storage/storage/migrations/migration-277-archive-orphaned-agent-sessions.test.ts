@@ -4,14 +4,18 @@ import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compa
 
 const GONE = '11111111-2222-4333-8444-555555555555';
 const LIVE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const ARCHIVED = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec(
     `CREATE TABLE sessions (id TEXT PRIMARY KEY, space_id TEXT, status TEXT NOT NULL DEFAULT 'active', archived_at TEXT, metadata TEXT, type TEXT DEFAULT 'worker', session_context TEXT)`
   );
-  db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY)`);
-  db.exec(`INSERT INTO space_long_horizon_agents VALUES ('${LIVE}')`);
+  db.exec(
+    `CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active')`
+  );
+  db.exec(`INSERT INTO space_long_horizon_agents VALUES ('${LIVE}', 'active')`);
+  db.exec(`INSERT INTO space_long_horizon_agents VALUES ('${ARCHIVED}', 'archived')`);
   return db;
 }
 
@@ -51,6 +55,15 @@ describe('migration 277: archive sessions whose agent no longer exists', () => {
     ).toEqual({ status: 'archived', archived_at: '2026-09-24T00:00:00.000Z' });
   });
 
+  test('archives the still-active session of an agent archived before this migration', () => {
+    const db = makeDb();
+    insert(db, 'stale', 'space-1', ARCHIVED);
+
+    runMigration277(db);
+
+    expect(status(db, 'stale')).toBe('archived');
+  });
+
   test('leaves sessions of live agents, unstamped sessions, and non-space sessions alone', () => {
     const db = makeDb();
     insert(db, 'owned', 'space-1', LIVE);
@@ -82,7 +95,7 @@ describe('migration 277: archive sessions whose agent no longer exists', () => {
   test('is a no-op on a sessions table without the metadata column', () => {
     const db = new BunDatabase(':memory:');
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, space_id TEXT, status TEXT)`);
-    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY)`);
+    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, status TEXT)`);
     db.exec(`INSERT INTO sessions VALUES ('s', 'space-1', 'active')`);
 
     runMigration277(db);

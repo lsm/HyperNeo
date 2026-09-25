@@ -177,7 +177,14 @@ export function buildAgentUpdate(
     const wasArchived = deps.agents.getById(input.id)?.status === 'archived';
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
-    if (!wasArchived || outcome.status === 'archived' || !outcome.sessionId) return outcome;
+    if (
+      !wasArchived ||
+      outcome.status === 'archived' ||
+      !outcome.sessionId ||
+      input.sessionId !== undefined
+    ) {
+      return outcome;
+    }
     deps.agents.update(outcome.id, { sessionId: null });
     const restored = deps.agents.getById(outcome.id) ?? { ...outcome, sessionId: null };
     await publishAgentEvent(deps, 'spaceAgentV2.updated', restored);

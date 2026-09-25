@@ -1,9 +1,5 @@
 import type { Database } from '../sqlite-compat.ts';
 
-function tableExists(db: Database, name: string): boolean {
-  return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name);
-}
-
 function hasColumns(db: Database, table: string, columns: string[]): boolean {
   const present = new Set(
     (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
@@ -25,7 +21,7 @@ function parseObject(value: string | null): Record<string, unknown> {
 
 export function runMigration277(db: Database, now = new Date().toISOString()): void {
   if (
-    !tableExists(db, 'space_long_horizon_agents') ||
+    !hasColumns(db, 'space_long_horizon_agents', ['id', 'status']) ||
     !hasColumns(db, 'sessions', [
       'space_id',
       'status',
@@ -38,9 +34,13 @@ export function runMigration277(db: Database, now = new Date().toISOString()): v
     return;
   }
   const agents = new Set(
-    (db.prepare(`SELECT id FROM space_long_horizon_agents`).all() as Array<{ id: string }>).map(
-      (row) => row.id
-    )
+    (
+      db
+        .prepare(`SELECT id FROM space_long_horizon_agents WHERE status != 'archived'`)
+        .all() as Array<{
+        id: string;
+      }>
+    ).map((row) => row.id)
   );
   const rows = db
     .prepare(

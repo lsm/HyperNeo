@@ -591,6 +591,20 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(calls).toEqual([['primary', 'cascade', 'archive']]);
     });
 
+    test('restoring an archived agent keeps a session the update explicitly binds', async () => {
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'active',
+        sessionId: 'session-2',
+      })) as { agent: SpaceAgent };
+
+      expect(agent.sessionId).toBe('session-2');
+    });
+
     test('restoring an archived agent drops its archived session so a fresh one is started', async () => {
       deps.retirePrimarySession = async () => {};
       const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
