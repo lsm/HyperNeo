@@ -1,8 +1,14 @@
 import type { SessionProgress, SessionProgressItem, SessionProgressStatus } from '@hyperneo/shared';
 
 interface ToolUse {
+  id?: string;
   name: string;
   input?: unknown;
+}
+
+interface ToolResult {
+  toolUseId: string;
+  content: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,12 +40,24 @@ function fromTodoWrite(input: unknown): SessionProgressItem[] | null {
   return items;
 }
 
-function nextTaskId(items: SessionProgressItem[]): string {
-  const max = items.reduce((acc, item) => {
-    const n = item.id.startsWith('task:') ? Number(item.id.slice(5)) : Number.NaN;
-    return Number.isFinite(n) && n > acc ? n : acc;
-  }, 0);
-  return `task:${max + 1}`;
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (isRecord(block) && typeof block.text === 'string' ? block.text : ''))
+    .join('\n');
+}
+
+function taskIdFromResult(content: unknown): string | null {
+  const raw = resultText(content).trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const id = isRecord(parsed) && isRecord(parsed.task) ? parsed.task.id : undefined;
+    if (typeof id === 'string' || typeof id === 'number') return String(id);
+  } catch {}
+  const match = raw.match(/\btask\s*#?\s*(\d+)/i) ?? raw.match(/\bid[:\s]+"?(\w+)/i);
+  return match ? match[1] : null;
 }
 
 function applyToolUse(
@@ -52,13 +70,13 @@ function applyToolUse(
   if (!isRecord(input)) return null;
   if (tool.name === 'TaskCreate') {
     const subject = text(input.subject);
-    if (!subject) return null;
+    if (!subject || !tool.id) return null;
     const base = current?.source === 'task' ? items : [];
     const activeForm = text(input.activeForm);
     return [
       ...base,
       {
-        id: nextTaskId(base),
+        id: `task:pending:${tool.id}`,
         content: subject,
         status: 'pending',
         ...(activeForm ? { activeForm } : {}),
@@ -96,8 +114,46 @@ export function applyProgressToolUses(
   for (const tool of toolUses) {
     const items = applyToolUse(progress, tool);
     if (!items) continue;
-    progress = { source: tool.name === 'TodoWrite' ? 'todo' : 'task', items, updatedAt: now() };
+    const source = tool.name === 'TodoWrite' ? 'todo' : 'task';
+    const pending =
+      source === 'task' && progress?.source === 'task' ? { ...progress.pendingTaskIds } : {};
+    if (tool.name === 'TaskCreate' && tool.id) pending[tool.id] = `task:pending:${tool.id}`;
+    progress = {
+      source,
+      items,
+      updatedAt: now(),
+      ...(Object.keys(pending).length > 0 ? { pendingTaskIds: pending } : {}),
+    };
     changed = true;
   }
   return changed && progress ? progress : null;
+}
+
+export function applyProgressToolResults(
+  current: SessionProgress | undefined,
+  results: readonly ToolResult[],
+  now: () => string = () => new Date().toISOString()
+): SessionProgress | null {
+  if (!current?.pendingTaskIds) return null;
+  let items = current.items;
+  const pending = { ...current.pendingTaskIds };
+  let changed = false;
+  for (const result of results) {
+    const provisional = pending[result.toolUseId];
+    if (!provisional) continue;
+    const taskId = taskIdFromResult(result.content);
+    delete pending[result.toolUseId];
+    changed = true;
+    if (!taskId) continue;
+    const real = `task:${taskId}`;
+    items = items.map((item) => (item.id === provisional ? { ...item, id: real } : item));
+  }
+  if (!changed) return null;
+  return {
+    ...current,
+    items,
+    updatedAt: now(),
+    ...(Object.keys(pending).length > 0 ? { pendingTaskIds: pending } : {}),
+    ...(Object.keys(pending).length === 0 ? { pendingTaskIds: undefined } : {}),
+  };
 }

@@ -313,6 +313,7 @@ export interface SessionProgress {
   source: 'todo' | 'task';
   items: SessionProgressItem[];
   updatedAt: string;
+  pendingTaskIds?: Record<string, string>;
 }
 
 export interface SessionMetadata {

@@ -35,7 +35,7 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database.ts';
-import { applyProgressToolUses } from '../session/session-progress.ts';
+import { applyProgressToolResults, applyProgressToolUses } from '../session/session-progress.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -1817,17 +1817,24 @@ export class SDKMessageHandler {
   }
 
   private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
-    const { internalEventBus } = this.ctx;
+    const { internalEventBus, session, db } = this.ctx;
 
     if (!isSDKUserMessage(message)) return;
     const content = Array.isArray(message.message.content) ? message.message.content : [];
+    const results: Array<{ toolUseId: string; content: unknown }> = [];
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
+      results.push({ toolUseId: block.tool_use_id, content: block.content });
       await internalEventBus.publish('sdk.toolUse.consumed', {
-        sessionId: this.ctx.session.id,
+        sessionId: session.id,
         toolUseId: block.tool_use_id,
         timestamp: Date.now(),
       });
+    }
+    const progress = applyProgressToolResults(session.metadata?.progress, results);
+    if (progress) {
+      session.metadata = { ...session.metadata, progress };
+      db.updateSession(session.id, { metadata: session.metadata });
     }
   }
 
