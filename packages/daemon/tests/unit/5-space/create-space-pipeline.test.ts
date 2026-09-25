@@ -97,7 +97,7 @@ describe('createSpace pipeline stages', () => {
       ['seedAgentTemplateKeys is an empty array', { ...params, seedAgentTemplateKeys: [] }],
       [
         'seedAgentTemplateKeys is a valid array of keys',
-        { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+        { ...params, seedAgentTemplateKeys: ['space-manager.default', 'other.default'] },
       ],
     ];
 
@@ -136,7 +136,7 @@ describe('createSpace pipeline stages', () => {
       ],
       [
         'seedAgentTemplateKeys is a bare string',
-        { ...params, seedAgentTemplateKeys: 'task-manager.default' as unknown as string[] },
+        { ...params, seedAgentTemplateKeys: 'space-manager.default' as unknown as string[] },
         'seedAgentTemplateKeys must be an array of strings',
       ],
       [
@@ -146,12 +146,12 @@ describe('createSpace pipeline stages', () => {
       ],
       [
         'empty seedAgentTemplateKeys entry at its index',
-        { ...params, seedAgentTemplateKeys: ['task-manager.default', ''] },
+        { ...params, seedAgentTemplateKeys: ['space-manager.default', ''] },
         'seedAgentTemplateKeys[1] is required',
       ],
       [
         'whitespace-only seedAgentTemplateKeys entry at its index',
-        { ...params, seedAgentTemplateKeys: ['task-manager.default', '   '] },
+        { ...params, seedAgentTemplateKeys: ['space-manager.default', '   '] },
         'seedAgentTemplateKeys[1] is required',
       ],
     ];
@@ -192,10 +192,10 @@ describe('createSpace pipeline stages', () => {
       const ctx = makeCtx({
         deps,
         space,
-        params: { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+        params: { ...params, seedAgentTemplateKeys: ['space-manager.default', 'other.default'] },
       });
       expect(await seedAgents(ctx)).toBe(ctx);
-      expect(log.calls).toEqual(['agents:space-1:task-manager.default|other.default']);
+      expect(log.calls).toEqual(['agents:space-1:space-manager.default|other.default']);
     });
 
     test('continues without a seeder dependency', async () => {
@@ -204,7 +204,7 @@ describe('createSpace pipeline stages', () => {
       const ctx = makeCtx({
         deps,
         space,
-        params: { ...params, seedAgentTemplateKeys: ['task-manager.default'] },
+        params: { ...params, seedAgentTemplateKeys: ['space-manager.default'] },
       });
       expect(await seedAgents(ctx)).toBe(ctx);
     });
@@ -214,7 +214,7 @@ describe('createSpace pipeline stages', () => {
       const deps = makeDeps({
         seedAgents: async () => ({
           errors: [
-            { key: 'task-manager.default', error: 'failed' },
+            { key: 'space-manager.default', error: 'failed' },
             { key: 'other.default', error: 'failed' },
           ],
         }),
@@ -224,12 +224,12 @@ describe('createSpace pipeline stages', () => {
           deps,
           space,
           warnings,
-          params: { ...params, seedAgentTemplateKeys: ['task-manager.default', 'other.default'] },
+          params: { ...params, seedAgentTemplateKeys: ['space-manager.default', 'other.default'] },
         })
       );
       expect(result.warnings).toEqual([
         'prior warning',
-        'Failed to seed agents: task-manager.default, other.default',
+        'Failed to seed agents: space-manager.default, other.default',
       ]);
       expect(warnings).toEqual(['prior warning']);
     });
@@ -244,7 +244,7 @@ describe('createSpace pipeline stages', () => {
         makeCtx({
           deps,
           space,
-          params: { ...params, seedAgentTemplateKeys: ['task-manager.default'] },
+          params: { ...params, seedAgentTemplateKeys: ['space-manager.default'] },
         })
       );
       expect(result.warnings).toEqual(['Failed to seed agents']);
@@ -366,10 +366,10 @@ describe('createSpace pipeline', () => {
 
   test('seeds requested agents before workflows', async () => {
     const { deps, log } = makeDeps();
-    await createSpace(deps, { ...params, seedAgentTemplateKeys: ['task-manager.default'] });
+    await createSpace(deps, { ...params, seedAgentTemplateKeys: ['space-manager.default'] });
     expect(log.calls).toEqual([
       'create:Test Space',
-      'agents:space-1:task-manager.default',
+      'agents:space-1:space-manager.default',
       'seed:space-1',
       'publish:space-1',
     ]);
@@ -377,13 +377,13 @@ describe('createSpace pipeline', () => {
 
   test('a failed agent seed warns and still creates the space', async () => {
     const { deps, log } = makeDeps({
-      seedAgents: async () => ({ errors: [{ key: 'task-manager.default', error: 'failed' }] }),
+      seedAgents: async () => ({ errors: [{ key: 'space-manager.default', error: 'failed' }] }),
     });
     const result = await createSpace(deps, {
       ...params,
-      seedAgentTemplateKeys: ['task-manager.default'],
+      seedAgentTemplateKeys: ['space-manager.default'],
     });
-    expect(result.seedWarnings).toEqual(['Failed to seed agents: task-manager.default']);
+    expect(result.seedWarnings).toEqual(['Failed to seed agents: space-manager.default']);
     expect(log.calls.at(-1)).toBe('publish:space-1');
   });
 
@@ -400,7 +400,7 @@ describe('createSpace pipeline', () => {
     await expect(
       createSpace(deps, {
         ...params,
-        seedAgentTemplateKeys: 'task-manager.default' as unknown as string[],
+        seedAgentTemplateKeys: 'space-manager.default' as unknown as string[],
       })
     ).rejects.toThrow('seedAgentTemplateKeys must be an array of strings');
     expect(log.calls).toEqual([]);

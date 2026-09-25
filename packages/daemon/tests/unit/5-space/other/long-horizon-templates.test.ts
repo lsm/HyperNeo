@@ -16,19 +16,21 @@ function getLongHorizonFamilyTemplates() {
 
 describe('long-horizon agent templates', () => {
   test('the space-creation default seed template exists and its handle is not reserved', () => {
+    expect(DEFAULT_SEED_AGENT_TEMPLATE_KEY).toBe('space-manager.default');
     const template = getLongHorizonAgentTemplates().find(
       (candidate) => candidate.key === DEFAULT_SEED_AGENT_TEMPLATE_KEY
     );
 
     expect(template).toBeDefined();
+    expect(template?.handle).toBe('space-manager');
     expect(RESERVED_SPACE_AGENT_HANDLES as readonly string[]).not.toContain(template?.handle);
   });
 
-  test('keeps only the task-manager as a non-worker built-in (ATC-3, ATC-4)', () => {
+  test('offers Space Manager without the retired Task Manager built-in', () => {
     const templates = getLongHorizonFamilyTemplates();
 
-    expect(templates.map((template) => template.key)).toEqual(['task-manager.default']);
-    expect(templates.map((template) => template.displayName)).toEqual(['Task Manager']);
+    expect(templates.map((template) => template.key)).toEqual(['space-manager.default']);
+    expect(templates.map((template) => template.displayName)).toEqual(['Space Manager']);
   });
 
   test('registers the worker presets as code built-ins under the worker namespace', () => {
@@ -64,31 +66,19 @@ describe('long-horizon agent templates', () => {
     }
   });
 
-  test('task-manager tracks work without routing powers or subscriptions (ATC-4)', () => {
-    const taskManager = getLongHorizonAgentTemplates().find(
-      (template) => template.key === 'task-manager.default'
+  test('Space Manager coordinates work with goal ownership and human gates', () => {
+    const spaceManager = getLongHorizonAgentTemplates().find(
+      (template) => template.key === 'space-manager.default'
     );
 
-    expect(taskManager?.suggestedAutonomyLevel).toBe(2);
-    expect(taskManager?.suggestedEventSubscriptions).toEqual([]);
-    expect(taskManager?.instructions).toContain('Triage');
-    expect(taskManager?.instructions).toContain('task.message.send');
-    expect(taskManager?.instructions).toContain('mark it `blocked`');
-    expect(taskManager?.instructions).toContain(
-      'append a short note to the task description saying what is stuck and what you recommend'
-    );
-    expect(taskManager?.instructions).toContain('not awaiting review');
-    expect(taskManager?.instructions).toContain('statuses like `stopped` cannot take it at all');
-    expect(taskManager?.instructions).toContain(
-      'rate- or usage-paused tasks gate it above level 2'
-    );
-    expect(taskManager?.instructions).toContain('Tasks waiting in review are not yours to move');
-    expect(taskManager?.instructions).toContain('next slices');
-    expect(taskManager?.instructions).toContain('no routing powers over other agents');
-    expect(taskManager?.instructions).toContain('goal.task.trigger');
-    expect(taskManager?.instructions).not.toContain('reassign_task');
-    expect(taskManager?.instructions).not.toContain('send_session_message');
-    expect(taskManager?.instructions).not.toContain('escalate to the space manager');
+    expect(spaceManager?.suggestedAutonomyLevel).toBe(3);
+    expect(spaceManager?.suggestedEventSubscriptions).toEqual([]);
+    expect(spaceManager?.instructions).toContain('goal.owner.set');
+    expect(spaceManager?.instructions).toContain('goal.task.trigger');
+    expect(spaceManager?.instructions).toContain('task.create');
+    expect(spaceManager?.instructions).toContain('task.message.send');
+    expect(spaceManager?.instructions).toContain('manual handoff');
+    expect(spaceManager?.instructions).toContain('human review');
   });
 
   test('defines instructions, autonomy, subscriptions, reminders, and ownership patterns', () => {
@@ -98,9 +88,7 @@ describe('long-horizon agent templates', () => {
       expect(template.instructions.length).toBeGreaterThan(80);
       expect(template.suggestedAutonomyLevel).toBeGreaterThanOrEqual(1);
       expect(template.suggestedAutonomyLevel).toBeLessThanOrEqual(5);
-      if (template.key !== 'task-manager.default') {
-        expect(template.suggestedEventSubscriptions.length).toBeGreaterThan(0);
-      }
+      expect(template.suggestedEventSubscriptions).toEqual([]);
       expect(template.reminderDefaults.length).toBeGreaterThan(0);
       expect(template.ownershipPatterns.length).toBeGreaterThan(0);
     }

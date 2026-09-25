@@ -288,13 +288,13 @@ describe('the agent.template.instantiate operation', () => {
 
   test('template reminder defaults are seeded for the new agent', async () => {
     const outcome = await run('agent.template.instantiate', {
-      templateName: 'task-manager.default',
+      templateName: 'space-manager.default',
     });
     const agentId = String(outcome.value?.agent?.id);
-    expect(outcome.value?.seededReminders).toEqual([{ title: 'Review stalled work' }]);
+    expect(outcome.value?.seededReminders).toEqual([{ title: 'Review Space work' }]);
     expect(outcome.value?.skippedReminders).toEqual([]);
     const reminders = reminderRepo.listReminders(agentId);
-    expect(reminders.map((reminder) => reminder.title)).toEqual(['Review stalled work']);
+    expect(reminders.map((reminder) => reminder.title)).toEqual(['Review Space work']);
     expect(reminders[0]?.createdBySession).toBe(MEMBER_SESSION);
   });
 
