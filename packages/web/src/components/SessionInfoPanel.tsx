@@ -13,13 +13,6 @@ import { RenameIcon } from './icons/RenameIcon.tsx';
 interface SessionInfoPanelButtonProps {
   session: Session | null;
   features?: SessionFeatures;
-  onToolsClick: () => void;
-  onExportClick: () => void;
-  onResetClick: () => void;
-  onArchiveClick: () => void;
-  onDeleteClick: () => void;
-  archiving?: boolean;
-  resettingAgent?: boolean;
   readonly?: boolean;
   messages: ChatMessage[];
   backgroundTaskMessages?: ChatMessage[];
@@ -293,61 +286,34 @@ function SourceRows({ sources }: { sources: SourceItem[] }) {
 }
 
 function ActionToolbar({
-  features,
   isConnected,
-  archiving,
-  resettingAgent,
   readonly,
-  archived,
   canRename,
   isRenaming,
   renameInputProps,
   onRenameClick,
-  onToolsClick,
-  onExportClick,
-  onResetClick,
-  onArchiveClick,
-  onDeleteClick,
 }: {
-  features: SessionFeatures;
   isConnected: boolean;
-  archiving: boolean;
-  resettingAgent: boolean;
   readonly: boolean;
-  archived: boolean;
   canRename: boolean;
   isRenaming: boolean;
   renameInputProps: SessionRenameInputProps;
   onRenameClick: () => void;
-  onToolsClick: () => void;
-  onExportClick: () => void;
-  onResetClick: () => void;
-  onArchiveClick: () => void;
-  onDeleteClick: () => void;
 }) {
+  if (readonly) return null;
   return (
     <div
       class="flex flex-wrap items-center gap-1 border-b border-line pb-3"
       data-testid="session-info-toolbar"
     >
-      {!readonly && (
-        <IconButton size="sm" title="Tools" onClick={onToolsClick} disabled={!isConnected}>
-          <ToolsIcon />
-        </IconButton>
-      )}
-      <IconButton size="sm" title="Export chat" onClick={onExportClick} disabled={!isConnected}>
-        <ExportIcon />
+      <IconButton
+        size="sm"
+        title="Rename session"
+        onClick={onRenameClick}
+        disabled={!canRename || !isConnected || isRenaming}
+      >
+        <RenameIcon className="h-4 w-4" />
       </IconButton>
-      {!readonly && (
-        <IconButton
-          size="sm"
-          title="Rename session"
-          onClick={onRenameClick}
-          disabled={!canRename || !isConnected || isRenaming}
-        >
-          <RenameIcon className="h-4 w-4" />
-        </IconButton>
-      )}
       {isRenaming && (
         <input
           {...renameInputProps}
@@ -355,35 +321,6 @@ function ActionToolbar({
           placeholder="Session title"
           class="basis-full rounded-md border border-line-strong bg-surface/80 px-2.5 py-1.5 text-sm text-fg outline-none focus:border-fg-faint"
         />
-      )}
-      <IconButton
-        size="sm"
-        title={resettingAgent ? 'Resetting agent...' : 'Reset agent'}
-        onClick={onResetClick}
-        disabled={resettingAgent || !isConnected}
-      >
-        {resettingAgent ? <SpinnerIcon /> : <ResetIcon />}
-      </IconButton>
-      {features.archive && (
-        <>
-          <IconButton
-            size="sm"
-            title={archiving ? 'Archiving...' : 'Archive session'}
-            onClick={onArchiveClick}
-            disabled={archiving || archived || !isConnected}
-          >
-            {archiving ? <SpinnerIcon /> : <ArchiveIcon />}
-          </IconButton>
-          <IconButton
-            size="sm"
-            variant="danger"
-            title="Delete chat"
-            onClick={onDeleteClick}
-            disabled={!isConnected}
-          >
-            <DeleteIcon />
-          </IconButton>
-        </>
       )}
     </div>
   );
@@ -468,13 +405,6 @@ function InternalDetails({ session }: { session: Session }) {
 export function SessionInfoPanelButton({
   session,
   features = DEFAULT_WORKER_FEATURES,
-  onToolsClick,
-  onExportClick,
-  onResetClick,
-  onArchiveClick,
-  onDeleteClick,
-  archiving = false,
-  resettingAgent = false,
   readonly = false,
   messages = [],
   backgroundTaskMessages = [],
@@ -558,7 +488,6 @@ export function SessionInfoPanelButton({
   }, [open]);
 
   const isConnected = connectionState.value === 'connected';
-  const archived = session?.status === 'archived';
 
   return (
     <div ref={rootRef} class="relative">
@@ -582,21 +511,12 @@ export function SessionInfoPanelButton({
           class="z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-line bg-surface-raised/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
         >
           <ActionToolbar
-            features={features}
             isConnected={isConnected}
-            archiving={archiving}
-            resettingAgent={resettingAgent}
             readonly={readonly}
-            archived={archived}
             canRename={!!session}
             isRenaming={isRenaming}
             renameInputProps={renameInputProps}
             onRenameClick={startEditing}
-            onToolsClick={onToolsClick}
-            onExportClick={onExportClick}
-            onResetClick={onResetClick}
-            onArchiveClick={onArchiveClick}
-            onDeleteClick={onDeleteClick}
           />
 
           {features.sessionInfo && (
@@ -635,84 +555,6 @@ function InfoIcon() {
         stroke-linejoin="round"
         stroke-width={1.9}
         d="M12 11.5v5M12 7.25h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
-    </svg>
-  );
-}
-
-function ToolsIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2}
-        d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-      />
-    </svg>
-  );
-}
-
-function ExportIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2}
-        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-      />
-    </svg>
-  );
-}
-
-function ResetIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2}
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
-  );
-}
-
-function ArchiveIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2}
-        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-      />
-    </svg>
-  );
-}
-
-function DeleteIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width={2}
-        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-      />
-    </svg>
-  );
-}
-
-function SpinnerIcon() {
-  return (
-    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width={4} />
-      <path
-        class="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
       />
     </svg>
   );

@@ -32,6 +32,7 @@ import {
   type UnavailableAction,
 } from '../components/UnavailableSessionView.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
@@ -336,6 +337,7 @@ export default function ChatContainer({
   const [session, setSession] = useState(store.sessionInfo.value);
 
   const deleteModal = useModal();
+  const resetConfirmModal = useModal();
   const toolsModal = useModal();
   const errorDialog = useModal();
   const rewindConfirmModal = useModal();
@@ -1271,7 +1273,7 @@ export default function ChatContainer({
         features={features}
         onToolsClick={toolsModal.open}
         onExportClick={sessionActions.handleExportChat}
-        onResetClick={sessionActions.handleResetAgent}
+        onResetClick={resetConfirmModal.open}
         onArchiveClick={() => sessionActions.handleArchiveClick()}
         onDeleteClick={deleteModal.open}
         archiving={sessionActions.archiving}
@@ -1493,6 +1495,21 @@ export default function ChatContainer({
           onCancel={sessionActions.handleCancelCloneChoice}
         />
       )}
+
+      <ConfirmModal
+        isOpen={resetConfirmModal.isOpen}
+        onClose={resetConfirmModal.close}
+        onConfirm={() => {
+          resetConfirmModal.close();
+          void sessionActions.handleResetAgent();
+        }}
+        title="Reset agent"
+        message="This restarts the agent process for this chat. In-flight work is interrupted and the conversation continues from its saved history."
+        confirmText="Reset agent"
+        confirmButtonVariant="warning"
+        isLoading={sessionActions.resettingAgent}
+        confirmTestId="confirm-reset-agent"
+      />
 
       <ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
 

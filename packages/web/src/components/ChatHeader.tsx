@@ -3,6 +3,7 @@ import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
+import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
 import { SessionInfoPanelButton } from './SessionInfoPanel.tsx';
 
 export interface ChatHeaderProps {
@@ -108,16 +109,21 @@ export function ChatHeader({
           </button>
         )}
 
-        <SessionInfoPanelButton
-          session={session}
+        <ChatHeaderMenu
           features={features}
+          readonly={readonly}
+          archived={session?.status === 'archived'}
+          archiving={archiving}
+          resettingAgent={resettingAgent}
           onToolsClick={onToolsClick}
           onExportClick={onExportClick}
           onResetClick={onResetClick}
           onArchiveClick={onArchiveClick}
           onDeleteClick={onDeleteClick}
-          archiving={archiving}
-          resettingAgent={resettingAgent}
+        />
+        <SessionInfoPanelButton
+          session={session}
+          features={features}
           readonly={readonly}
           messages={messages}
           backgroundTaskMessages={backgroundTaskMessages}

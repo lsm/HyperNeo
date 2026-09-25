@@ -69,7 +69,7 @@ test.describe('Worktree Isolation', () => {
 
     const deletedSessionId = sessionId;
 
-    const optionsButton = page.getByTestId('session-info-btn');
+    const optionsButton = page.getByTestId('chat-menu-btn');
     await optionsButton.click();
 
     await page.getByTitle('Delete chat').click();

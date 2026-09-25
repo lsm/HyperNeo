@@ -19,7 +19,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
   }
   await page.waitForTimeout(300);
 
-  const optionsButton = page.getByTestId('session-info-btn');
+  const optionsButton = page.getByTestId('chat-menu-btn');
   await optionsButton.waitFor({ state: 'visible', timeout: 10000 });
   await optionsButton.click();
 
