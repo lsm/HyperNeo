@@ -16,11 +16,13 @@ test.describe('Mobile Layout', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
   });
 
   test('should display correctly on mobile viewport', async ({ page }) => {
-    const heading = page.getByRole('heading', { name: 'Neo Lobby' }).first();
+    const heading = page.getByRole('heading', { name: 'What should we build?' }).first();
     await expect(heading).toBeVisible();
 
     const newSessionButton = page.getByRole('button', {
@@ -63,7 +65,9 @@ test.describe('Mobile Input', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     sessionId = null;
   });
 
@@ -149,7 +153,9 @@ test.describe('Mobile Messages', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     sessionId = null;
   });
 

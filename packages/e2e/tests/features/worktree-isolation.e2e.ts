@@ -6,7 +6,9 @@ test.describe('Worktree Isolation', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     await page.waitForTimeout(1000);
     sessionId = null;
   });
@@ -48,11 +50,10 @@ test.describe('Worktree Isolation', () => {
       timeout: 60000,
     });
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTitle('Session info');
     await optionsButton.click();
 
-    const dropdown = page.locator('[role="menu"]');
-    await expect(dropdown).toBeVisible();
+    await expect(page.getByTestId('session-info-toolbar')).toBeVisible();
   });
 
   test.skip('should cleanup worktree when session is deleted', async ({ page }) => {
@@ -68,10 +69,10 @@ test.describe('Worktree Isolation', () => {
 
     const deletedSessionId = sessionId;
 
-    const optionsButton = page.getByTitle('Session options');
+    const optionsButton = page.getByTitle('Session info');
     await optionsButton.click();
 
-    await page.locator('text=Delete Chat').click();
+    await page.getByTitle('Delete chat').click();
 
     const confirmButton = page.locator('[data-testid="confirm-delete-session"]');
     await confirmButton.click();

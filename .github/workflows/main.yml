@@ -653,7 +653,7 @@ jobs:
         id: categorize
         run: |
           # Tests that require LLM API round-trips are excluded here and run in real-api-tests.yml.
-          LLM_TESTS=(core/message-flow core/interrupt-button core/interrupt-error-bug core/context-features core/model-selection features/archive features/file-operations features/message-operations features/provider-model-switching features/reviewer-feedback-loop features/rewind-features features/session-operations features/slash-cmd features/space-approval-gate-rejection features/space-artifacts-panel features/space-canvas-mode features/space-happy-path-pipeline features/worktree-isolation responsive/mobile responsive/tablet settings/auto-title)
+          LLM_TESTS=(core/message-flow core/interrupt-button core/interrupt-error-bug core/context-features core/model-selection features/archive features/file-operations features/message-operations features/provider-model-switching features/reviewer-feedback-loop features/rewind-features features/session-operations features/slash-cmd features/space-approval-gate-rejection features/space-canvas-mode features/space-happy-path-pipeline features/worktree-isolation responsive/mobile responsive/tablet settings/auto-title)
 
           # Tests to exclude entirely (disabled, pending stabilization)
           EXCLUDED_TESTS=(

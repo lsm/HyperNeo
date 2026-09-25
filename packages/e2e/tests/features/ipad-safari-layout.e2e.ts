@@ -9,7 +9,9 @@ test.describe('iPad portrait (820×1180)', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
   });
 
   test('root container uses h-safe-screen class', async ({ page }) => {
@@ -20,7 +22,7 @@ test.describe('iPad portrait (820×1180)', () => {
   });
 
   test('header element is visible within the viewport bounds', async ({ page }) => {
-    const heading = page.getByRole('heading', { name: 'Neo Lobby' }).first();
+    const heading = page.getByRole('heading', { name: 'What should we build?' }).first();
     await expect(heading).toBeVisible();
     const box = await heading.boundingBox();
     expect(box).not.toBeNull();
@@ -35,7 +37,9 @@ test.describe('iPad Mini portrait (744×1133)', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
   });
 
   test('root container uses h-safe-screen class', async ({ page }) => {
@@ -46,7 +50,7 @@ test.describe('iPad Mini portrait (744×1133)', () => {
   });
 
   test('header element is visible within the viewport bounds', async ({ page }) => {
-    const heading = page.getByRole('heading', { name: 'Neo Lobby' }).first();
+    const heading = page.getByRole('heading', { name: 'What should we build?' }).first();
     await expect(heading).toBeVisible();
     const box = await heading.boundingBox();
     expect(box).not.toBeNull();
@@ -74,7 +78,9 @@ test.describe('Desktop (1280×800)', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
   });
 
   test('root container uses h-safe-screen class', async ({ page }) => {

@@ -109,7 +109,10 @@ test.describe
       expect(existsSync(worktreePath)).toBe(true);
 
       await page.goto('/');
-      await page.getByRole('heading', { name: 'Neo Lobby' }).first().waitFor({ state: 'visible' });
+      await page
+        .getByRole('heading', { name: 'What should we build?' })
+        .first()
+        .waitFor({ state: 'visible' });
 
       await page.waitForTimeout(1000);
 

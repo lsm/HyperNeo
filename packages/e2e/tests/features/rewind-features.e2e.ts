@@ -51,7 +51,9 @@ test.describe('Rewind Mode', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'What should we build?' }).first()
+    ).toBeVisible();
     await waitForWebSocketConnected(page);
     sessionId = null;
   });

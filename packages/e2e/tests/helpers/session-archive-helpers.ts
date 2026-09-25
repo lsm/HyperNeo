@@ -19,7 +19,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
   }
   await page.waitForTimeout(300);
 
-  const optionsButton = page.getByTitle('Session options');
+  const optionsButton = page.getByTitle('Session info');
   await optionsButton.waitFor({ state: 'visible', timeout: 10000 });
   await optionsButton.click();
 
@@ -27,7 +27,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
 }
 
 export async function clickArchiveSession(page: Page): Promise<void> {
-  const archiveItem = page.locator('text=Archive Session').first();
+  const archiveItem = page.getByTitle('Archive session').first();
   await archiveItem.waitFor({ state: 'visible', timeout: 3000 });
   await archiveItem.click();
 }

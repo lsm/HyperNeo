@@ -43,7 +43,9 @@ test.describe('UI Components', () => {
       await page.reload();
       await page.waitForTimeout(500);
 
-      await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should we build?' }).first()
+      ).toBeVisible();
       await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
     });
 
@@ -53,7 +55,9 @@ test.describe('UI Components', () => {
       await page.reload();
       await page.waitForTimeout(500);
 
-      await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'What should we build?' }).first()
+      ).toBeVisible();
       await expect(page.locator('text=Your agent command center')).toBeVisible();
     });
   });

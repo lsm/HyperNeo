@@ -53,7 +53,7 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
     await waitForWebSocketConnected(page);
 
     await expect(page.getByTestId('space-detail-dashboard')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Space Agent')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Agents').first()).toBeVisible({ timeout: 5000 });
 
     await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 5000 });
   });

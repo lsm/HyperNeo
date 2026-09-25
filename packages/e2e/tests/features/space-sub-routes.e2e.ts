@@ -167,24 +167,4 @@ test.describe('Space Sub-Routes Deep Links', () => {
       timeout: 10000,
     });
   });
-
-  test('clicking Space Agent in sidebar navigates to /agent route and back returns to dashboard', async ({
-    page,
-  }) => {
-    await page.goto(`/space/${spaceId}`);
-    await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-    await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
-
-    await page.getByRole('button', { name: 'Space Agent', exact: true }).click();
-    await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-
-    await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
-      timeout: 10000,
-    });
-    await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
-
-    await page.goBack();
-    await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-    await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
-  });
 });

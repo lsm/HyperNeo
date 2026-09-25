@@ -117,7 +117,9 @@ test.describe('Inline Workspace Selector', () => {
     await expect(page.getByText('Select a workspace')).not.toBeVisible({ timeout: 5000 });
 
     await page.goto('/');
-    await expect(page.getByText('Neo Lobby')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'What should we build?' })).toBeVisible({
+      timeout: 5000,
+    });
 
     await page.goto(`/session/${sessionId}`);
     await page.waitForURL(/\/session\//, { timeout: 10000 });
