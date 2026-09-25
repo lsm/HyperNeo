@@ -393,6 +393,38 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('records session progress from TodoWrite tool calls in the metadata', async () => {
+      const message: SDKMessage = {
+        type: 'assistant',
+        uuid: 'todo-uuid',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tu-1',
+              name: 'TodoWrite',
+              input: {
+                todos: [{ content: 'Ship it', status: 'in_progress', activeForm: 'Shipping' }],
+              },
+            },
+          ],
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      const call = updateSessionSpy.mock.calls.find(
+        (args) => (args[1] as { metadata?: { progress?: unknown } }).metadata?.progress
+      );
+      expect(call).toBeDefined();
+      expect(
+        (call![1] as { metadata: { progress: { items: unknown[] } } }).metadata.progress.items
+      ).toEqual([
+        { id: 'todo:0', content: 'Ship it', status: 'in_progress', activeForm: 'Shipping' },
+      ]);
+    });
+
     it('should save message to database', async () => {
       const message: SDKMessage = {
         type: 'assistant',

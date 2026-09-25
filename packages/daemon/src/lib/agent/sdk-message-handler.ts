@@ -35,6 +35,7 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database.ts';
+import { applyProgressToolUses } from '../session/session-progress.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -1846,9 +1847,11 @@ export class SDKMessageHandler {
       this.repeatedToolErrorGuardrail.recordToolUse(toolCall.id, toolCall.name);
     }
     if (toolCalls.length > 0) {
+      const progress = applyProgressToolUses(session.metadata?.progress, toolCalls);
       session.metadata = {
         ...session.metadata,
         toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
+        ...(progress ? { progress } : {}),
       };
       db.updateSession(session.id, {
         metadata: session.metadata,
