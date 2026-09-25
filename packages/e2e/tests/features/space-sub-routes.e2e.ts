@@ -130,9 +130,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 
     await page.goto(`/space/${spaceId}/agent`);
     await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-    await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
-      timeout: 10000,
-    });
+    await expect(page.getByTestId('space-agents-introduction')).toBeVisible({ timeout: 10000 });
 
     await page.goto(`/space/${spaceId}/task/${taskId}`);
     await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
@@ -140,9 +138,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 
     await page.goBack();
     await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
-    await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
-      timeout: 10000,
-    });
+    await expect(page.getByTestId('space-agents-introduction')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 
     await page.goBack();
