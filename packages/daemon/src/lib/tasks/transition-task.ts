@@ -204,7 +204,7 @@ async function snapshotStillCurrent({ spaceId, task }: OwnedTask, deps: Deps): P
 }
 
 export function routeAgentCompletionToReview(owned: OwnedTask, input: In, caller: Caller): In {
-  if (caller.source === 'rpc' || input.status !== 'done') return input;
+  if (caller.source !== 'mcp' || input.status !== 'done') return input;
   if (owned.task.status === 'review' || owned.task.status === 'approved') return input;
   return {
     ...input,
