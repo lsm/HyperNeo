@@ -4,6 +4,7 @@ import type { SettingSource, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const mockDeleteAgent = vi.fn();
 const {
   mockAgents,
   mockTemplates,
@@ -57,6 +58,7 @@ vi.mock('../../../lib/space-store', () => ({
       deleteTemplate: mockDeleteTemplate,
       updateAgent: mockUpdateAgent,
       ensureAgentSession: mockEnsureAgentSession,
+      deleteAgent: (...args: unknown[]) => mockDeleteAgent(...args),
     };
   },
 }));
@@ -609,6 +611,29 @@ describe('SpaceLongHorizonAgents', () => {
       'scribe',
       expect.objectContaining({ tools: ['Bash(gh pr view:*)'] })
     );
+  });
+
+  it('carries the clone choice through the unpushed-commits confirmation', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: 'session-research' })];
+    mockDeleteAgent
+      .mockResolvedValueOnce({ clones: [{ id: 'c1', title: 'Clone one' }] })
+      .mockResolvedValueOnce({ commitStatus: { hasCommitsAhead: true, commits: ['abc'] } })
+      .mockResolvedValueOnce(null);
+
+    render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(screen.getByLabelText('Delete Research Long Horizon'));
+    fireEvent.click(await screen.findByTestId('agent-delete-confirm'));
+    await screen.findByTestId('clone-choice-dialog');
+    fireEvent.click(await screen.findByTestId('clone-choice-flatten'));
+    fireEvent.click(await screen.findByTestId('agent-delete-commits-confirm'));
+
+    await waitFor(() => expect(mockDeleteAgent).toHaveBeenCalledTimes(3));
+    expect(mockDeleteAgent.mock.calls).toEqual([
+      ['lh-1', undefined, undefined],
+      ['lh-1', 'flatten', undefined],
+      ['lh-1', 'flatten', true],
+    ]);
   });
 
   it('deletes a user template after confirmation, passing the captured version', async () => {

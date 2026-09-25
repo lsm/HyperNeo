@@ -591,6 +591,7 @@ export function SpaceLongHorizonAgents({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteClones, setDeleteClones] = useState<CloneSummary[] | null>(null);
   const [deleteCommits, setDeleteCommits] = useState<WorktreeCommitStatus | null>(null);
+  const [deleteChildren, setDeleteChildren] = useState<CloneChildrenChoice | undefined>(undefined);
 
   useEffect(() => {
     if (agents.length === 0) return;
@@ -622,6 +623,7 @@ export function SpaceLongHorizonAgents({
     if (!deletingAgent) return;
     setDeleting(true);
     setDeleteError(null);
+    setDeleteChildren(children);
     try {
       const refused = await spaceStore.deleteAgent(deletingAgent.id, children, confirmed);
       if (refused && 'clones' in refused) {
@@ -636,6 +638,7 @@ export function SpaceLongHorizonAgents({
       setDeletingAgent(null);
       setDeleteClones(null);
       setDeleteCommits(null);
+      setDeleteChildren(undefined);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
@@ -815,9 +818,9 @@ export function SpaceLongHorizonAgents({
             setDeleteClones(null);
             setDeletingAgent(null);
           }}
-          onConfirm={() => handleDeleteConfirm('cascade', true)}
+          onConfirm={() => handleDeleteConfirm(deleteChildren, true)}
           title="Unpushed commits"
-          message={`A clone of "${deletingAgent.displayName}" has ${deleteCommits.commits.length} unpushed commit(s) on its worktree. Deleting the clones will discard them.`}
+          message={`A conversation of "${deletingAgent.displayName}" has ${deleteCommits.commits.length} unpushed commit(s) on its worktree. Deleting will discard them.`}
           confirmText="Delete anyway"
           confirmButtonVariant="danger"
           isLoading={deleting}
@@ -854,6 +857,7 @@ export function SpaceLongHorizonAgents({
           confirmButtonVariant="danger"
           isLoading={deleting}
           error={deleteError}
+          confirmTestId="agent-delete-confirm"
         />
       )}
     </div>

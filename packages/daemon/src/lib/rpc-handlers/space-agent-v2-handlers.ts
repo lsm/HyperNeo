@@ -54,7 +54,9 @@ export interface SpaceAgentV2Deps {
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
   resolveClones?: ResolveClones;
-  listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
+  listClones?: (
+    parentId: string
+  ) => Array<{ id: string; title?: string; worktree?: WorktreeMetadata }>;
   commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
   retirePrimarySession?: (sessionId: string, action: 'archive' | 'delete') => Promise<void>;
   stampProvenance?: (
@@ -276,8 +278,9 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
-    if (params.status === 'archived' && existing?.sessionId && params.confirmed !== true) {
-      const commitStatus = await firstSessionWithCommitsAhead(deps, existing.sessionId, true);
+    const archiveTarget = params.sessionId ?? existing?.sessionId;
+    if (params.status === 'archived' && archiveTarget && params.confirmed !== true) {
+      const commitStatus = await firstSessionWithCommitsAhead(deps, archiveTarget, true);
       if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
     }
     const { confirmed: _confirmed, ...input } = params;
@@ -307,11 +310,22 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (params.spaceId && existing.spaceId !== params.spaceId) {
       throw new Error(`Agent ${id} does not belong to space ${params.spaceId}`);
     }
+    const choice = isCloneChoice(params.children) ? params.children : undefined;
+    if (existing.sessionId && !choice && deps.listClones) {
+      const clones = deps.listClones(existing.sessionId);
+      if (clones.length > 0) {
+        return {
+          accepted: false,
+          reason: 'has_clones',
+          clones: clones.map((clone) => ({ id: clone.id, title: clone.title ?? clone.id })),
+        };
+      }
+    }
     if (existing.sessionId && params.confirmed !== true) {
       const commitStatus = await firstSessionWithCommitsAhead(
         deps,
         existing.sessionId,
-        isCloneChoice(params.children) && params.children === 'cascade'
+        choice === 'cascade'
       );
       if (commitStatus) return { accepted: false, reason: 'requires_confirmation', commitStatus };
     }
