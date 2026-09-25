@@ -16,6 +16,7 @@ import {
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
+import { invokeOperation } from '../lib/operations.ts';
 import { isUserSession } from '../lib/session-utils.ts';
 import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs.ts';
 import { projectRootOf, projectName } from '../lib/projects.ts';
@@ -48,11 +49,20 @@ interface ProjectGroup {
 function buildView(
   sessionsList: Session[],
   history: WorkspaceHistoryEntry[]
-): { projects: ProjectGroup[]; ungrouped: Session[] } {
+): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
   const ungrouped: Session[] = [];
+  const ids = new Set(sessionsList.map((session) => session.id));
+  const childrenByParent = new Map<string, Session[]>();
 
   for (const session of sessionsList) {
+    const parentId = session.parentSessionId;
+    if (parentId && ids.has(parentId)) {
+      const siblings = childrenByParent.get(parentId) ?? [];
+      siblings.push(session);
+      childrenByParent.set(parentId, siblings);
+      continue;
+    }
     const root = projectRootOf(session);
     if (root) {
       const existing = byRoot.get(root);
@@ -78,8 +88,11 @@ function buildView(
     .sort((a, b) => b.sortTime - a.sortTime);
 
   ungrouped.sort((a, b) => lastActive(b) - lastActive(a));
+  for (const siblings of childrenByParent.values()) {
+    siblings.sort((a, b) => lastActive(b) - lastActive(a));
+  }
 
-  return { projects, ungrouped };
+  return { projects, ungrouped, childrenByParent };
 }
 
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
@@ -108,12 +121,31 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   }, []);
 
   const sessionsList = sessions.value.filter(isUserSession);
-  const { projects, ungrouped } = buildView(sessionsList, history);
+  const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
   const hasContent = sessionsList.length > 0 || projects.length > 0;
+  const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
 
   const handleSessionClick = (sessionId: string) => {
     navigateToSession(sessionId);
     onSessionSelect?.();
+  };
+
+  const handleSpawn = async (parentSessionId: string) => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected');
+      return;
+    }
+    try {
+      const result = await invokeOperation<
+        { accepted: true; sessionId: string } | { accepted: false; message: string }
+      >(hub, 'session.clone.spawn', { parentSessionId });
+      if (!result.accepted) throw new Error(result.message);
+      navigateToSession(result.sessionId);
+      onSessionSelect?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to spawn');
+    }
   };
 
   const toggleProject = (path: string) => {
@@ -346,6 +378,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                     onToggle={() => toggleProject(project.path)}
                     onSessionClick={handleSessionClick}
                     onArchive={handleArchive}
+                    onSpawn={handleSpawn}
+                    childrenOf={childrenOf}
                     onRemove={
                       project.sessions.length === 0
                         ? () => handleRemoveProject(project.path)
@@ -360,14 +394,24 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               <>
                 <div class="px-2.5 pt-3 pb-1 text-xs font-medium text-fg-faint">Chats</div>
                 <div class="flex flex-col gap-0.5">
-                  {ungrouped.map((session) => (
+                  {ungrouped.flatMap((session) => [
                     <SessionListItem
                       key={session.id}
                       session={session}
                       onSessionClick={handleSessionClick}
                       onArchive={handleArchive}
-                    />
-                  ))}
+                      onSpawn={handleSpawn}
+                    />,
+                    ...childrenOf(session.id).map((child) => (
+                      <SessionListItem
+                        key={child.id}
+                        session={child}
+                        onSessionClick={handleSessionClick}
+                        onArchive={handleArchive}
+                        nested
+                      />
+                    )),
+                  ])}
                 </div>
               </>
             )}

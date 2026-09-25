@@ -167,6 +167,67 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText('Loose Chat')).toBeTruthy();
   });
 
+  it('nests clones under their parent, marks returned ones, and lists orphans as roots', () => {
+    const parent = createMockSession('parent', 'Parent Chat', '/workspace/hyperneo');
+    const returned = {
+      ...createMockSession('clone-1', 'Parent Chat · 分身', '/workspace/hyperneo'),
+      parentSessionId: 'parent',
+      metadata: { messageCount: 0, clone: { returnedAt: '2026-09-24T00:00:00.000Z' } },
+    };
+    const open = {
+      ...createMockSession('clone-2', 'Parent Chat · 分身 2', '/workspace/hyperneo'),
+      parentSessionId: 'parent',
+      lastActiveAt: '2026-05-17T12:00:00.000Z',
+    };
+    const orphan = { ...createMockSession('orphan', 'Orphan'), parentSessionId: 'gone' };
+    mockSessionsSignal.value = [parent, returned, open, orphan];
+
+    render(<SessionsSidebar />);
+
+    const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
+    expect(cards).toEqual([
+      'Parent Chat',
+      '分身Parent Chat · 分身 2',
+      '分身Parent Chat · 分身✓',
+      'Orphan',
+    ]);
+    expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(2);
+    expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
+    expect(screen.getAllByTestId('session-spawn')).toHaveLength(2);
+  });
+
+  it('spawns a clone from a chat row and opens it', async () => {
+    const onSessionSelect = vi.fn();
+    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
+    mockHubRequest.mockResolvedValue({ accepted: true, sessionId: 'clone-new' });
+
+    render(<SessionsSidebar onSessionSelect={onSessionSelect} />);
+    fireEvent.click(screen.getByTestId('session-spawn'));
+
+    await waitFor(() => expect(mockNavigateToSession).toHaveBeenCalledWith('clone-new'));
+    expect(mockHubRequest).toHaveBeenCalledWith('operation.invoke', {
+      name: 'session.clone.spawn',
+      input: { parentSessionId: 'parent' },
+    });
+    expect(onSessionSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a refused spawn', async () => {
+    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
+    mockHubRequest.mockResolvedValue({
+      accepted: false,
+      message: 'A clone cannot spawn its own clone',
+    });
+
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByTestId('session-spawn'));
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith('A clone cannot spawn its own clone')
+    );
+    expect(mockNavigateToSession).not.toHaveBeenCalled();
+  });
+
   it('navigates when a session row is selected', () => {
     const onSessionSelect = vi.fn();
     mockSessionsSignal.value = [

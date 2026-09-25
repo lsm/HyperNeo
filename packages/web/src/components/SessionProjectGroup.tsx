@@ -10,6 +10,8 @@ interface SessionProjectGroupProps {
   onToggle: () => void;
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
+  onSpawn?: (sessionId: string) => void | Promise<void>;
+  childrenOf?: (sessionId: string) => Session[];
   onRemove?: () => void;
 }
 
@@ -39,6 +41,8 @@ export function SessionProjectGroup({
   onToggle,
   onSessionClick,
   onArchive,
+  onSpawn,
+  childrenOf,
   onRemove,
 }: SessionProjectGroupProps) {
   const isEmpty = sessions.length === 0;
@@ -117,14 +121,24 @@ export function SessionProjectGroup({
           {isEmpty ? (
             <div class="px-2.5 py-1.5 text-xs text-fg-faint">No chats</div>
           ) : (
-            sessions.map((session) => (
+            sessions.flatMap((session) => [
               <SessionListItem
                 key={session.id}
                 session={session}
                 onSessionClick={onSessionClick}
                 onArchive={onArchive}
-              />
-            ))
+                onSpawn={onSpawn}
+              />,
+              ...(childrenOf?.(session.id) ?? []).map((child) => (
+                <SessionListItem
+                  key={child.id}
+                  session={child}
+                  onSessionClick={onSessionClick}
+                  onArchive={onArchive}
+                  nested
+                />
+              )),
+            ])
           )}
         </div>
       )}
