@@ -145,6 +145,21 @@ describe('router', () => {
     expect(currentSpaceIdSignal.value).toBeNull();
   });
 
+  it('redirects the retired space sessions URL to the space overview', () => {
+    setPath(`/space/${SPACE_ID}/sessions`);
+
+    expect(initializeRouter()).toBeNull();
+
+    expect(window.history.replaceState).toHaveBeenCalledWith(
+      expect.objectContaining({ spaceId: SPACE_ID, path: `/space/${SPACE_ID}` }),
+      '',
+      `/space/${SPACE_ID}`
+    );
+    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+    expect(currentSpaceViewModeSignal.value).toBe('overview');
+    expect(navSectionSignal.value).toBe('spaces');
+  });
+
   it('initializes space task view routes', () => {
     setPath(`/space/${SPACE_ID}/task/${TASK_ID}/canvas`);
 

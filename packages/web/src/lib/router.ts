@@ -677,7 +677,15 @@ export function navigateToSpaceAgent(
   navSectionSignal.value = 'spaces';
 }
 
+const LEGACY_SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
+
 function applyPathToSignals(path: string, search = window.location.search): string | null {
+  const legacySessionsMatch = path.match(LEGACY_SPACE_SESSIONS_ROUTE_PATTERN);
+  if (legacySessionsMatch) {
+    path = createSpacePath(legacySessionsMatch[1]);
+    pushPath(path, { spaceId: legacySessionsMatch[1] }, true);
+  }
+
   const legacyArchivedTasksMatch = path.match(SPACE_TASKS_ARCHIVED_ROUTE_PATTERN);
   if (legacyArchivedTasksMatch) {
     pushPath(
