@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigration271 } from '../../../../../src/storage/schema/m271-relocate-built-in-key-templates.ts';
+import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
@@ -114,5 +115,28 @@ describe('runMigration271', () => {
     expect(templateRow(db, 'space-1', 'task-manager.default.migrated').labels).toEqual([
       'relocated-from:task-manager.default',
     ]);
+  });
+});
+
+describe('upgrading a database that already ran migration 271', () => {
+  test('preserves a custom space-manager.default template and its version sequence', () => {
+    const db = new BunDatabase(':memory:');
+    runMigrations(db, () => {});
+    db.prepare(`DELETE FROM migration_markers WHERE key = 'migration_276'`).run();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES ('space-1', 'space-1', '/tmp/space-1', 'Space', 1, 1)`
+    ).run();
+    insertTemplate(db, 'space-1', 'space-manager.default', ['custom']);
+
+    runMigrations(db, () => {});
+
+    expect(templateKeys(db, 'space-1')).toEqual(['space-manager.default.migrated']);
+    expect(templateRow(db, 'space-1', 'space-manager.default.migrated')).toEqual({
+      labels: ['custom', 'relocated-from:space-manager.default'],
+      instructions: 'custom instructions',
+    });
+    expect(versionSeqKeys(db, 'space-1')).toEqual(['space-manager.default.migrated']);
+    db.close();
   });
 });

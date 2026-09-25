@@ -1,7 +1,4 @@
-import {
-  getLongHorizonAgentTemplates,
-  RELOCATED_FROM_LABEL_PREFIX,
-} from '../../lib/agents/long-horizon-templates.ts';
+import { RELOCATED_FROM_LABEL_PREFIX } from '../../lib/agents/long-horizon-templates.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 interface CollidingTemplate {
@@ -9,8 +6,6 @@ interface CollidingTemplate {
   key: string;
   labels: string | null;
 }
-
-const HISTORICAL_BUILT_IN_TEMPLATE_KEYS = ['task-manager.default'] as const;
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!db
@@ -58,12 +53,13 @@ function relocationTarget(
 }
 
 export function runMigration271(db: BunDatabase): void {
+  relocateBuiltInKeyTemplates(db, ['task-manager.default']);
+}
+
+export function relocateBuiltInKeyTemplates(db: BunDatabase, keys: readonly string[]): void {
   if (!tableExists(db, 'space_agent_templates')) return;
   if (!tableHasColumn(db, 'space_agent_templates', 'space_id')) return;
-  const builtInKeys = new Set([
-    ...HISTORICAL_BUILT_IN_TEMPLATE_KEYS,
-    ...getLongHorizonAgentTemplates().map((template) => template.key),
-  ]);
+  const builtInKeys = new Set(keys);
   if (builtInKeys.size === 0) return;
   const placeholders = [...builtInKeys].map(() => '?').join(', ');
   const colliding = db

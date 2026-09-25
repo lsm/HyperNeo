@@ -31,6 +31,7 @@ import { runMigration270 } from './m270-restamp-contracts-task-transition-review
 import { runMigration271 } from './m271-relocate-built-in-key-templates.ts';
 import { runMigration274 } from './m274-convert-ad-hoc-space-sessions.ts';
 import { runMigration275 } from './m275-link-agent-owned-sessions.ts';
+import { runMigration276 } from './m276-relocate-space-manager-template.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -626,6 +627,7 @@ export function runMigrations(
   run(migrationMarkerKey(273), () => runMigration273(db));
   run(migrationMarkerKey(274), () => runMigration274(db));
   run(migrationMarkerKey(275), () => runMigration275(db));
+  run(migrationMarkerKey(276), () => runMigration276(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
