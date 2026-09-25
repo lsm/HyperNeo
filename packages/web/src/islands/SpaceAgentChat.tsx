@@ -23,6 +23,7 @@ export function SpaceAgentChat({
   const agentId = agent?.id ?? null;
   const sessionId = agent?.sessionId ?? null;
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     setError(null);
@@ -34,7 +35,7 @@ export function SpaceAgentChat({
     return () => {
       cancelled = true;
     };
-  }, [agentId, sessionId]);
+  }, [agentId, sessionId, attempt]);
 
   const refreshAgent = async () => {
     await spaceStore.refreshAgents();
@@ -52,7 +53,11 @@ export function SpaceAgentChat({
     );
   }
 
-  const retryAgents = () => {
+  const retry = () => {
+    if (agent) {
+      setAttempt((n) => n + 1);
+      return;
+    }
     setRetrying(true);
     spaceStore.refreshAgents().finally(() => setRetrying(false));
   };
@@ -81,10 +86,10 @@ export function SpaceAgentChat({
       ) : (
         <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       )}
-      {loaded && !agent && (
+      {loaded && (!agent || error) && (
         <button
           type="button"
-          onClick={retryAgents}
+          onClick={retry}
           disabled={retrying}
           class="rounded-md border border-line px-3 py-1.5 text-xs text-fg-soft transition hover:bg-fill hover:text-fg disabled:opacity-50"
           data-testid="space-agent-detail-retry"

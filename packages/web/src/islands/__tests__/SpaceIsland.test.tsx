@@ -933,6 +933,40 @@ describe('SpaceIsland — agents view', () => {
     expect(mockRefreshAgents).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the session-start error with a retry that re-runs ensure', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'fresh';
+    mockAgents.value = [
+      {
+        id: 'agent-2',
+        spaceId: 'space-1',
+        name: 'Fresh',
+        handle: 'fresh',
+        status: 'active',
+        sessionId: null,
+        customPrompt: '',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    mockEnsureAgentSession.mockRejectedValueOnce(new Error('Space is paused'));
+    mockEnsureAgentSession.mockImplementation(async () => {
+      mockAgents.value = mockAgents.value.map((a) =>
+        a.id === 'agent-2' ? { ...a, sessionId: 'sess-fresh' } : a
+      );
+      return 'sess-fresh';
+    });
+
+    const { findByTestId, findByText } = render(
+      <SpaceIsland spaceId="space-1" viewMode="agents" />
+    );
+
+    await findByText('Space is paused');
+    fireEvent.click(await findByTestId('space-agent-detail-retry'));
+    const chat = await findByTestId('chat-container');
+    expect(chat.getAttribute('data-session-id')).toBe('sess-fresh');
+    expect(mockEnsureAgentSession).toHaveBeenCalledTimes(2);
+  });
+
   it('redirects an agent primary session route to the agent route', async () => {
     mockAgents.value = [
       {
