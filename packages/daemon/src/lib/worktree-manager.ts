@@ -993,15 +993,20 @@ export class WorktreeManager {
     }
   }
 
-  private async commitsOnlyOnBranch(repoPath: string, branch: string): Promise<Set<string> | null> {
+  private async commitsOnlyOnBranch(
+    repoPath: string,
+    branch: string,
+    alsoDeleting: readonly string[]
+  ): Promise<Set<string> | null> {
     const git = this.getGit(repoPath);
+    const removed = new Set([branch, ...alsoDeleting].map((name) => `refs/heads/${name}`));
     try {
       const refs = (
         await git.raw(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])
       )
         .split('\n')
         .map((ref) => ref.trim())
-        .filter((ref) => ref && ref !== `refs/heads/${branch}`);
+        .filter((ref) => ref && !removed.has(ref));
       const output = await git.raw(['rev-list', branch, '--not', ...refs]);
       return new Set(
         output
@@ -1016,7 +1021,8 @@ export class WorktreeManager {
 
   async getCommitsAhead(
     worktree: WorktreeMetadata,
-    baseBranch?: string
+    baseBranch?: string,
+    options: { alsoDeleting?: readonly string[] } = {}
   ): Promise<WorktreeCommitStatus> {
     const { mainRepoPath, branch } = worktree;
 
@@ -1104,7 +1110,11 @@ export class WorktreeManager {
       }
 
       const unmergedCommits: CommitInfo[] = [];
-      const uniqueToBranch = await this.commitsOnlyOnBranch(mainRepoPath, branch);
+      const uniqueToBranch = await this.commitsOnlyOnBranch(
+        mainRepoPath,
+        branch,
+        options.alsoDeleting ?? []
+      );
 
       for (const commit of commits) {
         if (uniqueToBranch && !uniqueToBranch.has(commit.fullHash)) continue;

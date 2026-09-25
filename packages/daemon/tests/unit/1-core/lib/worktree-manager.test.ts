@@ -725,6 +725,39 @@ describe('WorktreeManager', () => {
       expect(result.commits.map((c) => c.hash)).toEqual(['bbb2222']);
     });
 
+    it('still counts commits held only by branches deleted in the same cascade', async () => {
+      mockGitRevparse.mockResolvedValue('abc123');
+      mockGitRaw
+        .mockResolvedValueOnce('origin/main')
+        .mockResolvedValueOnce('merge-base-123')
+        .mockResolvedValueOnce('file1.ts')
+        .mockResolvedValueOnce('+ added line')
+        .mockResolvedValueOnce('aaa1111|Parent|2024-01-01 12:00:00|Parent work')
+        .mockResolvedValueOnce(
+          'refs/heads/main\nrefs/heads/session/parent\nrefs/heads/session/clone'
+        )
+        .mockResolvedValueOnce('aaa1111');
+
+      const result = await manager.getCommitsAhead(
+        {
+          isWorktree: true,
+          worktreePath: '/test/worktree',
+          mainRepoPath: '/test/repo',
+          branch: 'session/parent',
+        },
+        undefined,
+        { alsoDeleting: ['session/clone'] }
+      );
+
+      expect(mockGitRaw).toHaveBeenCalledWith([
+        'rev-list',
+        'session/parent',
+        '--not',
+        'refs/heads/main',
+      ]);
+      expect(result.commits.map((c) => c.hash)).toEqual(['aaa1111']);
+    });
+
     it('should throw on git error', async () => {
       mockGitRevparse.mockResolvedValue('abc123');
       mockGitRaw.mockRejectedValue(new Error('Git error'));

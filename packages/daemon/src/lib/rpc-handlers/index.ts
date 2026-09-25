@@ -1156,8 +1156,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       ? cloneLifecycle.deleteChild(sessionId)
       : cloneLifecycle.archiveChild(sessionId);
   spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
-  spaceAgentV2Deps.commitsAhead = (worktree) =>
-    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+  spaceAgentV2Deps.commitsAhead = (worktree, alsoDeleting) =>
+    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree, undefined, { alsoDeleting });
 
   setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
 
