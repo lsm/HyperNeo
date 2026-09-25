@@ -174,9 +174,14 @@ export function buildAgentUpdate(
   });
 
   return async (input) => {
+    const wasArchived = deps.agents.getById(input.id)?.status === 'archived';
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
-    return outcome;
+    if (!wasArchived || outcome.status === 'archived' || !outcome.sessionId) return outcome;
+    deps.agents.update(outcome.id, { sessionId: null });
+    const restored = deps.agents.getById(outcome.id) ?? { ...outcome, sessionId: null };
+    await publishAgentEvent(deps, 'spaceAgentV2.updated', restored);
+    return restored;
   };
 }
 
@@ -193,6 +198,7 @@ export async function applyUpdateRuntimeEffects(
     throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
   }
   if (input.status === 'archived' && agent.sessionId) {
+    await deps.resolveClones?.(agent.sessionId, 'cascade', 'archive');
     await deps.retirePrimarySession?.(agent.sessionId, 'archive');
   }
 }
@@ -277,8 +283,8 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
       );
       if (clones) return clones;
     }
-    deps.agents.delete(id);
     if (existing.sessionId) await deps.retirePrimarySession?.(existing.sessionId, action);
+    deps.agents.delete(id);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);
     await publishAgentDeleted(deps, existing.spaceId, id);
     return { id };

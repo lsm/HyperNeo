@@ -540,21 +540,40 @@ describe('setupSpaceAgentV2Handlers', () => {
   });
 
   describe('update', () => {
-    test('archiving an agent archives its primary session', async () => {
-      const retired: unknown[] = [];
+    test('archiving an agent archives its clones and then its primary session', async () => {
+      const calls: unknown[] = [];
+      deps.resolveClones = async (parentId, choice, action) => {
+        calls.push(['clones', parentId, choice, action]);
+        return null;
+      };
       deps.retirePrimarySession = async (sessionId, action) => {
-        retired.push([sessionId, action]);
+        calls.push(['retire', sessionId, action]);
       };
       const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
 
       await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
-      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
       await handlers.get('spaceAgentV2.update')!({ id: created.id, displayName: 'B' });
 
-      expect(retired).toEqual([
-        ['primary', 'archive'],
-        ['primary', 'archive'],
+      expect(calls).toEqual([
+        ['clones', 'primary', 'cascade', 'archive'],
+        ['retire', 'primary', 'archive'],
       ]);
+    });
+
+    test('restoring an archived agent drops its archived session so a fresh one is started', async () => {
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+      published.length = 0;
+
+      const { agent } = (await handlers.get('spaceAgentV2.update')!({
+        id: created.id,
+        status: 'active',
+      })) as { agent: SpaceAgent };
+
+      expect(agent.sessionId).toBeNull();
+      expect(agents.getById(created.id)?.sessionId).toBeNull();
+      expect(published.filter((p) => p.topic === 'spaceAgentV2.updated')).toHaveLength(2);
     });
 
     test('refreshes runtime subscriptions after a successful update', async () => {
@@ -761,16 +780,29 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agents.getById(created.id)).toBeNull();
     });
 
-    test('archives the primary session after removing the agent', async () => {
+    test('archives the primary session before removing the agent row', async () => {
       const retired: unknown[] = [];
       deps.retirePrimarySession = async (sessionId, action) => {
-        retired.push([sessionId, action, agents.getById(created.id)]);
+        retired.push([sessionId, action, agents.getById(created.id)?.id ?? null]);
       };
       const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
 
       await call(handlers, 'spaceAgentV2.delete', { id: created.id });
 
-      expect(retired).toEqual([['primary', 'archive', null]]);
+      expect(retired).toEqual([['primary', 'archive', created.id]]);
+      expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('keeps the agent when retiring its session fails', async () => {
+      deps.retirePrimarySession = async () => {
+        throw new Error('disk full');
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await expect(call(handlers, 'spaceAgentV2.delete', { id: created.id })).rejects.toThrow(
+        'disk full'
+      );
+      expect(agents.getById(created.id)).not.toBeNull();
     });
 
     test('a confirmed delete deletes the primary session and cascades delete to clones', async () => {
