@@ -423,7 +423,8 @@ export function SessionInfoPanelButton({
     commit: commitRename,
     inputProps: renameInputProps,
   } = useSessionRename(session?.id ?? '', session?.title ?? '');
-  const todos = useMemo(() => extractLatestTodos(messages), [messages]);
+  const recorded = session?.metadata?.progress?.items;
+  const todos = useMemo(() => recorded ?? extractLatestTodos(messages), [recorded, messages]);
   const tasks = useMemo(
     () => extractBackgroundTasks(backgroundTaskMessages, toolInputsMap),
     [backgroundTaskMessages, toolInputsMap]

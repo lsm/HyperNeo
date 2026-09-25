@@ -316,6 +316,24 @@ describe('SessionInfoPanel', () => {
       expect(toolbar.querySelector('button[title="Rename session"]')?.disabled).toBe(true);
     });
 
+    it('prefers the recorded session progress over todos parsed from the loaded messages', () => {
+      const session = createMockSession({
+        metadata: {
+          ...createMockSession().metadata,
+          progress: {
+            source: 'task',
+            updatedAt: '2026-09-25T00:00:00.000Z',
+            items: [{ id: 'task:1', content: 'Recorded task', status: 'in_progress' }],
+          },
+        },
+      });
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} session={session} />);
+      openPanel(container);
+
+      expect(container.textContent).toContain('Recorded task');
+      expect(container.textContent).not.toContain('No progress yet.');
+    });
+
     it('renders metadata sections (Workspace, Configuration, Usage)', () => {
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);

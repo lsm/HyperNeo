@@ -393,6 +393,71 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('records session progress from TodoWrite tool calls in the metadata', async () => {
+      const message: SDKMessage = {
+        type: 'assistant',
+        uuid: 'todo-uuid',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tu-1',
+              name: 'TodoWrite',
+              input: {
+                todos: [{ content: 'Ship it', status: 'in_progress', activeForm: 'Shipping' }],
+              },
+            },
+          ],
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      const call = updateSessionSpy.mock.calls.find(
+        (args) => (args[1] as { metadata?: { progress?: unknown } }).metadata?.progress
+      );
+      expect(call).toBeDefined();
+      expect(
+        (call![1] as { metadata: { progress: { items: unknown[] } } }).metadata.progress.items
+      ).toEqual([
+        { id: 'todo:0', content: 'Ship it', status: 'in_progress', activeForm: 'Shipping' },
+      ]);
+    });
+
+    it('resolves provisional task ids from TaskCreate tool results', async () => {
+      mockContext.session.metadata = {
+        ...mockContext.session.metadata,
+        progress: {
+          source: 'task',
+          updatedAt: 'x',
+          items: [{ id: 'task:pending:tu-1', content: 'A', status: 'pending' }],
+          pendingTaskIds: { 'tu-1': 'task:pending:tu-1' },
+        },
+      };
+      const message: SDKMessage = {
+        type: 'user',
+        uuid: 'result-uuid',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: '{"task":{"id":"3"}}' }],
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      const call = updateSessionSpy.mock.calls.find(
+        (args) =>
+          (args[1] as { metadata?: { progress?: { items: Array<{ id: string }> } } }).metadata
+            ?.progress
+      );
+      expect(call).toBeDefined();
+      expect(
+        (call![1] as { metadata: { progress: { items: Array<{ id: string }> } } }).metadata.progress
+          .items[0].id
+      ).toBe('task:3');
+    });
+
     it('should save message to database', async () => {
       const message: SDKMessage = {
         type: 'assistant',
