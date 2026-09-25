@@ -92,6 +92,7 @@ import { setupSpaceAgentTemplateHandlers } from './space-agent-template-handlers
 import {
   buildAgentCreate,
   type SpaceAgentV2Deps,
+  archiveAgentSessions,
   setupSpaceAgentV2Handlers,
 } from './space-agent-v2-handlers.ts';
 import { buildTemplateExtrasSeeder } from '../agents/template-extras-seeding.ts';
@@ -1372,6 +1373,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactProfile,
     channelCycleRepo,
     replyRoutingRegistry,
+    archiveAgentSessions: (agent) =>
+      agent.sessionId
+        ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
+        : Promise.resolve({ ok: true }),
   };
   const familyOperations = collectFamilyOperations(familyContext);
 

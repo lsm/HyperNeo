@@ -246,6 +246,24 @@ async function firstSessionWithCommitsAhead(
   return null;
 }
 
+export type ArchiveAgentSessionsOutcome = { ok: true } | { ok: false; message: string };
+
+export async function archiveAgentSessions(
+  deps: SpaceAgentV2Deps,
+  sessionId: string
+): Promise<ArchiveAgentSessionsOutcome> {
+  const commitStatus = await firstSessionWithCommitsAhead(deps, sessionId, true);
+  if (commitStatus) {
+    return {
+      ok: false,
+      message: `A session of this agent has ${commitStatus.commits.length} unpushed commit(s); archive or delete the agent from the Agents page to confirm discarding them.`,
+    };
+  }
+  await deps.resolveClones?.(sessionId, 'cascade', 'archive');
+  await deps.retirePrimarySession?.(sessionId, 'archive');
+  return { ok: true };
+}
+
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
   const createAgent = buildAgentCreate(deps);
   const updateAgent = buildAgentUpdate(deps);

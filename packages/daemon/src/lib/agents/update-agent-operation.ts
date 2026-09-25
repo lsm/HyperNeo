@@ -50,7 +50,12 @@ type Input = z.infer<typeof inputSchema>;
 type Result = { agent: SpaceLongHorizonAgent } | AgentRejection;
 type Gate<T> = { value: T } | { reason: AgentRejection };
 
+export type ArchiveAgentSessionsOutcome = { ok: true } | { ok: false; message: string };
+
 export interface UpdateAgentDependencies extends AgentOperationDeps {
+  readonly archiveAgentSessions?: (
+    agent: SpaceLongHorizonAgent
+  ) => Promise<ArchiveAgentSessionsOutcome>;
   readonly listAgents: (spaceId: string) => SpaceLongHorizonAgent[];
   readonly getAgent: (agentId: string) => SpaceLongHorizonAgent | null;
   readonly updateAgent: (
@@ -148,7 +153,17 @@ export async function applyAgentUpdate(
   deps: UpdateAgentDependencies
 ): Promise<Result> {
   const spaceId = existing.spaceId;
-  const agent = deps.updateAgent(input.agentId, updateParamsFromInput(input));
+  const archiving = input.status === 'archived' && existing.status !== 'archived';
+  if (archiving && existing.sessionId && deps.archiveAgentSessions) {
+    const outcome = await deps.archiveAgentSessions(existing);
+    if (!outcome.ok) return rejectAgent('session_unavailable', outcome.message);
+  }
+  const reviving =
+    existing.status === 'archived' && input.status !== undefined && input.status !== 'archived';
+  let agent = deps.updateAgent(input.agentId, updateParamsFromInput(input));
+  if (agent && reviving && existing.sessionId) {
+    agent = deps.updateAgent(input.agentId, { sessionId: null });
+  }
   if (input.provider === null) await deps.clearAgentSessionProvider(spaceId, input.agentId);
   const refresh = deps.refreshAgentSubscriptions(spaceId, input.agentId);
   if (!refresh.success) {

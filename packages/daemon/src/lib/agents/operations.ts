@@ -43,6 +43,7 @@ export interface AgentOperationDependencies extends AgentOperationDeps {
   readonly publishAgentUpdated: UpdateAgentDependencies['publishAgentUpdated'];
   readonly refreshAgentSubscriptions: UpdateAgentDependencies['refreshAgentSubscriptions'];
   readonly clearAgentSessionProvider: UpdateAgentDependencies['clearAgentSessionProvider'];
+  readonly archiveAgentSessions?: UpdateAgentDependencies['archiveAgentSessions'];
   readonly ensureAgentSession: EnsureAgentSessionDependencies['ensureAgentSession'];
   readonly audit: CreateAgentDependencies['audit'];
   readonly getGoalSpace: AgentAssignmentDependencies['getGoalSpace'];
