@@ -39,6 +39,12 @@ const MAX_PATCH_CHARS = 24_000;
 const MAX_FULL_PATCH_CHARS = 1_000_000;
 const GH_TIMEOUT_MS = 8_000;
 
+export function normalizeBranchName(value: string | null | undefined): string | null {
+  const name = value?.trim() ?? '';
+  if (!name || name === 'HEAD' || name.startsWith('(') || /\s/.test(name)) return null;
+  return name;
+}
+
 function literalPathspec(path: string): string {
   return `:(literal)${path}`;
 }
@@ -124,7 +130,7 @@ export class WorktreeManager {
     try {
       const summary = await git.branchLocal();
       branches = summary.all;
-      currentBranch = summary.current ? summary.current : null;
+      currentBranch = normalizeBranchName(summary.current);
     } catch (error) {
       this.logger.warn(`getRepoGitInfo: failed to list branches for ${gitRoot}:`, error);
     }
@@ -189,9 +195,9 @@ export class WorktreeManager {
       (await this.resolveMainRepoPath(effectivePath)) ??
       repoInfo.gitRoot;
     const branch =
-      session.worktree?.branch ??
+      normalizeBranchName(session.worktree?.branch) ??
       repoInfo.currentBranch ??
-      session.gitBranch ??
+      normalizeBranchName(session.gitBranch) ??
       (await this.getCurrentBranch(effectivePath));
 
     let files: GitChangedFile[] = [];
@@ -291,7 +297,10 @@ export class WorktreeManager {
     }
 
     const git = this.getGit(repoInfo.gitRoot);
-    const branch = session.worktree?.branch ?? repoInfo.currentBranch ?? session.gitBranch ?? null;
+    const branch =
+      normalizeBranchName(session.worktree?.branch) ??
+      repoInfo.currentBranch ??
+      normalizeBranchName(session.gitBranch);
 
     let baseBranch = repoInfo.defaultBranch;
     if (session.worktree) {
@@ -881,15 +890,10 @@ export class WorktreeManager {
     const git = simpleGit(worktreePath);
 
     try {
-      const branch = (await git.raw(['branch', '--show-current'])).trim();
-      if (branch) {
-        return branch;
-      }
-      return null;
+      return normalizeBranchName(await git.raw(['branch', '--show-current']));
     } catch {
       try {
-        const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-        return branch && branch !== 'HEAD' ? branch : null;
+        return normalizeBranchName(await git.revparse(['--abbrev-ref', 'HEAD']));
       } catch {
         return null;
       }
