@@ -19,6 +19,7 @@ export interface SpaceSessionScope {
   readonly role: SpaceScopeRole;
   readonly agentDisplayName?: string | null;
   readonly spaceInstructions?: string | null;
+  readonly agentInstructions?: string | null;
 }
 
 function roleLine(scope: SpaceSessionScope): string {
@@ -47,6 +48,10 @@ export function spaceScopeContribution(scope: SpaceSessionScope): ScopeContribut
   const instructions = scope.spaceInstructions?.trim();
   if (instructions) {
     sections.push('', '### Space Standing Instructions', '', instructions);
+  }
+  const agentInstructions = scope.agentInstructions?.trim();
+  if (agentInstructions) {
+    sections.push('', '### Agent Standing Instructions', '', agentInstructions);
   }
   return { facet: 'space', briefing: sections.join('\n') };
 }
