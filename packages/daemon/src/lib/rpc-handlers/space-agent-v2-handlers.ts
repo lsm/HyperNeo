@@ -32,8 +32,9 @@ const METHOD_PREFIX = 'spaceAgentV2';
 
 export interface SessionLookup {
   type?: string;
-  context?: { spaceId?: string | null } | null;
+  context?: { spaceId?: string | null; taskId?: string | null } | null;
   parentSessionId?: string | null;
+  metadata?: { promptProvenance?: { workflowRunId?: unknown } | null } | null;
 }
 
 export interface SpaceAgentV2Deps {
@@ -71,6 +72,9 @@ export function toBindableSession(session: SessionLookup | null): BindableSessio
     type: session.type ?? '',
     spaceId: session.context?.spaceId ?? null,
     parentSessionId: session.parentSessionId ?? null,
+    taskOwned:
+      typeof session.context?.taskId === 'string' ||
+      typeof session.metadata?.promptProvenance?.workflowRunId === 'string',
   };
 }
 
@@ -142,6 +146,13 @@ export function buildAgentCreate(
     createAgent: (params) => deps.agents.create(params),
     publishCreated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.created', agent),
     seedTemplateExtras: deps.seedTemplateExtras,
+    stampSession: (sessionId, agent) =>
+      deps.stampProvenance?.(sessionId, {
+        source: 'converted_session',
+        hash: agent.id,
+        agentId: agent.id,
+        agentName: agent.handle,
+      }),
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,
@@ -150,14 +161,6 @@ export function buildAgentCreate(
   return async (input) => {
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
-    if (input.sessionId) {
-      deps.stampProvenance?.(input.sessionId, {
-        source: 'converted_session',
-        hash: outcome.id,
-        agentId: outcome.id,
-        agentName: outcome.handle,
-      });
-    }
     return outcome;
   };
 }

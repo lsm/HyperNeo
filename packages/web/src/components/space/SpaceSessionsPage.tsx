@@ -301,7 +301,7 @@ export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsP
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
     return [...storeSessions]
-      .filter((session) => !isSystemSpaceSession(session.id))
+      .filter((session) => !isSystemSpaceSession(session.id) && !session.taskId)
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [storeSessions, spaceId]);
 

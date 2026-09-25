@@ -80,6 +80,7 @@ export interface SpaceSessionRow {
   lastActiveAt: number;
   parentSessionId?: string | null;
   returnedAt?: string | null;
+  taskId?: string | null;
 }
 
 export type SummarySpaceTask = SpaceTask & {

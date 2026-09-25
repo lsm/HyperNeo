@@ -22,6 +22,7 @@ export interface CreateSpaceAgentDeps extends Dependencies {
   listDisplayNames(spaceId: string): string[];
   createAgent(params: CreateSpaceAgentParams): SpaceAgent;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
+  stampSession?(sessionId: string, agent: SpaceAgent): void;
   publishCreated(agent: SpaceAgent): Promise<void>;
   validateTools(tools: string[]): string | null;
   validateModel(model: string, provider: string | null): Promise<string | null>;
@@ -44,6 +45,7 @@ export interface BindableSession {
   type: string;
   spaceId: string | null;
   parentSessionId: string | null;
+  taskOwned?: boolean;
 }
 
 export interface SpaceAgentRejection {
@@ -112,7 +114,7 @@ export function gateSession(
   if (session.spaceId !== spaceId) {
     return reject('session_invalid', `Session ${sessionId} does not belong to space ${spaceId}`);
   }
-  if (session.type === 'space_task_agent') {
+  if (session.type === 'space_task_agent' || session.taskOwned) {
     return reject('session_invalid', 'Task agent sessions cannot be bound to a space agent');
   }
   if (session.parentSessionId) {
@@ -288,6 +290,15 @@ function classifyPersistenceCollision(
   return null;
 }
 
+export function stampBoundSession(
+  agent: SpaceAgent,
+  request: CreateSpaceAgentInput,
+  stampSession: CreateSpaceAgentDeps['stampSession']
+): SpaceAgent {
+  if (request.sessionId && stampSession) stampSession(request.sessionId, agent);
+  return agent;
+}
+
 export async function publishCreated(
   agent: SpaceAgent,
   publish: CreateSpaceAgentDeps['publishCreated']
@@ -312,6 +323,7 @@ export function buildCreateSpaceAgentPipeline(
     .pipe(gateModel, ['admitted', 'validateModel'], 'result:admitted')
     .pipe(gateModelPool, ['admitted', 'validateModelPool'], 'result:admitted')
     .pipe(persistAgent, ['admitted', 'createAgent'], 'result:admitted')
+    .pipe(stampBoundSession, ['admitted', 'request', 'stampSession'], 'admitted')
     .pipe(seedFromTemplate, ['admitted', 'template', 'seedTemplateExtras'], 'admitted')
     .pipe(publishCreated, ['admitted', 'publishCreated'], 'admitted')
     .endAsync('admitted') as (

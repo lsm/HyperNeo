@@ -67,6 +67,14 @@ describe('SpaceSessionsPage', () => {
     expect(mockToast.success).toHaveBeenCalledWith('Converted into agent Session s1');
   });
 
+  it('hides task-owned worker sessions entirely', () => {
+    mockSessions.value = [row('direct-abc:session', { taskId: 't1' }), row('s1')];
+    render(<SpaceSessionsPage spaceId="space-1" />);
+
+    expect(screen.getAllByTestId('space-session-item')).toHaveLength(1);
+    expect(screen.queryByText('Session direct-abc:session')).toBeNull();
+  });
+
   it('offers no convert action for agent-owned sessions or clones', () => {
     mockIsAgentOwnedSession.mockImplementation((id: string) => id === 'owned');
     mockSessions.value = [row('owned'), row('clone', { parentSessionId: 'owned' })];
