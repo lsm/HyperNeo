@@ -54,6 +54,7 @@ export interface SpaceAgentV2Deps {
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Array<{ id: string; worktree?: WorktreeMetadata }>;
   commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+  retirePrimarySession?: (sessionId: string, action: 'archive' | 'delete') => Promise<void>;
 }
 
 function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {
@@ -191,6 +192,9 @@ export async function applyUpdateRuntimeEffects(
   if (refresh && !refresh.success) {
     throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
   }
+  if (input.status === 'archived' && agent.sessionId) {
+    await deps.retirePrimarySession?.(agent.sessionId, 'archive');
+  }
 }
 
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
@@ -264,15 +268,17 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
         }
       }
     }
+    const action = params.confirmed === true ? 'delete' : 'archive';
     if (existing.sessionId) {
       const clones = await deps.resolveClones?.(
         existing.sessionId,
         isCloneChoice(params.children) ? params.children : undefined,
-        'archive'
+        action
       );
       if (clones) return clones;
     }
     deps.agents.delete(id);
+    if (existing.sessionId) await deps.retirePrimarySession?.(existing.sessionId, action);
     deps.removeAgentSubscriptions?.(existing.spaceId, id);
     await publishAgentDeleted(deps, existing.spaceId, id);
     return { id };

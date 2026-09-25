@@ -540,6 +540,23 @@ describe('setupSpaceAgentV2Handlers', () => {
   });
 
   describe('update', () => {
+    test('archiving an agent archives its primary session', async () => {
+      const retired: unknown[] = [];
+      deps.retirePrimarySession = async (sessionId, action) => {
+        retired.push([sessionId, action]);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'archived' });
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, displayName: 'B' });
+
+      expect(retired).toEqual([
+        ['primary', 'archive'],
+        ['primary', 'archive'],
+      ]);
+    });
+
     test('refreshes runtime subscriptions after a successful update', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a' });
       await handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'disabled' });
@@ -742,6 +759,40 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       expect(result.id).toBe(created.id);
       expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('archives the primary session after removing the agent', async () => {
+      const retired: unknown[] = [];
+      deps.retirePrimarySession = async (sessionId, action) => {
+        retired.push([sessionId, action, agents.getById(created.id)]);
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+
+      expect(retired).toEqual([['primary', 'archive', null]]);
+    });
+
+    test('a confirmed delete deletes the primary session and cascades delete to clones', async () => {
+      const retired: unknown[] = [];
+      const cloneCalls: unknown[] = [];
+      deps.retirePrimarySession = async (sessionId, action) => {
+        retired.push([sessionId, action]);
+      };
+      deps.resolveClones = async (parentId, choice, action) => {
+        cloneCalls.push([parentId, choice, action]);
+        return null;
+      };
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await call(handlers, 'spaceAgentV2.delete', {
+        id: created.id,
+        children: 'cascade',
+        confirmed: true,
+      });
+
+      expect(cloneCalls).toEqual([['primary', 'cascade', 'delete']]);
+      expect(retired).toEqual([['primary', 'delete']]);
     });
 
     test('an agent with clones needs a choice before it is removed', async () => {

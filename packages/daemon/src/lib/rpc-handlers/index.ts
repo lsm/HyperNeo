@@ -1103,6 +1103,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }),
   };
 
+  const cloneLifecycle = createCloneLifecycleEffects(
+    deps.sessionManager,
+    deps.spaceManager,
+    deps.internalEventBus,
+    (id) => deps.db.getSession(id)
+  );
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
     detach: (sessionId) => {
@@ -1136,14 +1142,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         deps.db.notifyChange('sessions', { sessionId });
       }
     },
-    ...createCloneLifecycleEffects(
-      deps.sessionManager,
-      deps.spaceManager,
-      deps.internalEventBus,
-      (id) => deps.db.getSession(id)
-    ),
+    ...cloneLifecycle,
   });
   spaceAgentV2Deps.resolveClones = resolveClones;
+  spaceAgentV2Deps.retirePrimarySession = (sessionId, action) =>
+    action === 'delete'
+      ? cloneLifecycle.deleteChild(sessionId)
+      : cloneLifecycle.archiveChild(sessionId);
   spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
   spaceAgentV2Deps.commitsAhead = (worktree) =>
     deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
