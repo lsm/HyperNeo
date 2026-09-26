@@ -128,14 +128,15 @@ describe('Neo MVP controls', () => {
     expect(document.activeElement).toBe(toggle);
   });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
-    const store = makeStore();
-    Object.assign(store, {
-      agentState: signal({ status: 'waiting_for_input', pendingQuestion: { toolUseId: 'choose' } }),
+    const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({
+      status: 'idle',
     });
-    const view = render(<NeoConversation store={store} sessionId="neo" />);
+    const error = signal<{ message: string; occurredAt: number } | null>(null);
+    const store = { ...makeStore(), agentState, error } as unknown as SessionStore;
+    agentState.value = { status: 'waiting_for_input', pendingQuestion: { toolUseId: 'choose' } };
+    render(<NeoConversation store={store} sessionId="neo" />);
     expect(screen.getByText('Question: choose')).toBeTruthy();
-    Object.assign(store, { error: signal({ message: 'Authentication required', occurredAt: 1 }) });
-    view.rerender(<NeoConversation store={store} sessionId="neo" />);
+    error.value = { message: 'Authentication required', occurredAt: 1 };
     expect(screen.getByRole('alert').textContent).toBe('Authentication required');
   });
   it('sends through the existing message path without creating a concern', async () => {
