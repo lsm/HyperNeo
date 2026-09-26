@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -136,7 +136,9 @@ describe('Neo MVP controls', () => {
     agentState.value = { status: 'waiting_for_input', pendingQuestion: { toolUseId: 'choose' } };
     render(<NeoConversation store={store} sessionId="neo" />);
     expect(screen.getByText('Question: choose')).toBeTruthy();
-    error.value = { message: 'Authentication required', occurredAt: 1 };
+    act(() => {
+      error.value = { message: 'Authentication required', occurredAt: 1 };
+    });
     expect(screen.getByRole('alert').textContent).toBe('Authentication required');
   });
   it('sends through the existing message path without creating a concern', async () => {
