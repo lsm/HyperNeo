@@ -112,8 +112,11 @@ export async function startProdServer(config: Config) {
       return c.redirect(entry.location, 308);
     }
     if (entry?.kind === 'entry') {
-      const html = await Bun.file(resolve(distPath, `.${entry.path}`)).text();
-      return c.html(html, { headers: { 'Cache-Control': 'no-cache' } });
+      const file = Bun.file(resolve(distPath, `.${entry.path}`));
+      if (await file.exists()) {
+        const html = await file.text();
+        return c.html(html, { headers: { 'Cache-Control': 'no-cache' } });
+      }
     }
     await next();
   });
