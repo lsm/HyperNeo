@@ -55,7 +55,8 @@ export function NeoWorkCard({
       </details>
       {work.status === 'proposed' && (
         <p class="mt-3 text-xs leading-relaxed text-fg-muted">
-          Starts a real HyperNeo session with its existing tools and permissions.
+          Starts a real HyperNeo session with its existing tools and permissions, in a temporary
+          scratch workspace — no folder of yours is selected.
         </p>
       )}
       {work.report && (

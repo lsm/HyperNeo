@@ -10,7 +10,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { NeoService, neoWorkScratchDir } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { neoCoordinatorBinding, restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 import {
@@ -221,6 +221,10 @@ describe('Neo MVP', () => {
       messageUuid: work.id,
     });
     expect(service.repo.getBindingBySession(saved.sessionId!)?.kind).toBe('worker');
+    expect(created[0].workspacePath).toBeNull();
+    expect(created[1].workspacePath).toBe(neoWorkScratchDir(saved.sessionId!));
+    expect(created[1].worktreeMode).toBe('direct');
+    expect(created[1].workspacePath).toContain('hyperneo-neo-work');
   });
 
   test('a response returns through the mailbox only after a terminal result and recovers without duplication', async () => {
