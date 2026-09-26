@@ -15,6 +15,7 @@ export function UnreadBadge({ count, max = 99, className }: UnreadBadgeProps) {
 
   return (
     <span
+      aria-label={`${count} unread ${count === 1 ? 'message' : 'messages'}`}
       class={cn(
         'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-[10px] font-semibold tabular-nums',
         'bg-accent-hover text-accent-fg',

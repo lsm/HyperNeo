@@ -1,6 +1,7 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { ConversationRow } from '../components/ConversationRow';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { StatusDot } from '../components/ui/StatusDot';
 import {
@@ -17,13 +18,22 @@ import {
   currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
+  currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
+  spaceOverlaySessionIdSignal,
+  spaceOverlayPendingTaskIdSignal,
 } from '../lib/signals';
 import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
 import { toast } from '../lib/toast';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { getTaskStatusConfig } from '../lib/task-status';
 import {
+  conversationTitle,
+  getSessionSidebarStatus,
+  getTaskSidebarStatus,
+} from '../lib/session-sidebar-status';
+import {
+  getSpaceSessionUnreadCount,
   isSpaceTaskUnread,
   markSpaceSessionRead,
   markSpaceTaskRead,
@@ -35,10 +45,6 @@ import { cn } from '../lib/utils';
 type TaskTab = 'active' | 'action' | 'draft';
 
 const SIDEBAR_PREVIEW_LIMIT = 10;
-
-function TaskStatusDot({ status, pulse }: { status: SpaceTaskStatus; pulse?: boolean }) {
-  return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={pulse} />;
-}
 
 interface SpaceDetailPanelProps {
   spaceId: string;
@@ -61,6 +67,7 @@ function TaskTabButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       class={cn(
         'flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors',
         active ? 'bg-fill-soft text-fg-soft' : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
@@ -95,6 +102,7 @@ function SpaceNavItem({
       onClick={onClick}
       data-testid={testId}
       data-active={active ? 'true' : 'false'}
+      aria-current={active ? 'page' : undefined}
       class={cn(
         'mx-2 w-auto rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-left text-sm transition-colors',
         active ? 'bg-fill text-fg' : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
@@ -138,6 +146,20 @@ export function SpaceDetailPanel({
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
+  const sessions = spaceStore.sessions.value;
+  const agents = spaceStore.agents.value.filter((agent) => agent.status !== 'archived');
+  const viewedSessionId = spaceOverlayPendingTaskIdSignal.value
+    ? null
+    : (spaceOverlaySessionIdSignal.value ??
+      selectedSessionId ??
+      agents.find((agent) => agent.handle === selectedAgentHandle)?.sessionId);
+  const viewedTaskId =
+    !spaceOverlaySessionIdSignal.value &&
+    !spaceOverlayPendingTaskIdSignal.value &&
+    currentSpaceTaskViewTabSignal.value !== 'canvas'
+      ? selectedTaskId
+      : null;
+  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
   useEffect(() => {
@@ -154,30 +176,40 @@ export function SpaceDetailPanel({
   }, [selectedTaskId]);
 
   useEffect(() => {
-    if (!selectedSessionId) return;
-    const session = spaceStore.sessions.value.find((s) => s.id === selectedSessionId);
-    if (session) markSpaceSessionRead(session.id, session.messageCount);
-  }, [selectedSessionId, spaceStore.sessions.value]);
+    for (const session of sessions) {
+      if (session.id === viewedSessionId || (viewedTaskId && session.taskId === viewedTaskId)) {
+        markSpaceSessionRead(session.id, session.messageCount);
+      }
+    }
+  }, [viewedSessionId, viewedTaskId, sessions]);
 
   useEffect(() => {
-    syncSpaceSessionSeen(spaceStore.sessions.value);
-  }, [spaceStore.sessions.value]);
+    syncSpaceSessionSeen(sessions);
+  }, [sessions]);
 
   useEffect(() => {
     seedSpaceTasksSeen(tasks);
   }, [tasks]);
 
   useEffect(() => {
-    if (!selectedTaskId) return;
-    const task = tasks.find((t) => t.id === selectedTaskId);
+    if (!viewedTaskId) return;
+    const task = tasks.find((t) => t.id === viewedTaskId);
     if (task) markSpaceTaskRead(task.id, task.updatedAt);
-  }, [selectedTaskId, tasks]);
+  }, [viewedTaskId, tasks]);
 
   const isOverviewSelected =
     selectedSessionId === null &&
     selectedTaskId === null &&
     currentSpaceViewModeSignal.value === 'overview';
-  const isSpaceAgentSelected = currentSpaceViewModeSignal.value === 'agents';
+  const selectedSession = sessions.find((session) => session.id === selectedSessionId);
+  const isSpaceAgentSelected =
+    currentSpaceViewModeSignal.value === 'agents' ||
+    agents.some(
+      (agent) =>
+        agent.sessionId &&
+        (agent.sessionId === selectedSessionId ||
+          agent.sessionId === selectedSession?.parentSessionId)
+    );
   const isGoalsSelected = currentSpaceViewModeSignal.value === 'goals';
   const isMemoriesSelected = currentSpaceViewModeSignal.value === 'memories';
   const isForgeSelected = currentSpaceViewModeSignal.value === 'forge';
@@ -220,11 +252,9 @@ export function SpaceDetailPanel({
     return capped;
   }, [tasksForTab, selectedTaskId]);
 
-  const agents = spaceStore.agents.value.filter((agent) => agent.status !== 'archived');
-
   const clonesByParent = useMemo(() => {
     const groups = new Map<string, SpaceSessionRow[]>();
-    for (const row of spaceStore.sessions.value) {
+    for (const row of sessions) {
       if (!row.parentSessionId) continue;
       const group = groups.get(row.parentSessionId) ?? [];
       group.push(row);
@@ -234,11 +264,12 @@ export function SpaceDetailPanel({
       group.sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
     }
     return groups;
-  }, [spaceStore.sessions.value]);
+  }, [sessions]);
 
   const visibleClones = useCallback(
-    (parentSessionId: string | null): SpaceSessionRow[] => {
+    (parentSessionId: string | null, expanded: boolean): SpaceSessionRow[] => {
       const all = parentSessionId ? (clonesByParent.get(parentSessionId) ?? []) : [];
+      if (expanded) return all;
       const capped = all.slice(0, SIDEBAR_PREVIEW_LIMIT);
       const selected = all.find((row) => row.id === selectedSessionId);
       return selected && !capped.some((row) => row.id === selected.id)
@@ -516,27 +547,31 @@ export function SpaceDetailPanel({
           ) : (
             visibleTasks.map((task) => {
               const taskUnread =
-                selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
-              const taskRunning =
-                task.status === 'in_progress' &&
-                (!task.workflowRunId ||
-                  spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
+                viewedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
+              const taskSessions = sessions.filter((session) => session.taskId === task.id);
+              const taskActivity = getTaskSidebarStatus(task, taskSessions);
+              const lifecycleLabel = getTaskStatusConfig(task.status).label;
               return (
-                <button
+                <ConversationRow
                   key={task.id}
-                  type="button"
-                  onClick={() => handleTaskClick(task.id)}
-                  class={cn(
-                    'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
-                    selectedTaskId === task.id ? 'bg-fill' : 'hover:bg-fill-soft'
+                  title={task.title}
+                  selected={selectedTaskId === task.id}
+                  status={taskActivity}
+                  unreadCount={taskSessions.reduce(
+                    (count, session) =>
+                      count +
+                      (session.id === viewedSessionId || task.id === viewedTaskId
+                        ? 0
+                        : getSpaceSessionUnreadCount(session.id, session.messageCount)),
+                    0
                   )}
+                  onClick={() => handleTaskClick(task.id)}
                 >
-                  <TaskStatusDot status={task.status} pulse={taskRunning} />
-                  <div class="min-w-0 flex-1">
-                    <span class="block text-sm text-fg-muted truncate">{task.title}</span>
-                  </div>
+                  {taskActivity.label !== lifecycleLabel && (
+                    <span class="text-[11px] text-fg-faint">{lifecycleLabel}</span>
+                  )}
                   {taskUnread && <StatusDot tone="info" size="xs" aria-label="Has updates" />}
-                </button>
+                </ConversationRow>
               );
             })
           )}
@@ -556,67 +591,102 @@ export function SpaceDetailPanel({
           {agents.length === 0 ? (
             <div class="px-4 py-2 text-xs text-fg-muted">No agents</div>
           ) : (
-            agents.map((agent) => (
-              <div key={agent.id} class="group/agent">
-                <div
-                  class={`flex items-center rounded-md transition-colors ${
-                    (agent.sessionId !== null && agent.sessionId === selectedSessionId) ||
-                    agent.handle === selectedAgentHandle
-                      ? 'bg-fill-soft text-fg'
-                      : 'text-fg-soft hover:bg-fill-soft hover:text-fg'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    data-testid="space-detail-agent-row"
+            agents.map((agent) => {
+              const session = sessions.find((row) => row.id === agent.sessionId);
+              const expanded = expandedAgents.has(agent.id);
+              const clones = visibleClones(agent.sessionId, expanded);
+              const cloneCount = agent.sessionId
+                ? (clonesByParent.get(agent.sessionId)?.length ?? 0)
+                : 0;
+              return (
+                <div key={agent.id} class="group/agent">
+                  <ConversationRow
+                    title={agent.displayName}
+                    testId="space-detail-agent-row"
+                    sessionId={agent.sessionId ?? undefined}
+                    selected={
+                      (agent.sessionId !== null && agent.sessionId === selectedSessionId) ||
+                      agent.handle === selectedAgentHandle
+                    }
+                    status={getSessionSidebarStatus(session ?? null)}
+                    unreadCount={
+                      session && session.id !== viewedSessionId
+                        ? getSpaceSessionUnreadCount(session.id, session.messageCount)
+                        : 0
+                    }
                     onClick={() => handleAgentClick(agent)}
-                    class="min-w-0 flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-sm"
+                    actions={
+                      agent.status === 'active' && (
+                        <button
+                          type="button"
+                          data-testid="space-detail-agent-spawn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSpawnClone(agent.id);
+                          }}
+                          disabled={spawningAgentId !== null}
+                          class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 rounded p-1 text-fg-faint transition-colors hover:text-fg hover:bg-fill disabled:opacity-40"
+                          title={`New conversation with ${agent.displayName}`}
+                          aria-label={`New conversation with ${agent.displayName}`}
+                        >
+                          +
+                        </button>
+                      )
+                    }
                   >
-                    <span class="min-w-0 flex-1 truncate">{agent.displayName}</span>
                     {agent.status !== 'active' && (
                       <span class="text-[11px] text-fg-faint">{agent.status}</span>
                     )}
-                  </button>
-                  {agent.status === 'active' && (
+                  </ConversationRow>
+                  {clones.map((clone) => (
+                    <ConversationRow
+                      key={clone.id}
+                      title={conversationTitle(clone.title, true)}
+                      testId="space-detail-clone-row"
+                      sessionId={clone.id}
+                      nested
+                      clone
+                      selected={clone.id === selectedSessionId}
+                      status={getSessionSidebarStatus(clone)}
+                      unreadCount={
+                        clone.id === viewedSessionId
+                          ? 0
+                          : getSpaceSessionUnreadCount(clone.id, clone.messageCount)
+                      }
+                      onClick={() => handleCloneClick(clone.id)}
+                    >
+                      {clone.returnedAt && (
+                        <span
+                          class="text-fg-faint"
+                          title={`Returned ${clone.returnedAt}`}
+                          aria-label="Returned"
+                        >
+                          ✓
+                        </span>
+                      )}
+                    </ConversationRow>
+                  ))}
+                  {cloneCount > SIDEBAR_PREVIEW_LIMIT && (
                     <button
                       type="button"
-                      data-testid="space-detail-agent-spawn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSpawnClone(agent.id);
-                      }}
-                      disabled={spawningAgentId !== null}
-                      class="mr-1 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:text-fg group-hover/agent:opacity-100 focus-visible:opacity-100 disabled:opacity-40"
-                      title={`New conversation with ${agent.displayName}`}
-                      aria-label={`New conversation with ${agent.displayName}`}
+                      class="w-full py-1.5 pl-7 pr-3 text-left text-xs text-fg-muted transition-colors hover:text-fg"
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? 'Show fewer' : 'Show all'} conversations with ${agent.displayName}`}
+                      onClick={() =>
+                        setExpandedAgents((previous) => {
+                          const next = new Set(previous);
+                          if (expanded) next.delete(agent.id);
+                          else next.add(agent.id);
+                          return next;
+                        })
+                      }
                     >
-                      +
+                      {expanded ? 'Show fewer' : `Show all ${cloneCount} conversations`}
                     </button>
                   )}
                 </div>
-                {visibleClones(agent.sessionId).map((clone) => (
-                  <button
-                    key={clone.id}
-                    type="button"
-                    data-testid="space-detail-clone-row"
-                    onClick={() => handleCloneClick(clone.id)}
-                    class={`w-full flex items-center gap-2 rounded-md py-1 pl-7 pr-3 text-left text-xs transition-colors ${
-                      clone.id === selectedSessionId
-                        ? 'bg-fill-soft text-fg'
-                        : 'text-fg-muted hover:bg-fill-soft hover:text-fg'
-                    }`}
-                  >
-                    <span class="text-fg-faint">分身</span>
-                    <span class="min-w-0 flex-1 truncate">{clone.title}</span>
-                    {clone.returnedAt && (
-                      <span class="text-fg-faint" title={`Returned ${clone.returnedAt}`}>
-                        ✓
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            ))
+              );
+            })
           )}
         </CollapsibleSection>
       </div>

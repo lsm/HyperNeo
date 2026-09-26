@@ -1,6 +1,5 @@
 import type { Session } from '@hyperneo/shared';
 import SessionListItem from './SessionListItem.tsx';
-import { cn } from '../lib/utils.ts';
 
 interface SessionProjectGroupProps {
   name: string;
@@ -13,24 +12,6 @@ interface SessionProjectGroupProps {
   onSpawn?: (sessionId: string) => void | Promise<void>;
   childrenOf?: (sessionId: string) => Session[];
   onRemove?: () => void;
-}
-
-const FOLDER_TONES = [
-  { bg: 'bg-warning/10', icon: 'text-warning' },
-  { bg: 'bg-sky-400/10', icon: 'text-info-soft' },
-  { bg: 'bg-emerald-400/10', icon: 'text-success-soft' },
-  { bg: 'bg-cat-violet/10', icon: 'text-cat-violet' },
-  { bg: 'bg-rose-400/10', icon: 'text-cat-rose' },
-  { bg: 'bg-cat-cyan/10', icon: 'text-cat-cyan' },
-  { bg: 'bg-orange-400/10', icon: 'text-warning-soft' },
-];
-
-function folderToneForPath(path: string) {
-  let hash = 0;
-  for (let i = 0; i < path.length; i++) {
-    hash = (hash * 31 + path.charCodeAt(i)) >>> 0;
-  }
-  return FOLDER_TONES[hash % FOLDER_TONES.length];
 }
 
 export function SessionProjectGroup({
@@ -46,7 +27,6 @@ export function SessionProjectGroup({
   onRemove,
 }: SessionProjectGroupProps) {
   const isEmpty = sessions.length === 0;
-  const folderTone = folderToneForPath(path);
 
   return (
     <div>
@@ -74,18 +54,8 @@ export function SessionProjectGroup({
               d="M8.25 4.5l7.5 7.5-7.5 7.5"
             />
           </svg>
-          <span
-            class={cn(
-              'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md',
-              folderTone.bg
-            )}
-          >
-            <svg
-              class={cn('w-3.5 h-3.5', folderTone.icon)}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
+          <span class="flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-faint">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -103,7 +73,7 @@ export function SessionProjectGroup({
             onClick={onRemove}
             title="Remove project"
             aria-label={`Remove project ${name}`}
-            class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded text-fg-faint hover:text-danger hover:bg-fill transition-colors"
+            class="opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 mr-1 p-1 rounded text-fg-faint hover:text-danger hover:bg-fill transition-colors"
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

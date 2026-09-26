@@ -1,9 +1,10 @@
 // @ts-nocheck
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { markSpaceSessionRead, spaceSessionLastSeen } from '../../../lib/space-unread';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
@@ -160,6 +161,32 @@ describe('SpaceOverview', () => {
     expect(getByTestId('overview-recent-tasks')).toBeTruthy();
     expect(getByTestId('overview-recent-sessions')).toBeTruthy();
     expect(getByText('Running').closest('.glass-surface')).toBeTruthy();
+  });
+
+  it('keeps recent conversation status and unread updates visible with clean clone titles', async () => {
+    spaceSessionLastSeen.value = new Map();
+    mockSpace.value = makeSpace();
+    mockSessions.value = [
+      {
+        id: 'clone-1',
+        title: 'Research · 分身',
+        parentSessionId: 'parent-1',
+        status: 'active',
+        processingState: JSON.stringify({ status: 'waiting_for_input' }),
+        messageCount: 4,
+        lastActiveAt: Date.now(),
+      },
+    ];
+    const { getByTestId, getByRole } = render(<SpaceOverview spaceId="space-1" />);
+    const recent = getByTestId('overview-recent-sessions');
+    expect(getByRole('heading', { name: 'Recent conversations' })).toBeTruthy();
+    expect(within(recent).getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
+    expect(within(recent).getByText('Research')).toBeTruthy();
+    expect(within(recent).getByLabelText('Clone conversation')).toBeTruthy();
+    expect(recent.textContent).toContain('4 unread');
+
+    markSpaceSessionRead('clone-1', 4);
+    await waitFor(() => expect(recent.textContent).not.toContain('unread'));
   });
 
   it('renders recent tasks sorted by updatedAt', () => {

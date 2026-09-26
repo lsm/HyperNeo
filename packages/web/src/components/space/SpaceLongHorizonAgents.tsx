@@ -11,12 +11,16 @@ import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { getSessionSidebarStatus } from '../../lib/session-sidebar-status';
+import { getSpaceSessionUnreadCount } from '../../lib/space-unread';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { CloneChoiceDialog } from '../CloneChoiceDialog';
+import { SessionActivityIndicator } from '../SessionActivityIndicator';
+import { UnreadBadge } from '../ui/UnreadBadge';
 import { FORM_CONTROL_CLASS, FormActions, FormField } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
@@ -426,6 +430,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
   };
 
   const sessionId = agent.sessionId ?? null;
+  const session = spaceStore.sessions.value.find((candidate) => candidate.id === sessionId);
 
   const openSession = () => navigateToSpaceAgent(navigationSpaceId, agent.handle);
 
@@ -463,6 +468,14 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               <span class="truncate text-base font-semibold tracking-tight text-fg">
                 {agent.displayName}
               </span>
+              {session && (
+                <>
+                  <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
+                  <UnreadBadge
+                    count={getSpaceSessionUnreadCount(session.id, session.messageCount)}
+                  />
+                </>
+              )}
             </div>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
               <span
@@ -470,7 +483,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               />
               <span>{agent.status}</span>
               <span>·</span>
-              <span>{sessionId ? 'Session' : 'Start session'}</span>
+              <span>{sessionId ? 'Open chat' : 'Start chat'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>

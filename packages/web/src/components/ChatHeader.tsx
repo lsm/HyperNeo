@@ -1,11 +1,13 @@
 import type { Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { sessionStore } from '../lib/session-store.ts';
+import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
 import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
 import { IconButton } from './ui/IconButton.tsx';
+import { CloneIcon } from './icons/CloneIcon.tsx';
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -79,12 +81,21 @@ export function ChatHeader({
         )}
 
         <div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
+          {isClone && (
+            <span
+              class="flex-shrink-0 text-fg-muted"
+              title="Clone conversation"
+              aria-label="Clone conversation"
+            >
+              <CloneIcon className="h-4 w-4" />
+            </span>
+          )}
           <h2
             data-testid="chat-header-title"
             class="min-w-0 truncate text-sm font-semibold text-fg"
             data-tauri-drag-region
           >
-            {titleOverride || session?.title || 'New Session'}
+            {conversationTitle(titleOverride || session?.title || 'New conversation', isClone)}
           </h2>
           {isClone && returnedAt && (
             <span
@@ -122,7 +133,7 @@ export function ChatHeader({
         />
         {inspectorAvailable && (
           <IconButton
-            title="Session info"
+            title="Conversation info"
             data-testid="session-info-btn"
             onClick={toggleInspector}
             class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}

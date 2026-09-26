@@ -140,6 +140,7 @@ describe('SessionsSidebar', () => {
 
     expect(screen.getByText('No chats yet')).toBeTruthy();
     expect(screen.getByText('Start a new chat to begin.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy();
   });
 
   it('opens the new chat landing from the New chat row', () => {
@@ -185,15 +186,10 @@ describe('SessionsSidebar', () => {
     render(<SessionsSidebar />);
 
     const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
-    expect(cards).toEqual([
-      'Parent Chat',
-      '分身Parent Chat · 分身 2',
-      '分身Parent Chat · 分身✓',
-      'Orphan',
-    ]);
-    expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(2);
+    expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat✓', 'Orphan']);
+    expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(3);
     expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
-    expect(screen.getAllByTestId('session-spawn')).toHaveLength(2);
+    expect(screen.getAllByTestId('session-spawn')).toHaveLength(1);
   });
 
   it('spawns a clone from a chat row and opens it', async () => {
@@ -269,6 +265,35 @@ describe('SessionsSidebar', () => {
     expect(await screen.findByText('new-project')).toBeTruthy();
   });
 
+  it('adds the first project before any chats exist', async () => {
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add project' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), {
+      target: { value: '/workspace/first-project' },
+    });
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+
+    expect(await screen.findByText('first-project')).toBeTruthy();
+    expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/first-project');
+  });
+
+  it('collapses projects and loose chats independently', () => {
+    mockSessionsSignal.value = [
+      createMockSession('project-chat', 'Project Chat', '/workspace/hyperneo'),
+      createMockSession('loose-chat', 'Loose Chat'),
+    ];
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+
+    expect(screen.queryByText('Project Chat')).toBeNull();
+    expect(screen.getByText('Loose Chat')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Chats section' }));
+    expect(screen.queryByText('Loose Chat')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+    expect(screen.getByText('Project Chat')).toBeTruthy();
+  });
+
   it('uses native browsing from the add-project control when available', async () => {
     mockSessionsSignal.value = [
       createMockSession('session-1', 'Project Chat', '/workspace/hyperneo'),
@@ -320,7 +345,8 @@ describe('SessionsSidebar', () => {
     fireEvent.click(screen.getByTestId('session-archive-confirm'));
 
     const dialog = await screen.findByTestId('clone-choice-dialog');
-    expect(dialog.textContent).toContain('Parent · 分身');
+    expect(dialog.textContent).toContain('Parent');
+    expect(dialog.textContent).not.toContain('分身');
     fireEvent.click(screen.getByTestId('clone-choice-cascade'));
 
     await waitFor(() =>

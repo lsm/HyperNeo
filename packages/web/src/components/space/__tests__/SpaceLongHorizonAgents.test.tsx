@@ -3,10 +3,12 @@
 import type { SettingSource, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { markSpaceSessionRead, spaceSessionLastSeen } from '../../../lib/space-unread';
 
 const mockDeleteAgent = vi.fn();
 const {
   mockAgents,
+  mockSessions,
   mockTemplates,
   mockUserTemplateKeys,
   mockConfigDataLoaded,
@@ -26,6 +28,7 @@ const {
   }
   return {
     mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
+    mockSessions: makeSignal([]),
     mockTemplates: makeSignal([]),
     mockUserTemplateKeys: makeSignal<Set<string>>(new Set()),
     mockConfigDataLoaded: makeSignal(true),
@@ -46,6 +49,7 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
+      sessions: mockSessions,
       spaceId: { value: 'space-1' },
       agentTemplates: mockTemplates,
       userTemplateKeys: mockUserTemplateKeys,
@@ -218,6 +222,8 @@ describe('SpaceLongHorizonAgents', () => {
   beforeEach(() => {
     cleanup();
     mockAgents.value = [];
+    mockSessions.value = [];
+    spaceSessionLastSeen.value = new Map();
     mockTemplates.value = [];
     mockUserTemplateKeys.value = new Set();
     mockConfigDataLoaded.value = true;
@@ -1947,9 +1953,29 @@ describe('SpaceLongHorizonAgents', () => {
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     const liveCard = getByText('Research Long Horizon').closest('[role="button"]');
-    expect(liveCard?.textContent).toContain('Session');
+    expect(liveCard?.textContent).toContain('Open chat');
     expect(getByText('Draft Agent').closest('[role="button"]')).toBeTruthy();
-    expect(getByText('Start session')).toBeTruthy();
+    expect(getByText('Start chat')).toBeTruthy();
+  });
+
+  it('shows conversation activity separately from agent lifecycle and reacts when read', async () => {
+    mockAgents.value = [makeLongHorizonAgent()];
+    mockSessions.value = [
+      {
+        id: 'session-research',
+        status: 'active',
+        processingState: JSON.stringify({ status: 'waiting_for_input' }),
+        messageCount: 3,
+      },
+    ];
+    render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const card = screen.getByText('Research Long Horizon').closest('[role="button"]')!;
+    expect(within(card).getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
+    expect(within(card).getByText('active')).toBeTruthy();
+    expect(card.textContent).toContain('3 unread');
+
+    markSpaceSessionRead('session-research', 3);
+    await waitFor(() => expect(card.textContent).not.toContain('unread'));
   });
 
   it('opens the agent route for a sessionless agent without starting a session', () => {

@@ -28,6 +28,7 @@ import SessionListItem from '../components/SessionListItem.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
+import { CollapsibleSection } from '../components/ui/CollapsibleSection.tsx';
 
 interface SessionsSidebarProps {
   onSessionSelect?: () => void;
@@ -297,125 +298,124 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       </div>
 
       <div class="flex-1 overflow-y-auto px-2 pb-2">
-        {!hasContent ? (
+        <CollapsibleSection
+          title="Projects"
+          count={projects.length}
+          headerRight={
+            <button
+              type="button"
+              data-testid="add-project-button"
+              onClick={() => {
+                setAddProjectError(null);
+                if (nativeFolderPickerAvailable) {
+                  void handleBrowseProject();
+                } else {
+                  setAddProjectOpen(true);
+                }
+              }}
+              title="Add project"
+              aria-label="Add project"
+              class="p-0.5 rounded text-fg-faint hover:text-fg-soft hover:bg-fill-soft transition-colors"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+            </button>
+          }
+        >
+          {addProjectOpen && (
+            <form
+              data-testid="add-project-form"
+              onSubmit={handleAddProjectSubmit}
+              class="mx-2 mb-2 rounded-lg border border-line bg-surface-overlay p-2"
+            >
+              <div class="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  data-testid="add-project-path-input"
+                  value={addProjectPath}
+                  onInput={(e) => {
+                    setAddProjectPath((e.currentTarget as HTMLInputElement).value);
+                    setAddProjectError(null);
+                  }}
+                  placeholder="Project path"
+                  autoFocus
+                  class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={addProjectBusy}
+                  class="rounded-md bg-fill-strong px-2 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:bg-line-strong disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {addProjectBusy ? 'Adding…' : 'Add'}
+                </button>
+              </div>
+              <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
+                Use an absolute path accessible to HyperNeo.
+              </p>
+              {addProjectError && (
+                <p class="mt-1.5 text-[11px] leading-4 text-danger">{addProjectError}</p>
+              )}
+            </form>
+          )}
+          {projects.length > 0 && (
+            <div class="flex flex-col gap-0.5">
+              {projects.map((project) => (
+                <SessionProjectGroup
+                  key={project.path}
+                  name={project.name}
+                  path={project.path}
+                  sessions={project.sessions}
+                  collapsed={collapsed.has(project.path)}
+                  onToggle={() => toggleProject(project.path)}
+                  onSessionClick={handleSessionClick}
+                  onArchive={handleArchive}
+                  onSpawn={handleSpawn}
+                  childrenOf={childrenOf}
+                  onRemove={
+                    project.sessions.length === 0
+                      ? () => handleRemoveProject(project.path)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </CollapsibleSection>
+        {ungrouped.length > 0 && (
+          <CollapsibleSection title="Chats" count={ungrouped.length}>
+            <div class="flex flex-col gap-0.5">
+              {ungrouped.flatMap((session) => [
+                <SessionListItem
+                  key={session.id}
+                  session={session}
+                  onSessionClick={handleSessionClick}
+                  onArchive={handleArchive}
+                  onSpawn={handleSpawn}
+                />,
+                ...childrenOf(session.id).map((child) => (
+                  <SessionListItem
+                    key={child.id}
+                    session={child}
+                    onSessionClick={handleSessionClick}
+                    onArchive={handleArchive}
+                    nested
+                  />
+                )),
+              ])}
+            </div>
+          </CollapsibleSection>
+        )}
+        {!hasContent && (
           <div class="px-2 py-10 text-center">
             <p class="text-sm text-fg-faint">No chats yet</p>
             <p class="text-xs text-fg-faint mt-1">Start a new chat to begin.</p>
           </div>
-        ) : (
-          <>
-            <div class="flex items-center justify-between px-2.5 pt-2 pb-1">
-              <span class="text-xs font-medium text-fg-faint">Projects</span>
-              <button
-                type="button"
-                data-testid="add-project-button"
-                onClick={() => {
-                  setAddProjectError(null);
-                  if (nativeFolderPickerAvailable) {
-                    void handleBrowseProject();
-                  } else {
-                    setAddProjectOpen(true);
-                  }
-                }}
-                title="Add project"
-                aria-label="Add project"
-                class="p-0.5 rounded text-fg-faint hover:text-fg-soft hover:bg-fill-soft transition-colors"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-              </button>
-            </div>
-            {addProjectOpen && (
-              <form
-                data-testid="add-project-form"
-                onSubmit={handleAddProjectSubmit}
-                class="mx-2 mb-2 rounded-lg border border-line bg-surface-overlay p-2"
-              >
-                <div class="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    data-testid="add-project-path-input"
-                    value={addProjectPath}
-                    onInput={(e) => {
-                      setAddProjectPath((e.currentTarget as HTMLInputElement).value);
-                      setAddProjectError(null);
-                    }}
-                    placeholder="Project path"
-                    autoFocus
-                    class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={addProjectBusy}
-                    class="rounded-md bg-fill-strong px-2 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:bg-line-strong disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {addProjectBusy ? 'Adding…' : 'Add'}
-                  </button>
-                </div>
-                <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
-                  Use an absolute path accessible to HyperNeo.
-                </p>
-                {addProjectError && (
-                  <p class="mt-1.5 text-[11px] leading-4 text-danger">{addProjectError}</p>
-                )}
-              </form>
-            )}
-            {projects.length > 0 && (
-              <div class="flex flex-col gap-0.5">
-                {projects.map((project) => (
-                  <SessionProjectGroup
-                    key={project.path}
-                    name={project.name}
-                    path={project.path}
-                    sessions={project.sessions}
-                    collapsed={collapsed.has(project.path)}
-                    onToggle={() => toggleProject(project.path)}
-                    onSessionClick={handleSessionClick}
-                    onArchive={handleArchive}
-                    onSpawn={handleSpawn}
-                    childrenOf={childrenOf}
-                    onRemove={
-                      project.sessions.length === 0
-                        ? () => handleRemoveProject(project.path)
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
-            )}
-
-            {ungrouped.length > 0 && (
-              <>
-                <div class="px-2.5 pt-3 pb-1 text-xs font-medium text-fg-faint">Chats</div>
-                <div class="flex flex-col gap-0.5">
-                  {ungrouped.flatMap((session) => [
-                    <SessionListItem
-                      key={session.id}
-                      session={session}
-                      onSessionClick={handleSessionClick}
-                      onArchive={handleArchive}
-                      onSpawn={handleSpawn}
-                    />,
-                    ...childrenOf(session.id).map((child) => (
-                      <SessionListItem
-                        key={child.id}
-                        session={child}
-                        onSessionClick={handleSessionClick}
-                        onArchive={handleArchive}
-                        nested
-                      />
-                    )),
-                  ])}
-                </div>
-              </>
-            )}
-          </>
         )}
       </div>
 
