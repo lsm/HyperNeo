@@ -1,9 +1,9 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { ConversationDisclosure } from '../components/ConversationDisclosure';
 import { ConversationRow } from '../components/ConversationRow';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
-import { StatusDot } from '../components/ui/StatusDot';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
@@ -24,7 +24,6 @@ import {
   spaceOverlayPendingTaskIdSignal,
 } from '../lib/signals';
 import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
-import { toast } from '../lib/toast';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { getTaskStatusConfig } from '../lib/task-status';
 import {
@@ -270,30 +269,9 @@ export function SpaceDetailPanel({
     (parentSessionId: string | null, expanded: boolean): SpaceSessionRow[] => {
       const all = parentSessionId ? (clonesByParent.get(parentSessionId) ?? []) : [];
       if (expanded) return all;
-      const capped = all.slice(0, SIDEBAR_PREVIEW_LIMIT);
-      const selected = all.find((row) => row.id === selectedSessionId);
-      return selected && !capped.some((row) => row.id === selected.id)
-        ? [...capped, selected]
-        : capped;
+      return all.filter((row) => row.id === selectedSessionId || row.id === viewedSessionId);
     },
-    [clonesByParent, selectedSessionId]
-  );
-
-  const [spawningAgentId, setSpawningAgentId] = useState<string | null>(null);
-  const handleSpawnClone = useCallback(
-    (agentId: string) => {
-      if (spawningAgentId) return;
-      setSpawningAgentId(agentId);
-      spaceStore
-        .spawnAgentClone(agentId)
-        .then((sessionId) => {
-          navigateToSpaceSession(routeSpaceId, sessionId);
-          onNavigate?.();
-        })
-        .catch((err) => toast.error(err instanceof Error ? err.message : 'Failed to spawn'))
-        .finally(() => setSpawningAgentId(null));
-    },
-    [routeSpaceId, onNavigate, spawningAgentId]
+    [clonesByParent, selectedSessionId, viewedSessionId]
   );
 
   const handleCloneClick = useCallback(
@@ -557,6 +535,12 @@ export function SpaceDetailPanel({
                   title={task.title}
                   selected={selectedTaskId === task.id}
                   status={taskActivity}
+                  secondaryStatus={
+                    taskActivity.label !== lifecycleLabel
+                      ? { ...getTaskStatusConfig(task.status), kind: task.status, pulse: false }
+                      : undefined
+                  }
+                  unread={taskUnread}
                   unreadCount={taskSessions.reduce(
                     (count, session) =>
                       count +
@@ -566,12 +550,7 @@ export function SpaceDetailPanel({
                     0
                   )}
                   onClick={() => handleTaskClick(task.id)}
-                >
-                  {taskActivity.label !== lifecycleLabel && (
-                    <span class="text-[11px] text-fg-faint">{lifecycleLabel}</span>
-                  )}
-                  {taskUnread && <StatusDot tone="info" size="xs" aria-label="Has updates" />}
-                </ConversationRow>
+                />
               );
             })
           )}
@@ -615,22 +594,28 @@ export function SpaceDetailPanel({
                         : 0
                     }
                     onClick={() => handleAgentClick(agent)}
-                    actions={
-                      agent.status === 'active' && (
-                        <button
-                          type="button"
-                          data-testid="space-detail-agent-spawn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSpawnClone(agent.id);
-                          }}
-                          disabled={spawningAgentId !== null}
-                          class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 rounded p-1 text-fg-faint transition-colors hover:text-fg hover:bg-fill disabled:opacity-40"
-                          title={`New conversation with ${agent.displayName}`}
-                          aria-label={`New conversation with ${agent.displayName}`}
-                        >
-                          +
-                        </button>
+                    unread={
+                      !expanded &&
+                      (agent.sessionId ? (clonesByParent.get(agent.sessionId) ?? []) : []).some(
+                        (clone) =>
+                          clone.id !== viewedSessionId &&
+                          getSpaceSessionUnreadCount(clone.id, clone.messageCount) > 0
+                      )
+                    }
+                    disclosure={
+                      cloneCount > 0 && (
+                        <ConversationDisclosure
+                          expanded={expanded}
+                          title={agent.displayName}
+                          onToggle={() =>
+                            setExpandedAgents((previous) => {
+                              const next = new Set(previous);
+                              if (expanded) next.delete(agent.id);
+                              else next.add(agent.id);
+                              return next;
+                            })
+                          }
+                        />
                       )
                     }
                   >
@@ -666,24 +651,6 @@ export function SpaceDetailPanel({
                       )}
                     </ConversationRow>
                   ))}
-                  {cloneCount > SIDEBAR_PREVIEW_LIMIT && (
-                    <button
-                      type="button"
-                      class="w-full py-1.5 pl-7 pr-3 text-left text-xs text-fg-muted transition-colors hover:text-fg"
-                      aria-expanded={expanded}
-                      aria-label={`${expanded ? 'Show fewer' : 'Show all'} conversations with ${agent.displayName}`}
-                      onClick={() =>
-                        setExpandedAgents((previous) => {
-                          const next = new Set(previous);
-                          if (expanded) next.delete(agent.id);
-                          else next.add(agent.id);
-                          return next;
-                        })
-                      }
-                    >
-                      {expanded ? 'Show fewer' : `Show all ${cloneCount} conversations`}
-                    </button>
-                  )}
                 </div>
               );
             })

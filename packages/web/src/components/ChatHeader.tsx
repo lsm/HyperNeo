@@ -92,6 +92,10 @@ export function ChatHeader({
           )}
           <h2
             data-testid="chat-header-title"
+            title={conversationTitle(
+              titleOverride || session?.title || 'New conversation',
+              isClone
+            )}
             class="min-w-0 truncate text-sm font-semibold text-fg"
             data-tauri-drag-region
           >
@@ -112,10 +116,26 @@ export function ChatHeader({
           <button
             type="button"
             onClick={onReturnToParent}
-            class="flex-shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            aria-label="Return to parent"
+            title="Return to parent"
+            class="inline-flex min-h-8 min-w-8 flex-shrink-0 items-center justify-center rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             data-testid="chat-header-return-to-parent"
           >
-            Return to parent
+            <svg
+              class="h-4 w-4 sm:hidden"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                d="m9 5-5 5 5 5M4 10h10a6 6 0 0 1 6 6v3"
+                stroke-width={1.75}
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="hidden sm:inline">Return to parent</span>
           </button>
         )}
 

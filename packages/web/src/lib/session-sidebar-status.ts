@@ -37,7 +37,7 @@ function resolveStatus(
   session: SessionActivitySource | null | undefined,
   state: Record<string, unknown>
 ): SidebarSessionStatus {
-  if (!session) return { tone: 'neutral', label: 'Not started', pulse: false, kind: 'idle' };
+  if (!session) return { tone: 'neutral', label: 'Not started', pulse: false, kind: 'not_started' };
   const lifecycle = session.status ?? 'active';
   if (['pending_worktree_choice', 'paused', 'ended', 'archived'].includes(lifecycle)) {
     const config = getSessionLifecycleStatusConfig(lifecycle as SessionStatus);

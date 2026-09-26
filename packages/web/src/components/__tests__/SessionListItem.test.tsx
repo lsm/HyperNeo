@@ -297,7 +297,7 @@ describe('SessionListItem', () => {
       );
 
       expect(container.querySelector('[role="img"][aria-label="Idle"]')).toBeTruthy();
-      expect(container.querySelector('.bg-accent-hover')).toBeNull();
+      expect(container.querySelector('[aria-label="3 unread messages"]')).toBeNull();
     });
 
     it('uses persisted processing state before live updates arrive', () => {
@@ -312,7 +312,7 @@ describe('SessionListItem', () => {
     });
 
     it('reacts to live status and unread updates without replacing the row', async () => {
-      const { getByRole, getByText } = render(
+      const { getByRole } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
@@ -323,7 +323,7 @@ describe('SessionListItem', () => {
       });
 
       expect(getByRole('img', { name: 'Interrupted' })).toBeTruthy();
-      expect(getByText('2')).toBeTruthy();
+      expect(getByRole('img', { name: '2 unread messages' })).toBeTruthy();
     });
 
     it('shows a neutral idle indicator when read', () => {
@@ -396,7 +396,7 @@ describe('SessionListItem', () => {
       expect(container.querySelector('[role="img"][aria-label="Queued"]')).toBeTruthy();
     });
 
-    it('should show a blue unread badge with the count when there are unseen messages', () => {
+    it('shows a compact unread dot without a visible count', () => {
       mockStatuses.value = new Map([
         ['session-1', { processingState: { status: 'idle' }, unreadCount: 3 }],
       ]);
@@ -405,9 +405,9 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const badge = container.querySelector('.bg-accent-hover');
+      const badge = container.querySelector('[aria-label="3 unread messages"]');
       expect(badge).toBeTruthy();
-      expect(badge?.textContent).toContain('3');
+      expect(badge?.textContent).toBe('');
 
       expect(container.querySelector('.animate-spin')).toBeNull();
     });
@@ -426,7 +426,7 @@ describe('SessionListItem', () => {
 
       expect(container.querySelector('[role="img"][aria-label="Streaming"]')).toBeTruthy();
       expect(container.querySelector('.animate-spin')).toBeTruthy();
-      expect(container.querySelector('.bg-accent-hover')?.textContent).toContain('5');
+      expect(container.querySelector('[aria-label="5 unread messages"]')).toBeTruthy();
     });
 
     it('should not pulse for interrupted status', () => {

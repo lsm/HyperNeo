@@ -392,11 +392,12 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceSessionIdSignal.value = 'clone-2';
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
     const rows = screen.getAllByTestId('space-detail-clone-row');
     expect(rows.every((row) => !row.textContent?.includes('分身'))).toBe(true);
     expect(within(rows[0]).getByRole('img', { name: 'Clone conversation' })).toBeTruthy();
     expect(within(rows[1]).getByRole('img', { name: 'Error' })).toBeTruthy();
-    expect(within(rows[1]).getByText('2')).toBeTruthy();
+    expect(within(rows[1]).getByLabelText('2 unread messages')).toBeTruthy();
     expect(within(rows[1]).getByLabelText('Returned')).toBeTruthy();
     expect(rows[0].getAttribute('aria-current')).toBe('page');
     expect(screen.getByTestId('space-detail-agent').getAttribute('data-active')).toBe('true');
@@ -421,14 +422,14 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceSessionIdSignal.value = 'clone-0';
     render(<SpaceDetailPanel spaceId="space-1" />);
 
-    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(11);
+    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(1);
     expect(screen.queryByText('Conversation 1')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show all conversations with Lead' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
     expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(12);
     fireEvent.click(screen.getByText('Conversation 1'));
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-1');
-    fireEvent.click(screen.getByRole('button', { name: 'Show fewer conversations with Lead' }));
-    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(11);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Lead' }));
+    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(1);
     expect(screen.getByText('Conversation 0').closest('button')?.getAttribute('aria-current')).toBe(
       'page'
     );
@@ -499,10 +500,12 @@ describe('SpaceDetailPanel', () => {
 
     await waitFor(() => expect(spaceSessionLastSeen.value.get('clone-1')).toBe(3));
     expect(spaceSessionLastSeen.value.has('sess-a1')).toBe(false);
-    expect(within(screen.getByTestId('space-detail-agent-row')).getByText('4')).toBeTruthy();
+    expect(
+      within(screen.getByTestId('space-detail-agent-row')).getByLabelText('4 unread messages')
+    ).toBeTruthy();
   });
 
-  it('shows task session activity and unread messages separately from task updates', () => {
+  it('shows task activity and lifecycle with one unread indicator', () => {
     mockTasksSignal.value = [makeTask('t1', 'Blocked Task', 'in_progress', { updatedAt: 2 })];
     mockCurrentSpaceTaskIdSignal.value = 'other';
     spaceTaskLastSeen.value = new Map([['t1', 1]]);
@@ -532,8 +535,8 @@ describe('SpaceDetailPanel', () => {
     const row = screen.getByText('Blocked Task').closest('button')!;
     expect(within(row).getByRole('img', { name: 'Processing' })).toBeTruthy();
     expect(within(row).getByLabelText('5 unread messages')).toBeTruthy();
-    expect(within(row).getByText('In Progress')).toBeTruthy();
-    expect(within(row).getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'In Progress' })).toBeTruthy();
+    expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
   });
 
   it('marks task sessions read through the visible thread and subsequent live activity', async () => {
@@ -614,7 +617,7 @@ describe('SpaceDetailPanel', () => {
       const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
       const row = screen.getByText('Task thread').closest('button')!;
       expect(within(row).getByLabelText('3 unread messages')).toBeTruthy();
-      expect(within(row).getByRole('img', { name: 'Has updates' })).toBeTruthy();
+      expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
       expect(spaceSessionLastSeen.value.has('worker')).toBe(false);
 
       mockSpaceOverlaySessionIdSignal.value = null;
@@ -642,23 +645,32 @@ describe('SpaceDetailPanel', () => {
     render(<SpaceDetailPanel spaceId="space-1" />);
     const row = screen.getByText('Task thread').closest('button')!;
     expect(within(row).getByRole('img', { name: 'Thinking' })).toBeTruthy();
-    expect(within(row).getByText('Blocked')).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'Blocked' })).toBeTruthy();
   });
 
-  it('spawns a new conversation from the agent row and opens it', async () => {
-    const onNavigate = vi.fn();
+  it('shows collapsed child unread output without exposing a spawn action', () => {
     mockAgentsSignal.value = [
       { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
     ];
-    render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-
-    fireEvent.click(screen.getByTestId('space-detail-agent-spawn'));
-    expect(mockSpawnAgentClone).toHaveBeenCalledWith('a1');
-    await waitFor(() =>
-      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-new')
-    );
-    expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
-    expect(onNavigate).toHaveBeenCalledOnce();
+    mockSessionsSignal.value = [
+      { id: 'sess-a1', title: 'Lead', status: 'active', messageCount: 0, lastActiveAt: 1 },
+      {
+        id: 'child',
+        title: 'Child',
+        status: 'active',
+        parentSessionId: 'sess-a1',
+        messageCount: 4,
+        lastActiveAt: 2,
+      },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(screen.queryByTestId('space-detail-agent-spawn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
+    expect(screen.getByRole('img', { name: '4 unread messages' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Lead' }));
+    expect(screen.queryByText('Child')).toBeNull();
   });
 
   it('loads the Space agents when the panel mounts', () => {

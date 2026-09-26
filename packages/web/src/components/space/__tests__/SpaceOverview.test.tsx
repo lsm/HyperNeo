@@ -183,7 +183,7 @@ describe('SpaceOverview', () => {
     expect(within(recent).getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
     expect(within(recent).getByText('Research')).toBeTruthy();
     expect(within(recent).getByLabelText('Clone conversation')).toBeTruthy();
-    expect(recent.textContent).toContain('4 unread');
+    expect(within(recent).getByLabelText('4 unread messages')).toBeTruthy();
 
     markSpaceSessionRead('clone-1', 4);
     await waitFor(() => expect(recent.textContent).not.toContain('unread'));

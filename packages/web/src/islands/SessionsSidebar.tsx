@@ -16,7 +16,6 @@ import {
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
-import { invokeOperation } from '../lib/operations.ts';
 import { isUserSession } from '../lib/session-utils.ts';
 import { getCollapsedProjects, setCollapsedProjects } from '../lib/sidebar-prefs.ts';
 import { projectRootOf, projectName } from '../lib/projects.ts';
@@ -24,7 +23,7 @@ import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
 } from '../lib/runtime-capabilities.ts';
-import SessionListItem from '../components/SessionListItem.tsx';
+import { SessionConversationGroup } from '../components/SessionConversationGroup.tsx';
 import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
@@ -129,24 +128,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const handleSessionClick = (sessionId: string) => {
     navigateToSession(sessionId);
     onSessionSelect?.();
-  };
-
-  const handleSpawn = async (parentSessionId: string) => {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) {
-      toast.error('Not connected');
-      return;
-    }
-    try {
-      const result = await invokeOperation<
-        { accepted: true; sessionId: string } | { accepted: false; message: string }
-      >(hub, 'session.clone.spawn', { parentSessionId });
-      if (!result.accepted) throw new Error(result.message);
-      navigateToSession(result.sessionId);
-      onSessionSelect?.();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to spawn');
-    }
   };
 
   const toggleProject = (path: string) => {
@@ -375,7 +356,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onToggle={() => toggleProject(project.path)}
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
-                  onSpawn={handleSpawn}
                   childrenOf={childrenOf}
                   onRemove={
                     project.sessions.length === 0
@@ -390,24 +370,15 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         {ungrouped.length > 0 && (
           <CollapsibleSection title="Chats" count={ungrouped.length}>
             <div class="flex flex-col gap-0.5">
-              {ungrouped.flatMap((session) => [
-                <SessionListItem
+              {ungrouped.map((session) => (
+                <SessionConversationGroup
                   key={session.id}
                   session={session}
+                  childSessions={childrenOf(session.id)}
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
-                  onSpawn={handleSpawn}
-                />,
-                ...childrenOf(session.id).map((child) => (
-                  <SessionListItem
-                    key={child.id}
-                    session={child}
-                    onSessionClick={handleSessionClick}
-                    onArchive={handleArchive}
-                    nested
-                  />
-                )),
-              ])}
+                />
+              ))}
             </div>
           </CollapsibleSection>
         )}

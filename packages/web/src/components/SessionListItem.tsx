@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import type { Session } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { useSessionRename } from '../hooks/useSessionRename';
@@ -10,7 +11,8 @@ interface SessionListItemProps {
   session: Session;
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
-  onSpawn?: (sessionId: string) => void | Promise<void>;
+  disclosure?: ComponentChildren;
+  unread?: boolean;
   nested?: boolean;
 }
 
@@ -18,7 +20,8 @@ export default function SessionListItem({
   session,
   onSessionClick,
   onArchive,
-  onSpawn,
+  disclosure,
+  unread,
   nested = false,
 }: SessionListItemProps) {
   const returnedAt = session.metadata?.clone?.returnedAt;
@@ -51,6 +54,8 @@ export default function SessionListItem({
       clone={isClone}
       status={status}
       unreadCount={liveStatus?.unreadCount}
+      unread={unread}
+      disclosure={disclosure}
       onClick={() => onSessionClick(session.id)}
       onTitleDoubleClick={startEditing}
       titleHint="Double-click or press F2 to rename"
@@ -73,32 +78,13 @@ export default function SessionListItem({
       actions={
         session.status !== 'archived' && (
           <div class="flex items-center pr-1">
-            {onSpawn && !isClone && !confirming && (
-              <button
-                type="button"
-                data-testid="session-spawn"
-                onClick={() => onSpawn(session.id)}
-                title="New conversation"
-                aria-label={`Spawn a clone of ${session.title || 'chat'}`}
-                class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={1.75}
-                    d="M12 5v14m7-7H5"
-                  />
-                </svg>
-              </button>
-            )}
             {confirming ? (
               <button
                 type="button"
                 data-testid="session-archive-confirm"
                 onClick={handleArchive}
                 disabled={archiving}
-                class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
+                class="min-h-8 px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
               >
                 {archiving ? 'Archiving…' : 'Archive'}
               </button>
@@ -109,7 +95,7 @@ export default function SessionListItem({
                 onClick={() => setConfirming(true)}
                 title="Archive chat"
                 aria-label={`Archive ${session.title || 'chat'}`}
-                class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
+                class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 inline-flex min-h-8 min-w-8 items-center justify-center p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
               >
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path

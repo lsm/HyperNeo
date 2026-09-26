@@ -35,6 +35,46 @@ describe('ConversationRow', () => {
     expect(screen.getByRole('button').getAttribute('aria-current')).toBe('page');
   });
 
+  it('preserves full titles and status details in rename tooltips', () => {
+    const title = 'Review the proposed navigation and accessibility changes';
+    render(
+      <ConversationRow
+        title={title}
+        titleHint="Double-click or press F2 to rename"
+        status={getSessionSidebarStatus({ processingState: { status: 'queued' } })}
+        onClick={() => {}}
+      />
+    );
+    expect(screen.getByRole('heading').title).toBe(
+      `${title} · Queued · Double-click or press F2 to rename`
+    );
+  });
+
+  it('uses one unread marker while retaining secondary lifecycle status', () => {
+    const { rerender } = render(
+      <ConversationRow
+        title="Review"
+        status={getSessionSidebarStatus({ processingState: { status: 'processing' } })}
+        secondaryStatus={{ kind: 'blocked', label: 'Blocked', tone: 'danger', pulse: false }}
+        unread
+        unreadCount={100}
+        onClick={() => {}}
+      />
+    );
+    expect(screen.getByRole('img', { name: 'Blocked' })).toBeTruthy();
+    expect(screen.getByLabelText('100 unread messages').textContent).toBe('');
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
+    rerender(
+      <ConversationRow
+        title="Review"
+        status={getSessionSidebarStatus({})}
+        unread
+        onClick={() => {}}
+      />
+    );
+    expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+  });
+
   it('keeps actions outside the navigation button and supports keyboard rename', () => {
     const navigate = vi.fn();
     const rename = vi.fn();

@@ -86,6 +86,7 @@ mockSessionsSignal = signal<Session[]>([]);
 mockSessionStatusesSignal = signal(new Map());
 
 import { SessionsSidebar } from '../SessionsSidebar';
+import { currentSessionIdSignal } from '../../lib/signals';
 
 function createMockSession(
   id: string,
@@ -185,43 +186,51 @@ describe('SessionsSidebar', () => {
 
     render(<SessionsSidebar />);
 
+    expect(screen.getAllByTestId('session-card')).toHaveLength(2);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show child conversations for Parent Chat' })
+    );
     const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
     expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat✓', 'Orphan']);
     expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(3);
     expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
-    expect(screen.getAllByTestId('session-spawn')).toHaveLength(1);
+    expect(screen.queryByTestId('session-spawn')).toBeNull();
   });
 
-  it('spawns a clone from a chat row and opens it', async () => {
-    const onSessionSelect = vi.fn();
-    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
-    mockHubRequest.mockResolvedValue({ accepted: true, sessionId: 'clone-new' });
-
-    render(<SessionsSidebar onSessionSelect={onSessionSelect} />);
-    fireEvent.click(screen.getByTestId('session-spawn'));
-
-    await waitFor(() => expect(mockNavigateToSession).toHaveBeenCalledWith('clone-new'));
-    expect(mockHubRequest).toHaveBeenCalledWith('operation.invoke', {
-      name: 'session.clone.spawn',
-      input: { parentSessionId: 'parent' },
-    });
-    expect(onSessionSelect).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports a refused spawn', async () => {
-    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
-    mockHubRequest.mockResolvedValue({
-      accepted: false,
-      message: 'A clone cannot spawn its own clone',
-    });
-
+  it('collapses ungrouped child conversations while keeping the selected child visible', () => {
+    mockSessionsSignal.value = [
+      createMockSession('parent', 'Parent'),
+      { ...createMockSession('child', 'Child'), parentSessionId: 'parent' },
+      { ...createMockSession('sibling', 'Sibling'), parentSessionId: 'parent' },
+    ];
+    currentSessionIdSignal.value = 'child';
     render(<SessionsSidebar />);
-    fireEvent.click(screen.getByTestId('session-spawn'));
-
-    await waitFor(() =>
-      expect(mockToastError).toHaveBeenCalledWith('A clone cannot spawn its own clone')
-    );
+    expect(screen.getByText('Child')).toBeTruthy();
+    expect(screen.queryByText('Sibling')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Parent' }));
+    expect(screen.getByText('Sibling')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Parent' }));
+    expect(screen.getByText('Child')).toBeTruthy();
+    expect(screen.queryByText('Sibling')).toBeNull();
     expect(mockNavigateToSession).not.toHaveBeenCalled();
+    currentSessionIdSignal.value = null;
+  });
+
+  it('signals unread output from collapsed children without showing counts or spawn actions', () => {
+    mockSessionsSignal.value = [
+      createMockSession('parent', 'Parent'),
+      { ...createMockSession('child', 'Child'), parentSessionId: 'parent' },
+    ];
+    mockSessionStatusesSignal.value = new Map([
+      ['child', { processingState: { status: 'idle' }, unreadCount: 42 }],
+    ]);
+    render(<SessionsSidebar />);
+    expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(screen.queryByText('42')).toBeNull();
+    expect(screen.queryByTestId('session-spawn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Parent' }));
+    expect(screen.getByRole('img', { name: '42 unread messages' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
   });
 
   it('navigates when a session row is selected', () => {

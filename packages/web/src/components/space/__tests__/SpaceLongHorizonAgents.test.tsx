@@ -1972,7 +1972,8 @@ describe('SpaceLongHorizonAgents', () => {
     const card = screen.getByText('Research Long Horizon').closest('[role="button"]')!;
     expect(within(card).getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
     expect(within(card).getByText('active')).toBeTruthy();
-    expect(card.textContent).toContain('3 unread');
+    expect(within(card).getByLabelText('3 unread messages')).toBeTruthy();
+    expect(within(card).queryByTestId('agent-card-new-conversation')).toBeNull();
 
     markSpaceSessionRead('session-research', 3);
     await waitFor(() => expect(card.textContent).not.toContain('unread'));

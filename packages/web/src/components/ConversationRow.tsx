@@ -12,12 +12,14 @@ interface ConversationRowProps {
   nested?: boolean;
   clone?: boolean;
   status: SidebarSessionStatus;
+  secondaryStatus?: SidebarSessionStatus;
   unreadCount?: number;
   unread?: boolean;
   onClick: () => void;
   onTitleDoubleClick?: () => void;
   titleHint?: string;
   actions?: ComponentChildren;
+  disclosure?: ComponentChildren;
   children?: ComponentChildren;
   editor?: ComponentChildren;
   rowTestId?: string;
@@ -32,12 +34,14 @@ export function ConversationRow({
   nested = false,
   clone = false,
   status,
+  secondaryStatus,
   unreadCount = 0,
   unread = false,
   onClick,
   onTitleDoubleClick,
   titleHint,
   actions,
+  disclosure,
   children,
   editor,
   rowTestId,
@@ -50,13 +54,14 @@ export function ConversationRow({
       data-testid={rowTestId}
       class={cn(
         'group/row relative flex min-h-8 items-stretch rounded-lg transition-colors',
-        nested && 'ml-4',
+        nested && 'ml-6',
         selected ? 'bg-fill' : 'hover:bg-fill-soft'
       )}
       onMouseLeave={onMouseLeave}
     >
       {editor || (
         <>
+          {disclosure}
           <button
             type="button"
             data-testid={testId}
@@ -69,13 +74,16 @@ export function ConversationRow({
                 onTitleDoubleClick();
               }
             }}
-            title={`${title} · ${status.label}`}
+            title={[title, status.label, secondaryStatus?.label, titleHint]
+              .filter(Boolean)
+              .join(' · ')}
             class={cn(
               'flex flex-1 min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
               selected ? 'text-fg' : 'text-fg-muted group-hover/row:text-fg-soft'
             )}
           >
             <SessionActivityIndicator status={status} />
+            {secondaryStatus && <SessionActivityIndicator status={secondaryStatus} />}
             {clone && (
               <span
                 role="img"
@@ -93,7 +101,9 @@ export function ConversationRow({
                 (selected || unreadCount > 0 || unread) && 'font-medium text-fg'
               )}
               onDblClick={onTitleDoubleClick}
-              title={titleHint}
+              title={[title, status.label, secondaryStatus?.label, titleHint]
+                .filter(Boolean)
+                .join(' · ')}
             >
               {title}
             </h3>
