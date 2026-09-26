@@ -593,7 +593,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     expect(getByTestId('confirm-modal')).toBeTruthy();
   });
 
-  it('clones a built-in template into an editable draft', async () => {
+  it('prefills the create form from a built-in template via Start from', async () => {
     mockTemplates.value = [
       makeTemplate({
         key: 'qa',
@@ -605,13 +605,14 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       }),
     ];
 
-    const { getByRole, getByDisplayValue, getByText, getByPlaceholderText } = renderPanel();
+    const { getByRole, getByDisplayValue, getByTestId, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'Clone template QA Engineer' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
+    fireEvent.input(getByTestId('template-start-from'), { target: { value: 'qa' } });
 
-    expect(getByText('Clone QA Engineer')).toBeTruthy();
     expect(getByDisplayValue('QA Engineer copy')).toBeTruthy();
     expect(getByDisplayValue('qa-copy')).toBeTruthy();
+    expect(getByDisplayValue('Validates product quality.')).toBeTruthy();
     const keyInput = getByPlaceholderText('e.g. release-readiness.custom') as HTMLInputElement;
     expect(keyInput.disabled).toBe(false);
 

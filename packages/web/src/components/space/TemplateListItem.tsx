@@ -5,31 +5,25 @@ export function TemplateListItem({
   isUserTemplate,
   onEdit,
   onDelete,
-  onClone,
 }: {
   template: SpaceLongHorizonAgentTemplate;
   isUserTemplate: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
-  onClone?: () => void;
 }) {
   return (
     <div class="st-trow">
-      <span class="st-trow-name">{template.displayName}</span>
-      {!isUserTemplate && <span class="st-chip">Built-in</span>}
-      <span class="st-trow-desc">{template.description}</span>
-      {(onEdit || onDelete || onClone) && (
+      <div class="st-trow-body">
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="st-trow-name truncate">{template.displayName}</span>
+          {!isUserTemplate && <span class="st-chip">Built-in</span>}
+        </div>
+        {template.description && (
+          <p class="mt-1 line-clamp-2 text-xs leading-5 text-fg-muted">{template.description}</p>
+        )}
+      </div>
+      {(onEdit || onDelete) && (
         <span class="st-trow-acts">
-          {onClone && (
-            <button
-              type="button"
-              onClick={onClone}
-              aria-label={`Clone template ${template.displayName}`}
-              class="st-act"
-            >
-              Clone
-            </button>
-          )}
           {onEdit && (
             <button
               type="button"

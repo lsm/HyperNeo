@@ -18,47 +18,61 @@ import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
 export function TemplateEditor({
   template,
-  cloneFrom,
+  copyFromOptions,
   onSaved,
   onCancel,
 }: {
   template: SpaceLongHorizonAgentTemplate | null;
-  cloneFrom?: SpaceLongHorizonAgentTemplate | null;
+  copyFromOptions?: SpaceLongHorizonAgentTemplate[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const isEdit = !!template;
-  const source = template ?? cloneFrom ?? null;
-  const templateTools = source ? toolPermissionsToolsList(source) : [];
-  const [displayName, setDisplayName] = useState(
-    template?.displayName ?? (cloneFrom ? `${cloneFrom.displayName} copy` : '')
-  );
+  const templateTools = template ? toolPermissionsToolsList(template) : [];
+  const [displayName, setDisplayName] = useState(template?.displayName ?? '');
   const [key, setKey] = useState(template?.key ?? '');
-  const [handle, setHandle] = useState(
-    template?.handle ?? (cloneFrom ? `${cloneFrom.handle}-copy` : '')
-  );
-  const [description, setDescription] = useState(source?.description ?? '');
-  const [instructions, setInstructions] = useState(source?.instructions ?? '');
-  const [autonomyLevel, setAutonomyLevel] = useState<number>(source?.suggestedAutonomyLevel ?? 2);
+  const [handle, setHandle] = useState(template?.handle ?? '');
+  const [description, setDescription] = useState(template?.description ?? '');
+  const [instructions, setInstructions] = useState(template?.instructions ?? '');
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(template?.suggestedAutonomyLevel ?? 2);
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
     tools: templateTools,
     toolsOverridden: templateTools.length > 0,
   });
   const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
-    model: source?.model ?? null,
-    provider: source?.provider ?? null,
-    thinkingLevel: source?.thinkingLevel ?? null,
+    model: template?.model ?? null,
+    provider: template?.provider ?? null,
+    thinkingLevel: template?.thinkingLevel ?? null,
   });
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
-    source?.settingSources ?? null
+    template?.settingSources ?? null
   );
   const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(() =>
-    poolFromModelConfig(withoutInheritedThinkingLevel(source))
+    poolFromModelConfig(withoutInheritedThinkingLevel(template))
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
   const extraTools = extraToolsOf(toolsSelection.tools);
+
+  const applySource = (source: SpaceLongHorizonAgentTemplate | null) => {
+    setDisplayName(source ? `${source.displayName} copy` : '');
+    setKey('');
+    setHandle(source ? `${source.handle}-copy` : '');
+    setDescription(source?.description ?? '');
+    setInstructions(source?.instructions ?? '');
+    setAutonomyLevel(source?.suggestedAutonomyLevel ?? 2);
+    const sourceTools = source ? toolPermissionsToolsList(source) : [];
+    setToolsSelection({ tools: sourceTools, toolsOverridden: sourceTools.length > 0 });
+    setModelFields({
+      model: source?.model ?? null,
+      provider: source?.provider ?? null,
+      thinkingLevel: source?.thinkingLevel ?? null,
+    });
+    setSettingSources(source?.settingSources ?? null);
+    setModelPool(poolFromModelConfig(withoutInheritedThinkingLevel(source)));
+    setExtraToolDraft('');
+  };
 
   const removeExtraTool = (tool: string) => {
     setToolsSelection((selection) => withoutExtraTool(selection, tool));
@@ -104,9 +118,7 @@ export function TemplateEditor({
     <Modal
       isOpen
       onClose={onCancel}
-      title={
-        isEdit ? 'Edit template' : cloneFrom ? `Clone ${cloneFrom.displayName}` : 'New template'
-      }
+      title={isEdit ? 'Edit template' : 'New template'}
       size="lg"
       footer={
         <FormActions
@@ -119,6 +131,29 @@ export function TemplateEditor({
       }
     >
       <div class="space-y-4">
+        {!isEdit && copyFromOptions && copyFromOptions.length > 0 && (
+          <FormField label="Start from">
+            <select
+              class={FORM_CONTROL_CLASS}
+              defaultValue=""
+              data-testid="template-start-from"
+              onInput={(e) => {
+                const selectedKey = (e.target as HTMLSelectElement).value;
+                applySource(copyFromOptions.find((option) => option.key === selectedKey) ?? null);
+              }}
+            >
+              <option value="">Blank template</option>
+              {copyFromOptions.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.displayName}
+                </option>
+              ))}
+            </select>
+            <p class="mt-1 text-xs text-fg-muted">
+              Prefills every field from the chosen template — adjust anything before creating.
+            </p>
+          </FormField>
+        )}
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Name">
             <input

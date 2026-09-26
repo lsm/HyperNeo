@@ -27,9 +27,6 @@ export function SpaceTemplatesPanel({
   const [editingTemplate, setEditingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
-  const [cloningTemplate, setCloningTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
-    null
-  );
   const templateGroups = groupTemplatesByLabel(templates);
   const pendingDelete = templateDeleteRequest.value;
 
@@ -45,10 +42,6 @@ export function SpaceTemplatesPanel({
   const openEditTemplate = (template: SpaceLongHorizonAgentTemplate) => {
     setEditingTemplate(template);
     setShowTemplateEditor(true);
-  };
-
-  const openCloneTemplate = (template: SpaceLongHorizonAgentTemplate) => {
-    setCloningTemplate(template);
   };
 
   return (
@@ -109,7 +102,6 @@ export function SpaceTemplatesPanel({
                     onDelete={
                       userTemplateKeys.has(t.key) ? () => openTemplateDelete(spaceId, t) : undefined
                     }
-                    onClone={userTemplateKeys.has(t.key) ? undefined : () => openCloneTemplate(t)}
                   />
                 ))}
               </div>
@@ -121,6 +113,7 @@ export function SpaceTemplatesPanel({
       {showTemplateEditor && (
         <TemplateEditor
           template={editingTemplate}
+          copyFromOptions={templates}
           onSaved={() => {
             setShowTemplateEditor(false);
             setEditingTemplate(null);
@@ -129,15 +122,6 @@ export function SpaceTemplatesPanel({
             setShowTemplateEditor(false);
             setEditingTemplate(null);
           }}
-        />
-      )}
-
-      {cloningTemplate && (
-        <TemplateEditor
-          template={null}
-          cloneFrom={cloningTemplate}
-          onSaved={() => setCloningTemplate(null)}
-          onCancel={() => setCloningTemplate(null)}
         />
       )}
 
