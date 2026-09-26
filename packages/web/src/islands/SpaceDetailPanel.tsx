@@ -7,30 +7,29 @@ import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import {
   navigateToSpace,
   navigateToSpaceAgent,
-  navigateToSpaceGoals,
   navigateToSpaceEvolve,
+  navigateToSpaceGoals,
   navigateToSpaceMemories,
   navigateToSpaceSession,
   navigateToSpaceTask,
   navigateToSpaceTasks,
 } from '../lib/router';
 import {
+  cloneConversationTitles,
+  conversationTitle,
+  getSessionSidebarStatus,
+  getTaskSidebarStatus,
+} from '../lib/session-sidebar-status';
+import {
   currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
-  spaceOverlaySessionIdSignal,
   spaceOverlayPendingTaskIdSignal,
+  spaceOverlaySessionIdSignal,
 } from '../lib/signals';
 import { type SpaceSessionRow, spaceStore } from '../lib/space-store';
-import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
-import { getTaskStatusConfig } from '../lib/task-status';
-import {
-  conversationTitle,
-  getSessionSidebarStatus,
-  getTaskSidebarStatus,
-} from '../lib/session-sidebar-status';
 import {
   getSpaceSessionUnreadCount,
   isSpaceTaskUnread,
@@ -39,6 +38,8 @@ import {
   seedSpaceTasksSeen,
   syncSpaceSessionSeen,
 } from '../lib/space-unread';
+import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
+import { getTaskStatusConfig } from '../lib/task-status';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
@@ -133,14 +134,6 @@ export function SpaceDetailPanel({
   const routeSpaceId = navigationSpaceId ?? spaceId;
 
   const isReady = !isLoading && loadedSpaceId === spaceId;
-
-  if (!isReady) {
-    return (
-      <div class="flex-1 flex items-center justify-center p-6">
-        <span class="text-xs text-fg-muted">Loading…</span>
-      </div>
-    );
-  }
 
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
@@ -333,6 +326,14 @@ export function SpaceDetailPanel({
     },
     [routeSpaceId, onNavigate]
   );
+
+  if (!isReady) {
+    return (
+      <div class="flex-1 flex items-center justify-center p-6">
+        <span class="text-xs text-fg-muted">Loading…</span>
+      </div>
+    );
+  }
 
   return (
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -577,6 +578,10 @@ export function SpaceDetailPanel({
               const cloneCount = agent.sessionId
                 ? (clonesByParent.get(agent.sessionId)?.length ?? 0)
                 : 0;
+              const cloneTitles = cloneConversationTitles(
+                agent.displayName,
+                agent.sessionId ? (clonesByParent.get(agent.sessionId) ?? []) : []
+              );
               return (
                 <div key={agent.id} class="group/agent">
                   <ConversationRow
@@ -626,7 +631,7 @@ export function SpaceDetailPanel({
                   {clones.map((clone) => (
                     <ConversationRow
                       key={clone.id}
-                      title={conversationTitle(clone.title, true)}
+                      title={cloneTitles.get(clone.id) ?? conversationTitle(clone.title, true)}
                       testId="space-detail-clone-row"
                       sessionId={clone.id}
                       nested

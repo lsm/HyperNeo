@@ -85,8 +85,8 @@ vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({
 mockSessionsSignal = signal<Session[]>([]);
 mockSessionStatusesSignal = signal(new Map());
 
-import { SessionsSidebar } from '../SessionsSidebar';
 import { currentSessionIdSignal } from '../../lib/signals';
+import { SessionsSidebar } from '../SessionsSidebar';
 
 function createMockSession(
   id: string,
@@ -177,7 +177,7 @@ describe('SessionsSidebar', () => {
       metadata: { messageCount: 0, clone: { returnedAt: '2026-09-24T00:00:00.000Z' } },
     };
     const open = {
-      ...createMockSession('clone-2', 'Parent Chat · 分身 2', '/workspace/hyperneo'),
+      ...createMockSession('clone-2', 'Parent Chat · 分身', '/workspace/hyperneo'),
       parentSessionId: 'parent',
       lastActiveAt: '2026-05-17T12:00:00.000Z',
     };
@@ -191,7 +191,7 @@ describe('SessionsSidebar', () => {
       screen.getByRole('button', { name: 'Show child conversations for Parent Chat' })
     );
     const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
-    expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat✓', 'Orphan']);
+    expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat 3✓', 'Orphan']);
     expect(screen.queryByTestId('session-clone-glyph')).toBeNull();
     expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
     expect(screen.queryByTestId('session-spawn')).toBeNull();

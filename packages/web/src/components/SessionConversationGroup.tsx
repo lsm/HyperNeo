@@ -1,8 +1,8 @@
 import type { Session } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
-import { currentSessionIdSignal } from '../lib/signals';
+import { cloneConversationTitles, conversationTitle } from '../lib/session-sidebar-status';
 import { allSessionStatuses } from '../lib/session-status';
-import { conversationTitle } from '../lib/session-sidebar-status';
+import { currentSessionIdSignal } from '../lib/signals';
 import { ConversationDisclosure } from './ConversationDisclosure';
 import SessionListItem from './SessionListItem';
 
@@ -21,6 +21,8 @@ export function SessionConversationGroup({
 }: SessionConversationGroupProps) {
   const [expanded, setExpanded] = useState(false);
   const selectedId = currentSessionIdSignal.value;
+  const displayedTitle = conversationTitle(session.title, !!session.parentSessionId);
+  const childTitles = cloneConversationTitles(displayedTitle, childSessions);
   const visible = expanded
     ? childSessions
     : childSessions.filter((child) => child.id === selectedId);
@@ -41,7 +43,7 @@ export function SessionConversationGroup({
           childSessions.length > 0 && (
             <ConversationDisclosure
               expanded={expanded}
-              title={conversationTitle(session.title, !!session.parentSessionId)}
+              title={displayedTitle}
               onToggle={() => setExpanded((value) => !value)}
             />
           )
@@ -53,6 +55,7 @@ export function SessionConversationGroup({
           session={child}
           onSessionClick={onSessionClick}
           onArchive={onArchive}
+          displayTitle={childTitles.get(child.id)}
           nested
         />
       ))}

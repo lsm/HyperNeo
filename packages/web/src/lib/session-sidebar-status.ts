@@ -107,3 +107,22 @@ export function conversationTitle(title: string, isClone: boolean): string {
     (isClone ? title.replace(/\s*·\s*分身(?=\s*\d*\s*$)/u, '') : title).trim() || 'New conversation'
   );
 }
+
+export function cloneConversationTitles(
+  parentTitle: string,
+  clones: ReadonlyArray<{ id: string; title: string }>
+): Map<string, string> {
+  const reference = conversationTitle(parentTitle, false);
+  const titles = new Map<string, string>();
+  let ordinal = 1;
+  for (const clone of clones) {
+    const stripped = conversationTitle(clone.title, true);
+    if (stripped === reference) {
+      ordinal += 1;
+      titles.set(clone.id, `${stripped} ${ordinal}`);
+    } else {
+      titles.set(clone.id, stripped);
+    }
+  }
+  return titles;
+}

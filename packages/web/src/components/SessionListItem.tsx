@@ -1,5 +1,5 @@
-import type { ComponentChildren } from 'preact';
 import type { Session } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { useSessionRename } from '../hooks/useSessionRename';
 import { conversationTitle, getSessionSidebarStatus } from '../lib/session-sidebar-status.ts';
@@ -13,6 +13,7 @@ interface SessionListItemProps {
   onArchive: (sessionId: string) => void | Promise<void>;
   disclosure?: ComponentChildren;
   unread?: boolean;
+  displayTitle?: string;
   nested?: boolean;
 }
 
@@ -22,6 +23,7 @@ export default function SessionListItem({
   onArchive,
   disclosure,
   unread,
+  displayTitle,
   nested = false,
 }: SessionListItemProps) {
   const returnedAt = session.metadata?.clone?.returnedAt;
@@ -48,7 +50,7 @@ export default function SessionListItem({
 
   return (
     <ConversationRow
-      title={conversationTitle(session.title, isClone)}
+      title={displayTitle ?? conversationTitle(session.title, isClone)}
       selected={isActive}
       nested={nested}
       status={status}
