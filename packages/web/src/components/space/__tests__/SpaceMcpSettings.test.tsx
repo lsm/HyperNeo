@@ -125,9 +125,9 @@ describe('SpaceMcpSettings', () => {
   it('toggles a server — calls space.mcp.setEnabled with inverse value', async () => {
     setEntries([makeEntry('alpha', { enabled: true })]);
     const { getByTestId } = render(<SpaceMcpSettings spaceId="space-1" />);
-    const toggle = getByTestId('space-mcp-toggle-alpha') as HTMLInputElement;
+    const toggle = getByTestId('space-mcp-toggle-alpha');
 
-    fireEvent.change(toggle);
+    fireEvent.click(toggle);
 
     await waitFor(() => {
       expect(mockHubRequest).toHaveBeenCalledWith('space.mcp.setEnabled', {
@@ -194,7 +194,7 @@ describe('SpaceMcpSettings', () => {
     setEntries([makeEntry('fail-srv')]);
     mockHubRequest.mockRejectedValueOnce(new Error('nope'));
     const { getByTestId } = render(<SpaceMcpSettings spaceId="space-1" />);
-    fireEvent.change(getByTestId('space-mcp-toggle-fail-srv') as HTMLInputElement);
+    fireEvent.click(getByTestId('space-mcp-toggle-fail-srv'));
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalled();
@@ -206,7 +206,7 @@ describe('SpaceMcpSettings', () => {
     mockGetHubIfConnected.mockReturnValue(null as never);
     setEntries([makeEntry('offline-srv')]);
     const { getByTestId } = render(<SpaceMcpSettings spaceId="space-1" />);
-    fireEvent.change(getByTestId('space-mcp-toggle-offline-srv') as HTMLInputElement);
+    fireEvent.click(getByTestId('space-mcp-toggle-offline-srv'));
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Not connected to server');

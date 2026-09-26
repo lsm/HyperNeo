@@ -87,9 +87,15 @@ export interface SettingsToggleProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  'data-testid'?: string;
 }
 
-export function SettingsToggle({ checked, onChange, disabled }: SettingsToggleProps) {
+export function SettingsToggle({
+  checked,
+  onChange,
+  disabled,
+  'data-testid': testId,
+}: SettingsToggleProps) {
   return (
     <button
       type="button"
@@ -98,6 +104,7 @@ export function SettingsToggle({ checked, onChange, disabled }: SettingsTogglePr
       disabled={disabled}
       onClick={() => onChange(!checked)}
       class={cn('st-switch', checked && 'st-switch-on')}
+      data-testid={testId}
     />
   );
 }

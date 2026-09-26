@@ -823,11 +823,7 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
         </form>
       ) : (
         <>
-          {activeTab === 'tools' && (
-            <SettingsSection title="Tools" description="Enable MCP servers this space can use.">
-              <SpaceMcpSettings spaceId={space.id} disabled={saving} />
-            </SettingsSection>
-          )}
+          {activeTab === 'tools' && <SpaceMcpSettings spaceId={space.id} disabled={saving} />}
 
           {activeTab === 'events' && (
             <SettingsSection

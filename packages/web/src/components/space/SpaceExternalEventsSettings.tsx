@@ -662,16 +662,6 @@ export function SpaceExternalEventsSettings({
 
   return (
     <section class="space-y-4" data-testid="space-external-events-settings">
-      <div>
-        <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider">
-          External event sources
-        </h3>
-        <p class="mt-1 text-xs text-fg-muted">
-          Enable source extensions globally, then choose which repositories can trigger work in this
-          space.
-        </p>
-      </div>
-
       {loading ? (
         <div class="flex items-center gap-2 py-2 text-xs text-fg-muted">
           <Spinner size="sm" />
@@ -679,10 +669,10 @@ export function SpaceExternalEventsSettings({
         </div>
       ) : (
         <div class="space-y-4">
-          <div class="space-y-2">
+          <div class="st-group">
             {extensions.length === 0 ? (
-              <div class="rounded-lg border border-line bg-surface-raised px-3 py-3 text-sm text-fg-muted">
-                No external event extensions registered.
+              <div class="st-empty">
+                <p class="st-empty-title">No external event extensions registered.</p>
               </div>
             ) : (
               extensions.map((extension) => (
@@ -729,13 +719,13 @@ export function SpaceExternalEventsSettings({
             />
           )}
 
-          <div class="rounded-lg border border-line bg-surface-raised px-3 py-3">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div class="text-sm font-medium text-fg-soft">GitHub repositories</div>
-                <p class="mt-0.5 text-xs text-fg-muted">
+          <div class="st-group">
+            <div class="st-row">
+              <div class="st-row-label">
+                GitHub repositories
+                <div class="st-row-desc">
                   Watch pull request and review activity for this space.
-                </p>
+                </div>
               </div>
               <label
                 class={cn('flex items-center gap-2 text-xs text-fg-soft', disabled && 'opacity-60')}
@@ -753,23 +743,25 @@ export function SpaceExternalEventsSettings({
               </label>
             </div>
 
-            <div class="mt-3 rounded-lg border border-line bg-surface-overlay px-3 py-2">
-              <div class="text-[11px] uppercase tracking-wider text-fg-muted">Webhook endpoint</div>
-              <div class="mt-1 flex items-center gap-2">
-                <code class="min-w-0 flex-1 truncate text-xs text-fg-soft">{webhookUrl}</code>
+            <div class="st-row">
+              <div class="st-row-label">
+                Webhook endpoint
+                <div class="st-row-desc">
+                  Use a public HTTPS tunnel for local development. Configure GitHub webhooks for
+                  pull_request, issue_comment, pull_request_review, pull_request_review_comment,
+                  pull_request_review_thread, check_run, and check_suite events.
+                </div>
+              </div>
+              <div class="st-row-ctl flex min-w-0 items-center gap-2">
+                <code class="min-w-0 truncate text-xs text-fg-soft">{webhookUrl}</code>
                 <CopyButton text={webhookUrl} label="Copy webhook URL" />
               </div>
-              <p class="mt-1 text-xs text-fg-muted">
-                Use a public HTTPS tunnel for local development. Configure GitHub webhooks for
-                pull_request, issue_comment, pull_request_review, pull_request_review_comment,
-                pull_request_review_thread, check_run, and check_suite events.
-              </p>
             </div>
 
-            <div class="mt-3 flex flex-wrap items-center gap-3">
+            <div class="st-row">
               <label
                 class={cn(
-                  'flex items-center gap-2 text-xs text-fg-muted',
+                  'st-row-label flex items-center gap-2 text-xs',
                   (disabled ||
                     !githubControlsEnabled ||
                     busy === 'github:self-echo' ||
@@ -795,7 +787,7 @@ export function SpaceExternalEventsSettings({
 
             <form
               onSubmit={(event) => addRepo(event)}
-              class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]"
+              class="st-addrow grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]"
             >
               <input
                 type="text"
@@ -837,37 +829,35 @@ export function SpaceExternalEventsSettings({
               >
                 Auto-configure
               </Button>
+              {formError && <p class="mt-2 text-xs text-danger-soft">{formError}</p>}
             </form>
-            {formError && <p class="mt-2 text-xs text-danger-soft">{formError}</p>}
 
-            <div class="mt-3 space-y-2">
-              {repos.length === 0 ? (
-                <p class="rounded-lg border border-dashed border-line-strong px-3 py-3 text-sm text-fg-muted">
-                  No repositories watched yet.
-                </p>
-              ) : (
-                repos.map((repo) => (
-                  <GitHubRepoRow
-                    key={repo.id}
-                    repo={repo}
-                    disabled={
-                      disabled ||
-                      busy === `repo:${repo.id}` ||
-                      busy === `webhook:${repo.id}` ||
-                      !githubControlsEnabled ||
-                      panelBusy
-                    }
-                    webhookBusy={busy === `webhook:${repo.id}`}
-                    webhooksEnabled={githubWebhooksEnabled}
-                    pollingEnabled={githubPollingEnabled}
-                    onUpdate={(patch) => updateRepo(repo, patch)}
-                    onAutoConfigureWebhook={() => autoConfigureWebhook(repo)}
-                    onCheckWebhook={() => checkWebhook(repo)}
-                    onRemove={() => removeRepo(repo)}
-                  />
-                ))
-              )}
-            </div>
+            {repos.length === 0 ? (
+              <div class="st-trow">
+                <span class="st-trow-desc">No repositories watched yet.</span>
+              </div>
+            ) : (
+              repos.map((repo) => (
+                <GitHubRepoRow
+                  key={repo.id}
+                  repo={repo}
+                  disabled={
+                    disabled ||
+                    busy === `repo:${repo.id}` ||
+                    busy === `webhook:${repo.id}` ||
+                    !githubControlsEnabled ||
+                    panelBusy
+                  }
+                  webhookBusy={busy === `webhook:${repo.id}`}
+                  webhooksEnabled={githubWebhooksEnabled}
+                  pollingEnabled={githubPollingEnabled}
+                  onUpdate={(patch) => updateRepo(repo, patch)}
+                  onAutoConfigureWebhook={() => autoConfigureWebhook(repo)}
+                  onCheckWebhook={() => checkWebhook(repo)}
+                  onRemove={() => removeRepo(repo)}
+                />
+              ))
+            )}
           </div>
 
           <DeliveryLogSection
@@ -916,20 +906,20 @@ function DeliveryLogSection({
   onSelect,
 }: DeliveryLogSectionProps) {
   return (
-    <div class="rounded-lg border border-line bg-surface-raised px-3 py-3">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div class="text-sm font-medium text-fg-soft">Event delivery log</div>
-          <p class="mt-0.5 text-xs text-fg-muted">
+    <div class="st-group">
+      <div class="st-row">
+        <div class="st-row-label">
+          Event delivery log
+          <div class="st-row-desc">
             Inspect external events, matched agents, delivery state, and payloads.
-          </p>
+          </div>
         </div>
-        <Button type="button" size="sm" loading={loading} onClick={onRefresh}>
+        <Button type="button" size="sm" variant="ghost" loading={loading} onClick={onRefresh}>
           Refresh
         </Button>
       </div>
 
-      <div class="mt-3 flex flex-wrap gap-2">
+      <div class="st-addrow flex flex-wrap gap-2">
         <select
           value={status}
           onChange={(event) =>
@@ -959,10 +949,10 @@ function DeliveryLogSection({
         </Button>
       </div>
 
-      <div class="mt-3 overflow-x-auto rounded-lg border border-line-strong">
-        <table class="min-w-full divide-y divide-line-strong text-left text-xs">
-          <thead class="bg-surface-overlay text-fg-muted">
-            <tr>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-line text-left text-xs">
+          <thead class="text-fg-faint">
+            <tr class="border-b border-line">
               <th class="px-3 py-2 font-medium">Event</th>
               <th class="px-3 py-2 font-medium">Target</th>
               <th class="px-3 py-2 font-medium">Status</th>
@@ -1057,13 +1047,13 @@ function DeliveryDetail({
   onClose: () => void;
 }) {
   return (
-    <div class="mt-3 rounded-lg border border-line-strong bg-surface-overlay px-3 py-3">
+    <div class="st-row-stacked st-row">
       <div class="flex items-start justify-between gap-3">
         <div>
           <div class="text-sm font-medium text-fg-soft">Event detail</div>
           <div class="mt-1 font-mono text-xs text-fg-muted">{delivery.event.id}</div>
         </div>
-        <button type="button" onClick={onClose} class="text-xs text-fg-muted hover:text-fg-soft">
+        <button type="button" onClick={onClose} class="st-act">
           Close
         </button>
       </div>
@@ -1114,39 +1104,15 @@ interface ExtensionCardProps {
 function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
   const capabilities = formatCapabilities(extension.config.capabilities);
   return (
-    <label
-      class={cn(
-        'flex items-start gap-3 rounded-lg border border-line bg-surface-raised px-3 py-2.5',
-        disabled && 'opacity-60'
-      )}
-    >
-      <input
-        type="checkbox"
-        checked={extension.config.globallyEnabled}
-        disabled={disabled}
-        onChange={() => onToggle(!extension.config.globallyEnabled)}
-        class={cn(FORM_CHECKBOX_CLASS, 'mt-0.5')}
-      />
-      <div class="min-w-0 flex-1">
+    <label class={cn('st-trow cursor-pointer', disabled && 'opacity-60')}>
+      <div class="st-trow-body">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-sm font-medium text-fg-soft capitalize">{extension.source}</span>
-          <span
-            class={cn(
-              'rounded-full px-2 py-0.5 text-[11px]',
-              extension.status === 'started'
-                ? 'bg-success/10 text-success-soft'
-                : 'bg-fg-faint/10 text-fg-muted'
-            )}
-          >
+          <span class="st-trow-name capitalize">{extension.source}</span>
+          <span class={extension.status === 'started' ? 'st-chip st-chip-ok' : 'st-chip'}>
             {extension.status}
           </span>
-        </div>
-        <div class="mt-1 flex flex-wrap gap-1">
           {capabilities.map((capability) => (
-            <span
-              key={capability}
-              class="rounded bg-fill-soft px-1.5 py-0.5 text-[11px] text-fg-muted"
-            >
+            <span key={capability} class="st-chip">
               {capability}
             </span>
           ))}
@@ -1155,6 +1121,13 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
           )}
         </div>
       </div>
+      <input
+        type="checkbox"
+        checked={extension.config.globallyEnabled}
+        disabled={disabled}
+        onChange={() => onToggle(!extension.config.globallyEnabled)}
+        class={FORM_CHECKBOX_CLASS}
+      />
     </label>
   );
 }
@@ -1183,89 +1156,82 @@ function GitHubRepoRow({
   onRemove,
 }: GitHubRepoRowProps) {
   return (
-    <div
-      class={cn(
-        'rounded-lg border border-line-strong bg-surface-overlay px-3 py-2.5',
-        disabled && 'opacity-60'
-      )}
-    >
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0">
-          <div class="truncate font-mono text-sm text-fg-soft">
-            {repo.owner}/{repo.repo}
-          </div>
-          <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-fg-muted">
-            <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
-            <WebhookStatus repo={repo} />
-            <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
-            <span>last poll {formatTimestamp(repo.lastPollAt)}</span>
-          </div>
+    <div class={cn('st-trow items-start', disabled && 'opacity-60')}>
+      <div class="st-trow-body">
+        <div class="truncate font-mono text-[13px] font-medium text-fg-soft">
+          {repo.owner}/{repo.repo}
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-fg-muted">
+          <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
+          <WebhookStatus repo={repo} />
+          <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
+          <span>last poll {formatTimestamp(repo.lastPollAt)}</span>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-4">
+          <label class="flex items-center gap-2 text-xs text-fg-soft">
+            <input
+              type="checkbox"
+              checked={repo.enabled}
+              disabled={disabled}
+              onChange={() => onUpdate({ enabled: !repo.enabled })}
+              class={FORM_CHECKBOX_CLASS}
+            />
+            Enabled
+          </label>
+          <label class="flex items-center gap-2 text-xs text-fg-soft">
+            <input
+              type="checkbox"
+              checked={repo.webhookEnabled}
+              disabled={disabled}
+              onChange={() => onUpdate({ webhookEnabled: !repo.webhookEnabled })}
+              class={FORM_CHECKBOX_CLASS}
+            />
+            Webhooks
+          </label>
+          <label class="flex items-center gap-2 text-xs text-fg-soft">
+            <input
+              type="checkbox"
+              checked={repo.pollingEnabled}
+              disabled={disabled || !pollingEnabled}
+              onChange={() => onUpdate({ pollingEnabled: !repo.pollingEnabled })}
+              class={FORM_CHECKBOX_CLASS}
+            />
+            Polling
+          </label>
+        </div>
+      </div>
+      <span class="st-trow-acts">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          loading={webhookBusy}
+          disabled={disabled || webhookBusy || !webhooksEnabled}
+          onClick={onAutoConfigureWebhook}
+        >
+          Auto-configure webhook
+        </Button>
+        {repo.webhookRemoteId && (
           <Button
             type="button"
             size="sm"
-            variant="secondary"
-            loading={webhookBusy}
+            variant="ghost"
+            loading={false}
             disabled={disabled || webhookBusy || !webhooksEnabled}
-            onClick={onAutoConfigureWebhook}
+            onClick={onCheckWebhook}
           >
-            Auto-configure webhook
+            Check webhook
           </Button>
-          {repo.webhookRemoteId && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              loading={false}
-              disabled={disabled || webhookBusy || !webhooksEnabled}
-              onClick={onCheckWebhook}
-            >
-              Check webhook
-            </Button>
-          )}
-          <button
-            type="button"
-            onClick={onRemove}
-            disabled={disabled}
-            class="text-xs text-danger hover:text-danger-soft disabled:cursor-not-allowed disabled:text-danger"
-          >
-            Remove
-          </button>
-        </div>
-      </div>
-      <div class="mt-3 flex flex-wrap gap-4">
-        <label class="flex items-center gap-2 text-xs text-fg-soft">
-          <input
-            type="checkbox"
-            checked={repo.enabled}
-            disabled={disabled}
-            onChange={() => onUpdate({ enabled: !repo.enabled })}
-            class={FORM_CHECKBOX_CLASS}
-          />
-          Enabled
-        </label>
-        <label class="flex items-center gap-2 text-xs text-fg-soft">
-          <input
-            type="checkbox"
-            checked={repo.webhookEnabled}
-            disabled={disabled}
-            onChange={() => onUpdate({ webhookEnabled: !repo.webhookEnabled })}
-            class={FORM_CHECKBOX_CLASS}
-          />
-          Webhooks
-        </label>
-        <label class="flex items-center gap-2 text-xs text-fg-soft">
-          <input
-            type="checkbox"
-            checked={repo.pollingEnabled}
-            disabled={disabled || !pollingEnabled}
-            onChange={() => onUpdate({ pollingEnabled: !repo.pollingEnabled })}
-            class={FORM_CHECKBOX_CLASS}
-          />
-          Polling
-        </label>
-      </div>
+        )}
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={disabled}
+          class="st-act st-act-danger disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Remove
+        </button>
+      </span>
     </div>
   );
 }
@@ -1319,55 +1285,53 @@ function GitHubConnectionCard({
   const [replaceMode, setReplaceMode] = useState(false);
   const showInput = !connected || tokenInvalid || replaceMode;
   return (
-    <div
-      class="rounded-lg border border-line bg-surface-raised px-3 py-3 space-y-3"
-      data-testid="github-connection-card"
-    >
-      <div>
-        <div class="text-sm font-medium text-fg-soft">GitHub connection</div>
-        <p class="mt-0.5 text-xs text-fg-muted">
-          Store a daemon-wide personal access token in the keychain for webhook auto-configure and
-          authenticated polling. The token is shared by every space using the GitHub extension.
-          Recommended scopes: <code class="text-fg-soft">repo</code>,{' '}
-          <code class="text-fg-soft">admin:repo_hook</code>. Supported prefixes:{' '}
-          <code class="text-fg-soft">ghp_</code>, <code class="text-fg-soft">github_pat_</code>,{' '}
-          <code class="text-fg-soft">gho_</code>.
-        </p>
+    <div class="st-group" data-testid="github-connection-card">
+      <div class="st-row">
+        <div class="st-row-label">
+          GitHub connection
+          <div class="st-row-desc">
+            Store a daemon-wide personal access token in the keychain for webhook auto-configure and
+            authenticated polling. The token is shared by every space using the GitHub extension.
+            Recommended scopes: <code class="text-fg-soft">repo</code>,{' '}
+            <code class="text-fg-soft">admin:repo_hook</code>. Supported prefixes:{' '}
+            <code class="text-fg-soft">ghp_</code>, <code class="text-fg-soft">github_pat_</code>,{' '}
+            <code class="text-fg-soft">gho_</code>.
+          </div>
+        </div>
       </div>
 
       {(connected || tokenInvalid) && (
-        <div
-          class="flex flex-wrap items-center gap-2 text-xs"
-          data-testid="github-token-status-row"
-        >
-          <span
-            class={cn(
-              'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-              connected ? 'bg-success/10 text-success-soft' : 'bg-danger/10 text-danger-soft'
+        <div class="st-row" data-testid="github-token-status-row">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span
+              class={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+                connected ? 'bg-success/10 text-success-soft' : 'bg-danger/10 text-danger-soft'
+              )}
+            >
+              {connected ? 'Connected' : 'Token invalid'}
+            </span>
+            {tokenStatus?.login && (
+              <span class="text-fg-soft">
+                as <span class="font-mono">{tokenStatus.login}</span>
+              </span>
             )}
-          >
-            {connected ? 'Connected' : 'Token invalid'}
-          </span>
-          {tokenStatus?.login && (
-            <span class="text-fg-soft">
-              as <span class="font-mono">{tokenStatus.login}</span>
-            </span>
-          )}
-          {tokenStatus?.source === 'env' && (
-            <span class="text-fg-faint">(token from GITHUB_TOKEN env var)</span>
-          )}
-          {tokenInvalid && (
-            <span class="text-danger-soft" data-testid="github-token-invalid-error">
-              {tokenStatus?.error}
-            </span>
-          )}
-          <div class="ml-auto flex flex-wrap items-center gap-2">
+            {tokenStatus?.source === 'env' && (
+              <span class="text-fg-faint">(token from GITHUB_TOKEN env var)</span>
+            )}
+            {tokenInvalid && (
+              <span class="text-danger-soft" data-testid="github-token-invalid-error">
+                {tokenStatus?.error}
+              </span>
+            )}
+          </div>
+          <div class="st-trow-acts">
             {(connected || tokenInvalid) && !replaceMode && (
               <button
                 type="button"
                 onClick={() => setReplaceMode(true)}
                 disabled={tokenWriteDisabled}
-                class="text-fg-soft hover:text-fg disabled:cursor-not-allowed disabled:text-fg-faint"
+                class="st-act disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {connected
                   ? tokenStatus?.source === 'env'
@@ -1380,7 +1344,7 @@ function GitHubConnectionCard({
               type="button"
               onClick={onClearToken}
               disabled={tokenWriteDisabled || tokenStatus?.source === 'env'}
-              class="text-danger hover:text-danger-soft disabled:cursor-not-allowed disabled:text-danger"
+              class="st-act st-act-danger disabled:cursor-not-allowed disabled:opacity-50"
             >
               Disconnect
             </button>
@@ -1389,7 +1353,7 @@ function GitHubConnectionCard({
       )}
 
       {showInput && (
-        <div class="space-y-2">
+        <div class="st-row-stacked st-row space-y-2">
           <input
             type="password"
             value={tokenInput}
@@ -1430,23 +1394,25 @@ function GitHubConnectionCard({
         </div>
       )}
 
-      <label class="flex flex-col gap-1 text-xs text-fg-soft">
-        <span class="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={pollingEnabled}
-            disabled={pollingDisabled}
-            onChange={() => onTogglePolling(!pollingEnabled)}
-            class={FORM_CHECKBOX_CLASS}
-            aria-label="Enable GitHub polling for this space"
-          />
-          Polling for this space (daemon-wide capability)
-        </span>
-        {pollingCapabilityDisabled && (
-          <span class="ml-6 text-fg-faint">
-            Polling capability is currently off daemon-wide — toggle to enable it.
+      <label class="st-trow cursor-pointer text-xs text-fg-soft">
+        <span class="st-trow-body">
+          <span class="st-trow-name text-xs font-medium">
+            Polling for this space (daemon-wide capability)
           </span>
-        )}
+          {pollingCapabilityDisabled && (
+            <span class="st-trow-desc">
+              Polling capability is currently off daemon-wide — toggle to enable it.
+            </span>
+          )}
+        </span>
+        <input
+          type="checkbox"
+          checked={pollingEnabled}
+          disabled={pollingDisabled}
+          onChange={() => onTogglePolling(!pollingEnabled)}
+          class={FORM_CHECKBOX_CLASS}
+          aria-label="Enable GitHub polling for this space"
+        />
       </label>
     </div>
   );
