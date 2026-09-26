@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { isOperationAdmitted } from './invoke.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -38,7 +39,9 @@ export function listOperationSummaries(
   all = false
 ) {
   return registry.entries
-    .filter((entry) => all || isOperationListed(entry, caller))
+    .filter(
+      (entry) => isOperationAdmitted(entry, caller) && (all || isOperationListed(entry, caller))
+    )
     .map(({ name, description }) => ({ name, description }));
 }
 

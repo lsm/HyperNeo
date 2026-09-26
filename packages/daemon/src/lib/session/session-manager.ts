@@ -1,5 +1,6 @@
 import type { DirectStopVerificationResult } from '../tasks/stop-direct-attempt.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { NO_CALLER_SCOPE, type CallerScopeResolver } from '../operations/caller.ts';
 import type { ScopeContribution } from '../briefings/contribution.ts';
@@ -521,6 +522,7 @@ export class SessionManager {
   }
 
   resolveCallerScope(sessionId: string) {
+    if (neoCoordinatorBinding(this.db, sessionId)) return { role: 'neo' as const };
     return this.callerScopeResolver(sessionId);
   }
 

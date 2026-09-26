@@ -454,6 +454,9 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 ];
 
 const EXCLUDED_TABLE_NAMES: string[] = [
+  'neo_concerns',
+  'neo_session_bindings',
+  'neo_work',
   'direct_task_execution_selection',
   'direct_task_execution_attempts',
   'direct_task_session_provenance',

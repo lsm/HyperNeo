@@ -35,6 +35,7 @@ const questionColors = {
 export type ResolvedState = 'submitted' | 'cancelled' | null;
 
 interface QuestionPromptProps {
+  pendingHeading?: string;
   sessionId: string;
   pendingQuestion: PendingUserQuestion;
   resolvedState?: ResolvedState;
@@ -44,6 +45,7 @@ interface QuestionPromptProps {
 }
 
 export function QuestionPrompt({
+  pendingHeading = 'Claude needs your input',
   sessionId,
   pendingQuestion,
   resolvedState = null,
@@ -301,7 +303,7 @@ export function QuestionPrompt({
       }
       return 'Question skipped';
     }
-    return 'Claude needs your input';
+    return pendingHeading;
   };
 
   const getHeaderTextColor = () => {

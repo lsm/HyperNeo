@@ -3,6 +3,7 @@ import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@hyperneo/daemon/config';
 import { createServer as createViteServer } from 'vite';
+import { resolveNeoEntry } from '@hyperneo/shared/web-entry';
 import { resolve } from 'path';
 import { join } from 'node:path';
 import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
@@ -222,6 +223,13 @@ export async function startDevServer(config: Config) {
       }
 
       try {
+        const entry = resolveNeoEntry(url);
+        if (entry?.kind === 'redirect') {
+          return new Response(null, {
+            status: 308,
+            headers: { Location: entry.location, 'Cache-Control': 'no-cache' },
+          });
+        }
         if (url.pathname === '/@vite/client') {
           return new Response(VITE_CLIENT_SHIM, {
             headers: {
