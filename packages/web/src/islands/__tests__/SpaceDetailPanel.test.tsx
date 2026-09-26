@@ -395,7 +395,7 @@ describe('SpaceDetailPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
     const rows = screen.getAllByTestId('space-detail-clone-row');
     expect(rows.every((row) => !row.textContent?.includes('分身'))).toBe(true);
-    expect(within(rows[0]).getByRole('img', { name: 'Clone conversation' })).toBeTruthy();
+    expect(within(rows[0]).queryByRole('img', { name: 'Clone conversation' })).toBeNull();
     expect(within(rows[1]).getByRole('img', { name: 'Error' })).toBeTruthy();
     expect(within(rows[1]).getByLabelText('2 unread messages')).toBeTruthy();
     expect(within(rows[1]).getByLabelText('Returned')).toBeTruthy();

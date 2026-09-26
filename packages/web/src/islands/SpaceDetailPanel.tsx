@@ -630,7 +630,6 @@ export function SpaceDetailPanel({
                       testId="space-detail-clone-row"
                       sessionId={clone.id}
                       nested
-                      clone
                       selected={clone.id === selectedSessionId}
                       status={getSessionSidebarStatus(clone)}
                       unreadCount={

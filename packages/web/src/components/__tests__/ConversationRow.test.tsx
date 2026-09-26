@@ -19,19 +19,18 @@ describe('ConversationRow', () => {
     }
   );
 
-  it('exposes clone identity and selection without adding text to the title', () => {
+  it('keeps nested selection clear without a redundant clone icon', () => {
     render(
       <ConversationRow
         title="Review"
         selected
-        clone
         nested
         status={getSessionSidebarStatus({})}
         onClick={() => {}}
       />
     );
     expect(screen.getByRole('heading').textContent).toBe('Review');
-    expect(screen.getByRole('img', { name: 'Clone conversation' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Clone conversation' })).toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-current')).toBe('page');
   });
 

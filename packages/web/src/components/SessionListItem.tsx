@@ -51,7 +51,6 @@ export default function SessionListItem({
       title={conversationTitle(session.title, isClone)}
       selected={isActive}
       nested={nested}
-      clone={isClone}
       status={status}
       unreadCount={liveStatus?.unreadCount}
       unread={unread}

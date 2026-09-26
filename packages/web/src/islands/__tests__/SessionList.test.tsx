@@ -192,7 +192,7 @@ describe('SessionsSidebar', () => {
     );
     const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
     expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat✓', 'Orphan']);
-    expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(3);
+    expect(screen.queryByTestId('session-clone-glyph')).toBeNull();
     expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
     expect(screen.queryByTestId('session-spawn')).toBeNull();
   });

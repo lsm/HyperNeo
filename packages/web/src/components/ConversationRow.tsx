@@ -1,7 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import type { SidebarSessionStatus } from '../lib/session-sidebar-status.ts';
 import { cn } from '../lib/utils.ts';
-import { CloneIcon } from './icons/CloneIcon.tsx';
 import { SessionActivityIndicator } from './SessionActivityIndicator.tsx';
 import { StatusDot } from './ui/StatusDot.tsx';
 import { UnreadBadge } from './ui/UnreadBadge.tsx';
@@ -10,7 +9,6 @@ interface ConversationRowProps {
   title: string;
   selected?: boolean;
   nested?: boolean;
-  clone?: boolean;
   status: SidebarSessionStatus;
   secondaryStatus?: SidebarSessionStatus;
   unreadCount?: number;
@@ -32,7 +30,6 @@ export function ConversationRow({
   title,
   selected = false,
   nested = false,
-  clone = false,
   status,
   secondaryStatus,
   unreadCount = 0,
@@ -84,17 +81,6 @@ export function ConversationRow({
           >
             <SessionActivityIndicator status={status} />
             {secondaryStatus && <SessionActivityIndicator status={secondaryStatus} />}
-            {clone && (
-              <span
-                role="img"
-                aria-label="Clone conversation"
-                title="Clone conversation"
-                data-testid="session-clone-glyph"
-                class="shrink-0 text-fg-faint"
-              >
-                <CloneIcon />
-              </span>
-            )}
             <h3
               class={cn(
                 'min-w-0 flex-1 truncate text-sm',
