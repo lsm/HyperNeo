@@ -103,9 +103,14 @@ describe('Neo MVP controls', () => {
       { type: 'user', uuid: 'human', message: { role: 'user', content: 'What is 17 plus 25?' } },
       { type: 'assistant', uuid: 'answer', message: { content: [{ type: 'text', text: '42.' }] } },
       { type: 'result', uuid: 'result', subtype: 'success' },
-      { type: 'user', uuid: 'work', message: { role: 'user', content: 'Internal worker report' } },
+      {
+        type: 'user',
+        uuid: 'work',
+        message: { role: 'user', content: 'Internal worker report' },
+        inputKind: 'system',
+      },
     ] as unknown as SessionStore['sdkMessages']['value'];
-    render(<NeoConversation store={store} sessionId="neo" workIds={new Set(['work'])} />);
+    render(<NeoConversation store={store} sessionId="neo" />);
     const conversation = screen.getByRole('region', { name: 'Conversation with Neo' });
     expect(within(conversation).getByText('42.').tagName).toBe('P');
     expect(within(conversation).getByText('What is 17 plus 25?')).toBeTruthy();
@@ -127,10 +132,10 @@ describe('Neo MVP controls', () => {
     Object.assign(store, {
       agentState: signal({ status: 'waiting_for_input', pendingQuestion: { toolUseId: 'choose' } }),
     });
-    const view = render(<NeoConversation store={store} sessionId="neo" workIds={new Set()} />);
+    const view = render(<NeoConversation store={store} sessionId="neo" />);
     expect(screen.getByText('Question: choose')).toBeTruthy();
     Object.assign(store, { error: signal({ message: 'Authentication required', occurredAt: 1 }) });
-    view.rerender(<NeoConversation store={store} sessionId="neo" workIds={new Set()} />);
+    view.rerender(<NeoConversation store={store} sessionId="neo" />);
     expect(screen.getByRole('alert').textContent).toBe('Authentication required');
   });
   it('sends through the existing message path without creating a concern', async () => {

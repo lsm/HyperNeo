@@ -22,15 +22,13 @@ export function conversationText(message: ChatMessage): string {
     .join('\n\n');
 }
 
-export function completedConversation(
-  messages: ChatMessage[],
-  workIds: Set<string>
-): ChatMessage[] {
+export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
   const visible: ChatMessage[] = [];
   let reply: ChatMessage | null = null;
   for (const message of messages) {
     const text = conversationText(message);
-    if (message.type === 'user' && text && !workIds.has(message.uuid ?? '')) visible.push(message);
+    const syntheticDelivery = (message as { inputKind?: string }).inputKind === 'system';
+    if (message.type === 'user' && text && !syntheticDelivery) visible.push(message);
     if (message.type === 'assistant' && text) reply = message;
     if (message.type === 'result') {
       if (reply) visible.push(reply);
@@ -40,15 +38,7 @@ export function completedConversation(
   return visible;
 }
 
-export function NeoConversation({
-  store,
-  sessionId,
-  workIds,
-}: {
-  store: SessionStore;
-  sessionId: string;
-  workIds: Set<string>;
-}) {
+export function NeoConversation({ store, sessionId }: { store: SessionStore; sessionId: string }) {
   const messages = store.sdkMessages.value;
   const [expanded, setExpanded] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -60,8 +50,7 @@ export function NeoConversation({
     Object.entries(store.sessionInfo.value?.metadata.resolvedQuestions ?? {})
   );
   const visible = completedConversation(
-    messages.filter((message) => !maps.replacementStatusMap.has(message.uuid ?? '')),
-    workIds
+    messages.filter((message) => !maps.replacementStatusMap.has(message.uuid ?? ''))
   );
   return (
     <>
