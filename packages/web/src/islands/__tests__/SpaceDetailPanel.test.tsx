@@ -2,6 +2,8 @@ import type { Space, SpaceTask } from '@hyperneo/shared';
 import { type Signal, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SpaceSessionRow } from '../../lib/space-store';
+import { spaceSessionLastSeen, spaceTaskLastSeen } from '../../lib/space-unread';
 
 const {
   mockNavigateToSpace,
@@ -29,24 +31,16 @@ let mockTasksSignal!: Signal<SpaceTask[]>;
 let mockSpaceSignal!: Signal<Space | null>;
 let mockLoadingSignal!: Signal<boolean>;
 let mockSpaceIdSignal!: Signal<string | null>;
-let mockSessionsSignal!: Signal<
-  Array<{
-    id: string;
-    title: string;
-    status: string;
-    lastActiveAt: number;
-    parentSessionId?: string | null;
-    returnedAt?: string | null;
-  }>
->;
+let mockSessionsSignal!: Signal<SpaceSessionRow[]>;
 let mockAgentsSignal!: Signal<unknown[]>;
 const mockEnsureConfigData = vi.fn(() => Promise.resolve());
-const mockSpawnAgentClone = vi.fn(() => Promise.resolve('clone-new'));
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceAgentHandleSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
+let mockCurrentSpaceTaskViewTabSignal!: Signal<string>;
+let mockSpaceOverlayPendingTaskIdSignal!: Signal<string | null>;
 let mockCurrentSpaceViewModeSignal!: Signal<string>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
 let mockSpaceOverlayAgentNameSignal!: Signal<string | null>;
@@ -63,6 +57,8 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceAgentHandleSignal = signal(null);
   mockCurrentSpaceTaskIdSignal = signal(null);
+  mockCurrentSpaceTaskViewTabSignal = signal('thread');
+  mockSpaceOverlayPendingTaskIdSignal = signal(null);
   mockCurrentSpaceViewModeSignal = signal('overview');
   mockSpaceOverlaySessionIdSignal = signal(null);
   mockSpaceOverlayAgentNameSignal = signal(null);
@@ -80,7 +76,6 @@ vi.mock('../../lib/space-store.ts', () => ({
       sessions: mockSessionsSignal,
       agents: mockAgentsSignal,
       ensureConfigData: mockEnsureConfigData,
-      spawnAgentClone: mockSpawnAgentClone,
       goals: mockGoalsSignal,
       activeRuns: mockActiveRunsSignal,
     };
@@ -108,6 +103,12 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
     get currentSpaceTaskIdSignal() {
       return mockCurrentSpaceTaskIdSignal;
+    },
+    get currentSpaceTaskViewTabSignal() {
+      return mockCurrentSpaceTaskViewTabSignal;
+    },
+    get spaceOverlayPendingTaskIdSignal() {
+      return mockSpaceOverlayPendingTaskIdSignal;
     },
     get currentSpaceViewModeSignal() {
       return mockCurrentSpaceViewModeSignal;
@@ -180,6 +181,8 @@ describe('SpaceDetailPanel', () => {
     cleanup();
     vi.clearAllMocks();
     initSignals();
+    spaceSessionLastSeen.value = new Map();
+    spaceTaskLastSeen.value = new Map();
   });
 
   afterEach(() => {
@@ -354,9 +357,7 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceAgentHandleSignal.value = 'lead';
     render(<SpaceDetailPanel spaceId="space-1" />);
 
-    expect(screen.getByTestId('space-detail-agent-row').parentElement?.className).toContain(
-      'bg-fill-soft'
-    );
+    expect(screen.getByTestId('space-detail-agent-row').getAttribute('aria-current')).toBe('page');
   });
 
   it('nests clones under their agent, marks returned ones, and opens them on click', () => {
@@ -370,13 +371,15 @@ describe('SpaceDetailPanel', () => {
         id: 'clone-1',
         title: 'Lead · 分身',
         status: 'active',
+        processingState: JSON.stringify({ status: 'error' }),
+        messageCount: 2,
         lastActiveAt: 3,
         parentSessionId: 'sess-a1',
         returnedAt: '2026-09-24T00:00:00.000Z',
       },
       {
         id: 'clone-2',
-        title: 'Lead · 分身 2',
+        title: 'Lead · 分身',
         status: 'active',
         lastActiveAt: 4,
         parentSessionId: 'sess-a1',
@@ -387,9 +390,17 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceSessionIdSignal.value = 'clone-2';
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
     const rows = screen.getAllByTestId('space-detail-clone-row');
-    expect(rows.map((row) => row.textContent)).toEqual(['分身Lead · 分身 2', '分身Lead · 分身✓']);
-    expect(rows[0].className).toContain('bg-fill-soft');
+    expect(rows.every((row) => !row.textContent?.includes('分身'))).toBe(true);
+    expect(within(rows[0]).getByText('Lead 2')).toBeTruthy();
+    expect(within(rows[1]).getByText('Lead 3')).toBeTruthy();
+    expect(within(rows[0]).queryByRole('img', { name: 'Clone conversation' })).toBeNull();
+    expect(within(rows[1]).getByRole('img', { name: 'Error' })).toBeTruthy();
+    expect(within(rows[1]).getByLabelText('2 unread messages')).toBeTruthy();
+    expect(within(rows[1]).getByLabelText('Returned')).toBeTruthy();
+    expect(rows[0].getAttribute('aria-current')).toBe('page');
+    expect(screen.getByTestId('space-detail-agent').getAttribute('data-active')).toBe('true');
     expect(screen.queryByText('Stray')).toBeNull();
 
     fireEvent.click(rows[1]);
@@ -397,20 +408,269 @@ describe('SpaceDetailPanel', () => {
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 
-  it('spawns a new conversation from the agent row and opens it', async () => {
-    const onNavigate = vi.fn();
+  it('exposes all older conversations and preserves selection when collapsing', () => {
     mockAgentsSignal.value = [
       { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
     ];
-    render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
+    mockSessionsSignal.value = Array.from({ length: 12 }, (_, index) => ({
+      id: `clone-${index}`,
+      title: `Conversation ${index}`,
+      status: 'active',
+      lastActiveAt: index,
+      parentSessionId: 'sess-a1',
+    }));
+    mockCurrentSpaceSessionIdSignal.value = 'clone-0';
+    render(<SpaceDetailPanel spaceId="space-1" />);
 
-    fireEvent.click(screen.getByTestId('space-detail-agent-spawn'));
-    expect(mockSpawnAgentClone).toHaveBeenCalledWith('a1');
-    await waitFor(() =>
-      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-new')
+    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(1);
+    expect(screen.queryByText('Conversation 1')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
+    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(12);
+    fireEvent.click(screen.getByText('Conversation 1'));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'clone-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Lead' }));
+    expect(screen.getAllByTestId('space-detail-clone-row')).toHaveLength(1);
+    expect(screen.getByText('Conversation 0').closest('button')?.getAttribute('aria-current')).toBe(
+      'page'
     );
-    expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
-    expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('shows live status and unread output independently of agent lifecycle', () => {
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'paused', sessionId: 'sess-a1' },
+    ];
+    mockSessionsSignal.value = [
+      {
+        id: 'sess-a1',
+        title: 'Lead',
+        status: 'active',
+        processingState: JSON.stringify({ status: 'waiting_for_input' }),
+        messageCount: 7,
+        lastActiveAt: 5,
+      },
+    ];
+    spaceSessionLastSeen.value = new Map([['sess-a1', 3]]);
+    render(<SpaceDetailPanel spaceId="space-1" />);
+
+    const row = screen.getByTestId('space-detail-agent-row');
+    expect(within(row).getByText('paused')).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
+    expect(within(row).getByLabelText('4 unread messages')).toBeTruthy();
+  });
+
+  it('marks an agent route read as new output arrives', async () => {
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    mockSessionsSignal.value = [
+      { id: 'sess-a1', title: 'Lead', status: 'active', messageCount: 4, lastActiveAt: 5 },
+    ];
+    mockCurrentSpaceAgentHandleSignal.value = 'lead';
+    const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('sess-a1')).toBe(4));
+
+    mockSessionsSignal.value = [{ ...mockSessionsSignal.value[0], messageCount: 6 }];
+    rerender(<SpaceDetailPanel spaceId="space-1" />);
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('sess-a1')).toBe(6));
+    mockCurrentSpaceAgentHandleSignal.value = null;
+    rerender(<SpaceDetailPanel spaceId="space-1" />);
+    expect(
+      within(screen.getByTestId('space-detail-agent-row')).queryByLabelText(/unread messages/)
+    ).toBeNull();
+  });
+
+  it('marks only the visible overlay read while the agent chat is covered', async () => {
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    mockSessionsSignal.value = [
+      { id: 'sess-a1', title: 'Lead', status: 'active', messageCount: 4, lastActiveAt: 5 },
+      {
+        id: 'clone-1',
+        title: 'Clone',
+        status: 'active',
+        messageCount: 3,
+        lastActiveAt: 6,
+        parentSessionId: 'sess-a1',
+      },
+    ];
+    mockCurrentSpaceAgentHandleSignal.value = 'lead';
+    mockSpaceOverlaySessionIdSignal.value = 'clone-1';
+    render(<SpaceDetailPanel spaceId="space-1" />);
+
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('clone-1')).toBe(3));
+    expect(spaceSessionLastSeen.value.has('sess-a1')).toBe(false);
+    expect(
+      within(screen.getByTestId('space-detail-agent-row')).getByLabelText('4 unread messages')
+    ).toBeTruthy();
+  });
+
+  it('shows task activity and lifecycle with one unread indicator', () => {
+    mockTasksSignal.value = [makeTask('t1', 'Blocked Task', 'in_progress', { updatedAt: 2 })];
+    mockCurrentSpaceTaskIdSignal.value = 'other';
+    spaceTaskLastSeen.value = new Map([['t1', 1]]);
+    mockSessionsSignal.value = [
+      {
+        id: 'task-session-1',
+        title: 'Worker',
+        taskId: 't1',
+        status: 'active',
+        processingState: JSON.stringify({ status: 'processing' }),
+        messageCount: 3,
+        lastActiveAt: 5,
+      },
+      {
+        id: 'task-session-2',
+        title: 'Reviewer',
+        taskId: 't1',
+        status: 'active',
+        messageCount: 2,
+        lastActiveAt: 6,
+      },
+      { id: 'unrelated', title: 'Elsewhere', status: 'active', messageCount: 8, lastActiveAt: 6 },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    fireEvent.click(getTaskTab('Active'));
+
+    const row = screen.getByText('Blocked Task').closest('button')!;
+    expect(within(row).getByRole('img', { name: 'Processing' })).toBeTruthy();
+    expect(within(row).getByLabelText('5 unread messages')).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'In Progress' })).toBeTruthy();
+    expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
+  });
+
+  it('marks task sessions read through the visible thread and subsequent live activity', async () => {
+    mockTasksSignal.value = [makeTask('t1', 'Task thread', 'in_progress')];
+    mockSessionsSignal.value = [
+      {
+        id: 'worker',
+        title: 'Worker',
+        taskId: 't1',
+        status: 'active',
+        messageCount: 3,
+        lastActiveAt: 5,
+      },
+      {
+        id: 'reviewer',
+        title: 'Reviewer',
+        taskId: 't1',
+        status: 'active',
+        messageCount: 2,
+        lastActiveAt: 5,
+      },
+      {
+        id: 'other',
+        title: 'Other',
+        taskId: 't2',
+        status: 'active',
+        messageCount: 6,
+        lastActiveAt: 5,
+      },
+    ];
+    mockCurrentSpaceTaskIdSignal.value = 't1';
+    const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(3));
+    expect(spaceSessionLastSeen.value.get('reviewer')).toBe(2);
+    expect(spaceSessionLastSeen.value.has('other')).toBe(false);
+
+    mockSessionsSignal.value = mockSessionsSignal.value.map((session) =>
+      session.id === 'worker'
+        ? { ...session, messageCount: 5, processingState: JSON.stringify({ status: 'processing' }) }
+        : session
+    );
+    rerender(<SpaceDetailPanel spaceId="space-1" />);
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(5));
+    mockCurrentSpaceTaskIdSignal.value = null;
+    rerender(<SpaceDetailPanel spaceId="space-1" />);
+    expect(
+      within(screen.getByText('Task thread').closest('button')!).queryByLabelText(/unread messages/)
+    ).toBeNull();
+  });
+
+  it.each(['overlay', 'pending overlay', 'canvas'])(
+    'retains task unread output behind %s',
+    async (cover) => {
+      mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked', { updatedAt: 2 })];
+      spaceTaskLastSeen.value = new Map([['t1', 1]]);
+      mockSessionsSignal.value = [
+        {
+          id: 'worker',
+          title: 'Worker',
+          taskId: 't1',
+          status: 'active',
+          messageCount: 3,
+          lastActiveAt: 5,
+        },
+        {
+          id: 'other',
+          title: 'Other',
+          taskId: 't2',
+          status: 'active',
+          messageCount: 6,
+          lastActiveAt: 5,
+        },
+      ];
+      mockCurrentSpaceTaskIdSignal.value = 't1';
+      if (cover === 'overlay') mockSpaceOverlaySessionIdSignal.value = 'other';
+      if (cover === 'pending overlay') mockSpaceOverlayPendingTaskIdSignal.value = 't2';
+      if (cover === 'canvas') mockCurrentSpaceTaskViewTabSignal.value = 'canvas';
+      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+      const row = screen.getByText('Task thread').closest('button')!;
+      expect(within(row).getByLabelText('3 unread messages')).toBeTruthy();
+      expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
+      expect(spaceSessionLastSeen.value.has('worker')).toBe(false);
+
+      mockSpaceOverlaySessionIdSignal.value = null;
+      mockSpaceOverlayPendingTaskIdSignal.value = null;
+      mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+      rerender(<SpaceDetailPanel spaceId="space-1" />);
+      await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(3));
+      expect(spaceTaskLastSeen.value.get('t1')).toBe(2);
+      expect(within(row).queryByLabelText(/unread messages/)).toBeNull();
+    }
+  );
+
+  it('keeps blocked task lifecycle visible beside a running session indicator', () => {
+    mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked')];
+    mockSessionsSignal.value = [
+      {
+        id: 'worker',
+        title: 'Worker',
+        taskId: 't1',
+        status: 'active',
+        lastActiveAt: 5,
+        processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
+      },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    const row = screen.getByText('Task thread').closest('button')!;
+    expect(within(row).getByRole('img', { name: 'Thinking' })).toBeTruthy();
+    expect(within(row).getByRole('img', { name: 'Blocked' })).toBeTruthy();
+  });
+
+  it('shows collapsed child unread output without exposing a spawn action', () => {
+    mockAgentsSignal.value = [
+      { id: 'a1', handle: 'lead', displayName: 'Lead', status: 'active', sessionId: 'sess-a1' },
+    ];
+    mockSessionsSignal.value = [
+      { id: 'sess-a1', title: 'Lead', status: 'active', messageCount: 0, lastActiveAt: 1 },
+      {
+        id: 'child',
+        title: 'Child',
+        status: 'active',
+        parentSessionId: 'sess-a1',
+        messageCount: 4,
+        lastActiveAt: 2,
+      },
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(screen.queryByTestId('space-detail-agent-spawn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Lead' }));
+    expect(screen.getByRole('img', { name: '4 unread messages' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Lead' }));
+    expect(screen.queryByText('Child')).toBeNull();
   });
 
   it('loads the Space agents when the panel mounts', () => {
@@ -467,8 +727,8 @@ describe('SpaceDetailPanel', () => {
       mockTasksSignal.value = [makeTask('t1', 'Task A', 'open')];
       const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-      expect(screen.getByText('1')).toBeTruthy();
-      expect(screen.getByText('0')).toBeTruthy();
+      expect(within(getTaskTab('Active')).getByText('1')).toBeTruthy();
+      expect(within(getTaskTab('Action')).getByText('0')).toBeTruthy();
 
       mockTasksSignal.value = [
         makeTask('t1', 'Task A', 'open'),

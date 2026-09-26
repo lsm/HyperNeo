@@ -9,14 +9,18 @@ import {
 } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
+import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { getSessionSidebarStatus } from '../../lib/session-sidebar-status';
+import { getSpaceSessionUnreadCount } from '../../lib/space-unread';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { CloneChoiceDialog } from '../CloneChoiceDialog';
+import { SessionActivityIndicator } from '../SessionActivityIndicator';
+import { UnreadBadge } from '../ui/UnreadBadge';
 import { FORM_CONTROL_CLASS, FormActions, FormField } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
@@ -426,21 +430,9 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
   };
 
   const sessionId = agent.sessionId ?? null;
+  const session = spaceStore.sessions.value.find((candidate) => candidate.id === sessionId);
 
   const openSession = () => navigateToSpaceAgent(navigationSpaceId, agent.handle);
-
-  const [spawning, setSpawning] = useState(false);
-  const spawnClone = () => {
-    if (spawning) return;
-    setSpawning(true);
-    spaceStore
-      .spawnAgentClone(agent.id)
-      .then((cloneId) => navigateToSpaceSession(navigationSpaceId, cloneId))
-      .catch((err) =>
-        toast.error(err instanceof Error ? err.message : 'Failed to start a new conversation')
-      )
-      .finally(() => setSpawning(false));
-  };
 
   return (
     <div
@@ -463,6 +455,14 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               <span class="truncate text-base font-semibold tracking-tight text-fg">
                 {agent.displayName}
               </span>
+              {session && (
+                <>
+                  <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
+                  <UnreadBadge
+                    count={getSpaceSessionUnreadCount(session.id, session.messageCount)}
+                  />
+                </>
+              )}
             </div>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
               <span
@@ -470,7 +470,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               />
               <span>{agent.status}</span>
               <span>·</span>
-              <span>{sessionId ? 'Session' : 'Start session'}</span>
+              <span>{sessionId ? 'Open chat' : 'Start chat'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>
@@ -491,29 +491,6 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
           </div>
         </div>
         <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-          {agent.status === 'active' && (
-            <button
-              type="button"
-              data-testid="agent-card-new-conversation"
-              onClick={(e) => {
-                e.stopPropagation();
-                spawnClone();
-              }}
-              disabled={spawning}
-              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-40"
-              title="New conversation"
-              aria-label={`New conversation with ${agent.displayName}`}
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-            </button>
-          )}
           <button
             type="button"
             onClick={(e) => {

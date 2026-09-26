@@ -376,7 +376,7 @@ export function ContextPanel() {
         class={`
 					fixed md:relative
 					top-0 left-0 md:left-auto
-					h-safe-screen md:h-full w-70
+					h-safe-screen md:h-full w-88 max-w-[calc(100vw-3rem)] md:w-70 md:max-w-none
 					bg-app-sidebar
 					flex flex-col
 					pt-safe md:pt-0

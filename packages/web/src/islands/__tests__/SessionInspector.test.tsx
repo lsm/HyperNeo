@@ -101,7 +101,7 @@ describe('SessionInspector', () => {
     expect(card.textContent).toContain('My chat');
     expect(card.textContent).toContain('sonnet');
     expect(card.textContent).toContain('/repo');
-    expect(screen.getByTitle('Rename session')).toBeTruthy();
+    expect(screen.getByTitle('Rename conversation')).toBeTruthy();
   });
 
   it('shows the agent card instead for an agent-owned session', () => {
@@ -121,9 +121,10 @@ describe('SessionInspector', () => {
     expect(card.textContent).toContain('Scout');
     expect(card.textContent).toContain('@scout');
     expect(card.textContent).toContain('Look around');
-    expect(screen.queryByTitle('Rename session')).toBeNull();
-    fireEvent.click(screen.getByTestId('inspector-open-agent'));
-    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('my-space', 'scout');
+    expect(screen.queryByTitle('Rename conversation')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent settings' }));
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('my-space');
+    expect(rightPanelTargetSignal.value).toBeNull();
   });
 
   it('shows recorded progress under Work and falls back to TodoWrite messages', () => {

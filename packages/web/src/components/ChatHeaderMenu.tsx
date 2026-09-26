@@ -48,8 +48,8 @@ export function ChatHeaderMenu({
   if (features.archive) {
     items.push({ type: 'divider' });
     items.push({
-      label: archiving ? 'Archiving…' : 'Archive session',
-      title: 'Archive session',
+      label: archiving ? 'Archiving…' : 'Archive chat',
+      title: 'Archive chat',
       onClick: onArchiveClick,
       disabled: archiving || archived || !isConnected,
     });

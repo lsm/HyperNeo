@@ -11,7 +11,7 @@ describe('CloneChoiceDialog', () => {
     render(
       <CloneChoiceDialog
         clones={[
-          { id: 'c1', title: 'First' },
+          { id: 'c1', title: 'First · 分身' },
           { id: 'c2', title: 'Second' },
         ]}
         action="delete"
@@ -24,6 +24,7 @@ describe('CloneChoiceDialog', () => {
 
     expect(screen.getByText('First')).toBeTruthy();
     expect(screen.getByText('Second')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'This agent has 2 clones' })).toBeTruthy();
     expect(screen.getByTestId('clone-choice-cascade').textContent).toBe('Delete them too');
     expect(screen.getByTestId('clone-choice-flatten').textContent).toBe(
       'Keep them as their own agents'

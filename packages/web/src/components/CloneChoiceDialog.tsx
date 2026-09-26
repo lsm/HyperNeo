@@ -1,4 +1,6 @@
 import type { CloneChildrenChoice, CloneSummary } from '@hyperneo/shared';
+import { conversationTitle } from '../lib/session-sidebar-status.ts';
+import { CloneIcon } from './icons/CloneIcon.tsx';
 import { ConfirmModal } from './ui/ConfirmModal.tsx';
 
 export interface CloneChoiceDialogProps {
@@ -25,7 +27,7 @@ export function CloneChoiceDialog({
       isOpen
       onClose={onCancel}
       onConfirm={() => onChoose('cascade')}
-      title={`This ${subject} has ${clones.length} ${clones.length === 1 ? 'clone' : 'clones'} (分身)`}
+      title={`This ${subject === 'agent' ? 'agent' : 'conversation'} has ${clones.length} ${clones.length === 1 ? 'clone' : 'clones'}`}
       message={`${verb} them too, or keep them as ${keepAs}?`}
       confirmText={`${verb} them too`}
       confirmButtonVariant={action === 'delete' ? 'danger' : 'warning'}
@@ -35,8 +37,9 @@ export function CloneChoiceDialog({
       <div class="space-y-3" data-testid="clone-choice-dialog">
         <ul class="max-h-40 overflow-y-auto text-sm text-fg-soft">
           {clones.map((clone) => (
-            <li key={clone.id} class="truncate py-0.5">
-              {clone.title}
+            <li key={clone.id} class="flex items-center gap-2 py-0.5">
+              <CloneIcon className="h-4 w-4 flex-shrink-0 text-fg-muted" />
+              <span class="truncate">{conversationTitle(clone.title, true)}</span>
             </li>
           ))}
         </ul>

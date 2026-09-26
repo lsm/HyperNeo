@@ -42,7 +42,7 @@ test.describe('Background Job Queue Tasks', () => {
     sessionId = await createSessionViaUI(page);
 
     const headerTitle = page.locator(CHAT_HEADER_TITLE).first();
-    await expect(headerTitle).toHaveText('New Session', { timeout: 5000 });
+    await expect(headerTitle).toHaveText('New conversation', { timeout: 5000 });
 
     const textarea = page.locator('textarea[placeholder*="Ask"]').first();
     await textarea.fill('What is the capital of France?');
@@ -57,7 +57,7 @@ test.describe('Background Job Queue Tasks', () => {
         (selector) => {
           const h2 = document.querySelector(selector);
           const text = h2?.textContent?.trim() ?? '';
-          return text !== '' && text !== 'New Session';
+          return text !== '' && text !== 'New conversation';
         },
         CHAT_HEADER_TITLE,
         { timeout: 60000 }
@@ -65,13 +65,13 @@ test.describe('Background Job Queue Tasks', () => {
 
       const updatedTitle = await headerTitle.textContent();
       expect(updatedTitle?.trim()).toBeTruthy();
-      expect(updatedTitle?.trim()).not.toBe('New Session');
+      expect(updatedTitle?.trim()).not.toBe('New conversation');
 
       const sessionCard = page.locator(
         `[data-testid="session-card"][data-session-id="${sessionId}"]`
       );
       const cardTitle = sessionCard.locator('h3').first();
-      await expect(cardTitle).not.toHaveText('New Session', { timeout: 10000 });
+      await expect(cardTitle).not.toHaveText('New conversation', { timeout: 10000 });
     } else {
       await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
         timeout: 5000,

@@ -11,6 +11,7 @@ export interface SessionStatusInfo {
 }
 
 const lastSeenMessageCounts = signal<Map<string, number>>(new Map());
+let disposeTracking: (() => void) | undefined;
 
 function loadLastSeenCounts(): Map<string, number> {
   try {
@@ -37,36 +38,42 @@ function parseProcessingState(
     return { status: 'idle' };
   }
 
-  if (typeof processingState === 'object') {
-    return processingState;
-  }
-
   try {
-    return JSON.parse(processingState) as AgentProcessingState;
+    const parsed =
+      typeof processingState === 'string' ? JSON.parse(processingState) : processingState;
+    return parsed && typeof parsed === 'object' && typeof parsed.status === 'string'
+      ? (parsed as AgentProcessingState)
+      : { status: 'idle' };
   } catch {
     return { status: 'idle' };
   }
 }
 
 export function initSessionStatusTracking(): void {
+  disposeTracking?.();
   lastSeenMessageCounts.value = loadLastSeenCounts();
-
-  currentSessionIdSignal.subscribe((sessionId) => {
-    if (sessionId) {
-      markSessionAsRead(sessionId);
+  const syncReadCounts = () => {
+    const currentId = currentSessionIdSignal.value;
+    const previous = lastSeenMessageCounts.peek();
+    const next = new Map(previous);
+    for (const session of sessions.value) {
+      const count = session.metadata.messageCount || 0;
+      const seen = previous.get(session.id);
+      if (session.id === currentId || (seen !== undefined && seen > count)) {
+        next.set(session.id, count);
+      }
     }
-  });
-}
-
-function markSessionAsRead(sessionId: string): void {
-  const sessionList = sessions.value;
-  const session = sessionList.find((s) => s.id === sessionId);
-  if (!session) return;
-
-  const newCounts = new Map(lastSeenMessageCounts.value);
-  newCounts.set(sessionId, session.metadata.messageCount);
-  lastSeenMessageCounts.value = newCounts;
-  saveLastSeenCounts(newCounts);
+    if (next.size === previous.size && [...next].every(([id, count]) => previous.get(id) === count))
+      return;
+    lastSeenMessageCounts.value = next;
+    saveLastSeenCounts(next);
+  };
+  const disposeSelection = currentSessionIdSignal.subscribe(syncReadCounts);
+  const disposeSessions = sessions.subscribe(syncReadCounts);
+  disposeTracking = () => {
+    disposeSelection();
+    disposeSessions();
+  };
 }
 
 export const allSessionStatuses = computed<Map<string, SessionStatusInfo>>(() => {

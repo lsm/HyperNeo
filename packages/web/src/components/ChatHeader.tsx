@@ -1,11 +1,13 @@
 import type { Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { sessionStore } from '../lib/session-store.ts';
+import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 import { MobileMenuButton } from './ui/MobileMenuButton';
 import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
 import { IconButton } from './ui/IconButton.tsx';
+import { CloneIcon } from './icons/CloneIcon.tsx';
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -79,12 +81,26 @@ export function ChatHeader({
         )}
 
         <div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
+          {isClone && (
+            <span
+              role="img"
+              class="flex-shrink-0 text-fg-muted"
+              title="Clone conversation"
+              aria-label="Clone conversation"
+            >
+              <CloneIcon className="h-4 w-4" />
+            </span>
+          )}
           <h2
             data-testid="chat-header-title"
+            title={conversationTitle(
+              titleOverride || session?.title || 'New conversation',
+              isClone
+            )}
             class="min-w-0 truncate text-sm font-semibold text-fg"
             data-tauri-drag-region
           >
-            {titleOverride || session?.title || 'New Session'}
+            {conversationTitle(titleOverride || session?.title || 'New conversation', isClone)}
           </h2>
           {isClone && returnedAt && (
             <span
@@ -101,10 +117,26 @@ export function ChatHeader({
           <button
             type="button"
             onClick={onReturnToParent}
-            class="flex-shrink-0 rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            aria-label="Return to parent"
+            title="Return to parent"
+            class="inline-flex min-h-8 min-w-8 flex-shrink-0 items-center justify-center rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             data-testid="chat-header-return-to-parent"
           >
-            Return to parent
+            <svg
+              class="h-4 w-4 sm:hidden"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                d="m9 5-5 5 5 5M4 10h10a6 6 0 0 1 6 6v3"
+                stroke-width={1.75}
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="hidden sm:inline">Return to parent</span>
           </button>
         )}
 
@@ -122,7 +154,7 @@ export function ChatHeader({
         />
         {inspectorAvailable && (
           <IconButton
-            title="Session info"
+            title="Conversation info"
             data-testid="session-info-btn"
             onClick={toggleInspector}
             class={cn('flex-shrink-0 text-fg-muted', inspectorOpen && 'bg-fill text-fg')}
