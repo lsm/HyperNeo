@@ -34,7 +34,6 @@ let mockSpaceIdSignal!: Signal<string | null>;
 let mockSessionsSignal!: Signal<SpaceSessionRow[]>;
 let mockAgentsSignal!: Signal<unknown[]>;
 const mockEnsureConfigData = vi.fn(() => Promise.resolve());
-const mockSpawnAgentClone = vi.fn(() => Promise.resolve('clone-new'));
 let mockGoalsSignal!: Signal<[]>;
 let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
@@ -77,7 +76,6 @@ vi.mock('../../lib/space-store.ts', () => ({
       sessions: mockSessionsSignal,
       agents: mockAgentsSignal,
       ensureConfigData: mockEnsureConfigData,
-      spawnAgentClone: mockSpawnAgentClone,
       goals: mockGoalsSignal,
       activeRuns: mockActiveRunsSignal,
     };
