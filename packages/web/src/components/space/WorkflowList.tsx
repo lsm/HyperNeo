@@ -10,6 +10,7 @@ import { cn } from '../../lib/utils.ts';
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
+import { Button } from '../ui/Button.tsx';
 import { FormActions } from '../ui/FormField.tsx';
 import { Modal } from '../ui/Modal.tsx';
 import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';
@@ -199,7 +200,7 @@ function WorkflowCard({
   }
 
   return (
-    <div class={cn('group px-4 py-3.5 transition-colors', workflow.disabled ? 'opacity-60' : '')}>
+    <div class={cn('px-4 py-3.5 transition-colors', workflow.disabled ? 'opacity-60' : '')}>
       {deleteError && (
         <div class="mb-2 rounded bg-danger/20 px-3 py-1.5 text-xs text-danger-soft">
           {deleteError}
@@ -256,10 +257,7 @@ function WorkflowCard({
           )}
         </div>
 
-        <div
-          data-testid="workflow-card-actions"
-          class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"
-        >
+        <div data-testid="workflow-card-actions" class="st-trow-acts">
           {confirmDelete ? (
             <>
               <span class="text-xs text-danger">Delete?</span>
@@ -645,98 +643,46 @@ export function WorkflowList({
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
-      <div class="flat-surface mb-3 flex flex-shrink-0 flex-col items-stretch gap-3 rounded-xl p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="st-sec-head flex-shrink-0">
         <div class="min-w-0">
-          <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-soft">
-            {workflows.length} {workflows.length === 1 ? 'workflow template' : 'workflow templates'}
-          </p>
-          <p class="mt-1 text-xs leading-5 text-fg-muted">
-            Reusable multi-agent pipelines for this space.
-          </p>
+          <h3 class="st-sec-title">
+            Workflow Templates ·{' '}
+            <span data-testid="workflow-template-count" class="text-fg-muted">
+              {workflows.length}
+            </span>
+          </h3>
+          <p class="st-sec-desc">Reusable multi-agent pipelines for this space.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={startImport}
-            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-              />
-            </svg>
+        <div class="st-sec-actions">
+          <Button type="button" variant="ghost" size="sm" onClick={startImport}>
             Import
-          </button>
+          </Button>
           {workflows.length > 0 && (
-            <button
-              type="button"
-              onClick={exportAll}
-              class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
-            >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
+            <Button type="button" variant="ghost" size="sm" onClick={exportAll}>
               Export All
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            onClick={onCreateWorkflow}
-            class="glass-primary-button whitespace-nowrap !h-9 !px-3.5 !text-xs"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-            <span class="ml-1.5">Create Workflow</span>
-          </button>
+          <Button type="button" size="sm" onClick={onCreateWorkflow}>
+            + Create Workflow
+          </Button>
         </div>
       </div>
 
       <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto">
         {workflows.length === 0 ? (
-          <div class="flat-surface flex flex-col items-center justify-center rounded-xl py-12 text-center">
-            <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-surface-raised border border-line flex items-center justify-center">
-              <svg
-                class="w-5 h-5 text-fg-muted"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M4 6h16M4 10h16M4 14h16M4 18h16"
-                />
-              </svg>
+          <div class="st-group">
+            <div class="st-empty">
+              <p class="st-empty-title">No workflows yet</p>
+              <p class="st-empty-desc">Create a workflow to define multi-agent pipelines.</p>
+              <div class="mt-4">
+                <Button type="button" size="sm" onClick={onCreateWorkflow}>
+                  Create your first workflow
+                </Button>
+              </div>
             </div>
-            <p class="text-sm text-fg-muted">No workflows yet</p>
-            <p class="text-xs text-fg-muted mt-1">
-              Create a workflow to define multi-agent pipelines.
-            </p>
-            <button
-              type="button"
-              onClick={onCreateWorkflow}
-              class="glass-primary-button mt-4 !h-9 !px-3.5 !text-xs"
-            >
-              Create your first workflow
-            </button>
           </div>
         ) : (
-          <div class="flat-surface divide-y divide-line overflow-hidden rounded-xl">
+          <div class="st-group">
             {workflows.map((wf) => (
               <WorkflowCard
                 key={wf.id}

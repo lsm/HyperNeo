@@ -198,7 +198,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
 
     expect(getByTestId('agent-template-count').textContent).toBe('1');
     expect(getByText('QA Engineer')).toBeTruthy();
-    expect(getByRole('button', { name: 'New Template' })).toBeTruthy();
+    expect(getByRole('button', { name: '+ New Template' })).toBeTruthy();
   });
 
   it('groups templates by label with an unlabeled custom bucket', () => {
@@ -640,8 +640,8 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     ];
     const { getByRole, getByText } = renderPanel();
 
-    expect(getByText(/agent template/)).toBeTruthy();
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    expect(getByRole('heading', { name: /Agent Templates/ })).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
 
     expect(getByText('New template')).toBeTruthy();
     expect(getByRole('button', { name: 'Create template' })).toBeTruthy();
@@ -657,7 +657,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: '  Release Readiness  ' },
     });
@@ -697,7 +697,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
   it('mounts the tools editor in inherited mode inside the template editor', () => {
     const { getByRole, getByText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
 
     expect(document.body.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
     expect(getByText('(inherited)')).toBeTruthy();
@@ -713,7 +713,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -743,7 +743,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -774,7 +774,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -807,7 +807,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
   it('persists an explicit setting sources selection on template create', async () => {
     const { getByRole, getByText, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     expect(getByText('Inherits the space setting sources.')).toBeTruthy();
 
     fireEvent.click(settingSourceCheckbox('local'));
@@ -831,7 +831,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
   it('clears a template setting sources override back to inherit', async () => {
     const { getByRole, getByText, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.click(settingSourceCheckbox('local'));
     fireEvent.click(getByRole('button', { name: 'Clear override — inherit from space' }));
     expect(getByText('Inherits the space setting sources.')).toBeTruthy();
@@ -860,7 +860,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -899,7 +899,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -925,7 +925,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -962,7 +962,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -997,7 +997,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -1027,7 +1027,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     );
     const { getByRole, getByText, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
       target: { value: 'Release Readiness' },
     });
@@ -1051,7 +1051,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
   it('requires name, key, and handle before persisting a template', async () => {
     const { getByRole, getByText, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     fireEvent.click(getByRole('button', { name: 'Create template' }));
 
     await waitFor(() => expect(getByText('Name is required')).toBeTruthy());
@@ -1074,7 +1074,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     ];
     const { getByRole, getByPlaceholderText } = renderPanel();
 
-    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
     const instructionsField = getByPlaceholderText(
       'What should agents created from this template do?'
     );

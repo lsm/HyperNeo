@@ -6,7 +6,6 @@ import { currentSpaceIdSignal, currentSpaceSettingsTabSignal } from '../../lib/s
 import type { SpaceSettingsTab } from '../../lib/signals';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
-import { GLASS_TAB_PILL_CLASS, GLASS_TAB_STRIP_CLASS, GlassTabStrip } from './glass-workspace';
 
 const SpaceSettings = lazy(() =>
   import('./SpaceSettings').then((m) => ({ default: m.SpaceSettings }))
@@ -102,33 +101,26 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
     <div class="flex h-full flex-col overflow-hidden">
       <div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 sm:px-6">
         {!showWorkflowEditor && (
-          <GlassTabStrip>
-            <div
-              class={GLASS_TAB_STRIP_CLASS}
-              data-testid="space-configure-tab-bar"
-              role="tablist"
-              aria-label="Configure sections"
-            >
-              {CONFIGURE_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === tab.id}
-                  data-testid={`space-configure-tab-${tab.id}`}
-                  onClick={() => navigateToSpaceConfigure(spaceId, tab.id)}
-                  class={cn(
-                    GLASS_TAB_PILL_CLASS,
-                    activeTab === tab.id
-                      ? 'bg-accent/15 text-accent-soft'
-                      : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </GlassTabStrip>
+          <div
+            class="st-tabs mb-4 self-start"
+            data-testid="space-configure-tab-bar"
+            role="tablist"
+            aria-label="Configure sections"
+          >
+            {CONFIGURE_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                data-testid={`space-configure-tab-${tab.id}`}
+                onClick={() => navigateToSpaceConfigure(spaceId, tab.id)}
+                class={cn('st-tab', activeTab === tab.id && 'st-tab-on')}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         )}
 
         {showWorkflowEditor ? (

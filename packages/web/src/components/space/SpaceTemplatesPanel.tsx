@@ -5,6 +5,7 @@ import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateListItem } from './TemplateListItem';
 import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { TemplateEditor } from './TemplateEditor';
+import { Button } from '../ui/Button';
 import {
   abandonIdleTemplateDelete,
   closeTemplateDelete,
@@ -52,96 +53,69 @@ export function SpaceTemplatesPanel({
 
   return (
     <>
-      <div class="flex h-full min-h-0 flex-col overflow-hidden" data-testid="space-templates-panel">
-        <div class="flat-surface mb-3 flex flex-shrink-0 flex-col items-stretch gap-3 rounded-xl p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div data-testid="space-templates-panel">
+        <div class="st-sec-head">
           <div class="min-w-0">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-soft">
-              <span data-testid="agent-template-count">{templates.length}</span>{' '}
-              {templates.length === 1 ? 'agent template' : 'agent templates'}
-            </p>
-            <p class="mt-1 text-xs leading-5 text-fg-muted">
+            <h3 class="st-sec-title">
+              Agent Templates ·{' '}
+              <span data-testid="agent-template-count" class="text-fg-muted">
+                {templates.length}
+              </span>
+            </h3>
+            <p class="st-sec-desc">
               Reusable role presets — instructions, autonomy, model, and tools in one place. Agents
               created from a template inherit its configuration.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={openNewTemplate}
-            class="glass-primary-button whitespace-nowrap !h-9 !px-3.5 !text-xs"
-            data-testid="new-template-button"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-            <span class="ml-1.5">New Template</span>
-          </button>
+          <div class="st-sec-actions">
+            <Button
+              type="button"
+              size="sm"
+              onClick={openNewTemplate}
+              data-testid="new-template-button"
+            >
+              + New Template
+            </Button>
+          </div>
         </div>
 
-        <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto">
-          {templates.length === 0 ? (
-            <div class="flat-surface flex flex-col items-center justify-center rounded-xl py-12 text-center">
-              <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-surface-raised border border-line flex items-center justify-center">
-                <svg
-                  class="w-5 h-5 text-fg-muted"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                  />
-                </svg>
-              </div>
-              <p class="text-sm text-fg-muted">No templates yet</p>
-              <p class="text-xs text-fg-muted mt-1">
+        {templates.length === 0 ? (
+          <div class="st-group">
+            <div class="st-empty">
+              <p class="st-empty-title">No templates yet</p>
+              <p class="st-empty-desc">
                 Create a template to give agents a repeatable starting configuration.
               </p>
-              <button
-                type="button"
-                onClick={openNewTemplate}
-                class="glass-primary-button mt-4 !h-9 !px-3.5 !text-xs"
-              >
-                Create your first template
-              </button>
+              <div class="mt-4">
+                <Button type="button" size="sm" onClick={openNewTemplate}>
+                  Create your first template
+                </Button>
+              </div>
             </div>
-          ) : (
-            <div class="space-y-5">
-              {templateGroups.map((group) => (
-                <div key={group.key} data-testid={`agent-template-group-${group.key}`}>
-                  <h4 class="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-muted">
-                    {group.title} · {group.templates.length}
-                  </h4>
-                  <div class="flat-surface divide-y divide-line overflow-hidden rounded-xl">
-                    {group.templates.map((t) => (
-                      <TemplateListItem
-                        key={t.key}
-                        template={t}
-                        isUserTemplate={userTemplateKeys.has(t.key)}
-                        onEdit={userTemplateKeys.has(t.key) ? () => openEditTemplate(t) : undefined}
-                        onDelete={
-                          userTemplateKeys.has(t.key)
-                            ? () => openTemplateDelete(spaceId, t)
-                            : undefined
-                        }
-                        onClone={
-                          userTemplateKeys.has(t.key) ? undefined : () => openCloneTemplate(t)
-                        }
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
+          </div>
+        ) : (
+          templateGroups.map((group) => (
+            <div key={group.key} data-testid={`agent-template-group-${group.key}`}>
+              <div class="st-group-cap">
+                {group.title} · {group.templates.length}
+              </div>
+              <div class="st-group">
+                {group.templates.map((t) => (
+                  <TemplateListItem
+                    key={t.key}
+                    template={t}
+                    isUserTemplate={userTemplateKeys.has(t.key)}
+                    onEdit={userTemplateKeys.has(t.key) ? () => openEditTemplate(t) : undefined}
+                    onDelete={
+                      userTemplateKeys.has(t.key) ? () => openTemplateDelete(spaceId, t) : undefined
+                    }
+                    onClone={userTemplateKeys.has(t.key) ? undefined : () => openCloneTemplate(t)}
+                  />
+                ))}
+              </div>
             </div>
-          )}
-        </div>
+          ))
+        )}
       </div>
 
       {showTemplateEditor && (

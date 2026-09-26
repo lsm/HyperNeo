@@ -26,7 +26,12 @@ import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
 import { SpaceExternalEventsSettings } from './SpaceExternalEventsSettings.tsx';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 import { SpaceTemplatesSection } from './SpaceTemplatesPanel.tsx';
-import { SettingsGroup, SettingsRow, SettingsSection } from '../settings/SettingsSection.tsx';
+import {
+  SettingsDangerGroup,
+  SettingsGroup,
+  SettingsRow,
+  SettingsSection,
+} from '../settings/SettingsSection.tsx';
 import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS, formControlClass } from '../ui/FormField';
 
 interface SpaceSettingsProps {
@@ -241,145 +246,146 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
 
   return (
     <div class="space-y-3">
-      {workspaces.length === 0 ? (
-        <p class="px-1 text-sm text-fg-muted" data-testid="workspaces-empty">
-          No workspaces registered for this space.
-        </p>
-      ) : (
-        <div data-testid="workspaces-list">
-          <SettingsGroup>
-            {workspaces.map((workspace) => (
-              <div
-                key={workspace.id}
-                class="flex items-center gap-3 px-4 py-3"
-                data-testid="workspace-item"
-              >
-                <div class="min-w-0 flex-1">
-                  {editing !== null && editing.id === workspace.id ? (
-                    <div class="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editing.label}
-                        data-testid="workspace-label-input"
-                        onInput={(e) =>
-                          setEditing({
-                            id: workspace.id,
-                            label: (e.target as HTMLInputElement).value,
-                          })
+      <div data-testid="workspaces-list">
+        <SettingsGroup>
+          {workspaces.length === 0 && (
+            <div class="st-trow">
+              <span class="st-trow-desc" data-testid="workspaces-empty">
+                No workspaces registered for this space.
+              </span>
+            </div>
+          )}
+          {workspaces.map((workspace) => (
+            <div
+              key={workspace.id}
+              class="flex items-center gap-3 px-4 py-3"
+              data-testid="workspace-item"
+            >
+              <div class="min-w-0 flex-1">
+                {editing !== null && editing.id === workspace.id ? (
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={editing.label}
+                      data-testid="workspace-label-input"
+                      onInput={(e) =>
+                        setEditing({
+                          id: workspace.id,
+                          label: (e.target as HTMLInputElement).value,
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSaveLabel();
+                        } else if (e.key === 'Escape') {
+                          setEditing(null);
                         }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleSaveLabel();
-                          } else if (e.key === 'Escape') {
-                            setEditing(null);
-                          }
-                        }}
-                        disabled={savingLabelId !== null}
-                        class={formControlClass().replace('w-full', 'w-40')}
-                      />
-                      <button
-                        type="button"
-                        data-testid="workspace-label-save"
-                        onClick={handleSaveLabel}
-                        disabled={savingLabelId !== null}
-                        class="text-xs text-accent hover:text-accent-soft disabled:opacity-50"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="workspace-label-cancel"
-                        onClick={() => setEditing(null)}
-                        disabled={savingLabelId !== null}
-                        class="text-xs text-fg-muted hover:text-fg-soft disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div class="flex items-center gap-2">
-                      <span class="truncate text-[13px] font-medium text-fg">
-                        {workspaceTitle(workspace)}
-                      </span>
-                      {workspace.isPrimary && (
-                        <span
-                          class="flex-shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-soft"
-                          data-testid="workspace-primary-badge"
-                        >
-                          Primary
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <p class="truncate font-mono text-xs text-fg-muted">{workspace.path}</p>
-                </div>
-                {(editing === null || editing.id !== workspace.id) && (
-                  <div class="flex flex-shrink-0 items-center gap-3">
+                      }}
+                      disabled={savingLabelId !== null}
+                      class={formControlClass().replace('w-full', 'w-40')}
+                    />
                     <button
                       type="button"
-                      data-testid="workspace-edit-label"
-                      onClick={() => {
-                        setEditing({ id: workspace.id, label: workspace.label });
-                        clearActionError();
-                      }}
-                      class="text-xs text-fg-muted hover:text-fg-soft"
+                      data-testid="workspace-label-save"
+                      onClick={handleSaveLabel}
+                      disabled={savingLabelId !== null}
+                      class="text-xs text-accent hover:text-accent-soft disabled:opacity-50"
                     >
-                      Edit
+                      Save
                     </button>
-                    {!workspace.isPrimary && (
-                      <button
-                        type="button"
-                        data-testid="workspace-remove"
-                        disabled={removingId === workspace.id}
-                        onClick={() => handleRemove(workspace)}
-                        class="text-xs text-danger hover:text-danger-soft disabled:opacity-50"
+                    <button
+                      type="button"
+                      data-testid="workspace-label-cancel"
+                      onClick={() => setEditing(null)}
+                      disabled={savingLabelId !== null}
+                      class="text-xs text-fg-muted hover:text-fg-soft disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div class="flex items-center gap-2">
+                    <span class="truncate text-[13px] font-medium text-fg">
+                      {workspaceTitle(workspace)}
+                    </span>
+                    {workspace.isPrimary && (
+                      <span
+                        class="st-chip-accent inline-flex flex-shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                        data-testid="workspace-primary-badge"
                       >
-                        Remove
-                      </button>
+                        Primary
+                      </span>
                     )}
                   </div>
                 )}
+                <p class="truncate font-mono text-xs text-fg-muted">{workspace.path}</p>
               </div>
-            ))}
-          </SettingsGroup>
-        </div>
-      )}
-      <div class="flex flex-wrap items-center gap-2" data-testid="workspace-add-form">
-        <input
-          type="text"
-          value={newPath}
-          data-testid="workspace-add-path"
-          placeholder="/absolute/path/to/repo"
-          onInput={(e) => setNewPath((e.target as HTMLInputElement).value)}
-          onKeyDown={addOnEnter}
-          disabled={adding}
-          class={cn(workspaceInputClass, 'min-w-0 flex-1 font-mono text-xs')}
-        />
-        <input
-          type="text"
-          value={newLabel}
-          data-testid="workspace-add-label"
-          placeholder="Label (optional)"
-          onInput={(e) => setNewLabel((e.target as HTMLInputElement).value)}
-          onKeyDown={addOnEnter}
-          disabled={adding}
-          class={cn(workspaceInputClass, 'w-36')}
-        />
-        {nativeFolderPickerAvailable && (
-          <button
-            type="button"
-            data-testid="workspace-add-browse"
-            onClick={handleBrowse}
-            disabled={adding || browsing}
-            class="rounded-md border border-line px-2.5 py-1 text-[13px] text-fg-soft transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"
-          >
-            Browse
-          </button>
-        )}
-        <Button type="button" size="sm" loading={adding} onClick={handleAdd}>
-          Add
-        </Button>
+              {(editing === null || editing.id !== workspace.id) && (
+                <div class="flex flex-shrink-0 items-center gap-3">
+                  <button
+                    type="button"
+                    data-testid="workspace-edit-label"
+                    onClick={() => {
+                      setEditing({ id: workspace.id, label: workspace.label });
+                      clearActionError();
+                    }}
+                    class="text-xs text-fg-muted hover:text-fg-soft"
+                  >
+                    Edit
+                  </button>
+                  {!workspace.isPrimary && (
+                    <button
+                      type="button"
+                      data-testid="workspace-remove"
+                      disabled={removingId === workspace.id}
+                      onClick={() => handleRemove(workspace)}
+                      class="text-xs text-danger hover:text-danger-soft disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          <div class="st-addrow" data-testid="workspace-add-form">
+            <input
+              type="text"
+              value={newPath}
+              data-testid="workspace-add-path"
+              placeholder="/absolute/path/to/repo"
+              onInput={(e) => setNewPath((e.target as HTMLInputElement).value)}
+              onKeyDown={addOnEnter}
+              disabled={adding}
+              class={cn(workspaceInputClass, 'min-w-0 flex-1 font-mono text-xs')}
+            />
+            <input
+              type="text"
+              value={newLabel}
+              data-testid="workspace-add-label"
+              placeholder="Label (optional)"
+              onInput={(e) => setNewLabel((e.target as HTMLInputElement).value)}
+              onKeyDown={addOnEnter}
+              disabled={adding}
+              class={cn(workspaceInputClass, 'w-36')}
+            />
+            {nativeFolderPickerAvailable && (
+              <button
+                type="button"
+                data-testid="workspace-add-browse"
+                onClick={handleBrowse}
+                disabled={adding || browsing}
+                class="rounded-md border border-line px-2.5 py-1 text-[13px] text-fg-soft transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"
+              >
+                Browse
+              </button>
+            )}
+            <Button type="button" size="sm" loading={adding} onClick={handleAdd}>
+              Add
+            </Button>
+          </div>
+        </SettingsGroup>
       </div>
       {actionError && (
         <p class="text-sm text-danger-soft" data-testid="workspaces-action-error">
@@ -643,9 +649,7 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
                         rows={7}
                         class={cn(FORM_CONTROL_CLASS, 'resize-y')}
                       />
-                      <div class="mt-0.5 text-right text-xs text-fg-muted">
-                        {instructions.length} characters
-                      </div>
+                      <div class="st-charcount">{instructions.length} characters</div>
                     </div>
                   </SettingsRow>
                   <SettingsRow label="Background context" layout="stacked">
@@ -659,9 +663,7 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
                         rows={7}
                         class={cn(FORM_CONTROL_CLASS, 'resize-y')}
                       />
-                      <div class="mt-0.5 text-right text-xs text-fg-muted">
-                        {backgroundContext.length} characters
-                      </div>
+                      <div class="st-charcount">{backgroundContext.length} characters</div>
                     </div>
                   </SettingsRow>
                 </SettingsGroup>
@@ -808,7 +810,8 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
           )}
 
           {isDirty && (
-            <div class="sticky bottom-0 z-10 flex justify-end gap-2 rounded-lg border border-line bg-surface/95 px-3 py-3 backdrop-blur">
+            <div class="st-savebar">
+              <span class="st-savebar-hint">Unsaved changes</span>
               <Button type="button" variant="secondary" size="sm" onClick={resetChanges}>
                 Discard
               </Button>
@@ -873,7 +876,7 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
                 title={<span class="text-danger">Danger zone</span>}
                 description="Destructive actions for this space. Archive is reversible; delete is permanent."
               >
-                <div class="divide-y divide-danger/25 overflow-hidden rounded-xl border border-danger/30 bg-danger/5">
+                <SettingsDangerGroup>
                   <div class="flex items-center justify-between gap-4 px-4 py-3">
                     <div>
                       <p class="text-[13px] font-medium text-fg">Archive space</p>
@@ -910,7 +913,7 @@ export function SpaceSettings({ space, tab }: SpaceSettingsProps) {
                       Delete
                     </Button>
                   </div>
-                </div>
+                </SettingsDangerGroup>
               </SettingsSection>
             </>
           )}

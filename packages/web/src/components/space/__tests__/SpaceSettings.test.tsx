@@ -233,7 +233,8 @@ describe('SpaceSettings', () => {
       stubHubRequests([]);
       const { findByTestId, queryByTestId } = render(<SpaceSettings space={makeSpace()} />);
       expect(await findByTestId('workspaces-empty')).toBeTruthy();
-      expect(queryByTestId('workspaces-list')).toBeNull();
+      expect(queryByTestId('workspace-item')).toBeNull();
+      expect(await findByTestId('workspace-add-form')).toBeTruthy();
     });
 
     it('renders the RPC error inline when the list fails to load', async () => {

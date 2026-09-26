@@ -94,9 +94,9 @@ describe('SpaceTemplatesPanel', () => {
   });
 
   it('opens its own editor for a new template', () => {
-    const { getByText, getByTestId } = renderPanel();
+    const { getByTestId } = renderPanel();
 
-    fireEvent.click(getByText('New Template'));
+    fireEvent.click(getByTestId('new-template-button'));
 
     expect(getByTestId('template-editor').textContent).toBe('new');
   });

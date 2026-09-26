@@ -434,7 +434,7 @@ export default function SpaceIsland({
     return (
       <>
         <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          class="settings-theme flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-configure-view"
           {...baseLayerProps}
         >
