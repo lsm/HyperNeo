@@ -646,6 +646,7 @@ export function SpaceDetailPanel({
                     >
                       {clone.returnedAt && (
                         <span
+                          role="img"
                           class="text-fg-faint"
                           title={`Returned ${clone.returnedAt}`}
                           aria-label="Returned"

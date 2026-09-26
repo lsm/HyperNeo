@@ -562,6 +562,7 @@ function RecentSessionRow({ session, onOpen }: { session: SpaceSessionRow; onOpe
       <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
       {session.parentSessionId && (
         <span
+          role="img"
           class="flex-shrink-0 text-fg-muted"
           title="Clone conversation"
           aria-label="Clone conversation"

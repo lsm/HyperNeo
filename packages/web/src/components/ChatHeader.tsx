@@ -83,6 +83,7 @@ export function ChatHeader({
         <div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
           {isClone && (
             <span
+              role="img"
               class="flex-shrink-0 text-fg-muted"
               title="Clone conversation"
               aria-label="Clone conversation"
