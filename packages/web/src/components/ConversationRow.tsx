@@ -58,7 +58,6 @@ export function ConversationRow({
     >
       {editor || (
         <>
-          {disclosure}
           <button
             type="button"
             data-testid={testId}
@@ -105,6 +104,7 @@ export function ConversationRow({
               {actions}
             </div>
           )}
+          {disclosure && <div class="flex shrink-0 items-center pr-1">{disclosure}</div>}
         </>
       )}
     </div>

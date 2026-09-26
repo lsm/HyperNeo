@@ -20,7 +20,7 @@ export function CollapsibleSection({
 
   return (
     <div class="collapsible-section">
-      <div class="flex min-h-9 items-center justify-between gap-1 px-2.5 py-1">
+      <div class="flex min-h-9 items-center justify-between gap-1 px-1.5 py-1">
         <button
           type="button"
           class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-fg-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
@@ -53,7 +53,7 @@ export function CollapsibleSection({
           </div>
         )}
       </div>
-      {expanded && <div class="collapsible-section-body">{children}</div>}
+      {expanded && <div class="collapsible-section-body px-2">{children}</div>}
     </div>
   );
 }

@@ -13,7 +13,7 @@ export function ConversationDisclosure({ expanded, title, onToggle }: Conversati
       title={label}
       aria-expanded={expanded}
       onClick={onToggle}
-      class="flex h-8 w-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      class="flex h-8 w-8 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <svg
         class={`h-3 w-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
