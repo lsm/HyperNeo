@@ -10,6 +10,7 @@
     "./types": "./src/types.ts",
     "./types/*": "./src/types/*.ts",
     "./models": "./src/models.ts",
+    "./web-entry": "./src/web-entry.ts",
     "./provider": "./src/provider/index.ts",
     "./provider/*": "./src/provider/*.ts",
     "./logger": "./src/logger.ts",

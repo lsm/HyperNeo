@@ -6,6 +6,7 @@ import { EVOLUTION_OPERATION_NAMES } from './operation-names/evolution.ts';
 import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
 import { INACTIVITY_OPERATION_NAMES } from './operation-names/inactivity.ts';
 import { MESSAGING_OPERATION_NAMES } from './operation-names/messaging.ts';
+import { NEO_OPERATION_NAMES } from './operation-names/neo.ts';
 import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
 import { SESSION_OPERATION_NAMES } from './operation-names/session.ts';
 import { SPACE_OPERATION_NAMES } from './operation-names/space.ts';
@@ -21,6 +22,7 @@ export const OPERATION_NAME_FAMILIES = {
   goal: GOAL_OPERATION_NAMES,
   inactivity: INACTIVITY_OPERATION_NAMES,
   messaging: MESSAGING_OPERATION_NAMES,
+  neo: NEO_OPERATION_NAMES,
   schedule: SCHEDULE_OPERATION_NAMES,
   session: SESSION_OPERATION_NAMES,
   space: SPACE_OPERATION_NAMES,
@@ -37,6 +39,7 @@ export const OPERATION_NAMES = [
   ...GOAL_OPERATION_NAMES,
   ...INACTIVITY_OPERATION_NAMES,
   ...MESSAGING_OPERATION_NAMES,
+  ...NEO_OPERATION_NAMES,
   ...SCHEDULE_OPERATION_NAMES,
   ...SESSION_OPERATION_NAMES,
   ...SPACE_OPERATION_NAMES,

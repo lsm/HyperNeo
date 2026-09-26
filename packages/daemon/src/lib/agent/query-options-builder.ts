@@ -70,6 +70,7 @@ import {
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
+import { neoCoordinatorBinding, restrictNeoQuery } from '../neo/session-policy.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -303,6 +304,10 @@ export class QueryOptionsBuilder {
   }
 
   private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
+    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
+      const operations = this.ctx.getOperationMcpServer?.();
+      return operations ? { 'hyperneo-operations': operations } : {};
+    }
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: this.getMcpServersFromRegistry(),
       skillServers: this.getMcpServersFromSkills(),
@@ -544,6 +549,9 @@ export class QueryOptionsBuilder {
     } else {
       this.deferredPermissionMode = undefined;
     }
+
+    const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
+    if (neoBinding) restrictNeoQuery(queryOptions, neoBinding.concernId);
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
@@ -923,6 +931,7 @@ CRITICAL RULES:
   }
 
   private getPermissionMode(): PermissionMode {
+    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) return 'dontAsk';
     if (this.ctx.session.config.permissionMode) {
       if (this.ctx.session.config.permissionMode === 'default') {
         return 'bypassPermissions';

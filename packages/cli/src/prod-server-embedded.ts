@@ -4,6 +4,7 @@ import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver'
 import type { Config } from '@hyperneo/daemon/config';
 import { createHttpWsServer, type ServerHandle } from '@hyperneo/daemon/lib/runtime-server';
 import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
+import { resolveNeoEntry } from '@hyperneo/shared/web-entry';
 import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import {
@@ -149,15 +150,23 @@ export async function startProdServer(config: Config) {
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
-      const asset = embeddedAssets.get(url.pathname);
+      const entry = resolveNeoEntry(url);
+      if (entry?.kind === 'redirect') {
+        return new Response(null, {
+          status: 308,
+          headers: { Location: entry.location, 'Cache-Control': 'no-cache' },
+        });
+      }
+      const assetPath = entry?.kind === 'entry' ? entry.path : url.pathname;
+      const asset = embeddedAssets.get(assetPath);
       if (asset) {
         const headers: Record<string, string> = {
           'Content-Type': asset.mimeType,
         };
 
-        if (shouldHaveImmutableCache(url.pathname)) {
+        if (shouldHaveImmutableCache(assetPath)) {
           headers['Cache-Control'] = 'public, max-age=31536000, immutable';
-        } else if (isHtmlFile(url.pathname)) {
+        } else if (isHtmlFile(assetPath)) {
           headers['Cache-Control'] = 'no-cache';
         }
 
