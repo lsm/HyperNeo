@@ -158,6 +158,13 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { concerns: [{ context: '' }] } });
   });
 
+  test('opening a missing concern reports a domain rejection instead of an execution fault', async () => {
+    expect(await invoke('neo.open', { concernId: 'gone' })).toMatchObject({
+      value: { ok: false, reason: 'Concern not found.' },
+    });
+    expect(created).toHaveLength(0);
+  });
+
   test('trusts bindings, not a claimed role; concern holders cannot read or mutate other contexts', async () => {
     await invoke('neo.concern.save', concern);
     const id = await service.open(concern.id);

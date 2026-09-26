@@ -22,7 +22,10 @@ export function conversationText(message: ChatMessage): string {
     .join('\n\n');
 }
 
-function completedConversation(messages: ChatMessage[], workIds: Set<string>): ChatMessage[] {
+export function completedConversation(
+  messages: ChatMessage[],
+  workIds: Set<string>
+): ChatMessage[] {
   const visible: ChatMessage[] = [];
   let reply: ChatMessage | null = null;
   for (const message of messages) {
@@ -30,7 +33,7 @@ function completedConversation(messages: ChatMessage[], workIds: Set<string>): C
     if (message.type === 'user' && text && !workIds.has(message.uuid ?? '')) visible.push(message);
     if (message.type === 'assistant' && text) reply = message;
     if (message.type === 'result') {
-      if (reply && message.subtype === 'success') visible.push(reply);
+      if (reply) visible.push(reply);
       reply = null;
     }
   }

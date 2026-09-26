@@ -120,10 +120,11 @@ export function createNeoOperations(service: NeoService) {
   const open = path(
     'neo.open',
     (input: z.infer<typeof Scope>) => input.concernId,
-    async (input, caller) => ({
-      ...snapshot(caller),
-      sessionId: await service.open(input.concernId ?? null),
-    })
+    async (input, caller) => {
+      if (input.concernId && !service.repo.getConcern(input.concernId))
+        return { ok: false as const, reason: 'Concern not found.' };
+      return { ...snapshot(caller), sessionId: await service.open(input.concernId ?? null) };
+    }
   );
   const save = path(
     'neo.concern.save',
