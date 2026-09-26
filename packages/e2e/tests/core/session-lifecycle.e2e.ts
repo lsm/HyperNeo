@@ -41,10 +41,10 @@ test.describe('2-Stage Session Creation', () => {
     expect(sessionId).toBeTruthy();
   });
 
-  test('should show default title initially (New Session)', async ({ page }) => {
+  test('should show default title initially (New conversation)', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    await expect(page.locator('h2:has-text("New Session")')).toBeVisible({
+    await expect(page.locator('h2:has-text("New conversation")')).toBeVisible({
       timeout: 5000,
     });
   });
@@ -52,7 +52,7 @@ test.describe('2-Stage Session Creation', () => {
   test.skip('should generate title after first message (Stage 2)', async ({ page }) => {
     sessionId = await createSessionViaUI(page);
 
-    await expect(page.locator('h2:has-text("New Session")')).toBeVisible();
+    await expect(page.locator('h2:has-text("New conversation")')).toBeVisible();
 
     const testMessage = 'Reply with exactly: TEST_OK';
     const textarea = page.locator('textarea[placeholder*="Ask"]').first();

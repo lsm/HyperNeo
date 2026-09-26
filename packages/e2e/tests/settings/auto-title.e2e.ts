@@ -35,7 +35,7 @@ test.describe('Auto Title Generation', () => {
 
     const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
     await expect(sessionItem).toBeVisible({ timeout: 10000 });
-    await expect(sessionItem.locator('h3')).toHaveText('New Session', { timeout: 10000 });
+    await expect(sessionItem.locator('h3')).toHaveText('New conversation', { timeout: 10000 });
 
     const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
     await messageInput.fill('What is the capital of France?');
@@ -49,14 +49,14 @@ test.describe('Auto Title Generation', () => {
           const sessionEl = document.querySelector(`[data-session-id="${sid}"]`);
           const titleEl = sessionEl?.querySelector('h3');
           const titleText = titleEl?.textContent || '';
-          return titleText !== 'New Session' && titleText.length > 0;
+          return titleText !== 'New conversation' && titleText.length > 0;
         },
         sessionId,
         { timeout: 120000 }
       );
 
       const newTitle = await sessionItem.locator('h3').textContent();
-      expect(newTitle).not.toBe('New Session');
+      expect(newTitle).not.toBe('New conversation');
       expect(newTitle).toBeTruthy();
 
       const wordCount = newTitle?.split(/\s+/).length || 0;
@@ -87,14 +87,14 @@ test.describe('Auto Title Generation', () => {
         const sessionEl = document.querySelector(`[data-session-id="${sid}"]`);
         const titleEl = sessionEl?.querySelector('h3');
         const titleText = titleEl?.textContent || '';
-        return titleText !== 'New Session' && titleText.length > 0;
+        return titleText !== 'New conversation' && titleText.length > 0;
       },
       sessionId,
       { timeout: 120000 }
     );
 
     const generatedTitle = await sessionItem.locator('h3').textContent();
-    expect(generatedTitle).not.toBe('New Session');
+    expect(generatedTitle).not.toBe('New conversation');
 
     await messageInput.fill('What are its benefits?');
     await messageInput.press('Enter');
