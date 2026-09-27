@@ -104,7 +104,8 @@ export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
 }
 
 export function spaceAgentTemplateToNodeSource(
-  template: SpaceAgentTemplate | WorkflowTemplateSnapshot
+  template: SpaceAgentTemplate | WorkflowTemplateSnapshot,
+  builtIn?: SpaceLongHorizonAgentTemplate
 ): NodeAgentTemplateSource {
   return {
     key: template.key,
@@ -113,9 +114,9 @@ export function spaceAgentTemplateToNodeSource(
     description: template.description,
     instructions: template.instructions,
     suggestedAutonomyLevel: template.suggestedAutonomyLevel,
-    suggestedEventSubscriptions: [],
-    reminderDefaults: [],
-    ownershipPatterns: [],
+    suggestedEventSubscriptions: template.suggestedEventSubscriptions ?? [],
+    reminderDefaults: template.reminderDefaults ?? [],
+    ownershipPatterns: builtIn?.ownershipPatterns ?? [],
     toolPermissions: template.tools ? { tools: template.tools } : {},
     model: template.model ?? undefined,
     provider: template.provider ?? undefined,

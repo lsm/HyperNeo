@@ -154,6 +154,7 @@ interface TemplateResolutionHarness {
 function makeTemplateResolutionHarness(
   options: {
     storedTemplates?: SpaceAgentTemplate[];
+    hiddenKeys?: string[];
     registryAgents?: SpaceLongHorizonAgent[];
     pinnedWorkflows?: Record<string, SpaceWorkflow | null>;
   } = {}
@@ -161,6 +162,7 @@ function makeTemplateResolutionHarness(
   const templateRepoCalls: string[] = [];
   const pinnedLookupCalls: string[] = [];
   const stored = new Map((options.storedTemplates ?? []).map((t) => [t.key, t]));
+  const hiddenKeys = new Set(options.hiddenKeys ?? []);
   const registryAgents = options.registryAgents ?? [];
 
   const tam = new TaskAgentManager({
@@ -184,6 +186,8 @@ function makeTemplateResolutionHarness(
         templateRepoCalls.push(`${spaceId}:${key}`);
         return stored.get(key) ?? null;
       },
+      hiddenBuiltInKeys: (spaceId: string) =>
+        spaceId === 'space-1' ? hiddenKeys : new Set<string>(),
     },
   } as unknown as TaskAgentManagerConfig);
 
@@ -204,44 +208,46 @@ function makeTemplateResolutionHarnessScopedToOwner(params: {
   const calls = harness.templateRepoCalls;
   (
     harness.tam as unknown as {
-      config: { templateRepo: { getOwned: (spaceId: string, key: string) => unknown } };
+      config: {
+        templateRepo: {
+          getOwned: (spaceId: string, key: string) => unknown;
+          hiddenBuiltInKeys: () => ReadonlySet<string>;
+        };
+      };
     }
   ).config.templateRepo = {
     getOwned: (spaceId: string, key: string) => {
       calls.push(`${spaceId}:${key}`);
       return spaceId === params.owner ? (owned.get(key) ?? null) : null;
     },
+    hiddenBuiltInKeys: () => new Set<string>(),
   };
   return harness;
 }
 
 describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
-  test('resolves a code built-in worker template without consulting the template repo', () => {
-    const h = makeTemplateResolutionHarness({
-      storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
-    });
+  test('resolves a code built-in worker template when the Space has no override', () => {
+    const h = makeTemplateResolutionHarness();
 
     const source = h.internals.resolveNodeTemplateSource('space-1', 'worker.swe');
 
     expect(source?.key).toBe('worker.swe');
     expect(source?.handle).toBe('swe');
     expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
-    expect(h.templateRepoCalls).toEqual([]);
+    expect(h.templateRepoCalls).toEqual(['space-1:worker.swe']);
   });
 
-  test('resolves a code built-in family template without consulting the template repo', () => {
-    const h = makeTemplateResolutionHarness({
-      storedTemplates: [makeStoredTemplate({ key: 'space-manager.default' })],
-    });
+  test('resolves a code built-in family template when the Space has no override', () => {
+    const h = makeTemplateResolutionHarness();
 
     const source = h.internals.resolveNodeTemplateSource('space-1', 'space-manager.default');
 
     expect(source?.key).toBe('space-manager.default');
     expect(source?.handle).toBe('space-manager');
-    expect(h.templateRepoCalls).toEqual([]);
+    expect(h.templateRepoCalls).toEqual(['space-1:space-manager.default']);
   });
 
-  test('falls back to templateRepo.getOwned for a stored template and maps it to a node source', () => {
+  test('maps a stored template to a node source', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
     });
@@ -260,16 +266,36 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
     expect(source?.ownershipPatterns).toEqual([]);
   });
 
-  test('the code built-in wins when a stored template shadows a built-in key', () => {
+  test('a stored override shadows the code built-in for the same key', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
     });
 
     const source = h.internals.resolveNodeTemplateSource('space-1', 'worker.swe');
 
-    expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
-    expect(source?.instructions).not.toBe('Stored template instructions');
-    expect(h.templateRepoCalls).toEqual([]);
+    expect(source?.instructions).toBe('Stored template instructions');
+    expect(source?.instructions).not.toBe(PRESET_CODER_PROMPT);
+    expect(h.templateRepoCalls).toEqual(['space-1:worker.swe']);
+  });
+
+  test('a stored override of a built-in keeps the built-in reminder defaults and ownership patterns', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate({ key: 'space-manager.default' })],
+    });
+
+    const source = h.internals.resolveNodeTemplateSource('space-1', 'space-manager.default');
+
+    expect(source?.instructions).toBe('Stored template instructions');
+    expect(source?.reminderDefaults?.map((reminder) => reminder.title)).toEqual([
+      'Review Space work',
+    ]);
+    expect(source?.ownershipPatterns?.map((pattern) => pattern.target)).toEqual(['goal']);
+  });
+
+  test('a hidden built-in without an override resolves null', () => {
+    const h = makeTemplateResolutionHarness({ hiddenKeys: ['worker.swe'] });
+
+    expect(h.internals.resolveNodeTemplateSource('space-1', 'worker.swe')).toBeNull();
   });
 
   test('returns null for an unknown key after one repo lookup', () => {

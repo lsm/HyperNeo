@@ -50,6 +50,25 @@ export function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
   });
 }
 
+export function resolveEffectiveSpaceAgentTemplate(
+  key: string,
+  spaceId: string,
+  repo?: Pick<SpaceAgentTemplateRepository, 'getOwned' | 'hiddenBuiltInKeys'>
+): SpaceAgentTemplate | null {
+  const owned = repo?.getOwned(spaceId, key);
+  if (owned) {
+    const builtIn = getLongHorizonAgentTemplates().find((template) => template.key === owned.key);
+    if (!builtIn) return owned;
+    return {
+      ...owned,
+      suggestedEventSubscriptions: builtIn.suggestedEventSubscriptions,
+      reminderDefaults: builtIn.reminderDefaults,
+    };
+  }
+  if (repo?.hiddenBuiltInKeys(spaceId).has(key)) return null;
+  return getBuiltInSpaceAgentTemplates().find((template) => template.key === key) ?? null;
+}
+
 export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,

@@ -171,9 +171,26 @@ describe('createAgentTemplateResolver', () => {
       spaceId === 'space-a' && key === 'worker.custom'
         ? template({ instructions: 'stored copy' })
         : null,
+    hiddenBuiltInKeys: () => new Set<string>(),
   };
 
-  test('prefers built-in templates over stored templates with the same key', () => {
+  test('a stored override shadows the code built-in for the same key', () => {
+    const overridden = {
+      getOwned: (spaceId: string, key: string) =>
+        spaceId === 'space-a' && key === 'worker.swe'
+          ? template({ key: 'worker.swe', instructions: 'stored copy' })
+          : null,
+      hiddenBuiltInKeys: () => new Set<string>(),
+    };
+    const resolve = createAgentTemplateResolver('space-a', overridden);
+
+    expect(resolve('worker.swe')?.instructions).toBe('stored copy');
+    expect(createAgentTemplateResolver('space-b', overridden)('worker.swe')?.instructions).not.toBe(
+      'stored copy'
+    );
+  });
+
+  test('resolves a stored user template and rejects unknown keys', () => {
     const resolve = createAgentTemplateResolver('space-a', stored);
 
     const builtIn = resolve('worker.swe');
@@ -184,6 +201,32 @@ describe('createAgentTemplateResolver', () => {
     expect(userTemplate?.instructions).toBe('stored copy');
 
     expect(resolve('worker.nope')).toBeNull();
+  });
+
+  test('a hidden built-in without an override resolves null', () => {
+    const hidden = {
+      getOwned: () => null,
+      hiddenBuiltInKeys: (spaceId: string) =>
+        spaceId === 'space-a' ? new Set(['worker.swe']) : new Set<string>(),
+    };
+    const resolve = createAgentTemplateResolver('space-a', hidden);
+
+    expect(resolve('worker.swe')).toBeNull();
+    expect(createAgentTemplateResolver('space-b', hidden)('worker.swe')?.key).toBe('worker.swe');
+  });
+
+  test('a hidden built-in with an override resolves the override', () => {
+    const hiddenOverridden = {
+      getOwned: (spaceId: string, key: string) =>
+        spaceId === 'space-a' && key === 'worker.swe'
+          ? template({ key: 'worker.swe', instructions: 'stored copy' })
+          : null,
+      hiddenBuiltInKeys: () => new Set(['worker.swe']),
+    };
+
+    expect(
+      createAgentTemplateResolver('space-a', hiddenOverridden)('worker.swe')?.instructions
+    ).toBe('stored copy');
   });
 
   test('does not resolve a stored template another Space owns', () => {
@@ -203,6 +246,7 @@ describe('createAgentTemplateResolverFactory', () => {
     const resolveFor = createAgentTemplateResolverFactory({
       getOwned: (spaceId: string, key: string) =>
         key === 'worker.custom' ? template({ instructions: `stored in ${spaceId}` }) : null,
+      hiddenBuiltInKeys: () => new Set<string>(),
     });
 
     expect(resolveFor('space-a')('worker.custom')?.instructions).toBe('stored in space-a');

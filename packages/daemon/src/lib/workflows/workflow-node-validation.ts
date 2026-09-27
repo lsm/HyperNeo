@@ -242,6 +242,14 @@ export function validateNodeAgentRef(
     if (entry.templateKey?.trim()) {
       const key = entry.templateKey.trim();
       if (getLongHorizonAgentTemplate(key)) {
+        if (
+          !agentRefs.templateRepo?.getOwned(spaceId, key) &&
+          agentRefs.templateRepo?.hiddenBuiltInKeys(spaceId).has(key)
+        ) {
+          throw new WorkflowValidationError(
+            `node[${index}].agents[${j}]: built-in templateKey "${key}" is hidden in this Space`
+          );
+        }
         entry.agentId = '';
         continue;
       }

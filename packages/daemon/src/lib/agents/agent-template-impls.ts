@@ -17,10 +17,17 @@ import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { jsonResult } from '../space/tools/tool-result.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
-import { getLongHorizonAgentTemplates } from './long-horizon-templates.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+} from './long-horizon-templates.ts';
 import { deriveAgentTemplate } from './template-derivation.ts';
 import { validateAgentModel as validateLongHorizonModel } from './agent-validation.ts';
-import { getBuiltInSpaceAgentTemplates, SpaceAgentTemplateManager } from './template-manager.ts';
+import {
+  getBuiltInSpaceAgentTemplates,
+  resolveEffectiveSpaceAgentTemplate,
+  SpaceAgentTemplateManager,
+} from './template-manager.ts';
 
 function longHorizonAgentTools(agent: SpaceLongHorizonAgent): string[] | null {
   const declared = agent.toolPermissions?.tools;
@@ -138,21 +145,13 @@ function resolveExactAgentTemplate(
   templateName: string,
   spaceId: string
 ): NodeAgentTemplateSource | null {
-  if (!db) {
-    return (
-      (getLongHorizonAgentTemplates().find((candidate) => candidate.key === templateName) as
-        | NodeAgentTemplateSource
-        | undefined) ?? null
-    );
-  }
-  const repo = new SpaceAgentTemplateRepository(db);
-  const stored = repo.getOwned(spaceId, templateName);
-  if (stored) return spaceAgentTemplateToNodeSource(stored);
-  if (repo.hiddenBuiltInKeys(spaceId).has(templateName)) return null;
-  const builtIn = getLongHorizonAgentTemplates().find(
-    (candidate) => candidate.key === templateName
-  ) as NodeAgentTemplateSource | undefined;
-  return builtIn ?? null;
+  const effective = resolveEffectiveSpaceAgentTemplate(
+    templateName,
+    spaceId,
+    db ? new SpaceAgentTemplateRepository(db) : undefined
+  );
+  if (!effective) return null;
+  return spaceAgentTemplateToNodeSource(effective, getLongHorizonAgentTemplate(effective.key));
 }
 
 function fallbackBuiltinAgentTemplate(

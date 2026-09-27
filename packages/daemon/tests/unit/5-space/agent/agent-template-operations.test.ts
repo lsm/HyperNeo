@@ -315,6 +315,29 @@ describe('the agent.template.instantiate operation', () => {
     expect(reminders[0]?.createdBySession).toBe(MEMBER_SESSION);
   });
 
+  test('a customized built-in still seeds its reminder defaults', async () => {
+    const updated = await run('agent.template.update', {
+      key: 'space-manager.default',
+      displayName: 'Tuned Manager',
+    });
+    expect(updated.value?.template).toMatchObject({
+      key: 'space-manager.default',
+      displayName: 'Tuned Manager',
+    });
+    expect(templateRepo.getOwned(spaceId, 'space-manager.default')?.displayName).toBe(
+      'Tuned Manager'
+    );
+
+    const outcome = await run('agent.template.instantiate', {
+      templateName: 'space-manager.default',
+    });
+    const agentId = String(outcome.value?.agent?.id);
+    expect(outcome.value?.seededReminders).toEqual([{ title: 'Review Space work' }]);
+    expect(reminderRepo.listReminders(agentId).map((reminder) => reminder.title)).toEqual([
+      'Review Space work',
+    ]);
+  });
+
   test('an unknown template key is rejected with template_rejected', async () => {
     const outcome = await run('agent.template.instantiate', { templateName: 'worker.nope' });
     expect(outcome.value?.reason).toBe('template_rejected');

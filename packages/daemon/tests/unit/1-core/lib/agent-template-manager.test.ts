@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
+  resolveEffectiveSpaceAgentTemplate,
   runCreateTemplate,
   runDeleteTemplate,
   runUpdateTemplate,
@@ -1440,5 +1441,56 @@ describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
     );
 
     expect(result.ok && result.value?.displayName).toBe('Mine');
+  });
+});
+
+describe('resolveEffectiveSpaceAgentTemplate', () => {
+  test('a stored override shadows the code built-in and keeps its reminder defaults', () => {
+    repo.createOwned(OWNER, {
+      key: 'space-manager.default',
+      handle: 'space-manager',
+      displayName: 'Tuned Manager',
+    });
+
+    const effective = resolveEffectiveSpaceAgentTemplate('space-manager.default', OWNER, repo);
+
+    expect(effective?.displayName).toBe('Tuned Manager');
+    expect(effective?.reminderDefaults?.map((reminder) => reminder.title)).toEqual([
+      'Review Space work',
+    ]);
+  });
+
+  test('a stored user template resolves without built-in extras', () => {
+    repo.createOwned(OWNER, { key: 'release.custom', handle: 'release', displayName: 'Release' });
+
+    const effective = resolveEffectiveSpaceAgentTemplate('release.custom', OWNER, repo);
+
+    expect(effective?.displayName).toBe('Release');
+    expect(effective?.reminderDefaults).toBeUndefined();
+  });
+
+  test('a hidden built-in without an override resolves null', () => {
+    repo.hideBuiltInKey(OWNER, 'worker.swe');
+
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)).toBeNull();
+  });
+
+  test('a hidden built-in with an override resolves the override', () => {
+    repo.hideBuiltInKey(OWNER, 'worker.swe');
+    repo.createOwned(OWNER, { key: 'worker.swe', handle: 'swe', displayName: 'Tuned SWE' });
+
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)?.displayName).toBe(
+      'Tuned SWE'
+    );
+  });
+
+  test('resolves a pure built-in and nulls an unknown key', () => {
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)?.key).toBe('worker.swe');
+    expect(resolveEffectiveSpaceAgentTemplate('missing.custom', OWNER, repo)).toBeNull();
+  });
+
+  test('resolves built-ins when no repository is provided', () => {
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER)?.key).toBe('worker.swe');
+    expect(resolveEffectiveSpaceAgentTemplate('missing.custom', OWNER)).toBeNull();
   });
 });

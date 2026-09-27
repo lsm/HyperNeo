@@ -53,6 +53,7 @@ import { createDefaultSessionResolutionDeps } from '../../session-resolution/def
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../../agents/long-horizon-templates.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../../agents/template-manager.ts';
 import { isRunnableUnifiedAgent } from '../../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
@@ -3495,10 +3496,9 @@ export class TaskAgentManager {
   }
 
   private resolveNodeTemplateSource(spaceId: string, key: string): NodeAgentTemplateSource | null {
-    const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
-    if (builtIn) return builtIn;
-    const stored = this.config.templateRepo?.getOwned(spaceId, key);
-    return stored ? spaceAgentTemplateToNodeSource(stored) : null;
+    const effective = resolveEffectiveSpaceAgentTemplate(key, spaceId, this.config.templateRepo);
+    if (!effective) return null;
+    return spaceAgentTemplateToNodeSource(effective, getLongHorizonAgentTemplate(effective.key));
   }
 
   private resolveSessionId(baseId: string): string {
