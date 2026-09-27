@@ -459,6 +459,117 @@ describe('Neo MVP', () => {
     expect(jobs).toHaveLength(0);
   });
 
+  test.each(['reported', 'failed', 'expired', 'stopped'])(
+    'preserves a newer human correction across a %s work review and recovery',
+    async (outcome) => {
+      const { work } = await concernWork();
+      const correction = {
+        ...concern,
+        expectedRevision: 1,
+        summary: 'Eight people, at my home',
+        context: 'Eight people. I will host at my home. No venue booking.',
+      };
+      expect(await invoke('neo.concern.save', correction)).toMatchObject({
+        value: { ok: true, concern: { revision: 2, context: correction.context } },
+      });
+      const corrected = service.repo.getConcern(concern.id);
+      await service.reconcile(work.id);
+      const review = service.consultations.get(`neo-work:${work.id}:review`)!;
+      const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: review.sessionId };
+      const staleSave = { ...concern, expectedRevision: 1, context: 'Six people at the library' };
+      expect(await invoke('neo.concern.save', staleSave, holder)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('superseded') },
+      });
+      expect(await invoke('neo.snapshot', {}, holder)).toMatchObject({
+        value: { concerns: [{ revision: 2, context: correction.context }] },
+      });
+      if (outcome === 'reported') {
+        expect(
+          await invoke(
+            'neo.concern.respond',
+            { id: review.id, answer: 'Library suggested, not booked.' },
+            holder
+          )
+        ).toMatchObject({ value: { ok: true } });
+      } else if (outcome === 'stopped') {
+        expect(await invoke('neo.concern.cancel', { id: review.id })).toMatchObject({
+          value: { ok: true },
+        });
+      } else {
+        if (outcome === 'expired') {
+          sqlite
+            .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
+            .run(Date.now() - CONSULTATION_TIMEOUT_MS - 1, review.id);
+        } else terminalSessions!.add(review.sessionId);
+        await service.syncConsultation(review.id);
+      }
+      expect(service.repo.getConcern(concern.id)).toEqual(corrected);
+      expect(service.consultations.get(review.id)?.status).toBe(
+        outcome === 'reported' ? 'reported' : 'failed'
+      );
+      const receipt = service.repo.getWork(work.id);
+      expect(receipt).toMatchObject({
+        status: 'reported',
+        report: expect.stringContaining('library'),
+      });
+      const jobCount = jobs.length;
+      service.dispose();
+      service = new NeoService(
+        db,
+        sessions,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        events
+      );
+      await service.recover();
+      await service.recover();
+      expect(await invoke('neo.concern.save', staleSave, holder)).toMatchObject({
+        value: { ok: false },
+      });
+      expect(service.repo.getConcern(concern.id)).toEqual(corrected);
+      expect(service.repo.getWork(work.id)).toEqual(receipt);
+      expect(service.consultations.list()).toHaveLength(1);
+      expect(service.repo.listWork()).toHaveLength(1);
+      expect(jobs).toHaveLength(jobCount);
+      expect(interrupt).not.toHaveBeenCalled();
+    }
+  );
+
+  test('a holder can incorporate evidence after reading a newer correction without losing it', async () => {
+    const { work } = await concernWork();
+    await service.reconcile(work.id);
+    const review = service.consultations.list()[0];
+    const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: review.sessionId };
+    const context = 'Eight people. I will host at my home.';
+    expect(
+      await invoke('neo.concern.save', { ...concern, expectedRevision: 1, context })
+    ).toMatchObject({
+      value: { ok: true },
+    });
+    expect(await invoke('neo.snapshot', {}, holder)).toMatchObject({
+      value: { concerns: [{ revision: 2, context }] },
+    });
+    const updated = `${context} Worker suggested a library; no booking was made.`;
+    expect(
+      await invoke(
+        'neo.concern.save',
+        { ...concern, expectedRevision: 2, context: updated },
+        holder
+      )
+    ).toMatchObject({
+      value: { ok: true, concern: { revision: 3, context: updated } },
+    });
+    expect(
+      await invoke(
+        'neo.concern.respond',
+        { id: review.id, answer: 'Your home remains the plan; nothing booked.' },
+        holder
+      )
+    ).toMatchObject({ value: { ok: true } });
+    await service.recover();
+    expect(service.repo.getConcern(concern.id)?.context).toBe(updated);
+    expect(service.repo.listWork()).toHaveLength(1);
+  });
+
   test('cancellation during session creation cannot enqueue work afterwards', async () => {
     const work = await propose();
     const originalCreate = sessions.createSession;
