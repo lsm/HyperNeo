@@ -129,6 +129,15 @@ export function createNeoOperations(service: NeoService) {
     const scope = binding?.kind === 'concern' ? binding.concernId : requested;
     const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
     const concerns = service.repo.listConcerns().filter((item) => !scope || item.id === scope);
+    const work = service.repo.listWork(scope === undefined ? undefined : scope);
+    const recentWork = work.slice(0, caller.source === 'rpc' ? 50 : 10);
+    const olderActiveWork =
+      caller.source === 'rpc'
+        ? work
+            .slice(50)
+            .filter((item) => item.status === 'proposed' || item.status === 'queued')
+            .slice(0, 50)
+        : [];
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -139,22 +148,15 @@ export function createNeoOperations(service: NeoService) {
       consultations: service.consultations
         .list(scope ?? undefined)
         .map((item) => (detailed ? item : { ...item, question: '', answer: null })),
-      work: service.repo
-        .listWork(scope === undefined ? undefined : scope)
-        .filter(
-          (item, index) =>
-            index < (caller.source === 'rpc' ? 50 : 10) ||
-            (caller.source === 'rpc' && (item.status === 'proposed' || item.status === 'queued'))
-        )
-        .map((item) =>
-          caller.source === 'rpc'
-            ? item
-            : {
-                ...item,
-                instruction: detailed ? item.instruction.slice(0, 1000) : '',
-                report: detailed ? (item.report?.slice(0, 3000) ?? null) : null,
-              }
-        ),
+      work: [...recentWork, ...olderActiveWork].map((item) =>
+        caller.source === 'rpc'
+          ? item
+          : {
+              ...item,
+              instruction: detailed ? item.instruction.slice(0, 1000) : '',
+              report: detailed ? (item.report?.slice(0, 3000) ?? null) : null,
+            }
+      ),
     };
   }
   const read = path(
