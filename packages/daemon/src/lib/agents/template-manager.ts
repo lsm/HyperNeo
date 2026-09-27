@@ -119,23 +119,27 @@ export class SpaceAgentTemplateManager {
     if (this.repo.getOwned(spaceId, key)) return { ok: true, value: null };
     const builtIn = this.builtIns().find((template) => template.key === key);
     if (!builtIn) return { ok: true, value: null };
-    const created = await this.createIn(spaceId, {
-      key: builtIn.key,
-      handle: builtIn.handle,
-      displayName: builtIn.displayName,
-      description: builtIn.description,
-      instructions: builtIn.instructions,
-      suggestedAutonomyLevel: builtIn.suggestedAutonomyLevel,
-      model: builtIn.model,
-      provider: builtIn.provider,
-      modelPool: builtIn.modelPool,
-      thinkingLevel: builtIn.thinkingLevel,
-      settingSources: builtIn.settingSources,
-      tools: builtIn.tools,
-      labels: builtIn.labels,
+    const ctx = await runCreateTemplate({
+      repo: this.repo,
+      spaceId,
+      params: {
+        key: builtIn.key,
+        handle: builtIn.handle,
+        displayName: builtIn.displayName,
+        description: builtIn.description,
+        instructions: builtIn.instructions,
+        suggestedAutonomyLevel: builtIn.suggestedAutonomyLevel,
+        model: builtIn.model,
+        provider: builtIn.provider,
+        modelPool: builtIn.modelPool,
+        thinkingLevel: builtIn.thinkingLevel,
+        settingSources: builtIn.settingSources,
+        tools: builtIn.tools,
+        labels: builtIn.labels,
+      },
     });
-    if (!created.ok) return { ok: false, error: created.error };
-    return { ok: true, value: created.value.version };
+    if (ctx.error) return { ok: false, error: ctx.error };
+    return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, key)?.version ?? null };
   }
 
   private discardSeededOverride(spaceId: string, key: string, seededVersion: number | null): void {
