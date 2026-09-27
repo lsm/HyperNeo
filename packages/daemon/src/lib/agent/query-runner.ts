@@ -31,6 +31,9 @@ import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts'
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
+import { NeoHolderTurn } from '../neo/holder-turn.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -315,6 +318,9 @@ interface RetryTeardownOptions {
 }
 
 export interface QueryRunnerContext {
+  createNeoTurnMcpServer?: (
+    getTurn: () => OperationCaller['neoTurn']
+  ) => NonNullable<Options['mcpServers']>[string];
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
@@ -655,6 +661,7 @@ export class QueryRunner {
     };
 
     let runAbortController: AbortController | null = null;
+    let holderTurn: NeoHolderTurn | undefined;
     let isAbortError = false;
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
@@ -787,6 +794,25 @@ export class QueryRunner {
       });
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+      if (neoCoordinatorBinding(this.ctx.db, session.id)?.kind === 'concern') {
+        if (!this.ctx.createNeoTurnMcpServer) throw new Error('Holder turn isolation unavailable.');
+        holderTurn = new NeoHolderTurn(
+          this.ctx.db,
+          session.id,
+          {
+            isLive: () =>
+              attemptToken.isLive() &&
+              this.ctx.getQueryGeneration() === queryGeneration &&
+              !runAbortController?.signal.aborted &&
+              !this.ctx.isCleaningUp(),
+          },
+          () => runAbortController?.abort()
+        );
+        const isolated = holderTurn;
+        queryOptions.mcpServers = {
+          'hyperneo-operations': this.ctx.createNeoTurnMcpServer(() => isolated.identity()),
+        };
+      }
 
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
       const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
@@ -930,7 +956,11 @@ export class QueryRunner {
 
       recoveryState.startGuard?.();
       const queryObject = query({
-        prompt: this.createMessageGeneratorWrapper(queryGeneration, recoveryState.startGuard),
+        prompt: this.createMessageGeneratorWrapper(
+          queryGeneration,
+          recoveryState.startGuard,
+          holderTurn
+        ),
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
@@ -949,7 +979,7 @@ export class QueryRunner {
         );
       });
 
-      if (session.config.provider !== 'acp') {
+      if (session.config.provider !== 'acp' && !holderTurn) {
         const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
         void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
           logger.warn(
@@ -1580,6 +1610,7 @@ export class QueryRunner {
       }
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
+      holderTurn?.dispose();
 
       releaseStartupPermit('attempt_finished');
 
@@ -1943,7 +1974,11 @@ export class QueryRunner {
     );
   }
 
-  async *createMessageGeneratorWrapper(queryGeneration: number, startGuard?: () => void) {
+  async *createMessageGeneratorWrapper(
+    queryGeneration: number,
+    startGuard?: () => void,
+    holderTurn?: NeoHolderTurn
+  ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
@@ -1957,6 +1992,13 @@ export class QueryRunner {
           logger.warn(`Prompt feed: could not requeue yielded prompt ${yieldedUuid}.`);
         }
         break;
+      }
+      if (holderTurn) {
+        startGuard?.();
+        if (!holderTurn.bind(message.uuid ?? '')) {
+          onSent();
+          return;
+        }
       }
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2010,6 +2052,7 @@ export class QueryRunner {
       startGuard?.();
       yield message;
       onSent();
+      if (holderTurn) return;
     }
   }
 

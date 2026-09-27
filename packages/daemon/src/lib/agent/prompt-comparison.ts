@@ -30,7 +30,7 @@ export function normalizeLegacyPromptRole(message: SDKMessage): SDKMessage {
 export function normalizePromptForComparison(message: SDKMessage): SDKMessage {
   const roleNormalized = normalizeLegacyPromptRole(message);
   const typed = roleNormalized as SDKMessage & { inputKind?: string; isSynthetic?: boolean };
-  const dropInputKind = typed.inputKind === 'task';
+  const dropInputKind = typed.inputKind === 'task' || typed.inputKind === 'human';
   const dropSynthetic = typed.isSynthetic === false;
   if (!dropInputKind && !dropSynthetic) return roleNormalized;
   const normalized = { ...roleNormalized } as SDKMessage & {

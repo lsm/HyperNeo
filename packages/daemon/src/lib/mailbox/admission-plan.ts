@@ -43,6 +43,9 @@ export function projectAdmissionMessage(
     ...entry.message,
     uuid: uuid as AdmissionMessage['uuid'],
     session_id: entry.to.sessionId,
+    ...(entry.origin === 'chat' && !synthetic && entry.message.inputKind === undefined
+      ? { inputKind: 'human' as const }
+      : {}),
     ...(synthetic ? { isSynthetic: true } : {}),
   };
 }

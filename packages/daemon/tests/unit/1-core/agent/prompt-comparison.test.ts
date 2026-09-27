@@ -74,6 +74,12 @@ describe('prompt-comparison', () => {
       expect(normalized.inputKind).toBe('resume');
     });
 
+    it('treats stamped human input as equivalent to an older unstamped prompt', () => {
+      expect(canonicalJson(normalizePromptForComparison(userMessage({ inputKind: 'human' })))).toBe(
+        canonicalJson(normalizePromptForComparison(userMessage()))
+      );
+    });
+
     it('treats an explicit isSynthetic false as equivalent to the absent flag', () => {
       expect(canonicalJson(normalizePromptForComparison(userMessage({ isSynthetic: false })))).toBe(
         canonicalJson(normalizePromptForComparison(userMessage()))

@@ -192,7 +192,7 @@ describe('createMailboxDeadHandler', () => {
     }
   });
 
-  test('reuses the existing failed row when delivery dies after marking the row failed', async () => {
+  test('marks a stored chat prompt failed when its delivery dies', async () => {
     const mailbox = createMailboxTestDb();
     const entry = makeEntry({ origin: 'chat', messageUuid: 'archived-then-failed' });
     const persisted = mailbox.sdkMessageRepo.saveUserMessage(
@@ -201,8 +201,9 @@ describe('createMailboxDeadHandler', () => {
         ...message,
         uuid: 'archived-then-failed',
         session_id: SESSION_ID,
+        inputKind: 'human',
       },
-      'failed'
+      'enqueued'
     );
     const job = claimMailboxJob(mailbox, entry);
     const publishFailed = mock(async () => {});
@@ -223,6 +224,7 @@ describe('createMailboxDeadHandler', () => {
     expect(saveFailed).not.toHaveBeenCalled();
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, persisted);
+    expect(mailbox.sdkRows()[0].send_status).toBe('failed');
     mailbox.close();
   });
 
@@ -684,6 +686,7 @@ describe('failure pipeline stages', () => {
     });
 
     expect(ctx.message).toMatchObject({ uuid: 'uuid-2', session_id: SESSION_ID });
+    expect(ctx.message?.inputKind).toBe('human');
     expect(ctx.message?.isSynthetic).toBeUndefined();
   });
 
