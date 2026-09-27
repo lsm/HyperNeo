@@ -2,7 +2,7 @@
 
 @theme {
   /* App shell surfaces — values overridden per theme in the Layer-1 blocks */
-  --color-app-sidebar: #242123;
+  --color-app-sidebar: #202024;
   --color-app-content: #151517;
 
   /* Legacy dark-N aliases retained for unprefixed variant positions
@@ -143,7 +143,17 @@
 
     /* Space glass surfaces */
     --color-app-content: #151517;
-    --color-app-sidebar: #242123;
+    --color-app-sidebar: #202024;
+    --sidebar-row-fg: #eeeef0;
+    --sidebar-row-muted: #a4a4ae;
+    --sidebar-row-faint: #71717d;
+    --sidebar-row-hover: #303036;
+    --sidebar-row-selected: #39393e;
+    --sidebar-tone-info: #438eff;
+    --sidebar-tone-progress: #e9b758;
+    --sidebar-tone-success: #60c99a;
+    --sidebar-tone-special: #ba9af3;
+    --sidebar-tone-danger: #ef777b;
     --glass-line: rgb(255 255 255 / 0.15);
     --glass-fill: rgb(255 255 255 / 0.07);
     --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 16px 40px rgb(0 0 0 / 0.18);
@@ -257,6 +267,16 @@
     /* Space glass surfaces */
     --color-app-content: #fafafc;
     --color-app-sidebar: #f0f0f3;
+    --sidebar-row-fg: var(--fg);
+    --sidebar-row-muted: var(--fg-muted);
+    --sidebar-row-faint: var(--fg-faint);
+    --sidebar-row-hover: var(--fill-soft);
+    --sidebar-row-selected: var(--fill);
+    --sidebar-tone-info: var(--accent);
+    --sidebar-tone-progress: var(--warning);
+    --sidebar-tone-success: var(--success);
+    --sidebar-tone-special: var(--cat-purple);
+    --sidebar-tone-danger: var(--danger);
     --glass-line: rgb(0 0 0 / 0.1);
     --glass-fill: rgb(255 255 255 / 0.6);
     --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6), 0 16px 40px rgb(0 0 0 / 0.08);
@@ -312,6 +332,46 @@
 
     --code-lineno-fg: #8c8c94;
   }
+}
+
+.conversation-row:hover:not(.is-selected) {
+  background: var(--sidebar-row-hover);
+}
+
+.conversation-row.is-selected {
+  background: var(--sidebar-row-selected);
+}
+
+.conversation-row__button {
+  color: var(--sidebar-row-muted);
+}
+
+.conversation-row.is-selected .conversation-row__button,
+.conversation-row__title--unread {
+  color: var(--sidebar-row-fg);
+}
+
+.sidebar-status--neutral {
+  color: var(--sidebar-row-faint);
+}
+.sidebar-status--info {
+  color: var(--sidebar-tone-info);
+}
+.sidebar-status--progress,
+.sidebar-status--warning {
+  color: var(--sidebar-tone-progress);
+}
+.sidebar-status--success {
+  color: var(--sidebar-tone-success);
+}
+.sidebar-status--special {
+  color: var(--sidebar-tone-special);
+}
+.sidebar-status--danger {
+  color: var(--sidebar-tone-danger);
+}
+.sidebar-unread-mark {
+  background: var(--sidebar-row-fg);
 }
 
 :root {

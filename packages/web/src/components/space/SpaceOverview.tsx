@@ -23,7 +23,6 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 import { CloneIcon } from '../icons/CloneIcon';
 import { SessionActivityIndicator } from '../SessionActivityIndicator';
-import { UnreadBadge } from '../ui/UnreadBadge';
 
 function StatCard({
   label,
@@ -553,13 +552,15 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
 }
 
 function RecentSessionRow({ session, onOpen }: { session: SpaceSessionRow; onOpen: () => void }) {
+  const unreadCount = getSpaceSessionUnreadCount(session.id, session.messageCount);
+  const status = getSessionSidebarStatus(session);
   return (
     <button
       type="button"
       class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-fill-soft focus-visible:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cat-indigo/60"
       onClick={onOpen}
     >
-      <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
+      <SessionActivityIndicator status={status} unreadCount={unreadCount} />
       {session.parentSessionId && (
         <span
           role="img"
@@ -570,10 +571,18 @@ function RecentSessionRow({ session, onOpen }: { session: SpaceSessionRow; onOpe
           <CloneIcon className="h-4 w-4" />
         </span>
       )}
-      <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">
+      <span
+        class={`min-w-0 flex-1 truncate text-sm text-fg ${unreadCount > 0 ? 'font-semibold' : 'font-medium'}`}
+      >
         {conversationTitle(session.title || 'Untitled conversation', !!session.parentSessionId)}
       </span>
-      <UnreadBadge count={getSpaceSessionUnreadCount(session.id, session.messageCount)} />
+      {unreadCount > 0 && !['idle', 'not_started'].includes(status.kind ?? '') && (
+        <span
+          class="sr-only"
+          role="img"
+          aria-label={`${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`}
+        />
+      )}
       <span class="flex-none text-xs tabular-nums text-fg-muted">
         {getRelativeTime(session.lastActiveAt)}
       </span>

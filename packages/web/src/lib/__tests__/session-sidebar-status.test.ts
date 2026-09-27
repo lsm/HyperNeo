@@ -83,6 +83,13 @@ describe('getTaskSidebarStatus', () => {
     );
     expect(getTaskSidebarStatus({ status: 'draft' }, []).label).toBe('Draft');
   });
+
+  it.each(['blocked', 'rate_limited', 'usage_limited'] as const)(
+    'keeps attention state %s ahead of a running worker',
+    (status) => {
+      expect(getTaskSidebarStatus({ status }, [thinking]).kind).toBe(status);
+    }
+  );
 });
 
 describe('conversationTitle', () => {

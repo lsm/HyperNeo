@@ -7,7 +7,7 @@ afterEach(cleanup);
 
 describe('ConversationRow', () => {
   it.each(['processing', 'waiting_for_input', 'rate_limit_cooldown', 'interrupted'])(
-    'keeps unread visible alongside %s',
+    'keeps unread accessible while %s owns the visible slot',
     (state) => {
       const status = getSessionSidebarStatus({
         status: 'active',
@@ -15,7 +15,7 @@ describe('ConversationRow', () => {
       });
       render(<ConversationRow title="Review" status={status} unreadCount={5} onClick={() => {}} />);
       expect(screen.getByRole('img', { name: status.label })).toBeTruthy();
-      expect(screen.getByLabelText('5 unread messages')).toBeTruthy();
+      expect(screen.getByLabelText('5 unread messages').classList.contains('sr-only')).toBe(true);
     }
   );
 
@@ -49,19 +49,20 @@ describe('ConversationRow', () => {
     );
   });
 
-  it('uses one unread marker while retaining secondary lifecycle status', () => {
+  it('uses one leading signal while preserving unread in the accessible row', () => {
     const { rerender } = render(
       <ConversationRow
         title="Review"
         status={getSessionSidebarStatus({ processingState: { status: 'processing' } })}
-        secondaryStatus={{ kind: 'blocked', label: 'Blocked', tone: 'danger', pulse: false }}
         unread
         unreadCount={100}
         onClick={() => {}}
       />
     );
-    expect(screen.getByRole('img', { name: 'Blocked' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Processing' })).toBeTruthy();
     expect(screen.getByLabelText('100 unread messages').textContent).toBe('');
+    expect(screen.getByLabelText('100 unread messages').classList.contains('sr-only')).toBe(true);
+    expect(screen.getByRole('heading').classList.contains('font-semibold')).toBe(true);
     expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
     rerender(
       <ConversationRow
@@ -72,6 +73,9 @@ describe('ConversationRow', () => {
       />
     );
     expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(
+      screen.getByRole('img', { name: 'Has updates' }).querySelector('.sidebar-unread-mark')
+    ).toBeTruthy();
   });
 
   it('keeps actions outside the navigation button and supports keyboard rename', () => {
