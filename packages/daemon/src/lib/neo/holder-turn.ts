@@ -15,14 +15,19 @@ export class NeoHolderTurn {
     private readonly expire: () => void
   ) {}
 
-  bind(messageId: string): void {
+  bind(messageId: string): boolean {
     if (this.bound || this.closed) throw new Error('Holder turn already bound or closed.');
     this.bound = true;
     const item = this.db
       .getDatabase()
-      .prepare(`SELECT id, created_at AS createdAt
+      .prepare(`SELECT id, status, created_at AS createdAt
       FROM neo_consultations WHERE session_id = ? AND 'neo-consult:' || id || ':request' = ?`)
-      .get(this.sessionId, messageId) as { id: string; createdAt: number } | null;
+      .get(this.sessionId, messageId) as { id: string; status: string; createdAt: number } | null;
+    const remaining = item ? item.createdAt + CONSULTATION_TIMEOUT_MS - Date.now() : 0;
+    if (item && (item.status !== 'pending' || remaining <= 0)) {
+      this.closed = true;
+      return false;
+    }
     const human =
       !item &&
       this.db
@@ -39,16 +44,14 @@ export class NeoHolderTurn {
       isLive: () => !this.closed && this.attempt.isLive(),
     };
     if (item) {
-      this.timer = setTimeout(
-        () => {
-          const live = this.attempt.isLive();
-          this.dispose();
-          if (live) this.expire();
-        },
-        Math.max(0, item.createdAt + CONSULTATION_TIMEOUT_MS - Date.now())
-      );
+      this.timer = setTimeout(() => {
+        const live = this.attempt.isLive();
+        this.dispose();
+        if (live) this.expire();
+      }, remaining);
       this.timer.unref?.();
     }
+    return true;
   }
 
   identity(): OperationCaller['neoTurn'] {

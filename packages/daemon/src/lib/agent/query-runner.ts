@@ -1993,6 +1993,13 @@ export class QueryRunner {
         }
         break;
       }
+      if (holderTurn) {
+        startGuard?.();
+        if (!holderTurn.bind(message.uuid ?? '')) {
+          onSent();
+          return;
+        }
+      }
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
@@ -2043,7 +2050,6 @@ export class QueryRunner {
       );
 
       startGuard?.();
-      holderTurn?.bind(message.uuid ?? '');
       yield message;
       onSent();
       if (holderTurn) return;

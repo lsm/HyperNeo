@@ -367,6 +367,17 @@ describe('QueryRunner startup gate', () => {
       ctx.queryAbortController?.abort();
       await ctx.queryPromise;
       expect(identities[1]()?.isLive()).toBe(false);
+      sql.prepare("UPDATE neo_consultations SET status = 'failed' WHERE id = 'a'").run();
+      const stale = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
+        durable: true,
+      });
+      await runner.start();
+      await waitFor(() => spawned.length === 3);
+      expect(await inputs[2].next()).toMatchObject({ done: true });
+      await stale;
+      expect(identities[2]()).toBeUndefined();
+      await completeQuery(spawned[2], waitFor);
+      await ctx.queryPromise;
       expect(spawned.every((query) => query.closeCount > 0)).toBe(true);
       expect(getSdkStartupGate().getStats().active).toBe(0);
     } finally {

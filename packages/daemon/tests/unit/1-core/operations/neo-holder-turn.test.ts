@@ -119,6 +119,38 @@ describe('Neo isolated holder turns', () => {
     expect(queue.size()).toBe(0);
   });
 
+  test.each(['settled', 'expired'] as const)(
+    'drains a %s queued consultation once and leaves the next input runnable',
+    async (state) => {
+      if (state === 'settled') service.consultations.finish('a', 'failed', 'Stopped');
+      else
+        sqlite
+          .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
+          .run(Date.now() - CONSULTATION_TIMEOUT_MS, 'a');
+      const firstSent = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
+        durable: true,
+      });
+      const nextSent = queue.enqueueWithId('human-input', 'Current', false, { durable: true });
+      const expired = mock(() => {});
+      const stale = turn(expired);
+      const input = runner.createMessageGeneratorWrapper(1, undefined, stale);
+      expect(await input.next()).toMatchObject({ done: true });
+      await firstSent;
+      expect(stale.identity()).toBeUndefined();
+      expect(expired).not.toHaveBeenCalled();
+      expect(queue.size()).toBe(1);
+      queue.stop();
+      queue.start();
+      const successor = turn();
+      const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
+      expect((await next.next()).value?.uuid).toBe('human-input');
+      expect((await next.next()).done).toBe(true);
+      await nextSent;
+      expect(successor.identity()?.human).toBe(true);
+      expect(queue.size()).toBe(0);
+    }
+  );
+
   test('MCP writes use the server-bound request, ignoring forged input provenance', async () => {
     const current = turn();
     current.bind('neo-consult:a:request');
