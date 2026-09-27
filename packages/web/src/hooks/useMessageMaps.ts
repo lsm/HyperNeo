@@ -13,6 +13,7 @@ import {
 
 export interface ToolResultData {
   content: unknown;
+  structuredOutput?: unknown;
   messageUuid: string | undefined;
   sessionId: string;
   isOutputRemoved: boolean;
@@ -49,6 +50,9 @@ export function useMessageMaps(
     sdkMessages.forEach((msg) => {
       if (msg.type === 'user' && Array.isArray(msg.message.content)) {
         const replacementStatus = msg.uuid ? replacementStatusMap.get(msg.uuid) : undefined;
+        const resultBlocks = msg.message.content.filter(
+          (block: unknown) => (block as Record<string, unknown>)?.type === 'tool_result'
+        );
         msg.message.content.forEach((block: unknown) => {
           const blockObj = block as Record<string, unknown>;
           if (blockObj.type === 'tool_result' && blockObj.tool_use_id) {
@@ -58,6 +62,10 @@ export function useMessageMaps(
               (msg.uuid ? removedOutputs.includes(msg.uuid) : false) || isReplacementRemoved;
             map.set(toolUseId, {
               content: isReplacementRemoved ? undefined : block,
+              structuredOutput:
+                !isReplacementRemoved && resultBlocks.length === 1
+                  ? msg.tool_use_result
+                  : undefined,
               messageUuid: msg.uuid,
               sessionId,
               isOutputRemoved: isRemoved,

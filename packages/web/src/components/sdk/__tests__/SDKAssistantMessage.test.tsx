@@ -269,6 +269,29 @@ describe('SDKAssistantMessage', () => {
       expect(container.textContent).toContain('Read');
     });
 
+    it('shows a Read image from the mapped structured SDK result', () => {
+      const message = createToolUseMessage();
+      const toolResultsMap = new Map([
+        [
+          'toolu_test123',
+          {
+            content: { type: 'tool_result', tool_use_id: 'toolu_test123', content: [] },
+            structuredOutput: { type: 'image', file: { type: 'image/png', base64: 'AAAA' } },
+          },
+        ],
+      ]);
+
+      const { getByRole } = render(
+        <SDKAssistantMessage message={message} toolResultsMap={toolResultsMap} />
+      );
+      fireEvent.click(getByRole('button', { name: /Read.*file.txt/ }));
+
+      const trigger = getByRole('button', {
+        name: 'Open Image read from /test/file.txt full size',
+      });
+      expect(trigger.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    });
+
     it('should display tool result when available', () => {
       const message = createToolUseMessage();
       const toolResultsMap = new Map([['toolu_test123', { content: 'File content here' }]]);

@@ -460,6 +460,97 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByTestId('code-viewer')).toBeTruthy();
     });
 
+    it('previews a structured Read image and opens its original in an app overlay', async () => {
+      const src = 'data:image/png;base64,AAAA';
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="read-image"
+          input={{ file_path: '/art/picture.png' }}
+          output={{ type: 'tool_result', content: [] }}
+          structuredOutput={{ type: 'image', file: { type: 'image/png', base64: 'AAAA' } }}
+          defaultExpanded={true}
+        />
+      );
+
+      const trigger = screen.getByRole('button', {
+        name: 'Open Image read from /art/picture.png full size',
+      });
+      expect(trigger.querySelector('img')?.getAttribute('src')).toBe(src);
+      fireEvent.click(trigger);
+      const overlay = await screen.findByRole('dialog', {
+        name: 'Image read from /art/picture.png',
+      });
+      expect(document.body.contains(overlay)).toBe(true);
+      expect(overlay.querySelector('img')?.getAttribute('src')).toBe(src);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it('previews an SDK image content block when structured output is absent', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="read-image"
+          input={{ file_path: '/art/picture.jpg' }}
+          output={{
+            type: 'tool_result',
+            content: [
+              { type: 'text', text: 'Image loaded' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/jpeg', data: 'BBBB' },
+              },
+            ],
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      expect(screen.getByText('Image loaded')).toBeTruthy();
+      const trigger = screen.getByRole('button', {
+        name: 'Open Image read from /art/picture.jpg full size',
+      });
+      expect(trigger.querySelector('img')?.getAttribute('src')).toBe('data:image/jpeg;base64,BBBB');
+    });
+
+    it('keeps rendering a Read image passed directly as the tool output', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="read-direct-image"
+          input={{ file_path: '/art/direct.webp' }}
+          output={{ type: 'image', file: { type: 'image/webp', base64: 'CCCC' } }}
+          defaultExpanded={true}
+        />
+      );
+
+      const trigger = screen.getByRole('button', {
+        name: 'Open Image read from /art/direct.webp full size',
+      });
+      expect(trigger.querySelector('img')?.getAttribute('src')).toBe('data:image/webp;base64,CCCC');
+    });
+
+    it('keeps PDF Read result text instead of dumping structured base64', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="read-pdf"
+          input={{ file_path: '/docs/report.pdf' }}
+          output={{ type: 'tool_result', content: 'PDF has 12 pages' }}
+          structuredOutput={{
+            type: 'pdf',
+            file: { filePath: '/docs/report.pdf', base64: 'LARGE_PDF_BASE64', originalSize: 1000 },
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      expect(screen.getByTestId('code-viewer').textContent).toBe('PDF has 12 pages');
+      expect(screen.queryByText(/LARGE_PDF_BASE64/)).toBeNull();
+    });
+
     it('should render CodeViewer for Write tool', () => {
       render(
         <ToolResultCard

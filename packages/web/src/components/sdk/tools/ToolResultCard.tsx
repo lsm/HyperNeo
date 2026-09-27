@@ -18,6 +18,50 @@ import { cn } from '../../../lib/utils.ts';
 import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
+import { ReadImagePreview } from './ReadImagePreview.tsx';
+
+const imageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+function readImageSource(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const image = record.type === 'image' && record.file ? record.file : record.source;
+  if (!image || typeof image !== 'object') return null;
+  const imageRecord = image as Record<string, unknown>;
+  const mediaType = record.file ? imageRecord.type : imageRecord.media_type;
+  const data = record.file ? imageRecord.base64 : imageRecord.data;
+  if (typeof mediaType !== 'string' || !imageMediaTypes.has(mediaType)) return null;
+  if (typeof data !== 'string' || !data) return null;
+  if (!record.file && imageRecord.type !== 'base64') return null;
+  return `data:${mediaType};base64,${data}`;
+}
+
+function readImageSources(structuredOutput: unknown, output: unknown): string[] {
+  const structuredImage = readImageSource(structuredOutput);
+  if (structuredImage) return [structuredImage];
+  const directImage = readImageSource(output);
+  if (directImage) return [directImage];
+  if (!output || typeof output !== 'object') return [];
+  const content = (output as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return [];
+  return content.map(readImageSource).filter((src): src is string => src !== null);
+}
+
+function readContentText(output: unknown): string | null {
+  if (typeof output === 'string') return output;
+  if (!output || typeof output !== 'object') return null;
+  const content = (output as Record<string, unknown>).content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter(
+      (block): block is { type: 'text'; text: string } =>
+        block?.type === 'text' && typeof block.text === 'string'
+    )
+    .map((block) => block.text)
+    .join('\n');
+  return text || null;
+}
 
 function stripLineNumbers(content: string): string {
   return content
@@ -51,6 +95,7 @@ export function ToolResultCard({
   toolId,
   input,
   output,
+  structuredOutput,
   isError = false,
   variant = 'default',
   defaultExpanded,
@@ -69,6 +114,12 @@ export function ToolResultCard({
   const showErrorIcon = notificationIsError || (!taskNotification && isError);
   const inputRecord = input as Record<string, unknown>;
   const outputRecord = (output || {}) as Record<string, unknown>;
+  const readOutput =
+    isFileReadOutput(structuredOutput) && structuredOutput.type === 'image'
+      ? structuredOutput
+      : output;
+  const readImages = toolName === 'Read' ? readImageSources(structuredOutput, output) : [];
+  const readText = toolName === 'Read' ? readContentText(output) : null;
 
   const colors = getToolColors(toolName);
   const displayName = getToolDisplayName(toolName);
@@ -393,42 +444,43 @@ export function ToolResultCard({
               />
             ) : null
           ) : toolName === 'Read' && !isError ? (
-            isFileReadOutput(output) ? (
-              output.type === 'text' ? (
+            isFileReadOutput(readOutput) ? (
+              readOutput.type === 'text' ? (
                 <CodeViewer
-                  code={stripLineNumbers(output.file.content)}
-                  filePath={output.file.filePath}
+                  code={stripLineNumbers(readOutput.file.content)}
+                  filePath={readOutput.file.filePath}
                   showLineNumbers={true}
                   showHeader={true}
                   maxHeight="none"
                 />
-              ) : output.type === 'file_unchanged' ? (
+              ) : readOutput.type === 'file_unchanged' ? (
                 <div class="text-xs text-fg-muted italic">
-                  File unchanged: {output.file.filePath}
+                  File unchanged: {readOutput.file.filePath}
                 </div>
-              ) : output.type === 'image' ? (
-                <img
-                  src={`data:${output.file.type};base64,${output.file.base64}`}
-                  alt="Read tool result"
-                  class="max-w-full rounded border"
+              ) : readOutput.type === 'image' && readImages.length > 0 ? (
+                <ReadImagePreview
+                  src={readImages[0]}
+                  filePath={inputRecord?.file_path as string | undefined}
                 />
               ) : (
                 <pre class="text-xs bg-surface-raised p-3 rounded overflow-x-auto border border-line">
-                  {JSON.stringify(output, null, 2)}
+                  {JSON.stringify(readOutput, null, 2)}
                 </pre>
               )
-            ) : output &&
-              (typeof output === 'string' ||
-                (typeof output === 'object' &&
-                  'content' in output &&
-                  output.content &&
-                  typeof (output as Record<string, unknown>).content === 'string')) ? (
+            ) : readImages.length > 0 ? (
+              <div class="space-y-2">
+                {readText && <div class="text-xs text-fg-muted">{readText}</div>}
+                {readImages.map((src, index) => (
+                  <ReadImagePreview
+                    key={index}
+                    src={src}
+                    filePath={inputRecord?.file_path as string | undefined}
+                  />
+                ))}
+              </div>
+            ) : readText ? (
               <CodeViewer
-                code={stripLineNumbers(
-                  typeof output === 'string'
-                    ? output
-                    : ((output as Record<string, unknown>).content as string)
-                )}
+                code={stripLineNumbers(readText)}
                 filePath={inputRecord?.file_path as string | undefined}
                 showLineNumbers={true}
                 showHeader={true}
