@@ -1,0 +1,232 @@
+.neo-shell {
+  --neo-background: color-mix(in srgb, var(--surface) 60%, var(--surface-raised));
+  --neo-message-label: var(--fg-muted);
+  --neo-message-time: var(--fg-faint);
+
+  --neo-user-accent: color-mix(in srgb, var(--accent) 70%, var(--fg));
+  --neo-user-background: color-mix(in srgb, var(--accent) 10%, var(--neo-background));
+  --neo-user-border: color-mix(in srgb, var(--accent) 15%, var(--line));
+  --neo-user-text: var(--fg-soft);
+  --neo-user-heading: var(--neo-user-accent);
+  --neo-user-emphasis: var(--neo-user-accent);
+  --neo-user-link: var(--neo-user-accent);
+  --neo-user-quote: var(--fg-soft);
+  --neo-user-quote-background: color-mix(in srgb, var(--neo-user-accent) 6%, transparent);
+  --neo-user-code: var(--neo-user-accent);
+  --neo-user-code-background: var(--surface-overlay);
+  --neo-user-table-background: color-mix(in srgb, var(--neo-user-accent) 10%, transparent);
+
+  --neo-assistant-accent: light-dark(#8a4c31, #e6b39a);
+  --neo-assistant-background: color-mix(
+    in srgb,
+    var(--neo-assistant-accent) 4%,
+    var(--surface-raised)
+  );
+  --neo-assistant-border: color-mix(in srgb, var(--neo-assistant-accent) 16%, var(--line));
+  --neo-assistant-text: var(--fg-soft);
+  --neo-assistant-heading: var(--neo-assistant-accent);
+  --neo-assistant-emphasis: var(--neo-assistant-accent);
+  --neo-assistant-link: var(--neo-assistant-accent);
+  --neo-assistant-quote: var(--fg-soft);
+  --neo-assistant-quote-background: color-mix(in srgb, var(--neo-assistant-accent) 6%, transparent);
+  --neo-assistant-code: var(--neo-assistant-accent);
+  --neo-assistant-code-background: color-mix(
+    in srgb,
+    var(--neo-assistant-accent) 3%,
+    var(--surface-overlay)
+  );
+  --neo-assistant-table-background: color-mix(
+    in srgb,
+    var(--neo-assistant-accent) 10%,
+    transparent
+  );
+  background: var(--neo-background);
+}
+
+.neo-scroll {
+  scrollbar-gutter: stable;
+  scroll-padding-bottom: calc(var(--neo-composer-height, 190px) + 24px);
+}
+
+.neo-chat-rail,
+.neo-composer-rail {
+  max-width: 48rem;
+  margin-inline: auto;
+}
+
+.neo-chat-rail {
+  padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
+}
+
+.neo-message {
+  min-width: min(10rem, 100%);
+}
+
+.neo-message-assistant {
+  --neo-bubble-background: var(--neo-assistant-background);
+  --neo-bubble-border: var(--neo-assistant-border);
+  --prose-fg: var(--neo-assistant-text);
+  --prose-heading: var(--neo-assistant-heading);
+  --prose-code-fg: var(--neo-assistant-code);
+  --prose-link: var(--neo-assistant-link);
+  --prose-quote-fg: var(--neo-assistant-quote);
+  --neo-markdown-accent: var(--neo-assistant-accent);
+  --neo-markdown-emphasis: var(--neo-assistant-emphasis);
+  --neo-quote-background: var(--neo-assistant-quote-background);
+  --neo-code-background: var(--neo-assistant-code-background);
+  --neo-table-background: var(--neo-assistant-table-background);
+}
+
+.neo-message-user {
+  --neo-bubble-background: var(--neo-user-background);
+  --neo-bubble-border: var(--neo-user-border);
+  --prose-fg: var(--neo-user-text);
+  --prose-heading: var(--neo-user-heading);
+  --prose-code-fg: var(--neo-user-code);
+  --prose-link: var(--neo-user-link);
+  --prose-quote-fg: var(--neo-user-quote);
+  --neo-markdown-accent: var(--neo-user-accent);
+  --neo-markdown-emphasis: var(--neo-user-emphasis);
+  --neo-quote-background: var(--neo-user-quote-background);
+  --neo-code-background: var(--neo-user-code-background);
+  --neo-table-background: var(--neo-user-table-background);
+}
+
+.neo-message-bubble {
+  background: var(--neo-bubble-background);
+  border-color: var(--neo-bubble-border);
+  color: var(--prose-fg);
+}
+
+.neo-message-name {
+  color: var(--neo-message-label);
+}
+.neo-message-time {
+  color: var(--neo-message-time);
+}
+
+.neo-markdown {
+  --prose-link-hover: var(--fg);
+}
+
+.neo-markdown code,
+.neo-markdown pre {
+  background: var(--neo-code-background);
+}
+
+.neo-markdown pre code {
+  background: transparent;
+}
+
+.neo-markdown strong {
+  color: var(--neo-markdown-emphasis);
+}
+
+.neo-markdown :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+
+.neo-markdown li::marker {
+  color: var(--neo-markdown-accent);
+}
+
+.neo-markdown blockquote {
+  border-color: var(--neo-markdown-accent);
+  background: var(--neo-quote-background);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+}
+
+.neo-markdown th {
+  background: var(--neo-table-background);
+}
+
+.neo-markdown input[type="checkbox"] {
+  accent-color: var(--neo-markdown-accent);
+}
+
+.neo-markdown ul {
+  list-style-type: disc;
+}
+.neo-markdown ol {
+  list-style-type: decimal;
+}
+.neo-markdown li:has(> input[type="checkbox"]) {
+  list-style-type: none;
+}
+
+.neo-composer-dock {
+  background: linear-gradient(transparent, var(--neo-background));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.neo-concerns-card {
+  display: none;
+  position: absolute;
+  top: 76px;
+  right: 20px;
+  width: min(300px, calc(100vw - 40px));
+  max-height: calc(100dvh - var(--neo-composer-height, 190px) - 100px);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 35%, transparent);
+}
+
+.neo-concerns-card.is-open {
+  display: block;
+}
+
+@media (min-width: 1180px) {
+  .neo-chat-rail,
+  .neo-composer-rail {
+    width: calc(100% - 340px);
+    margin-left: max(20px, calc((100vw - 1160px) / 2));
+    margin-right: 300px;
+  }
+  .neo-concerns-trigger {
+    display: none;
+  }
+  .neo-concerns-card {
+    display: block;
+    top: 100px;
+    right: max(24px, calc((100vw - 1160px) / 2));
+    width: 260px;
+    background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+    box-shadow: none;
+  }
+}
+
+@keyframes neo-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .neo-arrive {
+    animation: neo-arrive 180ms ease-out both;
+  }
+  .neo-mark {
+    transition: transform 180ms ease-out;
+  }
+  button:hover .neo-mark {
+    transform: rotate(-9deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root *,
+  #root *::before,
+  #root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

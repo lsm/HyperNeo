@@ -104,6 +104,7 @@ describe('router', () => {
   it('creates and extracts session and space paths', () => {
     expect(createSessionPath(SESSION_ID)).toBe(`/session/${SESSION_ID}`);
     expect(getSessionIdFromPath(`/session/${SESSION_ID}`)).toBe(SESSION_ID);
+    expect(getSessionIdFromPath(createSessionPath(`neo:${SESSION_ID}`))).toBe(`neo:${SESSION_ID}`);
     expect(createSpacePath(SPACE_ID)).toBe(`/space/${SPACE_ID}`);
     expect(createSpaceConfigurePath(SPACE_ID, 'settings')).toBe(
       `/space/${SPACE_ID}/configure/settings`

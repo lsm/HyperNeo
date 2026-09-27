@@ -5,6 +5,7 @@ import type { Config } from '@hyperneo/daemon/config';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import { resolve } from 'path';
 import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
+import { resolveNeoEntry } from '@hyperneo/shared/web-entry';
 import {
   createCorsPreflightResponse,
   isWebSocketPath,
@@ -103,6 +104,22 @@ export async function startProdServer(config: Config) {
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
   const app = new Hono();
+
+  app.use('*', async (c, next) => {
+    const entry = resolveNeoEntry(new URL(c.req.url));
+    if (entry?.kind === 'redirect') {
+      c.header('Cache-Control', 'no-cache');
+      return c.redirect(entry.location, 308);
+    }
+    if (entry?.kind === 'entry') {
+      const file = Bun.file(resolve(distPath, `.${entry.path}`));
+      if (await file.exists()) {
+        const html = await file.text();
+        return c.html(html, { headers: { 'Cache-Control': 'no-cache' } });
+      }
+    }
+    await next();
+  });
 
   app.use(
     '/*',

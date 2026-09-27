@@ -23,7 +23,7 @@ import {
   spaceOverlayTaskContextSignal,
 } from './signals.ts';
 
-const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/i;
+const SESSION_ROUTE_PATTERN = /^\/session\/((?:neo:)?[a-f0-9-]+)$/i;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 const SETTINGS_ROUTE_PATTERN = /^\/settings$/;

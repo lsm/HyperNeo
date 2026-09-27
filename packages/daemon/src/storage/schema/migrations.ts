@@ -33,6 +33,7 @@ import { runMigration274 } from './m274-convert-ad-hoc-space-sessions.ts';
 import { runMigration275 } from './m275-link-agent-owned-sessions.ts';
 import { runMigration276 } from './m276-relocate-space-manager-template.ts';
 import { runMigration277 } from './m277-archive-orphaned-agent-sessions.ts';
+import { runMigration278 } from './m278-neo-contexts.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -630,6 +631,7 @@ export function runMigrations(
   run(migrationMarkerKey(275), () => runMigration275(db));
   run(migrationMarkerKey(276), () => runMigration276(db));
   run(migrationMarkerKey(277), () => runMigration277(db));
+  run(migrationMarkerKey(278), () => runMigration278(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

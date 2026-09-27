@@ -6,6 +6,8 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
+import { NeoService } from '../neo/service.ts';
+import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
@@ -1378,7 +1380,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
         : Promise.resolve({ ok: true }),
   };
-  const familyOperations = collectFamilyOperations(familyContext);
+  const neoService = new NeoService(
+    deps.db,
+    deps.sessionManager,
+    deps.messageHub,
+    deps.internalEventBus
+  );
+  const familyOperations = [
+    ...collectFamilyOperations(familyContext),
+    ...createNeoOperations(neoService),
+  ];
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
@@ -1616,8 +1627,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
+  void neoService.recover();
+
   return {
     cleanup: async () => {
+      neoService.dispose();
       inactivityRunNowCancelled = true;
       await Promise.allSettled(pendingInactivityRunNow);
       unsubLiveQuery();

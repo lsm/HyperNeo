@@ -1,12 +1,16 @@
 import type { ScopeContribution } from '../../briefings/contribution.ts';
 import type { OperationCallerRole } from '../../operations/registry.ts';
 
-export type SpaceScopeRole = Exclude<OperationCallerRole, 'universal_read' | 'outside_space'>;
+export type SpaceScopeRole = Exclude<
+  OperationCallerRole,
+  'universal_read' | 'outside_space' | 'neo'
+>;
 
 export function spaceScopeRole(role: OperationCallerRole): SpaceScopeRole | null {
   switch (role) {
     case 'universal_read':
     case 'outside_space':
+    case 'neo':
       return null;
     default:
       return role;
