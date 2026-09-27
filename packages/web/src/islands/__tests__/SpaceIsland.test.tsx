@@ -567,14 +567,13 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    mockNavigateToSpaceConfigure.mockClear();
 
     const activeTab = getByTestId('space-configure-tab-general');
     activeTab.focus();
     fireEvent.keyDown(activeTab, { key: 'ArrowRight' });
 
     await waitFor(() => {
-      expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-1', 'runtime');
+      expect(mockCurrentSpaceSettingsTabSignal.value).toBe('runtime');
     });
     await waitFor(() => {
       expect(getByTestId('space-configure-tab-runtime').getAttribute('aria-selected')).toBe('true');
