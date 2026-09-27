@@ -26,6 +26,7 @@ import {
   CONSULTATION_STOPPED,
   CONSULTATION_TIMEOUT_MS,
 } from '../../../../src/lib/neo/consultation-policy.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const concern = {
@@ -37,6 +38,14 @@ const concern = {
 };
 
 describe('Neo MVP', () => {
+  test('root prompt requires real cards and honors explicit context retention', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('permission to create its record now');
+    expect(prompt).toContain('call neo.work.propose in that turn');
+    expect(prompt).toContain('never render a pretend card');
+    expect(prompt).toContain('Start work button is the approval to execute');
+  });
+
   let sqlite: SQLite;
   let service: NeoService;
   let db: Database;
