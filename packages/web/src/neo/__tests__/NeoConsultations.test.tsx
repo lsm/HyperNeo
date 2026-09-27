@@ -36,6 +36,8 @@ describe('NeoLive consultation status', () => {
       error: null,
       setError: vi.fn(),
       open,
+      act: vi.fn(),
+      busyWork: null as string | null,
       store: {
         sessionInfo: signal({ metadata: {} }),
         sdkMessages: signal([{ type: 'user' }]),
@@ -59,6 +61,12 @@ describe('NeoLive consultation status', () => {
     ).toBeTruthy();
     fireEvent.click(status.querySelector('button')!);
     expect(open).toHaveBeenCalledWith('club');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
+    expect(model.act).toHaveBeenCalledWith('consult-one', 'stop-waiting');
+    act(() => {
+      neoState.value = { ...model, busyWork: 'consult-one' };
+    });
+    expect(screen.getByRole('button', { name: 'Closing…' }).hasAttribute('disabled')).toBe(true);
     act(() => {
       neoState.value = {
         ...model,

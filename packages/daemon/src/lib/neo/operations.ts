@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
+import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -100,7 +101,7 @@ export function admitNeoCaller(
         reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
       },
     };
-  if (['neo.open', 'neo.work.start', 'neo.work.cancel'].includes(name))
+  if (['neo.open', 'neo.work.start', 'neo.work.cancel', 'neo.concern.cancel'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -252,6 +253,8 @@ export function createNeoOperations(service: NeoService) {
       async (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) => {
         const saved = service.consultations.finish(item.id, 'reported', input.answer)!;
         await service.syncConsultation(saved.id);
+        if (saved.status !== 'reported' || saved.answer !== input.answer)
+          return { ok: false as const, reason: 'This consultation is already settled.' };
         return { ok: true as const, consultation: saved };
       },
       ['input', 'admission'],
@@ -268,6 +271,16 @@ export function createNeoOperations(service: NeoService) {
       if (input.concernId && !service.repo.getConcern(input.concernId))
         return { ok: false as const, reason: 'Concern not found.' };
       return { ...snapshot(caller), sessionId: await service.open(input.concernId ?? null) };
+    }
+  );
+  const cancelConsultation = path(
+    'neo.concern.cancel',
+    (_input: z.infer<typeof WorkId>) => undefined,
+    async ({ id }) => {
+      const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
+      if (!item) return { ok: false as const, reason: 'Consultation not found.' };
+      await service.syncConsultation(id);
+      return { ok: true as const, consultation: service.consultations.get(id)! };
     }
   );
   const save = path(
@@ -320,6 +333,15 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
+    defineOperation({
+      name: 'neo.concern.cancel',
+      description:
+        'Stop waiting for a context check. Rejects later answers without interrupting the holder session or undoing saved context.',
+      inputSchema: WorkId,
+      resultSchema: ConsultationResult,
+      policy: { safetyClass: 'human_only' },
+      execute: cancelConsultation,
+    }),
     defineOperation({
       name: 'neo.concern.consult',
       description:

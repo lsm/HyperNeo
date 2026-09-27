@@ -20,6 +20,11 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
+import {
+  CONSULTATION_EXPIRED,
+  CONSULTATION_STOPPED,
+  CONSULTATION_TIMEOUT_MS,
+} from '../../../../src/lib/neo/consultation-policy.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const concern = {
@@ -528,5 +533,110 @@ describe('Neo MVP', () => {
     expect(
       await invoke('neo.concern.save', { ...correction, expectedRevision: 2 }, human)
     ).toMatchObject({ value: { ok: true } });
+  });
+
+  test('only the human can stop waiting, without interrupting the shared holder session', async () => {
+    const { item, caller, holder } = await consultation();
+    for (const denied of [caller, holder]) {
+      expect(await invoke('neo.concern.cancel', { id: item.id }, denied)).toMatchObject({
+        kind: 'failed',
+        code: 'forbidden',
+      });
+    }
+    expect(
+      await invoke('neo.concern.cancel', { id: item.id }, { source: 'rpc', principal: 'remote' })
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.consultations.get(item.id)?.status).toBe('pending');
+    const request = jobs[0];
+    const unrelated = {
+      payload: { to: { sessionId: item.sessionId }, messageUuid: 'human-follow-up' },
+    };
+    jobs.push(unrelated);
+    expect(await invoke('neo.concern.cancel', { id: item.id })).toMatchObject({
+      value: { ok: true, consultation: { status: 'failed', answer: CONSULTATION_STOPPED } },
+    });
+    await invoke('neo.concern.cancel', { id: item.id });
+    await service.recoverConsultations();
+    expect(jobs).toHaveLength(3);
+    expect(jobs[0]).toBe(request);
+    expect(jobs[1]).toBe(unrelated);
+    expect(JSON.stringify(jobs[2])).toContain(CONSULTATION_STOPPED);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(service.repo.getConcern(concern.id)?.context).toBe(concern.context);
+    expect(
+      await invoke('neo.concern.respond', { id: item.id, answer: 'Late' }, holder)
+    ).toMatchObject({
+      value: { ok: false },
+    });
+    expect(await invoke('neo.concern.cancel', { id: 'missing' })).toMatchObject({
+      value: { ok: false },
+    });
+  });
+
+  test('expires a stuck consultation during recovery and allows a new request with a new key', async () => {
+    const { item, caller, input } = await consultation();
+    sqlite
+      .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
+      .run(Date.now() - CONSULTATION_TIMEOUT_MS, item.id);
+    await service.recoverConsultations();
+    expect(service.consultations.get(item.id)).toMatchObject({
+      status: 'failed',
+      answer: CONSULTATION_EXPIRED,
+    });
+    expect(jobs).toHaveLength(2);
+    await service.recoverConsultations();
+    expect(jobs).toHaveLength(2);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(await invoke('neo.concern.consult', input, caller)).toMatchObject({
+      value: { consultation: { id: item.id, status: 'failed' } },
+    });
+    expect(
+      await invoke('neo.concern.consult', { ...input, requestKey: 'new-attempt' }, caller)
+    ).toMatchObject({
+      value: { ok: true, consultation: { status: 'pending' } },
+    });
+    expect(created).toHaveLength(2);
+  });
+
+  test('rejects an answer past its deadline even before recovery runs', async () => {
+    const { item, holder } = await consultation();
+    sqlite
+      .prepare('UPDATE neo_consultations SET created_at = ? WHERE id = ?')
+      .run(Date.now() - CONSULTATION_TIMEOUT_MS - 1, item.id);
+    expect(
+      await invoke('neo.concern.respond', { id: item.id, answer: 'Too late' }, holder)
+    ).toMatchObject({
+      value: { ok: false },
+    });
+    expect(service.consultations.get(item.id)?.answer).toBe(CONSULTATION_EXPIRED);
+    expect(JSON.stringify(jobs[1])).toContain(CONSULTATION_EXPIRED);
+  });
+
+  test('stopping or expiring a completed request cannot replace its answer', async () => {
+    const { item, holder } = await consultation();
+    await invoke('neo.concern.respond', { id: item.id, answer: 'Timely answer' }, holder);
+    sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run(item.id);
+    await invoke('neo.concern.cancel', { id: item.id });
+    await service.recoverConsultations();
+    expect(service.consultations.get(item.id)).toMatchObject({
+      status: 'reported',
+      answer: 'Timely answer',
+    });
+    expect(jobs).toHaveLength(2);
+  });
+
+  test('a concurrent answer and stop settle once with one consistent return', async () => {
+    const { item, holder } = await consultation();
+    await Promise.all([
+      invoke('neo.concern.respond', { id: item.id, answer: 'Answer' }, holder),
+      invoke('neo.concern.cancel', { id: item.id }),
+    ]);
+    const settled = service.consultations.get(item.id)!;
+    expect(['reported', 'failed']).toContain(settled.status);
+    expect(settled.answer).toBe(settled.status === 'reported' ? 'Answer' : CONSULTATION_STOPPED);
+    expect(jobs).toHaveLength(2);
+    expect(JSON.stringify(jobs[1])).toContain(settled.answer!);
+    await service.recoverConsultations();
+    expect(jobs).toHaveLength(2);
   });
 });

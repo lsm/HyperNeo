@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { NeoResult, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
@@ -89,15 +88,21 @@ export function useNeo() {
     [store]
   );
 
-  async function act(id: string, action: 'start' | 'cancel') {
+  async function act(id: string, action: 'start' | 'cancel' | 'stop-waiting') {
     if (busyWork) return;
     setBusyWork(id);
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true; work: NeoWork }>>(
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(
         hub,
-        action === 'start' ? 'neo.work.start' : 'neo.work.cancel',
+        (
+          {
+            start: 'neo.work.start',
+            cancel: 'neo.work.cancel',
+            'stop-waiting': 'neo.concern.cancel',
+          } as const
+        )[action],
         { id }
       );
       if (!result.ok) throw new Error(result.reason);
