@@ -19,7 +19,7 @@ export function ExaSettings() {
   }, [settings]);
 
   const save = async (next: ExaSettingsConfig) => {
-    const { hasApiKey: _omitHasApiKey, ...payload } = next;
+    const { hasApiKey: _omitHasApiKey, apiKeyFromEnv: _omitApiKeyFromEnv, ...payload } = next;
     setDraft(next);
     if (next.apiKey?.trim()) {
       setDraft((d) => ({ ...d, apiKey: '' }));
@@ -81,7 +81,13 @@ export function ExaSettings() {
             placeholder="exa-..."
             class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
-          {draft.hasApiKey && !draft.apiKey && (
+          {draft.hasApiKey && !draft.apiKey && draft.apiKeyFromEnv && (
+            <div class="text-xs text-success">
+              Key provided by the daemon&apos;s EXA_API_KEY environment variable. Unset it and
+              restart the daemon to remove it.
+            </div>
+          )}
+          {draft.hasApiKey && !draft.apiKey && !draft.apiKeyFromEnv && (
             <div class="flex items-center justify-between gap-3">
               <div class="text-xs text-success">Key saved. Enter a new key to replace it.</div>
               <button

@@ -448,6 +448,38 @@ describe('Settings RPC Handlers', () => {
 
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
       expect(result.settings.exa?.hasApiKey).toBe(true);
+      expect(result.settings.exa?.apiKeyFromEnv).toBe(true);
+    });
+
+    it('does not persist the server-computed apiKeyFromEnv flag', async () => {
+      const credentialManager = createMockCredentialManager();
+      (
+        credentialManager.manager.hasEnvironmentCredentials as ReturnType<typeof mock>
+      ).mockReturnValue(true);
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      await handler!(
+        {
+          updates: {
+            exa: { enabled: true, hasApiKey: true, apiKeyFromEnv: true },
+          },
+        },
+        {}
+      );
+
+      const persisted = settingsManagerData.mocks.updateGlobalSettings.mock.calls[0]?.[0] as
+        | Partial<GlobalSettings>
+        | undefined;
+      expect(persisted?.exa?.apiKeyFromEnv).toBeUndefined();
+      expect(persisted?.exa?.apiKey).toBeUndefined();
     });
 
     it('rejects an API key before an endpoint is configured', async () => {

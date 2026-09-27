@@ -135,6 +135,35 @@ describe('settings handlers — custom endpoints integration', () => {
       ).rejects.toThrow(/invalid/);
       expect(syncCalls).toHaveLength(0);
     });
+
+    it('rejects creating a custom endpoint with the reserved exa id', async () => {
+      const handler = hubData.handlers.get('settings.global.update')!;
+      await expect(
+        handler(
+          { updates: { customEndpoints: [validEndpoint, { ...validEndpoint, id: 'exa' }] } },
+          {}
+        )
+      ).rejects.toThrow(/reserved/);
+      expect(syncCalls).toHaveLength(0);
+    });
+
+    it('allows edits when a reserved id endpoint already exists in persisted settings', async () => {
+      settings.state.settings = {
+        ...settings.state.settings,
+        customEndpoints: [validEndpoint, { ...validEndpoint, id: 'exa', name: 'Legacy Exa' }],
+      };
+      const handler = hubData.handlers.get('settings.global.update')!;
+      const result = (await handler(
+        {
+          updates: {
+            customEndpoints: [validEndpoint, { ...validEndpoint, id: 'exa', name: 'Legacy Exa 2' }],
+          },
+        },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(syncCalls).toHaveLength(1);
+    });
   });
 
   describe('cross-RPC mutation serialisation', () => {

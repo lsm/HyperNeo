@@ -98,10 +98,16 @@ async function fetchModelsFromEndpoint(params: {
   }
 }
 
-export function validateCustomEndpoint(config: CustomEndpointConfig): void {
+export function validateCustomEndpoint(
+  config: CustomEndpointConfig,
+  options?: { allowReservedIds?: ReadonlySet<string> }
+): void {
   if (!config?.id || typeof config.id !== 'string')
     throw new Error('Custom endpoint id is required');
-  if (config.id === VOICE_CREDENTIAL_PROVIDER_ID || config.id === EXA_CREDENTIAL_PROVIDER_ID)
+  if (
+    (config.id === VOICE_CREDENTIAL_PROVIDER_ID || config.id === EXA_CREDENTIAL_PROVIDER_ID) &&
+    !options?.allowReservedIds?.has(config.id)
+  )
     throw new Error(`Custom endpoint id '${config.id}' is reserved`);
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
     throw new Error(
@@ -158,13 +164,16 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
   }
 }
 
-export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
+export function validateCustomEndpoints(
+  configs: CustomEndpointConfig[] | undefined,
+  options?: { allowReservedIds?: ReadonlySet<string> }
+): void {
   if (configs === undefined) return;
   if (configs === null) throw new Error('customEndpoints must be an array, got null');
   if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
   const ids = new Set<string>();
   for (const config of configs) {
-    validateCustomEndpoint(config);
+    validateCustomEndpoint(config, options);
     if (ids.has(config.id)) throw new Error(`Duplicate custom endpoint id '${config.id}'`);
     ids.add(config.id);
   }

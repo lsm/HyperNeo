@@ -93,6 +93,7 @@ export interface ExaSettings {
   enabled: boolean;
   apiKey?: string;
   hasApiKey?: boolean;
+  apiKeyFromEnv?: boolean;
 }
 
 export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;

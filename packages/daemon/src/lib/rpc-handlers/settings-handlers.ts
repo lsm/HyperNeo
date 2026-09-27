@@ -74,7 +74,13 @@ export function registerSettingsHandlers(
       const run = async () => {
         if (touchesCustomEndpoints) {
           const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
-          validateCustomEndpoints(data.updates.customEndpoints);
+          validateCustomEndpoints(data.updates.customEndpoints, {
+            allowReservedIds: new Set(
+              (settingsManager.getGlobalSettings().customEndpoints ?? []).map(
+                (endpoint) => endpoint.id
+              )
+            ),
+          });
         }
         const voiceMutation: VoiceCredentialMutation = {};
         const exaMutation: VoiceCredentialMutation = {};
@@ -337,6 +343,7 @@ function prepareExaSettingsUpdate(
   const clearRequested = exa.hasApiKey === false;
   delete exa.apiKey;
   delete exa.hasApiKey;
+  delete exa.apiKeyFromEnv;
 
   const persistedExa = settingsManager.getGlobalSettings().exa;
 
@@ -386,6 +393,7 @@ export function sanitizeGlobalSettings(
       credentialManager?.hasEnvironmentCredentials(EXA_CREDENTIAL_PROVIDER_ID)
     ) {
       exa.hasApiKey = true;
+      exa.apiKeyFromEnv = true;
     }
     sanitized = { ...sanitized, exa };
   }
