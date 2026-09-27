@@ -192,6 +192,87 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { concerns: [{ context: '' }] } });
   });
 
+  test('human snapshots retain a bounded set of older actionable work', async () => {
+    service.repo.saveConcern({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
+    const root = await service.open(null);
+    const oldest = service.repo.proposeWork({
+      id: 'oldest',
+      requestKey: 'oldest',
+      concernId: 'book-club',
+      originSessionId: root,
+      title: 'Still needs a decision',
+      instruction: 'Draft a plan.',
+    });
+    sqlite.prepare('UPDATE neo_work SET created_at = 1 WHERE id = ?').run(oldest.id);
+    const queued = service.repo.proposeWork({
+      id: 'queued',
+      requestKey: 'queued',
+      concernId: 'book-club',
+      originSessionId: root,
+      title: 'Still running',
+      instruction: 'Draft a plan.',
+    });
+    service.repo.transitionWork(queued.id, queued, {
+      status: 'queued',
+      sessionId: 'queued-session',
+    });
+    sqlite.prepare('UPDATE neo_work SET created_at = 2 WHERE id = ?').run(queued.id);
+    for (let index = 0; index < 50; index++) {
+      const item = service.repo.proposeWork({
+        id: `recent-${index}`,
+        requestKey: `recent-${index}`,
+        concernId: 'book-club',
+        originSessionId: root,
+        title: 'Completed work',
+        instruction: 'Draft a plan.',
+      });
+      service.repo.transitionWork(
+        item.id,
+        { status: 'proposed', sessionId: null, report: null },
+        { status: 'reported', report: 'Done.' }
+      );
+    }
+    const rootSnapshot = (await invoke('neo.snapshot')) as {
+      value: { work: Array<{ id: string }> };
+    };
+    expect(rootSnapshot.value.work).toHaveLength(52);
+    expect(rootSnapshot.value.work.at(-1)?.id).toBe(oldest.id);
+    expect(rootSnapshot.value.work.some((item) => item.id === queued.id)).toBe(true);
+    const concernSnapshot = (await invoke('neo.snapshot', { concernId: 'book-club' })) as {
+      value: { work: Array<{ id: string }> };
+    };
+    expect(concernSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(true);
+    expect(concernSnapshot.value.work.some((item) => item.id === queued.id)).toBe(true);
+    const agentSnapshot = (await invoke(
+      'neo.snapshot',
+      {},
+      { source: 'mcp', role: 'neo', sessionId: root }
+    )) as {
+      value: { work: Array<{ id: string }> };
+    };
+    expect(agentSnapshot.value.work).toHaveLength(10);
+    expect(agentSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(false);
+    expect(agentSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
+    for (let index = 0; index < 50; index++) {
+      const item = service.repo.proposeWork({
+        id: `extra-${index}`,
+        requestKey: `extra-${index}`,
+        concernId: 'book-club',
+        originSessionId: root,
+        title: 'Another decision',
+        instruction: 'Draft a plan.',
+      });
+      sqlite.prepare('UPDATE neo_work SET created_at = ? WHERE id = ?').run(index + 3, item.id);
+    }
+    const boundedSnapshot = (await invoke('neo.snapshot')) as {
+      value: { work: Array<{ id: string }> };
+    };
+    expect(boundedSnapshot.value.work).toHaveLength(100);
+    expect(boundedSnapshot.value.work.some((item) => item.id === 'extra-0')).toBe(true);
+    expect(boundedSnapshot.value.work.some((item) => item.id === oldest.id)).toBe(false);
+    expect(boundedSnapshot.value.work.some((item) => item.id === queued.id)).toBe(false);
+  });
+
   test('opening a missing concern reports a domain rejection instead of an execution fault', async () => {
     expect(await invoke('neo.open', { concernId: 'gone' })).toMatchObject({
       value: { ok: false, reason: 'Concern not found.' },
