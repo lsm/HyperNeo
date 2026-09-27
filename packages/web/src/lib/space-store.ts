@@ -2782,20 +2782,6 @@ class SpaceStore {
     return result.sessionId;
   }
 
-  async spawnAgentClone(agentId: string): Promise<string> {
-    const agent = this.agents.value.find((candidate) => candidate.id === agentId);
-    const parentSessionId = agent?.sessionId ?? (await this.ensureAgentSession(agentId));
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const result = await invokeOperation<
-      { accepted: true; sessionId: string } | { accepted: false; reason: string; message: string }
-    >(hub, 'session.clone.spawn', { parentSessionId });
-    if (!result.accepted) throw new Error(result.message);
-    return result.sessionId;
-  }
-
   isAgentOwnedSession(sessionId: string | null): boolean {
     if (!sessionId) return false;
     const agents = this.agents.value;

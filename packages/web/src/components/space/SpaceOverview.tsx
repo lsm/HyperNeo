@@ -6,7 +6,9 @@ import type {
   SpaceWorkflowSummary,
 } from '@hyperneo/shared';
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
-import { spaceStore } from '../../lib/space-store';
+import { spaceStore, type SpaceSessionRow } from '../../lib/space-store';
+import { conversationTitle, getSessionSidebarStatus } from '../../lib/session-sidebar-status';
+import { getSpaceSessionUnreadCount } from '../../lib/space-unread';
 import {
   navigateToSpaceTask,
   navigateToSpaceSession,
@@ -19,6 +21,9 @@ import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
+import { CloneIcon } from '../icons/CloneIcon';
+import { SessionActivityIndicator } from '../SessionActivityIndicator';
+import { UnreadBadge } from '../ui/UnreadBadge';
 
 function StatCard({
   label,
@@ -514,7 +519,9 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             >
               <div class="flex items-center justify-between border-b border-line bg-fill-soft px-4 py-3.5 sm:px-5">
                 <div>
-                  <h3 class="text-base font-semibold tracking-tight text-fg">Recent Sessions</h3>
+                  <h3 class="text-base font-semibold tracking-tight text-fg">
+                    Recent conversations
+                  </h3>
                   <p class="mt-0.5 text-[11px] text-fg-faint">Continue recent conversations</p>
                 </div>
               </div>
@@ -545,22 +552,28 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   );
 }
 
-function RecentSessionRow({
-  session,
-  onOpen,
-}: {
-  session: { title: string; lastActiveAt: number };
-  onOpen: () => void;
-}) {
+function RecentSessionRow({ session, onOpen }: { session: SpaceSessionRow; onOpen: () => void }) {
   return (
     <button
       type="button"
       class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-fill-soft focus-visible:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cat-indigo/60"
       onClick={onOpen}
     >
+      <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
+      {session.parentSessionId && (
+        <span
+          role="img"
+          class="flex-shrink-0 text-fg-muted"
+          title="Clone conversation"
+          aria-label="Clone conversation"
+        >
+          <CloneIcon className="h-4 w-4" />
+        </span>
+      )}
       <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-        {session.title || 'Untitled Session'}
+        {conversationTitle(session.title || 'Untitled conversation', !!session.parentSessionId)}
       </span>
+      <UnreadBadge count={getSpaceSessionUnreadCount(session.id, session.messageCount)} />
       <span class="flex-none text-xs tabular-nums text-fg-muted">
         {getRelativeTime(session.lastActiveAt)}
       </span>

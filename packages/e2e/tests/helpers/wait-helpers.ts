@@ -171,7 +171,10 @@ export async function waitForSDKSystemInitMessage(
   page: Page,
   timeout: number = 10000
 ): Promise<void> {
-  await page.locator('button[title="Session info"]').last().waitFor({ state: 'visible', timeout });
+  await page
+    .locator('button[title="Conversation info"]')
+    .last()
+    .waitFor({ state: 'visible', timeout });
 }
 
 export function getModal(page: Page): Locator {

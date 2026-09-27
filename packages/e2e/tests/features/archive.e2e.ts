@@ -40,7 +40,7 @@ test.describe('Session Archive - Menu Option', () => {
   test('should show the Archive action in the session info panel', async ({ page }) => {
     await openSessionOptionsMenu(page);
 
-    await expect(page.getByTitle('Archive session')).toBeVisible();
+    await expect(page.getByTitle('Archive chat')).toBeVisible();
   });
 
   test('should show Tools, Export, Archive and Delete actions in the session info panel', async ({
@@ -50,7 +50,7 @@ test.describe('Session Archive - Menu Option', () => {
 
     await expect(page.getByTitle('Tools')).toBeVisible();
     await expect(page.getByTitle('Export chat')).toBeVisible();
-    await expect(page.getByTitle('Archive session')).toBeVisible();
+    await expect(page.getByTitle('Archive chat')).toBeVisible();
     await expect(page.getByTitle('Delete chat')).toBeVisible();
   });
 });
@@ -112,7 +112,7 @@ test.describe('Session Archive - Archiving Flow', () => {
 
     await openSessionOptionsMenu(page);
 
-    const archiveItem = page.getByTitle('Archive session').first();
+    const archiveItem = page.getByTitle('Archive chat').first();
     const _isDisabled =
       (await archiveItem.getAttribute('aria-disabled')) === 'true' ||
       (await archiveItem.locator('..').getAttribute('class'))?.includes('opacity') ||

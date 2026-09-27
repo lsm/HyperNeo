@@ -28,12 +28,12 @@ let mockSessions: Signal<Session[]>;
 let mockCurrentSessionIdSignal: Signal<string | null>;
 
 describe('session-status (real module tests)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.localStorage = mockLocalStorage as unknown as Storage;
     mockLocalStorage.clear();
     vi.clearAllMocks();
 
-    const { signal } = require('@preact/signals');
+    const { signal } = await import('@preact/signals');
     mockSessions = signal<Session[]>([]);
     mockCurrentSessionIdSignal = signal<string | null>(null);
   });
@@ -446,6 +446,43 @@ describe('session-status (real module tests)', () => {
   });
 
   describe('reactivity to signal changes', () => {
+    it('persists messages arriving while selected so they stay read after navigation', async () => {
+      mockSessions.value = [createMockSession('sess-live', { metadata: { messageCount: 4 } })];
+      vi.doMock('../state.js', () => ({ sessions: mockSessions }));
+      vi.doMock('../signals.js', () => ({ currentSessionIdSignal: mockCurrentSessionIdSignal }));
+      const module = await import('../session-status.js');
+      module.initSessionStatusTracking();
+      mockCurrentSessionIdSignal.value = 'sess-live';
+      mockSessions.value = [createMockSession('sess-live', { metadata: { messageCount: 8 } })];
+      mockCurrentSessionIdSignal.value = null;
+      expect(module.allSessionStatuses.value.get('sess-live')?.unreadCount).toBe(0);
+      expect(JSON.parse(mockLocalStorage.getItem('kai:session-last-seen')!)['sess-live']).toBe(8);
+      mockSessions.value = [createMockSession('sess-live', { metadata: { messageCount: 9 } })];
+      expect(module.allSessionStatuses.value.get('sess-live')?.unreadCount).toBe(1);
+    });
+
+    it('acknowledges an already-selected chat when the session list arrives later', async () => {
+      vi.doMock('../state.js', () => ({ sessions: mockSessions }));
+      vi.doMock('../signals.js', () => ({ currentSessionIdSignal: mockCurrentSessionIdSignal }));
+      const module = await import('../session-status.js');
+      mockCurrentSessionIdSignal.value = 'sess-late';
+      module.initSessionStatusTracking();
+      mockSessions.value = [createMockSession('sess-late', { metadata: { messageCount: 7 } })];
+      mockCurrentSessionIdSignal.value = null;
+      expect(module.allSessionStatuses.value.get('sess-late')?.unreadCount).toBe(0);
+    });
+
+    it('rebases unread after history is reset', async () => {
+      mockLocalStorage.setItem('kai:session-last-seen', JSON.stringify({ 'sess-reset': 20 }));
+      mockSessions.value = [createMockSession('sess-reset', { metadata: { messageCount: 2 } })];
+      vi.doMock('../state.js', () => ({ sessions: mockSessions }));
+      vi.doMock('../signals.js', () => ({ currentSessionIdSignal: mockCurrentSessionIdSignal }));
+      const module = await import('../session-status.js');
+      module.initSessionStatusTracking();
+      mockSessions.value = [createMockSession('sess-reset', { metadata: { messageCount: 3 } })];
+      expect(module.allSessionStatuses.value.get('sess-reset')?.unreadCount).toBe(1);
+    });
+
     it('should compute statuses from sessions signal', async () => {
       mockSessions.value = [
         createMockSession('sess-1', {

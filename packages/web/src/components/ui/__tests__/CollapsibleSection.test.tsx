@@ -6,7 +6,7 @@ describe('CollapsibleSection', () => {
   afterEach(() => cleanup());
 
   it('renders title and children when expanded by default', () => {
-    const { getByText } = render(
+    const { getByText, getByRole } = render(
       <CollapsibleSection title="Tasks">
         <div>Task content</div>
       </CollapsibleSection>
@@ -14,11 +14,11 @@ describe('CollapsibleSection', () => {
 
     expect(getByText('Tasks')).toBeTruthy();
     expect(getByText('Task content')).toBeTruthy();
-    expect(getByText('▼')).toBeTruthy();
+    expect(getByRole('button').getAttribute('aria-expanded')).toBe('true');
   });
 
   it('hides children when defaultExpanded is false', () => {
-    const { getByText, queryByText } = render(
+    const { getByText, queryByText, getByRole } = render(
       <CollapsibleSection title="Sessions" defaultExpanded={false}>
         <div>Session content</div>
       </CollapsibleSection>
@@ -26,7 +26,7 @@ describe('CollapsibleSection', () => {
 
     expect(getByText('Sessions')).toBeTruthy();
     expect(queryByText('Session content')).toBeNull();
-    expect(getByText('▶')).toBeTruthy();
+    expect(getByRole('button').getAttribute('aria-expanded')).toBe('false');
   });
 
   it('toggles children visibility on header click', () => {
@@ -40,11 +40,11 @@ describe('CollapsibleSection', () => {
 
     fireEvent.click(getByRole('button'));
     expect(queryByText('Task content')).toBeNull();
-    expect(getByText('▶')).toBeTruthy();
+    expect(getByRole('button').getAttribute('aria-expanded')).toBe('false');
 
     fireEvent.click(getByRole('button'));
     expect(getByText('Task content')).toBeTruthy();
-    expect(getByText('▼')).toBeTruthy();
+    expect(getByRole('button').getAttribute('aria-expanded')).toBe('true');
   });
 
   it('renders count and headerRight slot', () => {
@@ -54,7 +54,7 @@ describe('CollapsibleSection', () => {
       </CollapsibleSection>
     );
 
-    expect(getByText('(2)')).toBeTruthy();
+    expect(getByText('2')).toBeTruthy();
     expect(getByText('+')).toBeTruthy();
   });
 });
