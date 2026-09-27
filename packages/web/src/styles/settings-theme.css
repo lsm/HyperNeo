@@ -7,13 +7,13 @@
  */
 
 .settings-theme {
-  --surface: #16161d;
-  --surface-raised: #1c1c24;
-  --surface-overlay: #22222b;
+  --surface: #1f1f23;
+  --surface-raised: #26262e;
+  --surface-overlay: #2b2b34;
 }
 
 [data-theme="light"] .settings-theme {
-  --surface: #fdfdfe;
+  --surface: #ffffff;
   --surface-raised: #ffffff;
   --surface-overlay: #ffffff;
 }
