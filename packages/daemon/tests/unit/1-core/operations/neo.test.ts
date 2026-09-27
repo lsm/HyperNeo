@@ -523,7 +523,7 @@ describe('Neo MVP', () => {
       await service.recover();
       await service.recover();
       expect(await invoke('neo.concern.save', staleSave, holder)).toMatchObject({
-        value: { ok: false },
+        value: { ok: false, reason: expect.stringContaining('superseded') },
       });
       expect(service.repo.getConcern(concern.id)).toEqual(corrected);
       expect(service.repo.getWork(work.id)).toEqual(receipt);
