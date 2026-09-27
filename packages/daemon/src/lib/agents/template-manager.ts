@@ -86,6 +86,27 @@ export class SpaceAgentTemplateManager {
     spaceId: string,
     params: CreateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord>> {
+    if (!this.repo.getOwned(spaceId, params.key)) {
+      const builtIn = this.builtIns().find((template) => template.key === params.key);
+      if (builtIn) {
+        const seeded = await this.ensureOwnedOverride(spaceId, params.key);
+        if (!seeded.ok) return { ok: false, error: seeded.error };
+        const applied = await this.casUpdateIn(
+          spaceId,
+          params.key,
+          params,
+          seeded.value ?? undefined
+        );
+        if (!applied.ok) return applied;
+        if (!applied.value) {
+          return {
+            ok: false,
+            error: `Template "${params.key}" was modified concurrently; retry the create`,
+          };
+        }
+        return { ok: true, value: applied.value };
+      }
+    }
     const ctx = await runCreateTemplate({ repo: this.repo, spaceId, params });
     if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, ctx.params.key)! };
@@ -142,7 +163,11 @@ export class SpaceAgentTemplateManager {
       this.discardSeededOverride(spaceId, key, seeded.value);
       return { ok: false, error: ctx.error };
     }
-    return { ok: true, value: ctx.template ?? null };
+    if (!ctx.template) {
+      this.discardSeededOverride(spaceId, key, seeded.value);
+      return { ok: true, value: null };
+    }
+    return { ok: true, value: ctx.template };
   }
 
   async casUpdateIn(
@@ -164,7 +189,10 @@ export class SpaceAgentTemplateManager {
       this.discardSeededOverride(spaceId, key, seeded.value);
       return { ok: false, error: ctx.error };
     }
-    if (!ctx.template) return { ok: true, value: null };
+    if (!ctx.template) {
+      this.discardSeededOverride(spaceId, key, seeded.value);
+      return { ok: true, value: null };
+    }
     return { ok: true, value: ctx.template as SpaceAgentTemplateRecord };
   }
 

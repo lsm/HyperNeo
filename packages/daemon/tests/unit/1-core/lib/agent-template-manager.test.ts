@@ -1538,7 +1538,8 @@ describe('built-in override seeding rollback', () => {
   test('a CAS mismatch on a fresh override rolls the seed back', async () => {
     const result = await manager.casUpdateIn(OWNER, 'builtin.default', { displayName: 'Mine' }, 99);
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBeNull();
     expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
     expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
   });
@@ -1548,5 +1549,40 @@ describe('built-in override seeding rollback', () => {
 
     expect(result.ok).toBe(true);
     expect(repo.getOwned(OWNER, 'builtin.default')?.displayName).toBe('Tuned');
+  });
+
+  test('creating an override with partial fields seeds the built-in defaults', async () => {
+    const result = await manager.createIn(OWNER, {
+      key: 'builtin.default',
+      handle: 'builtin',
+      displayName: 'Only Name',
+    });
+
+    expect(result.ok).toBe(true);
+    const stored = repo.getOwned(OWNER, 'builtin.default');
+    expect(stored?.displayName).toBe('Only Name');
+    expect(stored?.instructions).toBe('Built-in instructions.');
+    expect(manager.getIn(OWNER, 'builtin.default')?.instructions).toBe('Built-in instructions.');
+  });
+
+  test('creating an override with full fields replaces the built-in values', async () => {
+    const result = await manager.createIn(OWNER, {
+      ...fullParams(),
+      key: 'builtin.default',
+      handle: 'builtin',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(repo.getOwned(OWNER, 'builtin.default')?.instructions).toBe(
+      'Coordinate release checks.'
+    );
+  });
+
+  test('creating over an existing override still reports a duplicate key', async () => {
+    await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin', displayName: 'A' });
+    const second = await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin' });
+
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toContain('already exists');
   });
 });

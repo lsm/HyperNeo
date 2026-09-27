@@ -375,7 +375,7 @@ const createTemplateInputSchema = AgentSpaceScopeSchema.extend({
     .string()
     .min(1)
     .describe(
-      'Unique template key (e.g. reviewer.custom); matching a built-in key creates a space-level customization that shadows the built-in'
+      'Unique template key (e.g. reviewer.custom); matching a built-in key creates a space-level customization that shadows the built-in, starting from its fields'
     ),
   handle: z.string().min(1).describe('Handle slug for agents created from this template'),
   ...templateOverrideFields,
@@ -630,7 +630,7 @@ export async function runCreateAgentFromTemplate(
 const SCOPE_DOC =
   'Human (RPC) callers pass spaceId; agent callers act in their own Space and are rejected with space_mismatch when they pass a different one. Impl-level failures (duplicate key, concurrent version change, unknown template) are rejected with template_rejected.';
 
-const CREATE_TEMPLATE_DESCRIPTION = `Create a user-authored agent template in a Space from a key, handle, and optional display name, description, instructions, labels, suggested autonomy level, model, provider, model pool, thinking level, setting sources, and tool allowlist, returning the stored template with its version. Pass fromAgentId to derive defaults from an existing long-horizon agent in the Space; caller-supplied fields override the derived ones. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space.`;
+const CREATE_TEMPLATE_DESCRIPTION = `Create a user-authored agent template in a Space from a key, handle, and optional display name, description, instructions, labels, suggested autonomy level, model, provider, model pool, thinking level, setting sources, and tool allowlist, returning the stored template with its version. Pass fromAgentId to derive defaults from an existing long-horizon agent in the Space; caller-supplied fields override the derived ones. Creating with a built-in key seeds that built-in's fields first; supplied fields replace them. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space.`;
 
 const UPDATE_TEMPLATE_DESCRIPTION = `Update a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a prior create/update result and the update fails when the stored version differs; omit it to update against the current stored version. Nullable fields (model, provider, modelPool, thinkingLevel, settingSources, tools, labels) accept null to inherit defaults or clear them. Updating a built-in key materializes a space-level customization that shadows the built-in. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space.`;
 
