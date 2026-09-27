@@ -1956,6 +1956,102 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
+  describe('exa web tools fallback', () => {
+    const EXA_TEST_KEY = 'exa-test-key-123';
+
+    let priorExaEnv: string | undefined;
+
+    beforeEach(() => {
+      priorExaEnv = process.env.EXA_API_KEY;
+    });
+
+    afterEach(() => {
+      if (priorExaEnv === undefined) {
+        delete process.env.EXA_API_KEY;
+      } else {
+        process.env.EXA_API_KEY = priorExaEnv;
+      }
+    });
+
+    const enableExaSettings = () => {
+      (mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockImplementation(() => ({
+        settingSources: ['user', 'project', 'local'],
+        outputLimiter: { enabled: false },
+        sandbox: { excludedCommands: ['git'] },
+        exa: { enabled: true, hasApiKey: true },
+      }));
+    };
+
+    const useNonNativeProvider = () => {
+      mockSession.config.provider = 'kimi';
+      mockSession.config.model = 'kimi-k3';
+      mockSession.config.providerConfig = { apiKey: 'sk-test' };
+    };
+
+    it('attaches the exa MCP server and hides builtin web tools for providers without native web tools', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+
+      const options = await builder.build();
+
+      const servers = options.mcpServers as Record<string, { type: string; url: string }>;
+      expect(servers.exa.type).toBe('http');
+      expect(servers.exa.url).toBe(`https://mcp.exa.ai/mcp?exaApiKey=${EXA_TEST_KEY}`);
+      expect(options.disallowedTools).toContain('WebSearch');
+      expect(options.disallowedTools).toContain('WebFetch');
+    });
+
+    it('does not attach exa for providers with native web tools', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+
+      const options = await builder.build();
+
+      expect(options.mcpServers).toBeUndefined();
+      expect(options.disallowedTools ?? []).not.toContain('WebSearch');
+      expect(options.disallowedTools ?? []).not.toContain('WebFetch');
+    });
+
+    it('does not attach exa when disabled in settings', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      useNonNativeProvider();
+
+      const options = await builder.build();
+
+      expect(options.mcpServers).toBeUndefined();
+      expect(options.disallowedTools ?? []).not.toContain('WebSearch');
+    });
+
+    it('does not attach exa when no API key is available', async () => {
+      delete process.env.EXA_API_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+
+      const options = await builder.build();
+
+      expect(options.mcpServers).toBeUndefined();
+      expect(options.disallowedTools ?? []).not.toContain('WebSearch');
+      expect(options.disallowedTools ?? []).not.toContain('WebFetch');
+    });
+
+    it('does not override a user-configured MCP server named exa', async () => {
+      process.env.EXA_API_KEY = EXA_TEST_KEY;
+      enableExaSettings();
+      useNonNativeProvider();
+      mockSession.config.mcpServers = {
+        exa: { type: 'http', url: 'https://example.com/custom-exa' },
+      };
+
+      const options = await builder.build();
+
+      const servers = options.mcpServers as Record<string, { url: string }>;
+      expect(servers.exa.url).toBe('https://example.com/custom-exa');
+      expect(options.disallowedTools).toContain('WebSearch');
+      expect(options.disallowedTools).toContain('WebFetch');
+    });
+  });
+
   describe('setting sources configuration', () => {
     it('should default settingSources to global settings', async () => {
       const options = await builder.build();

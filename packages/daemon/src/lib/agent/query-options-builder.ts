@@ -62,6 +62,7 @@ import {
 import { autoCompactReserveTokens } from './context-tracker.js';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { resolveExaWebToolsActivation, type ExaWebToolsActivation } from './exa-web-tools.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import {
   createOutputLimiterPostHook,
@@ -284,6 +285,7 @@ export class QueryOptionsBuilder {
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
   private readonly warnedReservedMcpNames = new Set<string>();
+  private exaWebToolsActivation?: ExaWebToolsActivation;
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
 
@@ -315,6 +317,10 @@ export class QueryOptionsBuilder {
       operationServer: this.ctx.getOperationMcpServer?.(),
     });
     for (const { from, to } of renamed) this.warnReservedMcpServerName(from, to);
+    const exa = this.exaWebToolsActivation;
+    if (exa && !(exa.serverName in servers)) {
+      servers[exa.serverName] = exa.serverConfig;
+    }
     return Object.keys(servers).length > 0 ? servers : undefined;
   }
 
@@ -344,6 +350,11 @@ export class QueryOptionsBuilder {
     await contextManager.ensureContextReady(session);
     const providerContext = contextManager.createContext(session);
     const providerId = providerContext.provider.id;
+    this.exaWebToolsActivation = await resolveExaWebToolsActivation({
+      settings: this.ctx.settingsManager.getGlobalSettings(),
+      db: this.ctx.db,
+      nativeWebTools: providerContext.provider.capabilities.nativeWebTools === true,
+    });
     const { modelInfo } = await resolveSessionContextModelInfo(session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
@@ -784,6 +795,10 @@ CRITICAL RULES:
 
     if (config.disallowedTools && config.disallowedTools.length > 0) {
       disallowedTools.push(...config.disallowedTools);
+    }
+
+    if (this.exaWebToolsActivation) {
+      disallowedTools.push(...this.exaWebToolsActivation.disallowedTools);
     }
 
     return [...new Set(disallowedTools)];

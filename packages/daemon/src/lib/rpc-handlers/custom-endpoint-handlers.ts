@@ -11,7 +11,11 @@ import type { SettingsManager } from '../settings-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
-import { sanitizeGlobalSettings, VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
+import {
+  sanitizeGlobalSettings,
+  VOICE_CREDENTIAL_PROVIDER_ID,
+  EXA_CREDENTIAL_PROVIDER_ID,
+} from './settings-handlers.ts';
 import { Logger } from '../logger.js';
 
 const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
@@ -94,10 +98,16 @@ async function fetchModelsFromEndpoint(params: {
   }
 }
 
-export function validateCustomEndpoint(config: CustomEndpointConfig): void {
+export function validateCustomEndpoint(
+  config: CustomEndpointConfig,
+  options?: { allowReservedIds?: ReadonlySet<string> }
+): void {
   if (!config?.id || typeof config.id !== 'string')
     throw new Error('Custom endpoint id is required');
-  if (config.id === VOICE_CREDENTIAL_PROVIDER_ID)
+  if (
+    (config.id === VOICE_CREDENTIAL_PROVIDER_ID || config.id === EXA_CREDENTIAL_PROVIDER_ID) &&
+    !options?.allowReservedIds?.has(config.id)
+  )
     throw new Error(`Custom endpoint id '${config.id}' is reserved`);
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
     throw new Error(
@@ -154,13 +164,16 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
   }
 }
 
-export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
+export function validateCustomEndpoints(
+  configs: CustomEndpointConfig[] | undefined,
+  options?: { allowReservedIds?: ReadonlySet<string> }
+): void {
   if (configs === undefined) return;
   if (configs === null) throw new Error('customEndpoints must be an array, got null');
   if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
   const ids = new Set<string>();
   for (const config of configs) {
-    validateCustomEndpoint(config);
+    validateCustomEndpoint(config, options);
     if (ids.has(config.id)) throw new Error(`Duplicate custom endpoint id '${config.id}'`);
     ids.add(config.id);
   }
@@ -350,8 +363,10 @@ export function registerCustomEndpointHandlers(
     'customEndpoints.update',
     async (data: { endpoint: CustomEndpointConfig }) => {
       return withCustomEndpointsLock(async () => {
-        validateCustomEndpoint(data.endpoint);
         const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+        validateCustomEndpoint(data.endpoint, {
+          allowReservedIds: new Set(current.map((endpoint) => endpoint.id)),
+        });
         const index = current.findIndex((e) => e.id === data.endpoint.id);
         if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
         const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];

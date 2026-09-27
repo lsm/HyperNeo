@@ -11,6 +11,7 @@ export interface ProviderCapabilities {
   maxContextWindow: number;
   functionCalling: boolean;
   vision: boolean;
+  nativeWebTools?: boolean;
 }
 
 export interface ProviderSdkConfig {

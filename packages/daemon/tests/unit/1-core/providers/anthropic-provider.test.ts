@@ -40,6 +40,7 @@ describe('AnthropicProvider', () => {
         functionCalling: true,
         vision: true,
         thinkingModes: 'granular',
+        nativeWebTools: true,
       });
     });
   });

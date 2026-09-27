@@ -42,6 +42,7 @@ describe('GlmProvider', () => {
         functionCalling: true,
         vision: true,
         thinkingModes: 'granular',
+        nativeWebTools: true,
       });
     });
   });

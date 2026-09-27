@@ -89,6 +89,13 @@ export interface VoiceSettings {
   allowPrivateNetwork?: boolean;
 }
 
+export interface ExaSettings {
+  enabled: boolean;
+  apiKey?: string;
+  hasApiKey?: boolean;
+  apiKeyFromEnv?: boolean;
+}
+
 export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
@@ -113,6 +120,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   customEndpoints?: CustomEndpointConfig[];
 
   voice?: VoiceSettings;
+
+  exa?: ExaSettings;
 }
 
 export interface SessionSettings extends GlobalSettings {
@@ -132,6 +141,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     model: '',
     allowInsecureTls: false,
     allowPrivateNetwork: false,
+  },
+  exa: {
+    enabled: false,
   },
   coordinatorMode: false,
   maxConcurrentWorkers: 3,

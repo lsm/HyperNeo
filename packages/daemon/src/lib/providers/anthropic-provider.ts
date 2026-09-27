@@ -99,6 +99,7 @@ export class AnthropicProvider implements Provider {
     maxContextWindow: 200000,
     functionCalling: true,
     vision: true,
+    nativeWebTools: true,
   };
 
   private modelCache: ModelInfo[] | null = null;

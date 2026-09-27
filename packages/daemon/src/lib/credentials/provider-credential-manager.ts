@@ -20,6 +20,7 @@ const PROVIDER_ENV_KEYS: Record<string, string[]> = {
   'ollama-cloud': ['OLLAMA_CLOUD_API_KEY'],
   'anthropic-codex': ['OPENAI_API_KEY'],
   'anthropic-copilot': ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN'],
+  exa: ['EXA_API_KEY'],
 };
 
 const PROVIDER_ENV_OAUTH_KEYS: Record<string, string[]> = {
