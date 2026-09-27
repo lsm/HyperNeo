@@ -76,13 +76,13 @@ describe('SpaceTemplatesPanel', () => {
     expect(getByTestId('agent-template-count').textContent).toBe('2');
   });
 
-  it('groups templates by label', () => {
-    const { getByTestId } = renderPanel({
+  it('shows template labels as chips on the row', () => {
+    const { getByText, queryByText } = renderPanel({
       templates: [makeTemplate('w', ['workflow-worker']), makeTemplate('c')],
     });
 
-    expect(getByTestId('agent-template-group-workflow-worker')).toBeTruthy();
-    expect(getByTestId('agent-template-group-custom')).toBeTruthy();
+    expect(getByText('workflow-worker')).toBeTruthy();
+    expect(queryByText('long-horizon')).toBeNull();
   });
 
   it('stacks templates as list rows rather than a multi-column card grid', () => {
@@ -90,7 +90,7 @@ describe('SpaceTemplatesPanel', () => {
       templates: [makeTemplate('a'), makeTemplate('b')],
     });
 
-    const rows = getByTestId('agent-template-group-custom').lastElementChild as HTMLElement;
+    const rows = getByTestId('agent-template-list');
     expect(rows.children).toHaveLength(2);
     expect(rows.className).not.toContain('grid');
   });

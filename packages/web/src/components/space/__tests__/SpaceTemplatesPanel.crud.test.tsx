@@ -208,7 +208,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     cleanup();
   });
 
-  it('renders the templates section with count and grouped rows', () => {
+  it('renders the templates section with count and rows', () => {
     mockTemplates.value = [
       makeTemplate({
         key: 'qa',
@@ -223,7 +223,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     expect(getByRole('button', { name: '+ New Template' })).toBeTruthy();
   });
 
-  it('groups templates by label with an unlabeled custom bucket', () => {
+  it('lists every template in one flat list with label chips', () => {
     mockTemplates.value = [
       makeTemplate({ key: 'worker.swe', displayName: 'SWE Worker', labels: ['workflow-worker'] }),
       makeTemplate({
@@ -234,32 +234,14 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       makeTemplate({ key: 'scribe', displayName: 'Scribe' }),
     ];
 
-    const { getByTestId } = renderPanel();
+    const { getByTestId, getByText, queryByText } = renderPanel();
 
     expect(getByTestId('agent-template-count').textContent).toBe('3');
-    const workers = getByTestId('agent-template-group-workflow-worker');
-    const longHorizon = getByTestId('agent-template-group-long-horizon');
-    const custom = getByTestId('agent-template-group-custom');
-    expect(within(workers).getByText('SWE Worker')).toBeTruthy();
-    expect(within(longHorizon).getByText('Task Manager')).toBeTruthy();
-    expect(within(custom).getByText('Scribe')).toBeTruthy();
-    expect(
-      workers.compareDocumentPosition(longHorizon) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-    expect(
-      longHorizon.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-  });
-
-  it('hides template groups that have no templates', () => {
-    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
-
-    const { getByTestId, queryByTestId } = renderPanel();
-
-    expect(getByTestId('agent-template-group-custom')).toBeTruthy();
-    expect(queryByTestId('agent-template-group-workflow-worker')).toBeNull();
-    expect(queryByTestId('agent-template-group-long-horizon')).toBeNull();
-    expect(getByTestId('agent-template-count').textContent).toBe('1');
+    const list = getByTestId('agent-template-list');
+    expect(list.children).toHaveLength(3);
+    expect(getByText('workflow-worker')).toBeTruthy();
+    expect(getByText('long-horizon')).toBeTruthy();
+    expect(queryByText('custom')).toBeNull();
   });
 
   it('offers edit and delete on every template row', () => {
@@ -279,8 +261,8 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       />
     );
 
-    const workers = getByTestId('agent-template-group-workflow-worker');
-    expect(within(workers).getByText('Built-in')).toBeTruthy();
+    const list = getByTestId('agent-template-list');
+    expect(within(list).getAllByText('Built-in')).toHaveLength(1);
     expect(getByRole('button', { name: 'Edit template SWE Worker' })).toBeTruthy();
     expect(getByRole('button', { name: 'Delete template SWE Worker' })).toBeTruthy();
     expect(getByRole('button', { name: 'Edit template Scribe' })).toBeTruthy();
@@ -730,6 +712,70 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     expect(mockUpdateTemplate).not.toHaveBeenCalled();
   });
 
+  it('creates a template with the labels typed into the Labels field', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = renderPanel();
+
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.input(getByTestId('template-labels'), {
+      target: { value: ' workflow-worker,  release , workflow-worker ' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['workflow-worker', 'release'] })
+    );
+  });
+
+  it('prefills labels when editing and saves edits to them', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        displayName: 'Scribe',
+        labels: ['notes', 'reviewer'],
+        version: 2,
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId } = renderPanel();
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    const field = getByTestId('template-labels') as HTMLInputElement;
+    expect(field.value).toBe('notes, reviewer');
+
+    fireEvent.input(field, { target: { value: 'long-horizon' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ labels: ['long-horizon'] })
+    );
+  });
+
+  it('prefills labels from the Start from source template', () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'qa', displayName: 'QA Engineer', labels: ['workflow-worker'] }),
+    ];
+
+    const { getByRole, getByTestId } = renderPanel();
+
+    fireEvent.click(getByRole('button', { name: '+ New Template' }));
+    fireEvent.input(getByTestId('template-start-from'), { target: { value: 'qa' } });
+
+    expect((getByTestId('template-labels') as HTMLInputElement).value).toBe('workflow-worker');
+  });
+
   it('opens a dedicated template editor from New Template', () => {
     mockTemplates.value = [
       makeTemplate({
@@ -791,6 +837,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
       modelPool: null,
       thinkingLevel: null,
       settingSources: null,
+      labels: [],
     });
     await waitFor(() => expect(queryByRole('button', { name: 'Create template' })).toBeNull());
   });

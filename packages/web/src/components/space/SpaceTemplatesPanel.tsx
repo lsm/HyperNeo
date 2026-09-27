@@ -1,7 +1,6 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateListItem } from './TemplateListItem';
 import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { TemplateEditor } from './TemplateEditor';
@@ -33,7 +32,6 @@ export function SpaceTemplatesPanel({
   const [editingTemplate, setEditingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
-  const templateGroups = groupTemplatesByLabel(templates);
   const pendingDelete = templateDeleteRequest.value;
 
   useEffect(() => {
@@ -103,29 +101,22 @@ export function SpaceTemplatesPanel({
             </div>
           </div>
         ) : (
-          templateGroups.map((group) => (
-            <div key={group.key} data-testid={`agent-template-group-${group.key}`}>
-              <div class="st-group-cap">
-                {group.title} · {group.templates.length}
-              </div>
-              <div class="st-group">
-                {group.templates.map((t) => (
-                  <TemplateListItem
-                    key={t.key}
-                    template={t}
-                    isBuiltIn={builtInTemplateKeys.has(t.key)}
-                    isUserTemplate={userTemplateKeys.has(t.key)}
-                    onEdit={() => openEditTemplate(t)}
-                    onDelete={
-                      userTemplateKeys.has(t.key)
-                        ? () => openTemplateDelete(spaceId, t)
-                        : () => openTemplateHide(spaceId, t)
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          ))
+          <div class="st-group" data-testid="agent-template-list">
+            {templates.map((t) => (
+              <TemplateListItem
+                key={t.key}
+                template={t}
+                isBuiltIn={builtInTemplateKeys.has(t.key)}
+                isUserTemplate={userTemplateKeys.has(t.key)}
+                onEdit={() => openEditTemplate(t)}
+                onDelete={
+                  userTemplateKeys.has(t.key)
+                    ? () => openTemplateDelete(spaceId, t)
+                    : () => openTemplateHide(spaceId, t)
+                }
+              />
+            ))}
+          </div>
         )}
 
         {hiddenBuiltIns.length > 0 && (

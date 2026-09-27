@@ -16,6 +16,15 @@ import { runTemplateSave } from './template-save-pipeline';
 import { TemplateModelFields, type TemplateModelFieldsValue } from './TemplateModelFields';
 import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
+function parseLabels(text: string): string[] {
+  const seen = new Set<string>();
+  for (const part of text.split(',')) {
+    const label = part.trim();
+    if (label) seen.add(label);
+  }
+  return [...seen];
+}
+
 export function TemplateEditor({
   template,
   copyFromOptions,
@@ -35,6 +44,7 @@ export function TemplateEditor({
   const [description, setDescription] = useState(template?.description ?? '');
   const [instructions, setInstructions] = useState(template?.instructions ?? '');
   const [autonomyLevel, setAutonomyLevel] = useState<number>(template?.suggestedAutonomyLevel ?? 2);
+  const [labelsText, setLabelsText] = useState((template?.labels ?? []).join(', '));
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
     tools: templateTools,
     toolsOverridden: templateTools.length > 0,
@@ -62,6 +72,7 @@ export function TemplateEditor({
     setDescription(source?.description ?? '');
     setInstructions(source?.instructions ?? '');
     setAutonomyLevel(source?.suggestedAutonomyLevel ?? 2);
+    setLabelsText((source?.labels ?? []).join(', '));
     const sourceTools = source ? toolPermissionsToolsList(source) : [];
     setToolsSelection({ tools: sourceTools, toolsOverridden: sourceTools.length > 0 });
     setModelFields({
@@ -99,6 +110,7 @@ export function TemplateEditor({
           description,
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
+          labels: parseLabels(labelsText),
           tools: toolsSelection.tools,
           pendingTool: extraToolDraft,
           modelPool,
@@ -173,6 +185,19 @@ export function TemplateEditor({
             />
           </FormField>
         </div>
+        <FormField label="Labels">
+          <input
+            value={labelsText}
+            onInput={(e) => setLabelsText((e.target as HTMLInputElement).value)}
+            class={FORM_CONTROL_CLASS}
+            placeholder="e.g. workflow-worker, reviewer"
+            data-testid="template-labels"
+          />
+          <p class="mt-1 text-xs text-fg-muted">
+            Comma-separated tags shown on the template row — use them to mark roles like
+            workflow-worker or long-horizon.
+          </p>
+        </FormField>
         <FormField label="Default agent handle">
           <input
             value={handle}

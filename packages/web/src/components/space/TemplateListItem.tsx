@@ -21,6 +21,11 @@ export function TemplateListItem({
           <span class="st-trow-name truncate">{template.displayName}</span>
           {isBuiltIn && <span class="st-chip">Built-in</span>}
           {customized && <span class="st-chip st-chip-accent">Customized</span>}
+          {(template.labels ?? []).map((label) => (
+            <span key={label} class="st-chip">
+              {label}
+            </span>
+          ))}
         </div>
         {template.description && (
           <p class="mt-1 line-clamp-2 text-xs leading-5 text-fg-muted">{template.description}</p>
