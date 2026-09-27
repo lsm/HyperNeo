@@ -558,6 +558,28 @@ describe('SpaceIsland — route-driven views', () => {
       'Workflows'
     );
   });
+
+  it('moves between configure tabs with the keyboard', async () => {
+    const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+    await waitFor(
+      () => {
+        expect(getByTestId('space-settings')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    mockNavigateToSpaceConfigure.mockClear();
+
+    const activeTab = getByTestId('space-configure-tab-general');
+    activeTab.focus();
+    fireEvent.keyDown(activeTab, { key: 'ArrowRight' });
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-1', 'runtime');
+    });
+    await waitFor(() => {
+      expect(getByTestId('space-configure-tab-runtime').getAttribute('aria-selected')).toBe('true');
+    });
+  });
 });
 
 describe('SpaceIsland — overview content', () => {

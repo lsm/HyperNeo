@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
+import { Tab, TabGroup, TabList } from '@hyperneo/ui';
 import type { Space, SpaceWorkflow } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { currentSpaceIdSignal, currentSpaceSettingsTabSignal } from '../../lib/signals';
@@ -101,26 +102,32 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
     <div class="flex h-full flex-col overflow-hidden">
       <div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 sm:px-6">
         {!showWorkflowEditor && (
-          <div
-            class="st-tabs mb-4 self-start"
-            data-testid="space-configure-tab-bar"
-            role="tablist"
-            aria-label="Configure sections"
+          <TabGroup
+            class="mb-4 self-start"
+            selectedIndex={Math.max(
+              0,
+              CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)
+            )}
+            onChange={(index: number) =>
+              navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'general')
+            }
           >
-            {CONFIGURE_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab.id}
-                data-testid={`space-configure-tab-${tab.id}`}
-                onClick={() => navigateToSpaceConfigure(spaceId, tab.id)}
-                class={cn('st-tab', activeTab === tab.id && 'st-tab-on')}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+            <TabList
+              class="st-tabs"
+              data-testid="space-configure-tab-bar"
+              aria-label="Configure sections"
+            >
+              {CONFIGURE_TABS.map((tab) => (
+                <Tab
+                  key={tab.id}
+                  class={cn('st-tab', activeTab === tab.id && 'st-tab-on')}
+                  data-testid={`space-configure-tab-${tab.id}`}
+                >
+                  {tab.label}
+                </Tab>
+              ))}
+            </TabList>
+          </TabGroup>
         )}
 
         {showWorkflowEditor ? (
