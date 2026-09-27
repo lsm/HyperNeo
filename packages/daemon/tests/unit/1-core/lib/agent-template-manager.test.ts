@@ -1445,6 +1445,20 @@ describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
 });
 
 describe('resolveEffectiveSpaceAgentTemplate', () => {
+  let db: BunDatabase;
+  let repo: SpaceAgentTemplateRepository;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
+    repo = new SpaceAgentTemplateRepository(db);
+  });
+
   test('a stored override shadows the code built-in and keeps its reminder defaults', () => {
     repo.createOwned(OWNER, {
       key: 'space-manager.default',
