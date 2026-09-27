@@ -2,6 +2,9 @@ import type { McpServerConfig as SdkMcpServerConfig } from '@anthropic-ai/claude
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { Database as SqliteDatabase } from '../../storage/sqlite-compat.ts';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { Logger } from '../logger.ts';
+
+const log = new Logger('ExaWebTools');
 
 export interface ExaCredentialDatabase {
   getDatabase(): SqliteDatabase;
@@ -21,7 +24,13 @@ export async function resolveExaApiKey(db?: ExaCredentialDatabase): Promise<stri
       if (credentials?.type === 'api_key' && credentials.apiKey?.trim()) {
         return credentials.apiKey.trim();
       }
-    } catch {}
+    } catch (error) {
+      log.warn(
+        `Failed to read stored Exa API key (falling back to EXA_API_KEY env): ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
   const envKey = process.env.EXA_API_KEY?.trim();
   return envKey ? envKey : null;

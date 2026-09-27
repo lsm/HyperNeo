@@ -363,8 +363,10 @@ export function registerCustomEndpointHandlers(
     'customEndpoints.update',
     async (data: { endpoint: CustomEndpointConfig }) => {
       return withCustomEndpointsLock(async () => {
-        validateCustomEndpoint(data.endpoint);
         const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+        validateCustomEndpoint(data.endpoint, {
+          allowReservedIds: new Set(current.map((endpoint) => endpoint.id)),
+        });
         const index = current.findIndex((e) => e.id === data.endpoint.id);
         if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
         const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];

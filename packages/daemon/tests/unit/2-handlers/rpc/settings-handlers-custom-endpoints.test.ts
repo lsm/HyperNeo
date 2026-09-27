@@ -166,6 +166,38 @@ describe('settings handlers — custom endpoints integration', () => {
     });
   });
 
+  describe('customEndpoints.add / customEndpoints.update reserved ids', () => {
+    it('add rejects the reserved exa id', async () => {
+      registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+      const addHandler = hubData.handlers.get('customEndpoints.add')!;
+      await expect(addHandler({ endpoint: { ...validEndpoint, id: 'exa' } }, {})).rejects.toThrow(
+        /reserved/
+      );
+    });
+
+    it('update allows editing a pre-existing reserved id endpoint', async () => {
+      settings.state.settings = {
+        ...settings.state.settings,
+        customEndpoints: [validEndpoint, { ...validEndpoint, id: 'exa', name: 'Legacy Exa' }],
+      };
+      registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+      const updateHandler = hubData.handlers.get('customEndpoints.update')!;
+      const result = (await updateHandler(
+        { endpoint: { ...validEndpoint, id: 'exa', name: 'Legacy Exa renamed' } },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+    });
+
+    it('update still rejects a reserved id that was never persisted', async () => {
+      registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
+      const updateHandler = hubData.handlers.get('customEndpoints.update')!;
+      await expect(
+        updateHandler({ endpoint: { ...validEndpoint, id: 'exa' } }, {})
+      ).rejects.toThrow(/reserved/);
+    });
+  });
+
   describe('cross-RPC mutation serialisation', () => {
     it('serialises a concurrent settings.global.update + customEndpoints.remove via the shared lock', async () => {
       registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
