@@ -141,7 +141,11 @@ export function createNeoOperations(service: NeoService) {
         .map((item) => (detailed ? item : { ...item, question: '', answer: null })),
       work: service.repo
         .listWork(scope === undefined ? undefined : scope)
-        .slice(0, caller.source === 'rpc' ? 50 : 10)
+        .filter(
+          (item, index) =>
+            index < (caller.source === 'rpc' ? 50 : 10) ||
+            (caller.source === 'rpc' && (item.status === 'proposed' || item.status === 'queued'))
+        )
         .map((item) =>
           caller.source === 'rpc'
             ? item
