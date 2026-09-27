@@ -114,7 +114,10 @@ export function ToolResultCard({
   const showErrorIcon = notificationIsError || (!taskNotification && isError);
   const inputRecord = input as Record<string, unknown>;
   const outputRecord = (output || {}) as Record<string, unknown>;
-  const readOutput = isFileReadOutput(structuredOutput) ? structuredOutput : output;
+  const readOutput =
+    isFileReadOutput(structuredOutput) && structuredOutput.type === 'image'
+      ? structuredOutput
+      : output;
   const readImages = toolName === 'Read' ? readImageSources(structuredOutput, output) : [];
   const readText = toolName === 'Read' ? readContentText(output) : null;
 

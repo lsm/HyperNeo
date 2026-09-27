@@ -532,6 +532,25 @@ describe('ToolResultCard Component', () => {
       expect(trigger.querySelector('img')?.getAttribute('src')).toBe('data:image/webp;base64,CCCC');
     });
 
+    it('keeps PDF Read result text instead of dumping structured base64', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="read-pdf"
+          input={{ file_path: '/docs/report.pdf' }}
+          output={{ type: 'tool_result', content: 'PDF has 12 pages' }}
+          structuredOutput={{
+            type: 'pdf',
+            file: { filePath: '/docs/report.pdf', base64: 'LARGE_PDF_BASE64', originalSize: 1000 },
+          }}
+          defaultExpanded={true}
+        />
+      );
+
+      expect(screen.getByTestId('code-viewer').textContent).toBe('PDF has 12 pages');
+      expect(screen.queryByText(/LARGE_PDF_BASE64/)).toBeNull();
+    });
+
     it('should render CodeViewer for Write tool', () => {
       render(
         <ToolResultCard
