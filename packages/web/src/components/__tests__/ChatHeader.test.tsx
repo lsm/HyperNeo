@@ -54,19 +54,19 @@ describe('ChatHeader', () => {
       expect(title?.textContent).toBe('Test Session');
     });
 
-    it('should render "New Session" when session has no title', () => {
+    it('should render "New conversation" when session has no title', () => {
       const sessionWithoutTitle = { ...mockSession, title: '' };
       const { container } = render(<ChatHeader {...defaultProps} session={sessionWithoutTitle} />);
 
       const title = container.querySelector('h2');
-      expect(title?.textContent).toBe('New Session');
+      expect(title?.textContent).toBe('New conversation');
     });
 
-    it('should render "New Session" when session is null', () => {
+    it('should render "New conversation" when session is null', () => {
       const { container } = render(<ChatHeader {...defaultProps} session={null} />);
 
       const title = container.querySelector('h2');
-      expect(title?.textContent).toBe('New Session');
+      expect(title?.textContent).toBe('New conversation');
     });
 
     it('does not render stats in the compact header', () => {
@@ -84,6 +84,17 @@ describe('ChatHeader', () => {
   });
 
   describe('Return to parent', () => {
+    it('represents clone conversations with an icon and a clean title', () => {
+      const { getByTestId, getByLabelText } = render(
+        <ChatHeader
+          {...defaultProps}
+          session={{ ...mockSession, title: 'Research · 分身', parentSessionId: 'parent-1' }}
+        />
+      );
+      expect(getByTestId('chat-header-title').textContent).toBe('Research');
+      expect(getByLabelText('Clone conversation').querySelector('svg')).toBeTruthy();
+    });
+
     it('is hidden for a session without a parent', () => {
       const { queryByTestId } = render(
         <ChatHeader {...defaultProps} onReturnToParent={vi.fn(() => {})} />
@@ -162,7 +173,7 @@ describe('ChatHeader', () => {
     it('renders exactly one far-right info button', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      const infoButtons = container.querySelectorAll('button[title="Session info"]');
+      const infoButtons = container.querySelectorAll('button[title="Conversation info"]');
       expect(infoButtons.length).toBe(1);
     });
 
@@ -182,7 +193,7 @@ describe('ChatHeader', () => {
 
       expect(container.textContent).not.toContain('Export chat');
       expect(container.textContent).not.toContain('Reset agent');
-      expect(container.textContent).not.toContain('Archive session');
+      expect(container.textContent).not.toContain('Archive chat');
     });
   });
 
@@ -207,7 +218,7 @@ describe('ChatHeader', () => {
         'Tools',
         'Export chat',
         'Reset agent',
-        'Archive session',
+        'Archive chat',
         'Delete chat',
       ]);
     });
@@ -244,14 +255,14 @@ describe('ChatHeader', () => {
       const menu = openMenu(container);
 
       expect(
-        (menu.querySelector('button[title="Archive session"]') as HTMLButtonElement).disabled
+        (menu.querySelector('button[title="Archive chat"]') as HTMLButtonElement).disabled
       ).toBe(true);
     });
 
     it('shows the info button at every breakpoint (no longer lg-only)', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      const infoButton = container.querySelector('button[title="Session info"]')!;
+      const infoButton = container.querySelector('button[title="Conversation info"]')!;
       const wrapper = infoButton.parentElement;
       expect(wrapper?.className).not.toContain('hidden');
     });
@@ -261,7 +272,7 @@ describe('ChatHeader', () => {
         <ChatHeader {...defaultProps} features={{ sessionInfo: false }} />
       );
 
-      expect(container.querySelector('button[title="Session info"]')).toBeTruthy();
+      expect(container.querySelector('button[title="Conversation info"]')).toBeTruthy();
     });
 
     it('renders without error when action handlers and flags are provided', () => {

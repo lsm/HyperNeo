@@ -57,7 +57,10 @@ export interface SpaceAgentV2Deps {
   listClones?: (
     parentId: string
   ) => Array<{ id: string; title?: string; worktree?: WorktreeMetadata }>;
-  commitsAhead?: (worktree: WorktreeMetadata) => Promise<WorktreeCommitStatus>;
+  commitsAhead?: (
+    worktree: WorktreeMetadata,
+    alsoDeleting: readonly string[]
+  ) => Promise<WorktreeCommitStatus>;
   retirePrimarySession?: (sessionId: string, action: 'archive' | 'delete') => Promise<void>;
   stampProvenance?: (
     sessionId: string,
@@ -238,9 +241,12 @@ async function firstSessionWithCommitsAhead(
     (deps.listClones?.(parentId) ?? []).flatMap((clone) => [clone, ...descendants(clone.id)]);
   const primary = { id: primarySessionId, worktree: deps.getSession(primarySessionId)?.worktree };
   const candidates = includeClones ? [primary, ...descendants(primarySessionId)] : [primary];
+  const alsoDeleting = candidates.flatMap((candidate) =>
+    candidate.worktree ? [candidate.worktree.branch] : []
+  );
   for (const candidate of candidates) {
     if (!candidate.worktree) continue;
-    const commitStatus = await deps.commitsAhead(candidate.worktree);
+    const commitStatus = await deps.commitsAhead(candidate.worktree, alsoDeleting);
     if (commitStatus.hasCommitsAhead) return commitStatus;
   }
   return null;

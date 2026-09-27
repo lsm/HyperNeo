@@ -27,7 +27,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
 }
 
 export async function clickArchiveSession(page: Page): Promise<void> {
-  const archiveItem = page.getByTitle('Archive session').first();
+  const archiveItem = page.getByTitle('Archive chat').first();
   await archiveItem.waitFor({ state: 'visible', timeout: 3000 });
   await archiveItem.click();
 }

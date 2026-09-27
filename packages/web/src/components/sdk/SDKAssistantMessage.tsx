@@ -298,12 +298,14 @@ function ToolUseBlock({
   const resultData = toolResult as
     | {
         content: unknown;
+        structuredOutput?: unknown;
         messageUuid?: string;
         sessionId?: string;
         isOutputRemoved?: boolean;
       }
     | undefined;
   const content = resultData?.content;
+  const structuredOutput = resultData?.structuredOutput;
   const messageUuid = resultData?.messageUuid;
   const sessionId = resultData?.sessionId || propSessionId;
   const isOutputRemoved = resultData?.isOutputRemoved || false;
@@ -430,6 +432,7 @@ function ToolUseBlock({
       toolId={block.id}
       input={block.input}
       output={content}
+      structuredOutput={structuredOutput}
       isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
       variant="default"
       messageUuid={messageUuid}

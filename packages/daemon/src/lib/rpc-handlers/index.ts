@@ -6,6 +6,13 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
+import { NeoService } from '../neo/service.ts';
+import {
+  NEO_CONSULTATION_RECOVERY,
+  recoverNeoConsultations,
+  scheduleConsultationRecovery,
+} from '../neo/consultation-recovery.ts';
+import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
@@ -1156,8 +1163,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       ? cloneLifecycle.deleteChild(sessionId)
       : cloneLifecycle.archiveChild(sessionId);
   spaceAgentV2Deps.listClones = (parentId) => deps.db.listChildSessions(parentId);
-  spaceAgentV2Deps.commitsAhead = (worktree) =>
-    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+  spaceAgentV2Deps.commitsAhead = (worktree, alsoDeleting) =>
+    deps.sessionManager.getWorktreeManager().getCommitsAhead(worktree, undefined, { alsoDeleting });
 
   setupSpaceAgentV2Handlers(deps.messageHub, spaceAgentV2Deps);
 
@@ -1378,7 +1385,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
         : Promise.resolve({ ok: true }),
   };
-  const familyOperations = collectFamilyOperations(familyContext);
+  const neoService = new NeoService(
+    deps.db,
+    deps.sessionManager,
+    deps.messageHub,
+    deps.internalEventBus
+  );
+  const familyOperations = [
+    ...collectFamilyOperations(familyContext),
+    ...createNeoOperations(neoService),
+  ];
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
@@ -1616,8 +1632,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
+  void neoService.recover();
+  deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
+    recoverNeoConsultations(deps.jobQueue, neoService)
+  );
+  scheduleConsultationRecovery(deps.jobQueue);
+
   return {
     cleanup: async () => {
+      neoService.dispose();
       inactivityRunNowCancelled = true;
       await Promise.allSettled(pendingInactivityRunNow);
       unsubLiveQuery();

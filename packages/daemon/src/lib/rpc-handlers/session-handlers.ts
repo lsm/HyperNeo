@@ -498,8 +498,11 @@ export function setupSessionHandlers(
     if (worktrees.length > 0) {
       const { WorktreeManager } = await import('../worktree-manager.ts');
       const worktreeManager = new WorktreeManager();
+      const alsoDeleting = worktrees.map((worktree) => worktree.branch);
       for (const worktree of worktrees) {
-        const commitStatus = await worktreeManager.getCommitsAhead(worktree);
+        const commitStatus = await worktreeManager.getCommitsAhead(worktree, undefined, {
+          alsoDeleting,
+        });
         if (!confirmed && commitStatus.hasCommitsAhead) {
           return {
             success: false,

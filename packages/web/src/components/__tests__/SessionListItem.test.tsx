@@ -73,6 +73,8 @@ describe('SessionListItem', () => {
     cleanup();
     mockOnSessionClick.mockClear();
     mockOnArchive.mockClear();
+    mockStatuses.value = new Map();
+    mockCurrentSessionId.value = null;
   });
 
   afterEach(() => {
@@ -89,14 +91,14 @@ describe('SessionListItem', () => {
       expect(title?.textContent).toBe('Test Session');
     });
 
-    it('should render "New Session" when title is empty', () => {
+    it('should render "New conversation" when title is empty', () => {
       const sessionWithoutTitle = { ...mockSession, title: '' };
       const { container } = render(
         <SessionListItem session={sessionWithoutTitle} onSessionClick={mockOnSessionClick} />
       );
 
       const title = container.querySelector('h3');
-      expect(title?.textContent).toBe('New Session');
+      expect(title?.textContent).toBe('New conversation');
     });
 
     it('does not render metadata in the compact row', () => {
@@ -195,7 +197,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={sessionWithWorktree} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.text-success')).toBeNull();
       expect(container.querySelector('[title^="Worktree:"]')).toBeNull();
     });
   });
@@ -207,7 +208,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const archivedIcon = container.querySelector('.text-warning');
+      const archivedIcon = container.querySelector('[role="img"][aria-label="Archived"]');
       expect(archivedIcon).toBeTruthy();
     });
 
@@ -217,7 +218,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const archivedSpan = container.querySelector('[title="Archived session"]');
+      const archivedSpan = container.querySelector('[role="img"][aria-label="Archived"]');
       expect(archivedSpan).toBeTruthy();
     });
 
@@ -226,7 +227,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const archivedSpan = container.querySelector('[title="Archived session"]');
+      const archivedSpan = container.querySelector('[role="img"][aria-label="Archived"]');
       expect(archivedSpan).toBeNull();
     });
   });
@@ -290,16 +291,42 @@ describe('SessionListItem', () => {
       mockStatuses.value = new Map();
     });
 
-    it('should not show an indicator when no status exists', () => {
+    it('shows an idle status before live updates arrive', () => {
       const { container } = render(
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('[role="img"]')).toBeNull();
-      expect(container.querySelector('.bg-accent-hover')).toBeNull();
+      expect(container.querySelector('[role="img"][aria-label="Idle"]')).toBeTruthy();
+      expect(container.querySelector('[aria-label="3 unread messages"]')).toBeNull();
     });
 
-    it('should show a static lifecycle dot when idle and read', () => {
+    it('uses persisted processing state before live updates arrive', () => {
+      const { getByRole } = render(
+        <SessionListItem
+          session={{ ...mockSession, processingState: { status: 'waiting_for_input' } }}
+          onSessionClick={mockOnSessionClick}
+        />
+      );
+
+      expect(getByRole('img', { name: 'Waiting for input' })).toBeTruthy();
+    });
+
+    it('reacts to live status and unread updates without replacing the row', async () => {
+      const { getByRole } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      await act(async () => {
+        mockStatuses.value = new Map([
+          ['session-1', { processingState: { status: 'interrupted' }, unreadCount: 2 }],
+        ]);
+      });
+
+      expect(getByRole('img', { name: 'Interrupted' })).toBeTruthy();
+      expect(getByRole('img', { name: '2 unread messages' })).toBeTruthy();
+    });
+
+    it('shows a neutral idle indicator when read', () => {
       mockStatuses.value = new Map([
         ['session-1', { processingState: { status: 'idle' }, unreadCount: 0 }],
       ]);
@@ -308,11 +335,11 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-success')).toBeTruthy();
-      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(container.querySelector('[role="img"][aria-label="Idle"]')).toBeTruthy();
+      expect(container.querySelector('.animate-spin')).toBeNull();
     });
 
-    it('should show a pulsing indicator when processing', () => {
+    it('shows a working indicator when processing', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -324,10 +351,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.animate-pulse')).toBeTruthy();
+      expect(container.querySelector('.animate-spin')).toBeTruthy();
     });
 
-    it('should show a blue dot when thinking', () => {
+    it('indicates thinking', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -339,10 +366,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-accent')).toBeTruthy();
+      expect(container.querySelector('[role="img"][aria-label="Thinking"]')).toBeTruthy();
     });
 
-    it('should show a green dot when streaming', () => {
+    it('indicates streaming', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -354,10 +381,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-success')).toBeTruthy();
+      expect(container.querySelector('[role="img"][aria-label="Streaming"]')).toBeTruthy();
     });
 
-    it('should show a yellow dot when queued', () => {
+    it('indicates queued sessions', () => {
       mockStatuses.value = new Map([
         ['session-1', { processingState: { status: 'queued' }, unreadCount: 0 }],
       ]);
@@ -366,10 +393,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-warning')).toBeTruthy();
+      expect(container.querySelector('[role="img"][aria-label="Queued"]')).toBeTruthy();
     });
 
-    it('should show a blue unread badge with the count when there are unseen messages', () => {
+    it('shows a compact unread dot without a visible count', () => {
       mockStatuses.value = new Map([
         ['session-1', { processingState: { status: 'idle' }, unreadCount: 3 }],
       ]);
@@ -378,14 +405,14 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const badge = container.querySelector('.bg-accent-hover');
+      const badge = container.querySelector('[aria-label="3 unread messages"]');
       expect(badge).toBeTruthy();
-      expect(badge?.textContent).toContain('3');
+      expect(badge?.textContent).toBe('');
 
-      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(container.querySelector('.animate-spin')).toBeNull();
     });
 
-    it('should prioritize processing state over unread', () => {
+    it('keeps unread messages visible while a session is processing', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -397,9 +424,9 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-success')).toBeTruthy();
-      expect(container.querySelector('.animate-pulse')).toBeTruthy();
-      expect(container.querySelector('.bg-accent-hover')).toBeNull();
+      expect(container.querySelector('[role="img"][aria-label="Streaming"]')).toBeTruthy();
+      expect(container.querySelector('.animate-spin')).toBeTruthy();
+      expect(container.querySelector('[aria-label="5 unread messages"]')).toBeTruthy();
     });
 
     it('should not pulse for interrupted status', () => {
@@ -411,10 +438,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(container.querySelector('.animate-spin')).toBeNull();
     });
 
-    it('should fall through to the lifecycle dot for an unrecognized processing status', () => {
+    it('falls back to idle for an unrecognized processing status', () => {
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -429,8 +456,8 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.animate-pulse')).toBeNull();
-      expect(container.querySelector('.bg-success')).toBeTruthy();
+      expect(container.querySelector('.animate-spin')).toBeNull();
+      expect(container.querySelector('[role="img"][aria-label="Idle"]')).toBeTruthy();
     });
   });
 
@@ -489,6 +516,17 @@ describe('SessionListItem', () => {
       ) as HTMLInputElement;
       expect(input).toBeTruthy();
       expect(input.value).toBe('Test Session');
+    });
+
+    it('opens rename with F2 from the focused session button', () => {
+      const { getByTestId } = render(
+        <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
+      );
+
+      fireEvent.keyDown(getByTestId('session-card'), { key: 'F2' });
+
+      expect(getByTestId('session-rename-input')).toBeTruthy();
+      expect(mockOnSessionClick).not.toHaveBeenCalled();
     });
 
     it('does not render an inline rename pencil button', () => {

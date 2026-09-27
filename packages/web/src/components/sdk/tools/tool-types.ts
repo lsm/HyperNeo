@@ -79,6 +79,7 @@ export interface ToolResultCardProps {
   toolId: string;
   input: unknown;
   output?: unknown;
+  structuredOutput?: unknown;
   isError?: boolean;
   variant?: ToolCardVariant;
   defaultExpanded?: boolean;

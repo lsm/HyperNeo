@@ -85,6 +85,7 @@ vi.mock('../../components/ArchiveConfirmDialog.tsx', () => ({
 mockSessionsSignal = signal<Session[]>([]);
 mockSessionStatusesSignal = signal(new Map());
 
+import { currentSessionIdSignal } from '../../lib/signals';
 import { SessionsSidebar } from '../SessionsSidebar';
 
 function createMockSession(
@@ -140,6 +141,7 @@ describe('SessionsSidebar', () => {
 
     expect(screen.getByText('No chats yet')).toBeTruthy();
     expect(screen.getByText('Start a new chat to begin.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy();
   });
 
   it('opens the new chat landing from the New chat row', () => {
@@ -175,7 +177,7 @@ describe('SessionsSidebar', () => {
       metadata: { messageCount: 0, clone: { returnedAt: '2026-09-24T00:00:00.000Z' } },
     };
     const open = {
-      ...createMockSession('clone-2', 'Parent Chat · 分身 2', '/workspace/hyperneo'),
+      ...createMockSession('clone-2', 'Parent Chat · 分身', '/workspace/hyperneo'),
       parentSessionId: 'parent',
       lastActiveAt: '2026-05-17T12:00:00.000Z',
     };
@@ -184,48 +186,51 @@ describe('SessionsSidebar', () => {
 
     render(<SessionsSidebar />);
 
-    const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
-    expect(cards).toEqual([
-      'Parent Chat',
-      '分身Parent Chat · 分身 2',
-      '分身Parent Chat · 分身✓',
-      'Orphan',
-    ]);
-    expect(screen.getAllByTestId('session-clone-glyph')).toHaveLength(2);
-    expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
-    expect(screen.getAllByTestId('session-spawn')).toHaveLength(2);
-  });
-
-  it('spawns a clone from a chat row and opens it', async () => {
-    const onSessionSelect = vi.fn();
-    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
-    mockHubRequest.mockResolvedValue({ accepted: true, sessionId: 'clone-new' });
-
-    render(<SessionsSidebar onSessionSelect={onSessionSelect} />);
-    fireEvent.click(screen.getByTestId('session-spawn'));
-
-    await waitFor(() => expect(mockNavigateToSession).toHaveBeenCalledWith('clone-new'));
-    expect(mockHubRequest).toHaveBeenCalledWith('operation.invoke', {
-      name: 'session.clone.spawn',
-      input: { parentSessionId: 'parent' },
-    });
-    expect(onSessionSelect).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports a refused spawn', async () => {
-    mockSessionsSignal.value = [createMockSession('parent', 'Parent Chat')];
-    mockHubRequest.mockResolvedValue({
-      accepted: false,
-      message: 'A clone cannot spawn its own clone',
-    });
-
-    render(<SessionsSidebar />);
-    fireEvent.click(screen.getByTestId('session-spawn'));
-
-    await waitFor(() =>
-      expect(mockToastError).toHaveBeenCalledWith('A clone cannot spawn its own clone')
+    expect(screen.getAllByTestId('session-card')).toHaveLength(2);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show child conversations for Parent Chat' })
     );
+    const cards = screen.getAllByTestId('session-card').map((card) => card.textContent);
+    expect(cards).toEqual(['Parent Chat', 'Parent Chat 2', 'Parent Chat 3✓', 'Orphan']);
+    expect(screen.queryByTestId('session-clone-glyph')).toBeNull();
+    expect(screen.getAllByTestId('session-clone-returned')).toHaveLength(1);
+    expect(screen.queryByTestId('session-spawn')).toBeNull();
+  });
+
+  it('collapses ungrouped child conversations while keeping the selected child visible', () => {
+    mockSessionsSignal.value = [
+      createMockSession('parent', 'Parent'),
+      { ...createMockSession('child', 'Child'), parentSessionId: 'parent' },
+      { ...createMockSession('sibling', 'Sibling'), parentSessionId: 'parent' },
+    ];
+    currentSessionIdSignal.value = 'child';
+    render(<SessionsSidebar />);
+    expect(screen.getByText('Child')).toBeTruthy();
+    expect(screen.queryByText('Sibling')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Parent' }));
+    expect(screen.getByText('Sibling')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide child conversations for Parent' }));
+    expect(screen.getByText('Child')).toBeTruthy();
+    expect(screen.queryByText('Sibling')).toBeNull();
     expect(mockNavigateToSession).not.toHaveBeenCalled();
+    currentSessionIdSignal.value = null;
+  });
+
+  it('signals unread output from collapsed children without showing counts or spawn actions', () => {
+    mockSessionsSignal.value = [
+      createMockSession('parent', 'Parent'),
+      { ...createMockSession('child', 'Child'), parentSessionId: 'parent' },
+    ];
+    mockSessionStatusesSignal.value = new Map([
+      ['child', { processingState: { status: 'idle' }, unreadCount: 42 }],
+    ]);
+    render(<SessionsSidebar />);
+    expect(screen.getByRole('img', { name: 'Has updates' })).toBeTruthy();
+    expect(screen.queryByText('42')).toBeNull();
+    expect(screen.queryByTestId('session-spawn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show child conversations for Parent' }));
+    expect(screen.getByRole('img', { name: '42 unread messages' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
   });
 
   it('navigates when a session row is selected', () => {
@@ -267,6 +272,35 @@ describe('SessionsSidebar', () => {
       expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/new-project')
     );
     expect(await screen.findByText('new-project')).toBeTruthy();
+  });
+
+  it('adds the first project before any chats exist', async () => {
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add project' }));
+    fireEvent.input(screen.getByTestId('add-project-path-input'), {
+      target: { value: '/workspace/first-project' },
+    });
+    fireEvent.submit(screen.getByTestId('add-project-form'));
+
+    expect(await screen.findByText('first-project')).toBeTruthy();
+    expect(mockAddWorkspaceToHistory).toHaveBeenCalledWith('/workspace/first-project');
+  });
+
+  it('collapses projects and loose chats independently', () => {
+    mockSessionsSignal.value = [
+      createMockSession('project-chat', 'Project Chat', '/workspace/hyperneo'),
+      createMockSession('loose-chat', 'Loose Chat'),
+    ];
+    render(<SessionsSidebar />);
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+
+    expect(screen.queryByText('Project Chat')).toBeNull();
+    expect(screen.getByText('Loose Chat')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Chats section' }));
+    expect(screen.queryByText('Loose Chat')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Projects section' }));
+    expect(screen.getByText('Project Chat')).toBeTruthy();
   });
 
   it('uses native browsing from the add-project control when available', async () => {
@@ -320,7 +354,8 @@ describe('SessionsSidebar', () => {
     fireEvent.click(screen.getByTestId('session-archive-confirm'));
 
     const dialog = await screen.findByTestId('clone-choice-dialog');
-    expect(dialog.textContent).toContain('Parent · 分身');
+    expect(dialog.textContent).toContain('Parent');
+    expect(dialog.textContent).not.toContain('分身');
     fireEvent.click(screen.getByTestId('clone-choice-cascade'));
 
     await waitFor(() =>

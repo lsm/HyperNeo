@@ -482,6 +482,34 @@ describe('SubagentBlock', () => {
       });
     });
 
+    it('shows a nested Read image preview from the structured SDK result', async () => {
+      const toolResultsMap = new Map([
+        [
+          'toolu_nested123',
+          {
+            content: { type: 'tool_result', tool_use_id: 'toolu_nested123', content: [] },
+            structuredOutput: { type: 'image', file: { type: 'image/png', base64: 'AAAA' } },
+          },
+        ],
+      ]);
+      const { getByRole } = render(
+        <SubagentBlock
+          input={createAgentInput('Explore', 'Read an image', 'Inspect the image')}
+          toolId="toolu_task123"
+          nestedMessages={[createNestedToolUseMessage()]}
+          toolResultsMap={toolResultsMap}
+        />
+      );
+
+      fireEvent.click(getByRole('button', { name: /Explore/ }));
+      fireEvent.click(getByRole('button', { name: /Read.*file.txt/ }));
+
+      const trigger = getByRole('button', {
+        name: 'Open Image read from /test/file.txt full size',
+      });
+      expect(trigger.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    });
+
     it('suppresses the standalone nested task_notification row when it is folded', async () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const nestedMessages = [

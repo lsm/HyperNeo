@@ -2,7 +2,7 @@
   "allowlist": [],
   "areas": {
     "(root)": 1,
-    "components": 68,
+    "components": 64,
     "components/sdk": 47,
     "components/settings": 5,
     "components/space": 67,

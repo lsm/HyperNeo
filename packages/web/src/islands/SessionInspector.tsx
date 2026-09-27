@@ -9,6 +9,7 @@ import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunning
 import { useSessionRename } from '../hooks/useSessionRename.ts';
 import { navigateToSpaceAgent } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
+import { conversationTitle } from '../lib/session-sidebar-status.ts';
 import type { InspectorSection } from '../lib/signals.ts';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
@@ -23,7 +24,7 @@ export interface ProgressItem {
 }
 
 const SECTIONS: Array<{ key: InspectorSection; label: string }> = [
-  { key: 'session', label: 'Session' },
+  { key: 'session', label: 'Conversation' },
   { key: 'work', label: 'Work' },
   { key: 'changes', label: 'Changes' },
 ];
@@ -181,10 +182,13 @@ function SessionSection({ session, readonly }: { session: Session; readonly: boo
             <button
               type="button"
               class="mt-3 rounded-md border border-line px-3 py-1.5 text-xs text-fg-soft transition hover:bg-fill hover:text-fg"
-              onClick={() => navigateToSpaceAgent(spaceSlug, agent.handle)}
+              onClick={() => {
+                rightPanelTargetSignal.value = null;
+                navigateToSpaceAgent(spaceSlug);
+              }}
               data-testid="inspector-open-agent"
             >
-              Open agent
+              Agent settings
             </button>
           )}
         </Section>
@@ -199,24 +203,27 @@ function SessionSection({ session, readonly }: { session: Session; readonly: boo
 
   return (
     <div data-testid="inspector-session-card">
-      <Section title="Session">
+      <Section title="Conversation">
         <div class="mb-2 flex items-center gap-2">
           {isEditing ? (
             <input
               {...inputProps}
               data-testid="inspector-rename-input"
-              placeholder="Session title"
+              placeholder="Conversation title"
               class="min-w-0 flex-1 rounded-md border border-line-strong bg-surface/80 px-2.5 py-1.5 text-sm text-fg outline-none focus:border-fg-faint"
             />
           ) : (
             <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-              {session.title || 'Untitled'}
+              {conversationTitle(
+                session.title || 'Untitled conversation',
+                !!session.parentSessionId
+              )}
             </span>
           )}
           {!readonly && !isEditing && (
             <IconButton
               size="sm"
-              title="Rename session"
+              title="Rename conversation"
               onClick={startEditing}
               disabled={!isConnected}
             >
@@ -326,7 +333,7 @@ export function SessionInspector({
       {section === 'changes' ? (
         <GitPanel sessionId={sessionId} />
       ) : !session ? (
-        <p class="px-5 py-4 text-sm text-fg-faint">Loading session…</p>
+        <p class="px-5 py-4 text-sm text-fg-faint">Loading conversation…</p>
       ) : (
         <div class="flex-1 overflow-y-auto px-5 py-4">
           {section === 'session' ? (

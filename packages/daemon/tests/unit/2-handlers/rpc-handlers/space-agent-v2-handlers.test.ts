@@ -886,6 +886,38 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(retired).toEqual([['primary', 'delete']]);
     });
 
+    test('tells the commits check which branches are deleted together', async () => {
+      sessions.set('primary', {
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+        worktree: { branch: 'session/p', worktreePath: '/wt-p', mainRepoPath: '/repo' },
+      } as never);
+      deps.listClones = (parentId) =>
+        parentId === 'primary'
+          ? [
+              {
+                id: 'c1',
+                worktree: { branch: 'session/c', worktreePath: '/wt-c', mainRepoPath: '/repo' },
+              },
+            ]
+          : [];
+      const seen: unknown[] = [];
+      deps.commitsAhead = async (worktree, alsoDeleting) => {
+        seen.push([worktree.branch, alsoDeleting]);
+        return { hasCommitsAhead: false, commits: [] } as never;
+      };
+      deps.resolveClones = async () => null;
+      deps.retirePrimarySession = async () => {};
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', sessionId: 'primary' });
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id, children: 'cascade' });
+
+      expect(seen).toEqual([
+        ['session/p', ['session/p', 'session/c']],
+        ['session/c', ['session/p', 'session/c']],
+      ]);
+    });
+
     test('offers the clone choice before the commits confirmation and gates the chosen scope', async () => {
       sessions.set('primary', {
         type: 'worker',

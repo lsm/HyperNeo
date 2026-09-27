@@ -1,57 +1,38 @@
 import type { Session } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { useSessionRename } from '../hooks/useSessionRename';
-import { getSessionLifecycleStatusConfig } from '../lib/session-lifecycle-status.ts';
-import { getAgentProcessingStateConfig } from '../lib/session-processing-phase.ts';
+import { conversationTitle, getSessionSidebarStatus } from '../lib/session-sidebar-status.ts';
 import { allSessionStatuses } from '../lib/session-status.ts';
 import { currentSessionIdSignal } from '../lib/signals.ts';
-import { cn } from '../lib/utils.ts';
-import { StatusDot } from './ui/StatusDot.tsx';
-import { UnreadBadge } from './ui/UnreadBadge.tsx';
+import { ConversationRow } from './ConversationRow.tsx';
 
 interface SessionListItemProps {
   session: Session;
   onSessionClick: (sessionId: string) => void;
   onArchive: (sessionId: string) => void | Promise<void>;
-  onSpawn?: (sessionId: string) => void | Promise<void>;
+  disclosure?: ComponentChildren;
+  unread?: boolean;
+  displayTitle?: string;
   nested?: boolean;
-}
-
-const ACTIVE_PROCESSING_STATUSES = new Set([
-  'queued',
-  'processing',
-  'waiting_for_input',
-  'rate_limit_cooldown',
-]);
-
-function StatusIndicator({ session, sessionId }: { session: Session; sessionId: string }) {
-  const status = allSessionStatuses.value.get(sessionId);
-
-  if (!status) return null;
-
-  const { processingState, unreadCount } = status;
-
-  if (ACTIVE_PROCESSING_STATUSES.has(processingState.status)) {
-    const config = getAgentProcessingStateConfig(processingState);
-    return <StatusDot tone={config.tone} pulse aria-label={config.label} />;
-  }
-
-  if (unreadCount > 0) {
-    return <UnreadBadge count={unreadCount} />;
-  }
-
-  const lifecycle = getSessionLifecycleStatusConfig(session.status);
-  return <StatusDot tone={lifecycle.tone} aria-label={lifecycle.label} />;
 }
 
 export default function SessionListItem({
   session,
   onSessionClick,
   onArchive,
-  onSpawn,
+  disclosure,
+  unread,
+  displayTitle,
   nested = false,
 }: SessionListItemProps) {
   const returnedAt = session.metadata?.clone?.returnedAt;
+  const isClone = !!session.parentSessionId;
+  const liveStatus = allSessionStatuses.value.get(session.id);
+  const status = getSessionSidebarStatus({
+    status: session.status,
+    processingState: liveStatus?.processingState ?? session.processingState,
+  });
   const isActive = currentSessionIdSignal.value === session.id;
   const [confirming, setConfirming] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -68,124 +49,78 @@ export default function SessionListItem({
   };
 
   return (
-    <div
-      data-testid="session-row"
-      class={cn(
-        'group/row relative flex items-stretch rounded-lg transition-colors',
-        nested && 'ml-4',
-        isActive ? 'bg-fill' : 'hover:bg-fill-soft'
-      )}
+    <ConversationRow
+      title={displayTitle ?? conversationTitle(session.title, isClone)}
+      selected={isActive}
+      nested={nested}
+      status={status}
+      unreadCount={liveStatus?.unreadCount}
+      unread={unread}
+      disclosure={disclosure}
+      onClick={() => onSessionClick(session.id)}
+      onTitleDoubleClick={startEditing}
+      titleHint="Double-click or press F2 to rename"
+      rowTestId="session-row"
+      testId="session-card"
+      sessionId={session.id}
       onMouseLeave={() => {
         if (!archiving) setConfirming(false);
       }}
-    >
-      {isEditing ? (
-        <input
-          type="text"
-          data-testid="session-rename-input"
-          {...inputProps}
-          class="flex-1 min-w-0 mx-2.5 my-0.5 px-1.5 py-1 text-sm bg-fill rounded-md text-fg outline-none ring-1 ring-accent/60"
-        />
-      ) : (
-        <>
-          <button
-            type="button"
-            data-testid="session-card"
-            data-session-id={session.id}
-            onClick={() => onSessionClick(session.id)}
-            class={cn(
-              'flex-1 min-w-0 flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors',
-              isActive ? 'text-fg' : 'text-fg-muted group-hover/row:text-fg-soft'
-            )}
-          >
-            {nested && (
-              <span
-                class="flex-shrink-0 text-[10px] text-fg-faint"
-                data-testid="session-clone-glyph"
+      editor={
+        isEditing && (
+          <input
+            type="text"
+            data-testid="session-rename-input"
+            {...inputProps}
+            class="flex-1 min-w-0 mx-2.5 my-0.5 px-1.5 py-1 text-sm bg-fill rounded-md text-fg outline-none ring-1 ring-accent/60"
+          />
+        )
+      }
+      actions={
+        session.status !== 'archived' && (
+          <div class="flex items-center pr-1">
+            {confirming ? (
+              <button
+                type="button"
+                data-testid="session-archive-confirm"
+                onClick={handleArchive}
+                disabled={archiving}
+                class="min-h-8 px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
               >
-                分身
-              </span>
-            )}
-            <StatusIndicator session={session} sessionId={session.id} />
-            <h3
-              class={cn('flex-1 min-w-0 truncate text-sm', isActive && 'font-medium')}
-              onDblClick={startEditing}
-              title="Double-click to rename"
-            >
-              {session.title || 'New Session'}
-            </h3>
-            {nested && returnedAt && (
-              <span
-                class="flex-shrink-0 text-xs text-fg-faint"
-                data-testid="session-clone-returned"
-                title={`Returned ${returnedAt}`}
+                {archiving ? 'Archiving…' : 'Archive'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="session-archive"
+                onClick={() => setConfirming(true)}
+                title="Archive chat"
+                aria-label={`Archive ${session.title || 'chat'}`}
+                class="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 inline-flex min-h-8 min-w-8 items-center justify-center p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
               >
-                ✓
-              </span>
-            )}
-            {session.status === 'archived' && (
-              <span class="text-warning flex-shrink-0" title="Archived session">
-                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
-                  <path d="M15.528 2.973a.75.75 0 0 1 .472.696v8.662a.75.75 0 0 1-.472.696l-7.25 2.9a.75.75 0 0 1-.557 0l-7.25-2.9A.75.75 0 0 1 0 12.331V3.669a.75.75 0 0 1 .471-.696L7.443.184l.01-.003.268-.108a.75.75 0 0 1 .558 0l.269.108.01.003zM10.404 2 4.25 4.461 1.846 3.5 1 3.839v.4l6.5 2.6v7.922l.5.2.5-.2V6.84l6.5-2.6v-.4l-.846-.339L8 5.961 5.596 5l6.154-2.461z" />
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={1.75}
+                    d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+                  />
                 </svg>
-              </span>
+              </button>
             )}
-          </button>
-
-          {session.status !== 'archived' && (
-            <div class="flex items-center pr-1">
-              {onSpawn && !nested && !confirming && (
-                <button
-                  type="button"
-                  data-testid="session-spawn"
-                  onClick={() => onSpawn(session.id)}
-                  title="Spawn 分身"
-                  aria-label={`Spawn a clone of ${session.title || 'chat'}`}
-                  class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
-                >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={1.75}
-                      d="M12 5v14m7-7H5"
-                    />
-                  </svg>
-                </button>
-              )}
-              {confirming ? (
-                <button
-                  type="button"
-                  data-testid="session-archive-confirm"
-                  onClick={handleArchive}
-                  disabled={archiving}
-                  class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
-                >
-                  {archiving ? 'Archiving…' : 'Archive'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="session-archive"
-                  onClick={() => setConfirming(true)}
-                  title="Archive chat"
-                  aria-label={`Archive ${session.title || 'chat'}`}
-                  class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
-                >
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={1.75}
-                      d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
-                    />
-                  </svg>
-                </button>
-              )}
-            </div>
-          )}
-        </>
+          </div>
+        )
+      }
+    >
+      {isClone && returnedAt && (
+        <span
+          class="flex-shrink-0 text-xs text-fg-faint"
+          data-testid="session-clone-returned"
+          title={`Returned ${returnedAt}`}
+        >
+          ✓
+        </span>
       )}
-    </div>
+    </ConversationRow>
   );
 }

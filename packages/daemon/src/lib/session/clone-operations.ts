@@ -128,9 +128,11 @@ export async function buildCloneParams(
   const workspacePath = parent.worktree?.mainRepoPath ?? parent.workspacePath;
   const isGit = workspacePath ? await deps.isGitRepo(workspacePath) : false;
   const config = stripRejectedSessionConfig(parent.config);
+  const parentBranch = parent.worktree?.branch ?? parent.gitBranch ?? undefined;
   return {
     workspacePath,
     worktreeMode: isGit ? 'worktree' : 'direct',
+    ...(isGit && parentBranch ? { worktreeBaseBranch: parentBranch } : {}),
     title: input.title ?? `${parent.title} · 分身`,
     spaceId: parent.context?.spaceId,
     parentSessionId: parent.id,

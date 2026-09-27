@@ -50,9 +50,20 @@ export async function parseOperationInput(
 }
 
 export function isOperationAdmitted(
-  _operation: OperationDefinition,
-  _caller: OperationCaller
+  operation: OperationDefinition,
+  caller: OperationCaller
 ): boolean {
+  if (caller.role === 'neo') {
+    return [
+      'operations.list',
+      'operations.describe',
+      'neo.snapshot',
+      'neo.concern.save',
+      'neo.concern.consult',
+      'neo.concern.respond',
+      'neo.work.propose',
+    ].includes(operation.name);
+  }
   return true;
 }
 

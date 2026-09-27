@@ -2,11 +2,12 @@ import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
+import { neoRoutePlugin } from './neo-route-plugin.ts';
 
 const repoTmpDir = resolve(__dirname, '../../tmp').replace(/\\/g, '/');
 
 export default defineConfig({
-  plugins: [preact(), tailwindcss()],
+  plugins: [neoRoutePlugin(), preact(), tailwindcss()],
 
   root: 'src',
   publicDir: '../public',
@@ -18,6 +19,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'src/index.html'),
+        neo: resolve(__dirname, 'src/neo/index.html'),
       },
       output: {
         manualChunks(id) {
