@@ -1,5 +1,6 @@
 import type { NeoBinding, NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
+import { CONSULTATION_TIMEOUT_MS } from '../../lib/neo/consultation-policy.ts';
 
 const concernColumns = `id, title, summary, context, revision,
   created_at AS createdAt, updated_at AS updatedAt`;
@@ -59,6 +60,49 @@ export class NeoRepository {
       .run(binding.sessionId, binding.concernId, binding.kind);
     if (result.changes > 0) this.notify();
     return result.changes > 0;
+  }
+
+  saveConsultationContext(
+    input: NeoConcernInput,
+    expectedRevision: number,
+    consultationId: string,
+    holderSessionId: string
+  ): NeoConcern | null {
+    const saved = this.db.transaction(() => {
+      const now = Date.now();
+      const row = this.db
+        .prepare(`UPDATE neo_concerns SET title = ?, summary = ?, context = ?,
+          revision = revision + 1, updated_at = ?
+          WHERE id = ? AND revision = ? AND EXISTS (
+            SELECT 1 FROM neo_context_write_grants g
+            JOIN neo_consultations c ON c.id = g.consultation_id
+            JOIN neo_session_bindings b ON b.session_id = c.session_id
+            WHERE c.id = ? AND c.session_id = ? AND c.concern_id = neo_concerns.id
+              AND b.kind = 'concern' AND b.concern_id = c.concern_id
+              AND c.status = 'pending' AND c.created_at > ?
+              AND g.context_revision = neo_concerns.revision
+          ) RETURNING ${concernColumns}`)
+        .get(
+          input.title,
+          input.summary,
+          input.context,
+          now,
+          input.id,
+          expectedRevision,
+          consultationId,
+          holderSessionId,
+          now - CONSULTATION_TIMEOUT_MS
+        ) as NeoConcern | null;
+      if (row)
+        this.db
+          .prepare(
+            'UPDATE neo_context_write_grants SET context_revision = ? WHERE consultation_id = ?'
+          )
+          .run(row.revision, consultationId);
+      return row;
+    })();
+    if (saved) this.notify();
+    return saved;
   }
 
   getBindingBySession(sessionId: string): NeoBinding | null {
