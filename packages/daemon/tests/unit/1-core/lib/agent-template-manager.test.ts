@@ -1578,6 +1578,18 @@ describe('built-in override seeding rollback', () => {
     );
   });
 
+  test('a failed create on a built-in key leaves no override row behind', async () => {
+    const result = await manager.createIn(OWNER, {
+      key: 'builtin.default',
+      handle: 'builtin',
+      displayName: '   ',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+  });
+
   test('creating over an existing override still reports a duplicate key', async () => {
     await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin', displayName: 'A' });
     const second = await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin' });

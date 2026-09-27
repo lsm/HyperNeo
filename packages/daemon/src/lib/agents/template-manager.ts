@@ -97,8 +97,12 @@ export class SpaceAgentTemplateManager {
           params,
           seeded.value ?? undefined
         );
-        if (!applied.ok) return applied;
+        if (!applied.ok) {
+          this.discardSeededOverride(spaceId, params.key, seeded.value);
+          return applied;
+        }
         if (!applied.value) {
+          this.discardSeededOverride(spaceId, params.key, seeded.value);
           return {
             ok: false,
             error: `Template "${params.key}" was modified concurrently; retry the create`,
