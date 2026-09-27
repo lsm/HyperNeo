@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { tmpdir } from 'node:os';
 
-let queryFactory: (() => unknown) | null = null;
+let queryFactory:
+  | ((args: { prompt: AsyncIterable<SDKMessage>; options: Options }) => unknown)
+  | null = null;
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
   class MockMcpServer {
@@ -10,7 +12,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
     disconnect(): void {}
   }
   return {
-    query: () => queryFactory?.(),
+    query: (args: { prompt: AsyncIterable<SDKMessage>; options: Options }) => queryFactory?.(args),
     interrupt: mock(async () => {}),
     supportedModels: mock(async () => {
       throw new Error('SDK unavailable in unit test');
@@ -40,7 +42,12 @@ import type { MessageHub, Session } from '@hyperneo/shared';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
@@ -291,6 +298,83 @@ describe('QueryRunner startup gate', () => {
       queued: 3,
       maxConcurrent: 2,
     });
+  });
+
+  it('runs isolated holder inputs sequentially with fresh MCP identity and no post-start overwrite', async () => {
+    const sql = new SQLite(':memory:');
+    createNeoTables(sql);
+    runMigration279(sql);
+    sql.exec(`INSERT INTO neo_concerns VALUES ('club','Club','','Six',1,1,1);
+      INSERT INTO neo_session_bindings VALUES ('neo:holder','club','concern')`);
+    sql
+      .prepare(`INSERT INTO neo_consultations
+      (id,request_key,concern_id,origin_session_id,session_id,question,status,created_at)
+      VALUES ('a','a','club','root','neo:holder','Next?','pending',?)`)
+      .run(Date.now());
+    const queue = new MessageQueue();
+    const base = createRunner('base');
+    const identities: Array<() => OperationCaller['neoTurn']> = [];
+    const inputs: Array<AsyncIterator<SDKMessage>> = [];
+    const reconciled = mock(async () => {});
+    queryFactory = ({ prompt, options }) => {
+      expect(options.mcpServers?.['hyperneo-operations']).toMatchObject({
+        name: 'isolated-holder',
+      });
+      inputs.push(prompt[Symbol.asyncIterator]());
+      const controlled = createControlledQuery();
+      controlled.queryObject.setMcpServers = reconciled;
+      spawned.push(controlled);
+      return controlled.queryObject;
+    };
+    const { runner, ctx } = createRunner('neo:holder', {
+      messageQueue: queue,
+      db: {
+        ...base.ctx.db,
+        getDatabase: () => sql,
+        getSDKMessageRepo: () => ({
+          getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
+        }),
+      } as unknown as Database,
+      createNeoTurnMcpServer: (getTurn) => {
+        identities.push(getTurn);
+        return { type: 'sdk', name: 'isolated-holder', instance: {} } as NonNullable<
+          Options['mcpServers']
+        >[string];
+      },
+    });
+    const first = queue.enqueueWithId('neo-consult:a:request', 'First', false, { durable: true });
+    const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
+    try {
+      await runner.start();
+      await waitFor(() => spawned.length === 1);
+      expect((await inputs[0].next()).value?.uuid).toBe('neo-consult:a:request');
+      expect((await inputs[0].next()).done).toBe(true);
+      await first;
+      expect(identities[0]()?.consultationId).toBe('a');
+      expect(queue.size()).toBe(1);
+      deliverFirstMessage(spawned[0]);
+      await completeQuery(spawned[0], waitFor);
+      await ctx.queryPromise;
+      expect(identities[0]()?.isLive()).toBe(false);
+      await runner.start();
+      await waitFor(() => spawned.length === 2);
+      expect((await inputs[1].next()).value?.uuid).toBe('human-input');
+      expect((await inputs[1].next()).done).toBe(true);
+      await second;
+      expect(identities[1]()?.human).toBe(true);
+      expect(identities[1]()?.isLive()).toBe(true);
+      expect(reconciled).not.toHaveBeenCalled();
+      ctx.queryAbortController?.abort();
+      await ctx.queryPromise;
+      expect(identities[1]()?.isLive()).toBe(false);
+      expect(spawned.every((query) => query.closeCount > 0)).toBe(true);
+      expect(getSdkStartupGate().getStats().active).toBe(0);
+    } finally {
+      ctx.queryAbortController?.abort();
+      queue.clear();
+      await Promise.allSettled([first, second, ctx.queryPromise]);
+      sql.close();
+    }
   });
 
   it('admits queued sessions FIFO as first messages arrive (not at turn end)', async () => {

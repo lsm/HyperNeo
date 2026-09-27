@@ -286,13 +286,31 @@ export function createNeoOperations(service: NeoService) {
   const save = path(
     'neo.concern.save',
     (input: z.infer<typeof Save>) => input.id,
-    (input) => {
-      const concern = service.repo.saveConcern(input, input.expectedRevision);
+    (input, caller) => {
+      const holder =
+        caller.source === 'mcp' &&
+        caller.sessionId &&
+        service.repo.getBindingBySession(caller.sessionId)?.kind === 'concern';
+      const turn = caller.neoTurn;
+      if (holder && (!turn?.isLive() || (!turn.human && !turn.consultationId)))
+        return { ok: false as const, reason: 'A live holder input is required to save context.' };
+      const concern =
+        holder && turn?.consultationId
+          ? service.repo.saveConsultationContext(
+              input,
+              input.expectedRevision,
+              turn.consultationId,
+              caller.sessionId!
+            )
+          : service.repo.saveConcern(input, input.expectedRevision);
       return concern
         ? { ok: true as const, concern }
         : {
             ok: false as const,
-            reason: 'superseded: read the current concern before saving again',
+            reason:
+              holder && turn?.consultationId
+                ? 'superseded: this request cannot save context. Return the uncertainty to Neo; a fresh consultation is required.'
+                : 'superseded: read the current concern before saving again',
           };
     }
   );

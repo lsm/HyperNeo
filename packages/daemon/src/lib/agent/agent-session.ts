@@ -311,6 +311,18 @@ export class AgentSession
     ));
   }
 
+  createNeoTurnMcpServer(
+    getTurn: () => import('../operations/registry.ts').OperationCaller['neoTurn']
+  ): ReturnType<typeof createOperationMcpServer> {
+    return createOperationMcpServer(
+      () => this.resolveOperationRegistry(),
+      () => ({
+        ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+        neoTurn: getTurn(),
+      })
+    );
+  }
+
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
     return operationsCapabilityContribution(
       this.getOperationMcpServer(),

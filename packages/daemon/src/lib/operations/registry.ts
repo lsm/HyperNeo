@@ -18,6 +18,12 @@ export interface OperationCaller {
   readonly role?: OperationCallerRole;
   readonly agentId?: string;
   readonly agentName?: string;
+  readonly neoTurn?: {
+    readonly messageId: string;
+    readonly consultationId?: string;
+    readonly human: boolean;
+    readonly isLive: () => boolean;
+  };
   readonly hookReplay?: {
     readonly targetNode?: string;
     readonly isFollowUp: boolean;

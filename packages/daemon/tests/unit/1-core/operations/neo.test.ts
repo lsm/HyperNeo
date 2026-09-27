@@ -5,6 +5,7 @@ import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
+import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -54,6 +55,7 @@ describe('Neo MVP', () => {
     sqlite = new SQLite(':memory:');
     createNeoTables(sqlite);
     runMigration279(sqlite);
+    runMigration280(sqlite);
     created = [];
     active = new Set();
     jobs = [];
@@ -121,6 +123,19 @@ describe('Neo MVP', () => {
       input,
       caller
     );
+  }
+  function holderInput(sessionId: string, consultationId?: string): OperationCaller {
+    return {
+      source: 'mcp',
+      role: 'neo',
+      sessionId,
+      neoTurn: {
+        messageId: consultationId ? `neo-consult:${consultationId}:request` : 'human-message',
+        consultationId,
+        human: !consultationId,
+        isLive: () => true,
+      },
+    };
   }
   async function propose() {
     const root = await service.open(null);
@@ -475,7 +490,7 @@ describe('Neo MVP', () => {
       const corrected = service.repo.getConcern(concern.id);
       await service.reconcile(work.id);
       const review = service.consultations.get(`neo-work:${work.id}:review`)!;
-      const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: review.sessionId };
+      const holder = holderInput(review.sessionId, review.id);
       const staleSave = { ...concern, expectedRevision: 1, context: 'Six people at the library' };
       expect(await invoke('neo.concern.save', staleSave, holder)).toMatchObject({
         value: { ok: false, reason: expect.stringContaining('superseded') },
@@ -534,11 +549,11 @@ describe('Neo MVP', () => {
     }
   );
 
-  test('a holder can incorporate evidence after reading a newer correction without losing it', async () => {
+  test('a newer correction requires a fresh request before the holder can incorporate evidence', async () => {
     const { work } = await concernWork();
     await service.reconcile(work.id);
     const review = service.consultations.list()[0];
-    const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: review.sessionId };
+    const holder = holderInput(review.sessionId, review.id);
     const context = 'Eight people. I will host at my home.';
     expect(
       await invoke('neo.concern.save', { ...concern, expectedRevision: 1, context })
@@ -552,8 +567,23 @@ describe('Neo MVP', () => {
     expect(
       await invoke(
         'neo.concern.save',
-        { ...concern, expectedRevision: 2, context: updated },
+        { ...concern, expectedRevision: 2, context: 'Stale overwrite' },
         holder
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.repo.getConcern(concern.id)?.context).toBe(context);
+    await invoke('neo.concern.cancel', { id: review.id });
+    const fresh = service.consultations.reserve({
+      ...review,
+      id: 'fresh-review',
+      requestKey: 'fresh-review',
+    })!;
+    const freshHolder = holderInput(fresh.sessionId, fresh.id);
+    expect(
+      await invoke(
+        'neo.concern.save',
+        { ...concern, expectedRevision: 2, context: updated },
+        freshHolder
       )
     ).toMatchObject({
       value: { ok: true, concern: { revision: 3, context: updated } },
@@ -561,8 +591,8 @@ describe('Neo MVP', () => {
     expect(
       await invoke(
         'neo.concern.respond',
-        { id: review.id, answer: 'Your home remains the plan; nothing booked.' },
-        holder
+        { id: fresh.id, answer: 'Your home remains the plan; nothing booked.' },
+        freshHolder
       )
     ).toMatchObject({ value: { ok: true } });
     await service.recover();
@@ -808,9 +838,9 @@ describe('Neo MVP', () => {
     });
     expect(service.repo.getConcern(concern.id)?.context).toBe(concern.context);
     const holder = await service.open(concern.id);
-    expect(
-      await invoke('neo.concern.save', correction, { ...caller, sessionId: holder })
-    ).toMatchObject({ value: { ok: true, concern: { context: correction.context } } });
+    expect(await invoke('neo.concern.save', correction, holderInput(holder))).toMatchObject({
+      value: { ok: true, concern: { context: correction.context } },
+    });
     expect(
       await invoke('neo.concern.save', { ...correction, expectedRevision: 2 }, human)
     ).toMatchObject({ value: { ok: true } });
