@@ -66,11 +66,36 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, ctx.params.key)! };
   }
 
+  private async ensureOwnedOverride(spaceId: string, key: string): Promise<SpaceAgentResult<void>> {
+    if (this.repo.getOwned(spaceId, key)) return { ok: true, value: undefined };
+    const builtIn = this.builtIns().find((template) => template.key === key);
+    if (!builtIn) return { ok: true, value: undefined };
+    const created = await this.createIn(spaceId, {
+      key: builtIn.key,
+      handle: builtIn.handle,
+      displayName: builtIn.displayName,
+      description: builtIn.description,
+      instructions: builtIn.instructions,
+      suggestedAutonomyLevel: builtIn.suggestedAutonomyLevel,
+      model: builtIn.model,
+      provider: builtIn.provider,
+      modelPool: builtIn.modelPool,
+      thinkingLevel: builtIn.thinkingLevel,
+      settingSources: builtIn.settingSources,
+      tools: builtIn.tools,
+      labels: builtIn.labels,
+    });
+    if (!created.ok) return { ok: false, error: created.error };
+    return { ok: true, value: undefined };
+  }
+
   async updateIn(
     spaceId: string,
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
+    const seeded = await this.ensureOwnedOverride(spaceId, key);
+    if (!seeded.ok) return { ok: false, error: seeded.error };
     const { expectedVersion, ...updates } = params;
     const ctx = await runUpdateTemplate({
       repo: this.repo,
@@ -89,6 +114,8 @@ export class SpaceAgentTemplateManager {
     params: UpdateSpaceAgentTemplateParams,
     expectedVersion?: number
   ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord | null>> {
+    const seeded = await this.ensureOwnedOverride(spaceId, key);
+    if (!seeded.ok) return { ok: false, error: seeded.error };
     const ctx = await runUpdateTemplate({
       repo: this.repo,
       spaceId,
@@ -125,15 +152,16 @@ export class SpaceAgentTemplateManager {
       if (isReservedAgentHandle(template.handle)) continue;
       byKey.set(template.key, template);
     }
-    const builtIns = [...byKey.values()];
-    const owned = this.repo.listOwned(spaceId).filter((template) => !byKey.has(template.key));
-    return [...builtIns, ...owned];
+    for (const template of this.repo.listOwned(spaceId)) {
+      byKey.set(template.key, template);
+    }
+    return [...byKey.values()];
   }
 
   getIn(spaceId: string, key: string): SpaceAgentTemplate | null {
     return (
-      this.builtIns().find((template) => template.key === key) ??
       this.repo.getOwned(spaceId, key) ??
+      this.builtIns().find((template) => template.key === key) ??
       null
     );
   }

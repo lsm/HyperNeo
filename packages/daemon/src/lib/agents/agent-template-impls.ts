@@ -17,10 +17,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { jsonResult } from '../space/tools/tool-result.ts';
 import type { ToolResult } from '../space/tools/tool-result.ts';
-import {
-  getLongHorizonAgentTemplate,
-  getLongHorizonAgentTemplates,
-} from './long-horizon-templates.ts';
+import { getLongHorizonAgentTemplates } from './long-horizon-templates.ts';
 import { deriveAgentTemplate } from './template-derivation.ts';
 import { validateAgentModel as validateLongHorizonModel } from './agent-validation.ts';
 import { getBuiltInSpaceAgentTemplates, SpaceAgentTemplateManager } from './template-manager.ts';
@@ -141,12 +138,12 @@ function resolveExactAgentTemplate(
   templateName: string,
   spaceId: string
 ): NodeAgentTemplateSource | null {
+  const stored = db ? new SpaceAgentTemplateRepository(db).getOwned(spaceId, templateName) : null;
+  if (stored) return spaceAgentTemplateToNodeSource(stored);
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key === templateName
   ) as NodeAgentTemplateSource | undefined;
-  if (builtIn) return builtIn;
-  const stored = db ? new SpaceAgentTemplateRepository(db).getOwned(spaceId, templateName) : null;
-  return stored ? spaceAgentTemplateToNodeSource(stored) : null;
+  return builtIn ?? null;
 }
 
 function fallbackBuiltinAgentTemplate(
@@ -395,12 +392,6 @@ export async function updateAgentTemplate(
 ): Promise<ToolResult> {
   const { spaceId, logAudit, requireTemplateManager } = deps;
   try {
-    if (getLongHorizonAgentTemplate(args.key)) {
-      return jsonResult({
-        success: false,
-        error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/agents/long-horizon-templates.ts)`,
-      });
-    }
     const result = await requireTemplateManager().casUpdateIn(
       spaceId,
       args.key,

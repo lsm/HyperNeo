@@ -369,6 +369,7 @@ class SpaceStore {
   readonly agents = signal<SpaceLongHorizonAgent[]>([]);
 
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
+  readonly builtInTemplateKeys = signal<ReadonlySet<string>>(new Set());
 
   readonly userTemplateKeys = signal<ReadonlySet<string>>(new Set());
 
@@ -722,6 +723,7 @@ class SpaceStore {
     this.agents.value = [];
     this.agentListState.value = 'loading';
     this.agentTemplates.value = [];
+    this.builtInTemplateKeys.value = new Set();
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -1416,6 +1418,7 @@ class SpaceStore {
         this.fetchAgentTemplates(hub, spaceId),
         this.fetchWorkflows(hub, spaceId),
         this.fetchWorkflowTemplates(hub, spaceId),
+        this.fetchBuiltInTemplateKeys(hub, spaceId),
       ]);
       if (this.spaceId.value === spaceId) {
         this.configDataLoaded.value = true;
@@ -2636,6 +2639,18 @@ class SpaceStore {
     } catch (err) {
       logger.error('Failed to fetch templates:', err);
     }
+  }
+
+  private async fetchBuiltInTemplateKeys(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
+  ): Promise<void> {
+    const result = await hub.request<{ templates: Array<{ key: string }> }>(
+      'spaceAgentTemplate.listBuiltIn',
+      { spaceId }
+    );
+    if (this.spaceId.value !== spaceId) return;
+    this.builtInTemplateKeys.value = new Set((result?.templates ?? []).map((t) => t.key));
   }
 
   private async refreshTemplateLibrary(

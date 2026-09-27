@@ -110,18 +110,18 @@ describe('SpaceAgentTemplateManager', () => {
       expect(custom).toEqual(created);
     });
 
-    test('a stored row with a built-in key never shadows the built-in', () => {
+    test('a stored row with a built-in key shadows the built-in in place', () => {
       repo.createOwned(OWNER, {
         key: 'builtin.default',
         handle: 'builtin-override',
         displayName: 'Override',
       });
 
-      const templates = manager
-        .listIn(OWNER)
-        .filter((template) => template.key === 'builtin.default');
-      expect(templates).toHaveLength(1);
-      expect(templates[0]?.displayName).toBe('Built-in');
+      const templates = manager.listIn(OWNER);
+      const matches = templates.filter((template) => template.key === 'builtin.default');
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.displayName).toBe('Override');
+      expect(templates[0]?.key).toBe('builtin.default');
     });
 
     test('orders by createdAt then key', () => {
@@ -413,17 +413,17 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('reserved');
     });
 
-    test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of [
-        'worker.swe',
-        'worker.coder',
-        'worker.reviewer',
-        'space-manager.default',
-      ]) {
+    test('allows space-level overrides of code built-in template keys', async () => {
+      for (const key of ['worker.swe', 'worker.reviewer', 'space-manager.default']) {
         const result = await manager.createIn(OWNER, { ...fullParams(), key });
-        expect(result.ok, key).toBe(false);
-        if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
+        expect(result.ok, key).toBe(true);
       }
+    });
+
+    test('still rejects legacy alias keys of built-in templates', async () => {
+      const result = await manager.createIn(OWNER, { ...fullParams(), key: 'worker.coder' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('retired alias');
     });
 
     test('does not allow reuse of the retired Task Manager key', async () => {
@@ -1001,6 +1001,31 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
+    test('deleting an override restores the built-in', async () => {
+      const updated = await manager.updateIn(OWNER, 'builtin.default', {
+        description: 'Customized description.',
+      });
+      expect(updated.ok).toBe(true);
+      expect(manager.getIn(OWNER, 'builtin.default')?.description).toBe('Customized description.');
+
+      const result = manager.deleteIn(OWNER, 'builtin.default');
+      expect(result.ok).toBe(true);
+      expect(manager.getIn(OWNER, 'builtin.default')?.description).toBe('A built-in template.');
+    });
+
+    test('updating a built-in materializes an override over the built-in fields', async () => {
+      const result = await manager.updateIn(OWNER, 'builtin.default', {
+        description: 'Customized description.',
+      });
+      expect(result.ok).toBe(true);
+
+      const template = manager.getIn(OWNER, 'builtin.default');
+      expect(template?.description).toBe('Customized description.');
+      expect(template?.displayName).toBe('Built-in');
+      expect(template?.instructions).toBe('Built-in instructions.');
+      expect(template && template.createdAt > 0).toBe(true);
+    });
+
     test('cannot delete a built-in', () => {
       const result = manager.deleteIn(OWNER, 'builtin.default');
 
@@ -1221,7 +1246,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(template?.displayName).toBe('Release Readiness');
     });
 
-    test('a stored row with a built-in key never shadows the built-in', async () => {
+    test('a stored row with a built-in key shadows the built-in', async () => {
       repo.createOwned(OWNER, {
         key: 'builtin.default',
         handle: 'builtin-override',
@@ -1229,7 +1254,7 @@ describe('SpaceAgentTemplateManager', () => {
       });
 
       const template = manager.getIn(OWNER, 'builtin.default');
-      expect(template?.displayName).toBe('Built-in');
+      expect(template?.displayName).toBe('Override');
     });
 
     test('worker built-ins keep their tool policy through the template view', () => {

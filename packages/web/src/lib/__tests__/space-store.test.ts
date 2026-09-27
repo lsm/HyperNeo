@@ -544,15 +544,26 @@ describe('SpaceStore — space selection', () => {
       makeAgentTemplate({ key: 'worker.swe', labels: ['workflow-worker'] }),
       makeAgentTemplate({ key: 'scribe', displayName: 'Scribe' }),
     ];
+    mockHub.request.mockImplementation((method: string) => {
+      if (method === 'spaceAgentTemplate.listBuiltIn') {
+        return Promise.resolve({ templates: [{ key: 'worker.swe' }] });
+      }
+      if (method === 'spaceAgentTemplate.list') {
+        return Promise.resolve({ templates: templateListResult ?? [] });
+      }
+      return Promise.resolve({});
+    });
 
     await spaceStore.ensureConfigData();
 
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
+    expect(calledMethods).toContain('spaceAgentTemplate.listBuiltIn');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['worker.swe', 'scribe']);
     expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe');
     expect(spaceStore.agentTemplates.value[1].labels).toEqual([]);
+    expect(spaceStore.builtInTemplateKeys.value.has('worker.swe')).toBe(true);
+    expect(spaceStore.builtInTemplateKeys.value.has('scribe')).toBe(false);
   });
 
   it('ensureConfigData() is idempotent — second call is a no-op', async () => {

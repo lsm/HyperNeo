@@ -375,7 +375,7 @@ const createTemplateInputSchema = AgentSpaceScopeSchema.extend({
     .string()
     .min(1)
     .describe(
-      'Unique template key (e.g. reviewer.custom); must not collide with an existing, built-in, or reserved key'
+      'Unique template key (e.g. reviewer.custom); matching a built-in key creates a space-level customization that shadows the built-in'
     ),
   handle: z.string().min(1).describe('Handle slug for agents created from this template'),
   ...templateOverrideFields,
@@ -395,7 +395,9 @@ const updateTemplateInputSchema = AgentSpaceScopeSchema.extend({
   key: z
     .string()
     .min(1)
-    .describe('Key of the user-authored template to update; built-in keys are rejected'),
+    .describe(
+      'Key of the template to update; updating a built-in key materializes a space-level customization that shadows the built-in'
+    ),
   ...templateOverrideFields,
   labels: z
     .array(z.string())
@@ -416,7 +418,9 @@ const deleteTemplateInputSchema = AgentSpaceScopeSchema.extend({
   key: z
     .string()
     .min(1)
-    .describe('Key of the user-authored template to delete; built-in keys are rejected'),
+    .describe(
+      'Key of the user-authored template to delete; for a customized built-in, deletes the customization and restores the built-in default'
+    ),
   expectedVersion: z
     .number()
     .int()
@@ -630,7 +634,7 @@ const CREATE_TEMPLATE_DESCRIPTION = `Create a user-authored agent template in a 
 
 const UPDATE_TEMPLATE_DESCRIPTION = `Update a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a prior create/update result and the update fails when the stored version differs; omit it to update against the current stored version. Nullable fields (model, provider, modelPool, thinkingLevel, settingSources, tools, labels) accept null to inherit defaults or clear them. Built-in templates are rejected. ${SCOPE_DOC} Admitted for MCP callers whose session is active in the owning Space.`;
 
-const DELETE_TEMPLATE_DESCRIPTION = `Delete a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a create/update result or agent.template.list and the delete fails when the stored version differs; omit it to delete unconditionally. Built-in templates are rejected. Deleting a template does not touch agents already created from it. ${SCOPE_DOC} Requires space autonomy level 4 or an agent ceiling at that level; admitted for MCP callers whose session is active in the owning Space.`;
+const DELETE_TEMPLATE_DESCRIPTION = `Delete a user-authored agent template by key with compare-and-swap versioning: pass expectedVersion from a create/update result or agent.template.list and the delete fails when the stored version differs; omit it to delete unconditionally. Deleting a customized built-in restores its shipped default. Deleting a template does not touch agents already created from it. ${SCOPE_DOC} Requires space autonomy level 4 or an agent ceiling at that level; admitted for MCP callers whose session is active in the owning Space.`;
 
 const LIST_TEMPLATES_DESCRIPTION = `List the agent templates available in a Space: built-in long-horizon templates plus user-authored ones, each with key (templateName), handle, display name, description, suggested autonomy level, labels, whether it is built-in, and its owned version when the Space has one. Reserved auto-created handles are hidden. ${SCOPE_DOC} Read access is admitted for any caller scoped to the Space.`;
 

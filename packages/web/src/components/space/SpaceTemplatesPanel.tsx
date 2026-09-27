@@ -18,10 +18,12 @@ export function SpaceTemplatesPanel({
   spaceId,
   templates,
   userTemplateKeys,
+  builtInTemplateKeys,
 }: {
   spaceId: string;
   templates: SpaceLongHorizonAgentTemplate[];
   userTemplateKeys: ReadonlySet<string>;
+  builtInTemplateKeys: ReadonlySet<string>;
 }) {
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
@@ -97,8 +99,9 @@ export function SpaceTemplatesPanel({
                   <TemplateListItem
                     key={t.key}
                     template={t}
+                    isBuiltIn={builtInTemplateKeys.has(t.key)}
                     isUserTemplate={userTemplateKeys.has(t.key)}
-                    onEdit={userTemplateKeys.has(t.key) ? () => openEditTemplate(t) : undefined}
+                    onEdit={() => openEditTemplate(t)}
                     onDelete={
                       userTemplateKeys.has(t.key) ? () => openTemplateDelete(spaceId, t) : undefined
                     }
@@ -128,6 +131,7 @@ export function SpaceTemplatesPanel({
       {pendingDelete && pendingDelete.spaceId === spaceId && (
         <TemplateDeleteDialog
           template={pendingDelete.template}
+          restoresBuiltIn={builtInTemplateKeys.has(pendingDelete.template.key)}
           busy={pendingDelete.busy}
           error={pendingDelete.error}
           onConfirm={runTemplateDelete}
@@ -141,6 +145,7 @@ export function SpaceTemplatesPanel({
 export function SpaceTemplatesSection({ spaceId }: { spaceId: string }) {
   const templates = spaceStore.agentTemplates.value;
   const userTemplateKeys = spaceStore.userTemplateKeys.value;
+  const builtInTemplateKeys = spaceStore.builtInTemplateKeys.value;
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -152,6 +157,7 @@ export function SpaceTemplatesSection({ spaceId }: { spaceId: string }) {
         spaceId={spaceId}
         templates={templates}
         userTemplateKeys={userTemplateKeys}
+        builtInTemplateKeys={builtInTemplateKeys}
       />
     </div>
   );

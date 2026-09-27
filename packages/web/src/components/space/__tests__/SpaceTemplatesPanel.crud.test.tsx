@@ -98,9 +98,11 @@ vi.mock('../../ui/ConfirmModal', () => ({
     onConfirm: () => void;
     onClose: () => void;
     confirmTestId?: string;
+    title?: string;
     error?: string | null;
   }) => (
     <div data-testid="confirm-modal">
+      {props.title && <h2>{props.title}</h2>}
       {props.error && <p data-testid="confirm-modal-error">{props.error}</p>}
       <button type="button" data-testid={props.confirmTestId} onClick={props.onConfirm}>
         confirm
@@ -161,12 +163,20 @@ function chipInput(tool: string): HTMLInputElement {
   return input as HTMLInputElement;
 }
 
+const BUILT_IN_KEYS = new Set([
+  'worker.swe',
+  'worker.reviewer',
+  'worker.qa',
+  'space-manager.default',
+]);
+
 function renderPanel() {
   return render(
     <SpaceTemplatesPanel
       spaceId="space-1"
       templates={mockTemplates.value}
       userTemplateKeys={mockUserTemplateKeys.value}
+      builtInTemplateKeys={BUILT_IN_KEYS}
     />
   );
 }
@@ -240,7 +250,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
     expect(getByTestId('agent-template-count').textContent).toBe('1');
   });
 
-  it('marks built-in templates read-only and offers edit and delete on user templates', () => {
+  it('offers edit on every template and delete on owned templates', () => {
     mockTemplates.value = [
       makeTemplate({ key: 'worker.swe', displayName: 'SWE Worker', labels: ['workflow-worker'] }),
       makeTemplate({ key: 'scribe', displayName: 'Scribe' }),
@@ -252,15 +262,45 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
     const workers = getByTestId('agent-template-group-workflow-worker');
     expect(within(workers).getByText('Built-in')).toBeTruthy();
-    expect(queryByRole('button', { name: 'Edit template SWE Worker' })).toBeNull();
+    expect(getByRole('button', { name: 'Edit template SWE Worker' })).toBeTruthy();
     expect(queryByRole('button', { name: 'Delete template SWE Worker' })).toBeNull();
     expect(getByRole('button', { name: 'Edit template Scribe' })).toBeTruthy();
     expect(getByRole('button', { name: 'Delete template Scribe' })).toBeTruthy();
+  });
+
+  it('marks a customized built-in and restores the default on delete', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'worker.swe',
+        displayName: 'SWE Worker',
+        labels: ['workflow-worker'],
+        version: 2,
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['worker.swe']);
+
+    const { getByText, getByRole } = render(
+      <SpaceTemplatesPanel
+        spaceId="space-1"
+        templates={mockTemplates.value}
+        userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
+      />
+    );
+
+    expect(getByText('Built-in')).toBeTruthy();
+    expect(getByText('Customized')).toBeTruthy();
+
+    fireEvent.click(getByRole('button', { name: 'Delete template SWE Worker' }));
+    expect(getByText('Restore Built-in Default')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('confirm-delete-template'));
+    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledWith('worker.swe', 2));
   });
 
   it('opens the template editor prefilled from a user template card and saves changes', async () => {
@@ -283,6 +323,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -458,6 +499,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -565,6 +607,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -655,6 +698,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -711,6 +755,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -741,6 +786,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -772,6 +818,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -858,6 +905,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -897,6 +945,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -923,6 +972,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -960,6 +1010,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
@@ -995,6 +1046,7 @@ describe('SpaceTemplatesPanel — template CRUD', () => {
         spaceId="space-1"
         templates={mockTemplates.value}
         userTemplateKeys={mockUserTemplateKeys.value}
+        builtInTemplateKeys={BUILT_IN_KEYS}
       />
     );
 
