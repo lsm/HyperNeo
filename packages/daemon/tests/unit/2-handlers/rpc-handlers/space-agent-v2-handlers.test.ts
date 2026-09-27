@@ -282,6 +282,34 @@ describe('setupSpaceAgentV2Handlers', () => {
       expect(agent.tools).toEqual(['Read', 'Grep']);
     });
 
+    test('copies configuration from a built-in override owned by the Space', async () => {
+      templates.createOwned(SPACE_ID, {
+        key: 'worker.swe',
+        handle: 'swe',
+        displayName: 'Tuned SWE',
+        instructions: 'Tuned SWE instructions.',
+        suggestedAutonomyLevel: 1,
+      });
+
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        templateKey: 'worker.swe',
+      });
+
+      expect(agent.instructions).toBe('Tuned SWE instructions.');
+    });
+
+    test('rejects creating from a built-in hidden in the Space', async () => {
+      templates.hideBuiltInKey(SPACE_ID, 'worker.swe');
+
+      await expect(
+        call(handlers, 'spaceAgentV2.create', {
+          spaceId: 'space-1',
+          templateKey: 'worker.swe',
+        })
+      ).rejects.toThrow('Template not found: worker.swe');
+    });
+
     test('seeds template extras for the created agent', async () => {
       templates.createOwned(SPACE_ID, {
         key: 'researcher.v1',
