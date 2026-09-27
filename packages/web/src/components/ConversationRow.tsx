@@ -43,7 +43,7 @@ export function ConversationRow({
   onMouseLeave,
 }: ConversationRowProps) {
   const hasUnread = unreadCount > 0 || unread;
-  const showUnreadDot = hasUnread && ['idle', 'not_started'].includes(status.kind ?? '');
+  const showUnreadDot = hasUnread && ['idle', 'not_started', 'open'].includes(status.kind ?? '');
   return (
     <div
       data-testid={rowTestId}

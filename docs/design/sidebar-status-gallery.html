@@ -113,7 +113,6 @@
       <symbol id="i-archive" viewBox="0 0 24 24"><path d="M4 8h16v12H4ZM3 4h18v4H3ZM9 12h6"/></symbol>
       <symbol id="i-archive-action" viewBox="0 0 24 24"><path d="M20 8 19 19H5L4 8M3 4h18v4H3Zm7 8h4"/></symbol>
       <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m4 16 11-11 4 4L8 20H4Zm9-9 4 4"/></symbol>
-      <symbol id="i-plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h8m-4-4v8"/></symbol>
       <symbol id="i-progress" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></symbol>
@@ -175,7 +174,7 @@
         ],
         taskLifecycle: [
           ['draft', 'Draft', 'Not yet submitted.', 'neutral', 'pencil'],
-          ['open', 'Open', 'Ready for work.', 'neutral', 'plus'],
+          ['open', 'Open', 'Ready for work; no mark until there are unread updates.', 'neutral', 'empty'],
           ['in_progress', 'In progress', 'Work is underway; running worker takes priority.', 'info', 'progress'],
           ['review', 'Awaiting review', 'Needs a review decision.', 'special', 'eye'],
           ['approved', 'Approved', 'Approved, awaiting completion.', 'success', 'check'],

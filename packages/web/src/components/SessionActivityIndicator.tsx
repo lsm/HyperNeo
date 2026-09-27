@@ -3,7 +3,6 @@ import { UnreadBadge } from './ui/UnreadBadge.tsx';
 
 const ICONS: Record<string, string> = {
   draft: 'm4 16 11-11 4 4L8 20H4Zm9-9 4 4',
-  open: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M8 12h8m-4-4v8',
   in_progress: 'M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6',
   review: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
   approved: 'm8 12 3 3 5-6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
@@ -35,7 +34,7 @@ export function SessionActivityIndicator({
   unread?: boolean;
 }) {
   const icon = ICONS[status.kind ?? ''];
-  const resting = ['idle', 'not_started'].includes(status.kind ?? '');
+  const resting = ['idle', 'not_started', 'open'].includes(status.kind ?? '');
   if (resting && (unreadCount > 0 || unread)) {
     return <UnreadBadge count={unreadCount} unread={unread} className="h-[18px] w-[17px]" />;
   }

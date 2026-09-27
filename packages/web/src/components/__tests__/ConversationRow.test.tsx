@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getSessionSidebarStatus, getTaskSidebarStatus } from '../../lib/session-sidebar-status.ts';
 import { ConversationRow } from '../ConversationRow.tsx';
-import { getSessionSidebarStatus } from '../../lib/session-sidebar-status.ts';
 
 afterEach(cleanup);
 
@@ -76,6 +76,19 @@ describe('ConversationRow', () => {
     expect(
       screen.getByRole('img', { name: 'Has updates' }).querySelector('.sidebar-unread-mark')
     ).toBeTruthy();
+  });
+
+  it('uses the unread dot for an open task and no icon when it is read', () => {
+    const status = getTaskSidebarStatus({ status: 'open' }, []);
+    const { rerender } = render(
+      <ConversationRow title="Unify unread placement" status={status} unread onClick={() => {}} />
+    );
+    expect(
+      screen.getByRole('img', { name: 'Has updates' }).querySelector('.sidebar-unread-mark')
+    ).toBeTruthy();
+    rerender(<ConversationRow title="Unify unread placement" status={status} onClick={() => {}} />);
+    expect(screen.queryByRole('img', { name: 'Has updates' })).toBeNull();
+    expect(screen.getByRole('img', { name: 'Open' }).querySelector('svg')).toBeNull();
   });
 
   it('keeps actions outside the navigation button and supports keyboard rename', () => {
