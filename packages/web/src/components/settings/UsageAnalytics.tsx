@@ -27,7 +27,7 @@ interface UsageData {
 
 function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
   return (
-    <div class="bg-fill-soft border border-line rounded-lg p-4">
+    <div class="rounded-xl border border-line bg-surface p-4">
       <div class="text-xs text-fg-muted mb-1">{label}</div>
       <div class="text-xl font-semibold text-fg">{value}</div>
       {subtext && <div class="text-xs text-fg-faint mt-1">{subtext}</div>}
@@ -107,35 +107,7 @@ export function UsageAnalytics() {
   }, [fetchUsage]);
 
   return (
-    <div class="space-y-6">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-medium text-fg-soft">Usage Analytics</h3>
-          <p class="text-xs text-fg-faint">Pre-calculated from session data</p>
-        </div>
-        <button
-          type="button"
-          onClick={fetchUsage}
-          disabled={loading}
-          class="flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-xs text-fg-soft transition-colors hover:border-line-strong hover:bg-fill-strong hover:text-fg disabled:opacity-50"
-        >
-          <svg
-            class={`w-3 h-3 ${loading ? 'animate-spin' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-          Recalculate
-        </button>
-      </div>
-
+    <div>
       {!data && loading && <div class="text-xs text-fg-faint text-center py-8">Calculating...</div>}
 
       {!data && !loading && (
@@ -144,7 +116,33 @@ export function UsageAnalytics() {
 
       {data && (
         <>
-          <SettingsSection title="Overview">
+          <SettingsSection
+            title="Overview"
+            description="Pre-calculated from session data"
+            actions={
+              <button
+                type="button"
+                onClick={fetchUsage}
+                disabled={loading}
+                class="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg disabled:opacity-50"
+              >
+                <svg
+                  class={`w-3 h-3 ${loading ? 'animate-spin' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                Recalculate
+              </button>
+            }
+          >
             <div class="grid grid-cols-3 gap-3">
               <StatCard
                 label="Total Cost"

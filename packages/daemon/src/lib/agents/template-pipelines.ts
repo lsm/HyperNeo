@@ -283,3 +283,67 @@ export const runDeleteTemplate = (templatePipeline('delete-space-agent-template'
   .pipe('!hasError', 'ctx')
   .pipe(deletePersist, 'ctx', 'ctx')
   .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;
+
+export interface HideBuiltInTemplateCtx {
+  repo: SpaceAgentTemplateRepository;
+  spaceId: string;
+  key: string;
+  builtIns: SpaceAgentTemplate[];
+  error?: string;
+}
+
+function hideValidateBuiltIn(ctx: HideBuiltInTemplateCtx): HideBuiltInTemplateCtx {
+  if (ctx.builtIns.some((template) => template.key === ctx.key)) return ctx;
+  return { ...ctx, error: `Unknown built-in template "${ctx.key}"` };
+}
+
+function hideRejectCustomized(ctx: HideBuiltInTemplateCtx): HideBuiltInTemplateCtx {
+  if (!ctx.repo.getOwned(ctx.spaceId, ctx.key)) return ctx;
+  return {
+    ...ctx,
+    error: `Template "${ctx.key}" has a space-level customization; delete it instead of hiding`,
+  };
+}
+
+function hidePersist(ctx: HideBuiltInTemplateCtx): HideBuiltInTemplateCtx {
+  ctx.repo.hideBuiltInKey(ctx.spaceId, ctx.key);
+  return ctx;
+}
+
+export const runHideBuiltInTemplate = (
+  templatePipeline('hide-space-agent-template-built-in') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(hideValidateBuiltIn, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(hideRejectCustomized, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(hidePersist, 'ctx', 'ctx')
+  .end('ctx') as (input: HideBuiltInTemplateCtx) => HideBuiltInTemplateCtx;
+
+export interface UnhideBuiltInTemplateCtx {
+  repo: SpaceAgentTemplateRepository;
+  spaceId: string;
+  key: string;
+  builtIns: SpaceAgentTemplate[];
+  error?: string;
+}
+
+function unhideValidateBuiltIn(ctx: UnhideBuiltInTemplateCtx): UnhideBuiltInTemplateCtx {
+  if (ctx.builtIns.some((template) => template.key === ctx.key)) return ctx;
+  return { ...ctx, error: `Unknown built-in template "${ctx.key}"` };
+}
+
+function unhidePersist(ctx: UnhideBuiltInTemplateCtx): UnhideBuiltInTemplateCtx {
+  ctx.repo.unhideBuiltInKey(ctx.spaceId, ctx.key);
+  return ctx;
+}
+
+export const runUnhideBuiltInTemplate = (
+  templatePipeline('unhide-space-agent-template-built-in') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(unhideValidateBuiltIn, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(unhidePersist, 'ctx', 'ctx')
+  .end('ctx') as (input: UnhideBuiltInTemplateCtx) => UnhideBuiltInTemplateCtx;

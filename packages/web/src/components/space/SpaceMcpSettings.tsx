@@ -4,9 +4,9 @@ import type { McpImportsRefreshResponse, SpaceMcpEntry } from '@hyperneo/shared'
 import { spaceMcpStore } from '../../lib/space-mcp-store.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
-import { cn } from '../../lib/utils.ts';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Button } from '../ui/Button.tsx';
+import { SettingsSection, SettingsToggle } from '../settings/SettingsSection.tsx';
 
 interface SpaceMcpSettingsProps {
   spaceId: string;
@@ -138,9 +138,10 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
   }
 
   return (
-    <section class="space-y-3" data-testid="space-mcp-settings">
-      <div class="flex items-center justify-between">
-        <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider">MCP Servers</h3>
+    <SettingsSection
+      title="Tools"
+      description="Enable or disable MCP servers for tasks spawned in this space. Each toggle overrides the global default. Changes apply to new sessions; already-running tasks keep the MCP set they started with."
+      actions={
         <Button
           type="button"
           variant="secondary"
@@ -152,35 +153,32 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
         >
           Refresh imports
         </Button>
-      </div>
-      <p class="text-xs text-fg-muted">
-        Enable or disable MCP servers for tasks spawned in this space. Each toggle overrides the
-        global default. Changes apply to <strong>new</strong> sessions; already-running tasks keep
-        the MCP set they started with.
-      </p>
-
-      {loading && totalEntries === 0 ? (
-        <div class="flex items-center gap-2 py-2">
-          <Spinner size="sm" />
-          <span class="text-xs text-fg-muted">Loading MCP servers…</span>
-        </div>
-      ) : totalEntries === 0 ? (
-        <div class="text-sm text-fg-muted bg-surface-raised border border-line rounded-lg px-3 py-3">
-          No MCP servers configured. Add one in global MCP settings, or drop a
-          <span class="font-mono mx-1">.mcp.json</span>
-          into the space workspace and press <strong>Refresh imports</strong>.
-        </div>
-      ) : (
-        <div class="space-y-4">
-          {GROUP_ORDER.map((groupKey) => {
+      }
+    >
+      <div data-testid="space-mcp-settings">
+        {loading && totalEntries === 0 ? (
+          <div class="flex items-center gap-2 py-2">
+            <Spinner size="sm" />
+            <span class="text-xs text-fg-muted">Loading MCP servers…</span>
+          </div>
+        ) : totalEntries === 0 ? (
+          <div class="st-group">
+            <div class="st-empty">
+              <p class="st-empty-title">No MCP servers configured</p>
+              <p class="st-empty-desc">
+                Add one in global MCP settings, or drop a .mcp.json into the space workspace and
+                press Refresh imports.
+              </p>
+            </div>
+          </div>
+        ) : (
+          GROUP_ORDER.map((groupKey) => {
             const group = grouped[groupKey];
             if (group.length === 0) return null;
             return (
-              <div key={groupKey} class="space-y-2">
-                <div class="text-[11px] uppercase tracking-wider text-fg-muted">
-                  {GROUP_LABELS[groupKey]}
-                </div>
-                <div class="space-y-2">
+              <div key={groupKey}>
+                <div class="st-group-cap">{GROUP_LABELS[groupKey]}</div>
+                <div class="st-group">
                   {group.map((entry) => (
                     <SpaceMcpEntryRow
                       key={entry.serverId}
@@ -193,10 +191,10 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
-    </section>
+          })
+        )}
+      </div>
+    </SettingsSection>
   );
 }
 
@@ -220,63 +218,54 @@ function SpaceMcpEntryRow({ entry, disabled, onToggle, onClearOverride }: SpaceM
   }
 
   return (
-    <label
-      class={cn(
-        'flex items-start gap-3 bg-surface-raised border border-line-strong rounded-lg px-3 py-2.5 cursor-pointer hover:border-line-strong transition-colors',
-        disabled && 'opacity-60 cursor-not-allowed'
-      )}
+    <div
+      class={disabled ? 'st-trow opacity-60' : 'st-trow'}
       data-testid={`space-mcp-entry-${entry.name}`}
     >
-      <input
-        type="checkbox"
-        checked={entry.enabled}
-        disabled={disabled}
-        onChange={async () => {
-          await onToggle(!entry.enabled);
-        }}
-        class="w-4 h-4 mt-0.5 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900 cursor-pointer"
-        data-testid={`space-mcp-toggle-${entry.name}`}
-      />
-      <div class="flex-1 min-w-0">
+      <div class="st-trow-body">
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-sm font-medium text-fg-soft">{entry.name}</span>
+          <span class="st-trow-name">{entry.name}</span>
           {badges.map((b) => (
             <span
               key={b.label}
-              class={cn(
-                'text-xs px-1.5 py-0.5 rounded',
-                b.tone === 'override' && 'bg-accent/15 text-accent-soft',
-                b.tone === 'muted' && 'bg-fill-strong text-fg-muted',
-                b.tone === 'info' && 'bg-cat-purple/15 text-cat-purple'
-              )}
+              class={
+                b.tone === 'override'
+                  ? 'st-chip st-chip-accent'
+                  : b.tone === 'info'
+                    ? 'st-chip st-chip-warn'
+                    : 'st-chip'
+              }
             >
               {b.label}
             </span>
           ))}
         </div>
-        {entry.description && (
-          <p class="text-xs text-fg-muted mt-0.5 line-clamp-2">{entry.description}</p>
-        )}
-        <p class="text-xs text-fg-muted mt-0.5 font-mono">
+        {entry.description && <p class="st-trow-desc">{entry.description}</p>}
+        <p class="mt-0.5 font-mono text-[11px] text-fg-faint">
           {sourceTypeLabel(entry.sourceType)}
           {entry.source === 'imported' && entry.sourcePath ? ` — ${entry.sourcePath}` : ''}
         </p>
+      </div>
+      <span class="st-trow-acts">
         {entry.overridden && (
           <button
             type="button"
-            class="text-xs text-fg-muted hover:text-fg-soft mt-1 disabled:opacity-40"
-            onClick={async (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              await onClearOverride();
-            }}
+            class="st-act"
+            onClick={() => onClearOverride()}
             disabled={disabled}
             data-testid={`space-mcp-reset-${entry.name}`}
+            title="Reset to the global default"
           >
-            Reset to global default
+            Reset
           </button>
         )}
-      </div>
-    </label>
+        <SettingsToggle
+          checked={entry.enabled}
+          disabled={disabled}
+          onChange={(next) => onToggle(next)}
+          data-testid={`space-mcp-toggle-${entry.name}`}
+        />
+      </span>
+    </div>
   );
 }

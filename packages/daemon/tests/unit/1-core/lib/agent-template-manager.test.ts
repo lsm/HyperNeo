@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
+  resolveEffectiveSpaceAgentTemplate,
   runCreateTemplate,
   runDeleteTemplate,
   runUpdateTemplate,
@@ -110,18 +111,18 @@ describe('SpaceAgentTemplateManager', () => {
       expect(custom).toEqual(created);
     });
 
-    test('a stored row with a built-in key never shadows the built-in', () => {
+    test('a stored row with a built-in key shadows the built-in in place', () => {
       repo.createOwned(OWNER, {
         key: 'builtin.default',
         handle: 'builtin-override',
         displayName: 'Override',
       });
 
-      const templates = manager
-        .listIn(OWNER)
-        .filter((template) => template.key === 'builtin.default');
-      expect(templates).toHaveLength(1);
-      expect(templates[0]?.displayName).toBe('Built-in');
+      const templates = manager.listIn(OWNER);
+      const matches = templates.filter((template) => template.key === 'builtin.default');
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.displayName).toBe('Override');
+      expect(templates[0]?.key).toBe('builtin.default');
     });
 
     test('orders by createdAt then key', () => {
@@ -413,17 +414,17 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('reserved');
     });
 
-    test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of [
-        'worker.swe',
-        'worker.coder',
-        'worker.reviewer',
-        'space-manager.default',
-      ]) {
+    test('allows space-level overrides of code built-in template keys', async () => {
+      for (const key of ['worker.swe', 'worker.reviewer', 'space-manager.default']) {
         const result = await manager.createIn(OWNER, { ...fullParams(), key });
-        expect(result.ok, key).toBe(false);
-        if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
+        expect(result.ok, key).toBe(true);
       }
+    });
+
+    test('still rejects legacy alias keys of built-in templates', async () => {
+      const result = await manager.createIn(OWNER, { ...fullParams(), key: 'worker.coder' });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('retired alias');
     });
 
     test('does not allow reuse of the retired Task Manager key', async () => {
@@ -1001,6 +1002,31 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
+    test('deleting an override restores the built-in', async () => {
+      const updated = await manager.updateIn(OWNER, 'builtin.default', {
+        description: 'Customized description.',
+      });
+      expect(updated.ok).toBe(true);
+      expect(manager.getIn(OWNER, 'builtin.default')?.description).toBe('Customized description.');
+
+      const result = manager.deleteIn(OWNER, 'builtin.default');
+      expect(result.ok).toBe(true);
+      expect(manager.getIn(OWNER, 'builtin.default')?.description).toBe('A built-in template.');
+    });
+
+    test('updating a built-in materializes an override over the built-in fields', async () => {
+      const result = await manager.updateIn(OWNER, 'builtin.default', {
+        description: 'Customized description.',
+      });
+      expect(result.ok).toBe(true);
+
+      const template = manager.getIn(OWNER, 'builtin.default');
+      expect(template?.description).toBe('Customized description.');
+      expect(template?.displayName).toBe('Built-in');
+      expect(template?.instructions).toBe('Built-in instructions.');
+      expect(template && template.createdAt > 0).toBe(true);
+    });
+
     test('cannot delete a built-in', () => {
       const result = manager.deleteIn(OWNER, 'builtin.default');
 
@@ -1061,6 +1087,69 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(withInstances.deleteIn(OWNER, 'release-readiness.custom').ok).toBe(true);
       expect(cleared).toEqual(['release-readiness.custom']);
+    });
+  });
+
+  describe('hide', () => {
+    test('hides a built-in from list and get', () => {
+      expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+
+      expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(
+        false
+      );
+      expect(manager.getIn(OWNER, 'builtin.default')).toBeNull();
+      expect(manager.hiddenBuiltInsIn(OWNER).map((template) => template.key)).toEqual([
+        'builtin.default',
+      ]);
+    });
+
+    test('unhide restores the built-in', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+      expect(manager.unhideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+
+      expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(
+        true
+      );
+      expect(manager.getIn(OWNER, 'builtin.default')?.displayName).toBe('Built-in');
+      expect(manager.hiddenBuiltInsIn(OWNER)).toEqual([]);
+    });
+
+    test('hiding one space leaves other spaces untouched', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+
+      expect(manager.getIn('space-other', 'builtin.default')?.key).toBe('builtin.default');
+      expect(manager.listIn('space-other').some((t) => t.key === 'builtin.default')).toBe(true);
+    });
+
+    test('rejects hiding a customized built-in', async () => {
+      await manager.updateIn(OWNER, 'builtin.default', { description: 'Mine' });
+
+      const result = manager.hideBuiltInIn(OWNER, 'builtin.default');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('customization');
+    });
+
+    test('rejects hiding a custom template or an unknown key', async () => {
+      await manager.createIn(OWNER, fullParams());
+
+      const custom = manager.hideBuiltInIn(OWNER, 'release-readiness.custom');
+      expect(custom.ok).toBe(false);
+      const unknown = manager.hideBuiltInIn(OWNER, 'missing.default');
+      expect(unknown.ok).toBe(false);
+    });
+
+    test('a stored row still shadows its built-in when a stale hide exists', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+      repo.createOwned(OWNER, {
+        key: 'builtin.default',
+        handle: 'builtin-override',
+        displayName: 'Override',
+      });
+
+      expect(manager.getIn(OWNER, 'builtin.default')?.displayName).toBe('Override');
+      expect(
+        manager.listIn(OWNER).find((template) => template.key === 'builtin.default')?.displayName
+      ).toBe('Override');
     });
   });
 
@@ -1221,7 +1310,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(template?.displayName).toBe('Release Readiness');
     });
 
-    test('a stored row with a built-in key never shadows the built-in', async () => {
+    test('a stored row with a built-in key shadows the built-in', async () => {
       repo.createOwned(OWNER, {
         key: 'builtin.default',
         handle: 'builtin-override',
@@ -1229,7 +1318,7 @@ describe('SpaceAgentTemplateManager', () => {
       });
 
       const template = manager.getIn(OWNER, 'builtin.default');
-      expect(template?.displayName).toBe('Built-in');
+      expect(template?.displayName).toBe('Override');
     });
 
     test('worker built-ins keep their tool policy through the template view', () => {
@@ -1352,5 +1441,160 @@ describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
     );
 
     expect(result.ok && result.value?.displayName).toBe('Mine');
+  });
+});
+
+describe('resolveEffectiveSpaceAgentTemplate', () => {
+  let db: BunDatabase;
+  let repo: SpaceAgentTemplateRepository;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
+    repo = new SpaceAgentTemplateRepository(db);
+  });
+
+  test('a stored override shadows the code built-in and keeps its reminder defaults', () => {
+    repo.createOwned(OWNER, {
+      key: 'space-manager.default',
+      handle: 'space-manager',
+      displayName: 'Tuned Manager',
+    });
+
+    const effective = resolveEffectiveSpaceAgentTemplate('space-manager.default', OWNER, repo);
+
+    expect(effective?.displayName).toBe('Tuned Manager');
+    expect(effective?.reminderDefaults?.map((reminder) => reminder.title)).toEqual([
+      'Review Space work',
+    ]);
+  });
+
+  test('a stored user template resolves without built-in extras', () => {
+    repo.createOwned(OWNER, { key: 'release.custom', handle: 'release', displayName: 'Release' });
+
+    const effective = resolveEffectiveSpaceAgentTemplate('release.custom', OWNER, repo);
+
+    expect(effective?.displayName).toBe('Release');
+    expect(effective?.reminderDefaults).toBeUndefined();
+  });
+
+  test('a hidden built-in without an override resolves null', () => {
+    repo.hideBuiltInKey(OWNER, 'worker.swe');
+
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)).toBeNull();
+  });
+
+  test('a hidden built-in with an override resolves the override', () => {
+    repo.hideBuiltInKey(OWNER, 'worker.swe');
+    repo.createOwned(OWNER, { key: 'worker.swe', handle: 'swe', displayName: 'Tuned SWE' });
+
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)?.displayName).toBe(
+      'Tuned SWE'
+    );
+  });
+
+  test('resolves a pure built-in and nulls an unknown key', () => {
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER, repo)?.key).toBe('worker.swe');
+    expect(resolveEffectiveSpaceAgentTemplate('missing.custom', OWNER, repo)).toBeNull();
+  });
+
+  test('resolves built-ins when no repository is provided', () => {
+    expect(resolveEffectiveSpaceAgentTemplate('worker.swe', OWNER)?.key).toBe('worker.swe');
+    expect(resolveEffectiveSpaceAgentTemplate('missing.custom', OWNER)).toBeNull();
+  });
+});
+
+describe('built-in override seeding rollback', () => {
+  let db: BunDatabase;
+  let repo: SpaceAgentTemplateRepository;
+  let manager: SpaceAgentTemplateManager;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
+    repo = new SpaceAgentTemplateRepository(db);
+    manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
+    setModelsCache(new Map());
+  });
+
+  test('a failed update of a built-in leaves no override row behind', async () => {
+    const result = await manager.updateIn(OWNER, 'builtin.default', { displayName: '  ' });
+
+    expect(result.ok).toBe(false);
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(true);
+  });
+
+  test('a CAS mismatch on a fresh override rolls the seed back', async () => {
+    const result = await manager.casUpdateIn(OWNER, 'builtin.default', { displayName: 'Mine' }, 99);
+
+    expect(result.ok).toBe(true);
+    expect(result.value).toBeNull();
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+  });
+
+  test('a successful update keeps the seeded override', async () => {
+    const result = await manager.updateIn(OWNER, 'builtin.default', { displayName: 'Tuned' });
+
+    expect(result.ok).toBe(true);
+    expect(repo.getOwned(OWNER, 'builtin.default')?.displayName).toBe('Tuned');
+  });
+
+  test('creating an override with partial fields seeds the built-in defaults', async () => {
+    const result = await manager.createIn(OWNER, {
+      key: 'builtin.default',
+      handle: 'builtin',
+      displayName: 'Only Name',
+    });
+
+    expect(result.ok).toBe(true);
+    const stored = repo.getOwned(OWNER, 'builtin.default');
+    expect(stored?.displayName).toBe('Only Name');
+    expect(stored?.instructions).toBe('Built-in instructions.');
+    expect(manager.getIn(OWNER, 'builtin.default')?.instructions).toBe('Built-in instructions.');
+  });
+
+  test('creating an override with full fields replaces the built-in values', async () => {
+    const result = await manager.createIn(OWNER, {
+      ...fullParams(),
+      key: 'builtin.default',
+      handle: 'builtin',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(repo.getOwned(OWNER, 'builtin.default')?.instructions).toBe(
+      'Coordinate release checks.'
+    );
+  });
+
+  test('a failed create on a built-in key leaves no override row behind', async () => {
+    const result = await manager.createIn(OWNER, {
+      key: 'builtin.default',
+      handle: 'builtin',
+      displayName: '   ',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+  });
+
+  test('creating over an existing override still reports a duplicate key', async () => {
+    await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin', displayName: 'A' });
+    const second = await manager.createIn(OWNER, { key: 'builtin.default', handle: 'builtin' });
+
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toContain('already exists');
   });
 });

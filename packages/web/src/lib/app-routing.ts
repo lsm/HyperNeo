@@ -61,10 +61,7 @@ export function deriveAppExpectedPath(state: AppRoutingState): string {
     );
   }
   if (spaceId && spaceViewMode === 'configure') {
-    return createSpaceConfigurePath(
-      spaceId,
-      spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
-    );
+    return createSpaceConfigurePath(spaceId, spaceConfigureTab);
   }
   if (spaceId) return createSpacePath(spaceId);
   if (navSection === 'chats') return '/sessions';

@@ -9,7 +9,7 @@ const base: AppRoutingState = {
   spaceTaskId: null,
   spaceAgentHandle: null,
   spaceViewMode: 'overview',
-  spaceConfigureTab: 'agents',
+  spaceConfigureTab: 'general',
   spaceTasksFilterTab: 'active',
   spaceTaskViewTab: 'thread',
   navSection: 'spaces',
@@ -37,13 +37,30 @@ describe('deriveAppExpectedPath', () => {
     }
   });
 
-  it('honors non-default tasks filter and configure tab', () => {
+  it('honors a non-default tasks filter', () => {
     expect(
       deriveAppExpectedPath({ ...base, spaceViewMode: 'tasks', spaceTasksFilterTab: 'draft' })
     ).toBe('/space/s1/tasks/draft');
+  });
+
+  it('derives configure tab paths with general as the bare route', () => {
+    expect(deriveAppExpectedPath({ ...base, spaceViewMode: 'configure' })).toBe(
+      '/space/s1/configure'
+    );
     expect(
-      deriveAppExpectedPath({ ...base, spaceViewMode: 'configure', spaceConfigureTab: 'workflows' })
-    ).toBe('/space/s1/configure/workflows');
+      deriveAppExpectedPath({
+        ...base,
+        spaceViewMode: 'configure',
+        spaceConfigureTab: 'agent-templates',
+      })
+    ).toBe('/space/s1/configure/agent-templates');
+    expect(
+      deriveAppExpectedPath({
+        ...base,
+        spaceViewMode: 'configure',
+        spaceConfigureTab: 'workflow-templates',
+      })
+    ).toBe('/space/s1/configure/workflow-templates');
   });
 
   it('prioritizes a selected session/task over the space view mode', () => {

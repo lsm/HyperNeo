@@ -561,7 +561,8 @@ export function buildWorkflowCreateParams(
 
 function referencedStoredTemplateKeys(
   workflows: ExportedSpaceWorkflow[],
-  resolveAgentId: (agentRef: string) => string | null
+  resolveAgentId: (agentRef: string) => string | null,
+  ownsOverride: (key: string) => boolean = () => false
 ): string[] {
   const keys = new Set<string>();
   for (const workflow of workflows) {
@@ -570,7 +571,7 @@ function referencedStoredTemplateKeys(
         const raw = slot.templateKey?.trim();
         if (!raw) continue;
         const key = normalizeLegacyWorkerTemplateKey(raw);
-        if (getLongHorizonAgentTemplate(key)) continue;
+        if (getLongHorizonAgentTemplate(key) && !ownsOverride(key)) continue;
         const agentRef = slot.agentRef?.trim() ?? '';
         if (agentRef && resolveAgentId(agentRef)) continue;
         keys.add(key);
@@ -721,7 +722,11 @@ export function setupSpaceExportImportHandlers(
     resolveAgentId: (agentRef: string) => string | null
   ): string[] => {
     const copied: string[] = [];
-    for (const key of referencedStoredTemplateKeys(workflows, resolveAgentId)) {
+    const ownsOverride = (key: string): boolean =>
+      sourceSpaceId !== undefined && sourceSpaceId !== destinationSpaceId
+        ? templateRepo.getOwned(sourceSpaceId, key) != null
+        : templateRepo.getOwned(destinationSpaceId, key) != null;
+    for (const key of referencedStoredTemplateKeys(workflows, resolveAgentId, ownsOverride)) {
       if (ownsTemplate(destinationSpaceId, key)) continue;
       const source =
         sourceSpaceId && sourceSpaceId !== destinationSpaceId

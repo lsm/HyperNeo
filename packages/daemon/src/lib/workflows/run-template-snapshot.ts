@@ -1,6 +1,6 @@
 import type { SpaceAgentTemplate, SpaceWorkflow, WorkflowTemplateSnapshot } from '@hyperneo/shared';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../agents/template-manager.ts';
 
 export type AgentTemplateResolver = (key: string) => SpaceAgentTemplate | null;
 
@@ -8,16 +8,13 @@ export type AgentTemplateResolverFactory = (spaceId: string) => AgentTemplateRes
 
 export function createAgentTemplateResolver(
   spaceId: string,
-  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned'>
+  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned' | 'hiddenBuiltInKeys'>
 ): AgentTemplateResolver {
-  const builtIns = new Map(
-    getBuiltInSpaceAgentTemplates().map((template) => [template.key, template])
-  );
-  return (key) => builtIns.get(key) ?? templateRepo?.getOwned(spaceId, key) ?? null;
+  return (key) => resolveEffectiveSpaceAgentTemplate(key, spaceId, templateRepo);
 }
 
 export function createAgentTemplateResolverFactory(
-  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned'>
+  templateRepo?: Pick<SpaceAgentTemplateRepository, 'getOwned' | 'hiddenBuiltInKeys'>
 ): AgentTemplateResolverFactory {
   return (spaceId) => createAgentTemplateResolver(spaceId, templateRepo);
 }

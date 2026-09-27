@@ -1,4 +1,4 @@
-import { SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsRow, SettingsSection } from './SettingsSection.tsx';
 import { cn } from '../../lib/utils.ts';
 
 declare const __APP_VERSION__: string | undefined;
@@ -7,14 +7,11 @@ export function AboutSection() {
   const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
   return (
     <SettingsSection title="About">
-      <div class="space-y-3">
-        <div class="flex items-center justify-between">
-          <span class="text-sm text-fg-muted">Version</span>
-          <span class="text-sm text-fg-soft font-mono">{appVersion}</span>
-        </div>
-
-        <div class="pt-3 border-t border-line space-y-2">
-          <p class="text-sm text-fg-muted">HyperNeo - A modern web UI for Claude Code</p>
+      <SettingsGroup>
+        <SettingsRow label="HyperNeo" description="A modern web UI for Claude Code">
+          <span class="font-mono text-xs text-fg-muted">{appVersion}</span>
+        </SettingsRow>
+        <div class="px-4 py-3">
           <div class="flex gap-4 text-xs">
             <a
               href="https://github.com"
@@ -52,7 +49,7 @@ export function AboutSection() {
             </a>
           </div>
         </div>
-      </div>
+      </SettingsGroup>
     </SettingsSection>
   );
 }

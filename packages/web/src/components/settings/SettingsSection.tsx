@@ -2,21 +2,42 @@ import { ComponentChildren } from 'preact';
 import { cn } from '../../lib/utils.ts';
 
 export interface SettingsSectionProps {
-  title: string;
+  id?: string;
+  title: ComponentChildren;
+  description?: string;
+  actions?: ComponentChildren;
   children: ComponentChildren;
   class?: string;
 }
 
-export function SettingsSection({ title, children, class: className }: SettingsSectionProps) {
+export function SettingsSection({
+  id,
+  title,
+  description,
+  actions,
+  children,
+  class: className,
+}: SettingsSectionProps) {
   return (
-    <div class={cn('space-y-3 pb-6', className)}>
-      <div class="flex items-center gap-2 px-1">
-        <span class="h-4 w-1 rounded-full bg-accent/80" aria-hidden="true" />
-        <h3 class="text-xs font-semibold uppercase tracking-[0.16em] text-fg-muted">{title}</h3>
+    <section id={id} class={cn('st-sec', className)}>
+      <div class="st-sec-head">
+        <div class="min-w-0">
+          <h3 class="st-sec-title">{title}</h3>
+          {description && <p class="st-sec-desc">{description}</p>}
+        </div>
+        {actions && <div class="st-sec-actions">{actions}</div>}
       </div>
-      <div class="space-y-2">{children}</div>
-    </div>
+      <div class="st-sec-body">{children}</div>
+    </section>
   );
+}
+
+export function SettingsGroup({ children }: { children: ComponentChildren }) {
+  return <div class="st-group">{children}</div>;
+}
+
+export function SettingsDangerGroup({ children }: { children: ComponentChildren }) {
+  return <div class="st-group st-group-danger">{children}</div>;
 }
 
 export interface SettingsRowProps {
@@ -28,19 +49,12 @@ export interface SettingsRowProps {
 
 export function SettingsRow({ label, description, children, layout = 'inline' }: SettingsRowProps) {
   return (
-    <div
-      class={cn(
-        'rounded-lg border border-line bg-fill-soft px-4 py-3',
-        layout === 'inline'
-          ? 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
-          : 'space-y-3'
-      )}
-    >
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-fg-soft">{label}</div>
-        {description && <div class="text-xs text-fg-faint mt-0.5">{description}</div>}
+    <div class={cn('st-row', layout === 'stacked' && 'st-row-stacked')}>
+      <div class="st-row-label">
+        {label}
+        {description && <div class="st-row-desc">{description}</div>}
       </div>
-      <div class={cn(layout === 'inline' ? 'flex-shrink-0' : 'min-w-0')}>{children}</div>
+      <div class="st-row-ctl">{children}</div>
     </div>
   );
 }
@@ -58,12 +72,7 @@ export function SettingsSelect({ value, onChange, options, disabled }: SettingsS
       value={value}
       onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
       disabled={disabled}
-      class={cn(
-        'bg-surface-raised border border-line-strong rounded-lg px-3 py-1.5 text-sm text-fg-soft',
-        'focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent',
-        'disabled:opacity-50 disabled:cursor-not-allowed',
-        'min-w-[140px]'
-      )}
+      class="st-select"
     >
       {options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -78,9 +87,15 @@ export interface SettingsToggleProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  'data-testid'?: string;
 }
 
-export function SettingsToggle({ checked, onChange, disabled }: SettingsToggleProps) {
+export function SettingsToggle({
+  checked,
+  onChange,
+  disabled,
+  'data-testid': testId,
+}: SettingsToggleProps) {
   return (
     <button
       type="button"
@@ -88,22 +103,8 @@ export function SettingsToggle({ checked, onChange, disabled }: SettingsTogglePr
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      class={cn(
-        'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full',
-        'transition-colors duration-200 ease-in-out',
-        'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg',
-        'disabled:opacity-50 disabled:cursor-not-allowed',
-        checked ? 'bg-accent-hover' : 'bg-fill-strong'
-      )}
-    >
-      <span
-        class={cn(
-          'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0',
-          'transition duration-200 ease-in-out',
-          'mt-0.5 ml-0.5',
-          checked ? 'translate-x-4' : 'translate-x-0'
-        )}
-      />
-    </button>
+      class={cn('st-switch', checked && 'st-switch-on')}
+      data-testid={testId}
+    />
   );
 }

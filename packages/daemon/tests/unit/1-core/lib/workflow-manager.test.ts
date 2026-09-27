@@ -10,6 +10,7 @@ import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
+import { runMigration281 } from '../../../../src/storage/schema/m281-space-agent-template-hides';
 import { SpaceWorkflowManager } from '../../../../src/lib/workflows/workflow-manager';
 import type { SpaceAgentLookup } from '../../../../src/lib/workflows/workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
@@ -181,6 +182,34 @@ describe('SpaceWorkflowManager', () => {
           completionAutonomyLevel: 3,
         })
       ).toThrow('does not match any agent template');
+    });
+
+    it('rejects a built-in template key hidden in the Space', () => {
+      runMigration225(db);
+      runMigration226(db);
+      runMigration227(db);
+      runMigration238(db);
+      runMigration243(db);
+      runMigration246(db);
+      runMigration281(db);
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.hideBuiltInKey('space-1', 'worker.swe');
+      const managerWithTemplates = new SpaceWorkflowManager(repo, null, templateRepo);
+
+      expect(() =>
+        managerWithTemplates.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Template Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: '', templateKey: 'worker.swe', name: 'swe' }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('is hidden in this Space');
     });
 
     it('clears a stale agentId on built-in template slots', () => {

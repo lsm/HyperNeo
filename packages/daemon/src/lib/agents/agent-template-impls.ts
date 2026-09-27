@@ -23,7 +23,11 @@ import {
 } from './long-horizon-templates.ts';
 import { deriveAgentTemplate } from './template-derivation.ts';
 import { validateAgentModel as validateLongHorizonModel } from './agent-validation.ts';
-import { getBuiltInSpaceAgentTemplates, SpaceAgentTemplateManager } from './template-manager.ts';
+import {
+  getBuiltInSpaceAgentTemplates,
+  resolveEffectiveSpaceAgentTemplate,
+  SpaceAgentTemplateManager,
+} from './template-manager.ts';
 
 function longHorizonAgentTools(agent: SpaceLongHorizonAgent): string[] | null {
   const declared = agent.toolPermissions?.tools;
@@ -141,29 +145,40 @@ function resolveExactAgentTemplate(
   templateName: string,
   spaceId: string
 ): NodeAgentTemplateSource | null {
-  const builtIn = getLongHorizonAgentTemplates().find(
-    (candidate) => candidate.key === templateName
-  ) as NodeAgentTemplateSource | undefined;
-  if (builtIn) return builtIn;
-  const stored = db ? new SpaceAgentTemplateRepository(db).getOwned(spaceId, templateName) : null;
-  return stored ? spaceAgentTemplateToNodeSource(stored) : null;
+  const effective = resolveEffectiveSpaceAgentTemplate(
+    templateName,
+    spaceId,
+    db ? new SpaceAgentTemplateRepository(db) : undefined
+  );
+  if (!effective) return null;
+  return spaceAgentTemplateToNodeSource(effective, getLongHorizonAgentTemplate(effective.key));
 }
 
 function fallbackBuiltinAgentTemplate(
   templateName: string,
-  exact: NodeAgentTemplateSource | null
+  exact: NodeAgentTemplateSource | null,
+  hiddenKeys: ReadonlySet<string>
 ): NodeAgentTemplateSource | null {
   if (exact) return exact;
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
   ) as NodeAgentTemplateSource | undefined;
-  return builtIn ?? null;
+  if (!builtIn || hiddenKeys.has(builtIn.key)) return null;
+  return builtIn;
+}
+
+function resolveHiddenBuiltInKeys(
+  db: BunDatabase | undefined,
+  spaceId: string
+): ReadonlySet<string> {
+  return db ? new SpaceAgentTemplateRepository(db).hiddenBuiltInKeys(spaceId) : new Set();
 }
 
 const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
   .input(['templateName', 'db', 'spaceId'])
   .pipe(resolveExactAgentTemplate, ['db', 'templateName', 'spaceId'], 'exact')
-  .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact'], 'template')
+  .pipe(resolveHiddenBuiltInKeys, ['db', 'spaceId'], 'hiddenKeys')
+  .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact', 'hiddenKeys'], 'template')
   .end('template') as (
   templateName: string,
   db: BunDatabase | undefined,
@@ -395,12 +410,6 @@ export async function updateAgentTemplate(
 ): Promise<ToolResult> {
   const { spaceId, logAudit, requireTemplateManager } = deps;
   try {
-    if (getLongHorizonAgentTemplate(args.key)) {
-      return jsonResult({
-        success: false,
-        error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/agents/long-horizon-templates.ts)`,
-      });
-    }
     const result = await requireTemplateManager().casUpdateIn(
       spaceId,
       args.key,

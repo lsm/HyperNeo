@@ -76,16 +76,19 @@ vi.mock('../../ui/Modal.tsx', () => ({
     onClose,
     title,
     children,
+    footer,
   }: {
     isOpen: boolean;
     onClose: () => void;
     title: string;
     children: import('preact').ComponentChildren;
+    footer?: import('preact').ComponentChildren;
   }) =>
     isOpen ? (
       <div data-testid="modal">
         <h2 data-testid="modal-title">{title}</h2>
         <div data-testid="modal-content">{children}</div>
+        {footer && <div data-testid="modal-footer">{footer}</div>}
         <button data-testid="modal-close" onClick={onClose}>
           Close
         </button>
@@ -126,15 +129,24 @@ vi.mock('../../ui/ConfirmModal.tsx', () => ({
 }));
 
 vi.mock('../SettingsSection.tsx', () => ({
+  SettingsGroup: ({ children }: { children: import('preact').ComponentChildren }) => (
+    <div data-testid="settings-group">{children}</div>
+  ),
   SettingsSection: ({
     title,
+    description,
+    actions,
     children,
   }: {
     title: string;
+    description?: string;
+    actions?: import('preact').ComponentChildren;
     children: import('preact').ComponentChildren;
   }) => (
     <div data-testid="settings-section">
       <h3>{title}</h3>
+      {description && <p>{description}</p>}
+      {actions && <div>{actions}</div>}
       <div>{children}</div>
     </div>
   ),
@@ -167,6 +179,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     onClick,
     disabled,
     loading,
+    ...rest
   }: {
     children: import('preact').ComponentChildren;
     variant?: string;
@@ -175,6 +188,7 @@ vi.mock('../../ui/Button.tsx', () => ({
     onClick?: () => void;
     disabled?: boolean;
     loading?: boolean;
+    [key: string]: unknown;
   }) => (
     <button
       data-testid={`button-${variant ?? 'primary'}`}
@@ -182,6 +196,7 @@ vi.mock('../../ui/Button.tsx', () => ({
       type={type ?? 'button'}
       disabled={disabled ?? loading}
       onClick={onClick}
+      {...rest}
     >
       {loading && <span data-testid="button-loading">Loading...</span>}
       {children}

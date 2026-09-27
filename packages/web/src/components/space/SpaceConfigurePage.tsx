@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lazy, Suspense } from 'preact/compat';
+import { Tab, TabGroup, TabList } from '@hyperneo/ui';
 import type { Space, SpaceWorkflow } from '@hyperneo/shared';
-import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@hyperneo/ui';
 import { spaceStore } from '../../lib/space-store';
-import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
+import { currentSpaceIdSignal, currentSpaceSettingsTabSignal } from '../../lib/signals';
+import type { SpaceSettingsTab } from '../../lib/signals';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
-import { GLASS_TAB_PILL_CLASS, GLASS_TAB_STRIP_CLASS, GlassTabStrip } from './glass-workspace';
 
 const SpaceSettings = lazy(() =>
   import('./SpaceSettings').then((m) => ({ default: m.SpaceSettings }))
@@ -26,15 +26,14 @@ const lazyFallback = (
   </div>
 );
 
-type ConfigureTab = 'workflows' | 'settings';
-
-const CONFIGURE_TABS: Array<{
-  id: ConfigureTab;
-  label: string;
-  count: (args: { workflowCount: number }) => number;
-}> = [
-  { id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
-  { id: 'settings', label: 'General', count: () => 1 },
+const CONFIGURE_TABS: Array<{ id: SpaceSettingsTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'runtime', label: 'Runtime' },
+  { id: 'tools', label: 'Tools' },
+  { id: 'events', label: 'Events' },
+  { id: 'agent-templates', label: 'Agents' },
+  { id: 'workflow-templates', label: 'Workflows' },
+  { id: 'advanced', label: 'Advanced' },
 ];
 
 interface SpaceConfigurePageProps {
@@ -45,8 +44,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const workflows = spaceStore.workflows.value;
   const configLoaded = spaceStore.configDataLoaded.value;
 
-  const activeTab = currentSpaceConfigureTabSignal.value;
-  const effectiveTab: ConfigureTab = activeTab === 'settings' ? 'settings' : 'workflows';
+  const activeTab = currentSpaceSettingsTabSignal.value;
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -88,10 +86,9 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   }, [workflowEditId, workflowVersion]);
 
   const showWorkflowEditor =
-    effectiveTab === 'workflows' &&
+    activeTab === 'workflow-templates' &&
     workflowEditId !== null &&
     (workflowEditId === 'new' || editingWorkflow !== undefined);
-  const selectedIndex = CONFIGURE_TABS.findIndex((tab) => tab.id === effectiveTab);
 
   if (!configLoaded) {
     return (
@@ -106,65 +103,34 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
       <div class="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 sm:px-6">
         {!showWorkflowEditor && (
           <TabGroup
-            class="flex min-h-0 flex-1 flex-col"
-            selectedIndex={selectedIndex}
+            class="mb-4 self-start"
+            selectedIndex={Math.max(
+              0,
+              CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)
+            )}
             onChange={(index: number) =>
-              navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'workflows')
+              navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'general')
             }
           >
-            <GlassTabStrip>
-              <TabList class={GLASS_TAB_STRIP_CLASS} data-testid="space-configure-tab-bar">
-                {CONFIGURE_TABS.map((tab) => (
-                  <Tab
-                    key={tab.id}
-                    data-testid={`space-configure-tab-${tab.id}`}
-                    class={cn(
-                      GLASS_TAB_PILL_CLASS,
-                      effectiveTab === tab.id
-                        ? 'bg-accent/15 text-accent-soft'
-                        : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
-                    )}
-                  >
-                    <span>{tab.label}</span>
-                    <span
-                      class={cn(
-                        'shrink-0 rounded-full px-1.5 py-px text-xs',
-                        effectiveTab === tab.id
-                          ? 'bg-fill text-accent-soft'
-                          : 'bg-fill-soft text-fg-muted'
-                      )}
-                    >
-                      {tab.count({ workflowCount: workflows.length })}
-                    </span>
-                  </Tab>
-                ))}
-              </TabList>
-            </GlassTabStrip>
-
-            <TabPanels class="min-h-0 flex-1 overflow-hidden">
-              <TabPanel class="h-full min-h-0 overflow-hidden">
-                <Suspense fallback={lazyFallback}>
-                  <div class="h-full min-h-0 pt-4">
-                    <WorkflowList
-                      spaceId={space.id}
-                      spaceName={space.name}
-                      workflows={workflows}
-                      onCreateWorkflow={() => setWorkflowEditId('new')}
-                      onEditWorkflow={(id) => setWorkflowEditId(id)}
-                    />
-                  </div>
-                </Suspense>
-              </TabPanel>
-              <TabPanel class="h-full min-h-0 overflow-hidden">
-                <Suspense fallback={lazyFallback}>
-                  <SpaceSettings space={space} />
-                </Suspense>
-              </TabPanel>
-            </TabPanels>
+            <TabList
+              class="st-tabs"
+              data-testid="space-configure-tab-bar"
+              aria-label="Configure sections"
+            >
+              {CONFIGURE_TABS.map((tab) => (
+                <Tab
+                  key={tab.id}
+                  class={cn('st-tab', activeTab === tab.id && 'st-tab-on')}
+                  data-testid={`space-configure-tab-${tab.id}`}
+                >
+                  {tab.label}
+                </Tab>
+              ))}
+            </TabList>
           </TabGroup>
         )}
 
-        {showWorkflowEditor && (
+        {showWorkflowEditor ? (
           <Suspense fallback={lazyFallback}>
             <div class="min-h-0 flex-1 overflow-hidden">
               <VisualWorkflowEditor
@@ -174,6 +140,22 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                 onCancel={() => setWorkflowEditId(null)}
               />
             </div>
+          </Suspense>
+        ) : activeTab === 'workflow-templates' ? (
+          <Suspense fallback={lazyFallback}>
+            <div class="h-full min-h-0 pt-4">
+              <WorkflowList
+                spaceId={space.id}
+                spaceName={space.name}
+                workflows={workflows}
+                onCreateWorkflow={() => setWorkflowEditId('new')}
+                onEditWorkflow={(id) => setWorkflowEditId(id)}
+              />
+            </div>
+          </Suspense>
+        ) : (
+          <Suspense fallback={lazyFallback}>
+            <SpaceSettings space={space} tab={activeTab} />
           </Suspense>
         )}
       </div>

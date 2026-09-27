@@ -19,7 +19,7 @@ import {
   buildUpdateSpaceAgentPipeline,
   type UpdateSpaceAgentInput,
 } from '../agents/update-agent-pipeline.ts';
-import { getBuiltInSpaceAgentTemplates } from '../agents/template-manager.ts';
+import { resolveEffectiveSpaceAgentTemplate } from '../agents/template-manager.ts';
 import type { WorktreeCommitStatus, WorktreeMetadata } from '@hyperneo/shared';
 import { isCloneChoice, type ResolveClones } from '../session/clone-cascade.ts';
 import {
@@ -40,7 +40,7 @@ export interface SessionLookup {
 
 export interface SpaceAgentV2Deps {
   agents: SpaceAgentRepository;
-  templates: Pick<SpaceAgentTemplateRepository, 'getOwned'>;
+  templates: Pick<SpaceAgentTemplateRepository, 'getOwned' | 'hiddenBuiltInKeys'>;
   spaceExists(spaceId: string): Promise<boolean>;
   getSession(sessionId: string): SessionLookup | null;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -129,10 +129,7 @@ function requireString(value: unknown, field: string): string {
 export function resolveTemplate(
   deps: SpaceAgentV2Deps
 ): (spaceId: string, key: string) => ReturnType<SpaceAgentTemplateRepository['getOwned']> {
-  const builtIns = new Map(
-    getBuiltInSpaceAgentTemplates().map((template) => [template.key, template])
-  );
-  return (spaceId, key) => builtIns.get(key) ?? deps.templates.getOwned(spaceId, key);
+  return (spaceId, key) => resolveEffectiveSpaceAgentTemplate(key, spaceId, deps.templates);
 }
 
 export function buildAgentCreate(

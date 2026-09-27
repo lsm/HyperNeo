@@ -20,4 +20,16 @@ export function createSpaceAgentTemplatesTable(db: BunDatabase): void {
       updated_at INTEGER NOT NULL
     )
   `);
+  createSpaceAgentTemplateHidesTable(db);
+}
+
+export function createSpaceAgentTemplateHidesTable(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_template_hides (
+      space_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (space_id, key)
+    )
+  `);
 }

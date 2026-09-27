@@ -28,6 +28,12 @@ describe('TemplateDeleteDialog', () => {
     expect(getByText(/Delete template "Researcher"\?/)).toBeTruthy();
   });
 
+  it('warns that saved workflows must be re-pointed when hiding a built-in', () => {
+    const { getByText } = renderDialog({ hidesBuiltIn: true });
+
+    expect(getByText(/Saved workflows still naming this template must be re-pointed/)).toBeTruthy();
+  });
+
   it('confirms through the supplied handler', () => {
     const { props, getByTestId } = renderDialog();
 

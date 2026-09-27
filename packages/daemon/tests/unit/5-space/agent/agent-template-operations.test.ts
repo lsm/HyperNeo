@@ -182,13 +182,18 @@ describe('the agent.template.update operation', () => {
     );
   });
 
-  test('a built-in template key is rejected', async () => {
+  test('updating a built-in key materializes a space-level customization', async () => {
     const outcome = await run('agent.template.update', {
       key: 'worker.swe',
-      displayName: 'Nope',
+      displayName: 'Space SWE',
     });
-    expect(outcome.value?.reason).toBe('template_rejected');
-    expect(outcome.value?.message).toContain('built-in');
+    expect(outcome.value?.template).toMatchObject({ key: 'worker.swe', displayName: 'Space SWE' });
+    expect(templateRepo.getOwned(spaceId, 'worker.swe')?.displayName).toBe('Space SWE');
+
+    const entries = (await run('agent.template.list', {})).value?.templates ?? [];
+    const swe = entries.find((entry) => entry.templateName === 'worker.swe');
+    expect(swe?.builtin).toBe(true);
+    expect(swe?.version).toBeGreaterThan(0);
   });
 });
 
@@ -204,6 +209,18 @@ describe('the agent.template.delete operation', () => {
     const outcome = await run('agent.template.delete', { key: 'worker.swe' });
     expect(outcome.value?.reason).toBe('template_rejected');
     expect(outcome.value?.message).toContain('cannot be deleted');
+  });
+
+  test('deleting a customization of a built-in restores the shipped default', async () => {
+    await run('agent.template.update', { key: 'worker.swe', displayName: 'Space SWE' });
+    const outcome = await run('agent.template.delete', { key: 'worker.swe' });
+    expect(outcome.value?.deleted).toBe('worker.swe');
+    expect(templateRepo.getOwned(spaceId, 'worker.swe')).toBeNull();
+
+    const entries = (await run('agent.template.list', {})).value?.templates ?? [];
+    const swe = entries.find((entry) => entry.templateName === 'worker.swe');
+    expect(swe).toMatchObject({ builtin: true, version: null });
+    expect(swe?.displayName).not.toBe('Space SWE');
   });
 
   test('a space below autonomy level 4 is refused and the template survives', async () => {
@@ -296,6 +313,29 @@ describe('the agent.template.instantiate operation', () => {
     const reminders = reminderRepo.listReminders(agentId);
     expect(reminders.map((reminder) => reminder.title)).toEqual(['Review Space work']);
     expect(reminders[0]?.createdBySession).toBe(MEMBER_SESSION);
+  });
+
+  test('a customized built-in still seeds its reminder defaults', async () => {
+    const updated = await run('agent.template.update', {
+      key: 'space-manager.default',
+      displayName: 'Tuned Manager',
+    });
+    expect(updated.value?.template).toMatchObject({
+      key: 'space-manager.default',
+      displayName: 'Tuned Manager',
+    });
+    expect(templateRepo.getOwned(spaceId, 'space-manager.default')?.displayName).toBe(
+      'Tuned Manager'
+    );
+
+    const outcome = await run('agent.template.instantiate', {
+      templateName: 'space-manager.default',
+    });
+    const agentId = String(outcome.value?.agent?.id);
+    expect(outcome.value?.seededReminders).toEqual([{ title: 'Review Space work' }]);
+    expect(reminderRepo.listReminders(agentId).map((reminder) => reminder.title)).toEqual([
+      'Review Space work',
+    ]);
   });
 
   test('an unknown template key is rejected with template_rejected', async () => {

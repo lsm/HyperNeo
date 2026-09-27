@@ -524,6 +524,23 @@ describe('SpaceStore — space selection', () => {
     expect(spaceStore.agentListState.value).toBe('loaded');
   });
 
+  it('a failing built-in template keys fetch does not stall the config load', async () => {
+    await spaceStore.selectSpace('space-1');
+    const base = mockHub.request.getMockImplementation() as
+      | ((method: string, params?: Record<string, unknown>) => Promise<unknown>)
+      | undefined;
+    mockHub.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'spaceAgentTemplate.listBuiltIn') throw new Error('keys unavailable');
+      return (await base?.(method, params)) as never;
+    });
+
+    await spaceStore.ensureConfigData();
+
+    expect(spaceStore.configDataLoaded.value).toBe(true);
+    expect(spaceStore.builtInTemplateKeys.value).toEqual(new Set());
+    mockHub.request.mockImplementation(base as never);
+  });
+
   it('reports an agent fetch failure and recovers after a successful retry', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockRejectedValueOnce(new Error('agent list unavailable'));
@@ -544,15 +561,30 @@ describe('SpaceStore — space selection', () => {
       makeAgentTemplate({ key: 'worker.swe', labels: ['workflow-worker'] }),
       makeAgentTemplate({ key: 'scribe', displayName: 'Scribe' }),
     ];
+    mockHub.request.mockImplementation((method: string) => {
+      if (method === 'spaceAgentTemplate.listBuiltIn') {
+        return Promise.resolve({ templates: [{ key: 'worker.swe' }] });
+      }
+      if (method === 'spaceAgentTemplate.list') {
+        return Promise.resolve({
+          templates: templateListResult ?? [],
+          hiddenBuiltIns: [makeAgentTemplate({ key: 'worker.qa', displayName: 'QA Worker' })],
+        });
+      }
+      return Promise.resolve({});
+    });
 
     await spaceStore.ensureConfigData();
 
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calledMethods).not.toContain('spaceAgentTemplate.listBuiltIn');
+    expect(calledMethods).toContain('spaceAgentTemplate.listBuiltIn');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['worker.swe', 'scribe']);
     expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe');
     expect(spaceStore.agentTemplates.value[1].labels).toEqual([]);
+    expect(spaceStore.builtInTemplateKeys.value.has('worker.swe')).toBe(true);
+    expect(spaceStore.builtInTemplateKeys.value.has('scribe')).toBe(false);
+    expect(spaceStore.hiddenBuiltInTemplates.value.map((t) => t.key)).toEqual(['worker.qa']);
   });
 
   it('ensureConfigData() is idempotent — second call is a no-op', async () => {

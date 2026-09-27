@@ -836,6 +836,50 @@ describe('Space Export/Import RPC Handlers', () => {
       ).not.toBeNull();
     });
 
+    it('copies a built-in override the exporting Space customized', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'worker.swe',
+        handle: 'swe',
+        displayName: 'Tuned SWE',
+        instructions: 'Tuned SWE instructions.',
+      });
+      const bundle = {
+        version: 6,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        exportedFrom: OTHER_SPACE_ID,
+        agents: [],
+        workflows: [
+          {
+            version: 6,
+            type: 'workflow',
+            name: 'SWE Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'swe' }],
+                name: 'Build',
+              },
+            ],
+            startNode: 'Build',
+            tags: [],
+          },
+        ],
+      };
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      await call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle });
+
+      const copied = repo.getOwned(SPACE_ID, 'worker.swe');
+      expect(copied?.instructions).toBe('Tuned SWE instructions.');
+    });
+
     it('leaves a template the destination Space already owns untouched', async () => {
       const repo = new SpaceAgentTemplateRepository(db);
       repo.createOwned(OTHER_SPACE_ID, {

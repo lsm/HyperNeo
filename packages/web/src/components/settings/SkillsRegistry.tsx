@@ -3,7 +3,7 @@ import type { AppSkill } from '@hyperneo/shared';
 import { useSkills } from '../../hooks/useSkills';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
-import { SettingsSection, SettingsToggle } from './SettingsSection';
+import { SettingsGroup, SettingsSection, SettingsToggle } from './SettingsSection';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
@@ -81,34 +81,26 @@ export function SkillsRegistry() {
 
   return (
     <>
-      <SettingsSection title="Skills">
-        <div class="mb-4">
-          <p class="text-xs text-fg-faint mb-3">
-            Application-level skills are available to any space or session. Built-in skills ship
-            with HyperNeo; plugin and MCP server skills can be added from external sources.
-          </p>
-          <div class="flex gap-2">
-            <Button variant="primary" size="sm" onClick={() => setShowAddDialog(true)}>
-              Add Skill
-            </Button>
+      <SettingsSection
+        title="Skills"
+        description="Application-level skills are available to any space or session. Built-in skills ship with HyperNeo; plugin and MCP server skills can be added from external sources."
+        actions={
+          <>
             <Button variant="secondary" size="sm" onClick={() => setShowInstallFromGitDialog(true)}>
               Install from Git
             </Button>
-          </div>
-        </div>
-
+            <Button variant="primary" size="sm" onClick={() => setShowAddDialog(true)}>
+              Add Skill
+            </Button>
+          </>
+        }
+      >
         {skillsList.length === 0 ? (
           <div class="text-sm text-fg-faint py-4">No skills added yet. Add your first skill.</div>
         ) : (
-          <div class="space-y-2">
+          <SettingsGroup>
             {skillsList.map((skill) => (
-              <div
-                key={skill.id}
-                class={cn(
-                  'flex items-center justify-between gap-3 py-3 px-3',
-                  'bg-surface-raised/50 rounded-lg border border-line'
-                )}
-              >
+              <div key={skill.id} class="flex items-center justify-between gap-3 px-4 py-3">
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <div class="text-sm text-fg-soft font-medium truncate">{skill.displayName}</div>
@@ -175,7 +167,7 @@ export function SkillsRegistry() {
                 </div>
               </div>
             ))}
-          </div>
+          </SettingsGroup>
         )}
       </SettingsSection>
 

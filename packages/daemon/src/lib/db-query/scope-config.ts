@@ -171,6 +171,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
       'Agent templates this space owns — the prefilled creation form for its agents, with handle, instructions, model, tools, and labels. Built-in templates live in code and are not rows here.',
   },
   {
+    tableName: 'space_agent_template_hides',
+    scopeColumn: 'space_id',
+    blacklistedColumns: [],
+    description:
+      'Built-in agent template keys this space has hidden from its template library. Restore removes the row.',
+  },
+  {
     tableName: 'space_workflows',
     scopeColumn: 'space_id',
     blacklistedColumns: COLUMN_BLACKLISTS.space_workflows,

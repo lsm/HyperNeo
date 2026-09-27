@@ -1,4 +1,4 @@
-import { SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import {
   commandRegistry,
   categoryLabel,
@@ -21,33 +21,22 @@ function groupedCommands(): Array<[string, CommandDescriptor[]]> {
 export function ShortcutsSettings() {
   const groups = groupedCommands();
   return (
-    <SettingsSection title="Keyboard Shortcuts">
-      <p class="text-sm text-fg-muted mb-4">
-        Press{' '}
-        <kbd class="px-1.5 py-0.5 text-xs font-mono rounded bg-fill-strong border border-line-strong">
-          ⌘K
-        </kbd>{' '}
-        (or{' '}
-        <kbd class="px-1.5 py-0.5 text-xs font-mono rounded bg-fill-strong border border-line-strong">
-          Ctrl+K
-        </kbd>
-        ) to open the command palette and run any command.
-      </p>
+    <SettingsSection
+      title="Keyboard Shortcuts"
+      description="Press ⌘K (or Ctrl+K) to open the command palette and run any command."
+    >
       {groups.length === 0 ? (
         <p class="text-sm text-fg-faint">No shortcuts registered.</p>
       ) : (
         <div class="space-y-6">
           {groups.map(([category, cmds]) => (
             <div key={category}>
-              <h3 class="text-xs font-semibold text-fg-faint uppercase tracking-wider mb-2">
+              <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2 px-1">
                 {category}
               </h3>
-              <ul class="divide-y divide-line rounded-lg border border-line overflow-hidden">
+              <SettingsGroup>
                 {cmds.map((cmd) => (
-                  <li
-                    key={cmd.id}
-                    class="flex items-center justify-between px-3 py-2 bg-surface-raised/40"
-                  >
+                  <li key={cmd.id} class="flex items-center justify-between px-4 py-2.5">
                     <div class="min-w-0">
                       <div class="text-sm text-fg-soft truncate">{cmd.label}</div>
                       {cmd.description && (
@@ -61,7 +50,7 @@ export function ShortcutsSettings() {
                     )}
                   </li>
                 ))}
-              </ul>
+              </SettingsGroup>
             </div>
           ))}
         </div>

@@ -29,7 +29,6 @@ const {
 let mockNavSectionSignal!: Signal<'chats' | 'spaces' | 'settings'>;
 let mockContextPanelOpenSignal!: Signal<boolean>;
 let mockCurrentSpaceIdSignal!: Signal<string | null>;
-let mockCurrentSpaceConfigureTabSignal!: Signal<'agents' | 'workflows' | 'settings'>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTasksFilterTabSignal!: Signal<
   'action' | 'active' | 'completed' | 'archived' | 'draft'
@@ -66,7 +65,6 @@ function initSignals() {
   mockNavSectionSignal = signal('spaces');
   mockContextPanelOpenSignal = signal(true);
   mockCurrentSpaceIdSignal = signal('space-1');
-  mockCurrentSpaceConfigureTabSignal = signal('agents');
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTasksFilterTabSignal = signal('active');
   mockCurrentSpaceViewModeSignal = signal('overview');
@@ -156,9 +154,6 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
     },
-    get currentSpaceConfigureTabSignal() {
-      return mockCurrentSpaceConfigureTabSignal;
-    },
     get currentSpaceSessionIdSignal() {
       return mockCurrentSpaceSessionIdSignal;
     },
@@ -219,7 +214,7 @@ describe('ContextPanel', () => {
     ['overview', mockNavigateToSpace, ['space-2']],
     ['goals', mockNavigateToSpaceGoals, ['space-2']],
     ['tasks', mockNavigateToSpaceTasks, ['space-2', 'active']],
-    ['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
+    ['configure', mockNavigateToSpaceConfigure, ['space-2', 'general']],
   ] as const)(
     'preserves the %s view mode when switching spaces',
     (viewMode, expectedNavigate, args) => {
@@ -235,6 +230,23 @@ describe('ContextPanel', () => {
     }
   );
 
+  it('preserves the current configure tab when switching spaces from configure', async () => {
+    const { currentSpaceSettingsTabSignal } = await import('../../lib/signals.ts');
+    currentSpaceSettingsTabSignal.value = 'workflow-templates';
+    try {
+      mockCurrentSpaceViewModeSignal.value = 'configure';
+      mockCurrentSpaceIdSignal.value = null;
+      render(<ContextPanel />);
+
+      fireEvent.click(screen.getByText('Beta'));
+
+      expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-2', 'workflow-templates');
+      expect(mockContextPanelOpenSignal.value).toBe(false);
+    } finally {
+      currentSpaceSettingsTabSignal.value = 'general';
+    }
+  });
+
   it('preserves the current task filter when switching spaces from tasks', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';
     mockCurrentSpaceTasksFilterTabSignal.value = 'completed';
@@ -244,18 +256,6 @@ describe('ContextPanel', () => {
     fireEvent.click(screen.getByText('Beta'));
 
     expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-2', 'completed');
-    expect(mockContextPanelOpenSignal.value).toBe(false);
-  });
-
-  it('preserves the current configure subtab when switching spaces from configure', () => {
-    mockCurrentSpaceViewModeSignal.value = 'configure';
-    mockCurrentSpaceConfigureTabSignal.value = 'workflows';
-    mockCurrentSpaceIdSignal.value = null;
-    render(<ContextPanel />);
-
-    fireEvent.click(screen.getByText('Beta'));
-
-    expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-2', 'workflows');
     expect(mockContextPanelOpenSignal.value).toBe(false);
   });
 

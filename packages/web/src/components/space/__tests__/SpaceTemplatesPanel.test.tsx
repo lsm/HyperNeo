@@ -27,7 +27,8 @@ function renderPanel(overrides: Partial<Parameters<typeof SpaceTemplatesPanel>[0
     spaceId: 'space-1',
     templates: [makeTemplate('researcher.v1')],
     userTemplateKeys: new Set<string>(),
-    onUseTemplate: vi.fn(),
+    builtInTemplateKeys: new Set<string>(),
+    hiddenBuiltIns: [],
     ...overrides,
   };
   return { props, ...render(<SpaceTemplatesPanel {...props} />) };
@@ -75,13 +76,13 @@ describe('SpaceTemplatesPanel', () => {
     expect(getByTestId('agent-template-count').textContent).toBe('2');
   });
 
-  it('groups templates by label', () => {
-    const { getByTestId } = renderPanel({
+  it('shows template labels as chips on the row', () => {
+    const { getByText, queryByText } = renderPanel({
       templates: [makeTemplate('w', ['workflow-worker']), makeTemplate('c')],
     });
 
-    expect(getByTestId('agent-template-group-workflow-worker')).toBeTruthy();
-    expect(getByTestId('agent-template-group-custom')).toBeTruthy();
+    expect(getByText('workflow-worker')).toBeTruthy();
+    expect(queryByText('long-horizon')).toBeNull();
   });
 
   it('stacks templates as list rows rather than a multi-column card grid', () => {
@@ -89,25 +90,15 @@ describe('SpaceTemplatesPanel', () => {
       templates: [makeTemplate('a'), makeTemplate('b')],
     });
 
-    const rows = getByTestId('agent-template-group-custom').lastElementChild as HTMLElement;
+    const rows = getByTestId('agent-template-list');
     expect(rows.children).toHaveLength(2);
     expect(rows.className).not.toContain('grid');
   });
 
-  it('hands a clicked template back to the host rather than handling it', () => {
-    const { props, getByText } = renderPanel();
-
-    fireEvent.click(getByText('researcher.v1'));
-
-    expect(props.onUseTemplate).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'researcher.v1' })
-    );
-  });
-
   it('opens its own editor for a new template', () => {
-    const { getByText, getByTestId } = renderPanel();
+    const { getByTestId } = renderPanel();
 
-    fireEvent.click(getByText('New Template'));
+    fireEvent.click(getByTestId('new-template-button'));
 
     expect(getByTestId('template-editor').textContent).toBe('new');
   });

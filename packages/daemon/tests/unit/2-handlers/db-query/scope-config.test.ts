@@ -54,6 +54,7 @@ describe('scope-config', () => {
       expect(names).toEqual([
         'space_long_horizon_agents',
         'space_agent_templates',
+        'space_agent_template_hides',
         'space_workflows',
         'space_workflow_nodes',
         'space_workflow_runs',
@@ -87,7 +88,7 @@ describe('scope-config', () => {
         'session_groups',
         'session_group_members',
       ]);
-      expect(names).toHaveLength(34);
+      expect(names).toHaveLength(35);
     });
 
     it('all table configs have a description', () => {

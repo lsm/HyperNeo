@@ -463,6 +463,35 @@ describe('SpaceRepository', () => {
       expect(repo.deleteSpace('nonexistent')).toBe(false);
     });
 
+    it('removes the built-in hides the deleted space recorded', () => {
+      db.exec(`
+        CREATE TABLE space_agent_template_hides (
+          space_id TEXT NOT NULL DEFAULT '',
+          key TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (space_id, key)
+        )
+      `);
+      const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+      const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
+      const seedHide = db.prepare(
+        `INSERT INTO space_agent_template_hides (space_id, key, created_at) VALUES (?, 'worker.swe', 1)`
+      );
+      seedHide.run(deleted.id);
+      seedHide.run(kept.id);
+
+      repo.deleteSpace(deleted.id);
+
+      const owners = (
+        db
+          .prepare(`SELECT space_id FROM space_agent_template_hides ORDER BY space_id`)
+          .all() as Array<{
+          space_id: string;
+        }>
+      ).map((row) => row.space_id);
+      expect(owners).toEqual([kept.id]);
+    });
+
     it('removes the templates and version counters the deleted space owned', () => {
       db.exec(`
         CREATE TABLE space_agent_templates (

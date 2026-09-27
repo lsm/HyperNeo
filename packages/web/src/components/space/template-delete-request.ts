@@ -7,6 +7,7 @@ import { toast } from '../../lib/toast';
 export interface TemplateDeleteRequest {
   spaceId: string;
   template: SpaceLongHorizonAgentTemplate;
+  hidesBuiltIn: boolean;
   busy: boolean;
   error: string | null;
 }
@@ -56,7 +57,18 @@ export const decideTemplateDelete = (superpipe({})('template-delete') as Pipelin
 
 export function openTemplateDelete(spaceId: string, template: SpaceLongHorizonAgentTemplate): void {
   if (templateDeleteRequest.value?.busy) return;
-  templateDeleteRequest.value = { spaceId, template, busy: false, error: null };
+  templateDeleteRequest.value = {
+    spaceId,
+    template,
+    hidesBuiltIn: false,
+    busy: false,
+    error: null,
+  };
+}
+
+export function openTemplateHide(spaceId: string, template: SpaceLongHorizonAgentTemplate): void {
+  if (templateDeleteRequest.value?.busy) return;
+  templateDeleteRequest.value = { spaceId, template, hidesBuiltIn: true, busy: false, error: null };
 }
 
 export function closeTemplateDelete(): void {
@@ -76,12 +88,22 @@ export async function runTemplateDelete(): Promise<void> {
   const pending = decision.request;
   templateDeleteRequest.value = { ...pending, busy: true, error: null };
   try {
-    await spaceStore.deleteTemplate(pending.template.key, pending.template.version);
-    toast.success(`"${pending.template.displayName}" deleted`);
+    if (pending.hidesBuiltIn) {
+      await spaceStore.hideBuiltInTemplate(pending.template.key);
+      toast.success(`"${pending.template.displayName}" hidden for this space`);
+    } else {
+      await spaceStore.deleteTemplate(pending.template.key, pending.template.version);
+      toast.success(`"${pending.template.displayName}" deleted`);
+    }
     templateDeleteRequest.value = null;
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to delete template';
+    const fallback = pending.hidesBuiltIn ? 'Failed to hide template' : 'Failed to delete template';
+    const message = err instanceof Error ? err.message : fallback;
     templateDeleteRequest.value = { ...pending, busy: false, error: message };
-    toast.error(`Could not delete "${pending.template.displayName}": ${message}`);
+    toast.error(
+      pending.hidesBuiltIn
+        ? `Could not hide "${pending.template.displayName}": ${message}`
+        : `Could not delete "${pending.template.displayName}": ${message}`
+    );
   }
 }

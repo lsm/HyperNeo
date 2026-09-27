@@ -95,7 +95,13 @@ describe('template delete request', () => {
   });
 
   describe('decideTemplateDelete', () => {
-    const request = { spaceId: 'space-1', template: makeTemplate('a'), busy: false, error: null };
+    const request = {
+      spaceId: 'space-1',
+      template: makeTemplate('a'),
+      hidesBuiltIn: false,
+      busy: false,
+      error: null,
+    };
 
     it('runs when a request is idle and its Space is active', () => {
       expect(decideTemplateDelete(request, 'space-1')).toEqual({ kind: 'run', request });

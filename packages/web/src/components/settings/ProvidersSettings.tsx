@@ -19,7 +19,7 @@ import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
 import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
-import { SettingsSection } from './SettingsSection.tsx';
+import { SettingsGroup, SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
 import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
@@ -801,17 +801,16 @@ export function ProvidersSettings() {
 
   return (
     <>
-      <SettingsSection title="Providers">
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <p class="text-sm text-fg-muted">
-              Manage AI providers. Enable, disable, and configure authentication.
-            </p>
-            <Button size="sm" variant="primary" onClick={() => setShowAddModal(true)}>
-              Add Provider
-            </Button>
-          </div>
-
+      <SettingsSection
+        title="Providers"
+        description="Manage AI providers. Enable, disable, and configure authentication."
+        actions={
+          <Button size="sm" variant="primary" onClick={() => setShowAddModal(true)}>
+            Add Provider
+          </Button>
+        }
+      >
+        <div class="space-y-4">
           {(credentialStore?.backend === 'keychain-unavailable' ||
             credentialStore?.backend === 'keychain-fallback') && (
             <div
@@ -890,7 +889,7 @@ export function ProvidersSettings() {
           ) : null}
 
           {providers.length > 0 && (
-            <div class="space-y-2">
+            <SettingsGroup>
               {providers.map((provider) => {
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
@@ -921,10 +920,7 @@ export function ProvidersSettings() {
                 );
 
                 return (
-                  <div
-                    key={provider.id}
-                    class="rounded-lg border border-line bg-fill-soft overflow-hidden"
-                  >
+                  <div key={provider.id} class="overflow-hidden">
                     <div
                       class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-fill-soft transition-colors"
                       onClick={() => setExpandedId(isExpanded ? null : provider.id)}
@@ -1348,7 +1344,7 @@ export function ProvidersSettings() {
                   </div>
                 );
               })}
-            </div>
+            </SettingsGroup>
           )}
         </div>
       </SettingsSection>

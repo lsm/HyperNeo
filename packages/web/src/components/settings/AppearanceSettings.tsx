@@ -1,4 +1,4 @@
-import { SettingsSection, SettingsRow, SettingsSelect } from './SettingsSection.tsx';
+import { SettingsSection, SettingsGroup, SettingsRow, SettingsSelect } from './SettingsSection.tsx';
 import { themeSetting, setTheme, type ThemeSetting } from '../../lib/theme.ts';
 
 const THEME_OPTIONS: Array<{ value: ThemeSetting; label: string }> = [
@@ -10,16 +10,18 @@ const THEME_OPTIONS: Array<{ value: ThemeSetting; label: string }> = [
 export function AppearanceSettings() {
   return (
     <SettingsSection title="Appearance">
-      <SettingsRow
-        label="Theme"
-        description="Follow your OS appearance, or pin HyperNeo to a theme."
-      >
-        <SettingsSelect
-          value={themeSetting.value}
-          onChange={(value) => setTheme(value as ThemeSetting)}
-          options={THEME_OPTIONS}
-        />
-      </SettingsRow>
+      <SettingsGroup>
+        <SettingsRow
+          label="Theme"
+          description="Follow your OS appearance, or pin HyperNeo to a theme."
+        >
+          <SettingsSelect
+            value={themeSetting.value}
+            onChange={(value) => setTheme(value as ThemeSetting)}
+            options={THEME_OPTIONS}
+          />
+        </SettingsRow>
+      </SettingsGroup>
     </SettingsSection>
   );
 }

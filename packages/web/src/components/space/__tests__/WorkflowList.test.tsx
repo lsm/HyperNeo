@@ -92,18 +92,18 @@ describe('WorkflowList', () => {
   });
 
   it('renders Workflows heading', () => {
-    const { getByText } = render(<WorkflowList {...defaultProps} />);
-    expect(getByText('0 workflows')).toBeTruthy();
+    const { getByTestId } = render(<WorkflowList {...defaultProps} />);
+    expect(getByTestId('workflow-template-count').textContent).toBe('0');
   });
 
   it('renders Create Workflow button in header', () => {
     const { getByText } = render(<WorkflowList {...defaultProps} />);
-    expect(getByText('Create Workflow')).toBeTruthy();
+    expect(getByText('+ Create Workflow')).toBeTruthy();
   });
 
   it('calls onCreateWorkflow when header Create button clicked', () => {
     const { getByText } = render(<WorkflowList {...defaultProps} />);
-    fireEvent.click(getByText('Create Workflow'));
+    fireEvent.click(getByText('+ Create Workflow'));
     expect(defaultProps.onCreateWorkflow).toHaveBeenCalledOnce();
   });
 

@@ -118,7 +118,7 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
     );
   });
 
-  test('prefers built-in templates over stored templates with colliding keys', async () => {
+  test('a stored override of a built-in key wins the pinned snapshot', async () => {
     templateRepo.createOwned(SPACE_ID, {
       key: 'worker.swe',
       handle: 'swe',
@@ -147,7 +147,8 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
 
     const snapshot = pinnedPayload(run.id).templateSnapshots?.['worker.swe'];
     expect(snapshot?.key).toBe('worker.swe');
-    expect(snapshot?.instructions).not.toBe('Stored instructions.');
+    expect(snapshot?.instructions).toBe('Stored instructions.');
+    expect(snapshot?.displayName).toBe('Stored SWE');
   });
 
   test('keeps the pinned snapshot frozen across later template edits', async () => {

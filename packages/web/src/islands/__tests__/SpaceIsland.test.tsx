@@ -33,7 +33,7 @@ const { configureTabBridge, idBridge } = vi.hoisted(() => ({
 const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
   mockNavigateToSpaceConfigure: vi.fn((_spaceId: string, tab?: string) => {
     if (configureTabBridge.signal) {
-      configureTabBridge.signal.value = tab ?? 'agents';
+      configureTabBridge.signal.value = tab ?? 'general';
     }
   }),
 }));
@@ -61,7 +61,7 @@ const { mockHubRequest, connectMockHub } = vi.hoisted(() => ({
   connectMockHub: { current: null as unknown },
 }));
 
-const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
+const mockCurrentSpaceSettingsTabSignal = signal<string>('general');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
 const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
 const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
@@ -74,18 +74,18 @@ const mockSpaceOverlayPendingTaskIdSignal = signal<string | null>(null);
 const mockSpaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 const mockSpaceOverlayTaskContextSignal = signal<unknown>(null);
 
-configureTabBridge.signal = mockCurrentSpaceConfigureTabSignal;
+configureTabBridge.signal = mockCurrentSpaceSettingsTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
 vi.mock('../../lib/signals', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    get currentSpaceConfigureTabSignal() {
-      return mockCurrentSpaceConfigureTabSignal;
-    },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
+    },
+    get currentSpaceSettingsTabSignal() {
+      return mockCurrentSpaceSettingsTabSignal;
     },
     get currentSpaceCanonicalIdSignal() {
       return mockCurrentSpaceCanonicalIdSignal;
@@ -418,7 +418,7 @@ beforeEach(() => {
   mockSubscribeTaskMessageActivity.mockResolvedValue(undefined);
   mockUnsubscribeTaskMessageActivity.mockClear();
   capturedVisualEditorProps = {};
-  configureTabBridge.signal.value = 'agents';
+  configureTabBridge.signal.value = 'general';
   idBridge.signal.value = null;
   mockCurrentSpaceAgentHandleSignal.value = null;
   mockCurrentSpaceCanonicalIdSignal.value = null;
@@ -523,9 +523,61 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-settings')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
     const configureView = getByTestId('space-configure-view');
     expect(configureView).toBeTruthy();
     expect(configureView.hasAttribute('data-overview-surface')).toBe(false);
+  });
+
+  it('renders the configure tabs including both template tabs', async () => {
+    const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+    await waitFor(
+      () => {
+        expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    for (const tab of [
+      'general',
+      'runtime',
+      'tools',
+      'events',
+      'agent-templates',
+      'workflow-templates',
+      'advanced',
+    ]) {
+      expect(getByTestId(`space-configure-tab-${tab}`)).toBeTruthy();
+    }
+    expect(getByTestId('space-configure-tab-agent-templates').textContent).toContain('Agents');
+    expect(getByTestId('space-configure-tab-workflow-templates').textContent).toContain(
+      'Workflows'
+    );
+  });
+
+  it('moves between configure tabs with the keyboard', async () => {
+    const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+    await waitFor(
+      () => {
+        expect(getByTestId('space-settings')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    const activeTab = getByTestId('space-configure-tab-general');
+    activeTab.focus();
+    fireEvent.keyDown(activeTab, { key: 'ArrowRight' });
+
+    await waitFor(() => {
+      expect(mockCurrentSpaceSettingsTabSignal.value).toBe('runtime');
+    });
+    await waitFor(() => {
+      expect(getByTestId('space-configure-tab-runtime').getAttribute('aria-selected')).toBe('true');
+    });
   });
 });
 
@@ -555,8 +607,8 @@ describe('SpaceIsland — overview content', () => {
   });
 });
 
-describe('SpaceIsland — configure workflow editor', () => {
-  async function renderConfigure() {
+describe('SpaceIsland — workflow templates tab', () => {
+  async function renderWorkflowTemplatesTab() {
     const result = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
     await waitFor(
       () => {
@@ -564,32 +616,15 @@ describe('SpaceIsland — configure workflow editor', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
+    fireEvent.click(result.getByTestId('space-configure-tab-workflow-templates'));
+    await waitFor(() => {
+      expect(result.getByTestId('workflow-list')).toBeTruthy();
+    });
     return result;
   }
 
-  it('renders configure sub-tabs', async () => {
-    const { getByTestId } = await renderConfigure();
-    expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
-    expect(getByTestId('space-configure-tab-workflows')).toBeTruthy();
-    expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
-  });
-
-  it('falls back to the workflows tab for a stale agents tab value', async () => {
-    configureTabBridge.signal.value = 'agents';
-    const { getByTestId } = await renderConfigure();
-    expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
-    fireEvent.click(getByTestId('create-workflow-btn'));
-    await waitFor(() => {
-      expect(getByTestId('visual-workflow-editor')).toBeTruthy();
-    });
-  });
-
-  it('opens the visual editor when creating a workflow', async () => {
-    const result = await renderConfigure();
-    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
-    await waitFor(() => {
-      expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
-    });
+  it('opens the visual editor when creating a workflow template', async () => {
+    const result = await renderWorkflowTemplatesTab();
     fireEvent.click(result.getByTestId('create-workflow-btn'));
     await waitFor(() => {
       expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
@@ -597,12 +632,8 @@ describe('SpaceIsland — configure workflow editor', () => {
     expect(capturedVisualEditorProps.workflow).toBeUndefined();
   });
 
-  it('opens the visual editor when editing a workflow', async () => {
-    const result = await renderConfigure();
-    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
-    await waitFor(() => {
-      expect(result.getByTestId('edit-workflow-btn')).toBeTruthy();
-    });
+  it('opens the visual editor when editing a workflow template', async () => {
+    const result = await renderWorkflowTemplatesTab();
     fireEvent.click(result.getByTestId('edit-workflow-btn'));
     await waitFor(() => {
       expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
@@ -610,26 +641,25 @@ describe('SpaceIsland — configure workflow editor', () => {
     expect((capturedVisualEditorProps.workflow as SpaceWorkflow)?.id).toBe('wf-existing');
   });
 
-  it('hides configure sub-tabs while editing a workflow', async () => {
-    const result = await renderConfigure();
-    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
-    await waitFor(() => {
-      expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
-    });
+  it('hides the configure tab strip while editing a workflow template', async () => {
+    const result = await renderWorkflowTemplatesTab();
     fireEvent.click(result.getByTestId('create-workflow-btn'));
+    await waitFor(() => {
+      expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+    });
     expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
+    expect(result.queryByTestId('workflow-list')).toBeNull();
   });
 
   it('keeps workflow editor open after save', async () => {
-    const result = await renderConfigure();
-    fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
-    await waitFor(() => {
-      expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
-    });
+    const result = await renderWorkflowTemplatesTab();
     fireEvent.click(result.getByTestId('create-workflow-btn'));
+    await waitFor(() => {
+      expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+    });
     fireEvent.click(result.getByTestId('visual-editor-save'));
     expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
-    expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
+    expect(result.queryByTestId('workflow-list')).toBeNull();
   });
 });
 

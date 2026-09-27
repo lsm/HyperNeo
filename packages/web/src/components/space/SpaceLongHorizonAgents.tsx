@@ -9,12 +9,11 @@ import {
 } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { navigateToSpaceAgent } from '../../lib/router';
+import { navigateToSpaceAgent, navigateToSpaceConfigure } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { getSessionSidebarStatus } from '../../lib/session-sidebar-status';
 import { getSpaceSessionUnreadCount } from '../../lib/space-unread';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
-import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { toast } from '../../lib/toast';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -174,19 +173,23 @@ const runAgentSave = (superpipe({})('save-unified-agent') as PipelineAPI)
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
   agent?: SpaceLongHorizonAgent | null;
+  templates?: SpaceLongHorizonAgentTemplate[];
   existingHandles: Set<string>;
   existingNames: Set<string>;
   onSave: () => void;
   onCancel: () => void;
+  onManageTemplates?: () => void;
 }
 
 function AgentEditor({
   template,
   agent,
+  templates = [],
   existingHandles,
   existingNames,
   onSave,
   onCancel,
+  onManageTemplates,
 }: AgentEditorProps) {
   const isEdit = !!agent;
   const [displayName, setDisplayName] = useState(
@@ -216,7 +219,33 @@ function AgentEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
+  const [pickedTemplateKey, setPickedTemplateKey] = useState(template?.key ?? '');
   const extraTools = extraToolsOf(toolsSelection.tools);
+
+  const applyTemplate = (key: string) => {
+    setPickedTemplateKey(key);
+    const next = templates.find((t) => t.key === key) ?? null;
+    if (!next) {
+      setDisplayName('');
+      setHandle('');
+      setInstructions('');
+      setAutonomyLevel(null);
+      setModelPool([]);
+      setToolsSelection({ tools: [], toolsOverridden: false });
+      setSettingSources(null);
+      setExtraToolDraft('');
+      return;
+    }
+    setDisplayName(nextFreeDisplayName(next.displayName, existingNames));
+    setHandle(nextFreeHandle(next.handle, existingHandles));
+    setInstructions(next.instructions ?? '');
+    setAutonomyLevel(next.suggestedAutonomyLevel ?? null);
+    setModelPool(poolFromModelConfig(next));
+    const nextTools = toolPermissionsToolsList(next);
+    setToolsSelection({ tools: nextTools, toolsOverridden: nextTools.length > 0 });
+    setSettingSources(next.settingSources ?? null);
+    setExtraToolDraft('');
+  };
 
   const removeExtraTool = (tool: string) => {
     setToolsSelection((selection) => withoutExtraTool(selection, tool));
@@ -232,10 +261,13 @@ function AgentEditor({
   const handleSave = async () => {
     setSaving(true);
     setError(null);
+    const effectiveTemplate = isEdit
+      ? (template ?? null)
+      : (templates.find((t) => t.key === pickedTemplateKey) ?? template ?? null);
     try {
       await runAgentSave({
         agent: isEdit ? agent : null,
-        template: template ?? null,
+        template: effectiveTemplate,
         form: {
           displayName,
           handle,
@@ -281,6 +313,35 @@ function AgentEditor({
       }
     >
       <div class="space-y-4">
+        {!isEdit && (
+          <FormField label="Template">
+            <div class="flex items-center gap-2">
+              <select
+                value={pickedTemplateKey}
+                onChange={(e) => applyTemplate((e.target as HTMLSelectElement).value)}
+                onInput={(e) => applyTemplate((e.target as HTMLSelectElement).value)}
+                class={FORM_CONTROL_CLASS}
+                data-testid="agent-template-select"
+              >
+                <option value="">Start blank</option>
+                {templates.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.displayName}
+                  </option>
+                ))}
+              </select>
+              {onManageTemplates && (
+                <button
+                  type="button"
+                  onClick={onManageTemplates}
+                  class="flex-shrink-0 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                >
+                  Manage templates
+                </button>
+              )}
+            </div>
+          </FormField>
+        )}
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Name">
             <input
@@ -556,7 +617,6 @@ export function SpaceLongHorizonAgents({
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const agents = spaceStore.agents.value;
   const templates = spaceStore.agentTemplates.value;
-  const userTemplateKeys = spaceStore.userTemplateKeys.value;
   const loading = !spaceStore.configDataLoaded.value;
 
   useEffect(() => {
@@ -635,6 +695,11 @@ export function SpaceLongHorizonAgents({
     : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
   const existingNames = new Set(agents.map((a) => a.displayName));
+
+  const handleManageTemplates = () => {
+    handleEditorCancel();
+    navigateToSpaceConfigure(routeSpaceId, 'agent-templates');
+  };
 
   if (loading) {
     return (
@@ -732,19 +797,11 @@ export function SpaceLongHorizonAgents({
         )}
 
         <section aria-label="Agents">
-          <div class="mb-3">
-            <h3 class="text-lg font-semibold tracking-tight text-fg">
-              Agents · <span data-testid="agent-instance-count">{sortedAgents.length}</span>
-            </h3>
-            <p class="mt-0.5 text-xs text-fg-faint">
-              Template instances and custom agents running in this space.
-            </p>
-          </div>
           {sortedAgents.length === 0 ? (
             <div class={`rounded-2xl border px-5 py-8 text-center flat-surface`}>
               <p class="text-sm font-medium text-fg-soft">No agents yet</p>
               <p class="mt-1 text-xs text-fg-muted">
-                Add a custom agent or choose a template below.
+                Add a custom agent, or pick a template when creating one.
               </p>
             </div>
           ) : (
@@ -769,27 +826,18 @@ export function SpaceLongHorizonAgents({
             </div>
           )}
         </section>
-
-        <SpaceTemplatesPanel
-          spaceId={spaceId}
-          templates={templates}
-          userTemplateKeys={userTemplateKeys}
-          onUseTemplate={(template) => {
-            setSelectedTemplate(template);
-            setEditingAgent(null);
-            setShowEditor(true);
-          }}
-        />
       </div>
 
       {showEditor && (
         <AgentEditor
           template={selectedTemplate}
           agent={editingAgent}
+          templates={templates}
           existingHandles={existingHandles}
           existingNames={existingNames}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
+          onManageTemplates={handleManageTemplates}
         />
       )}
 

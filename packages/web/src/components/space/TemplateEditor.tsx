@@ -16,12 +16,23 @@ import { runTemplateSave } from './template-save-pipeline';
 import { TemplateModelFields, type TemplateModelFieldsValue } from './TemplateModelFields';
 import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
+function parseLabels(text: string): string[] {
+  const seen = new Set<string>();
+  for (const part of text.split(',')) {
+    const label = part.trim();
+    if (label) seen.add(label);
+  }
+  return [...seen];
+}
+
 export function TemplateEditor({
   template,
+  copyFromOptions,
   onSaved,
   onCancel,
 }: {
   template: SpaceLongHorizonAgentTemplate | null;
+  copyFromOptions?: SpaceLongHorizonAgentTemplate[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -33,6 +44,7 @@ export function TemplateEditor({
   const [description, setDescription] = useState(template?.description ?? '');
   const [instructions, setInstructions] = useState(template?.instructions ?? '');
   const [autonomyLevel, setAutonomyLevel] = useState<number>(template?.suggestedAutonomyLevel ?? 2);
+  const [labelsText, setLabelsText] = useState((template?.labels ?? []).join(', '));
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
     tools: templateTools,
     toolsOverridden: templateTools.length > 0,
@@ -52,6 +64,26 @@ export function TemplateEditor({
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
   const extraTools = extraToolsOf(toolsSelection.tools);
+
+  const applySource = (source: SpaceLongHorizonAgentTemplate | null) => {
+    setDisplayName(source ? `${source.displayName} copy` : '');
+    setKey('');
+    setHandle(source ? `${source.handle}-copy` : '');
+    setDescription(source?.description ?? '');
+    setInstructions(source?.instructions ?? '');
+    setAutonomyLevel(source?.suggestedAutonomyLevel ?? 2);
+    setLabelsText((source?.labels ?? []).join(', '));
+    const sourceTools = source ? toolPermissionsToolsList(source) : [];
+    setToolsSelection({ tools: sourceTools, toolsOverridden: sourceTools.length > 0 });
+    setModelFields({
+      model: source?.model ?? null,
+      provider: source?.provider ?? null,
+      thinkingLevel: source?.thinkingLevel ?? null,
+    });
+    setSettingSources(source?.settingSources ?? null);
+    setModelPool(poolFromModelConfig(withoutInheritedThinkingLevel(source)));
+    setExtraToolDraft('');
+  };
 
   const removeExtraTool = (tool: string) => {
     setToolsSelection((selection) => withoutExtraTool(selection, tool));
@@ -78,6 +110,7 @@ export function TemplateEditor({
           description,
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
+          labels: parseLabels(labelsText),
           tools: toolsSelection.tools,
           pendingTool: extraToolDraft,
           modelPool,
@@ -110,6 +143,29 @@ export function TemplateEditor({
       }
     >
       <div class="space-y-4">
+        {!isEdit && copyFromOptions && copyFromOptions.length > 0 && (
+          <FormField label="Start from">
+            <select
+              class={FORM_CONTROL_CLASS}
+              defaultValue=""
+              data-testid="template-start-from"
+              onInput={(e) => {
+                const selectedKey = (e.target as HTMLSelectElement).value;
+                applySource(copyFromOptions.find((option) => option.key === selectedKey) ?? null);
+              }}
+            >
+              <option value="">Blank template</option>
+              {copyFromOptions.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.displayName}
+                </option>
+              ))}
+            </select>
+            <p class="mt-1 text-xs text-fg-muted">
+              Prefills every field from the chosen template — adjust anything before creating.
+            </p>
+          </FormField>
+        )}
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Name">
             <input
@@ -129,6 +185,19 @@ export function TemplateEditor({
             />
           </FormField>
         </div>
+        <FormField label="Labels">
+          <input
+            value={labelsText}
+            onInput={(e) => setLabelsText((e.target as HTMLInputElement).value)}
+            class={FORM_CONTROL_CLASS}
+            placeholder="e.g. workflow-worker, reviewer"
+            data-testid="template-labels"
+          />
+          <p class="mt-1 text-xs text-fg-muted">
+            Comma-separated tags shown on the template row — use them to mark roles like
+            workflow-worker or long-horizon.
+          </p>
+        </FormField>
         <FormField label="Default agent handle">
           <input
             value={handle}

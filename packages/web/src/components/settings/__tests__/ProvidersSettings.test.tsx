@@ -168,15 +168,24 @@ vi.mock('../AddProviderModal.tsx', () => ({
 }));
 
 vi.mock('../SettingsSection.tsx', () => ({
+  SettingsGroup: ({ children }: { children: import('preact').ComponentChildren }) => (
+    <div data-testid="settings-group">{children}</div>
+  ),
   SettingsSection: ({
     title,
+    description,
+    actions,
     children,
   }: {
     title: string;
+    description?: string;
+    actions?: import('preact').ComponentChildren;
     children: import('preact').ComponentChildren;
   }) => (
     <div data-testid="settings-section">
       <h3>{title}</h3>
+      {description && <p>{description}</p>}
+      {actions && <div>{actions}</div>}
       <div>{children}</div>
     </div>
   ),

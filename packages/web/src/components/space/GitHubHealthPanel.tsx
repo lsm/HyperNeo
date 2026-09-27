@@ -460,13 +460,10 @@ export function GitHubHealthPanel({
   const rateLimited = snapshot?.rateLimit.limited === true;
 
   return (
-    <div
-      class="rounded-lg border border-line bg-surface-raised px-3 py-3"
-      data-testid="github-health-panel"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <div class="text-sm font-medium text-fg-soft">GitHub integration health</div>
+    <div data-testid="github-health-panel">
+      <div class="st-sec-head">
+        <div class="flex min-w-0 items-center gap-2">
+          <h3 class="st-sec-title">GitHub integration health</h3>
           {status && (
             <span
               class={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLES[status].class)}
@@ -476,7 +473,7 @@ export function GitHubHealthPanel({
             </span>
           )}
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div class="st-sec-actions">
           <Button
             type="button"
             size="sm"
@@ -536,6 +533,7 @@ export function GitHubHealthPanel({
           <Button
             type="button"
             size="sm"
+            variant="ghost"
             loading={loading}
             disabled={disabled || busy !== null}
             onClick={() => refreshHealth()}
@@ -545,80 +543,86 @@ export function GitHubHealthPanel({
         </div>
       </div>
 
-      {loading && !snapshot ? (
-        <div class="mt-3 flex items-center gap-2 py-2 text-xs text-fg-muted">
-          <Spinner size="sm" /> Loading integration health…
-        </div>
-      ) : error ? (
-        <p class="mt-3 text-xs text-danger-soft">Failed to load health: {error}</p>
-      ) : snapshot ? (
-        <div class="mt-3 space-y-3">
-          <dl class="grid gap-2 text-xs md:grid-cols-2" data-testid="github-health-metrics">
-            <Metric label="Token">
-              <TokenStatusBadge snapshot={snapshot} />
-            </Metric>
-            <Metric label="Polling">
-              <PollingStatus snapshot={snapshot} />
-            </Metric>
-            <Metric label="Rate limit">
-              <RateLimitStatus snapshot={snapshot} />
-            </Metric>
-            <Metric label="Webhooks">
-              <WebhookStatus snapshot={snapshot} />
-            </Metric>
-            <Metric label="Reaction polling">
-              <ReactionStatus snapshot={snapshot} />
-            </Metric>
-            <Metric label="Recent delivery errors">
-              <span class="text-fg-soft">{snapshot.recentErrorTotal}</span>
-              {snapshot.recentErrors.length > 0 && (
-                <span class="ml-2 text-fg-faint">
-                  latest {formatTimestamp(snapshot.recentErrors[0].updatedAt)}
-                </span>
-              )}
-            </Metric>
-          </dl>
+      <div class="st-group">
+        {loading && !snapshot ? (
+          <div class="st-row">
+            <span class="flex items-center gap-2 text-xs text-fg-muted">
+              <Spinner size="sm" /> Loading integration health…
+            </span>
+          </div>
+        ) : error ? (
+          <div class="st-row">
+            <p class="text-xs text-danger-soft">Failed to load health: {error}</p>
+          </div>
+        ) : snapshot ? (
+          <>
+            <dl class="divide-y divide-line" data-testid="github-health-metrics">
+              <Metric label="Token">
+                <TokenStatusBadge snapshot={snapshot} />
+              </Metric>
+              <Metric label="Polling">
+                <PollingStatus snapshot={snapshot} />
+              </Metric>
+              <Metric label="Rate limit">
+                <RateLimitStatus snapshot={snapshot} />
+              </Metric>
+              <Metric label="Webhooks">
+                <WebhookStatus snapshot={snapshot} />
+              </Metric>
+              <Metric label="Reaction polling">
+                <ReactionStatus snapshot={snapshot} />
+              </Metric>
+              <Metric label="Recent delivery errors">
+                <span class="text-fg-soft">{snapshot.recentErrorTotal}</span>
+                {snapshot.recentErrors.length > 0 && (
+                  <span class="ml-2 text-fg-faint">
+                    latest {formatTimestamp(snapshot.recentErrors[0].updatedAt)}
+                  </span>
+                )}
+              </Metric>
+            </dl>
 
-          <EventTypeBreakdown snapshot={snapshot} />
+            <EventTypeBreakdown snapshot={snapshot} />
 
-          {(snapshot.webhook.errors.length > 0 || snapshot.recentErrors.length > 0) && (
-            <div class="space-y-2 rounded-lg border border-line bg-surface-overlay px-3 py-2">
-              {snapshot.webhook.errors.length > 0 && (
-                <ErrorList
-                  heading="Webhook errors"
-                  rows={snapshot.webhook.errors.map((entry) => ({
-                    key: `wh:${entry.owner}/${entry.repo}`,
-                    primary: `${entry.owner}/${entry.repo}`,
-                    detail: entry.error,
-                    at: entry.at,
-                  }))}
-                />
-              )}
-              {snapshot.recentErrors.length > 0 && (
-                <ErrorList
-                  heading="Failed deliveries"
-                  rows={snapshot.recentErrors.map((entry) => ({
-                    key: `err:${entry.eventId}:${entry.deliveryKey}`,
-                    primary: entry.topic,
-                    detail: entry.failureReason ?? undefined,
-                    agent: entry.agentName ?? undefined,
-                    at: entry.updatedAt,
-                  }))}
-                />
-              )}
-            </div>
-          )}
-        </div>
-      ) : null}
+            {(snapshot.webhook.errors.length > 0 || snapshot.recentErrors.length > 0) && (
+              <div class="st-row-stacked st-row space-y-2">
+                {snapshot.webhook.errors.length > 0 && (
+                  <ErrorList
+                    heading="Webhook errors"
+                    rows={snapshot.webhook.errors.map((entry) => ({
+                      key: `wh:${entry.owner}/${entry.repo}`,
+                      primary: `${entry.owner}/${entry.repo}`,
+                      detail: entry.error,
+                      at: entry.at,
+                    }))}
+                  />
+                )}
+                {snapshot.recentErrors.length > 0 && (
+                  <ErrorList
+                    heading="Failed deliveries"
+                    rows={snapshot.recentErrors.map((entry) => ({
+                      key: `err:${entry.eventId}:${entry.deliveryKey}`,
+                      primary: entry.topic,
+                      detail: entry.failureReason ?? undefined,
+                      agent: entry.agentName ?? undefined,
+                      at: entry.updatedAt,
+                    }))}
+                  />
+                )}
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
 
 function Metric({ label, children }: { label: string; children: ComponentChildren }) {
   return (
-    <div class="rounded-lg border border-line bg-surface-overlay px-3 py-2">
-      <dt class="text-[11px] uppercase tracking-wider text-fg-faint">{label}</dt>
-      <dd class="mt-1 text-fg-soft">{children}</dd>
+    <div class="st-row text-xs">
+      <dt class="st-row-label">{label}</dt>
+      <dd class="text-right text-fg-soft">{children}</dd>
     </div>
   );
 }
@@ -727,11 +731,8 @@ function ReactionStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 
 function EventTypeBreakdown({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   return (
-    <div
-      class="rounded-lg border border-line bg-surface-overlay px-3 py-2"
-      data-testid="github-health-event-types"
-    >
-      <div class="text-[11px] uppercase tracking-wider text-fg-faint">Recent events</div>
+    <div class="st-row-stacked st-row" data-testid="github-health-event-types">
+      <div class="st-row-label">Recent events</div>
       <dl class="mt-2 grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2 lg:grid-cols-3">
         {snapshot.eventTypes.map((entry) => (
           <div

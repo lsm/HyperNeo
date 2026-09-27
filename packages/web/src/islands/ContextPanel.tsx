@@ -4,7 +4,7 @@ import {
   contextPanelOpenSignal,
   currentSpaceIdSignal,
   currentSpaceCanonicalIdSignal,
-  currentSpaceConfigureTabSignal,
+  currentSpaceSettingsTabSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
   settingsSectionSignal,
@@ -212,7 +212,7 @@ export function ContextPanel() {
   const currentSpaceId = currentSpaceIdSignal.value;
   const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
   const detailPanelSpaceId = currentSpaceCanonicalId ?? currentSpaceId;
-  const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
+  const currentSpaceSettingsTab = currentSpaceSettingsTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
   const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
@@ -240,7 +240,7 @@ export function ContextPanel() {
         navigateToSpaceEvolve(spaceId);
         break;
       case 'configure':
-        navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
+        navigateToSpaceConfigure(spaceId, currentSpaceSettingsTab);
         break;
       case 'overview':
       default:

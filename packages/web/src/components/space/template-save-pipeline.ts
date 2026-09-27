@@ -22,6 +22,7 @@ export interface TemplateSaveForm {
   description: string;
   instructions: string;
   suggestedAutonomyLevel: number;
+  labels: string[];
   tools: string[];
   pendingTool: string;
   modelPool: AgentModelPoolEntry[];
@@ -66,6 +67,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     modelPool: modelConfig.modelPool,
     thinkingLevel: modelConfig.thinkingLevel ?? form.thinkingLevel,
     settingSources: form.settingSources,
+    labels: form.labels,
   };
   if (ctx.template) {
     const { model, provider, modelPool, ...rest } = fields;
