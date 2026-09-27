@@ -117,10 +117,11 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--fg-faint);
-  margin: 18px 4px 8px;
+  margin: 28px 4px 8px;
 }
 
-.settings-theme .st-group-cap:first-child {
+.settings-theme .st-group-cap:first-child,
+.settings-theme .st-sec-head + div > .st-group-cap:first-child {
   margin-top: 0;
 }
 

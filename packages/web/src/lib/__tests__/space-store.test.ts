@@ -549,7 +549,10 @@ describe('SpaceStore — space selection', () => {
         return Promise.resolve({ templates: [{ key: 'worker.swe' }] });
       }
       if (method === 'spaceAgentTemplate.list') {
-        return Promise.resolve({ templates: templateListResult ?? [] });
+        return Promise.resolve({
+          templates: templateListResult ?? [],
+          hiddenBuiltIns: [makeAgentTemplate({ key: 'worker.qa', displayName: 'QA Worker' })],
+        });
       }
       return Promise.resolve({});
     });
@@ -564,6 +567,7 @@ describe('SpaceStore — space selection', () => {
     expect(spaceStore.agentTemplates.value[1].labels).toEqual([]);
     expect(spaceStore.builtInTemplateKeys.value.has('worker.swe')).toBe(true);
     expect(spaceStore.builtInTemplateKeys.value.has('scribe')).toBe(false);
+    expect(spaceStore.hiddenBuiltInTemplates.value.map((t) => t.key)).toEqual(['worker.qa']);
   });
 
   it('ensureConfigData() is idempotent — second call is a no-op', async () => {

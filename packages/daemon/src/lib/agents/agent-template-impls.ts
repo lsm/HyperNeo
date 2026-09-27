@@ -138,8 +138,17 @@ function resolveExactAgentTemplate(
   templateName: string,
   spaceId: string
 ): NodeAgentTemplateSource | null {
-  const stored = db ? new SpaceAgentTemplateRepository(db).getOwned(spaceId, templateName) : null;
+  if (!db) {
+    return (
+      (getLongHorizonAgentTemplates().find((candidate) => candidate.key === templateName) as
+        | NodeAgentTemplateSource
+        | undefined) ?? null
+    );
+  }
+  const repo = new SpaceAgentTemplateRepository(db);
+  const stored = repo.getOwned(spaceId, templateName);
   if (stored) return spaceAgentTemplateToNodeSource(stored);
+  if (repo.hiddenBuiltInKeys(spaceId).has(templateName)) return null;
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key === templateName
   ) as NodeAgentTemplateSource | undefined;
@@ -148,19 +157,29 @@ function resolveExactAgentTemplate(
 
 function fallbackBuiltinAgentTemplate(
   templateName: string,
-  exact: NodeAgentTemplateSource | null
+  exact: NodeAgentTemplateSource | null,
+  hiddenKeys: ReadonlySet<string>
 ): NodeAgentTemplateSource | null {
   if (exact) return exact;
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
   ) as NodeAgentTemplateSource | undefined;
-  return builtIn ?? null;
+  if (!builtIn || hiddenKeys.has(builtIn.key)) return null;
+  return builtIn;
+}
+
+function resolveHiddenBuiltInKeys(
+  db: BunDatabase | undefined,
+  spaceId: string
+): ReadonlySet<string> {
+  return db ? new SpaceAgentTemplateRepository(db).hiddenBuiltInKeys(spaceId) : new Set();
 }
 
 const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
   .input(['templateName', 'db', 'spaceId'])
   .pipe(resolveExactAgentTemplate, ['db', 'templateName', 'spaceId'], 'exact')
-  .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact'], 'template')
+  .pipe(resolveHiddenBuiltInKeys, ['db', 'spaceId'], 'hiddenKeys')
+  .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact', 'hiddenKeys'], 'template')
   .end('template') as (
   templateName: string,
   db: BunDatabase | undefined,

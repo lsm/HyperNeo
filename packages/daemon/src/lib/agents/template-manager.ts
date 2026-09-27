@@ -146,10 +146,39 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: undefined };
   }
 
+  hideBuiltInIn(spaceId: string, key: string): SpaceAgentResult<void> {
+    const builtIn = this.builtIns().find((template) => template.key === key);
+    if (!builtIn) return { ok: false, error: `Unknown built-in template "${key}"` };
+    if (this.repo.getOwned(spaceId, key)) {
+      return {
+        ok: false,
+        error: `Template "${key}" has a space-level customization; delete it instead of hiding`,
+      };
+    }
+    this.repo.hideBuiltInKey(spaceId, key);
+    return { ok: true, value: undefined };
+  }
+
+  unhideBuiltInIn(spaceId: string, key: string): SpaceAgentResult<void> {
+    if (!this.builtIns().some((template) => template.key === key)) {
+      return { ok: false, error: `Unknown built-in template "${key}"` };
+    }
+    this.repo.unhideBuiltInKey(spaceId, key);
+    return { ok: true, value: undefined };
+  }
+
+  hiddenBuiltInsIn(spaceId: string): SpaceAgentTemplate[] {
+    const hidden = this.repo.hiddenBuiltInKeys(spaceId);
+    if (hidden.size === 0) return [];
+    return this.builtIns().filter((template) => hidden.has(template.key));
+  }
+
   listIn(spaceId: string): SpaceAgentTemplate[] {
+    const hidden = this.repo.hiddenBuiltInKeys(spaceId);
     const byKey = new Map<string, SpaceAgentTemplate>();
     for (const template of this.builtIns()) {
       if (isReservedAgentHandle(template.handle)) continue;
+      if (hidden.has(template.key)) continue;
       byKey.set(template.key, template);
     }
     for (const template of this.repo.listOwned(spaceId)) {
@@ -159,10 +188,9 @@ export class SpaceAgentTemplateManager {
   }
 
   getIn(spaceId: string, key: string): SpaceAgentTemplate | null {
-    return (
-      this.repo.getOwned(spaceId, key) ??
-      this.builtIns().find((template) => template.key === key) ??
-      null
-    );
+    const owned = this.repo.getOwned(spaceId, key);
+    if (owned) return owned;
+    if (this.repo.hiddenBuiltInKeys(spaceId).has(key)) return null;
+    return this.builtIns().find((template) => template.key === key) ?? null;
   }
 }

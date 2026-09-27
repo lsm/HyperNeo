@@ -28,6 +28,7 @@ function renderPanel(overrides: Partial<Parameters<typeof SpaceTemplatesPanel>[0
     templates: [makeTemplate('researcher.v1')],
     userTemplateKeys: new Set<string>(),
     builtInTemplateKeys: new Set<string>(),
+    hiddenBuiltIns: [],
     ...overrides,
   };
   return { props, ...render(<SpaceTemplatesPanel {...props} />) };

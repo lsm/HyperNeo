@@ -42,7 +42,10 @@ export function setupSpaceAgentTemplateHandlers(
 
   messageHub.onRequest(method('list'), async (data) => {
     const spaceId = await requireTemplateSpace((data as { spaceId?: string }).spaceId);
-    return { templates: templateManager.listIn(spaceId) };
+    return {
+      templates: templateManager.listIn(spaceId),
+      hiddenBuiltIns: templateManager.hiddenBuiltInsIn(spaceId),
+    };
   });
 
   messageHub.onRequest(method('create'), async (data) => {
@@ -70,6 +73,24 @@ export function setupSpaceAgentTemplateHandlers(
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');
     const result = templateManager.deleteIn(spaceId, params.key, params.expectedVersion);
+    if (!result.ok) throw new Error(result.error);
+    return { success: true };
+  });
+
+  messageHub.onRequest(method('hideBuiltIn'), async (data) => {
+    const params = data as { spaceId?: string; key: string };
+    const spaceId = await requireTemplateSpace(params.spaceId);
+    if (!params.key) throw new Error('key is required');
+    const result = templateManager.hideBuiltInIn(spaceId, params.key);
+    if (!result.ok) throw new Error(result.error);
+    return { success: true };
+  });
+
+  messageHub.onRequest(method('unhideBuiltIn'), async (data) => {
+    const params = data as { spaceId?: string; key: string };
+    const spaceId = await requireTemplateSpace(params.spaceId);
+    if (!params.key) throw new Error('key is required');
+    const result = templateManager.unhideBuiltInIn(spaceId, params.key);
     if (!result.ok) throw new Error(result.error);
     return { success: true };
   });

@@ -1089,6 +1089,69 @@ describe('SpaceAgentTemplateManager', () => {
     });
   });
 
+  describe('hide', () => {
+    test('hides a built-in from list and get', () => {
+      expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+
+      expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(
+        false
+      );
+      expect(manager.getIn(OWNER, 'builtin.default')).toBeNull();
+      expect(manager.hiddenBuiltInsIn(OWNER).map((template) => template.key)).toEqual([
+        'builtin.default',
+      ]);
+    });
+
+    test('unhide restores the built-in', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+      expect(manager.unhideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+
+      expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(
+        true
+      );
+      expect(manager.getIn(OWNER, 'builtin.default')?.displayName).toBe('Built-in');
+      expect(manager.hiddenBuiltInsIn(OWNER)).toEqual([]);
+    });
+
+    test('hiding one space leaves other spaces untouched', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+
+      expect(manager.getIn('space-other', 'builtin.default')?.key).toBe('builtin.default');
+      expect(manager.listIn('space-other').some((t) => t.key === 'builtin.default')).toBe(true);
+    });
+
+    test('rejects hiding a customized built-in', async () => {
+      await manager.updateIn(OWNER, 'builtin.default', { description: 'Mine' });
+
+      const result = manager.hideBuiltInIn(OWNER, 'builtin.default');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('customization');
+    });
+
+    test('rejects hiding a custom template or an unknown key', async () => {
+      await manager.createIn(OWNER, fullParams());
+
+      const custom = manager.hideBuiltInIn(OWNER, 'release-readiness.custom');
+      expect(custom.ok).toBe(false);
+      const unknown = manager.hideBuiltInIn(OWNER, 'missing.default');
+      expect(unknown.ok).toBe(false);
+    });
+
+    test('a stored row still shadows its built-in when a stale hide exists', () => {
+      manager.hideBuiltInIn(OWNER, 'builtin.default');
+      repo.createOwned(OWNER, {
+        key: 'builtin.default',
+        handle: 'builtin-override',
+        displayName: 'Override',
+      });
+
+      expect(manager.getIn(OWNER, 'builtin.default')?.displayName).toBe('Override');
+      expect(
+        manager.listIn(OWNER).find((template) => template.key === 'builtin.default')?.displayName
+      ).toBe('Override');
+    });
+  });
+
   describe('create pipeline', () => {
     test('halts before persist on an invalid key', async () => {
       const ctx = await runCreateTemplate({

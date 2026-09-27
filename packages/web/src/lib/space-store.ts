@@ -370,6 +370,7 @@ class SpaceStore {
 
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
   readonly builtInTemplateKeys = signal<ReadonlySet<string>>(new Set());
+  readonly hiddenBuiltInTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
   readonly userTemplateKeys = signal<ReadonlySet<string>>(new Set());
 
@@ -724,6 +725,7 @@ class SpaceStore {
     this.agentListState.value = 'loading';
     this.agentTemplates.value = [];
     this.builtInTemplateKeys.value = new Set();
+    this.hiddenBuiltInTemplates.value = [];
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -1107,12 +1109,13 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-        'spaceAgentTemplate.list',
-        { spaceId }
-      );
+      const result = await hub.request<{
+        templates: SpaceAgentTemplate[];
+        hiddenBuiltIns?: SpaceAgentTemplate[];
+      }>('spaceAgentTemplate.list', { spaceId });
       if (this.spaceId.value !== spaceId) return;
       this.applyTemplateLibrary(result?.templates ?? []);
+      this.hiddenBuiltInTemplates.value = (result?.hiddenBuiltIns ?? []).map(toPaneAgentTemplate);
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
       if (this.spaceId.value === spaceId) this.applyTemplateLibrary([]);
@@ -2657,12 +2660,13 @@ class SpaceStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
   ): Promise<void> {
-    const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-      'spaceAgentTemplate.list',
-      { spaceId }
-    );
+    const result = await hub.request<{
+      templates: SpaceAgentTemplate[];
+      hiddenBuiltIns?: SpaceAgentTemplate[];
+    }>('spaceAgentTemplate.list', { spaceId });
     if (this.spaceId.value !== spaceId) return;
     this.applyTemplateLibrary(result?.templates ?? []);
+    this.hiddenBuiltInTemplates.value = (result?.hiddenBuiltIns ?? []).map(toPaneAgentTemplate);
   }
 
   private referencesUncachedTemplate(workflow: SpaceWorkflow): boolean {
@@ -2712,6 +2716,36 @@ class SpaceStore {
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
     if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
     return template;
+  }
+
+  async hideBuiltInTemplate(key: string): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    await hub.request('spaceAgentTemplate.hideBuiltIn', { spaceId, key });
+    if (this.spaceId.value !== spaceId) return;
+    try {
+      await this.refreshTemplateLibrary(hub, spaceId);
+    } catch (err) {
+      logger.error('Failed to refresh template library after hide:', err);
+    }
+  }
+
+  async unhideBuiltInTemplate(key: string): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    await hub.request('spaceAgentTemplate.unhideBuiltIn', { spaceId, key });
+    if (this.spaceId.value !== spaceId) return;
+    try {
+      await this.refreshTemplateLibrary(hub, spaceId);
+    } catch (err) {
+      logger.error('Failed to refresh template library after unhide:', err);
+    }
   }
 
   async deleteTemplate(key: string, expectedVersion?: number): Promise<void> {

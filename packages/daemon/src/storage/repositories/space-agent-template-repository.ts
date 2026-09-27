@@ -112,6 +112,28 @@ export class SpaceAgentTemplateRepository {
     return this.db.prepare(sql).run(...params).changes > 0;
   }
 
+  hideBuiltInKey(spaceId: string, key: string): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO space_agent_template_hides (space_id, key, created_at)
+         VALUES (?, ?, ?)`
+      )
+      .run(spaceId, key, Date.now());
+  }
+
+  unhideBuiltInKey(spaceId: string, key: string): void {
+    this.db
+      .prepare(`DELETE FROM space_agent_template_hides WHERE space_id = ? AND key = ?`)
+      .run(spaceId, key);
+  }
+
+  hiddenBuiltInKeys(spaceId: string): ReadonlySet<string> {
+    const rows = this.db
+      .prepare(`SELECT key FROM space_agent_template_hides WHERE space_id = ?`)
+      .all(spaceId) as Array<{ key: string }>;
+    return new Set(rows.map((row) => row.key));
+  }
+
   private effectiveOwner(spaceId: string, key: string): string | null {
     const row = this.db
       .prepare(`SELECT space_id FROM space_agent_templates WHERE space_id = ? AND key = ?`)

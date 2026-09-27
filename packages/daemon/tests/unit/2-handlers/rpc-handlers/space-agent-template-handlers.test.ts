@@ -82,8 +82,10 @@ describe('spaceAgentTemplate RPC handlers', () => {
     expect([...hubData.handlers.keys()].sort()).toEqual([
       'spaceAgentTemplate.create',
       'spaceAgentTemplate.delete',
+      'spaceAgentTemplate.hideBuiltIn',
       'spaceAgentTemplate.list',
       'spaceAgentTemplate.listBuiltIn',
+      'spaceAgentTemplate.unhideBuiltIn',
       'spaceAgentTemplate.update',
     ]);
   });
@@ -181,6 +183,66 @@ describe('spaceAgentTemplate RPC handlers', () => {
       { spaceId: 'space-1' }
     );
     expect(result.templates.map((t) => t.key)).not.toContain('custom.researcher');
+  });
+
+  describe('hideBuiltIn', () => {
+    it('hides a built-in from list and reports it under hiddenBuiltIns', async () => {
+      await call(hubData.handlers, 'spaceAgentTemplate.hideBuiltIn', {
+        spaceId: 'space-1',
+        key: 'worker.swe',
+      });
+
+      const result = await call<{
+        templates: SpaceAgentTemplate[];
+        hiddenBuiltIns: SpaceAgentTemplate[];
+      }>(hubData.handlers, 'spaceAgentTemplate.list', { spaceId: 'space-1' });
+
+      expect(result.templates.map((t) => t.key)).not.toContain('worker.swe');
+      expect(result.hiddenBuiltIns.map((t) => t.key)).toEqual(['worker.swe']);
+    });
+
+    it('unhideBuiltIn restores the built-in to the list', async () => {
+      await call(hubData.handlers, 'spaceAgentTemplate.hideBuiltIn', {
+        spaceId: 'space-1',
+        key: 'worker.swe',
+      });
+      await call(hubData.handlers, 'spaceAgentTemplate.unhideBuiltIn', {
+        spaceId: 'space-1',
+        key: 'worker.swe',
+      });
+
+      const result = await call<{
+        templates: SpaceAgentTemplate[];
+        hiddenBuiltIns: SpaceAgentTemplate[];
+      }>(hubData.handlers, 'spaceAgentTemplate.list', { spaceId: 'space-1' });
+
+      expect(result.templates.map((t) => t.key)).toContain('worker.swe');
+      expect(result.hiddenBuiltIns).toEqual([]);
+    });
+
+    it('rejects hiding a customized built-in', async () => {
+      await call(hubData.handlers, 'spaceAgentTemplate.update', {
+        spaceId: 'space-1',
+        key: 'worker.swe',
+        description: 'Tuned for this space',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgentTemplate.hideBuiltIn', {
+          spaceId: 'space-1',
+          key: 'worker.swe',
+        })
+      ).rejects.toThrow('customization');
+    });
+
+    it('rejects hiding an unknown key', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgentTemplate.hideBuiltIn', {
+          spaceId: 'space-1',
+          key: 'missing.default',
+        })
+      ).rejects.toThrow('Unknown built-in template');
+    });
   });
 
   it('hides another space stored template from list', async () => {
