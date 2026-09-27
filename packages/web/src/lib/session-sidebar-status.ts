@@ -80,7 +80,19 @@ function selectTaskActivity(
   statuses: SidebarSessionStatus[]
 ): SidebarSessionStatus {
   const fallback = { ...getTaskStatusConfig(task.status), pulse: false, kind: task.status };
-  if (['draft', 'review', 'done', 'cancelled', 'archived', 'stopped'].includes(task.status)) {
+  if (
+    [
+      'draft',
+      'review',
+      'done',
+      'cancelled',
+      'archived',
+      'stopped',
+      'blocked',
+      'rate_limited',
+      'usage_limited',
+    ].includes(task.status)
+  ) {
     return fallback;
   }
   return statuses.reduce<SidebarSessionStatus>((selected, status) => {

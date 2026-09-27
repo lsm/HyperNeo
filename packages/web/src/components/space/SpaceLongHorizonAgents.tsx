@@ -20,7 +20,6 @@ import { toast } from '../../lib/toast';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { CloneChoiceDialog } from '../CloneChoiceDialog';
 import { SessionActivityIndicator } from '../SessionActivityIndicator';
-import { UnreadBadge } from '../ui/UnreadBadge';
 import { FORM_CONTROL_CLASS, FormActions, FormField } from '../ui/FormField';
 import { Modal } from '../ui/Modal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
@@ -431,6 +430,8 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
 
   const sessionId = agent.sessionId ?? null;
   const session = spaceStore.sessions.value.find((candidate) => candidate.id === sessionId);
+  const sessionStatus = session ? getSessionSidebarStatus(session) : null;
+  const unreadCount = session ? getSpaceSessionUnreadCount(session.id, session.messageCount) : 0;
 
   const openSession = () => navigateToSpaceAgent(navigationSpaceId, agent.handle);
 
@@ -455,12 +456,17 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
               <span class="truncate text-base font-semibold tracking-tight text-fg">
                 {agent.displayName}
               </span>
-              {session && (
+              {sessionStatus && (
                 <>
-                  <SessionActivityIndicator status={getSessionSidebarStatus(session)} />
-                  <UnreadBadge
-                    count={getSpaceSessionUnreadCount(session.id, session.messageCount)}
-                  />
+                  <SessionActivityIndicator status={sessionStatus} unreadCount={unreadCount} />
+                  {unreadCount > 0 &&
+                    !['idle', 'not_started'].includes(sessionStatus.kind ?? '') && (
+                      <span
+                        class="sr-only"
+                        role="img"
+                        aria-label={`${unreadCount} unread messages`}
+                      />
+                    )}
                 </>
               )}
             </div>

@@ -505,7 +505,7 @@ describe('SpaceDetailPanel', () => {
     ).toBeTruthy();
   });
 
-  it('shows task activity and lifecycle with one unread indicator', () => {
+  it('shows task activity in the leading slot and keeps unread accessible', () => {
     mockTasksSignal.value = [makeTask('t1', 'Blocked Task', 'in_progress', { updatedAt: 2 })];
     mockCurrentSpaceTaskIdSignal.value = 'other';
     spaceTaskLastSeen.value = new Map([['t1', 1]]);
@@ -535,7 +535,7 @@ describe('SpaceDetailPanel', () => {
     const row = screen.getByText('Blocked Task').closest('button')!;
     expect(within(row).getByRole('img', { name: 'Processing' })).toBeTruthy();
     expect(within(row).getByLabelText('5 unread messages')).toBeTruthy();
-    expect(within(row).getByRole('img', { name: 'In Progress' })).toBeTruthy();
+    expect(within(row).queryByRole('img', { name: 'In Progress' })).toBeNull();
     expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
   });
 
@@ -630,7 +630,7 @@ describe('SpaceDetailPanel', () => {
     }
   );
 
-  it('keeps blocked task lifecycle visible beside a running session indicator', () => {
+  it('keeps blocked task lifecycle in the leading slot over worker activity', () => {
     mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked')];
     mockSessionsSignal.value = [
       {
@@ -644,7 +644,7 @@ describe('SpaceDetailPanel', () => {
     ];
     render(<SpaceDetailPanel spaceId="space-1" />);
     const row = screen.getByText('Task thread').closest('button')!;
-    expect(within(row).getByRole('img', { name: 'Thinking' })).toBeTruthy();
+    expect(within(row).queryByRole('img', { name: 'Thinking' })).toBeNull();
     expect(within(row).getByRole('img', { name: 'Blocked' })).toBeTruthy();
   });
 

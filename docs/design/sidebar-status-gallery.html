@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sidebar status study</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #151519;
+        color: #eeeef0;
+        --page: #151519;
+        --panel: #1e1e23;
+        --sidebar: #202024;
+        --elevated: #29292e;
+        --selected: #39393e;
+        --line: #38383e;
+        --text: #eeeef0;
+        --muted: #a4a4ae;
+        --faint: #71717d;
+        --blue: #438eff;
+        --amber: #e9b758;
+        --green: #60c99a;
+        --purple: #ba9af3;
+        --red: #ef777b;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; }
+      button { font: inherit; }
+      button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .app { max-width: 1440px; margin: auto; padding: 34px 32px 70px; }
+      .topline { color: var(--purple); font-size: 11px; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
+      h1 { font-size: clamp(28px, 3vw, 43px); line-height: 1.1; letter-spacing: -.04em; margin: 9px 0 12px; }
+      .intro { max-width: 780px; color: var(--muted); font-size: 14px; line-height: 1.65; margin: 0; }
+      .rules { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
+      .rule { display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 12px; }
+      .rule strong { color: var(--text); font-weight: 600; }
+      .layout { display: grid; grid-template-columns: minmax(310px, 388px) minmax(0, 1fr); align-items: start; gap: 24px; margin-top: 30px; }
+      .preview-wrap { position: sticky; top: 18px; }
+      .section-title { font-size: 17px; margin: 0 0 5px; letter-spacing: -.02em; }
+      .section-copy { margin: 0 0 15px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+      .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; border: 1px solid var(--line); background: #1a1a1e; border-radius: 11px; margin-bottom: 12px; }
+      .tab { min-width: 0; padding: 8px 3px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+      .tab[aria-selected="true"] { background: var(--elevated); color: var(--text); box-shadow: 0 1px 5px #0005; }
+      .sidebar { min-height: 525px; border: 1px solid #424248; border-radius: 15px; background: var(--sidebar); padding: 15px 8px 18px; box-shadow: 0 22px 48px #0004; }
+      .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 18px; border-bottom: 1px solid var(--line); margin: 0 5px 14px; }
+      .product { font-size: 15px; font-weight: 700; letter-spacing: -.03em; }
+      .preview-label { color: var(--faint); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+      .group-title { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 7px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .group-title .count { color: var(--faint); font-weight: 500; letter-spacing: 0; }
+      .group { margin: 0 5px 16px; }
+      .row { position: relative; display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 9px; border-radius: 9px; color: var(--muted); }
+      .row:hover { background: #303036; }
+      .row.selected { background: var(--selected); color: var(--text); }
+      .row.unread .row-title { color: var(--text); font-weight: 600; }
+      .row.nested { margin-left: 22px; }
+      .row.dim .row-title { color: var(--faint); }
+      .status-slot { width: 17px; height: 18px; flex: 0 0 17px; display: inline-flex; align-items: center; justify-content: center; }
+      .status-slot svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .status-slot .spinner { width: 14px; height: 14px; border: 1.8px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .85s linear infinite; }
+      .row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; font-size: 13px; }
+      .unread-mark { width: 7px; height: 7px; flex: 0 0 7px; background: var(--text); border-radius: 50%; }
+      .archive-action, .archive-confirm { display: inline-flex; flex: 0 0 0; align-items: center; justify-content: center; width: 0; height: 26px; overflow: hidden; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); opacity: 0; pointer-events: none; cursor: pointer; white-space: nowrap; }
+      .archive-action svg { width: 16px; height: 16px; flex: 0 0 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .chat-row:hover .archive-action, .chat-row:focus-within .archive-action { flex-basis: 26px; width: 26px; opacity: 1; pointer-events: auto; }
+      .archive-action:hover, .archive-action:focus-visible { background: #4a4a50; color: var(--text); }
+      .chat-row.confirming .archive-confirm { flex-basis: 57px; width: 57px; background: #aa4348; color: #fff; opacity: 1; pointer-events: auto; font-size: 11px; font-weight: 650; }
+      .archive-confirm:hover { background: #c04b51; }
+      .disclosure { display: grid; place-items: center; width: 25px; height: 25px; flex: 0 0 25px; margin-right: -4px; border: none; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
+      .disclosure:hover { color: var(--text); background: #4a4a50; }
+      .disclosure svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .16s; }
+      .disclosure[aria-expanded="true"] svg { transform: rotate(90deg); }
+      .row-note { margin: 13px 12px 0; padding-top: 13px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; line-height: 1.5; }
+      .legend { display: flex; gap: 17px; flex-wrap: wrap; margin: 13px 3px 0; color: var(--muted); font-size: 11px; }
+      .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+      .catalog { min-width: 0; }
+      .catalog-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+      .motion { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); padding: 7px 10px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+      .motion:hover { color: var(--text); }
+      .catalog-section { margin-top: 20px; }
+      .catalog-section h3 { font-size: 13px; margin: 0 0 5px; }
+      .catalog-section p { margin: 0 0 11px; font-size: 11px; line-height: 1.5; color: var(--faint); }
+      .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .card { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 54px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+      .card .status-slot { width: 21px; flex-basis: 21px; }
+      .card-copy { min-width: 0; }
+      .card-name { font-size: 12px; font-weight: 630; }
+      .card-desc { color: var(--faint); font-size: 10px; margin-top: 3px; line-height: 1.35; }
+      .tone-neutral { color: var(--faint); }
+      .tone-info { color: var(--blue); }
+      .tone-progress, .tone-warning { color: var(--amber); }
+      .tone-success { color: var(--green); }
+      .tone-special { color: var(--purple); }
+      .tone-danger { color: var(--red); }
+      .compact-tip { color: var(--faint); font-size: 11px; line-height: 1.55; margin: 11px 0 0; }
+      .is-motion-paused .spinner { animation-play-state: paused; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation: none !important; border-style: dotted !important; } .disclosure svg { transition: none; } }
+      @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .preview-wrap { position: static; max-width: 500px; } .sidebar { min-height: 450px; } }
+      @media (max-width: 560px) { .app { padding: 25px 14px 50px; } .cards { grid-template-columns: 1fr; } .tabs { grid-template-columns: repeat(2, 1fr); } }
+      @media (hover: none) { .chat-row .archive-action { flex-basis: 26px; width: 26px; opacity: 1; pointer-events: auto; } }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .5c0 1.5-2.5 2-2.5 3.5M12 17h.01"/></symbol>
+      <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M7 3v4l10 10v4M17 3v4L7 17v4"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5m0 3h.01"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><path d="M4 8h16v12H4ZM3 4h18v4H3ZM9 12h6"/></symbol>
+      <symbol id="i-archive-action" viewBox="0 0 24 24"><path d="M20 8 19 19H5L4 8M3 4h18v4H3Zm7 8h4"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m4 16 11-11 4 4L8 20H4Zm9-9 4 4"/></symbol>
+      <symbol id="i-progress" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6h12v12H6Z"/></symbol>
+      <symbol id="i-limit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9v6m6-6v6"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    </svg>
+    <main class="app">
+      <div class="topline">Design study · 27 September 2026</div>
+      <h1>One language for sidebar status.</h1>
+      <p class="intro">A working HTML proposal for chat sessions, Space agents, and Space tasks. The left slot shows one signal: a meaningful status, or a foreground-colored unread dot when idle. Unread titles stay bold while a stronger status is showing. Hover actions have the right side to themselves.</p>
+      <div class="rules">
+        <span class="rule"><strong>Left</strong> status or unread</span>
+        <span class="rule"><strong>Right</strong> actions on hover</span>
+        <span class="rule"><strong>No mark</strong> idle and read</span>
+        <span class="rule"><strong>Motion</strong> running only</span>
+      </div>
+      <div class="layout">
+        <section class="preview-wrap" aria-labelledby="preview-title">
+          <h2 class="section-title" id="preview-title">In the sidebar</h2>
+          <p class="section-copy">Switch contexts to see the same status grammar in each list. The agent disclosure is interactive.</p>
+          <div class="tabs" role="tablist" aria-label="Sidebar context">
+            <button class="tab" type="button" role="tab" data-view="agents" aria-selected="true">Agents</button>
+            <button class="tab" type="button" role="tab" data-view="tasks" aria-selected="false">Tasks</button>
+            <button class="tab" type="button" role="tab" data-view="project" aria-selected="false">Project chat</button>
+            <button class="tab" type="button" role="tab" data-view="chats" aria-selected="false">Other chats</button>
+          </div>
+          <div class="sidebar" id="sidebar-preview"></div>
+          <div class="legend"><span class="legend-item"><span class="unread-mark"></span> idle and unread</span><span class="legend-item">Status icon wins while active</span></div>
+        </section>
+        <section class="catalog" aria-labelledby="catalog-title">
+          <div class="catalog-head"><div><h2 class="section-title" id="catalog-title">Complete state set</h2><p class="section-copy">Names and meanings match the app's current session and task states.</p></div><button class="motion" id="motion-toggle" type="button" aria-pressed="false">Pause motion</button></div>
+          <div id="catalog-sections"></div>
+        </section>
+      </div>
+    </main>
+    <script>
+      const states = {
+        sessionActivity: [
+          ['idle', 'Idle', 'No mark; the default resting state.', 'neutral', 'empty'],
+          ['queued', 'Queued', 'Waiting to start.', 'progress', 'clock'],
+          ['initializing', 'Initializing', 'Running; preparing the session.', 'progress', 'spinner'],
+          ['thinking', 'Thinking', 'Running; reasoning.', 'info', 'spinner'],
+          ['streaming', 'Streaming', 'Running; producing a response.', 'success', 'spinner'],
+          ['finalizing', 'Finalizing', 'Running; wrapping up.', 'special', 'spinner'],
+          ['processing', 'Processing', 'Running; phase is unknown.', 'info', 'spinner'],
+          ['waiting_for_input', 'Waiting for input', 'A person needs to respond.', 'warning', 'question'],
+          ['rate_limit_cooldown', 'Rate limit cooldown', 'Waiting for the retry window.', 'warning', 'hourglass'],
+          ['interrupted', 'Interrupted', 'The run was interrupted.', 'danger', 'alert'],
+          ['error', 'Error', 'The session reported an error.', 'danger', 'alert']
+        ],
+        sessionLifecycle: [
+          ['active', 'Active', 'Uses its activity state; no second icon.', 'neutral', 'empty'],
+          ['not_started', 'Not started', 'No session exists for this agent yet.', 'neutral', 'empty'],
+          ['pending_worktree_choice', 'Needs worktree choice', 'Setup needs a decision.', 'warning', 'question'],
+          ['paused', 'Paused', 'Session is paused.', 'warning', 'pause'],
+          ['ended', 'Ended', 'Terminal session; cannot send or resume.', 'neutral', 'check'],
+          ['archived', 'Archived', 'Session is archived.', 'neutral', 'archive']
+        ],
+        taskLifecycle: [
+          ['draft', 'Draft', 'Not yet submitted.', 'neutral', 'pencil'],
+          ['open', 'Open', 'Ready for work; no mark until there are unread updates.', 'neutral', 'empty'],
+          ['in_progress', 'In progress', 'Work is underway; running worker takes priority.', 'info', 'progress'],
+          ['review', 'Awaiting review', 'Needs a review decision.', 'special', 'eye'],
+          ['approved', 'Approved', 'Approved, awaiting completion.', 'success', 'check'],
+          ['done', 'Done', 'Work is complete.', 'success', 'check'],
+          ['blocked', 'Blocked', 'Work cannot proceed.', 'danger', 'alert'],
+          ['cancelled', 'Cancelled', 'Work was cancelled.', 'neutral', 'x'],
+          ['archived', 'Archived', 'Task is archived.', 'neutral', 'archive'],
+          ['rate_limited', 'Rate limited', 'Temporarily limited by rate.', 'warning', 'hourglass'],
+          ['usage_limited', 'Usage limited', 'Usage limit needs attention.', 'warning', 'limit'],
+          ['stopped', 'Stopped', 'Work was stopped.', 'neutral', 'stop']
+        ]
+      };
+      const byKey = new Map(Object.values(states).flat().map((state) => [state[0], state]));
+      const icon = (key) => {
+        const state = byKey.get(key);
+        if (!state) return '';
+        const [, label, , tone, shape] = state;
+        const drawing = shape === 'empty' ? '' : shape === 'spinner' ? '<span class="spinner"></span>' : `<svg aria-hidden="true"><use href="#i-${shape}"></use></svg>`;
+        return `<span class="status-slot tone-${tone}" role="img" aria-label="${label}" title="${label}">${drawing}</span>`;
+      };
+      const sections = [
+        ['Session activity', 'The active session shows one of these. All four running phases animate.', states.sessionActivity],
+        ['Session lifecycle', 'These override activity when a session is paused, ended, archived, or needs setup.', states.sessionLifecycle],
+        ['Space task lifecycle', 'A task uses its lifecycle state unless a worker has a more urgent live state.', states.taskLifecycle]
+      ];
+      document.getElementById('catalog-sections').innerHTML = sections.map(([title, description, items]) => `<section class="catalog-section"><h3>${title}</h3><p>${description}</p><div class="cards">${items.map(([key, label, detail]) => `<div class="card">${icon(key)}<div class="card-copy"><div class="card-name">${label}</div><div class="card-desc">${detail}</div></div></div>`).join('')}</div></section>`).join('');
+      const views = {
+        agents: {
+          label: 'SPACE · AGENTS',
+          groups: [['Agents', '8', [
+            { title: 'Space Manager', status: 'paused', disclosure: true },
+            { title: 'Fired Goldman Quant Mispricing', status: 'thinking', unread: true },
+            { title: 'AI Agent Meta Harness Research', status: 'waiting_for_input', unread: true },
+            { title: 'macOS local ASR', status: 'streaming', unread: true },
+            { title: 'UI / UX', status: 'idle', selected: true },
+            { title: 'self-improve', status: 'idle' },
+            { title: 'Tasker', status: 'idle', unread: true },
+            { title: 'RPC MCP Unification Architecture', status: 'finalizing', unread: true }
+          ]]],
+          note: 'Tasker is idle with unread content. Running agents keep their status icon.'
+        },
+        tasks: {
+          label: 'SPACE · TASKS',
+          groups: [['Active', '5', [
+            { title: 'Unify the session sidebars', status: 'thinking', unread: true },
+            { title: 'Show Read image previews', status: 'in_progress' },
+            { title: 'Review agent permissions', status: 'review', unread: true },
+            { title: 'Repair session sync', status: 'blocked' },
+            { title: 'Run search indexing', status: 'rate_limited' }
+          ]], ['Recently completed', '2', [
+            { title: 'Migrate Space navigation', status: 'done' },
+            { title: 'Old onboarding experiment', status: 'archived', dim: true }
+          ]]],
+          note: 'Task status takes the left slot; unread affects title weight.'
+        },
+        project: {
+          label: 'CHATS · PROJECT',
+          groups: [['HyperNeo', '5', [
+            { title: 'Sidebar status study', status: 'streaming', unread: true },
+            { title: 'Session architecture', status: 'idle', selected: true, disclosure: true },
+            { title: 'Inspect agent handoff', status: 'queued', nested: true },
+            { title: 'Fix login transition', status: 'waiting_for_input' },
+            { title: 'Sidebar design notes', status: 'idle', unread: true }
+          ]]],
+          note: 'A running chat keeps its spinner; an idle unread chat shows the light dot.'
+        },
+        chats: {
+          label: 'CHATS · NO PROJECT',
+          groups: [['Chats', '6', [
+            { title: 'Compare provider models', status: 'initializing', unread: true },
+            { title: 'Untitled conversation', status: 'idle', unread: true },
+            { title: 'Website reference notes', status: 'rate_limit_cooldown', unread: true },
+            { title: 'Resolve merge conflicts', status: 'interrupted' },
+            { title: 'Paused research', status: 'paused' },
+            { title: 'Terminal chat session', status: 'ended', dim: true }
+          ]]],
+          note: 'Archive appears on the right; unread stays visible on the left.'
+        }
+      };
+      let currentView = 'agents';
+      let agentChildrenExpanded = false;
+      let confirmingArchive = null;
+      const archivedRows = new Set();
+      const row = (item) => {
+        const chat = currentView === 'project' || currentView === 'chats';
+        const archiveKey = `${currentView}:${item.title}`;
+        const confirming = confirmingArchive === archiveKey;
+        const leadingIndicator = item.status === 'idle' && item.unread
+          ? '<span class="status-slot" role="img" aria-label="Idle, unread" title="Idle · Unread"><span class="unread-mark idle-unread"></span></span>'
+          : icon(item.status);
+        const archiveAction = !chat || item.status === 'archived' ? '' : confirming
+          ? `<button class="archive-confirm" type="button" data-archive="${archiveKey}" aria-label="Confirm archive ${item.title}">Archive</button>`
+          : `<button class="archive-action" type="button" data-archive="${archiveKey}" aria-label="Archive ${item.title}" title="Archive chat"><svg aria-hidden="true"><use href="#i-archive-action"></use></svg></button>`;
+        return `<div class="row ${item.selected ? 'selected' : ''} ${item.unread ? 'unread' : ''} ${item.nested ? 'nested' : ''} ${item.dim ? 'dim' : ''} ${chat ? 'chat-row' : ''} ${confirming ? 'confirming' : ''}" title="${item.title} · ${byKey.get(item.status)?.[1] ?? ''}${item.unread ? ' · Unread' : ''}">${leadingIndicator}<span class="row-title">${item.title}</span>${archiveAction}${item.disclosure ? `<button class="disclosure" type="button" aria-label="${agentChildrenExpanded ? 'Collapse' : 'Expand'} child conversations" aria-expanded="${agentChildrenExpanded}"><svg aria-hidden="true"><use href="#i-chevron"></use></svg></button>` : ''}</div>`;
+      };
+      const renderPreview = () => {
+        const view = views[currentView];
+        const groups = view.groups.map(([title, count, rows]) => {
+          const visibleRows = rows.filter((item) => !archivedRows.has(`${currentView}:${item.title}`));
+          const rendered = visibleRows.map((item) => `${row(item)}${currentView === 'agents' && item.disclosure && agentChildrenExpanded ? row({ title: 'Investigate parser failure', status: 'queued', nested: true, unread: true }) + row({ title: 'Compare agent designs', status: 'ended', nested: true }) : ''}`).join('');
+          return `<div class="group"><div class="group-title"><span>${title}</span><span class="count">${currentView === 'project' || currentView === 'chats' ? visibleRows.length : count}</span></div>${rendered}</div>`;
+        }).join('');
+        document.getElementById('sidebar-preview').innerHTML = `<div class="sidebar-head"><span class="product">HyperNeo</span><span class="preview-label">${view.label}</span></div>${groups}<p class="row-note">${view.note}</p>`;
+        document.querySelector('.disclosure')?.addEventListener('click', () => { agentChildrenExpanded = !agentChildrenExpanded; renderPreview(); });
+        document.querySelectorAll('.archive-action').forEach((button) => button.addEventListener('click', () => { confirmingArchive = button.dataset.archive; renderPreview(); }));
+        document.querySelectorAll('.archive-confirm').forEach((button) => button.addEventListener('click', () => { archivedRows.add(button.dataset.archive); confirmingArchive = null; renderPreview(); }));
+      };
+      document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+        currentView = tab.dataset.view;
+        confirmingArchive = null;
+        document.querySelectorAll('.tab').forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+        renderPreview();
+      }));
+      document.getElementById('motion-toggle').addEventListener('click', (event) => {
+        const paused = document.body.classList.toggle('is-motion-paused');
+        event.currentTarget.textContent = paused ? 'Resume motion' : 'Pause motion';
+        event.currentTarget.setAttribute('aria-pressed', String(paused));
+      });
+      renderPreview();
+    </script>
+  </body>
+</html>

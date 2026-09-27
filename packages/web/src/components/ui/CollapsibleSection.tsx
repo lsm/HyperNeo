@@ -19,11 +19,11 @@ export function CollapsibleSection({
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
-    <div class="collapsible-section">
-      <div class="flex min-h-9 items-center justify-between gap-1 px-1.5 py-1">
+    <div class="collapsible-section mb-4 last:mb-0">
+      <div class="flex min-h-[30px] items-center justify-between gap-1 px-2.5 pb-[7px] pt-2.5">
         <button
           type="button"
-          class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-fg-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--sidebar-row-muted)] transition-colors hover:text-[var(--sidebar-row-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           aria-expanded={expanded}
           aria-label={`${title} section`}
           onClick={() => setExpanded(!expanded)}
@@ -42,9 +42,11 @@ export function CollapsibleSection({
               stroke-linejoin="round"
             />
           </svg>
-          <span class="truncate text-xs font-medium">{title}</span>
+          <span class="truncate">{title}</span>
           {count != null && (
-            <span class="ml-auto text-[11px] tabular-nums text-fg-faint">{count}</span>
+            <span class="ml-auto text-[11px] font-normal tracking-normal tabular-nums text-[var(--sidebar-row-faint)]">
+              {count}
+            </span>
           )}
         </button>
         {headerRight && (

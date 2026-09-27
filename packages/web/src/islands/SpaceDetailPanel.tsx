@@ -39,7 +39,6 @@ import {
   syncSpaceSessionSeen,
 } from '../lib/space-unread';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
-import { getTaskStatusConfig } from '../lib/task-status';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
@@ -529,18 +528,12 @@ export function SpaceDetailPanel({
                 viewedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
               const taskSessions = sessions.filter((session) => session.taskId === task.id);
               const taskActivity = getTaskSidebarStatus(task, taskSessions);
-              const lifecycleLabel = getTaskStatusConfig(task.status).label;
               return (
                 <ConversationRow
                   key={task.id}
                   title={task.title}
                   selected={selectedTaskId === task.id}
                   status={taskActivity}
-                  secondaryStatus={
-                    taskActivity.label !== lifecycleLabel
-                      ? { ...getTaskStatusConfig(task.status), kind: task.status, pulse: false }
-                      : undefined
-                  }
                   unread={taskUnread}
                   unreadCount={taskSessions.reduce(
                     (count, session) =>

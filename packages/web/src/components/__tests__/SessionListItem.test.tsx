@@ -180,7 +180,7 @@ describe('SessionListItem', () => {
       );
 
       const row = container.querySelector('[data-testid="session-row"]')!;
-      expect(row.className).toContain('hover:bg-fill-soft');
+      expect(row.className).toContain('conversation-row');
     });
   });
 
@@ -475,8 +475,8 @@ describe('SessionListItem', () => {
 
       const row = container.querySelector('[data-testid="session-row"]');
       const button = container.querySelector('[data-testid="session-card"]');
-      expect(row?.className).toContain('bg-fill');
-      expect(button?.className).toContain('text-fg');
+      expect(row?.className).toContain('is-selected');
+      expect(button?.getAttribute('aria-current')).toBe('page');
     });
 
     it('should have inactive styling when not current session', () => {
@@ -488,9 +488,9 @@ describe('SessionListItem', () => {
 
       const row = container.querySelector('[data-testid="session-row"]');
       const button = container.querySelector('[data-testid="session-card"]');
-      expect(row?.className).toContain('hover:bg-fill-soft');
-      expect(row?.className.split(' ')).not.toContain('bg-fill');
-      expect(button?.className).toContain('text-fg-muted');
+      expect(row?.className).toContain('conversation-row');
+      expect(row?.className.split(' ')).not.toContain('is-selected');
+      expect(button?.getAttribute('aria-current')).toBeNull();
     });
   });
 
