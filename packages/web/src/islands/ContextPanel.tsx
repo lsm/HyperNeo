@@ -44,6 +44,7 @@ const SETTINGS_SECTIONS: Array<{
   },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
+  { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
   {
     id: 'app-mcp-servers',
     label: 'MCP Servers',
@@ -101,6 +102,17 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+          />
+        </svg>
+      );
+    case 'search':
+      return (
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"
           />
         </svg>
       );

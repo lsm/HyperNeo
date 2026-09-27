@@ -118,6 +118,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     maxContextWindow: 272000,
     functionCalling: true,
     vision: false,
+    nativeWebTools: true,
   };
 
   private clientCache: CopilotClient | undefined = undefined;

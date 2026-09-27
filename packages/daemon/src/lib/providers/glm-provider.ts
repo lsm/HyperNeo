@@ -29,6 +29,7 @@ export class GlmProvider implements Provider {
     maxContextWindow: 1_000_000,
     functionCalling: true,
     vision: true,
+    nativeWebTools: true,
   };
 
   static readonly BASE_URL = 'https://open.bigmodel.cn/api/anthropic';

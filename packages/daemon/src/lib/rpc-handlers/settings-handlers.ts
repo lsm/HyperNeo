@@ -6,8 +6,10 @@ import type { SettingsManager } from '../settings-manager.ts';
 import type { Database } from '../../storage/database.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from './voice-credential-lock.ts';
+import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
+export { EXA_CREDENTIAL_PROVIDER_ID };
 
 function providerIdsFromAllowlistEnv(): string[] {
   const raw = process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
@@ -75,34 +77,68 @@ export function registerSettingsHandlers(
           validateCustomEndpoints(data.updates.customEndpoints);
         }
         const voiceMutation: VoiceCredentialMutation = {};
-        const updates = await prepareGlobalSettingsUpdate(
-          data.updates,
+        const exaMutation: VoiceCredentialMutation = {};
+        const updates = prepareExaSettingsUpdate(
+          await prepareGlobalSettingsUpdate(
+            data.updates,
+            credentialManager,
+            settingsManager,
+            voiceMutation
+          ),
           credentialManager,
           settingsManager,
-          voiceMutation
+          exaMutation
         );
-        const runVoiceMutation = async () => {
+        const runCredentialMutations = async () => {
           const priorSettings = settingsManager.getGlobalSettings();
           const needsCredentialSnapshot = credentialManager
-            ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
+            ? Boolean(
+                voiceMutation.storeKey ||
+                  voiceMutation.remove ||
+                  exaMutation.storeKey ||
+                  exaMutation.remove
+              )
             : false;
-          const priorCredential = needsCredentialSnapshot
-            ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
-            : null;
+          const priorVoiceCredential =
+            needsCredentialSnapshot && (voiceMutation.storeKey || voiceMutation.remove)
+              ? ((await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)) ?? null)
+              : null;
+          const priorExaCredential =
+            needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
+              ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
+              : null;
           const result = settingsManager.updateGlobalSettings(updates);
           try {
-            await applyVoiceCredentialMutation(voiceMutation, credentialManager);
+            await applyCredentialMutation(
+              voiceMutation,
+              credentialManager,
+              VOICE_CREDENTIAL_PROVIDER_ID
+            );
+            await applyCredentialMutation(
+              exaMutation,
+              credentialManager,
+              EXA_CREDENTIAL_PROVIDER_ID
+            );
           } catch (error) {
             settingsManager.saveGlobalSettings(priorSettings);
-            await restorePriorVoiceCredential(priorCredential, credentialManager);
+            await restorePriorCredential(
+              priorVoiceCredential,
+              credentialManager,
+              VOICE_CREDENTIAL_PROVIDER_ID
+            );
+            await restorePriorCredential(
+              priorExaCredential,
+              credentialManager,
+              EXA_CREDENTIAL_PROVIDER_ID
+            );
             throw error;
           }
           return result;
         };
         const updated =
           voiceMutation.storeKey || voiceMutation.remove
-            ? await withVoiceCredentialLock(runVoiceMutation)
-            : await runVoiceMutation();
+            ? await withVoiceCredentialLock(runCredentialMutations)
+            : await runCredentialMutations();
         if (data.updates.providerModelAllowlists !== undefined) {
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
@@ -211,28 +247,30 @@ interface VoiceCredentialMutation {
   remove?: boolean;
 }
 
-async function applyVoiceCredentialMutation(
+async function applyCredentialMutation(
   mutation: VoiceCredentialMutation,
-  credentialManager?: ProviderCredentialManager
+  credentialManager: ProviderCredentialManager | undefined,
+  providerId: string
 ): Promise<void> {
   if (!credentialManager) return;
   if (mutation.storeKey) {
-    await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, mutation.storeKey);
+    await credentialManager.storeApiKey(providerId, mutation.storeKey);
   } else if (mutation.remove) {
-    await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+    await credentialManager.removeCredentials(providerId);
   }
 }
 
-async function restorePriorVoiceCredential(
+async function restorePriorCredential(
   prior: { type: string; apiKey?: string } | null | undefined,
-  credentialManager?: ProviderCredentialManager
+  credentialManager: ProviderCredentialManager | undefined,
+  providerId: string
 ): Promise<void> {
   if (!credentialManager) return;
   try {
     if (prior?.type === 'api_key' && prior.apiKey) {
-      await credentialManager.storeApiKey(VOICE_CREDENTIAL_PROVIDER_ID, prior.apiKey);
+      await credentialManager.storeApiKey(providerId, prior.apiKey);
     } else {
-      await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
+      await credentialManager.removeCredentials(providerId);
     }
   } catch {}
 }
@@ -287,6 +325,37 @@ async function prepareGlobalSettingsUpdate(
   return { ...updates, voice };
 }
 
+function prepareExaSettingsUpdate(
+  updates: Partial<GlobalSettings>,
+  credentialManager: ProviderCredentialManager | undefined,
+  settingsManager: SettingsManager,
+  mutation: VoiceCredentialMutation
+): Partial<GlobalSettings> {
+  if (!updates.exa) return updates;
+  const exa = { ...updates.exa };
+  const newApiKey = exa.apiKey?.trim();
+  const clearRequested = exa.hasApiKey === false;
+  delete exa.apiKey;
+  delete exa.hasApiKey;
+
+  const persistedExa = settingsManager.getGlobalSettings().exa;
+
+  if (newApiKey) {
+    if (!credentialManager) throw new Error('Credential store is not available');
+    exa.hasApiKey = true;
+    mutation.storeKey = newApiKey;
+  } else if (clearRequested && persistedExa?.hasApiKey === true) {
+    mutation.remove = true;
+  } else if (persistedExa?.apiKey?.trim()) {
+    exa.hasApiKey = true;
+    mutation.storeKey = persistedExa.apiKey.trim();
+  } else if (persistedExa) {
+    exa.hasApiKey = persistedExa.hasApiKey;
+  }
+
+  return { ...updates, exa };
+}
+
 function normalizeEndpoint(endpoint: string): string {
   try {
     return new URL(endpoint).toString();
@@ -299,10 +368,26 @@ export function sanitizeGlobalSettings(
   settings: GlobalSettings,
   credentialManager?: ProviderCredentialManager
 ): GlobalSettings {
-  if (!settings.voice) return settings;
-  const voice = { ...settings.voice };
-  const hadInlineApiKey = !!voice.apiKey?.trim();
-  delete voice.apiKey;
-  if (hadInlineApiKey || credentialManager) voice.hasApiKey = voice.hasApiKey ?? hadInlineApiKey;
-  return { ...settings, voice };
+  let sanitized = settings;
+  if (sanitized.voice) {
+    const voice = { ...sanitized.voice };
+    const hadInlineApiKey = !!voice.apiKey?.trim();
+    delete voice.apiKey;
+    if (hadInlineApiKey || credentialManager) voice.hasApiKey = voice.hasApiKey ?? hadInlineApiKey;
+    sanitized = { ...sanitized, voice };
+  }
+  if (sanitized.exa) {
+    const exa = { ...sanitized.exa };
+    const hadInlineApiKey = !!exa.apiKey?.trim();
+    delete exa.apiKey;
+    if (hadInlineApiKey || credentialManager) exa.hasApiKey = exa.hasApiKey ?? hadInlineApiKey;
+    if (
+      exa.hasApiKey !== true &&
+      credentialManager?.hasEnvironmentCredentials(EXA_CREDENTIAL_PROVIDER_ID)
+    ) {
+      exa.hasApiKey = true;
+    }
+    sanitized = { ...sanitized, exa };
+  }
+  return sanitized;
 }

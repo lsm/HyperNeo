@@ -154,11 +154,13 @@ function createMockCredentialManager(): {
   const storeApiKey = mock(async () => {});
   const removeCredentials = mock(async () => {});
   const getCredentials = mock(async () => null);
+  const hasEnvironmentCredentials = mock(() => false);
   return {
     manager: {
       storeApiKey,
       removeCredentials,
       getCredentials,
+      hasEnvironmentCredentials,
     } as unknown as ProviderCredentialManager,
     storeApiKey,
     removeCredentials,
@@ -352,6 +354,100 @@ describe('Settings RPC Handlers', () => {
       );
 
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('voice-transcription');
+    });
+
+    it('stores exa apiKey in credentials and returns only hasApiKey', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            exa: {
+              enabled: true,
+              apiKey: 'exa-test-key',
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      expect(credentialManager.storeApiKey).toHaveBeenCalledWith('exa', 'exa-test-key');
+      expect(result.settings.exa?.apiKey).toBeUndefined();
+      expect(result.settings.exa?.hasApiKey).toBe(true);
+      expect(result.settings.exa?.enabled).toBe(true);
+    });
+
+    it('removes stored exa credentials when hasApiKey is cleared', async () => {
+      const credentialManager = createMockCredentialManager();
+      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
+        ...defaultGlobalSettings,
+        exa: {
+          enabled: true,
+          hasApiKey: true,
+        },
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            exa: {
+              enabled: true,
+              hasApiKey: false,
+            },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('exa');
+      expect(result.settings.exa?.apiKey).toBeUndefined();
+      expect(result.settings.exa?.hasApiKey).not.toBe(true);
+    });
+
+    it('reports exa hasApiKey when the daemon environment provides EXA_API_KEY', async () => {
+      const credentialManager = createMockCredentialManager();
+      (
+        credentialManager.manager.hasEnvironmentCredentials as ReturnType<typeof mock>
+      ).mockReturnValue(true);
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+
+      const result = (await handler!(
+        {
+          updates: {
+            exa: { enabled: true },
+          },
+        },
+        {}
+      )) as { settings: GlobalSettings };
+
+      expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
+      expect(result.settings.exa?.hasApiKey).toBe(true);
     });
 
     it('rejects an API key before an endpoint is configured', async () => {

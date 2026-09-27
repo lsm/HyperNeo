@@ -44,6 +44,9 @@ const ProvidersSettings = lazy(() =>
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
 );
+const ExaSettings = lazy(() =>
+  import('../components/settings/ExaSettings.tsx').then((m) => ({ default: m.ExaSettings }))
+);
 const AppMcpServersSettings = lazy(() =>
   import('../components/settings/AppMcpServersSettings.tsx').then((m) => ({
     default: m.AppMcpServersSettings,
@@ -442,6 +445,7 @@ export default function MainContent() {
                 {settingsSection === 'appearance' && <AppearanceSettings />}
                 {settingsSection === 'providers' && <ProvidersSettings />}
                 {settingsSection === 'voice' && <VoiceSettings />}
+                {settingsSection === 'exa' && <ExaSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
                 {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
