@@ -1,11 +1,13 @@
 # Neo MVP
 
-An opt-in entry inside the existing web package at `/neo`, included in the web build. The old `/neo/index.html` URL and `/neo/` redirect to `/neo`, preserving query parameters. Development, build preview, and production servers serve the same entry. The normal HyperNeo entry remains unchanged. Requires this branch's daemon (schema migration 278) and a configured model provider.
+An opt-in entry inside the existing web package at `/neo`, included in the web build. The old `/neo/index.html` URL and `/neo/` redirect to `/neo`, preserving query parameters. Development, build preview, and production servers serve the same entry. The normal HyperNeo entry remains unchanged. Requires this branch's daemon (schema migration 279) and a configured model provider.
 
 ## Working loop
 
 - Messages use existing sessions, message delivery and live subscriptions. One-off messages do not mechanically create concerns; Neo decides when continuity justifies one.
-- A 分身 is a durable concern record, independent of its coordinator conversation and execution sessions. Neo reads short summaries, then loads relevant context on demand. Corrections use revision protection.
+- A 分身 is a durable concern record, independent of its coordinator conversation and execution sessions. Neo reads short summaries and consults the relevant holder for detailed context. Root Neo can create concerns, but existing context can only be revised by its holder or the human; corrections use revision protection.
+- Neo can now consult a concern coordinator through `neo.concern.consult`. The existing holder session receives a bounded question through the durable mailbox, saves relevant context, and returns up to 4,000 characters through `neo.concern.respond`. Only root Neo may initiate consultations, and only the assigned holder may answer. Execution still needs a separate user-approved work card.
+- Consultation receipts survive restarts, retry keys prevent duplicate requests, and only one consultation per concern may be pending. A terminal holder turn without an explicit answer returns a failure rather than borrowing an unrelated transcript response. Neo shows a small “Checking with…” status while pending; internal mailbox envelopes remain under conversation details, not human message bubbles.
 - Root Neo and concern coordinators have only question cards and bounded Neo operations. They cannot start work, run shell/file tools, spawn agents, or access arbitrary external MCP servers.
 - Work proposals show the actual brief. Start creates an ordinary HyperNeo execution session using existing tools and permissions, with no new execution engine. Workspace-less executions run in a per-work temporary scratch directory (`$TMPDIR/hyperneo-neo-work/…`) in direct mode, so auto-accepted edits never land in the daemon's launch directory; the card says so. Repeated Start calls reuse the same receipt/session. Stop interrupts without undoing completed effects.
 - Terminal responses return through the durable mailbox to Neo and the originating concern conversation. “Response ready” is not independently verified task completion. Execution history stays inspectable.
@@ -26,7 +28,7 @@ The warm accent uses `light-dark()` with the existing app color scheme; other de
 
 ## Deliberate MVP limits
 
-Single-user local use. Each delegation currently creates its own execution session; no automatic import/linking of existing Spaces or task histories, concern merge/archive, scheduling or proactive reminders. The model can still misroute or poorly summarize context; inspect the saved context and correct it conversationally. Recent work is limited to 50 receipts in this UI; execution history remains in HyperNeo.
+Single-user local use. Each execution delegation currently creates its own execution session; consultations reuse the concern coordinator. No automatic import/linking of existing Spaces or task histories, concern merge/archive, scheduling or proactive reminders. Consultation routing is model-directed and may still be wrong; inspect the saved context and correct it conversationally. Recent work is limited to 50 receipts and consultations to 20 in this UI; history remains in HyperNeo. Worker result delivery retains the MVP behavior; this slice adds bounded Neo↔holder consultation, not continuous autonomous concern management.
 
 The old `NeoPreview` component remains a test fixture, not the live entry. No sample concerns are seeded in the live app.
 

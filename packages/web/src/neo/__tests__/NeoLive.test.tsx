@@ -109,12 +109,26 @@ describe('Neo MVP controls', () => {
         message: { role: 'user', content: 'Internal worker report' },
         inputKind: 'system',
       },
+      {
+        type: 'user',
+        uuid: 'neo-consult:one:request',
+        message: { role: 'user', content: 'Internal consultation question' },
+        inputKind: 'system',
+      },
+      {
+        type: 'user',
+        uuid: 'neo-consult:one:reply',
+        message: { role: 'user', content: 'Internal consultation answer' },
+        inputKind: 'system',
+      },
     ] as unknown as SessionStore['sdkMessages']['value'];
     render(<NeoConversation store={store} sessionId="neo" />);
     const conversation = screen.getByRole('region', { name: 'Conversation with Neo' });
     expect(within(conversation).getByText('42.').tagName).toBe('P');
     expect(within(conversation).getByText('What is 17 plus 25?')).toBeTruthy();
     expect(within(conversation).queryByText('Internal worker report')).toBeNull();
+    expect(within(conversation).queryByText('Internal consultation question')).toBeNull();
+    expect(within(conversation).queryByText('Internal consultation answer')).toBeNull();
     expect(screen.getByText('Behind the conversation')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open full conversation/ }).getAttribute('href')).toBe(
       '/session/neo'

@@ -27,6 +27,27 @@ const Work = z.object({
   updatedAt: z.number(),
 });
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
+const Consultation = z.object({
+  id: z.string(),
+  requestKey: z.string(),
+  concernId: z.string(),
+  originSessionId: z.string(),
+  sessionId: z.string(),
+  question: z.string(),
+  status: z.enum(['pending', 'reported', 'failed']),
+  answer: z.string().nullable(),
+  createdAt: z.number(),
+});
+const Consult = z.object({
+  concernId: z.string().min(1),
+  requestKey: z.string().min(1).max(160),
+  question: z.string().trim().min(1).max(8000),
+});
+const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
+const ConsultationResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), consultation: Consultation }),
+]);
 const Snapshot = z.union([
   Failure,
   z.object({
@@ -34,6 +55,7 @@ const Snapshot = z.union([
     sessionId: z.string().nullable(),
     concerns: z.array(Concern),
     work: z.array(Work),
+    consultations: z.array(Consultation),
   }),
 ]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
@@ -64,6 +86,20 @@ export function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || !binding || binding.kind === 'worker')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
+  if (name === 'neo.concern.consult' && binding.kind !== 'neo')
+    return { reason: { ok: false, reason: 'Only root Neo can consult a context holder.' } };
+  if (
+    name === 'neo.concern.save' &&
+    binding.kind === 'neo' &&
+    concernId &&
+    service.repo.getConcern(concernId)
+  )
+    return {
+      reason: {
+        ok: false,
+        reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
+      },
+    };
   if (['neo.open', 'neo.work.start', 'neo.work.cancel'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
@@ -90,14 +126,18 @@ export function createNeoOperations(service: NeoService) {
   function snapshot(caller: OperationCaller, requested?: string) {
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
     const scope = binding?.kind === 'concern' ? binding.concernId : requested;
+    const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
     const concerns = service.repo.listConcerns().filter((item) => !scope || item.id === scope);
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
       concerns: concerns.map((item) => ({
         ...item,
-        context: caller.source === 'rpc' || scope ? item.context : '',
+        context: detailed ? item.context : '',
       })),
+      consultations: service.consultations
+        .list(scope ?? undefined)
+        .map((item) => (detailed ? item : { ...item, question: '', answer: null })),
       work: service.repo
         .listWork(scope === undefined ? undefined : scope)
         .slice(0, caller.source === 'rpc' ? 50 : 10)
@@ -106,8 +146,8 @@ export function createNeoOperations(service: NeoService) {
             ? item
             : {
                 ...item,
-                instruction: scope ? item.instruction.slice(0, 1000) : '',
-                report: scope ? (item.report?.slice(0, 3000) ?? null) : null,
+                instruction: detailed ? item.instruction.slice(0, 1000) : '',
+                report: detailed ? (item.report?.slice(0, 3000) ?? null) : null,
               }
         ),
     };
@@ -117,6 +157,110 @@ export function createNeoOperations(service: NeoService) {
     (input: z.infer<typeof Scope>) => input.concernId,
     (input, caller) => snapshot(caller, input.concernId)
   );
+  const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => {
+        const root = caller.sessionId && service.repo.getBindingBySession(caller.sessionId);
+        return caller.source === 'mcp' && root && root.kind === 'neo'
+          ? { value: root.sessionId }
+          : { reason: { ok: false, reason: 'Only root Neo can consult.' } };
+      },
+      'caller',
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Consult>, root: string) =>
+        service.repo.getConcern(input.concernId)
+          ? { value: root }
+          : { reason: { ok: false, reason: 'Concern not found.' } },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe((input: z.infer<typeof Consult>) => service.open(input.concernId), 'input', 'sessionId')
+    .pipe(
+      (input: z.infer<typeof Consult>, root: string, sessionId: string) => {
+        const item = service.consultations.reserve({
+          ...input,
+          id: crypto.randomUUID(),
+          originSessionId: root,
+          sessionId,
+        });
+        return item
+          ? { value: item }
+          : {
+              reason: {
+                ok: false,
+                reason: 'This context holder already has a pending consultation.',
+              },
+            };
+      },
+      ['input', 'admission', 'sessionId'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Consult>, item: z.infer<typeof Consultation>) =>
+        item.question === input.question && item.concernId === input.concernId
+          ? { value: item }
+          : {
+              reason: { ok: false, reason: 'Request key already belongs to another consultation.' },
+            },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      async (item: z.infer<typeof Consultation>) => {
+        await service.syncConsultation(item.id);
+        return { ok: true as const, consultation: service.consultations.get(item.id)! };
+      },
+      'admission',
+      'admission'
+    )
+    .endAsync('admission') as (
+    input: z.infer<typeof Consult>,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof ConsultationResult>>;
+  const respond = (superpipe({})('neo.concern.respond') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Respond>, caller: OperationCaller) => {
+        const item = service.consultations.get(input.id);
+        const holder = caller.sessionId && service.repo.getBindingBySession(caller.sessionId);
+        return caller.source === 'mcp' &&
+          item &&
+          holder &&
+          holder.kind === 'concern' &&
+          holder.sessionId === item.sessionId &&
+          holder.concernId === item.concernId
+          ? { value: item }
+          : {
+              reason: { ok: false, reason: 'This consultation belongs to another context holder.' },
+            };
+      },
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) =>
+        item.status === 'pending' || (item.status === 'reported' && item.answer === input.answer)
+          ? { value: item }
+          : { reason: { ok: false, reason: 'This consultation is already settled.' } },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      async (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) => {
+        const saved = service.consultations.finish(item.id, 'reported', input.answer)!;
+        await service.syncConsultation(saved.id);
+        return { ok: true as const, consultation: saved };
+      },
+      ['input', 'admission'],
+      'admission'
+    )
+    .endAsync('admission') as (
+    input: z.infer<typeof Respond>,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof ConsultationResult>>;
   const open = path(
     'neo.open',
     (input: z.infer<typeof Scope>) => input.concernId,
@@ -176,6 +320,24 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
+    defineOperation({
+      name: 'neo.concern.consult',
+      description:
+        'Ask a context holder a bounded question. Returns a durable receipt; the answer arrives asynchronously. Reuse requestKey on retry.',
+      inputSchema: Consult,
+      resultSchema: ConsultationResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: consult,
+    }),
+    defineOperation({
+      name: 'neo.concern.respond',
+      description:
+        'Return a concise answer to the root Neo for a consultation assigned to this context holder.',
+      inputSchema: Respond,
+      resultSchema: ConsultationResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: respond,
+    }),
     defineOperation({
       name: 'neo.open',
       description: 'Open the human Neo or concern conversation.',

@@ -14,6 +14,18 @@ export interface NeoBinding {
   kind: 'neo' | 'concern' | 'worker';
 }
 
+export interface NeoConsultation {
+  id: string;
+  requestKey: string;
+  concernId: string;
+  originSessionId: string;
+  sessionId: string;
+  question: string;
+  status: 'pending' | 'reported' | 'failed';
+  answer: string | null;
+  createdAt: number;
+}
+
 export interface NeoWork {
   id: string;
   requestKey: string;
