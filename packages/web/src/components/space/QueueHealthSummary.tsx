@@ -110,110 +110,113 @@ export function QueueHealthSummary(): preact.JSX.Element {
     settled > 0 && counters ? Math.round((counters.delivered / settled) * 100) : null;
 
   return (
-    <div class="st-group" data-testid="queue-health-summary">
-      <div class="st-row">
-        <div class="st-row-label">
-          Queue health
-          <div class="st-row-desc">
+    <div data-testid="queue-health-summary">
+      <div class="st-sec-head">
+        <div class="min-w-0">
+          <h3 class="st-sec-title">Queue health</h3>
+          <p class="st-sec-desc">
             Daemon-wide pending external-event delivery queue.{' '}
             {snapshot ? `Counting since ${formatRelative(snapshot.counters.since)}` : ''}
             {snapshot ? ` · updated ${formatRelative(snapshot.collectedAt)}.` : ''}
-          </div>
-        </div>
-        <Button type="button" size="sm" variant="ghost" loading={loading} onClick={refresh}>
-          Refresh
-        </Button>
-      </div>
-
-      {error ? (
-        <div class="st-row">
-          <p class="text-xs text-danger-soft">Failed to load queue health: {error}</p>
-        </div>
-      ) : null}
-
-      {!snapshot && !error ? (
-        <div class="st-row">
-          <p class="text-xs text-fg-faint">
-            {loading ? 'Loading…' : 'No data yet. Click Refresh.'}
           </p>
         </div>
-      ) : null}
+        <div class="st-sec-actions">
+          <Button type="button" size="sm" variant="ghost" loading={loading} onClick={refresh}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+      <div class="st-group">
+        {error ? (
+          <div class="st-row">
+            <p class="text-xs text-danger-soft">Failed to load queue health: {error}</p>
+          </div>
+        ) : null}
 
-      {snapshot && counters && gauges ? (
-        <>
-          <div class="st-row-stacked st-row">
-            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              <Metric
-                label="Queue depth"
-                value={`${gauges.queueDepth}`}
-                hint={`${gauges.queueKeys} target queue${gauges.queueKeys === 1 ? '' : 's'} · ${gauges.persistedPending} persisted`}
-              />
-              <Metric
-                label="In flight"
-                value={`${gauges.inFlight}`}
-                hint={`${gauges.retryTimers} retry timer${gauges.retryTimers === 1 ? '' : 's'}`}
-              />
-              <Metric
-                label="Queue age"
-                value={gauges.queueDepth > 0 ? formatAge(gauges.queueAgeMs?.p95Ms ?? 0) : '—'}
-                hint={ageStats(gauges.queueAgeMs)}
-              />
-              <Metric
-                label="Enqueued"
-                value={`${counters.enqueue}`}
-                hint={`${counters.flushAttempts} flush attempt${counters.flushAttempts === 1 ? '' : 's'}`}
-              />
-              <Metric
-                label="Delivered"
-                value={`${counters.delivered}`}
-                hint={successRate === null ? undefined : `${successRate}% of settled`}
-              />
-              <Metric label="Failed (terminal)" value={`${totalFailures}`} />
-              <Metric
-                label="Skips"
-                value={`${
-                  counters.claimConflicts +
-                  counters.staleSessionSkips +
-                  counters.pausedSpaceSkips +
-                  counters.cooldownSkips
-                }`}
-                hint={`${counters.claimConflicts} claim · ${counters.staleSessionSkips} stale-session · ${counters.pausedSpaceSkips} paused · ${counters.cooldownSkips} cooldown`}
-              />
+        {!snapshot && !error ? (
+          <div class="st-row">
+            <p class="text-xs text-fg-faint">
+              {loading ? 'Loading…' : 'No data yet. Click Refresh.'}
+            </p>
+          </div>
+        ) : null}
+
+        {snapshot && counters && gauges ? (
+          <>
+            <div class="st-row-stacked st-row">
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                <Metric
+                  label="Queue depth"
+                  value={`${gauges.queueDepth}`}
+                  hint={`${gauges.queueKeys} target queue${gauges.queueKeys === 1 ? '' : 's'} · ${gauges.persistedPending} persisted`}
+                />
+                <Metric
+                  label="In flight"
+                  value={`${gauges.inFlight}`}
+                  hint={`${gauges.retryTimers} retry timer${gauges.retryTimers === 1 ? '' : 's'}`}
+                />
+                <Metric
+                  label="Queue age"
+                  value={gauges.queueDepth > 0 ? formatAge(gauges.queueAgeMs?.p95Ms ?? 0) : '—'}
+                  hint={ageStats(gauges.queueAgeMs)}
+                />
+                <Metric
+                  label="Enqueued"
+                  value={`${counters.enqueue}`}
+                  hint={`${counters.flushAttempts} flush attempt${counters.flushAttempts === 1 ? '' : 's'}`}
+                />
+                <Metric
+                  label="Delivered"
+                  value={`${counters.delivered}`}
+                  hint={successRate === null ? undefined : `${successRate}% of settled`}
+                />
+                <Metric label="Failed (terminal)" value={`${totalFailures}`} />
+                <Metric
+                  label="Skips"
+                  value={`${
+                    counters.claimConflicts +
+                    counters.staleSessionSkips +
+                    counters.pausedSpaceSkips +
+                    counters.cooldownSkips
+                  }`}
+                  hint={`${counters.claimConflicts} claim · ${counters.staleSessionSkips} stale-session · ${counters.pausedSpaceSkips} paused · ${counters.cooldownSkips} cooldown`}
+                />
+              </div>
             </div>
-          </div>
 
-          <div class="st-row-stacked st-row">
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Breakdown
-                title="Failures by category"
-                entries={entryList(snapshot.failuresByCategory)}
-                emptyHint="No terminal failures."
-              />
-              <Breakdown
-                title="Enqueued by source"
-                entries={entryList(counters.enqueueBySource)}
-                emptyHint="No enqueues recorded."
-              />
-              <Breakdown
-                title="Enqueued by target state"
-                entries={entryList(counters.enqueueByTargetState)}
-                emptyHint="No enqueues recorded."
-              />
-              <Breakdown
-                title="Failures by reason"
-                entries={entryList(counters.finalFailuresByReason)}
-                emptyHint="No terminal failures."
-              />
+            <div class="st-row-stacked st-row">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Breakdown
+                  title="Failures by category"
+                  entries={entryList(snapshot.failuresByCategory)}
+                  emptyHint="No terminal failures."
+                />
+                <Breakdown
+                  title="Enqueued by source"
+                  entries={entryList(counters.enqueueBySource)}
+                  emptyHint="No enqueues recorded."
+                />
+                <Breakdown
+                  title="Enqueued by target state"
+                  entries={entryList(counters.enqueueByTargetState)}
+                  emptyHint="No enqueues recorded."
+                />
+                <Breakdown
+                  title="Failures by reason"
+                  entries={entryList(counters.finalFailuresByReason)}
+                  emptyHint="No terminal failures."
+                />
+              </div>
             </div>
-          </div>
 
-          <div class="st-trow">
-            <span class="st-trow-desc">
-              Persisted pending age: {ageStats(gauges.persistedAgeMs)}
-            </span>
-          </div>
-        </>
-      ) : null}
+            <div class="st-trow">
+              <span class="st-trow-desc">
+                Persisted pending age: {ageStats(gauges.persistedAgeMs)}
+              </span>
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

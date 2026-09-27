@@ -10,6 +10,7 @@ import { cn } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
+import { SettingsToggle } from '../settings/SettingsSection.tsx';
 import { GitHubHealthPanel } from './GitHubHealthPanel.tsx';
 import { QueueHealthSummary } from './QueueHealthSummary.tsx';
 import { FORM_CONTROL_CLASS, FORM_CHECKBOX_CLASS } from '../ui/FormField';
@@ -669,6 +670,15 @@ export function SpaceExternalEventsSettings({
         </div>
       ) : (
         <div class="space-y-4">
+          <div class="st-sec-head">
+            <div class="min-w-0">
+              <h3 class="st-sec-title">Extensions</h3>
+              <p class="st-sec-desc">
+                External event sources registered on the daemon. The switch turns a source on or off
+                daemon-wide — spaces only receive events from enabled sources.
+              </p>
+            </div>
+          </div>
           <div class="st-group">
             {extensions.length === 0 ? (
               <div class="st-empty">
@@ -690,6 +700,16 @@ export function SpaceExternalEventsSettings({
             )}
           </div>
 
+          {githubControlsEnabled && (
+            <div class="st-sec-head">
+              <div class="min-w-0">
+                <h3 class="st-sec-title">GitHub connection</h3>
+                <p class="st-sec-desc">
+                  Daemon-wide token and delivery settings for the GitHub extension.
+                </p>
+              </div>
+            </div>
+          )}
           {githubControlsEnabled && (
             <GitHubConnectionCard
               tokenStatus={tokenStatus}
@@ -719,28 +739,23 @@ export function SpaceExternalEventsSettings({
             />
           )}
 
+          <div class="st-sec-head">
+            <div class="min-w-0">
+              <h3 class="st-sec-title">GitHub repositories</h3>
+              <p class="st-sec-desc">Watch pull request and review activity for this space.</p>
+            </div>
+          </div>
           <div class="st-group">
             <div class="st-row">
-              <div class="st-row-label">
-                GitHub repositories
-                <div class="st-row-desc">
-                  Watch pull request and review activity for this space.
-                </div>
-              </div>
-              <label
-                class={cn('flex items-center gap-2 text-xs text-fg-soft', disabled && 'opacity-60')}
-              >
-                <input
-                  type="checkbox"
-                  checked={githubSpaceEnabled}
-                  disabled={
-                    disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
-                  }
-                  onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
-                  class={FORM_CHECKBOX_CLASS}
-                />
-                Enabled for this space
-              </label>
+              <div class="st-row-label">Enabled for this space</div>
+              <SettingsToggle
+                checked={githubSpaceEnabled}
+                disabled={
+                  disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
+                }
+                onChange={(next) => setSpaceEnabled(next)}
+                data-testid="github-space-enabled-toggle"
+              />
             </div>
 
             <div class="st-row">
@@ -906,91 +921,94 @@ function DeliveryLogSection({
   onSelect,
 }: DeliveryLogSectionProps) {
   return (
-    <div class="st-group">
-      <div class="st-row">
-        <div class="st-row-label">
-          Event delivery log
-          <div class="st-row-desc">
+    <div>
+      <div class="st-sec-head">
+        <div class="min-w-0">
+          <h3 class="st-sec-title">Event delivery log</h3>
+          <p class="st-sec-desc">
             Inspect external events, matched agents, delivery state, and payloads.
-          </div>
+          </p>
         </div>
-        <Button type="button" size="sm" variant="ghost" loading={loading} onClick={onRefresh}>
-          Refresh
-        </Button>
+        <div class="st-sec-actions">
+          <Button type="button" size="sm" variant="ghost" loading={loading} onClick={onRefresh}>
+            Refresh
+          </Button>
+        </div>
       </div>
+      <div class="st-group">
+        <div class="st-addrow flex flex-wrap gap-2">
+          <select
+            value={status}
+            onChange={(event) =>
+              onStatusChange((event.target as HTMLSelectElement).value as typeof status)
+            }
+            class={FORM_CONTROL_CLASS}
+            aria-label="Delivery status"
+          >
+            {DELIVERY_STATUSES.map((deliveryStatus) => (
+              <option key={deliveryStatus || 'all'} value={deliveryStatus}>
+                {deliveryStatus || 'all statuses'}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={agentFilter}
+            onInput={(event) => onAgentFilterChange((event.target as HTMLInputElement).value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void onApplyAgentFilter();
+            }}
+            placeholder="filter agent"
+            class={FORM_CONTROL_CLASS}
+          />
+          <Button type="button" size="sm" onClick={onApplyAgentFilter}>
+            Apply
+          </Button>
+        </div>
 
-      <div class="st-addrow flex flex-wrap gap-2">
-        <select
-          value={status}
-          onChange={(event) =>
-            onStatusChange((event.target as HTMLSelectElement).value as typeof status)
-          }
-          class={FORM_CONTROL_CLASS}
-          aria-label="Delivery status"
-        >
-          {DELIVERY_STATUSES.map((deliveryStatus) => (
-            <option key={deliveryStatus || 'all'} value={deliveryStatus}>
-              {deliveryStatus || 'all statuses'}
-            </option>
-          ))}
-        </select>
-        <input
-          type="text"
-          value={agentFilter}
-          onInput={(event) => onAgentFilterChange((event.target as HTMLInputElement).value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void onApplyAgentFilter();
-          }}
-          placeholder="filter agent"
-          class={FORM_CONTROL_CLASS}
-        />
-        <Button type="button" size="sm" onClick={onApplyAgentFilter}>
-          Apply
-        </Button>
-      </div>
-
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-line text-left text-xs">
-          <thead class="text-fg-faint">
-            <tr class="border-b border-line">
-              <th class="px-3 py-2 font-medium">Event</th>
-              <th class="px-3 py-2 font-medium">Target</th>
-              <th class="px-3 py-2 font-medium">Status</th>
-              <th class="px-3 py-2 font-medium">Updated</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-line">
-            {loading ? (
-              <tr>
-                <td colSpan={4} class="px-3 py-4 text-fg-muted">
-                  <span class="inline-flex items-center gap-2">
-                    <Spinner size="sm" /> Loading deliveries…
-                  </span>
-                </td>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-line text-left text-xs">
+            <thead class="text-fg-faint">
+              <tr class="border-b border-line">
+                <th class="px-3 py-2 font-medium">Event</th>
+                <th class="px-3 py-2 font-medium">Target</th>
+                <th class="px-3 py-2 font-medium">Status</th>
+                <th class="px-3 py-2 font-medium">Updated</th>
               </tr>
-            ) : deliveries.length === 0 ? (
-              <tr>
-                <td colSpan={4} class="px-3 py-4 text-fg-muted">
-                  No event deliveries recorded yet.
-                </td>
-              </tr>
-            ) : (
-              deliveries.map((delivery) => (
-                <DeliveryRow
-                  key={delivery.deliveryKey}
-                  delivery={delivery}
-                  selected={selectedDelivery?.deliveryKey === delivery.deliveryKey}
-                  onSelect={() => onSelect(delivery)}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody class="divide-y divide-line">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} class="px-3 py-4 text-fg-muted">
+                    <span class="inline-flex items-center gap-2">
+                      <Spinner size="sm" /> Loading deliveries…
+                    </span>
+                  </td>
+                </tr>
+              ) : deliveries.length === 0 ? (
+                <tr>
+                  <td colSpan={4} class="px-3 py-4 text-fg-muted">
+                    No event deliveries recorded yet.
+                  </td>
+                </tr>
+              ) : (
+                deliveries.map((delivery) => (
+                  <DeliveryRow
+                    key={delivery.deliveryKey}
+                    delivery={delivery}
+                    selected={selectedDelivery?.deliveryKey === delivery.deliveryKey}
+                    onSelect={() => onSelect(delivery)}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-      {selectedDelivery && (
-        <DeliveryDetail delivery={selectedDelivery} onClose={() => onSelect(null)} />
-      )}
+        {selectedDelivery && (
+          <DeliveryDetail delivery={selectedDelivery} onClose={() => onSelect(null)} />
+        )}
+      </div>
     </div>
   );
 }
@@ -1104,7 +1122,7 @@ interface ExtensionCardProps {
 function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
   const capabilities = formatCapabilities(extension.config.capabilities);
   return (
-    <label class={cn('st-trow cursor-pointer', disabled && 'opacity-60')}>
+    <div class={cn('st-trow', disabled && 'opacity-60')}>
       <div class="st-trow-body">
         <div class="flex flex-wrap items-center gap-2">
           <span class="st-trow-name capitalize">{extension.source}</span>
@@ -1121,14 +1139,15 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
           )}
         </div>
       </div>
-      <input
-        type="checkbox"
-        checked={extension.config.globallyEnabled}
-        disabled={disabled}
-        onChange={() => onToggle(!extension.config.globallyEnabled)}
-        class={FORM_CHECKBOX_CLASS}
-      />
-    </label>
+      <span class="st-trow-acts">
+        <SettingsToggle
+          checked={extension.config.globallyEnabled}
+          disabled={disabled}
+          onChange={(next) => void onToggle(next)}
+          data-testid={`extension-toggle-${extension.source}`}
+        />
+      </span>
+    </div>
   );
 }
 
@@ -1287,16 +1306,13 @@ function GitHubConnectionCard({
   return (
     <div class="st-group" data-testid="github-connection-card">
       <div class="st-row">
-        <div class="st-row-label">
-          GitHub connection
-          <div class="st-row-desc">
-            Store a daemon-wide personal access token in the keychain for webhook auto-configure and
-            authenticated polling. The token is shared by every space using the GitHub extension.
-            Recommended scopes: <code class="text-fg-soft">repo</code>,{' '}
-            <code class="text-fg-soft">admin:repo_hook</code>. Supported prefixes:{' '}
-            <code class="text-fg-soft">ghp_</code>, <code class="text-fg-soft">github_pat_</code>,{' '}
-            <code class="text-fg-soft">gho_</code>.
-          </div>
+        <div class="st-row-desc">
+          Store a daemon-wide personal access token in the keychain for webhook auto-configure and
+          authenticated polling. The token is shared by every space using the GitHub extension.
+          Recommended scopes: <code class="text-fg-soft">repo</code>,{' '}
+          <code class="text-fg-soft">admin:repo_hook</code>. Supported prefixes:{' '}
+          <code class="text-fg-soft">ghp_</code>, <code class="text-fg-soft">github_pat_</code>,{' '}
+          <code class="text-fg-soft">gho_</code>.
         </div>
       </div>
 

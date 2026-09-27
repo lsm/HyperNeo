@@ -271,7 +271,7 @@ describe('SpaceExternalEventsSettings', () => {
     );
 
     expect(await findByText('github')).toBeTruthy();
-    expect(screen.getAllByRole('checkbox')[1]).toHaveProperty('disabled', true);
+    expect(screen.getByTestId('github-space-enabled-toggle')).toHaveProperty('disabled', true);
     expect(getByPlaceholderText('owner/repository')).toHaveProperty('disabled', true);
     expect(getByPlaceholderText('Webhook secret (optional)')).toHaveProperty('disabled', true);
     expect(getByText('Add watch')).toHaveProperty('disabled', true);
@@ -329,10 +329,10 @@ describe('SpaceExternalEventsSettings', () => {
 
   it('toggles space enablement', async () => {
     setupRequests();
-    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const { findByText, getByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
     await findByText('github');
 
-    fireEvent.click(getByText('Enabled for this space'));
+    fireEvent.click(getByTestId('github-space-enabled-toggle'));
 
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledWith('space.github.disable', { spaceId: 'space-1' });
@@ -347,10 +347,10 @@ describe('SpaceExternalEventsSettings', () => {
       if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
       return Promise.resolve({});
     });
-    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const { findByText, getByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
     await findByText('github');
 
-    fireEvent.click(getByText('Enabled for this space'));
+    fireEvent.click(getByTestId('github-space-enabled-toggle'));
 
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledWith('space.github.disable', { spaceId: 'space-1' });
@@ -446,7 +446,7 @@ describe('SpaceExternalEventsSettings', () => {
 
     const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
     expect(await view.findByText('acme/widgets')).toBeTruthy();
-    fireEvent.click(view.getByText('Enabled for this space'));
+    fireEvent.click(view.getByTestId('github-space-enabled-toggle'));
     await waitFor(() => expect(resolveDisable).toBeTypeOf('function'));
     view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
     expect(await view.findByText('beta/widgets')).toBeTruthy();
@@ -521,13 +521,13 @@ describe('SpaceExternalEventsSettings', () => {
 
     const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
     await view.findByText('acme/widgets');
-    fireEvent.click(view.getByText('Enabled for this space'));
+    fireEvent.click(view.getByTestId('github-space-enabled-toggle'));
     await waitFor(() => expect(resolveDisable).toBeTypeOf('function'));
     view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
     resolveDisable({});
 
     await waitFor(() => {
-      expect(screen.getAllByRole('checkbox')[1]).toHaveProperty('disabled', false);
+      expect(screen.getByTestId('github-space-enabled-toggle')).toHaveProperty('disabled', false);
     });
   });
 
@@ -558,12 +558,18 @@ describe('SpaceExternalEventsSettings', () => {
     });
   });
 
-  it('toggles global enablement', async () => {
+  it('toggles global enablement from the row switch only', async () => {
     setupRequests();
-    const { findByText, getAllByRole } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    await findByText('github');
+    const { findByText, getByTestId } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const rowName = await findByText('github');
 
-    fireEvent.click(getAllByRole('checkbox')[0]);
+    fireEvent.click(rowName);
+    expect(mockRequest).not.toHaveBeenCalledWith(
+      'externalEvents.extensions.setGlobalEnabled',
+      expect.anything()
+    );
+
+    fireEvent.click(getByTestId('extension-toggle-github'));
 
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledWith('externalEvents.extensions.setGlobalEnabled', {
