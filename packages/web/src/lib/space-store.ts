@@ -2648,12 +2648,17 @@ class SpaceStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
   ): Promise<void> {
-    const result = await hub.request<{ templates: Array<{ key: string }> }>(
-      'spaceAgentTemplate.listBuiltIn',
-      { spaceId }
-    );
-    if (this.spaceId.value !== spaceId) return;
-    this.builtInTemplateKeys.value = new Set((result?.templates ?? []).map((t) => t.key));
+    try {
+      const result = await hub.request<{ templates: Array<{ key: string }> }>(
+        'spaceAgentTemplate.listBuiltIn',
+        { spaceId }
+      );
+      if (this.spaceId.value !== spaceId) return;
+      this.builtInTemplateKeys.value = new Set((result?.templates ?? []).map((t) => t.key));
+    } catch (err) {
+      logger.error('Failed to fetch built-in template keys:', err);
+      if (this.spaceId.value === spaceId) this.builtInTemplateKeys.value = new Set();
+    }
   }
 
   private async refreshTemplateLibrary(

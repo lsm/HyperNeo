@@ -524,6 +524,23 @@ describe('SpaceStore — space selection', () => {
     expect(spaceStore.agentListState.value).toBe('loaded');
   });
 
+  it('a failing built-in template keys fetch does not stall the config load', async () => {
+    await spaceStore.selectSpace('space-1');
+    const base = mockHub.request.getMockImplementation() as
+      | ((method: string, params?: Record<string, unknown>) => Promise<unknown>)
+      | undefined;
+    mockHub.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'spaceAgentTemplate.listBuiltIn') throw new Error('keys unavailable');
+      return (await base?.(method, params)) as never;
+    });
+
+    await spaceStore.ensureConfigData();
+
+    expect(spaceStore.configDataLoaded.value).toBe(true);
+    expect(spaceStore.builtInTemplateKeys.value).toEqual(new Set());
+    mockHub.request.mockImplementation(base as never);
+  });
+
   it('reports an agent fetch failure and recovers after a successful retry', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockRejectedValueOnce(new Error('agent list unavailable'));
