@@ -136,7 +136,13 @@ export function NeoLive() {
           </span>
         </button>
         <div class="flex items-center gap-4">
-          <NeoConcerns concerns={concerns} selectedId={neo.selectedId} onOpen={open} />
+          <NeoConcerns
+            concerns={concerns}
+            works={works}
+            consultations={neo.snapshot?.consultations ?? []}
+            selectedId={neo.selectedId}
+            onOpen={open}
+          />
           <a
             href="/"
             target="_blank"
