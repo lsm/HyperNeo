@@ -11,7 +11,13 @@ import { isReservedAgentHandle } from '../messaging/agent-handle.ts';
 import type { SpaceAgentResult } from './validation.ts';
 import { getLongHorizonAgentTemplates } from './long-horizon-templates.ts';
 import type { TemplateInstanceScan } from './template-pipelines.ts';
-import { runCreateTemplate, runDeleteTemplate, runUpdateTemplate } from './template-pipelines.ts';
+import {
+  runCreateTemplate,
+  runDeleteTemplate,
+  runHideBuiltInTemplate,
+  runUnhideBuiltInTemplate,
+  runUpdateTemplate,
+} from './template-pipelines.ts';
 
 export type {
   CreateTemplateCtx,
@@ -85,10 +91,13 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: this.repo.getOwnedWithVersion(spaceId, ctx.params.key)! };
   }
 
-  private async ensureOwnedOverride(spaceId: string, key: string): Promise<SpaceAgentResult<void>> {
-    if (this.repo.getOwned(spaceId, key)) return { ok: true, value: undefined };
+  private async ensureOwnedOverride(
+    spaceId: string,
+    key: string
+  ): Promise<SpaceAgentResult<number | null>> {
+    if (this.repo.getOwned(spaceId, key)) return { ok: true, value: null };
     const builtIn = this.builtIns().find((template) => template.key === key);
-    if (!builtIn) return { ok: true, value: undefined };
+    if (!builtIn) return { ok: true, value: null };
     const created = await this.createIn(spaceId, {
       key: builtIn.key,
       handle: builtIn.handle,
@@ -105,7 +114,13 @@ export class SpaceAgentTemplateManager {
       labels: builtIn.labels,
     });
     if (!created.ok) return { ok: false, error: created.error };
-    return { ok: true, value: undefined };
+    return { ok: true, value: created.value.version };
+  }
+
+  private discardSeededOverride(spaceId: string, key: string, seededVersion: number | null): void {
+    if (seededVersion === null) return;
+    const current = this.repo.getOwnedWithVersion(spaceId, key);
+    if (current?.version === seededVersion) this.repo.deleteOwned(spaceId, key);
   }
 
   async updateIn(
@@ -123,7 +138,10 @@ export class SpaceAgentTemplateManager {
       params: updates,
       expectedVersion,
     });
-    if (ctx.error) return { ok: false, error: ctx.error };
+    if (ctx.error) {
+      this.discardSeededOverride(spaceId, key, seeded.value);
+      return { ok: false, error: ctx.error };
+    }
     return { ok: true, value: ctx.template ?? null };
   }
 
@@ -142,7 +160,10 @@ export class SpaceAgentTemplateManager {
       params,
       expectedVersion,
     });
-    if (ctx.error) return { ok: false, error: ctx.error };
+    if (ctx.error) {
+      this.discardSeededOverride(spaceId, key, seeded.value);
+      return { ok: false, error: ctx.error };
+    }
     if (!ctx.template) return { ok: true, value: null };
     return { ok: true, value: ctx.template as SpaceAgentTemplateRecord };
   }
@@ -166,23 +187,24 @@ export class SpaceAgentTemplateManager {
   }
 
   hideBuiltInIn(spaceId: string, key: string): SpaceAgentResult<void> {
-    const builtIn = this.builtIns().find((template) => template.key === key);
-    if (!builtIn) return { ok: false, error: `Unknown built-in template "${key}"` };
-    if (this.repo.getOwned(spaceId, key)) {
-      return {
-        ok: false,
-        error: `Template "${key}" has a space-level customization; delete it instead of hiding`,
-      };
-    }
-    this.repo.hideBuiltInKey(spaceId, key);
+    const ctx = runHideBuiltInTemplate({
+      repo: this.repo,
+      spaceId,
+      key,
+      builtIns: this.builtIns(),
+    });
+    if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: undefined };
   }
 
   unhideBuiltInIn(spaceId: string, key: string): SpaceAgentResult<void> {
-    if (!this.builtIns().some((template) => template.key === key)) {
-      return { ok: false, error: `Unknown built-in template "${key}"` };
-    }
-    this.repo.unhideBuiltInKey(spaceId, key);
+    const ctx = runUnhideBuiltInTemplate({
+      repo: this.repo,
+      spaceId,
+      key,
+      builtIns: this.builtIns(),
+    });
+    if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: undefined };
   }
 

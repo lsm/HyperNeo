@@ -1508,3 +1508,45 @@ describe('resolveEffectiveSpaceAgentTemplate', () => {
     expect(resolveEffectiveSpaceAgentTemplate('missing.custom', OWNER)).toBeNull();
   });
 });
+
+describe('built-in override seeding rollback', () => {
+  let db: BunDatabase;
+  let repo: SpaceAgentTemplateRepository;
+  let manager: SpaceAgentTemplateManager;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
+    repo = new SpaceAgentTemplateRepository(db);
+    manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
+    setModelsCache(new Map());
+  });
+
+  test('a failed update of a built-in leaves no override row behind', async () => {
+    const result = await manager.updateIn(OWNER, 'builtin.default', { displayName: '  ' });
+
+    expect(result.ok).toBe(false);
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.listIn(OWNER).some((template) => template.key === 'builtin.default')).toBe(true);
+  });
+
+  test('a CAS mismatch on a fresh override rolls the seed back', async () => {
+    const result = await manager.casUpdateIn(OWNER, 'builtin.default', { displayName: 'Mine' }, 99);
+
+    expect(result.ok).toBe(false);
+    expect(repo.getOwned(OWNER, 'builtin.default')).toBeNull();
+    expect(manager.hideBuiltInIn(OWNER, 'builtin.default').ok).toBe(true);
+  });
+
+  test('a successful update keeps the seeded override', async () => {
+    const result = await manager.updateIn(OWNER, 'builtin.default', { displayName: 'Tuned' });
+
+    expect(result.ok).toBe(true);
+    expect(repo.getOwned(OWNER, 'builtin.default')?.displayName).toBe('Tuned');
+  });
+});
