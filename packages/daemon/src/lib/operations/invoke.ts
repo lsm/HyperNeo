@@ -59,6 +59,8 @@ export function isOperationAdmitted(
       'operations.describe',
       'neo.snapshot',
       'neo.concern.save',
+      'neo.concern.consult',
+      'neo.concern.respond',
       'neo.work.propose',
     ].includes(operation.name);
   }

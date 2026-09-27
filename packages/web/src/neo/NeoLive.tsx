@@ -249,6 +249,29 @@ export function NeoLive() {
               </p>
             )
           )}
+          {neo.snapshot?.consultations
+            ?.filter(
+              (item) =>
+                item.status === 'pending' && (!neo.selectedId || item.concernId === neo.selectedId)
+            )
+            .map((item) => (
+              <p
+                key={item.id}
+                role="status"
+                class="my-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-fg-muted"
+              >
+                Checking with{' '}
+                <button
+                  type="button"
+                  class="text-accent hover:underline"
+                  onClick={() => open(item.concernId)}
+                >
+                  {concerns.find((concern) => concern.id === item.concernId)?.title ??
+                    'your context holder'}
+                </button>
+                …
+              </p>
+            ))}
           {ready && messageCount === 0 && (
             <div class="rounded-2xl border border-dashed border-accent/25 bg-accent/5 p-5 text-sm leading-relaxed text-fg-muted">
               <span class="mb-3 inline-flex text-accent">

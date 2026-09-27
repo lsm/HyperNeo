@@ -4,6 +4,7 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -46,6 +47,7 @@ describe('Neo MVP', () => {
   beforeEach(() => {
     sqlite = new SQLite(':memory:');
     createNeoTables(sqlite);
+    runMigration279(sqlite);
     created = [];
     active = new Set();
     jobs = [];
@@ -194,7 +196,13 @@ describe('Neo MVP', () => {
       listOperationSummaries(createOperationRegistry(definitions), caller, true).map(
         (item) => item.name
       )
-    ).toEqual(['neo.snapshot', 'neo.concern.save', 'neo.work.propose']);
+    ).toEqual([
+      'neo.concern.consult',
+      'neo.concern.respond',
+      'neo.snapshot',
+      'neo.concern.save',
+      'neo.work.propose',
+    ]);
     expect(isOperationAdmitted({ ...definitions[0], name: 'session.create' }, caller)).toBe(false);
     expect(
       isOperationAdmitted(
@@ -329,5 +337,196 @@ describe('Neo MVP', () => {
     expect(options.settingSources).toEqual([]);
     expect(options.agent).toBeUndefined();
     expect(options.agents).toEqual({});
+  });
+
+  async function consultation() {
+    await invoke('neo.concern.save', concern);
+    const root = await service.open(null);
+    const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root };
+    const input = {
+      concernId: concern.id,
+      requestKey: 'ask-once',
+      question: 'What venue fits our constraints?',
+    };
+    expect(await invoke('neo.concern.consult', input, caller)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, consultation: { status: 'pending' } },
+    });
+    const item = service.consultations.list()[0];
+    const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: item.sessionId };
+    return { item, caller, holder, input };
+  }
+
+  test('consults the persistent holder once, returns through the mailbox, and starts no worker', async () => {
+    const { item, caller, holder, input } = await consultation();
+    await Promise.all([
+      invoke('neo.concern.consult', input, caller),
+      invoke('neo.concern.consult', input, caller),
+    ]);
+    expect(service.consultations.list()).toHaveLength(1);
+    expect(service.repo.listWork()).toHaveLength(0);
+    expect(created).toHaveLength(2);
+    expect(service.repo.getBindingBySession(item.sessionId)?.kind).toBe('concern');
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].payload).toMatchObject({
+      to: { sessionId: item.sessionId },
+      messageUuid: `neo-consult:${item.id}:request`,
+    });
+    expect(JSON.stringify(jobs[0].payload)).toContain(input.question);
+    const answer = 'Use a free living room on Sunday. No booking has been made.';
+    expect(await invoke('neo.concern.respond', { id: item.id, answer }, holder)).toMatchObject({
+      value: { ok: true, consultation: { status: 'reported', answer } },
+    });
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1].payload).toMatchObject({
+      to: { sessionId: caller.sessionId },
+      messageUuid: `neo-consult:${item.id}:reply`,
+    });
+    expect(JSON.stringify(jobs[1].payload)).toContain(answer);
+    await invoke('neo.concern.respond', { id: item.id, answer }, holder);
+    await service.recover();
+    expect(jobs).toHaveLength(2);
+    expect(service.consultations.unsettled()).toEqual([]);
+    expect(
+      await invoke('neo.concern.respond', { id: item.id, answer: 'Overwrite' }, holder)
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.consultations.get(item.id)?.answer).toBe(answer);
+    expect(created).toHaveLength(2);
+  });
+
+  test('admits root consultations only and attributes replies to the exact assigned holder', async () => {
+    const { item, caller, holder, input } = await consultation();
+    await invoke('neo.concern.save', { ...concern, id: 'private' });
+    const other = await service.open('private');
+    service.repo.reserveBinding({ sessionId: 'worker', concernId: concern.id, kind: 'worker' });
+    for (const denied of [
+      human,
+      holder,
+      { ...caller, sessionId: other },
+      { ...caller, sessionId: 'worker' },
+      { ...caller, sessionId: 'impostor' },
+    ]) {
+      expect(await invoke('neo.concern.consult', input, denied)).toMatchObject({
+        value: { ok: false },
+      });
+    }
+    for (const denied of [
+      human,
+      caller,
+      { ...holder, sessionId: other },
+      { ...holder, sessionId: 'worker' },
+      { ...holder, sessionId: 'impostor' },
+    ]) {
+      expect(
+        await invoke('neo.concern.respond', { id: item.id, answer: 'Forged' }, denied)
+      ).toMatchObject({ value: { ok: false } });
+    }
+    expect(service.consultations.get(item.id)?.status).toBe('pending');
+    expect(jobs).toHaveLength(1);
+    expect(await invoke('neo.snapshot', {}, { ...holder, sessionId: other })).toMatchObject({
+      value: { consultations: [] },
+    });
+    expect(await invoke('neo.snapshot', {}, caller)).toMatchObject({
+      value: { consultations: [{ question: '', answer: null }] },
+    });
+    expect(await invoke('neo.snapshot', { concernId: concern.id }, caller)).toMatchObject({
+      value: { concerns: [{ context: '' }], consultations: [{ question: '', answer: null }] },
+    });
+    expect(await invoke('neo.snapshot', {}, holder)).toMatchObject({
+      value: { consultations: [{ question: input.question }] },
+    });
+  });
+
+  test('rejects conflicting request keys and simultaneous different questions without losing the first request', async () => {
+    const { item, caller, input } = await consultation();
+    for (const change of [
+      { question: 'Changed question' },
+      { requestKey: 'second-question' },
+      { concernId: 'missing' },
+    ]) {
+      expect(await invoke('neo.concern.consult', { ...input, ...change }, caller)).toMatchObject({
+        value: { ok: false },
+      });
+    }
+    expect(service.consultations.list()).toEqual([item]);
+    expect(jobs).toHaveLength(1);
+  });
+
+  test('recovers undelivered requests and finished replies across service restart', async () => {
+    const { item } = await consultation();
+    jobs = [];
+    service.dispose();
+    service = new NeoService(
+      db,
+      sessions,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      events
+    );
+    await service.recover();
+    expect(jobs).toHaveLength(1);
+    delivered.add(`${item.sessionId}:neo-consult:${item.id}:request`);
+    jobs = [];
+    await service.recover();
+    expect(jobs).toHaveLength(0);
+    service.consultations.finish(item.id, 'reported', 'Recovered answer');
+    await service.recover();
+    expect(jobs).toHaveLength(1);
+    expect(JSON.stringify(jobs[0].payload)).toContain('Recovered answer');
+    await service.recover();
+    expect(jobs).toHaveLength(1);
+  });
+
+  test.each([null, 'error_max_turns'])(
+    'returns an explicit failure when the holder ends without responding (%s)',
+    async (failure) => {
+      const { item, holder } = await consultation();
+      await service.syncConsultation(item.id);
+      expect(service.consultations.get(item.id)?.status).toBe('pending');
+      terminal = true;
+      failed = failure;
+      await events.publish('session.updated', {
+        sessionId: item.sessionId,
+        processingState: { status: 'idle' },
+      });
+      expect(service.consultations.get(item.id)).toMatchObject({
+        status: 'failed',
+        answer: expect.any(String),
+      });
+      expect(jobs).toHaveLength(2);
+      expect(
+        await invoke('neo.concern.respond', { id: item.id, answer: 'Late reply' }, holder)
+      ).toMatchObject({ value: { ok: false } });
+    }
+  );
+
+  test('bounds questions and responses before they enter durable context', async () => {
+    const { item, caller, holder, input } = await consultation();
+    expect(
+      await invoke('neo.concern.consult', { ...input, question: 'x'.repeat(8001) }, caller)
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(
+      await invoke('neo.concern.respond', { id: item.id, answer: 'x'.repeat(4001) }, holder)
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(service.consultations.get(item.id)?.status).toBe('pending');
+  });
+
+  test('root may create a concern but only its holder or the human may revise its context', async () => {
+    const root = await service.open(null);
+    const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root };
+    expect(await invoke('neo.concern.save', concern, caller)).toMatchObject({
+      value: { ok: true },
+    });
+    const correction = { ...concern, expectedRevision: 1, context: 'Host at my home' };
+    expect(await invoke('neo.concern.save', correction, caller)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('Consult') },
+    });
+    expect(service.repo.getConcern(concern.id)?.context).toBe(concern.context);
+    const holder = await service.open(concern.id);
+    expect(
+      await invoke('neo.concern.save', correction, { ...caller, sessionId: holder })
+    ).toMatchObject({ value: { ok: true, concern: { context: correction.context } } });
+    expect(
+      await invoke('neo.concern.save', { ...correction, expectedRevision: 2 }, human)
+    ).toMatchObject({ value: { ok: true } });
   });
 });
