@@ -5,6 +5,7 @@ import {
   persistAndEnqueueDelivery,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import {
   createMailboxDeadHandler,
@@ -20,6 +21,9 @@ import {
 } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import { DeadLetterImmediatelyError } from '../../../../src/storage/job-queue-processor';
+import type { Database } from '../../../../src/storage/database';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
+import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations';
 import type {
   Job,
   JobQueueRepository,
@@ -150,6 +154,46 @@ describe('createMailboxDeliveryHandler', () => {
 
   afterEach(() => {
     mailbox.close();
+  });
+
+  test('actual chat admission gives a holder turn human provenance', async () => {
+    createNeoTables(mailbox.db);
+    runMigration279(mailbox.db);
+    const handler = createMailboxDeliveryHandler({
+      jobQueue: mailbox.jobQueue,
+      db: mailbox.db,
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      getSession: async () => ({ ok: true }),
+      isSessionArchived: () => false,
+    });
+    const chat = claimMailboxJob(
+      mailbox,
+      makeEntry({ origin: 'chat', messageUuid: 'direct-chat' })
+    );
+    await handler(chat);
+    const injected = claimMailboxJob(
+      mailbox,
+      makeEntry({ origin: 'session:agent', messageUuid: 'agent-inject' })
+    );
+    await handler(injected);
+    const db = {
+      getDatabase: () => mailbox.db,
+      getSDKMessageRepo: () => mailbox.sdkMessageRepo,
+    } as unknown as Database;
+    const directTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true }, () => {});
+    const injectedTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true }, () => {});
+    try {
+      directTurn.bind('direct-chat');
+      injectedTurn.bind('agent-inject');
+      expect(mailbox.sdkMessageRepo.getStoredPromptsByUuid(SESSION_ID, 'direct-chat')).toEqual([
+        expect.objectContaining({ inputKind: 'human' }),
+      ]);
+      expect(directTurn.identity()?.human).toBe(true);
+      expect(injectedTurn.identity()?.human).toBe(false);
+    } finally {
+      directTurn.dispose();
+      injectedTurn.dispose();
+    }
   });
 
   function makeHandler(
@@ -404,6 +448,7 @@ describe('createMailboxDeliveryHandler', () => {
       expect(rows[0].origin).toBeNull();
       expect(JSON.parse(rows[0].sdk_message)).toEqual({
         ...message,
+        inputKind: 'human',
         uuid: messageUuid,
         session_id: SESSION_ID,
       });

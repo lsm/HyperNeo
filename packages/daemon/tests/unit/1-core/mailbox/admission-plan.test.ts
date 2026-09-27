@@ -34,6 +34,7 @@ describe('mailbox admission stages', () => {
       ...entry.message,
       uuid,
       session_id: 'session-1',
+      inputKind: 'human',
     });
     expect(projectAdmissionMessage({ ...entry, messageUuid: 'explicit-id' }, true)).toEqual({
       ...entry.message,
@@ -125,6 +126,7 @@ describe('planMailboxAdmission', () => {
   test('explicit UUID and omitted rowid survive the complete pipeline', () => {
     const plan = planMailboxAdmission({ ...entry, messageUuid: 'explicit-id' });
     expect(plan.message.uuid).toBe('explicit-id');
+    expect(plan.message.inputKind).toBe('human');
     expect(plan.delivery).not.toHaveProperty('admissionRowid');
   });
 });
