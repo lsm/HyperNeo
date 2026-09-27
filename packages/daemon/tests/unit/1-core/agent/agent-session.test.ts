@@ -4816,6 +4816,31 @@ describe('AgentSession', () => {
       });
     });
 
+    it('keeps the active holder query operations server bound during MCP refreshes', () => {
+      const session = makeMockSession();
+      session.id = 'neo:holder';
+      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+      (mockDb as unknown as { getDatabase: () => unknown }).getDatabase = () => ({
+        prepare: () => ({ get: () => ({ kind: 'concern' }) }),
+      });
+      const agentSession = new AgentSession(
+        session,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
+      agentSession.queryObject = {
+        setMcpServers,
+      } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+      const added = { type: 'sdk', name: 'later' } as McpServerConfig;
+      agentSession.mergeRuntimeMcpServers({ later: added });
+      agentSession.reconcileEffectiveMcpServers();
+      expect(setMcpServers).not.toHaveBeenCalled();
+      expect(agentSession.getSessionData().config.mcpServers?.later).toBe(added);
+    });
+
     it('records per-server attach errors against the MCP registry', async () => {
       const mockSession = makeMockSession();
       const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();

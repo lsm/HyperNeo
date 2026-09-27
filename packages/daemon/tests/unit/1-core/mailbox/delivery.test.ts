@@ -196,6 +196,21 @@ describe('createMailboxDeliveryHandler', () => {
     }
   });
 
+  test('re-ensures an older unstamped chat prompt without a content conflict', async () => {
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'legacy-chat' });
+    const original = { ...message, uuid: 'legacy-chat', session_id: SESSION_ID };
+    mailbox.sdkMessageRepo.saveUserMessage(SESSION_ID, original, 'enqueued');
+    const handler = createMailboxDeliveryHandler({
+      jobQueue: mailbox.jobQueue,
+      db: mailbox.db,
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      getSession: async () => ({}),
+      isSessionArchived: () => false,
+    });
+    expect(await handler(claimMailboxJob(mailbox, entry))).toMatchObject({ terminal: 'delivered' });
+    expect(mailbox.sdkRows()).toHaveLength(1);
+  });
+
   function makeHandler(
     getSession: (sessionId: string) => Promise<object | null> = async () => ({ ok: true }),
     isSessionArchived: (sessionId: string) => boolean = () => false,

@@ -7,6 +7,7 @@ import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { canonicalJson, normalizePromptForComparison } from '../agent/prompt-comparison.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
+import { projectAdmissionMessage, type SessionMailboxEntry } from './admission-plan.ts';
 import { mailboxMessageIsSynthetic, type MailboxEntry, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
@@ -93,14 +94,9 @@ function isSkippedMailboxFailure(ctx: MailboxFailureCtx): boolean {
 export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
   const target = ctx.target;
   const entry = ctx.entry;
-  if (target === undefined || entry === null) return ctx;
+  if (target === undefined || entry === null || entry.to.kind !== 'session') return ctx;
   const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
-  const message: SDKUserMessage = {
-    ...entry.message,
-    uuid: target.messageUuid as NonNullable<SDKUserMessage['uuid']>,
-    session_id: target.sessionId,
-    ...(synthetic ? { isSynthetic: true } : {}),
-  };
+  const message = projectAdmissionMessage(entry as SessionMailboxEntry, synthetic);
   return { ...ctx, message };
 }
 

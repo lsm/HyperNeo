@@ -37,6 +37,7 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import {
   type CallerScopeResolver,
   NO_CALLER_SCOPE,
@@ -1449,6 +1450,7 @@ export class AgentSession
   ): void {
     const queryObject = this.queryObject;
     if (!queryObject) return;
+    if (neoCoordinatorBinding(this.db, this.session.id)?.kind === 'concern') return;
 
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
     if (!setMcpServers) return;
