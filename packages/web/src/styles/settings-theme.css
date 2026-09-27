@@ -120,8 +120,8 @@
   margin: 28px 4px 8px;
 }
 
-.settings-theme .st-group-cap:first-child,
-.settings-theme .st-sec-head + div > .st-group-cap:first-child {
+.settings-theme .st-sec-head + div > .st-group-cap:first-child,
+.settings-theme div:first-child > .st-group-cap:first-child {
   margin-top: 0;
 }
 
