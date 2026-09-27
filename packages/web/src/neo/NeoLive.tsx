@@ -287,7 +287,7 @@ export function NeoLive() {
                 </button>
               </p>
             ))}
-          {ready && messageCount === 0 && (
+          {ready && messageCount === 0 && !neo.store.isWorking.value && (
             <div class="rounded-2xl border border-dashed border-accent/25 bg-accent/5 p-5 text-sm leading-relaxed text-fg-muted">
               <span class="mb-3 inline-flex text-accent">
                 <NeoIcon name="spark" />

@@ -126,20 +126,13 @@ describe('Neo MVP controls', () => {
     const conversation = screen.getByRole('region', { name: 'Conversation with Neo' });
     expect(within(conversation).getByText('42.').tagName).toBe('P');
     expect(within(conversation).getByText('What is 17 plus 25?')).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole('button', { name: 'What happened' }));
+    expect(within(conversation).getByText('Neo answered directly.')).toBeTruthy();
     expect(within(conversation).queryByText('Internal worker report')).toBeNull();
     expect(within(conversation).queryByText('Internal consultation question')).toBeNull();
     expect(within(conversation).queryByText('Internal consultation answer')).toBeNull();
-    expect(screen.getByText('Behind the conversation')).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Open full conversation/ }).getAttribute('href')).toBe(
-      '/session/neo'
-    );
-    const toggle = screen.getByRole('button', { name: 'Behind the conversation' });
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    toggle.scrollIntoView = vi.fn();
-    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(document.activeElement).toBe(toggle);
+    expect(screen.queryByText('Behind the conversation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Open full conversation/ })).toBeNull();
   });
   it('opens a completed execution response from the Neo reply that announced it', () => {
     const store = makeStore();
@@ -172,6 +165,39 @@ describe('Neo MVP controls', () => {
     expect(within(reply).getByText('Dear neighbors, join us Sunday.')).toBeTruthy();
     expect(within(reply).getByRole('button', { name: 'Copy work result' })).toBeTruthy();
   });
+  it('keeps each reply’s activity beside its own copy control', () => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'human', message: { role: 'user', content: 'Brief' } },
+      {
+        type: 'assistant',
+        uuid: 'tool',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'mcp__hyperneo-operations__invoke',
+              input: { name: 'neo.snapshot', input: {} },
+            },
+          ],
+        },
+      },
+      { type: 'assistant', uuid: 'reply', message: { role: 'assistant', content: 'All clear.' } },
+      { type: 'result', uuid: 'result', subtype: 'success' },
+    ] as unknown as SessionStore['sdkMessages']['value'];
+    render(<NeoConversation store={store} sessionId="neo" />);
+    const reply = screen.getByText('All clear.').closest('article')!;
+    expect(within(reply).getByRole('button', { name: 'Copy Neo’s message' })).toBeTruthy();
+    const activityButton = within(reply).getByRole('button', { name: 'What happened' });
+    fireEvent.click(activityButton);
+    expect(within(reply).getByText('Checked what Neo knows')).toBeTruthy();
+    expect(
+      within(reply).getByRole('link', { name: 'Open technical trace ↗' }).getAttribute('href')
+    ).toBe('/session/neo');
+    fireEvent.click(within(reply).getByRole('button', { name: 'Hide activity' }));
+    expect(within(reply).queryByText('Checked what Neo knows')).toBeNull();
+  });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
     const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({
       status: 'idle',
@@ -185,6 +211,38 @@ describe('Neo MVP controls', () => {
       error.value = { message: 'Authentication required', occurredAt: 1 };
     });
     expect(screen.getByRole('alert').textContent).toBe('Authentication required');
+  });
+  it('shows Neo working in the conversation until the reply completes', () => {
+    const agentState = signal<SessionStore['agentState']['value']>({ status: 'idle' });
+    const store = { ...makeStore(), agentState } as unknown as SessionStore;
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'human', message: { role: 'user', content: 'A quick question' } },
+    ] as unknown as SessionStore['sdkMessages']['value'];
+    const view = render(<NeoConversation store={store} sessionId="neo" />);
+    const conversation = screen.getByRole('region', { name: 'Conversation with Neo' });
+    act(() => {
+      agentState.value = { status: 'queued', messageId: 'human' };
+    });
+    expect(within(conversation).getByRole('status').textContent).toContain('Neo is getting ready');
+    act(() => {
+      agentState.value = {
+        status: 'processing',
+        messageId: 'human',
+        phase: 'thinking',
+      };
+    });
+    expect(within(conversation).getByRole('status').textContent).toContain('Neo is working');
+    act(() => {
+      store.sdkMessages.value = [
+        ...store.sdkMessages.value,
+        { type: 'assistant', uuid: 'reply', message: { role: 'assistant', content: 'Here.' } },
+        { type: 'result', uuid: 'result', subtype: 'success' },
+      ] as unknown as SessionStore['sdkMessages']['value'];
+      agentState.value = { status: 'idle' };
+    });
+    view.rerender(<NeoConversation store={store} sessionId="neo" />);
+    expect(within(conversation).queryByRole('status')).toBeNull();
+    expect(within(conversation).getByText('Here.')).toBeTruthy();
   });
   it('sends through the existing message path without creating a concern', async () => {
     const onDraft = vi.fn();

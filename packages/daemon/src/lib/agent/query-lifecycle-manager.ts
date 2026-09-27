@@ -14,6 +14,7 @@ import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
+import { neoCoordinatorBinding, neoCoordinatorRuntimePath } from '../neo/session-policy.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
@@ -105,7 +106,8 @@ export class QueryLifecycleManager {
   }
 
   private getSDKWorkspacePath(): string {
-    const { session } = this.ctx;
+    const { session, db } = this.ctx;
+    if (neoCoordinatorBinding(db, session.id)) return neoCoordinatorRuntimePath(session.id);
     return session.worktree
       ? session.worktree.worktreePath
       : (session.workspacePath ?? process.cwd());

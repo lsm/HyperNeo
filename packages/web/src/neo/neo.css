@@ -98,6 +98,32 @@
   color: var(--prose-fg);
 }
 
+.neo-progress-bubble {
+  background: var(--neo-assistant-background);
+  border-color: var(--neo-assistant-border);
+  color: var(--neo-assistant-text);
+}
+
+.neo-progress-glow {
+  position: absolute;
+  inset: 0;
+  width: 55%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--neo-assistant-accent) 18%, transparent),
+    transparent
+  );
+  transform: translateX(-120%);
+  animation: neo-progress-sweep 2.2s ease-in-out infinite;
+}
+
+@keyframes neo-progress-sweep {
+  to {
+    transform: translateX(300%);
+  }
+}
+
 .neo-message-name {
   color: var(--neo-message-label);
 }
