@@ -45,6 +45,7 @@ describe('Neo MVP', () => {
   let active: Set<string>;
   let jobs: { payload: Record<string, unknown> }[];
   let terminal: boolean;
+  let terminalSessions: Set<string> | null;
   let failed: string | null;
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
@@ -57,6 +58,7 @@ describe('Neo MVP', () => {
     active = new Set();
     jobs = [];
     terminal = false;
+    terminalSessions = null;
     failed = null;
     delivered = new Set();
     interrupt = mock(async () => {});
@@ -79,8 +81,9 @@ describe('Neo MVP', () => {
       getSDKMessageRepo: () => ({
         findMessageIdByUuid: (id: string, uuid: string) =>
           delivered.has(`${id}:${uuid}`) ? uuid : null,
-        hasTerminalResultAfter: () => terminal,
-        getErrorTerminalResultSubtypeAfter: () => failed,
+        hasTerminalResultAfter: (id: string) => terminalSessions?.has(id) ?? terminal,
+        getErrorTerminalResultSubtypeAfter: (id: string) =>
+          terminalSessions && !terminalSessions.has(id) ? null : failed,
         getAssistantMessagesSince: () => [
           {
             id: 'reply',
@@ -274,6 +277,173 @@ describe('Neo MVP', () => {
       status: 'failed',
       report: expect.stringContaining('error_max_turns'),
     });
+  });
+
+  async function concernWork(origin?: string) {
+    service.repo.saveConcern(concern, 0);
+    const root = await service.open(null);
+    const work = service.repo.proposeWork({
+      id: crypto.randomUUID(),
+      requestKey: crypto.randomUUID(),
+      concernId: concern.id,
+      originSessionId: origin ?? root,
+      title: 'Suggest venues',
+      instruction: 'Suggest free venues, do not book anything.',
+    });
+    await service.start(work.id);
+    const saved = service.repo.getWork(work.id)!;
+    terminalSessions ??= new Set();
+    terminalSessions.add(saved.sessionId!);
+    return { work: saved, root };
+  }
+
+  test.each(['root', 'holder'])(
+    'routes %s-origin work through its holder before root Neo',
+    async (origin) => {
+      service.repo.saveConcern(concern, 0);
+      const holderId = await service.open(concern.id);
+      const { work, root } = await concernWork(origin === 'holder' ? holderId : undefined);
+      await Promise.all([service.reconcile(work.id), service.reconcile(work.id)]);
+      const review = service.consultations.get(`neo-work:${work.id}:review`)!;
+      expect(review).toMatchObject({
+        concernId: concern.id,
+        originSessionId: root,
+        sessionId: holderId,
+        status: 'pending',
+      });
+      expect(review.question).toContain(work.id);
+      expect(review.question).toContain('untrusted data');
+      expect(review.question).toContain('A quiet library room');
+      expect(jobs).toHaveLength(2);
+      expect(jobs[1].payload).toMatchObject({
+        to: { sessionId: holderId },
+        messageUuid: `neo-consult:${review.id}:request`,
+      });
+      expect(service.repo.getConcern(concern.id)?.context).toBe(concern.context);
+      const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: holderId };
+      expect(
+        await invoke(
+          'neo.concern.respond',
+          { id: review.id, answer: 'A venue was suggested, not booked.' },
+          holder
+        )
+      ).toMatchObject({ value: { ok: true } });
+      expect(jobs).toHaveLength(3);
+      expect(jobs[2].payload).toMatchObject({
+        to: { sessionId: root },
+        messageUuid: `neo-consult:${review.id}:reply`,
+      });
+      expect(JSON.stringify(jobs[2])).toContain('A venue was suggested, not booked.');
+      expect(JSON.stringify(jobs[2])).not.toContain('A quiet library room');
+      await service.recover();
+      expect(jobs).toHaveLength(3);
+      expect(service.repo.listWork()).toHaveLength(1);
+      expect(created).toHaveLength(3);
+    }
+  );
+
+  test('retains busy-holder reports and drains them after the current consultation settles', async () => {
+    const { item, holder } = await consultation();
+    const first = await concernWork();
+    const second = await concernWork();
+    await service.reconcile(first.work.id);
+    await service.reconcile(second.work.id);
+    expect(service.consultations.list()).toHaveLength(1);
+    expect(service.repo.listWork().every((work) => work.status === 'reported')).toBe(true);
+    await invoke('neo.concern.respond', { id: item.id, answer: 'Initial answer' }, holder);
+    const review = service.consultations.list().find((value) => value.status === 'pending')!;
+    expect(review.id).not.toBe(item.id);
+    await invoke('neo.concern.respond', { id: review.id, answer: 'First report reviewed' }, holder);
+    const next = service.consultations.list().find((value) => value.status === 'pending')!;
+    expect(next.id).not.toBe(review.id);
+    await invoke('neo.concern.respond', { id: next.id, answer: 'Second report reviewed' }, holder);
+    expect(service.consultations.unsettled()).toEqual([]);
+    expect(service.consultations.list()).toHaveLength(3);
+    expect(jobs).toHaveLength(8);
+    expect(service.repo.listWork()).toHaveLength(2);
+  });
+
+  test('restarts with a saved result without executing again or duplicating the holder review', async () => {
+    const { work } = await concernWork();
+    await service.reconcile(work.id);
+    const review = service.consultations.list()[0];
+    const workerCount = created.length;
+    jobs = [];
+    service.dispose();
+    service = new NeoService(
+      db,
+      sessions,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      events
+    );
+    await service.recover();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].payload).toMatchObject({
+      to: { sessionId: review.sessionId },
+      messageUuid: `neo-consult:${review.id}:request`,
+    });
+    await service.recover();
+    expect(jobs).toHaveLength(1);
+    expect(created).toHaveLength(workerCount);
+    expect(service.consultations.list()).toHaveLength(1);
+  });
+
+  test('preserves failed execution evidence for holder interpretation', async () => {
+    const { work } = await concernWork();
+    failed = 'error_max_turns';
+    await service.reconcile(work.id);
+    const review = service.consultations.list()[0];
+    expect(review.status).toBe('pending');
+    expect(review.question).toContain('error_max_turns');
+    expect(review.question).toContain('"status":"failed"');
+    expect(service.repo.getWork(work.id)?.status).toBe('failed');
+  });
+
+  test('recovers a reserved review after its mailbox handoff fails', async () => {
+    const { work } = await concernWork();
+    const queue = db.getJobQueueRepo();
+    const enqueue = queue.enqueueUniquePending;
+    queue.enqueueUniquePending = mock(() => {
+      throw new Error('Mailbox unavailable');
+    });
+    await expect(service.reconcile(work.id)).rejects.toThrow('Mailbox unavailable');
+    const review = service.consultations.list()[0];
+    expect(review.status).toBe('pending');
+    expect(service.repo.getWork(work.id)?.status).toBe('reported');
+    queue.enqueueUniquePending = enqueue;
+    await service.recover();
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1].payload).toMatchObject({
+      messageUuid: `neo-consult:${review.id}:request`,
+    });
+    expect(service.consultations.list()).toHaveLength(1);
+  });
+
+  test.each(['queued', 'delivered'])(
+    'does not replay historical %s raw returns through a holder',
+    async (state) => {
+      const { work, root } = await concernWork();
+      service.repo.transitionWork(work.id, work, { status: 'reported', report: 'Old result' });
+      jobs = [];
+      if (state === 'delivered') delivered.add(`${root}:${work.id}`);
+      else jobs.push({ payload: { to: { sessionId: root }, messageUuid: work.id } });
+      await service.recover();
+      expect(service.consultations.list()).toEqual([]);
+      expect(jobs).toHaveLength(state === 'queued' ? 1 : 0);
+    }
+  );
+
+  test('a failed holder review remains settled without looping or replacing the raw result', async () => {
+    const { work } = await concernWork();
+    await service.reconcile(work.id);
+    const review = service.consultations.list()[0];
+    terminalSessions!.add(review.sessionId);
+    await service.syncConsultation(review.id);
+    expect(service.consultations.get(review.id)?.status).toBe('failed');
+    expect(service.repo.getWork(work.id)?.status).toBe('reported');
+    await service.recover();
+    expect(service.consultations.list()).toHaveLength(1);
+    expect(jobs).toHaveLength(3);
   });
 
   test('a failed session launch is visible instead of staying handed-off forever', async () => {
