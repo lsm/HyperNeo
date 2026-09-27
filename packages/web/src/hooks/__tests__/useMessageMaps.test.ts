@@ -83,6 +83,49 @@ describe('useMessageMaps', () => {
       expect(toolResult?.isOutputRemoved).toBe(false);
     });
 
+    it('keeps the SDK Read image output with its single tool result', () => {
+      const image = { type: 'image', file: { type: 'image/png', base64: 'AAAA' } };
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          tool_use_result: image,
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'read-image', content: [] }],
+          },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+      expect(result.current.toolResultsMap.get('read-image')?.structuredOutput).toEqual(image);
+    });
+
+    it('does not assign one structured result to multiple tool uses', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          tool_use_result: { type: 'image', file: { type: 'image/png', base64: 'AAAA' } },
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'read-one', content: [] },
+              { type: 'tool_result', tool_use_id: 'read-two', content: [] },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
+
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+
+      expect(result.current.toolResultsMap.get('read-one')?.structuredOutput).toBeUndefined();
+      expect(result.current.toolResultsMap.get('read-two')?.structuredOutput).toBeUndefined();
+    });
+
     it('should mark tool result as removed when in removedOutputs', () => {
       const messages = [
         {
