@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@hyperneo/shared';
-import { completedConversation, conversationText } from '../NeoConversation.tsx';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import {
+  completedConversation,
+  completedWorkReplies,
+  conversationText,
+} from '../NeoConversation.tsx';
 
 function user(uuid: string, text: string, inputKind?: string): ChatMessage {
   return {
@@ -58,5 +63,57 @@ describe('completedConversation', () => {
     ]);
     expect(visible.map((message) => conversationText(message))).toEqual(['Try again']);
     expect(completedConversation([])).toEqual([]);
+  });
+});
+
+describe('completedWorkReplies', () => {
+  const work = {
+    id: 'work-one',
+    report: 'Here is the draft.',
+  } as NeoWork;
+
+  it('attaches a one-off execution to its completed Neo reply only', () => {
+    const replies = completedWorkReplies(
+      [
+        user('u1', 'Draft an invitation'),
+        assistant('a1', 'I can set that up.'),
+        result('success'),
+        user('work-one', 'A delegated session returned.', 'system'),
+        assistant('a2', 'The draft is ready.'),
+        result('success'),
+        user('u2', 'Thanks'),
+        assistant('a3', 'You are welcome.'),
+        result('success'),
+      ],
+      [work]
+    );
+    expect([...replies.entries()]).toEqual([['a2', work]]);
+  });
+
+  it('attaches a holder-reviewed execution to the returned root reply', () => {
+    const replies = completedWorkReplies(
+      [
+        user('neo-consult:neo-work:work-one:review:reply', 'A consultation settled.', 'system'),
+        assistant('a1', 'The holder checked the result.'),
+        result('success'),
+      ],
+      [work]
+    );
+    expect(replies.get('a1')).toBe(work);
+  });
+
+  it('does not attach a work response without a matching completed receipt', () => {
+    const replies = completedWorkReplies(
+      [
+        user('work-one', 'A delegated session returned.', 'system'),
+        user('u1', 'New question'),
+        assistant('a1', 'Different answer.'),
+        result('success'),
+        user('work-one', 'A delegated session returned.', 'system'),
+        assistant('a2', 'Interrupted reply.'),
+      ],
+      [work]
+    );
+    expect(replies.size).toBe(0);
   });
 });

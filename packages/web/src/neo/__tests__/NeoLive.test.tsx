@@ -141,6 +141,37 @@ describe('Neo MVP controls', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(toggle);
   });
+  it('opens a completed execution response from the Neo reply that announced it', () => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      {
+        type: 'user',
+        uuid: 'work',
+        inputKind: 'system',
+        message: { role: 'user', content: 'A delegated session returned.' },
+      },
+      {
+        type: 'assistant',
+        uuid: 'reply',
+        message: { role: 'assistant', content: 'The draft is ready.' },
+      },
+      { type: 'result', uuid: 'result', subtype: 'success' },
+    ] as unknown as SessionStore['sdkMessages']['value'];
+    render(
+      <NeoConversation
+        store={store}
+        sessionId="neo"
+        works={[{ ...work, status: 'reported', report: 'Dear neighbors, join us Sunday.' }]}
+      />
+    );
+    const reply = screen.getByText('The draft is ready.').closest('article')!;
+    const result = within(reply).getByText('Read result · Draft the agenda');
+    expect(result.closest('details')?.open).toBe(false);
+    fireEvent.click(result);
+    expect(result.closest('details')?.open).toBe(true);
+    expect(within(reply).getByText('Dear neighbors, join us Sunday.')).toBeTruthy();
+    expect(within(reply).getByRole('button', { name: 'Copy work result' })).toBeTruthy();
+  });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
     const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({
       status: 'idle',

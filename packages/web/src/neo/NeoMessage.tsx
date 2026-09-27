@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 
@@ -23,7 +24,15 @@ export function messageTime(timestamp: unknown, now = new Date()) {
   };
 }
 
-export function NeoMessage({ message, text }: { message: ChatMessage; text: string }) {
+export function NeoMessage({
+  message,
+  text,
+  work,
+}: {
+  message: ChatMessage;
+  text: string;
+  work?: NeoWork;
+}) {
   const user = message.type === 'user';
   const content =
     message.type === 'user' || message.type === 'assistant' ? message.message?.content : null;
@@ -75,6 +84,23 @@ export function NeoMessage({ message, text }: { message: ChatMessage; text: stri
             content={text}
             class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-sm leading-relaxed`}
           />
+        )}
+        {work?.report && !user && (
+          <details class="mt-4 border-t border-line pt-3">
+            <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
+              Read result · {work.title}
+            </summary>
+            <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+              <p class="mb-3 text-xs text-fg-muted">
+                HyperNeo’s response, not independently verified.
+              </p>
+              <MarkdownRenderer
+                content={work.report}
+                class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+              />
+              <CopyButton text={work.report} label="Copy work result" />
+            </div>
+          </details>
         )}
       </div>
       <div class={`mt-1 flex ${user ? 'justify-end' : ''}`}>
