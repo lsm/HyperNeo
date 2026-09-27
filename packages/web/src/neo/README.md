@@ -29,6 +29,8 @@ The warm accent uses `light-dark()` with the existing app color scheme; other de
 
 ## Deliberate MVP limits
 
+Correction safety currently means revision protection: a holder save based on an older revision is rejected, and returning, stopping, expiring or recovering a work review does not itself rewrite concern context. This is not stale-turn protection: a holder can read the latest revision and still submit semantically outdated content. Binding context writes to their originating request remains future work; stopping a consultation does not revoke its holder session’s ability to save context.
+
 Single-user local use. Each execution delegation currently creates its own execution session; consultations reuse the concern coordinator. No automatic import/linking of existing Spaces or task histories, concern merge/archive, scheduling or proactive reminders. Consultation routing and interpretation are model-directed and may still be wrong; inspect the saved context and correct it conversationally. Recent work is limited to 50 receipts and consultations to 20 in this UI; history remains in HyperNeo. Holder review uses the same consultation lifecycle and does not automatically retry a settled failed review. This is bounded Neo↔holder coordination, not continuous autonomous concern management.
 
 The old `NeoPreview` component remains a test fixture, not the live entry. No sample concerns are seeded in the live app.
