@@ -7,6 +7,11 @@ import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
 import { NeoService } from '../neo/service.ts';
+import {
+  NEO_CONSULTATION_RECOVERY,
+  recoverNeoConsultations,
+  scheduleConsultationRecovery,
+} from '../neo/consultation-recovery.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1628,6 +1633,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
   void neoService.recover();
+  deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
+    recoverNeoConsultations(deps.jobQueue, neoService)
+  );
+  scheduleConsultationRecovery(deps.jobQueue);
 
   return {
     cleanup: async () => {

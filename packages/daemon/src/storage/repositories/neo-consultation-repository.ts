@@ -1,5 +1,9 @@
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import type { Database } from '../sqlite-compat.ts';
+import {
+  CONSULTATION_EXPIRED,
+  CONSULTATION_TIMEOUT_MS,
+} from '../../lib/neo/consultation-policy.ts';
 
 const columns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, session_id AS sessionId, question, status,
@@ -54,10 +58,20 @@ export class NeoConsultationRepository {
   }
 
   finish(id: string, status: 'reported' | 'failed', answer: string): NeoConsultation | null {
+    if (status === 'reported') this.expire(id);
     const result = this.db
       .prepare(`UPDATE neo_consultations SET status = ?, answer = ?
       WHERE id = ? AND status = 'pending'`)
       .run(status, answer, id);
+    if (result.changes) this.notify();
+    return this.get(id);
+  }
+
+  expire(id: string): NeoConsultation | null {
+    const result = this.db
+      .prepare(`UPDATE neo_consultations SET status = 'failed', answer = ?
+      WHERE id = ? AND status = 'pending' AND created_at <= ?`)
+      .run(CONSULTATION_EXPIRED, id, Date.now() - CONSULTATION_TIMEOUT_MS);
     if (result.changes) this.notify();
     return this.get(id);
   }

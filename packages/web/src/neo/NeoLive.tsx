@@ -270,6 +270,15 @@ export function NeoLive() {
                     'your context holder'}
                 </button>
                 …
+                <button
+                  type="button"
+                  class="ml-3 text-xs text-fg-muted underline disabled:opacity-50"
+                  title="Close this request without interrupting the holder or undoing saved context."
+                  disabled={!connected || !!neo.busyWork}
+                  onClick={() => void neo.act(item.id, 'stop-waiting')}
+                >
+                  {neo.busyWork === item.id ? 'Closing…' : 'Stop waiting'}
+                </button>
               </p>
             ))}
           {ready && messageCount === 0 && (
