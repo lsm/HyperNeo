@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
-import { NEO_CAPABILITIES_BRIEFING } from '@hyperneo/prompts';
+import { NEO_CAPABILITIES_BRIEFING, NEO_RESPONSE_FOCUS_BRIEFING } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorNativeTools,
@@ -14,6 +14,75 @@ describe('neoCoordinatorNativeTools', () => {
 });
 
 describe('Neo world briefing delivery', () => {
+  test('loads a bounded authored response-focus fragment as plain text', () => {
+    expect(NEO_RESPONSE_FOCUS_BRIEFING).toContain('Respond to the current input');
+    expect(NEO_RESPONSE_FOCUS_BRIEFING.length).toBeLessThan(2000);
+    expect(NEO_RESPONSE_FOCUS_BRIEFING).not.toContain('id: NEO_RESPONSE_FOCUS_BRIEFING');
+    expect(NEO_RESPONSE_FOCUS_BRIEFING).not.toContain('<p>');
+  });
+
+  test.each([null, 'research', 'family'])(
+    'ends the composed prompt with request focus for %s',
+    (concernId) => {
+      const prompt = neoPrompt(concernId);
+      expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
+      expect(prompt.indexOf(NEO_RESPONSE_FOCUS_BRIEFING)).toBeGreaterThan(
+        prompt.indexOf(NEO_CAPABILITIES_BRIEFING)
+      );
+      expect(prompt.endsWith(NEO_RESPONSE_FOCUS_BRIEFING)).toBe(true);
+      expect(prompt.split(NEO_RESPONSE_FOCUS_BRIEFING)).toHaveLength(2);
+      for (const text of [
+        'Never add another concern’s progress as an aside to an unrelated answer',
+        'Do not announce that all the user’s questions are settled from one return',
+        'summary-only snapshot can be intentionally redacted',
+        'do not describe hidden fields as empty facts to the human',
+        'give one short acknowledgement and end the input turn',
+        'Do not give a preliminary substantive answer from the summary',
+        'correction to that same concern',
+        'one or two conversational sentences',
+        'Expand when the user asks for detail',
+      ]) {
+        expect(prompt.replaceAll("'", '’').replace(/\s+/g, ' ')).toContain(text);
+      }
+    }
+  );
+
+  test.each([null, 'research'])(
+    'refreshes response guidance through the existing runtime policy for %s',
+    (concernId) => {
+      const options: Options = {
+        systemPrompt: 'Legacy stored coordinator wording',
+        model: 'fixture-model',
+        maxTurns: 17,
+        mcpServers: {
+          'hyperneo-operations': { type: 'stdio', command: 'fixture-operations' },
+        },
+      };
+      const operations = options.mcpServers!['hyperneo-operations'];
+      restrictNeoQuery(options, concernId);
+      expect(options.systemPrompt).toEqual({
+        type: 'custom',
+        prompt: neoPrompt(concernId),
+        snapshot: false,
+      });
+      const prompt = (options.systemPrompt as { prompt: string }).prompt;
+      expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
+      expect(prompt).not.toContain('Legacy stored coordinator wording');
+      expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
+      expect(options.mcpServers).toEqual({ 'hyperneo-operations': operations });
+      expect(options.allowedTools).toEqual([
+        ...(concernId ? ['AskUserQuestion'] : []),
+        'mcp__hyperneo-operations__invoke',
+      ]);
+      expect(options.settingSources).toEqual([]);
+      expect(options.model).toBe('fixture-model');
+      expect(options.maxTurns).toBe(17);
+      expect(prompt).toContain(
+        concernId ? 'For every consultation request' : 'For every new user request'
+      );
+    }
+  );
+
   test.each([null, 'saas'])('briefs the local world for concern %s', (concernId) => {
     const prompt = neoPrompt(concernId);
     expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
@@ -42,15 +111,19 @@ describe('Neo world briefing delivery', () => {
     expect(NEO_CAPABILITIES_BRIEFING).not.toContain('<p>');
   });
 
-  test.each([null, 'saas'])('delivers the briefing as a plain Neo prompt for %s', (concernId) => {
+  test.each([null, 'saas'])('delivers a refreshed custom Neo prompt for %s', (concernId) => {
     const options: Options = {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Ambient project' },
     };
     restrictNeoQuery(options, concernId);
-    expect(typeof options.systemPrompt).toBe('string');
-    expect(options.systemPrompt).toBe(neoPrompt(concernId));
-    expect(options.systemPrompt).toContain('daemon.snapshot');
-    expect(options.systemPrompt).not.toContain('Ambient project');
+    expect(options.systemPrompt).toEqual({
+      type: 'custom',
+      prompt: neoPrompt(concernId),
+      snapshot: false,
+    });
+    const prompt = (options.systemPrompt as { prompt: string }).prompt;
+    expect(prompt).toContain('daemon.snapshot');
+    expect(prompt).not.toContain('Ambient project');
     expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
   });
 

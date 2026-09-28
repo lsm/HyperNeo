@@ -32,6 +32,11 @@ An opt-in entry inside the existing web package at `/neo`, included in the web b
 - The plus button, clipboard paste and whole-window drop area accept photos (PNG/JPEG/GIF/WebP, up to 3.75 MB each) and UTF-8 text files (up to 128 KB each). Up to six attachments and 8 MB combined payload are allowed. PDF, Office and other binary documents are explicitly unsupported. Text files are sent as fenced source content through the existing message path; photos use the existing image payload. Attachments alone can be sent. Pending attachments stay scoped to the conversation in browser memory, survive view switches, and are retained on failure; refresh clears them.
 - Voice appears only when enabled with a configured endpoint/model. It reuses the recorder and transcription pipeline, inserts into the original conversation's draft for review, and exposes saved recordings for retry. Switching contexts cancels active capture; a transcription already underway returns to its original draft. Drafts remain memory-only, including transcribed text.
 
+## Response guidance
+
+The reusable `NEO_RESPONSE_FOCUS_BRIEFING` is delivered through the existing pure coordinator prompt/runtime policy. It asks Neo to answer only the current input, keep unrelated progress in its own attributed return, acknowledge pending checks briefly, and distinguish root snapshot redaction from missing context. This is behavioral guidance, not a routing/permission gate or guaranteed semantic isolation; actual-provider acceptance remains necessary.
+The Neo-only SDK policy delivers the authored prompt as `custom` with `snapshot:false`, so resumed root/holder sessions read current guidance without discarding their history. Ordinary execution-session prompt profiles remain unchanged.
+
 ## Message themes
 
 `neo.css` is the single customization point for Neo's palette. Its `.neo-shell` block sets the shared surface/text/border/accent tokens locally, without changing the rest of HyperNeo. Defaults use `light-dark()` and follow the existing app color scheme, including the system setting.

@@ -38,7 +38,7 @@ export function restrictNeoQuery(
     options.cwd = neoCoordinatorRuntimePath(sessionId);
     mkdirSync(options.cwd, { recursive: true });
   }
-  options.systemPrompt = neoPrompt(concernId);
+  options.systemPrompt = { type: 'custom', prompt: neoPrompt(concernId), snapshot: false };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
   const nativeTools = neoCoordinatorNativeTools(concernId);
   options.tools = nativeTools;
