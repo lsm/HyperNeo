@@ -12,6 +12,7 @@ import { neoPrompt } from './prompt.ts';
 import { neoCoordinatorNativeTools } from './session-policy.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
+import { createNeoWorkTargetResolver } from './work-target.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,7 @@ export class NeoService {
   readonly repo: NeoRepository;
   readonly consultations: NeoConsultationRepository;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
+  readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -47,6 +49,11 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       getWork: (id) => this.repo.getWork(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
+    });
+    this.resolveWorkTarget = createNeoWorkTargetResolver({
+      readTarget: (id) => this.repo.getWorkTarget(id),
+      readSession: (id) => db.getSession(id),
+      readBinding: (id) => this.repo.getBindingBySession(id),
     });
     this.unsubscribe = events.subscribe(
       'session.updated',

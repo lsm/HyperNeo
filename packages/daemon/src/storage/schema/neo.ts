@@ -26,6 +26,7 @@ export function createNeoTables(db: Database): void {
     origin_session_id TEXT NOT NULL,
     title TEXT NOT NULL,
     instruction TEXT NOT NULL,
+    target_session_id TEXT,
     session_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('proposed', 'queued', 'reported', 'failed', 'cancelled')),
     report TEXT,

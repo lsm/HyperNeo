@@ -100,7 +100,7 @@ describe('coordinator handoff admission', () => {
   });
 });
 
-describe('AgentSession coordinator handoff', () => {
+describe.each(['neo', 'concern'] as const)('AgentSession %s coordinator handoff', (kind) => {
   const providerId = 'custom:neo-handoff-unit';
   let db: Database;
   let agent: AgentSession;
@@ -115,13 +115,18 @@ describe('AgentSession coordinator handoff', () => {
   beforeEach(async () => {
     resetSdkStartupGateForTests();
     db = await createTestDb();
-    const session = createTestSession('neo:handoff-holder');
+    const session = createTestSession(`neo:handoff-${kind}`);
     session.workspacePath = null;
     session.config = { model: 'unit', provider: providerId };
     db.createSession(session);
     const neo = new NeoRepository(db.getDatabase());
-    neo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
-    neo.reserveBinding({ sessionId: session.id, concernId: 'club', kind: 'concern' });
+    if (kind === 'concern')
+      neo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+    neo.reserveBinding({
+      sessionId: session.id,
+      concernId: kind === 'concern' ? 'club' : null,
+      kind,
+    });
     initializeProviders().register({
       id: providerId,
       displayName: 'Neo handoff unit',
@@ -223,6 +228,7 @@ describe('AgentSession coordinator handoff', () => {
     await secondReady.promise;
     expect(received).toEqual(['ask-A', 'ask-B']);
     expect(peak).toBe(1);
+    expect(new NeoRepository(db.getDatabase()).listConcerns()).toHaveLength(kind === 'neo' ? 0 : 1);
     expect(errors).not.toHaveBeenCalled();
     expect(agent.getQueryGeneration()).toBe(2);
     await expect(second).resolves.toEqual({ outcome: 'completed' });
