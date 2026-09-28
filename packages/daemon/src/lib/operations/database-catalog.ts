@@ -11,6 +11,9 @@ import type { OperationDefinition } from './registry.ts';
 import { listOperationSummaries } from './discovery.ts';
 import { createDaemonSnapshotOperation } from '../inventory/snapshot-operation.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
+import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { listSessionMessages } from '../session/space-session-reads.ts';
 
 const FALLBACK_TASK_READ_ADMISSION = {
   getSession: () => null,
@@ -65,6 +68,12 @@ export function createDatabaseOperationCatalog(
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>
           listOperationSummaries(registry, caller).map(({ name }) => name),
+      }),
+      createSessionInspectionOperation({
+        readBinding: (id) => new NeoRepository(db.getDatabase()).getBindingBySession(id),
+        readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
+        readMessages: (id, limit, before) =>
+          listSessionMessages(db.getDatabase(), id, limit, before),
       }),
     ]
   );
