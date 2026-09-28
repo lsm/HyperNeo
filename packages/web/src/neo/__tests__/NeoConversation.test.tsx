@@ -103,6 +103,53 @@ describe('completedWorkReplies', () => {
     report: 'Here is the draft.',
   } as NeoWork;
 
+  it('uses the actual completed query after interleaved human and top-level SDK tool results', () => {
+    const reported = { ...work, status: 'reported' as const };
+    const bind = (message: ChatMessage, messageId: string): ChatMessage =>
+      ({ ...message, neoInputOrigin: { sessionId: 'neo', messageId } }) as unknown as ChatMessage;
+    const messages = [
+      user('work-one', 'A returned', 'system'),
+      user('human-B', 'Unrelated B'),
+      bind(assistant('reply-A', 'Draft A is ready'), 'work-one'),
+      {
+        type: 'user',
+        uuid: 'tool-result',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Result' }] },
+      } as unknown as ChatMessage,
+      result('success'),
+      bind(assistant('reply-B', 'Answer B'), 'human-B'),
+      result('success'),
+    ];
+    expect([...completedWorkReplies(messages, [reported], 'neo')]).toEqual([['reply-A', reported]]);
+  });
+
+  it.each([
+    null,
+    { sessionId: 'other', messageId: 'work-one' },
+    { sessionId: 'neo', messageId: 'human-B' },
+  ])('explicit origin %j suppresses an accidental chronological match', (neoInputOrigin) => {
+    const answer = {
+      ...assistant('reply', 'Unrelated answer'),
+      neoInputOrigin,
+    } as unknown as ChatMessage;
+    expect(
+      completedWorkReplies(
+        [user('work-one', 'A returned', 'system'), answer, result('success')],
+        [{ ...work, status: 'reported' }],
+        'neo'
+      ).size
+    ).toBe(0);
+  });
+
+  it('never attaches a completed report to an unfinished reply', () => {
+    const answer = {
+      ...assistant('reply', 'Partial'),
+      neoInputOrigin: { sessionId: 'neo', messageId: 'work-one' },
+    } as unknown as ChatMessage;
+    expect(completedWorkReplies([answer], [{ ...work, status: 'reported' }], 'neo').size).toBe(0);
+  });
+
   it('attaches a one-off execution to its completed Neo reply only', () => {
     const replies = completedWorkReplies(
       [

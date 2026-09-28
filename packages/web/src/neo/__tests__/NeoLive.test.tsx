@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { ChatMessage } from '@hyperneo/shared';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
@@ -62,6 +63,55 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+describe('Neo correlated work detail', () => {
+  it('shows the actual returned work after SDK tool results without borrowing it for B', () => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'work', inputKind: 'system', message: { content: 'A returned' } },
+      { type: 'user', uuid: 'ask-B', message: { content: 'Unrelated B' } },
+      {
+        type: 'assistant',
+        uuid: 'reply-A',
+        neoInputOrigin: { sessionId: 'neo', messageId: 'work' },
+        message: { content: 'The agenda is ready.' },
+      },
+      {
+        type: 'user',
+        uuid: 'tool-result',
+        parent_tool_use_id: null,
+        message: {
+          content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Checked state' }],
+        },
+      },
+      { type: 'result', uuid: 'result-A' },
+      {
+        type: 'assistant',
+        uuid: 'reply-B',
+        neoInputOrigin: { sessionId: 'neo', messageId: 'ask-B' },
+        message: { content: 'Separate answer B.' },
+      },
+      { type: 'result', uuid: 'result-B' },
+    ] as unknown as ChatMessage[];
+    render(
+      <NeoConversation
+        store={store}
+        sessionId="neo"
+        works={[{ ...work, status: 'reported', report: 'Actual scoped draft A.' }]}
+      />
+    );
+    const a = screen.getByText('The agenda is ready.').closest('article')!;
+    const b = screen.getByText('Separate answer B.').closest('article')!;
+    const detail = within(a).getByText('Read result · Draft the agenda');
+    fireEvent.click(detail);
+    expect(detail.closest('details')?.open).toBe(true);
+    expect(within(a).getByText('Actual scoped draft A.')).toBeTruthy();
+    expect(within(a).getByText('HyperNeo’s response, not independently verified.')).toBeTruthy();
+    expect(within(a).getByRole('button', { name: 'Copy work result' })).toBeTruthy();
+    expect(within(b).queryByText(/Read result/)).toBeNull();
+    expect(screen.queryByText('Checked state')).toBeNull();
+  });
+});
 
 describe('Neo MVP controls', () => {
   it('ties late A to its actual request while B stays direct and clicking remains in this view', () => {
