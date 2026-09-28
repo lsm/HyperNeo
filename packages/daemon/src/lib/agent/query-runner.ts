@@ -33,6 +33,7 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { stampNeoResponseInput } from '../neo/response-input.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -1225,7 +1226,7 @@ export class QueryRunner {
             break;
           }
 
-          const message = result.value as SDKMessage;
+          let message = result.value as SDKMessage;
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
             const elapsed = Date.now() - queryStartTime;
@@ -1272,6 +1273,9 @@ export class QueryRunner {
               throw new Error('SDK startup timeout - query aborted');
             }
           }
+
+          if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
+            message = stampNeoResponseInput(message, session.id, holderTurn.identity()?.messageId);
 
           try {
             await this.handleSDKMessage(message, queryGeneration);
