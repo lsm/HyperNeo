@@ -14,10 +14,13 @@ import {
   type NeoAskOriginReads,
 } from '../../../../src/lib/neo/ask-origin.ts';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -449,6 +452,187 @@ describe('real SQLite ask lineage facade', () => {
       consultations: service.consultations.list(),
     };
   }
+  async function snapshot(caller: OperationCaller = { source: 'rpc', principal: 'local' }) {
+    const result = await invokeOperation(
+      createOperationRegistry(createNeoOperations(service)),
+      'neo.snapshot',
+      {},
+      caller
+    );
+    if (result.kind !== 'completed') throw new Error('Snapshot did not complete');
+    return result.value as NeoSnapshot;
+  }
+  test('snapshot operation exposes accepted pending sources without provider work or writes', async () => {
+    const a = await intake();
+    const b = await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
+    const first = service.repo.proposeWork({ ...work, originMessageId: a.messageId });
+    service.repo.proposeWork({
+      ...work,
+      id: 'other-work',
+      requestKey: 'other',
+      originMessageId: b.messageId,
+    });
+    reserve({ ...consultation, originMessageId: a.messageId });
+    const before = unchangedState();
+    notify.mockClear();
+    const value = await snapshot();
+    expect(value.askOrigins).toEqual(
+      expect.arrayContaining([
+        { kind: 'work', id: first.id, origin: a },
+        { kind: 'work', id: 'other-work', origin: b },
+        { kind: 'consultation', id: consultation.id, origin: a },
+      ])
+    );
+    expect(value.askOrigins).toHaveLength(value.work.length + value.consultations!.length);
+    expect(value.work.find((item) => item.id === first.id)?.status).toBe('proposed');
+    expect(value.consultations![0].status).toBe('pending');
+    const definition = createNeoOperations(service).find((item) => item.name === 'neo.snapshot')!;
+    expect(definition.resultSchema.safeParse(value).success).toBe(true);
+    const { askOrigins: _removed, ...older } = value;
+    expect(definition.resultSchema.safeParse(older).success).toBe(true);
+    expect(unchangedState()).toEqual(before);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(getSessionAsync).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+  test('snapshot follows holder work and only actually delivered owned review provenance', async () => {
+    const a = await intake();
+    await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
+    const item = { ...consultation, originMessageId: a.messageId };
+    reserve(item);
+    storeSystem(request(item));
+    service.consultations.finish(item.id, 'reported', 'Context checked');
+    const proposed = service.repo.proposeWork({
+      ...work,
+      originSessionId: holder.sessionId,
+      originMessageId: request(item).messageId,
+    });
+    service.repo.transitionWork(proposed.id, proposed, {
+      status: 'reported',
+      report: 'Claim only',
+    });
+    const id = `neo-work:${proposed.id}:review`;
+    const review = { ...item, id, requestKey: id, originMessageId: null };
+    reserve(review);
+    expect((await snapshot()).askOrigins).toContainEqual({
+      kind: 'consultation',
+      id,
+      origin: null,
+    });
+    storeSystem(request(review));
+    const before = unchangedState();
+    expect((await snapshot()).askOrigins).toEqual(
+      expect.arrayContaining([
+        { kind: 'work', id: proposed.id, origin: a },
+        { kind: 'consultation', id, origin: a },
+      ])
+    );
+    expect(unchangedState()).toEqual(before);
+    const forged = { ...review, id: `neo-work:${proposed.id}:bad:review`, requestKey: 'ordinary' };
+    service.consultations.finish(review.id, 'reported', 'Fixture review settled');
+    reserve(forged);
+    storeSystem(request(forged));
+    expect((await snapshot()).askOrigins).toContainEqual({
+      kind: 'consultation',
+      id: forged.id,
+      origin: null,
+    });
+  });
+  test('snapshot preserves explicit unknown legacy sources instead of using a newer accepted ask', async () => {
+    await intake();
+    const unknown = service.repo.proposeWork({ ...work, originMessageId: 'missing-prompt' });
+    const legacy = service.repo.proposeWork({
+      ...work,
+      id: 'legacy',
+      requestKey: 'legacy',
+      originMessageId: null,
+    });
+    reserve({ ...consultation, originMessageId: null });
+    expect((await snapshot()).askOrigins).toEqual(
+      expect.arrayContaining([
+        { kind: 'work', id: unknown.id, origin: null },
+        { kind: 'work', id: legacy.id, origin: null },
+        { kind: 'consultation', id: consultation.id, origin: null },
+      ])
+    );
+  });
+  test('snapshot origin metadata preserves holder scope and root detail redaction', async () => {
+    const a = await intake();
+    const b = await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
+    service.repo.saveConcern(
+      { id: 'a', title: 'A', summary: 'Summary A', context: 'Private A' },
+      1
+    );
+    service.repo.saveConcern(
+      { id: 'b', title: 'B', summary: 'Summary B', context: 'Private B' },
+      0
+    );
+    service.repo.proposeWork({ ...work, originMessageId: a.messageId });
+    service.repo.proposeWork({
+      ...work,
+      id: 'work-b',
+      requestKey: 'b',
+      concernId: 'b',
+      originMessageId: b.messageId,
+    });
+    reserve({ ...consultation, originMessageId: a.messageId });
+    const rootCaller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root.sessionId };
+    const holderCaller: OperationCaller = { ...rootCaller, sessionId: holder.sessionId };
+    const overview = await snapshot(rootCaller);
+    expect(overview.concerns.map((item) => item.context)).toEqual(['', '']);
+    expect(overview.work.every((item) => item.instruction === '' && item.report === null)).toBe(
+      true
+    );
+    expect(overview.consultations![0]).toMatchObject({ question: '', answer: null });
+    expect(overview.askOrigins).toContainEqual({ kind: 'work', id: 'work-b', origin: b });
+    const scoped = await snapshot(holderCaller);
+    expect(scoped.concerns.map((item) => item.id)).toEqual(['a']);
+    expect(scoped.concerns[0].context).toBe('Private A');
+    expect(scoped.work.map((item) => item.id)).toEqual([work.id]);
+    expect(scoped.askOrigins).toEqual(
+      expect.arrayContaining([
+        { kind: 'work', id: work.id, origin: a },
+        { kind: 'consultation', id: consultation.id, origin: a },
+      ])
+    );
+    expect(scoped.askOrigins).toHaveLength(2);
+    expect(
+      await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.snapshot',
+        { concernId: 'b' },
+        holderCaller
+      )
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
+  });
+  test('snapshot projects only already-visible bounded receipts for humans and root agents', async () => {
+    const a = await intake();
+    for (let index = 0; index < 125; index++)
+      service.repo.proposeWork({
+        ...work,
+        id: `bounded-${index}`,
+        requestKey: `bounded-${index}`,
+        originMessageId: a.messageId,
+      });
+    const before = unchangedState();
+    for (const [caller, count] of [
+      [{ source: 'rpc', principal: 'local' }, 100],
+      [{ source: 'mcp', role: 'neo', sessionId: root.sessionId }, 10],
+    ] as [OperationCaller, number][]) {
+      const value = await snapshot(caller);
+      expect(value.work).toHaveLength(count);
+      expect(value.askOrigins).toHaveLength(count);
+      expect(value.askOrigins!.map((row) => row.id)).toEqual(value.work.map((row) => row.id));
+      expect(
+        value.askOrigins!.every(
+          (row) => row.kind === 'work' && row.origin?.messageId === a.messageId
+        )
+      ).toBe(true);
+    }
+    expect(unchangedState()).toEqual(before);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(getSessionAsync).not.toHaveBeenCalled();
+  });
   test('public facade reads actual durable human intake without query, subscription effects or writes', async () => {
     const human = await intake();
     const before = unchangedState();
