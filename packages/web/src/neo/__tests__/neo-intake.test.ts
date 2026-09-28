@@ -129,6 +129,24 @@ describe('Neo intake submission lifecycle', () => {
     expect((await client.send(draft)).ok).toBe(true);
     expect(request.mock.calls[1][1].input.requestId).toBe(request.mock.calls[0][1].input.requestId);
   });
+  it.each(['', '   '])('a rejected draft cannot evict an uncertain ask: %j', async (text) => {
+    const mint = vi.spyOn(crypto, 'randomUUID');
+    const { client, request } = setup();
+    const draft = { sessionId: 'neo:root', text: 'Project A?' };
+    try {
+      request.mockRejectedValueOnce(new Error('Disconnected'));
+      await expect(client.send(draft)).rejects.toThrow('Disconnected');
+      expect(await client.send({ ...draft, text, images: [] })).toHaveProperty('ok', false);
+      expect(request).toHaveBeenCalledTimes(1);
+      expect((await client.send(draft)).ok).toBe(true);
+      expect(request.mock.calls[1][1].input.requestId).toBe(
+        request.mock.calls[0][1].input.requestId
+      );
+      expect(mint).toHaveBeenCalledTimes(1);
+    } finally {
+      mint.mockRestore();
+    }
+  });
   it('retains identity after connection acquisition fails', async () => {
     const mint = vi.spyOn(crypto, 'randomUUID').mockReturnValue(uuid);
     const { request, getHub, client } = setup();
@@ -223,6 +241,7 @@ describe('Neo intake submission lifecycle', () => {
     );
     const draft = { sessionId: 'neo:root', text: 'A' };
     const first = client.send(draft);
+    expect(await client.send({ ...draft, text: '  ', images: [] })).toHaveProperty('ok', false);
     const retry = client.send(draft);
     expect(retry).toBe(first);
     const independent = await client.send({ ...draft, text: 'B' });

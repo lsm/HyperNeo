@@ -9,9 +9,9 @@ type IntakeReceipt =
   | { ok: false; reason: string };
 type Rejection = Extract<IntakeReceipt, { ok: false }>;
 
-export function admitNeoDraft(
-  submission: Submission
-): { value: Submission } | { reason: Rejection } {
+export function admitNeoDraft<T extends NeoDraft>(
+  submission: T
+): { value: T } | { reason: Rejection } {
   if (!submission.sessionId || (!submission.text.trim() && !submission.images?.length))
     return { reason: { ok: false, reason: 'Add a message or attachment before sending.' } };
   return { value: submission };
@@ -96,6 +96,8 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
 export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
   const pending = new Map<string, { submission: Submission; flight?: Promise<IntakeReceipt> }>();
   function send(draft: NeoDraft): Promise<IntakeReceipt> {
+    const admission = admitNeoDraft(draft);
+    if ('reason' in admission) return Promise.resolve(admission.reason);
     let entry = pending.get(draft.sessionId);
     if (!entry || !sameDraft(entry.submission, draft)) {
       entry = {
