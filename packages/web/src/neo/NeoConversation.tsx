@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { projectNeoWorkReply } from './work-reply.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoMessage } from './NeoMessage.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
@@ -38,7 +39,8 @@ export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
 
 export function completedWorkReplies(
   messages: ChatMessage[],
-  works: NeoWork[]
+  works: NeoWork[],
+  sessionId = ''
 ): Map<string, NeoWork> {
   const receipts = new Map<string, NeoWork>();
   for (const work of works) {
@@ -62,6 +64,12 @@ export function completedWorkReplies(
       active = null;
       reply = null;
     }
+  }
+  for (const message of completedConversation(messages)) {
+    const linked = projectNeoWorkReply(message, sessionId, receipts);
+    if (linked === 'legacy') continue;
+    if (message.uuid) replies.delete(message.uuid);
+    if (typeof linked === 'object') replies.set(linked.replyId, linked.work);
   }
   return replies;
 }
@@ -135,7 +143,7 @@ export function NeoConversation({
     (message) => !maps.replacementStatusMap.has(message.uuid ?? '')
   );
   const visible = completedConversation(conversation);
-  const workReplies = completedWorkReplies(conversation, works);
+  const workReplies = completedWorkReplies(conversation, works, sessionId);
   const activities = completedActivities(conversation);
   const progress =
     state.status === 'queued' || state.status === 'processing'
