@@ -122,6 +122,39 @@ async function attach(name: string, content: string, type: string) {
 }
 
 describe('Neo live durable intake', () => {
+  it('opens the actual optional board without making unrelated intake wait on inventory', async () => {
+    await open();
+    expect(request.mock.calls.some((call) => call[1]?.name === 'daemon.snapshot')).toBe(false);
+    let complete!: (value: unknown) => void;
+    request.mockImplementation(
+      async (_method: string, { name, input }: { name: string; input: IntakeInput }) => {
+        if (name === 'daemon.snapshot')
+          return new Promise((resolve) => {
+            complete = resolve;
+          });
+        if (name === 'neo.message.send') return accepted(input);
+        return snapshot();
+      }
+    );
+    fireEvent.click(screen.getByText('How Neo is handling things'));
+    await screen.findByRole('region', { name: 'Concern board' });
+    await screen.findByText('Checking linked resources…');
+    submit('A separate family question');
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(asks()[0][1].input.content).toBe('A separate family question');
+    await waitFor(() =>
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('')
+    );
+    await act(async () => complete({ capturedAt: 123, resources: [], capabilities: [] }));
+    expect(await screen.findByText(/Resource details captured/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Research Things to learn.' }));
+    await screen.findByText('How this is being handled');
+    expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull();
+    expect(request.mock.calls.filter((call) => call[1]?.name === 'daemon.snapshot')).toHaveLength(
+      1
+    );
+  });
+
   it('uses durable intake while Neo works and accepts an unrelated second ask', async () => {
     const input = await open();
     submit('Project A: **what is next?**');
