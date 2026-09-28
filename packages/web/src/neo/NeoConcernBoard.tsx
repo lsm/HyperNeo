@@ -51,7 +51,9 @@ export function NeoConcernBoardView({
           >
             <p class="mb-2 flex items-center gap-2 text-xs text-accent">
               <NeoIcon name={item.kind === 'work' ? 'work' : 'context'} />
-              {statusLabels[item.status]}
+              {item.kind === 'consultation' && item.status === 'queued'
+                ? 'Waiting for context'
+                : statusLabels[item.status]}
             </p>
             <p class="break-words text-sm font-medium">
               {item.kind === 'work' ? item.title : item.question}

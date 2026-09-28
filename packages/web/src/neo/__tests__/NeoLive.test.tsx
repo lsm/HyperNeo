@@ -120,6 +120,107 @@ describe('Neo correlated work detail', () => {
 });
 
 describe('Neo MVP controls', () => {
+  it('keeps active A and queued B beside their human asks through stable promotion and settlement', async () => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'A', message: { content: 'Research status A' } },
+      { type: 'user', uuid: 'B', message: { content: 'Research correction B' } },
+      { type: 'user', uuid: 'C', message: { content: 'Unrelated math C' } },
+      {
+        type: 'assistant',
+        uuid: 'reply-A',
+        neoAskOrigin: { sessionId: 'neo', messageId: 'A' },
+        message: { content: 'Older A acknowledgement' },
+      },
+      { type: 'result', uuid: 'result-A' },
+    ] as unknown as ChatMessage[];
+    const queued = {
+      id: 'receipt-B',
+      requestKey: 'B',
+      concernId: 'research',
+      originSessionId: 'neo',
+      originMessageId: 'B',
+      sessionId: 'holder-research',
+      question: 'Actual queued correction B',
+      status: 'queued' as const,
+      createdAt: 2,
+    };
+    const source: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      concerns: [
+        {
+          id: 'research',
+          title: 'Research',
+          summary: '',
+          context: '',
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      work: [],
+      consultations: [
+        { ...queued, id: 'receipt-A', originMessageId: 'A', status: 'pending', answer: null },
+      ],
+      consultationWaiters: [queued],
+      askOrigins: ['A', 'B'].map((id) => ({
+        kind: 'consultation',
+        id: `receipt-${id}`,
+        origin: { sessionId: 'neo', messageId: id },
+      })),
+    };
+    const view = render(<NeoConversation store={store} sessionId="neo" snapshot={source} />);
+    const a = screen.getByText('Research status A').closest('article')!;
+    const b = screen.getByText('Research correction B').closest('article')!;
+    const c = screen.getByText('Unrelated math C').closest('article')!;
+    expect(within(a).getByRole('status').textContent).toBe('Checking Research’s context…');
+    const waiting = within(b).getByRole('status');
+    expect(waiting.textContent).toBe('Waiting for Research’s context…');
+    expect(waiting.closest('.neo-message-bubble')).toBeNull();
+    expect(waiting.querySelector('.neo-progress-dots')).toBeNull();
+    expect(a.querySelector('.neo-progress-dots')).toBeTruthy();
+    expect(within(c).queryByRole('status')).toBeNull();
+    expect(
+      within(screen.getByText('Older A acknowledgement').closest('article')!).queryByRole('status')
+    ).toBeNull();
+    expect(inventoryRequest).not.toHaveBeenCalled();
+    fireEvent.click(within(b).getByText('How this is being handled'));
+    const board = await within(b).findByRole('region', { name: 'Concern board' });
+    await within(board).findByText(/Resource details captured/);
+    expect(within(board).getByText('Waiting for context')).toBeTruthy();
+    expect(within(board).getByText('Actual queued correction B')).toBeTruthy();
+    expect(within(board).getByText('Receipt: receipt-B')).toBeTruthy();
+    expect(within(board).queryByText('Receipt: receipt-A')).toBeNull();
+    expect(within(board).queryByText('Handed to HyperNeo')).toBeNull();
+    expect(within(board).getByText('holder-research')).toBeTruthy();
+    const promoted: NeoSnapshot = {
+      ...source,
+      consultationWaiters: [],
+      consultations: [{ ...queued, status: 'pending', answer: null }],
+    };
+    view.rerender(<NeoConversation store={store} sessionId="neo" snapshot={promoted} />);
+    expect(within(b).getByText('Checking Research’s context…')).toBeTruthy();
+    expect(within(b).queryByText('Waiting for Research’s context…')).toBeNull();
+    expect(within(board).getByText('Checking context')).toBeTruthy();
+    expect(within(board).getAllByText('Receipt: receipt-B')).toHaveLength(1);
+    expect(within(a).queryByText('Checking Research’s context…')).toBeNull();
+    view.rerender(
+      <NeoConversation
+        store={store}
+        sessionId="neo"
+        snapshot={{
+          ...promoted,
+          consultations: [{ ...queued, status: 'reported', answer: 'Correction saved.' }],
+        }}
+      />
+    );
+    expect(within(b).queryByText('Checking Research’s context…')).toBeNull();
+    expect(within(board).getByText('Response ready')).toBeTruthy();
+    expect(within(board).getByText('Correction saved.')).toBeTruthy();
+    expect(within(c).queryByText('How this is being handled')).toBeNull();
+  });
+
   it('opens A’s actual board under a delayed return without mixing in B’s same-concern work', async () => {
     const store = makeStore();
     store.sdkMessages.value = [

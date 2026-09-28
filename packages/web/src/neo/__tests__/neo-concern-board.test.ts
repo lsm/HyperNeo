@@ -103,6 +103,52 @@ describe('selectNeoConcernBoard', () => {
   });
 });
 
+describe('Queued Neo board projection', () => {
+  it('projects actual waiting holders without fake work or duplicate admission cards', () => {
+    const source: NeoSnapshot = {
+      ...snapshot,
+      consultations: [...snapshot.consultations!],
+      consultationWaiters: ['a', 'b'].map((id) => ({
+        ...check(`${id}-queued`, id),
+        originMessageId: `ask-${id}`,
+        status: 'queued',
+        createdAt: 4,
+      })),
+    };
+    const before = structuredClone(source);
+    const board = projectNeoConcernBoard(source, 'a', null)!;
+    const queued = board.receipts.filter((row) => row.id === 'a-queued');
+    expect(queued).toMatchObject([{ kind: 'consultation', status: 'queued', answer: null }]);
+    expect(board.receipts.some((row) => row.id === 'b-queued')).toBe(false);
+    expect(board.participants.map((row) => row.ref)).toContainEqual(ref('session', 'a-holder'));
+    expect(board.participants.some((row) => row.ref.id === 'b-holder')).toBe(false);
+    expect(source).toEqual(before);
+    source.consultations!.push({
+      ...source.consultationWaiters![0],
+      status: 'pending',
+      answer: null,
+    });
+    const promoted = projectNeoConcernBoard(source, 'a', null)!;
+    expect(promoted.receipts.filter((row) => row.id === 'a-queued')).toMatchObject([
+      { kind: 'consultation', status: 'pending' },
+    ]);
+    expect(promoted.receipts).toHaveLength(board.receipts.length);
+  });
+
+  it.each(['admitted', 'cancelled'] as const)(
+    'excludes %s waiter tombstones from the board',
+    (status) => {
+      const source: NeoSnapshot = {
+        ...snapshot,
+        work: [],
+        consultations: [],
+        consultationWaiters: [{ ...check('old', 'a'), originMessageId: 'ask-a', status }],
+      };
+      expect(projectNeoConcernBoard(source, 'a', null)!.receipts).toEqual([]);
+    }
+  );
+});
+
 describe('neoBoardReceipts', () => {
   it('preserves actual statuses, evidence and distinct kind/id identities', () => {
     const selected = selection();
