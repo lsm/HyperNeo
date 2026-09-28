@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="272" height="272" viewBox="0 0 272 272" aria-hidden="true">
   <g fill="none" stroke="#DCE5DD" stroke-opacity=".12" stroke-width="1">
-    <path d="M0 34H272M0 68H272M0 102H272M0 136H272M0 170H272M0 204H272M0 238H272" />
-    <path d="M34 0V272M68 0V272M102 0V272M136 0V272M170 0V272M204 0V272M238 0V272" />
+    <path d="M0 0H272M0 34H272M0 68H272M0 102H272M0 136H272M0 170H272M0 204H272M0 238H272" />
+    <path d="M0 0V272M34 0V272M68 0V272M102 0V272M136 0V272M170 0V272M204 0V272M238 0V272" />
   </g>
   <path d="M102 102H136M136 136V170" fill="none" stroke="#53E59A" stroke-opacity=".38" stroke-width="2" />
 </svg>
