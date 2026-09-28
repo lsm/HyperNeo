@@ -38,6 +38,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
   NO_CALLER_SCOPE,
@@ -362,9 +363,16 @@ export class AgentSession
       return;
     }
     let live = true;
+    const generation = this.getQueryGeneration();
+    const coordinator = this.session.id.startsWith('neo:');
+    const interruptEpoch = coordinator ? this.messageQueue.getUserInterruptEpoch() : 0;
     next.then(
       () => {
         live = false;
+        if (coordinator)
+          void this.handoffCoordinatorInput(generation, interruptEpoch).catch((error) =>
+            this.logger.warn('Coordinator input handoff failed:', error)
+          );
       },
       () => {
         live = false;
@@ -947,6 +955,35 @@ export class AgentSession
 
   async ensureQueryStarted(): Promise<void> {
     await this.lifecycleManager.ensureQueryStarted();
+  }
+
+  private async handoffCoordinatorInput(generation: number, interruptEpoch: number): Promise<void> {
+    const eligible = () =>
+      typeof decideCoordinatorHandoff(
+        neoCoordinatorBinding(this.db, this.session.id),
+        {
+          generation,
+          currentGeneration: this.getQueryGeneration(),
+          interruptEpoch,
+          currentInterruptEpoch: this.messageQueue.getUserInterruptEpoch(),
+          queryActive: this.messageQueue.isRunning() || this.queryPromise !== null,
+        },
+        {
+          sessionStatus: this.db.getSession(this.session.id)?.status,
+          queryMode: this.session.config.queryMode,
+          provider: this.session.config.provider,
+          processingStatus: this.stateManager.getState().status,
+          cleaningUp: this.isCleaningUp(),
+          waiting: this.isWaitingForInput(),
+          recovering: this.isLimitRecoveryPending(),
+        },
+        this.messageQueue.hasQueuedMessages()
+      ) !== 'string';
+    await admitAcrossContextClearBoundary(this.session.id, undefined, () =>
+      withSessionLock(this.session.id, async () => {
+        if (eligible()) await this.lifecycleManager.ensureQueryStarted(undefined, eligible);
+      })
+    );
   }
 
   async startQueryAndEnqueue(

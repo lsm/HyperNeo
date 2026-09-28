@@ -440,7 +440,10 @@ export class QueryLifecycleManager {
     return true;
   }
 
-  async ensureQueryStarted(signal?: AbortSignal): Promise<EnsureQueryStartedResult> {
+  async ensureQueryStarted(
+    signal?: AbortSignal,
+    admission?: () => boolean
+  ): Promise<EnsureQueryStartedResult> {
     const { session, messageQueue, interruptHandler } = this.ctx;
     throwIfDeliveryAborted(signal);
 
@@ -529,6 +532,7 @@ export class QueryLifecycleManager {
 
     await this.ctx.clearModelsCache();
     throwIfDeliveryAborted(signal);
+    if (admission && !admission()) return 'blocked';
 
     const queueLiveBeforeStart = messageQueue.isRunning();
     await this.ctx.startStreamingQuery();
