@@ -45,6 +45,25 @@ describe('Neo world briefing delivery', () => {
     expect(options.tools).toEqual(['AskUserQuestion']);
   });
 
+  test.each([null, 'saas'])(
+    'keeps execution discovery separate from approval for %s',
+    (concernId) => {
+      const prompt = neoPrompt(concernId);
+      expect(prompt).toContain(
+        'Inspect existing execution resources through their discovered read operations'
+      );
+      expect(prompt).toContain('reuse their relevant context when proposing work');
+      expect(prompt).toContain(
+        'Do not use other operations to bypass the existing human approval for starting or changing execution'
+      );
+      expect(prompt).toContain('the Start work button is the approval to execute');
+      expect(prompt).not.toContain(
+        'Coordinate existing execution resources through their discovered operations when appropriate'
+      );
+      if (concernId) expect(prompt).toContain('You may propose work but cannot start it');
+    }
+  );
+
   test('keeps holder context, consultation correlation and supersession distinct from world metadata', () => {
     const root = neoPrompt(null);
     const holder = neoPrompt('saas');
