@@ -31,6 +31,7 @@ import {
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
+import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -140,6 +141,7 @@ const WorkReport = z.object({
   id: z.string().min(1),
   status: z.enum(['reported', 'failed']),
   report: z.string().min(1).max(12000),
+  resourceRefs: NeoWorkResourceReferences.optional(),
 });
 const WorkReportResult = z.union([
   z.object({ accepted: z.literal(false), reason: z.string() }),
@@ -678,7 +680,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.report',
       description:
-        'Return explicit reported or failed evidence (up to 12,000 characters) for the exact work receipt assigned to this execution session. The actual MCP recipient must match; roles or arguments cannot replace it. Identical retries reuse the report. A report is a claim, not independently verified completion.',
+        'Return explicit reported or failed evidence (up to 12,000 characters) for the exact work receipt assigned to this execution session. Optionally include resourceRefs: up to 16 exact {kind,id} references from daemon.snapshot or native operation results, for resources involved in this receipt only. Do not include every task sharing this manager. The actual MCP recipient must match; roles or arguments cannot replace it. Identical retries reuse the report and supplied reference set; settled references cannot change. Reports and references are claims, not independently verified completion.',
       inputSchema: WorkReport,
       resultSchema: WorkReportResult,
       policy: { safetyClass: 'mutate' },
