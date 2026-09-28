@@ -32,7 +32,7 @@ Leave at least 34 source units of clear space around the mark. Use a minimum ren
 
 ## Color management
 
-The hex and RGB values in `brand-tokens.json` are the digital source values in **sRGB IEC61966-2.1**. The listed CMYK numbers are a color-managed conversion using **CGATS21-2 CRPC6 (GRACoL 2013)** with relative-colorimetric intent. They are a reference starting point, not a guarantee of an exact printed match. Ask the printer for the intended press condition and use its ICC profile; approve a hard proof on the actual stock before production. The [official ICC registry entry](https://registry.color.org/rgb-registry/profile/CGATS21_CRPC6) identifies the CRPC6 profile and its process condition.
+The hex and RGB values in `brand-tokens.json` are the digital source values in **sRGB IEC61966-2.1**. The listed CMYK numbers are a color-managed conversion using the **CGATS21_CRPC6.icc profile** for the **CGATS21-2-CRPC6 printing condition**, with relative-colorimetric intent. They are a reference starting point, not a guarantee of an exact printed match. Ask the printer for the intended press condition and use its ICC profile; approve a hard proof on the actual stock before production. The [official ICC registry entry](https://registry.color.org/profile-registry/CGATS21_CRPC6) identifies this profile, its provider, and its printing condition.
 
 No Pantone spot color has been approved. Do not guess a Pantone equivalent from a display or conversion chart. If a spot ink is required, choose it from a current physical fan deck, then verify a press proof. Color values and print profile details are also in the JSON token file.
 

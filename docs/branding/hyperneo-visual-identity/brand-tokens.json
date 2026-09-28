@@ -26,7 +26,7 @@
   },
   "colorManagement": {
     "digitalProfile": "sRGB IEC61966-2.1",
-    "printReferenceProfile": "CGATS21-2 CRPC6 (GRACoL 2013), relative colorimetric",
+    "printReferenceProfile": "CGATS21_CRPC6.icc (CGATS21-2-CRPC6 printing condition), relative colorimetric",
     "printValuesAreEstimates": true,
     "pantoneSpot": {
       "status": "not-assigned",
