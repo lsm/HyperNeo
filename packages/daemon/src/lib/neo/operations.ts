@@ -16,6 +16,13 @@ import {
   type presentNeoWorkTarget,
 } from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
+import {
+  requireNeoAgentWorkReference,
+  requireNeoAgentWorkSession,
+  requireNeoAgentWorkBinding,
+  requireNeoProposalReceipt,
+  type NeoAgentWorkOwner,
+} from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
@@ -112,6 +119,13 @@ const Propose = z.object({
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(16000),
   targetSessionId: z.string().min(1).max(160).nullable().optional(),
+  targetAgent: z
+    .object({
+      spaceId: z.string().min(1).max(160),
+      agentId: z.string().min(1).max(160),
+      sessionId: z.string().min(1).max(160),
+    })
+    .optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -470,10 +484,12 @@ export function createNeoOperations(service: NeoService) {
       (input: z.infer<typeof Propose>) => ({
         id: crypto.randomUUID(),
         targetSessionId: input.targetSessionId ?? null,
+        agent: input.targetAgent,
       }),
       'input',
       'candidate'
     )
+    .pipe(requireNeoAgentWorkReference, 'candidate', 'result:admission')
     .pipe(
       (target: NeoWorkTarget) => ({
         session:
@@ -483,9 +499,22 @@ export function createNeoOperations(service: NeoService) {
       'targetSession'
     )
     .pipe(
-      (target: NeoWorkTarget, { session }: { session: ReturnType<typeof inventory.readSession> }) =>
-        requireNeoWorkTargetSession(target, session),
-      ['candidate', 'targetSession'],
+      (target: NeoWorkTarget) => ({
+        owner: target.agent ? service.agentTargets.readOwner(target.agent) : null,
+      }),
+      'candidate',
+      'targetOwner'
+    )
+    .pipe(
+      (
+        target: NeoWorkTarget,
+        { session }: { session: ReturnType<typeof inventory.readSession> },
+        { owner }: { owner: NeoAgentWorkOwner | null }
+      ) =>
+        target.agent
+          ? requireNeoAgentWorkSession(target, session, owner)
+          : requireNeoWorkTargetSession(target, session),
+      ['candidate', 'targetSession', 'targetOwner'],
       'result:admission'
     )
     .pipe(
@@ -500,7 +529,9 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
-        requireNeoWorkTargetBinding(target, binding),
+        target.agent
+          ? requireNeoAgentWorkBinding(target, binding)
+          : requireNeoWorkTargetBinding(target, binding),
       ['admission', 'targetBinding'],
       'result:admission'
     )
@@ -513,23 +544,17 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
-        const work = service.repo.proposeWork({
-          ...input,
-          ...origin,
-          requestKey: `${origin.originSessionId}:${input.requestKey}`,
-          id: target.id,
-        });
-        return work.originMessageId === origin.originMessageId &&
-          work.originSessionId === origin.originSessionId
-          ? work.targetSessionId === target.targetSessionId
-            ? { value: { ok: true as const, work } }
-            : {
-                reason: {
-                  ok: false,
-                  reason: 'This request key belongs to another execution target.',
-                },
-              }
-          : { reason: { ok: false, reason: 'This request key belongs to another input.' } };
+        const receipt = service.agentTargets.propose(
+          service.repo,
+          {
+            ...input,
+            ...origin,
+            requestKey: `${origin.originSessionId}:${input.requestKey}`,
+            id: target.id,
+          },
+          target.agent
+        );
+        return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
       'result:admission'
@@ -619,7 +644,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat from daemon.snapshot, or null for self-contained scratch work. Space/task/workflow-owned and Neo-bound sessions keep their owning operations. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
+        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
