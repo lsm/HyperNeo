@@ -1,35 +1,54 @@
 .neo-shell {
-  --neo-background: color-mix(in srgb, var(--surface) 60%, var(--surface-raised));
+  --bg: light-dark(#f6f7f8, #171a20);
+  --surface: light-dark(#ffffff, #20242b);
+  --surface-overlay: light-dark(#faf9f7, #24262b);
+  --surface-raised: light-dark(#ffffff, #24262b);
+  --fg: light-dark(#25272c, #f1eee9);
+  --fg-soft: var(--fg);
+  --fg-muted: light-dark(#777b84, #b4b4b7);
+  --fg-faint: light-dark(#9a9da4, #898b91);
+  --line: light-dark(#e5e7eb, #373b43);
+  --line-strong: light-dark(#c8cbd1, #51545e);
+  --scrollbar-thumb: var(--line-strong);
+  --accent: light-dark(#b27557, #e1ab89);
+  --accent-hover: light-dark(#8f5b42, #efc2a6);
+  --accent-fg: light-dark(#ffffff, #25272c);
+  --accent-soft: var(--accent);
+  --focus-ring: var(--accent);
+
+  --neo-background: var(--bg);
   --neo-message-label: var(--fg-muted);
   --neo-message-time: var(--fg-faint);
 
-  --neo-user-accent: color-mix(in srgb, var(--accent) 70%, var(--fg));
-  --neo-user-background: color-mix(in srgb, var(--accent) 10%, var(--neo-background));
-  --neo-user-border: color-mix(in srgb, var(--accent) 15%, var(--line));
+  --neo-markdown-strong: light-dark(#946320, #dfbd87);
+  --neo-markdown-inline-code: light-dark(#416e52, #acd39d);
+  --neo-markdown-link: light-dark(#276879, #89c6d5);
+  --neo-markdown-quote: light-dark(#726182, #b7a8ce);
+  --neo-markdown-quote-background: color-mix(in srgb, var(--neo-markdown-quote) 6%, transparent);
+
+  --neo-user-accent: light-dark(#486594, #a5b9d9);
+  --neo-user-background: light-dark(#eaf0fa, #27303f);
+  --neo-user-border: light-dark(#c9d3e4, #404e66);
   --neo-user-text: var(--fg-soft);
   --neo-user-heading: var(--neo-user-accent);
-  --neo-user-emphasis: var(--neo-user-accent);
-  --neo-user-link: var(--neo-user-accent);
-  --neo-user-quote: var(--fg-soft);
-  --neo-user-quote-background: color-mix(in srgb, var(--neo-user-accent) 6%, transparent);
-  --neo-user-code: var(--neo-user-accent);
+  --neo-user-emphasis: var(--neo-markdown-strong);
+  --neo-user-link: var(--neo-markdown-link);
+  --neo-user-quote: var(--neo-markdown-quote);
+  --neo-user-quote-background: var(--neo-markdown-quote-background);
+  --neo-user-code: var(--neo-markdown-inline-code);
   --neo-user-code-background: var(--surface-overlay);
   --neo-user-table-background: color-mix(in srgb, var(--neo-user-accent) 10%, transparent);
 
-  --neo-assistant-accent: light-dark(#8a4c31, #e6b39a);
-  --neo-assistant-background: color-mix(
-    in srgb,
-    var(--neo-assistant-accent) 4%,
-    var(--surface-raised)
-  );
-  --neo-assistant-border: color-mix(in srgb, var(--neo-assistant-accent) 16%, var(--line));
+  --neo-assistant-accent: var(--accent);
+  --neo-assistant-background: var(--surface);
+  --neo-assistant-border: var(--line);
   --neo-assistant-text: var(--fg-soft);
   --neo-assistant-heading: var(--neo-assistant-accent);
-  --neo-assistant-emphasis: var(--neo-assistant-accent);
-  --neo-assistant-link: var(--neo-assistant-accent);
-  --neo-assistant-quote: var(--fg-soft);
-  --neo-assistant-quote-background: color-mix(in srgb, var(--neo-assistant-accent) 6%, transparent);
-  --neo-assistant-code: var(--neo-assistant-accent);
+  --neo-assistant-emphasis: var(--neo-markdown-strong);
+  --neo-assistant-link: var(--neo-markdown-link);
+  --neo-assistant-quote: var(--neo-markdown-quote);
+  --neo-assistant-quote-background: var(--neo-markdown-quote-background);
+  --neo-assistant-code: var(--neo-markdown-inline-code);
   --neo-assistant-code-background: color-mix(
     in srgb,
     var(--neo-assistant-accent) 3%,
@@ -173,7 +192,7 @@
 }
 
 .neo-markdown blockquote {
-  border-color: var(--neo-markdown-accent);
+  border-color: var(--prose-quote-fg);
   background: var(--neo-quote-background);
   border-radius: 0 8px 8px 0;
   padding: 8px 12px;
