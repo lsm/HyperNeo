@@ -7,7 +7,7 @@ const columns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   session_id AS sessionId, question, status, created_at AS createdAt`;
 
-type Admission<T> = { value: T } | { reason: null };
+type Admission<T> = { value: T } | { reason: 'busy' | 'conflict' | null };
 
 function requireQueuedWaiter(
   waiter: NeoConsultationWaiter | undefined
@@ -19,6 +19,7 @@ function requireMatchingConsultation(
   waiter: NeoConsultationWaiter | undefined,
   item: NeoConsultation | null
 ): Admission<NeoConsultation> {
+  if (!item) return { reason: 'busy' };
   return waiter &&
     item?.status === 'pending' &&
     item.id === waiter.id &&
@@ -29,7 +30,7 @@ function requireMatchingConsultation(
     item.originMessageId === waiter.originMessageId &&
     item.question === waiter.question
     ? { value: item }
-    : { reason: null };
+    : { reason: 'conflict' };
 }
 
 function markWaiterAdmitted(db: Database, item: NeoConsultation): NeoConsultation {
@@ -48,7 +49,8 @@ const admitNeoConsultationWaiter = (
   .pipe(requireQueuedWaiter, 'waiter', 'result:admission')
   .pipe(
     (db: Database, waiter: NeoConsultationWaiter) =>
-      new NeoConsultationRepository(db, () => {}).reserve(waiter),
+      new NeoConsultationRepository(db, () => {}).reserve(waiter) ??
+      new NeoConsultationRepository(db, () => {}).get(waiter.id),
     ['db', 'admission'],
     'consultation'
   )
@@ -57,7 +59,7 @@ const admitNeoConsultationWaiter = (
   .end('admission') as (
   db: Database,
   waiter: NeoConsultationWaiter | undefined
-) => NeoConsultation | null;
+) => NeoConsultation | 'busy' | 'conflict' | null;
 
 export class NeoConsultationWaiterRepository {
   constructor(
@@ -117,11 +119,25 @@ export class NeoConsultationWaiterRepository {
   }
 
   admitNext(concernId: string): NeoConsultation | null {
-    const admitted = this.db.transaction(() =>
-      admitNeoConsultationWaiter(this.db, this.queued(concernId)[0])
-    )();
-    if (admitted) this.notify();
-    return admitted;
+    let changed = false;
+    const admitted = this.db.transaction(() => {
+      let waiter = this.queued(concernId)[0];
+      while (waiter) {
+        const result = admitNeoConsultationWaiter(this.db, waiter);
+        if (result !== 'conflict') return result;
+        const cancelled = this.db
+          .prepare(`UPDATE neo_consultation_waiters SET status = 'cancelled'
+          WHERE id = ? AND status = 'queued'`)
+          .run(waiter.id);
+        if (cancelled.changes !== 1)
+          throw new Error('Consultation waiter changed during cancellation.');
+        changed = true;
+        waiter = this.queued(concernId)[0];
+      }
+      return null;
+    })();
+    if (changed || (admitted && admitted !== 'busy')) this.notify();
+    return admitted === 'busy' ? null : admitted;
   }
 
   cancel(id: string): NeoConsultationWaiter | null {

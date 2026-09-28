@@ -177,10 +177,16 @@ describe('NeoConsultationWaiterRepository', () => {
   test('never adopts a different receipt for an already-used consultation request key', () => {
     const existing = consultations.reserve(request('original'));
     const queued = waiters.enqueue({ ...request('new'), requestKey: 'original' });
+    waiters.enqueue(request('next'));
+    notices = 0;
     expect(waiters.admitNext('club')).toBeNull();
-    expect(waiters.get('new')).toEqual(queued);
+    expect(waiters.get('new')).toEqual({ ...queued, status: 'cancelled' });
     expect(consultations.get('original')).toEqual(existing);
     expect(consultations.get('new')).toBeNull();
+    expect(waiters.get('next')?.status).toBe('queued');
+    expect(notices).toBe(1);
+    consultations.finish('original', 'reported', 'Original answer');
+    expect(waiters.admitNext('club')?.originMessageId).toBe('human:next');
   });
 
   test.each(['originMessageId', 'sessionId', 'question'] as const)(
@@ -191,11 +197,69 @@ describe('NeoConsultationWaiterRepository', () => {
       const queued = waiters.enqueue(input);
       notices = 0;
       expect(waiters.admitNext('club')).toBeNull();
-      expect(waiters.get(input.id)).toEqual(queued);
+      expect(waiters.get(input.id)).toEqual({ ...queued, status: 'cancelled' });
       expect(consultations.get(input.id)).toEqual(existing);
-      expect(notices).toBe(0);
+      expect(notices).toBe(1);
     }
   );
+
+  test('skips consumed keys beyond the bounded read window and admits the next exact input', () => {
+    for (let index = 0; index < 23; index++) {
+      consultations.reserve(request(`consumed-${index}`));
+      consultations.finish(`consumed-${index}`, 'reported', 'Existing answer');
+      waiters.enqueue({ ...request(`poison-${index}`), requestKey: `consumed-${index}` });
+    }
+    waiters.enqueue(request('eligible'));
+    notices = 0;
+    expect(waiters.admitNext('club')).toMatchObject({
+      ...request('eligible'),
+      status: 'pending',
+    });
+    expect(waiters.queued()).toEqual([]);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS total FROM neo_consultation_waiters WHERE status = 'cancelled'"
+        )
+        .get()
+    ).toEqual({ total: 23 });
+    expect(consultations.get('consumed-22')?.answer).toBe('Existing answer');
+    expect(notices).toBe(1);
+  });
+
+  test('skips an ID collision without changing the other holder’s existing receipt', () => {
+    const existing = consultations.reserve({
+      ...request('collision', 'family'),
+      originSessionId: 'another-root',
+      requestKey: 'consumed-key',
+    });
+    waiters.enqueue(request('collision'));
+    waiters.enqueue(request('eligible'));
+    expect(waiters.admitNext('club')?.originMessageId).toBe('human:eligible');
+    expect(waiters.get('collision')?.status).toBe('cancelled');
+    expect(consultations.get('collision')).toEqual(existing);
+    expect(waiters.admitNext('club')).toBeNull();
+  });
+
+  test('rolls back skipped conflicts when a later admission fails without publishing notices', () => {
+    consultations.reserve(request('consumed'));
+    consultations.finish('consumed', 'reported', 'Existing answer');
+    const poison = waiters.enqueue({ ...request('poison'), requestKey: 'consumed' });
+    const eligible = waiters.enqueue(request('eligible'));
+    notices = 0;
+    db.exec(`CREATE TRIGGER reject_waiter_admission BEFORE UPDATE ON neo_consultation_waiters
+      WHEN NEW.status = 'admitted' BEGIN SELECT RAISE(ABORT, 'test admission failure'); END`);
+    expect(() => waiters.admitNext('club')).toThrow('test admission failure');
+    expect(waiters.get('poison')).toEqual(poison);
+    expect(waiters.get('eligible')).toEqual(eligible);
+    expect(consultations.get('eligible')).toBeNull();
+    expect(db.prepare('SELECT * FROM neo_context_write_grants').all()).toHaveLength(1);
+    expect(notices).toBe(0);
+    db.exec('DROP TRIGGER reject_waiter_admission');
+    expect(waiters.admitNext('club')?.originMessageId).toBe('human:eligible');
+    expect(waiters.get('poison')?.status).toBe('cancelled');
+    expect(notices).toBe(1);
+  });
 
   test('bounds FIFO queue reads to twenty entries without dropping durable receipts', () => {
     consultations.reserve(request('busy'));
