@@ -5,12 +5,12 @@
   --surface-raised: light-dark(#ffffff, #24262b);
   --fg: light-dark(#25272c, #f1eee9);
   --fg-soft: var(--fg);
-  --fg-muted: light-dark(#777b84, #b4b4b7);
-  --fg-faint: light-dark(#9a9da4, #898b91);
+  --fg-muted: light-dark(#62666f, #b4b4b7);
+  --fg-faint: light-dark(#676b75, #8b8d93);
   --line: light-dark(#e5e7eb, #373b43);
   --line-strong: light-dark(#c8cbd1, #51545e);
   --scrollbar-thumb: var(--line-strong);
-  --accent: light-dark(#b27557, #e1ab89);
+  --accent: light-dark(#9f6649, #e1ab89);
   --accent-hover: light-dark(#8f5b42, #efc2a6);
   --accent-fg: light-dark(#ffffff, #25272c);
   --accent-soft: var(--accent);
