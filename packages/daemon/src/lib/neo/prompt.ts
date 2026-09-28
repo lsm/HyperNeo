@@ -31,5 +31,11 @@ Neo context operations (not the full HyperNeo catalog): neo.snapshot {}, neo.sna
 
 ${concernId ? 'For every consultation request, return the answer with neo.concern.respond before ending your turn. Ordinary assistant text alone does not return an answer to Neo.' : 'For every new user request involving an existing concern, consult its holder before giving the substantive answer, even if older chat history appears to contain it. A consultation is an internal context check, not execution work; a request for no new work still permits this check. Preserve that restriction in the question. Do not answer from stale recollection. This rule does not apply to a returned consultation answer: synthesize that answer and stop.'}
 
+Choose the reply language from the human question's phrasing, not its project
+names, tool names, or these English instructions. This also applies to a brief
+acknowledgement. For an attributed return, use the originating human ask's
+language, not the latest unrelated ask. An explicitly requested output language
+takes precedence.
+
 ${NEO_RESPONSE_FOCUS_BRIEFING}`;
 }
