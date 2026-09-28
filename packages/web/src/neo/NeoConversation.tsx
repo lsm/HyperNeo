@@ -4,6 +4,7 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { NeoMessage } from './NeoMessage.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
+import { projectNeoReplyContext } from './reply-context.ts';
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -160,16 +161,20 @@ export function NeoConversation({
             </a>
           </p>
         )}
-        {visible.map((message) => (
-          <NeoMessage
-            key={message.uuid}
-            message={message}
-            text={conversationText(message)}
-            work={workReplies.get(message.uuid ?? '')}
-            activity={activities.get(message.uuid ?? '')}
-            sessionId={sessionId}
-          />
-        ))}
+        {visible.map((message) => {
+          const context = projectNeoReplyContext(message, sessionId, visible, conversationText);
+          return (
+            <NeoMessage
+              key={message.uuid}
+              message={message}
+              text={conversationText(message)}
+              work={workReplies.get(message.uuid ?? '')}
+              activity={activities.get(message.uuid ?? '')}
+              sessionId={sessionId}
+              replyTo={typeof context === 'object' ? context : undefined}
+            />
+          );
+        })}
         {progress && (
           <div role="status" class="neo-progress" aria-live="polite">
             <span class="neo-progress-dots" aria-hidden="true">

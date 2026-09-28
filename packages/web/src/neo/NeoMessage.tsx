@@ -3,6 +3,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
 
 export function messageTime(timestamp: unknown, now = new Date()) {
   if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return null;
@@ -31,12 +32,14 @@ export function NeoMessage({
   work,
   activity,
   sessionId,
+  replyTo,
 }: {
   message: ChatMessage;
   text: string;
   work?: NeoWork;
   activity?: string[];
   sessionId?: string;
+  replyTo?: NeoReplyContext;
 }) {
   const user = message.type === 'user';
   const [showActivity, setShowActivity] = useState(false);
@@ -60,6 +63,7 @@ export function NeoMessage({
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);
   return (
     <article
+      id={sessionId && message.uuid ? neoMessageAnchor(sessionId, message.uuid) : undefined}
       class={`neo-arrive neo-message w-fit break-words ${user ? 'neo-message-user ml-auto max-w-[78%]' : 'neo-message-assistant mr-auto max-w-[94%]'}`}
     >
       <div
@@ -75,6 +79,21 @@ export function NeoMessage({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${user ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
       >
+        {!user && replyTo && sessionId && (
+          <button
+            type="button"
+            title={replyTo.excerpt}
+            aria-label={`Return to your request: ${replyTo.excerpt}`}
+            class="mb-2 block max-w-full truncate text-left text-xs text-fg-muted hover:text-accent"
+            onClick={() =>
+              document
+                .getElementById(neoMessageAnchor(sessionId, replyTo.messageId))
+                ?.scrollIntoView?.({ block: 'nearest' })
+            }
+          >
+            ↩ {replyTo.excerpt}
+          </button>
+        )}
         {images.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
             {images.map((src, index) => (

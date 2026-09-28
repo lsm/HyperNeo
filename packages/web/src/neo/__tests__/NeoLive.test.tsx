@@ -6,6 +6,7 @@ import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoComposer } from '../NeoComposer.tsx';
+import { neoMessageAnchor } from '../reply-context.ts';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const interrupt = vi.hoisted(() => vi.fn());
@@ -63,6 +64,68 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo MVP controls', () => {
+  it('ties late A to its actual request while B stays direct and clicking remains in this view', () => {
+    const store = makeStore();
+    const human = (uuid: string, text: string) => ({
+      type: 'user',
+      uuid,
+      session_id: 'neo',
+      message: { role: 'user', content: text },
+    });
+    const answer = (uuid: string, text: string, messageId: string) => ({
+      type: 'assistant',
+      uuid,
+      neoAskOrigin: { sessionId: 'neo', messageId },
+      message: { role: 'assistant', content: text },
+    });
+    store.sdkMessages.value = [
+      human('A', 'Review the project draft'),
+      human('B', 'When is dinner?'),
+      answer('reply-B', 'Dinner is at seven.', 'B'),
+      { type: 'result', uuid: 'result-B' },
+      { type: 'user', uuid: 'work', inputKind: 'system', message: { content: 'Internal report' } },
+      answer('reply-A', 'The draft is ready.', 'A'),
+      { type: 'result', uuid: 'result-A' },
+    ] as unknown as SessionStore['sdkMessages']['value'];
+    render(<NeoConversation store={store} sessionId="neo" />);
+    const target = document.getElementById(neoMessageAnchor('neo', 'A'))!;
+    const scroll = vi.fn();
+    target.scrollIntoView = scroll;
+    const a = screen.getByText('The draft is ready.').closest('article')!;
+    const b = screen.getByText('Dinner is at seven.').closest('article')!;
+    fireEvent.click(
+      within(a).getByRole('button', { name: 'Return to your request: Review the project draft' })
+    );
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(within(b).queryByRole('button', { name: /Return to your request/ })).toBeNull();
+    expect(within(a).getByRole('button', { name: 'Copy Neo’s message' })).toBeTruthy();
+    expect(screen.queryByText('Internal report')).toBeNull();
+    expect(
+      screen.getByRole('region', { name: 'Conversation with Neo' }).querySelectorAll('article')[0]
+    ).toBe(target);
+  });
+  it.each([
+    null,
+    undefined,
+    { sessionId: 'other', messageId: 'A' },
+    { sessionId: 'neo', messageId: 'missing' },
+  ])('never labels an unknown late reply using the latest human ask: %j', (neoAskOrigin) => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'A', message: { content: 'Original request' } },
+      { type: 'user', uuid: 'B', message: { content: 'Latest unrelated request' } },
+      {
+        type: 'assistant',
+        uuid: 'answer',
+        neoAskOrigin,
+        message: { content: 'Unattributed answer' },
+      },
+      { type: 'result', uuid: 'result' },
+    ] as unknown as SessionStore['sdkMessages']['value'];
+    render(<NeoConversation store={store} sessionId="neo" />);
+    expect(screen.queryByRole('button', { name: /Return to your request/ })).toBeNull();
+    expect(screen.getByText('Unattributed answer')).toBeTruthy();
+  });
   it('proposals require an explicit Start and cancellation is a separate action', () => {
     const action = vi.fn();
     render(<NeoWorkCard work={work} busy={false} disabled={false} onAction={action} />);
