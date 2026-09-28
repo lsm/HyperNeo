@@ -13,6 +13,7 @@ import {
 } from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { createNeoIntakeOperation } from './intake.ts';
+import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import {
   admitNeoConsultationOrigin,
@@ -75,6 +76,15 @@ const Snapshot = z.union([
     concerns: z.array(Concern),
     work: z.array(Work),
     consultations: z.array(Consultation),
+    askOrigins: z
+      .array(
+        z.object({
+          kind: z.enum(['work', 'consultation']),
+          id: z.string(),
+          origin: z.object({ sessionId: z.string(), messageId: z.string() }).nullable(),
+        })
+      )
+      .optional(),
   }),
 ]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
@@ -187,6 +197,8 @@ export function createNeoOperations(service: NeoService) {
             .filter((item) => item.status === 'proposed' || item.status === 'queued')
             .slice(0, 50)
         : [];
+    const visibleWork = [...recentWork, ...olderActiveWork];
+    const consultations = service.consultations.list(scope ?? undefined);
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -194,10 +206,15 @@ export function createNeoOperations(service: NeoService) {
         ...item,
         context: detailed ? item.context : '',
       })),
-      consultations: service.consultations
-        .list(scope ?? undefined)
-        .map((item) => (detailed ? item : { ...item, question: '', answer: null })),
-      work: [...recentWork, ...olderActiveWork].map((item) =>
+      consultations: consultations.map((item) =>
+        detailed ? item : { ...item, question: '', answer: null }
+      ),
+      askOrigins: projectNeoSnapshotAskOrigins(
+        visibleWork,
+        consultations,
+        service.resolveAskOrigin
+      ),
+      work: visibleWork.map((item) =>
         caller.source === 'rpc'
           ? item
           : {
