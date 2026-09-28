@@ -18,6 +18,7 @@ import {
   clearModelsCache,
   setModelsCache,
 } from '../../../../src/lib/model-service';
+import { neoPrompt } from '../../../../src/lib/neo/prompt';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -1924,7 +1925,7 @@ describe('QueryOptionsBuilder', () => {
       ['concern', 'saas', ['AskUserQuestion']],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
-      'uses the persisted %s binding for native questions',
+      'uses the persisted %s binding for resumed prompts and native questions',
       async (kind, concernId, tools) => {
         const sqlite = new BunDatabase(':memory:');
         try {
@@ -1937,25 +1938,38 @@ describe('QueryOptionsBuilder', () => {
               .run(concernId, 'SaaS', '', '', 1, 1, 1);
           }
           mockSession.id = `neo:${generateUUID()}`;
+          mockSession.sdkSessionId = generateUUID();
           sqlite
             .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
             .run(mockSession.id, concernId, kind);
           mockSession.config.sdkToolsPreset = ['AskUserQuestion'];
           mockSession.config.allowedTools = ['AskUserQuestion'];
           mockSession.config.permissionMode = 'acceptEdits';
-          const options = await new QueryOptionsBuilder({
+          const resumedBuilder = new QueryOptionsBuilder({
             ...mockContext,
             db: {
               ...mockContext.db!,
               getDatabase: () => sqlite,
             },
             getOperationMcpServer: () => ({ type: 'stdio', command: 'operations' }),
-          }).build();
+          });
+          const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
+          expect(options.resume).toBe(mockSession.sdkSessionId);
+          expect(options.model).toBe('default');
+          expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual(tools);
           expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind !== 'neo');
           if (kind !== 'worker') {
             expect(options.allowedTools).toEqual([...tools, 'mcp__hyperneo-operations__invoke']);
             expect(options.permissionMode).toBe('dontAsk');
+            expect(options.systemPrompt).toEqual({
+              type: 'custom',
+              prompt: neoPrompt(concernId),
+              snapshot: false,
+            });
+          } else {
+            expect(options.permissionMode).toBe('acceptEdits');
+            expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
           }
         } finally {
           sqlite.close();
