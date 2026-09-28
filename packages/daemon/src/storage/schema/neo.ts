@@ -1,5 +1,4 @@
 import type { Database } from '../sqlite-compat.ts';
-import { runMigration286 } from './m286-neo-agent-work-targets.ts';
 
 export function createNeoTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_concerns (
@@ -37,5 +36,4 @@ export function createNeoTables(db: Database): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_concern ON neo_work(concern_id, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_session
     ON neo_work(session_id, created_at) WHERE session_id IS NOT NULL`);
-  runMigration286(db);
 }

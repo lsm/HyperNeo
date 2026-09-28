@@ -42,6 +42,7 @@ describe('migration 286 and immutable agent targets', () => {
       runMigration283(db);
       const work = new NeoRepository(db).proposeWork(proposal);
       const before = db.prepare('SELECT * FROM neo_work').get();
+      expect(new NeoAgentWorkTargetRepository(db).get(work.id)).toBeNull();
       runMigration286(db);
       runMigration286(db);
       expect(db.prepare('SELECT * FROM neo_work').get()).toEqual(before);

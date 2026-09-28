@@ -8,6 +8,14 @@ export class NeoAgentWorkTargetRepository {
   constructor(private readonly db: Database) {}
 
   get(workId: string): AgentTarget | null {
+    if (
+      !this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name = 'neo_agent_work_targets' AND type = 'table'"
+        )
+        .get()
+    )
+      return null;
     return (
       (this.db
         .prepare(`SELECT space_id AS spaceId, agent_id AS agentId, session_id AS sessionId
