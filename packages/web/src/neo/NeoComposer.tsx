@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
-import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -9,6 +8,7 @@ import { NeoPreferences } from './NeoPreferences.tsx';
 import { NeoVoice } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
+import type { createNeoIntakeClient } from './neo-intake.ts';
 
 export function NeoComposer({
   store,
@@ -17,6 +17,7 @@ export function NeoComposer({
   onDraft,
   onError,
   onTranscript,
+  onSend,
 }: {
   store: SessionStore;
   sessionId: string;
@@ -24,24 +25,25 @@ export function NeoComposer({
   onDraft: (value: string) => void;
   onError: (message: string) => void;
   onTranscript: (text: string) => void;
+  onSend: ReturnType<typeof createNeoIntakeClient>['send'];
 }) {
   const [sending, setSending] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
+  const alive = useRef(true);
+  const currentSession = useRef(sessionId);
+  currentSession.current = sessionId;
   const currentDraft = useRef(draft);
   currentDraft.current = draft;
-  const { sendMessage, clearSendTimeout } = useSendMessage({
-    sessionId,
-    session: store.sessionInfo.value,
-    isSending: sending,
-    onSendStart: () => setSending(true),
-    onSendComplete: () => setSending(false),
-    onError,
-  });
   const { handleInterrupt, interrupting } = useInterrupt({ sessionId });
-  useEffect(() => () => clearSendTimeout(), [clearSendTimeout]);
+  useLayoutEffect(
+    () => () => {
+      alive.current = false;
+    },
+    []
+  );
   const working = store.isWorking.value;
   const connected = connectionState.value === 'connected';
   async function send() {
@@ -58,17 +60,22 @@ export function NeoComposer({
       return;
     inFlight.current = true;
     setSending(true);
+    onError('');
+    const current = () => alive.current && currentSession.current === sessionId;
     try {
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
-      const accepted = await (images.length ? sendMessage(content, images) : sendMessage(content));
-      if (accepted) {
+      const receipt = await onSend({ sessionId, text: content, images });
+      if (receipt.ok) {
         attachments.remove(files.map((file) => file.id));
-        if (currentDraft.current === submitted) onDraft('');
-      }
+        if (current() && currentDraft.current === submitted) onDraft('');
+      } else if (current()) onError(receipt.reason);
+    } catch {
+      if (current())
+        onError('Could not confirm this message. Your draft is still here; please try again.');
     } finally {
       inFlight.current = false;
-      setSending(false);
+      if (current()) setSending(false);
     }
   }
   return (

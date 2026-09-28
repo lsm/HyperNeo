@@ -369,6 +369,7 @@ export function NeoLive() {
                 }))
               }
               onError={neo.setError}
+              onSend={neo.send}
             />
           )}
           <p class="mt-2 text-center text-[10px] text-fg-faint">

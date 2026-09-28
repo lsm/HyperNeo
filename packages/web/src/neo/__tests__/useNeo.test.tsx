@@ -71,7 +71,7 @@ function IntakeProbe() {
 }
 
 describe('useNeo intake client', () => {
-  it('exposes the durable intake path without changing existing composer messaging', async () => {
+  it('exposes the reusable durable intake path', async () => {
     request.mockImplementation(
       async (_method: string, { name, input }: { name: string; input: { requestId?: string } }) =>
         name === 'neo.message.send'
