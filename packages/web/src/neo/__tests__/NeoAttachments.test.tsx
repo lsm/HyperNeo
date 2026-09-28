@@ -6,15 +6,12 @@ import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoLive } from '../NeoLive.tsx';
 import { readNeoAttachment, attachmentMessage } from '../neo-attachments.ts';
 
-const sendMessage = vi.hoisted(() => vi.fn(async () => true));
+const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => null }));
 vi.mock('../NeoWorkCard.tsx', () => ({ NeoWorkCard: () => null }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
-vi.mock('../../hooks/useSendMessage.ts', () => ({
-  useSendMessage: () => ({ sendMessage, clearSendTimeout: vi.fn() }),
-}));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
   useInterrupt: () => ({ handleInterrupt: vi.fn(), interrupting: false }),
 }));
@@ -23,7 +20,12 @@ vi.mock('../NeoVoice.tsx', () => ({ NeoVoice: () => null }));
 vi.mock('../../lib/state.ts', () => ({ connectionState: { value: 'connected' } }));
 beforeEach(() => {
   sendMessage.mockReset();
-  sendMessage.mockResolvedValue(true);
+  sendMessage.mockResolvedValue({
+    ok: true,
+    requestId: 'request',
+    messageId: 'request',
+    created: true,
+  });
 });
 afterEach(() => {
   cleanup();
@@ -44,6 +46,7 @@ function composer(sessionId = crypto.randomUUID(), onError = vi.fn()) {
       onDraft={vi.fn()}
       onError={onError}
       onTranscript={vi.fn()}
+      onSend={sendMessage}
     />
   );
 }
@@ -73,6 +76,7 @@ describe('Neo attachments', () => {
       error: null,
       setError: vi.fn(),
       open: vi.fn(),
+      send: sendMessage,
       store: {
         sessionInfo: signal({ metadata: {} }),
         sdkMessages: signal([]),
@@ -159,9 +163,11 @@ describe('Neo attachments', () => {
     });
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
     await waitFor(() =>
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.stringContaining('A file, not a typed message.')
-      )
+      expect(sendMessage).toHaveBeenCalledWith({
+        sessionId: expect.any(String),
+        text: expect.stringContaining('A file, not a typed message.'),
+        images: [],
+      })
     );
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull()
@@ -172,16 +178,18 @@ describe('Neo attachments', () => {
     await attach(new File(['photo'], 'photo.png', { type: 'image/png' }));
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
     await waitFor(() =>
-      expect(sendMessage).toHaveBeenCalledWith('Attached files', [
-        { data: 'cGhvdG8=', media_type: 'image/png' },
-      ])
+      expect(sendMessage).toHaveBeenCalledWith({
+        sessionId: expect.any(String),
+        text: 'Attached files',
+        images: [{ data: 'cGhvdG8=', media_type: 'image/png' }],
+      })
     );
   });
   it('keeps attachments on failure and isolates drafts across conversation remounts', async () => {
     const id = crypto.randomUUID();
     const view = render(composer(id));
     await attach();
-    sendMessage.mockResolvedValueOnce(false);
+    sendMessage.mockResolvedValueOnce({ ok: false, reason: 'Try again' });
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
     expect(screen.getByRole('button', { name: 'Remove notes.md' })).toBeTruthy();
@@ -197,11 +205,12 @@ describe('Neo attachments', () => {
     ).toBe(true);
   });
   it('does not clear a new attachment added while sending or submit twice', async () => {
-    let accept: (value: boolean) => void = () => {};
+    let accept: () => void = () => {};
     sendMessage.mockImplementationOnce(
       () =>
-        new Promise<boolean>((resolve) => {
-          accept = resolve;
+        new Promise((resolve) => {
+          accept = () =>
+            resolve({ ok: true, requestId: 'request', messageId: 'request', created: true });
         })
     );
     render(composer());
@@ -210,7 +219,7 @@ describe('Neo attachments', () => {
     fireEvent.submit(form);
     fireEvent.submit(form);
     await attach(new File(['later'], 'later.txt', { type: 'text/plain' }));
-    accept(true);
+    accept();
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull()
     );

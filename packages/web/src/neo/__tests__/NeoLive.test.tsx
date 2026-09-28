@@ -7,12 +7,8 @@ import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoComposer } from '../NeoComposer.tsx';
 
-const sendMessage = vi.hoisted(() => vi.fn(async () => true));
-const clearSendTimeout = vi.hoisted(() => vi.fn());
+const sendMessage = vi.hoisted(() => vi.fn());
 const interrupt = vi.hoisted(() => vi.fn());
-vi.mock('../../hooks/useSendMessage.ts', () => ({
-  useSendMessage: () => ({ sendMessage, clearSendTimeout }),
-}));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
   useInterrupt: () => ({ handleInterrupt: interrupt, interrupting: false }),
 }));
@@ -56,7 +52,12 @@ const work: NeoWork = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  sendMessage.mockResolvedValue(true);
+  sendMessage.mockResolvedValue({
+    ok: true,
+    requestId: 'request',
+    messageId: 'request',
+    created: true,
+  });
 });
 afterEach(cleanup);
 
@@ -246,7 +247,7 @@ describe('Neo MVP controls', () => {
     expect(within(conversation).queryByRole('status')).toBeNull();
     expect(within(conversation).getByText('Here.')).toBeTruthy();
   });
-  it('sends through the existing message path without creating a concern', async () => {
+  it('sends through the supplied durable intake client without creating a concern', async () => {
     const onDraft = vi.fn();
     render(
       <NeoComposer
@@ -256,6 +257,7 @@ describe('Neo MVP controls', () => {
         onDraft={onDraft}
         onTranscript={vi.fn()}
         onError={vi.fn()}
+        onSend={sendMessage}
       />
     );
     expect(screen.getByRole('textbox', { name: 'Message Neo' })).toBeTruthy();
@@ -264,15 +266,22 @@ describe('Neo MVP controls', () => {
       screen.getByRole('button', { name: 'Send message' }).querySelector('path')?.getAttribute('d')
     ).toBe('M12 19V5m-6 6 6-6 6 6');
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
-    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith('A one-off question'));
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith({
+        sessionId: 'neo',
+        text: 'A one-off question',
+        images: [],
+      })
+    );
     await waitFor(() => expect(onDraft).toHaveBeenCalledWith(''));
   });
   it('does not erase text typed while an earlier message is being accepted', async () => {
-    let accept: (value: boolean) => void = () => {};
+    let accept: () => void = () => {};
     sendMessage.mockImplementationOnce(
       () =>
-        new Promise<boolean>((resolve) => {
-          accept = resolve;
+        new Promise((resolve) => {
+          accept = () =>
+            resolve({ ok: true, requestId: 'request', messageId: 'request', created: true });
         })
     );
     const onDraft = vi.fn();
@@ -285,6 +294,7 @@ describe('Neo MVP controls', () => {
         onDraft={onDraft}
         onTranscript={vi.fn()}
         onError={vi.fn()}
+        onSend={sendMessage}
       />
     );
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
@@ -296,9 +306,10 @@ describe('Neo MVP controls', () => {
         onDraft={onDraft}
         onTranscript={vi.fn()}
         onError={vi.fn()}
+        onSend={sendMessage}
       />
     );
-    accept(true);
+    accept();
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
