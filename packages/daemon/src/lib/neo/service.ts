@@ -135,6 +135,8 @@ export class NeoService {
   private async startReservedWork(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
+    const target = this.resolveWorkTarget(id);
+    if (!target.accepted || target.targetSessionId !== null) return;
     if (work.status === 'proposed') {
       work = this.repo.transitionWork(id, work, {
         status: 'queued',
@@ -176,6 +178,8 @@ export class NeoService {
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
     const cancelled = this.repo.transitionWork(id, work, { status: 'cancelled' });
     if (cancelled?.sessionId) {
+      const target = this.resolveWorkTarget(id);
+      if (!target.accepted || target.targetSessionId !== null) return;
       await this.workPending.get(id)?.catch(() => {});
       if (!this.db.getSession(cancelled.sessionId)) return;
       const session = await this.sessions.getSessionAsync(cancelled.sessionId);
@@ -237,8 +241,10 @@ export class NeoService {
   async reconcile(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work?.sessionId || work.status === 'cancelled' || work.status === 'proposed') return;
-    const messages = this.db.getSDKMessageRepo();
     if (work.status === 'queued') {
+      const target = this.resolveWorkTarget(id);
+      if (!target.accepted || target.targetSessionId !== null) return;
+      const messages = this.db.getSDKMessageRepo();
       const failed = messages.getErrorTerminalResultSubtypeAfter(work.sessionId, work.id);
       if (!failed && !messages.hasTerminalResultAfter(work.sessionId, work.id)) return;
       const text = messages
