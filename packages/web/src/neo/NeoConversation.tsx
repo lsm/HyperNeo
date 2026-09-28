@@ -77,58 +77,6 @@ export function completedWorkReplies(
   return replies;
 }
 
-const activityLabels: Record<string, string> = {
-  'neo.snapshot': 'Checked what Neo knows',
-  'neo.concern.consult': 'Checked with a context holder',
-  'neo.concern.save': 'Saved continuing context',
-  'neo.work.propose': 'Prepared a work card',
-  'neo.concern.respond': 'Returned a context check',
-};
-
-export function completedActivities(messages: ChatMessage[]): Map<string, string[]> {
-  const activities = new Map<string, string[]>();
-  let steps: string[] = [];
-  let reply: ChatMessage | null = null;
-  let origin: ChatMessage | null = null;
-  for (const message of messages) {
-    if (message.type === 'user' && conversationText(message)) {
-      origin = message;
-      steps = [];
-      reply = null;
-    }
-    if (message.type === 'assistant') {
-      const content = message.message.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type !== 'tool_use') continue;
-          const tool = block as { name?: string; input?: { name?: string } };
-          const label =
-            tool.name === 'mcp__hyperneo-operations__invoke'
-              ? (activityLabels[tool.input?.name ?? ''] ?? 'Used a HyperNeo capability')
-              : 'Used a tool';
-          if (!steps.includes(label)) steps.push(label);
-        }
-      }
-      if (conversationText(message)) reply = message;
-    }
-    if (message.type === 'result') {
-      if (reply?.uuid) {
-        if ((origin as { inputKind?: string } | null)?.inputKind === 'system') {
-          const label = origin?.uuid?.startsWith('neo-consult:')
-            ? 'Received a context check'
-            : 'Received delegated work';
-          if (!steps.includes(label)) steps.push(label);
-        }
-        if (steps.length) activities.set(reply.uuid, steps);
-      }
-      origin = null;
-      reply = null;
-      steps = [];
-    }
-  }
-  return activities;
-}
-
 export function NeoConversation({
   store,
   sessionId,
@@ -149,7 +97,6 @@ export function NeoConversation({
   );
   const visible = completedConversation(conversation);
   const workReplies = completedWorkReplies(conversation, works, sessionId);
-  const activities = completedActivities(conversation);
   const progress =
     state.status === 'queued' || state.status === 'processing'
       ? state.status === 'queued' || state.phase === 'initializing'
@@ -183,7 +130,6 @@ export function NeoConversation({
               message={message}
               text={conversationText(message)}
               work={workReplies.get(message.uuid ?? '')}
-              activity={activities.get(message.uuid ?? '')}
               sessionId={sessionId}
               replyTo={typeof context === 'object' ? context : undefined}
             >

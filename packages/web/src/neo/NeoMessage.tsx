@@ -3,7 +3,6 @@ import type { ComponentChildren } from 'preact';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
-import { useEffect, useRef, useState } from 'preact/hooks';
 import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
 
 export function messageTime(timestamp: unknown, now = new Date()) {
@@ -31,7 +30,6 @@ export function NeoMessage({
   message,
   text,
   work,
-  activity,
   sessionId,
   replyTo,
   children,
@@ -39,17 +37,11 @@ export function NeoMessage({
   message: ChatMessage;
   text: string;
   work?: NeoWork;
-  activity?: string[];
   sessionId?: string;
   replyTo?: NeoReplyContext;
   children?: ComponentChildren;
 }) {
   const user = message.type === 'user';
-  const [showActivity, setShowActivity] = useState(false);
-  const activityPanel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (showActivity) activityPanel.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [showActivity]);
   const content =
     message.type === 'user' || message.type === 'assistant' ? message.message?.content : null;
   const images = Array.isArray(content)
@@ -137,42 +129,8 @@ export function NeoMessage({
       </div>
       <div class={`mt-1 flex items-center gap-3 ${user ? 'justify-end' : ''}`}>
         <CopyButton text={text} label={user ? 'Copy your message' : 'Copy Neo’s message'} />
-        {!user && sessionId && (
-          <button
-            type="button"
-            aria-expanded={showActivity}
-            onClick={() => setShowActivity(!showActivity)}
-            class="text-xs text-fg-muted hover:text-fg"
-          >
-            {showActivity ? 'Hide activity' : 'What happened'}
-          </button>
-        )}
       </div>
       {children}
-      {showActivity && sessionId && (
-        <div
-          ref={activityPanel}
-          class="neo-activity-panel mt-2 min-w-[min(17rem,calc(100vw-2.5rem))] rounded-xl border border-line bg-surface p-3 text-xs text-fg-muted"
-        >
-          {activity?.length ? (
-            <ul class="space-y-1.5">
-              {activity.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ul>
-          ) : (
-            <p>Neo answered directly.</p>
-          )}
-          <a
-            href={`/session/${sessionId}`}
-            target="_blank"
-            rel="noreferrer"
-            class="mt-3 inline-block text-accent hover:underline"
-          >
-            Open technical trace ↗
-          </a>
-        </div>
-      )}
     </article>
   );
 }

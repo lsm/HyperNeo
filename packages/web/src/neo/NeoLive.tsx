@@ -8,7 +8,6 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
-import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
 import { useNeoAttachments } from './neo-attachments.ts';
 import './neo.css';
 
@@ -263,7 +262,6 @@ export function NeoLive() {
               </p>
             )
           )}
-          <NeoConcernBoardPanel key={draftKey} snapshot={view} concernId={neo.selectedId} />
           {view?.consultations
             ?.filter(
               (item) =>
