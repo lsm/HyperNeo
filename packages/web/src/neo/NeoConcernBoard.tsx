@@ -7,6 +7,7 @@ import { readDaemonInventory } from '../lib/daemon-inventory.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { projectNeoConcernBoard, type NeoConcernBoard } from './neo-concern-board.ts';
 import { projectNeoRequestSnapshot, type NeoRequestOrigin } from './request-board.ts';
+import { neoBoardReceiptLabel } from './board-receipt-label.ts';
 
 const statusLabels = {
   proposed: 'Your call',
@@ -56,10 +57,13 @@ export function NeoConcernBoardView({
                 : statusLabels[item.status]}
             </p>
             <p class="break-words text-sm font-medium">
-              {item.kind === 'work' ? item.title : item.question}
+              {neoBoardReceiptLabel(item, board.receipts)}
             </p>
             <details class="mt-3 text-xs text-fg-muted">
               <summary class="cursor-pointer">Request details</summary>
+              {item.kind === 'consultation' && (
+                <p class="mt-2 whitespace-pre-wrap break-words">{item.question}</p>
+              )}
               {item.kind === 'work' && (
                 <p class="mt-2 whitespace-pre-wrap break-words">{item.instruction}</p>
               )}
