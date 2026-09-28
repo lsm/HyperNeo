@@ -14,7 +14,9 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { z } from 'zod';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { runMigration264 } from '../../../../src/storage/schema/m264-agent-child-processes';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
@@ -4815,6 +4817,63 @@ describe('AgentSession', () => {
         'space-agent-tools': spaceAgent,
       });
     });
+
+    it.each(['neo', 'concern', 'worker', 'ordinary'] as const)(
+      'preserves the intended %s query boundary across all live MCP refresh paths',
+      async (kind) => {
+        const sqlite = new SqliteDatabase(':memory:');
+        createNeoTables(sqlite);
+        const session = makeMockSession();
+        session.id = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
+        const repo = new NeoRepository(sqlite);
+        if (kind === 'concern')
+          repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+        if (kind !== 'ordinary')
+          repo.reserveBinding({
+            sessionId: session.id,
+            concernId: kind === 'concern' ? 'club' : null,
+            kind,
+          });
+        const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
+        mockDb.getDatabase = () => sqlite;
+        const agentSession = new AgentSession(
+          session,
+          mockDb,
+          mockMessageHub,
+          mockInternalEventBus,
+          mockGetApiKey
+        );
+        try {
+          const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
+          agentSession.queryObject = {
+            setMcpServers,
+          } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+          const later: McpServerConfig = { command: 'later-server' };
+          const replacement: McpServerConfig = { command: 'replacement-server' };
+          agentSession.mergeRuntimeMcpServers({ later });
+          expect(agentSession.getSessionData().config.mcpServers?.later).toBe(later);
+          agentSession.reconcileEffectiveMcpServers();
+          agentSession.detachRuntimeMcpServer('later');
+          expect(agentSession.getSessionData().config.mcpServers?.later).toBeUndefined();
+          agentSession.replaceAllRuntimeMcpServers({ replacement });
+          expect(agentSession.getSessionData().config.mcpServers).toEqual({ replacement });
+          await Promise.resolve();
+          if (kind === 'neo' || kind === 'concern') {
+            expect(setMcpServers).not.toHaveBeenCalled();
+          } else {
+            expect(setMcpServers).toHaveBeenCalledTimes(4);
+            expect(setMcpServers).toHaveBeenLastCalledWith({
+              'hyperneo-operations': agentSession.getOperationMcpServer(),
+              replacement,
+            });
+          }
+        } finally {
+          agentSession.queryObject = null;
+          await agentSession.cleanup();
+          sqlite.close();
+        }
+      }
+    );
 
     it('keeps the active holder query operations server bound during MCP refreshes', () => {
       const session = makeMockSession();

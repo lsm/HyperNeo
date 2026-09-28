@@ -794,8 +794,8 @@ export class QueryRunner {
       });
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
-      if (neoCoordinatorBinding(this.ctx.db, session.id)?.kind === 'concern') {
-        if (!this.ctx.createNeoTurnMcpServer) throw new Error('Holder turn isolation unavailable.');
+      if (neoCoordinatorBinding(this.ctx.db, session.id)) {
+        if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
         holderTurn = new NeoHolderTurn(
           this.ctx.db,
           session.id,
