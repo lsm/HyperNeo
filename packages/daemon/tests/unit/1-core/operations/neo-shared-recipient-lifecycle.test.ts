@@ -176,8 +176,8 @@ describe('NeoService shared recipient lifecycle', () => {
     expect(interrupt).not.toHaveBeenCalled();
   }
 
-  test.each(['ordinary', 'project', 'manager', 'holder', 'missing'])(
-    'legacy Start never reserves or reconfigures existing target %s',
+  test.each(['manager', 'holder', 'missing'])(
+    'Start never reserves or reconfigures inadmissible existing target %s',
     async (target) => {
       const work = propose('A', target);
       const before = captureResources();
@@ -189,16 +189,21 @@ describe('NeoService shared recipient lifecycle', () => {
     }
   );
 
-  test.each(['ordinary', 'project', 'manager'])(
-    'recovery does not redeliver through the scratch-worker path for %s',
+  test.each(['manager'])(
+    'recovery does not deliver through the scratch-worker path for protected %s',
     async (target) => {
       const work = queue('A', target);
       const before = captureResources();
       await service.recover();
       await service.recover();
-      expect(service.repo.getWork(work.id)).toEqual(work);
+      expect(service.repo.getWork(work.id)).toMatchObject({
+        ...work,
+        status: 'failed',
+        report: expect.stringContaining('target_owned_context'),
+        updatedAt: expect.any(Number),
+      });
       expect(captureResources()).toBe(before);
-      expect(jobs()).toEqual([]);
+      expect(jobs()).toHaveLength(1);
       expectNoExecution();
     }
   );
@@ -211,6 +216,7 @@ describe('NeoService shared recipient lifecycle', () => {
       saveLaterResponse(a);
       const before = captureResources();
       const sdk = db.getSDKMessageRepo();
+      const readSdk = spyOn(db, 'getSDKMessageRepo').mockReturnValue(sdk);
       const terminal = spyOn(sdk, 'hasTerminalResultAfter');
       const failure = spyOn(sdk, 'getErrorTerminalResultSubtypeAfter');
       const text = spyOn(sdk, 'getAssistantMessagesSince');
@@ -220,10 +226,19 @@ describe('NeoService shared recipient lifecycle', () => {
           sessionId: target,
           processingState: { status: 'idle' },
         });
-        expect(service.repo.getWork(a.id)).toEqual(a);
-        expect(service.repo.getWork(b.id)).toEqual(b);
+        for (const work of [a, b])
+          expect(service.repo.getWork(work.id)).toEqual(
+            target === 'manager'
+              ? {
+                  ...work,
+                  status: 'failed',
+                  report: 'The chosen execution chat is no longer available: target_owned_context.',
+                  updatedAt: expect.any(Number),
+                }
+              : work
+          );
         expect(captureResources()).toBe(before);
-        expect(jobs()).toEqual([]);
+        expect(jobs()).toHaveLength(target === 'manager' ? 2 : 0);
         expect(terminal).not.toHaveBeenCalled();
         expect(failure).not.toHaveBeenCalled();
         expect(text).not.toHaveBeenCalled();
@@ -232,6 +247,7 @@ describe('NeoService shared recipient lifecycle', () => {
         terminal.mockRestore();
         failure.mockRestore();
         text.mockRestore();
+        readSdk.mockRestore();
       }
     }
   );
@@ -274,8 +290,11 @@ describe('NeoService shared recipient lifecycle', () => {
       await service.reconcile(queued.id);
       await service.cancel(queued.id);
       expect(service.repo.getWork(proposed.id)).toEqual(proposed);
-      expect(service.repo.getWork(queued.id)?.status).toBe('cancelled');
-      expect(jobs()).toEqual([]);
+      expect(service.repo.getWork(queued.id)).toMatchObject({
+        status: 'failed',
+        report: expect.stringContaining('work_not_found'),
+      });
+      expect(jobs()).toHaveLength(1);
       expectNoExecution();
     } finally {
       read.mockRestore();

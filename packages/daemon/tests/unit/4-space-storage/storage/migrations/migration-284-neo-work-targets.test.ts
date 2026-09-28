@@ -138,7 +138,7 @@ describe('migration 284 and work-target storage', () => {
         const targetSessionId = "existing:manager/α|?x=1';SELECT 1";
         const original = repo.proposeWork({ ...proposal, targetSessionId });
         expect(original).toMatchObject({ ...proposal, status: 'proposed', sessionId: null });
-        expect(original).not.toHaveProperty('targetSessionId');
+        expect(original.targetSessionId).toBe(targetSessionId);
         expect(repo.getWorkTarget(proposal.id)).toEqual({ id: proposal.id, targetSessionId });
         expect(
           repo.proposeWork({
@@ -181,9 +181,9 @@ describe('migration 284 and work-target storage', () => {
         const repo = new NeoRepository(db);
         repo.proposeWork({ ...proposal, targetSessionId });
         expect(repo.getWorkTarget(proposal.id)).toEqual({ id: proposal.id, targetSessionId: null });
-        expect(
-          repo.proposeWork({ ...proposal, targetSessionId: 'later-target' })
-        ).not.toHaveProperty('targetSessionId');
+        expect(repo.proposeWork({ ...proposal, targetSessionId: 'later-target' })).toMatchObject({
+          targetSessionId: null,
+        });
         expect(repo.getWorkTarget(proposal.id)?.targetSessionId).toBeNull();
       } finally {
         db.close();
@@ -219,7 +219,7 @@ describe('migration 284 and work-target storage', () => {
       db.close();
     }
   });
-  test('reopening and repeated migration retain the recorded target without changing the old DTO', () => {
+  test('reopening and repeated migration retain the recorded target in the work projection', () => {
     const directory = mkdtempSync(join(tmpdir(), 'neo-work-target-'));
     const path = join(directory, 'target.db');
     const first = new Database(path);
@@ -246,7 +246,7 @@ describe('migration 284 and work-target storage', () => {
         sessionId: null,
         status: 'proposed',
       });
-      expect(repo.getWork(proposal.id)).not.toHaveProperty('targetSessionId');
+      expect(repo.getWork(proposal.id)?.targetSessionId).toBe('persisted-manager');
     } finally {
       reopened.close();
       rmSync(directory, { recursive: true, force: true });

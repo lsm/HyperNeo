@@ -99,6 +99,52 @@ describe('Neo MVP controls', () => {
     );
     expect(screen.getByText('A draft, not a booking.')).toBeTruthy();
   });
+  it('describes existing-chat execution and closes only the wait for its shared result', () => {
+    const action = vi.fn();
+    const view = render(
+      <NeoWorkCard
+        work={{ ...work, targetSessionId: 'project-chat' }}
+        busy={false}
+        disabled={false}
+        onAction={action}
+      />
+    );
+    expect(screen.getByText(/selected existing HyperNeo chat/)).toBeTruthy();
+    expect(screen.queryByText(/temporary scratch workspace/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
+    expect(action).toHaveBeenCalledWith(work.id, 'start');
+    view.rerender(
+      <NeoWorkCard
+        work={{
+          ...work,
+          targetSessionId: 'project-chat',
+          sessionId: 'project-chat',
+          status: 'queued',
+        }}
+        busy={false}
+        disabled={false}
+        onAction={action}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Stop work' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
+    expect(action).toHaveBeenCalledWith(work.id, 'cancel');
+    view.rerender(
+      <NeoWorkCard
+        work={{
+          ...work,
+          targetSessionId: 'project-chat',
+          sessionId: 'project-chat',
+          status: 'cancelled',
+        }}
+        busy={false}
+        disabled={false}
+        onAction={action}
+      />
+    );
+    expect(screen.getByText(/existing chat and its other work continue/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+  });
   it('shows conversation text but keeps synthetic worker returns out of the human transcript', () => {
     const store = makeStore();
     store.sdkMessages.value = [

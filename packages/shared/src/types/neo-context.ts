@@ -35,6 +35,7 @@ export interface NeoWork {
   originMessageId: string | null;
   title: string;
   instruction: string;
+  targetSessionId?: string | null;
   sessionId: string | null;
   status: 'proposed' | 'queued' | 'reported' | 'failed' | 'cancelled';
   report: string | null;

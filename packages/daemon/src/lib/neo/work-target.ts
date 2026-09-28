@@ -2,7 +2,12 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-type ExecutionSession = { readonly id: string; readonly status: string };
+type ExecutionSession = {
+  readonly id: string;
+  readonly status: string;
+  readonly scopeOwned?: number;
+  readonly neoBound?: number;
+};
 type Rejection = {
   accepted: false;
   reason:
@@ -11,6 +16,7 @@ type Rejection = {
     | 'invalid_target_reference'
     | 'target_session_not_found'
     | 'target_session_not_active'
+    | 'target_owned_context'
     | 'invalid_target_binding'
     | 'target_is_coordinator';
 };
@@ -47,9 +53,11 @@ export function requireNeoWorkTargetSession(
   if (target.targetSessionId === null) return { value: target };
   if (!session || session.id !== target.targetSessionId)
     return { reason: { accepted: false, reason: 'target_session_not_found' } };
-  return session.status === 'active'
-    ? { value: target }
-    : { reason: { accepted: false, reason: 'target_session_not_active' } };
+  if (session.status !== 'active')
+    return { reason: { accepted: false, reason: 'target_session_not_active' } };
+  return session.scopeOwned || session.neoBound
+    ? { reason: { accepted: false, reason: 'target_owned_context' } }
+    : { value: target };
 }
 
 export function requireNeoWorkTargetBinding(

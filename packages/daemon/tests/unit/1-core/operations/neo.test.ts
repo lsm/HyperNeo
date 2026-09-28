@@ -419,6 +419,7 @@ describe('Neo MVP', () => {
         input: {
           requestKey: 'first',
           concernId: scope,
+          targetSessionId: null,
           title: 'Draft an agenda',
           instruction: 'Draft only.',
           originMessageId: 'forged',
@@ -506,7 +507,12 @@ describe('Neo MVP', () => {
     expect(
       await invoke(
         'neo.work.propose',
-        { requestKey: 'one', title: 'Draft only', instruction: 'Draft only' },
+        {
+          requestKey: 'one',
+          title: 'Draft only',
+          instruction: 'Draft only',
+          targetSessionId: null,
+        },
         caller
       )
     ).toMatchObject({ value: { ok: false } });
