@@ -11,6 +11,7 @@ import { Logger } from '../logger.ts';
 import { neoPrompt } from './prompt.ts';
 import { neoCoordinatorNativeTools } from './session-policy.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
+import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 export class NeoService {
   readonly repo: NeoRepository;
   readonly consultations: NeoConsultationRepository;
+  readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -38,6 +40,14 @@ export class NeoService {
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
+    this.resolveAskOrigin = createNeoAskOriginResolver({
+      getBinding: (id) => this.repo.getBindingBySession(id),
+      getPrompts: (sessionId, messageId) =>
+        this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
+      getConsultation: (id) => this.consultations.get(id),
+      getWork: (id) => this.repo.getWork(id),
+      getRootBinding: () => this.repo.getBindingForConcern(null),
+    });
     this.unsubscribe = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
