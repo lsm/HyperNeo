@@ -224,6 +224,8 @@ describe('Neo MVP controls', () => {
       agentState.value = { status: 'queued', messageId: 'human' };
     });
     expect(within(conversation).getByRole('status').textContent).toContain('Neo is getting ready');
+    expect(within(conversation).getByRole('status').querySelectorAll('i')).toHaveLength(3);
+    expect(conversation.querySelector('.neo-progress-bubble')).toBeNull();
     act(() => {
       agentState.value = {
         status: 'processing',

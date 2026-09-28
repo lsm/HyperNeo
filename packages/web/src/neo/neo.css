@@ -98,29 +98,45 @@
   color: var(--prose-fg);
 }
 
-.neo-progress-bubble {
-  background: var(--neo-assistant-background);
-  border-color: var(--neo-assistant-border);
-  color: var(--neo-assistant-text);
+.neo-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
 }
 
-.neo-progress-glow {
-  position: absolute;
-  inset: 0;
-  width: 55%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--neo-assistant-accent) 18%, transparent),
-    transparent
-  );
-  transform: translateX(-120%);
-  animation: neo-progress-sweep 2.2s ease-in-out infinite;
+.neo-progress-dots {
+  display: flex;
+  flex: none;
+  gap: 3px;
+  color: var(--neo-assistant-accent);
 }
 
-@keyframes neo-progress-sweep {
-  to {
-    transform: translateX(300%);
+.neo-progress-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: neo-progress-breathe 1.2s ease-in-out infinite;
+}
+
+.neo-progress-dots i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.neo-progress-dots i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes neo-progress-breathe {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
   }
 }
 

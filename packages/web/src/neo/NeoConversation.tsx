@@ -171,12 +171,13 @@ export function NeoConversation({
           />
         ))}
         {progress && (
-          <div role="status" class="neo-arrive neo-progress mr-auto max-w-[94%]" aria-live="polite">
-            <div class="mb-2 px-1 text-xs font-medium text-fg-muted">Neo</div>
-            <div class="neo-progress-bubble relative overflow-hidden rounded-2xl rounded-tl-sm border px-4 py-3 text-sm">
-              <span class="neo-progress-glow" aria-hidden="true" />
-              <span class="relative">{progress}</span>
-            </div>
+          <div role="status" class="neo-progress" aria-live="polite">
+            <span class="neo-progress-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span>{progress}</span>
           </div>
         )}
         {pending && (
