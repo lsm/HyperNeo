@@ -8,5 +8,6 @@ export const NEO_OPERATION_NAMES = [
   'neo.snapshot',
   'neo.work.cancel',
   'neo.work.propose',
+  'neo.work.report',
   'neo.work.start',
 ] as const;

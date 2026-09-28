@@ -338,6 +338,7 @@ describe('Neo MVP', () => {
       'neo.snapshot',
       'neo.concern.save',
       'neo.work.propose',
+      'neo.work.report',
       'neo.work.start',
       'neo.work.cancel',
     ]);
