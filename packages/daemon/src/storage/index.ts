@@ -41,6 +41,7 @@ import { AgentMemoryRepository } from './repositories/agent-memory-repository.ts
 import { EvolutionRepository } from './repositories/evolution-repository.ts';
 import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
 import { ProviderRepository } from './repositories/provider-repository.ts';
+import { NeoWorkResourceRepository } from './repositories/neo-work-resource-repository.ts';
 import type { ReactiveDatabase } from './reactive-database.ts';
 
 export type { SendStatus } from './repositories/sdk-message-repository.ts';
@@ -113,6 +114,7 @@ export class Database {
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
+  private neoWorkResourceRepo!: NeoWorkResourceRepository;
   private shortIdAllocator!: ShortIdAllocator;
   private reactiveDb?: ReactiveDatabase;
   private messageSearchIndexTimer: ReturnType<typeof setInterval> | null = null;
@@ -162,6 +164,9 @@ export class Database {
     this.evolutionRepo = new EvolutionRepository(db);
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
+    this.neoWorkResourceRepo = new NeoWorkResourceRepository(db, () =>
+      this.notifyChange('neo_work')
+    );
     this.agentMemoryRepo.backfillPendingEmbeddings();
     try {
       this.sdkMessageRepo.flushMessageSearchIndex();
@@ -566,6 +571,10 @@ export class Database {
 
   get providers(): ProviderRepository {
     return this.providerRepo;
+  }
+
+  get neoWorkResources(): NeoWorkResourceRepository {
+    return this.neoWorkResourceRepo;
   }
 
   close(): void {

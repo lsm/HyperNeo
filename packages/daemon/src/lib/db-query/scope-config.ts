@@ -468,6 +468,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_context_write_grants',
   'neo_session_bindings',
   'neo_work',
+  'neo_work_resources',
   'direct_task_execution_selection',
   'direct_task_execution_attempts',
   'direct_task_session_provenance',
