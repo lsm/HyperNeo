@@ -17,15 +17,25 @@ An opt-in entry inside the existing web package at `/neo`, included in the web b
 - A full-width scroll surface runs behind the width-capped floating composer. Readable message bubbles stay in a narrower rail with a 160px minimum width. Names and local timestamps sit above each bubble (time today, date and time on other days); full timestamps are available on hover. Copy controls below each message copy its text, without metadata or internal tool output. The concerns card stays visible on wide screens and parks behind a header icon on smaller screens.
 - One searchable, provider-grouped model picker and inline thinking buttons use existing session APIs. Duplicate provider/model entries are collapsed. Arrow keys move through results; Escape closes the picker and returns focus. Changes wait while Neo is working. No extra execution or provider settings are introduced.
 - The model list shows names only in a taller list. The composer reuses HyperNeo's light-bulb thinking indicator. While Neo is queued or processing, three quiet breathing dots accompany a plain status line, without a bubble or repeated name. The line accepts variable-length activity text; the current source is the session processing state, including rate-limit cooldown. Request-scoped activity and independently attributed concurrent asks are not implemented yet. A completed reply can expose a short, turn-specific “What happened” trail beside Copy, with the technical session available from that trail. The second full SDK transcript is not embedded in the chat.
-- Both sides render Markdown: muted peach/copper accents and a subtly warm bubble for Neo, cool blue accents for the human bubble. Rich, non-persistent examples at `/neo?examples` include a local light/dark toggle that does not change app settings.
+- Both sides render Markdown in a Charcoal & Apricot palette: warm headings for Neo, cool blue headings and bubbles for the human, amber emphasis, sage inline code, cyan links, and lavender quotes. Rich, non-persistent examples at `/neo?examples` include a local light/dark toggle that does not change app settings.
 - The plus button, clipboard paste and whole-window drop area accept photos (PNG/JPEG/GIF/WebP, up to 3.75 MB each) and UTF-8 text files (up to 128 KB each). Up to six attachments and 8 MB combined payload are allowed. PDF, Office and other binary documents are explicitly unsupported. Text files are sent as fenced source content through the existing message path; photos use the existing image payload. Attachments alone can be sent. Pending attachments stay scoped to the conversation in browser memory, survive view switches, and are retained on failure; refresh clears them.
 - Voice appears only when enabled with a configured endpoint/model. It reuses the recorder and transcription pipeline, inserts into the original conversation's draft for review, and exposes saved recordings for retry. Switching contexts cancels active capture; a transcription already underway returns to its original draft. Drafts remain memory-only, including transcribed text.
 
 ## Message themes
 
-`neo.css` is the single customization point for Neo's message colors. The `.neo-shell` block defines `--neo-user-*` and `--neo-assistant-*` tokens for accent, background, border, text, heading, emphasis, link, quote, quote background, code, code background, and table background. Name and timestamp colors use `--neo-message-label` and `--neo-message-time`. Role classes apply those tokens; components contain no bubble color utilities.
+`neo.css` is the single customization point for Neo's palette. Its `.neo-shell` block sets the shared surface/text/border/accent tokens locally, without changing the rest of HyperNeo. Defaults use `light-dark()` and follow the existing app color scheme, including the system setting.
 
-The warm accent uses `light-dark()` with the existing app color scheme; other defaults derive from shared surface/text tokens. Override the named variables on the Neo shell to create another palette without editing components. Shared Markdown structure and syntax-highlighting tokens (`--hljs-*`) continue to come from `styles.css`; they are not duplicated or changed globally. Live conversations and examples use the same component and stylesheet.
+The semantic Markdown tokens are `--neo-markdown-strong`, `--neo-markdown-inline-code`, `--neo-markdown-link`, and `--neo-markdown-quote`. Both roles use these by default; quote backgrounds derive from the quote color. The `--neo-user-*` and `--neo-assistant-*` tokens allow independent overrides for accent, background, border, text, heading, emphasis, link, quote, quote background, code, code background, and table background. Name and timestamp colors use `--neo-message-label` and `--neo-message-time`. Role classes apply the tokens; components contain no bubble color utilities.
+
+To create another palette, override variables on `.neo-shell` in a stylesheet loaded after `neo.css`, or in a shell's inline style. For example, changing one semantic token updates links on both sides without editing either component:
+
+```css
+.neo-shell {
+  --neo-markdown-link: light-dark(#276879, #89c6d5);
+}
+```
+
+Override `--neo-user-link` or `--neo-assistant-link` instead to change only one role. Shared Markdown structure and syntax-highlighting tokens (`--hljs-*`) continue to come from `styles.css`; they are not duplicated or changed globally. Live conversations and examples use the same component and stylesheet.
 
 ## Deliberate MVP limits
 
