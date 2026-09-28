@@ -6,14 +6,16 @@ const concernColumns = `id, title, summary, context, revision,
   created_at AS createdAt, updated_at AS updatedAt`;
 const bindingColumns = 'session_id AS sessionId, concern_id AS concernId, kind';
 const workColumns = `id, request_key AS requestKey, concern_id AS concernId,
-  origin_session_id AS originSessionId, title, instruction, session_id AS sessionId,
+  origin_session_id AS originSessionId, origin_message_id AS originMessageId,
+  title, instruction, session_id AS sessionId,
   status, report, created_at AS createdAt, updated_at AS updatedAt`;
 
 export type NeoConcernInput = Pick<NeoConcern, 'id' | 'title' | 'summary' | 'context'>;
 export type NeoWorkInput = Pick<
   NeoWork,
   'id' | 'requestKey' | 'concernId' | 'originSessionId' | 'title' | 'instruction'
->;
+> &
+  Partial<Pick<NeoWork, 'originMessageId'>>;
 export type NeoWorkState = Pick<NeoWork, 'status' | 'sessionId' | 'report'>;
 
 export class NeoRepository {
@@ -142,15 +144,16 @@ export class NeoRepository {
     const now = Date.now();
     const result = this.db
       .prepare(`INSERT INTO neo_work
-        (id, request_key, concern_id, origin_session_id, title, instruction,
+        (id, request_key, concern_id, origin_session_id, origin_message_id, title, instruction,
           session_id, status, report, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?)
         ON CONFLICT(request_key) DO NOTHING`)
       .run(
         input.id,
         input.requestKey,
         input.concernId,
         input.originSessionId,
+        input.originMessageId ?? null,
         input.title,
         input.instruction,
         now,

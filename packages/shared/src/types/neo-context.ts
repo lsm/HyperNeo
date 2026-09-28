@@ -32,6 +32,7 @@ export interface NeoWork {
   requestKey: string;
   concernId: string | null;
   originSessionId: string;
+  originMessageId: string | null;
   title: string;
   instruction: string;
   sessionId: string | null;
