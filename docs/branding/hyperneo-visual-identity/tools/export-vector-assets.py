@@ -83,9 +83,10 @@ def pdf_document(path: Path, width: float, height: float, stream: str, with_font
         output.extend(object_body)
         output.extend(b"\nendobj\n")
     xref = len(output)
-    output.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f\n".encode())
+    output.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    output.extend(b"0000000000 65535 f\r\n")
     for offset in offsets[1:]:
-        output.extend(f"{offset:010d} 00000 n\n".encode())
+        output.extend(f"{offset:010d} 00000 n\r\n".encode())
     output.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     path.write_bytes(output)
 
@@ -97,7 +98,6 @@ def eps_document(path: Path, width: float, height: float, title: str, body: str)
         f"%%BoundingBox: 0 0 {int(width)} {int(height)}",
         f"%%HiResBoundingBox: 0 0 {number(width)} {number(height)}",
         "%%LanguageLevel: 2",
-        "%%Pages: 1",
         "%%EndComments",
         body,
         "%%EOF",
