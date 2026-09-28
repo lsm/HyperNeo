@@ -4,6 +4,7 @@ import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
+import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
@@ -26,6 +27,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 export class NeoService {
   readonly repo: NeoRepository;
   readonly consultations: NeoConsultationRepository;
+  readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
@@ -43,6 +45,9 @@ export class NeoService {
   ) {
     this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
+      hub.event('neo.changed', {})
+    );
+    this.consultationWaiters = new NeoConsultationWaiterRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
     this.reportWork = createNeoWorkReporter({

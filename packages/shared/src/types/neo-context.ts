@@ -42,3 +42,11 @@ export interface NeoWork {
   createdAt: number;
   updatedAt: number;
 }
+
+export type NeoConsultationWaiter = Omit<
+  NeoConsultation,
+  'status' | 'answer' | 'originMessageId'
+> & {
+  originMessageId: string;
+  status: 'queued' | 'admitted' | 'cancelled';
+};
