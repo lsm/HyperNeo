@@ -244,8 +244,10 @@ describe('Neo intake submission lifecycle', () => {
     expect(await client.send({ ...draft, text: '  ', images: [] })).toHaveProperty('ok', false);
     const retry = client.send(draft);
     expect(retry).toBe(first);
-    const independent = await client.send({ ...draft, text: 'B' });
-    expect(independent.ok).toBe(true);
+    const independent = client.send({ ...draft, text: 'B' });
+    expect(client.send(draft)).toBe(first);
+    expect((await independent).ok).toBe(true);
+    expect(client.send(draft)).toBe(first);
     expect(request).toHaveBeenCalledTimes(2);
     settle(receipt(request.mock.calls[0][1].input.requestId));
     expect(await first).toEqual(await retry);
@@ -263,6 +265,7 @@ describe('Neo intake submission lifecycle', () => {
     const first = client.send({ sessionId: 'neo:root', text: 'A' });
     const second = { sessionId: 'neo:root', text: 'B' };
     await expect(client.send(second)).rejects.toThrow('Disconnected');
+    expect(client.send({ sessionId: 'neo:root', text: 'A' })).toBe(first);
     const secondId = request.mock.calls[1][1].input.requestId;
     settle(receipt(request.mock.calls[0][1].input.requestId));
     await first;

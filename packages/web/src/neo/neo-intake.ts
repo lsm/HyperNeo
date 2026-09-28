@@ -4,6 +4,7 @@ import { invokeOperation } from '../lib/operations.ts';
 
 export type NeoDraft = { sessionId: string; text: string; images?: readonly MessageImage[] };
 type Submission = NeoDraft & { requestId: string };
+type PendingSubmission = { submission: Submission; flight?: Promise<IntakeReceipt> };
 type IntakeReceipt =
   | { ok: true; requestId: string; messageId: string; created: boolean }
   | { ok: false; reason: string };
@@ -94,12 +95,13 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
 }
 
 export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
-  const pending = new Map<string, { submission: Submission; flight?: Promise<IntakeReceipt> }>();
+  const pending = new Map<string, Set<PendingSubmission>>();
   function send(draft: NeoDraft): Promise<IntakeReceipt> {
     const admission = admitNeoDraft(draft);
     if ('reason' in admission) return Promise.resolve(admission.reason);
-    let entry = pending.get(draft.sessionId);
-    if (!entry || !sameDraft(entry.submission, draft)) {
+    const entries = pending.get(draft.sessionId) ?? new Set<PendingSubmission>();
+    let entry = [...entries].find((item) => sameDraft(item.submission, draft));
+    if (!entry) {
       entry = {
         submission: {
           ...draft,
@@ -107,14 +109,18 @@ export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
           requestId: crypto.randomUUID(),
         },
       };
-      pending.set(draft.sessionId, entry);
+      entries.add(entry);
+      pending.set(draft.sessionId, entries);
     }
     if (entry.flight) return entry.flight;
     const current = entry;
     const flight = submitNeoDraft(current.submission, getHub)
       .then((receipt) => {
-        if (receipt.ok && pending.get(current.submission.sessionId) === current)
-          pending.delete(current.submission.sessionId);
+        if (receipt.ok) {
+          entries.delete(current);
+          if (!entries.size && pending.get(current.submission.sessionId) === entries)
+            pending.delete(current.submission.sessionId);
+        }
         return receipt;
       })
       .finally(() => {
