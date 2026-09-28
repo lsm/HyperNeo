@@ -19,6 +19,11 @@ export type NeoWorkInput = Pick<
 export interface NeoWorkTarget {
   readonly id: string;
   readonly targetSessionId: string | null;
+  readonly agent?: {
+    readonly spaceId: string;
+    readonly agentId: string;
+    readonly sessionId: string;
+  };
 }
 export type NeoWorkState = Pick<NeoWork, 'status' | 'sessionId' | 'report'>;
 

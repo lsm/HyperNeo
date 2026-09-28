@@ -3,6 +3,7 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
@@ -47,6 +48,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 
 export class NeoService {
   readonly repo: NeoRepository;
+  readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -65,6 +67,7 @@ export class NeoService {
     events: InternalEventBus<DaemonInternalEventMap>
   ) {
     this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
+    this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -86,7 +89,12 @@ export class NeoService {
       getRootBinding: () => this.repo.getBindingForConcern(null),
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
-      readTarget: (id) => this.repo.getWorkTarget(id),
+      readTarget: (id) => {
+        const target = this.repo.getWorkTarget(id);
+        const agent = target ? this.agentTargets.get(id) : null;
+        return target && (agent ? { ...target, agent } : target);
+      },
+      readAgentOwner: (agent) => this.agentTargets.readOwner(agent),
       readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
     });
