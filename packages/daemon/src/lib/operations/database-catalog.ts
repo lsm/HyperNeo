@@ -8,6 +8,9 @@ import { listScopedTasks, readScopedTask } from '../tasks/scoped-task-reads.ts';
 import { FAIL_CLOSED_LONG_HORIZON_AGENT_REPO } from '../space/runtime/space-mcp-session-policy.ts';
 import { createDaemonOperationCatalog, type TaskOperationDependencies } from './catalog.ts';
 import type { OperationDefinition } from './registry.ts';
+import { listOperationSummaries } from './discovery.ts';
+import { createDaemonSnapshotOperation } from '../inventory/snapshot-operation.ts';
+import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 
 const FALLBACK_TASK_READ_ADMISSION = {
   getSession: () => null,
@@ -24,7 +27,7 @@ export function createDatabaseOperationCatalog(
   overrides: Partial<TaskOperationDependencies> = {},
   extra: readonly OperationDefinition[] = []
 ) {
-  return createDaemonOperationCatalog(
+  const registry = createDaemonOperationCatalog(
     jobQueue,
     {
       readTask: (taskId, caller) =>
@@ -56,6 +59,14 @@ export function createDatabaseOperationCatalog(
       sessionExists: (sessionId) => sessionRowExists(db, sessionId),
       ...overrides,
     },
-    extra
+    [
+      ...extra,
+      createDaemonSnapshotOperation({
+        readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
+        readCapabilities: (caller) =>
+          listOperationSummaries(registry, caller).map(({ name }) => name),
+      }),
+    ]
   );
+  return registry;
 }

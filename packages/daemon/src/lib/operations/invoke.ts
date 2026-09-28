@@ -57,6 +57,7 @@ export function isOperationAdmitted(
     return [
       'operations.list',
       'operations.describe',
+      'daemon.snapshot',
       'neo.snapshot',
       'neo.concern.save',
       'neo.concern.consult',
