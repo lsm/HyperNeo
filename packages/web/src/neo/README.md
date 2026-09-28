@@ -1,5 +1,7 @@
 # Neo MVP
 
+The entry header uses the approved HyperNeo mark via the reusable `HyperNeoMark` component and namespaced brand tokens. The unchanged jade SVG is 32px tall on a 44px night tile with preserved aspect ratio and clear space in either theme. It is decorative beside the named Neo control; standalone uses can supply a label. This is asset adoption, not a replacement of the warm Neo/cool human conversation palette or a full product-brand rollout.
+
 An opt-in entry inside the existing web package at `/neo`, included in the web build. The old `/neo/index.html` URL and `/neo/` redirect to `/neo`, preserving query parameters. Development, build preview, and production servers serve the same entry. The normal HyperNeo entry remains unchanged. Requires this branch's daemon (schema migration 279) and a configured model provider.
 
 ## Working loop

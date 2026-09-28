@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { connectionState } from '../lib/state.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { HyperNeoMark } from '../components/HyperNeoMark.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -129,9 +130,7 @@ export function NeoLive() {
           aria-label="Back to Neo"
           class="flex items-center gap-3 rounded-lg text-xl font-semibold tracking-tight focus-visible:outline-accent"
         >
-          <span class="neo-mark rounded-2xl bg-accent/10 p-2 text-accent">
-            <NeoIcon name="spark" />
-          </span>
+          <HyperNeoMark />
           neo
           <span class="rounded-full bg-success/10 px-2 py-1 text-[10px] font-medium tracking-normal text-success">
             MVP
