@@ -24,6 +24,7 @@ import { SkillsManager } from '../../../../src/lib/skills-manager';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
@@ -1918,6 +1919,50 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('tools configuration', () => {
+    it.each([
+      ['neo', null, []],
+      ['concern', 'saas', ['AskUserQuestion']],
+      ['worker', 'saas', ['AskUserQuestion']],
+    ] as const)(
+      'uses the persisted %s binding for native questions',
+      async (kind, concernId, tools) => {
+        const sqlite = new BunDatabase(':memory:');
+        try {
+          createNeoTables(sqlite);
+          if (concernId) {
+            sqlite
+              .prepare(
+                'INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
+              )
+              .run(concernId, 'SaaS', '', '', 1, 1, 1);
+          }
+          mockSession.id = `neo:${generateUUID()}`;
+          sqlite
+            .prepare('INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,?,?)')
+            .run(mockSession.id, concernId, kind);
+          mockSession.config.sdkToolsPreset = ['AskUserQuestion'];
+          mockSession.config.allowedTools = ['AskUserQuestion'];
+          mockSession.config.permissionMode = 'acceptEdits';
+          const options = await new QueryOptionsBuilder({
+            ...mockContext,
+            db: {
+              ...mockContext.db!,
+              getDatabase: () => sqlite,
+            },
+            getOperationMcpServer: () => ({ type: 'stdio', command: 'operations' }),
+          }).build();
+          expect(options.tools).toEqual(tools);
+          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind !== 'neo');
+          if (kind !== 'worker') {
+            expect(options.allowedTools).toEqual([...tools, 'mcp__hyperneo-operations__invoke']);
+            expect(options.permissionMode).toBe('dontAsk');
+          }
+        } finally {
+          sqlite.close();
+        }
+      }
+    );
+
     it('should include sdkToolsPreset when configured', async () => {
       mockSession.config.sdkToolsPreset = 'full';
       const options = await builder.build();

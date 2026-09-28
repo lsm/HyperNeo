@@ -2,7 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { NEO_CAPABILITIES_BRIEFING } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
+import {
+  neoCoordinatorNativeTools,
+  restrictNeoQuery,
+} from '../../../../src/lib/neo/session-policy.ts';
+
+describe('neoCoordinatorNativeTools', () => {
+  test.each([null, 'saas', 'family'])('selects native questions for %s', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual(concernId ? ['AskUserQuestion'] : []);
+  });
+});
 
 describe('Neo world briefing delivery', () => {
   test.each([null, 'saas'])('briefs the local world for concern %s', (concernId) => {
@@ -42,7 +51,7 @@ describe('Neo world briefing delivery', () => {
     expect(options.systemPrompt).toBe(neoPrompt(concernId));
     expect(options.systemPrompt).toContain('daemon.snapshot');
     expect(options.systemPrompt).not.toContain('Ambient project');
-    expect(options.tools).toEqual(['AskUserQuestion']);
+    expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
   });
 
   test.each([null, 'saas'])(
@@ -73,5 +82,16 @@ describe('Neo world briefing delivery', () => {
     expect(holder).toContain('Use the consultationId from that request, not a work id');
     expect(holder).toContain('Ordinary assistant text alone does not return an answer to Neo');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
+  });
+
+  test('ends root clarification turns without changing the holder question policy', () => {
+    const root = neoPrompt(null);
+    const holder = neoPrompt('saas');
+    expect(root).toContain('Ask clarification questions in ordinary conversational text');
+    expect(root).toContain('then end this input turn without waiting for the human');
+    expect(root).toContain('The human’s reply will arrive as a new input');
+    expect(holder).not.toContain('then end this input turn without waiting for the human');
+    expect(holder).toContain('Do not call AskUserQuestion during a consultation');
+    expect(holder).toContain('When the human speaks to you directly, answer normally');
   });
 });

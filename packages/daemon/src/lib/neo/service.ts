@@ -9,6 +9,7 @@ import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { renderAddress } from '../mailbox/address.ts';
 import { Logger } from '../logger.ts';
 import { neoPrompt } from './prompt.ts';
+import { neoCoordinatorNativeTools } from './session-policy.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -85,15 +86,16 @@ export class NeoService {
     }
     if (!binding) throw new Error('Could not reserve Neo context.');
     if (!this.db.getSession(binding.sessionId)) {
+      const nativeTools = neoCoordinatorNativeTools(concernId);
       await this.sessions.createSession({
         sessionId: binding.sessionId,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
         workspacePath: null,
         config: {
           systemPrompt: neoPrompt(concernId),
-          sdkToolsPreset: ['AskUserQuestion'],
+          sdkToolsPreset: nativeTools,
           permissionMode: 'dontAsk',
-          allowedTools: ['AskUserQuestion', 'mcp__hyperneo-operations__invoke'],
+          allowedTools: [...nativeTools, 'mcp__hyperneo-operations__invoke'],
           maxTurns: 32,
         },
       });
