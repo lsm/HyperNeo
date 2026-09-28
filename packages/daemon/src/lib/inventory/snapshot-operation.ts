@@ -32,6 +32,19 @@ const SnapshotSchema = z.object({
   resources: z.array(PageSchema),
   capabilities: z.array(z.string()),
 }) satisfies z.ZodType<DaemonSnapshot>;
+const RejectedSchema = z.object({
+  accepted: z.literal(false),
+  reason: z.literal('daemon_inventory_forbidden'),
+});
+
+function admitSnapshotCaller(
+  input: SnapshotInput,
+  caller: OperationCaller
+): { value: SnapshotInput } | { reason: z.infer<typeof RejectedSchema> } {
+  return caller.source === 'rpc' || caller.role === 'neo'
+    ? { value: input }
+    : { reason: { accepted: false, reason: 'daemon_inventory_forbidden' } };
+}
 
 export interface InventoryDependencies {
   readonly readResources: (
@@ -76,11 +89,12 @@ export function createDaemonSnapshotOperation(deps: InventoryDependencies) {
     superpipe({ ...deps, now: deps.now ?? Date.now })('daemon-snapshot') as PipelineAPI
   )
     .input(['input', 'caller'])
-    .pipe((input: SnapshotInput) => input.limit, 'input', 'limit')
+    .pipe(admitSnapshotCaller, ['input', 'caller'], 'result:snapshot')
+    .pipe((input: SnapshotInput) => input.limit, 'snapshot', 'limit')
     .pipe((now: () => number) => now(), 'now', 'capturedAt')
     .pipe(
       (input: SnapshotInput, read: InventoryDependencies['readResources']) => read(input),
-      ['input', 'readResources'],
+      ['snapshot', 'readResources'],
       'resources'
     )
     .pipe(
@@ -92,14 +106,14 @@ export function createDaemonSnapshotOperation(deps: InventoryDependencies) {
     .endAsync('snapshot') as (
     input: SnapshotInput,
     caller: OperationCaller
-  ) => Promise<DaemonSnapshot>;
+  ) => Promise<DaemonSnapshot | z.infer<typeof RejectedSchema>>;
   return defineOperation({
     name: 'daemon.snapshot',
     description:
-      'Read local daemon resource metadata and caller-visible operation names without opening sessions or executing work. Each resource kind returns at most limit entries, newest first, with an exact total and an explicit truncated flag. Session status is lifecycle state, not live processing progress. No instructions, configs or transcripts are included. Use operations.describe for capability schemas.',
-    policy: { safetyClass: 'read' },
+      'Read local daemon resource metadata and caller-visible operation names without opening sessions or executing work. Available to local RPC callers and Neo coordinators/holders; other callers receive daemon_inventory_forbidden before any reads. Each resource kind returns at most limit entries, newest first, with an exact total and an explicit truncated flag. Session status is lifecycle state, not live processing progress. No instructions, configs or transcripts are included. Use operations.describe for capability schemas.',
+    policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: InputSchema,
-    resultSchema: SnapshotSchema,
+    resultSchema: z.union([SnapshotSchema, RejectedSchema]),
     execute: snapshot,
   });
 }

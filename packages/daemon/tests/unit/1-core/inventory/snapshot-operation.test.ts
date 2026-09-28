@@ -2,10 +2,15 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { DaemonInventoryPage } from '@hyperneo/shared/types/daemon-snapshot';
 import {
   createDaemonSnapshotOperation,
+  type InventoryDependencies,
   presentDaemonSnapshot,
 } from '../../../../src/lib/inventory/snapshot-operation';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
 
 const caller = { source: 'rpc' as const, principal: 'local' };
 const entry = {
@@ -17,6 +22,8 @@ const entry = {
   links: [{ kind: 'space', id: 'space-a' }],
 };
 const pages: readonly DaemonInventoryPage[] = [{ kind: 'session', total: 2, entries: [entry] }];
+const snapshotRegistry = (deps: InventoryDependencies) =>
+  createOperationRegistry([createDaemonSnapshotOperation(deps)]);
 
 describe('presentDaemonSnapshot', () => {
   test('projects metadata without mutating or retaining the reader objects', () => {
@@ -87,7 +94,7 @@ describe('presentDaemonSnapshot', () => {
   });
 });
 
-describe('createDaemonSnapshotOperation', () => {
+describe('daemon.snapshot invocation', () => {
   test.each([false, true])('composes sync or async ports: async=%s', async (asynchronous) => {
     const readResources = mock((input: { limit: number; includeArchived: boolean }) => {
       expect(input).toEqual({ limit: 20, includeArchived: false });
@@ -97,12 +104,8 @@ describe('createDaemonSnapshotOperation', () => {
       asynchronous ? Promise.resolve(['task.create']) : ['task.create']
     );
     const now = mock(() => 500);
-    const registry = createOperationRegistry([
-      createDaemonSnapshotOperation({ readResources, readCapabilities, now }),
-    ]);
-    expect(readResources).not.toHaveBeenCalled();
-    expect(readCapabilities).not.toHaveBeenCalled();
-    expect(now).not.toHaveBeenCalled();
+    const registry = snapshotRegistry({ readResources, readCapabilities, now });
+    for (const port of [readResources, readCapabilities, now]) expect(port).not.toHaveBeenCalled();
     expect(await invokeOperation(registry, 'daemon.snapshot', undefined, caller)).toEqual({
       kind: 'completed',
       value: presentDaemonSnapshot(pages, ['task.create'], 500),
@@ -112,25 +115,37 @@ describe('createDaemonSnapshotOperation', () => {
     expect(now).toHaveBeenCalledTimes(1);
   });
 
-  test('forwards validated options and the original caller to separate read ports', async () => {
+  test.each([
+    ['rpc', undefined, true],
+    ['mcp', 'neo', true],
+    ['mcp', 'outside_space', false],
+    ['mcp', 'workflow_worker', false],
+    ['mcp', 'direct_task_worker', false],
+    ['mcp', 'long_term_agent', false],
+    ['mcp', 'universal_read', false],
+    ['mcp', 'legacy_task_agent', false],
+    ['mcp', undefined, false],
+    ['internal', undefined, false],
+  ] as const)('gates %s/%s before read ports: allowed=%s', async (source, role, allowed) => {
     const readResources = mock(() => pages);
     const readCapabilities = mock(() => ['session.list']);
-    const registry = createOperationRegistry([
-      createDaemonSnapshotOperation({ readResources, readCapabilities, now: () => 1 }),
-    ]);
-    const principal = {
-      source: 'mcp' as const,
-      role: 'outside_space' as const,
-      sessionId: 'source',
-    };
-    await invokeOperation(
-      registry,
-      'daemon.snapshot',
-      { limit: 1, includeArchived: true },
-      principal
-    );
-    expect(readResources).toHaveBeenCalledWith({ limit: 1, includeArchived: true });
-    expect(readCapabilities).toHaveBeenCalledWith(principal);
+    const now = mock(() => 1);
+    const registry = snapshotRegistry({ readResources, readCapabilities, now });
+    const principal: OperationCaller = { source, role, sessionId: 'source' };
+    const input = { limit: 1, includeArchived: true };
+    expect(await invokeOperation(registry, 'daemon.snapshot', input, principal)).toEqual({
+      kind: 'completed',
+      value: allowed
+        ? presentDaemonSnapshot(pages, ['session.list'], 1, 1)
+        : { accepted: false, reason: 'daemon_inventory_forbidden' },
+    });
+    expect(readResources.mock.calls).toEqual(allowed ? [[input]] : []);
+    expect(readCapabilities.mock.calls).toEqual(allowed ? [[principal]] : []);
+    expect(now).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    if (source === 'mcp')
+      expect(listOperationSummaries(registry, principal).map(({ name }) => name)).toEqual(
+        allowed ? ['daemon.snapshot'] : []
+      );
   });
 
   test.each([
@@ -142,9 +157,7 @@ describe('createDaemonSnapshotOperation', () => {
   ])('rejects invalid options before reading: %j', async (input) => {
     const readResources = mock(() => pages);
     const readCapabilities = mock(() => []);
-    const registry = createOperationRegistry([
-      createDaemonSnapshotOperation({ readResources, readCapabilities }),
-    ]);
+    const registry = snapshotRegistry({ readResources, readCapabilities });
     expect(await invokeOperation(registry, 'daemon.snapshot', input, caller)).toMatchObject({
       kind: 'failed',
       code: 'invalid_input',
@@ -153,36 +166,29 @@ describe('createDaemonSnapshotOperation', () => {
     expect(readCapabilities).not.toHaveBeenCalled();
   });
 
-  test.each(['resources', 'capabilities'] as const)(
-    'surfaces a failed %s read without retry',
-    async (port) => {
-      const readResources = mock(async () => {
-        if (port === 'resources') throw new Error('read failed');
-        return pages;
-      });
-      const readCapabilities = mock(async () => {
-        throw new Error('read failed');
-      });
-      const registry = createOperationRegistry([
-        createDaemonSnapshotOperation({ readResources, readCapabilities }),
-      ]);
-      expect(await invokeOperation(registry, 'daemon.snapshot', {}, caller)).toEqual({
-        kind: 'failed',
-        code: 'execution_failed',
-        message: 'read failed',
-      });
-      expect(readResources).toHaveBeenCalledTimes(1);
-      expect(readCapabilities).toHaveBeenCalledTimes(port === 'resources' ? 0 : 1);
-    }
-  );
+  test.each(['resources', 'capabilities'])('fails %s without retry', async (port) => {
+    const readResources = mock(async () => {
+      if (port === 'resources') throw new Error('read failed');
+      return pages;
+    });
+    const readCapabilities = mock(async () => {
+      throw new Error('read failed');
+    });
+    const registry = snapshotRegistry({ readResources, readCapabilities });
+    expect(await invokeOperation(registry, 'daemon.snapshot', {}, caller)).toEqual({
+      kind: 'failed',
+      code: 'execution_failed',
+      message: 'read failed',
+    });
+    expect(readResources).toHaveBeenCalledTimes(1);
+    expect(readCapabilities).toHaveBeenCalledTimes(port === 'resources' ? 0 : 1);
+  });
 
   test('rejects impossible source counts instead of reporting an empty or successful snapshot', async () => {
-    const registry = createOperationRegistry([
-      createDaemonSnapshotOperation({
-        readResources: () => [{ kind: 'session', total: 0, entries: [entry] }],
-        readCapabilities: () => [],
-      }),
-    ]);
+    const registry = snapshotRegistry({
+      readResources: () => [{ kind: 'session', total: 0, entries: [entry] }],
+      readCapabilities: () => [],
+    });
     expect(await invokeOperation(registry, 'daemon.snapshot', {}, caller)).toMatchObject({
       kind: 'failed',
       code: 'invalid_result',

@@ -239,7 +239,8 @@ describe('daemon.snapshot catalog binding', () => {
   test('is discoverable and invocable through the default database operation catalog', async () => {
     session('project-chat', '/projects/a', 200);
     const registry = createDatabaseOperationCatalog(db);
-    expect(registry.get('daemon.snapshot')?.policy).toEqual({ safetyClass: 'read' });
+    const snapshot = registry.get('daemon.snapshot');
+    expect(snapshot?.policy).toEqual({ safetyClass: 'read', roles: ['neo'] });
     const caller = { source: 'rpc' as const, principal: 'local' };
     const listing = await invokeOperation(registry, 'operations.list', {}, caller);
     expect(listing).toMatchObject({
@@ -289,7 +290,7 @@ describe('daemon.snapshot catalog binding', () => {
       registry,
       'daemon.snapshot',
       {},
-      { source: 'mcp', role: 'outside_space', sessionId: 'caller' }
+      { source: 'mcp', role: 'neo', sessionId: 'caller' }
     );
     expect(result).toMatchObject({
       kind: 'completed',
