@@ -5,7 +5,11 @@ import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
-import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoBinding,
+  NeoConsultation,
+  NeoConsultationWaiter,
+} from '@hyperneo/shared/types/neo-context';
 import {
   requireNeoWorkTargetSession,
   requireNeoWorkTargetBinding,
@@ -58,6 +62,10 @@ const Consultation = z.object({
   answer: z.string().nullable(),
   createdAt: z.number(),
 });
+const ConsultationWaiter = Consultation.omit({ answer: true, status: true }).extend({
+  originMessageId: z.string(),
+  status: z.enum(['queued', 'admitted', 'cancelled']),
+});
 const Consult = z.object({
   concernId: z.string().min(1),
   requestKey: z.string().min(1).max(160),
@@ -67,6 +75,7 @@ const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(
 const ConsultationResult = z.union([
   Failure,
   z.object({ ok: z.literal(true), consultation: Consultation }),
+  z.object({ ok: z.literal(true), waiter: ConsultationWaiter }),
 ]);
 const Snapshot = z.union([
   Failure,
@@ -76,6 +85,7 @@ const Snapshot = z.union([
     concerns: z.array(Concern),
     work: z.array(Work),
     consultations: z.array(Consultation),
+    consultationWaiters: z.array(ConsultationWaiter).optional(),
     askOrigins: z
       .array(
         z.object({
@@ -119,6 +129,32 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+
+export function requireNeoConsultationReceipt(
+  input: z.infer<typeof Consult>,
+  item: NeoConsultation | NeoConsultationWaiter | null,
+  origin: NeoConsultationOrigin,
+  sessionId: string
+): { value: NeoConsultation | NeoConsultationWaiter } | { reason: Rejection } {
+  if (
+    !item ||
+    item.requestKey !== input.requestKey ||
+    item.question !== input.question ||
+    item.concernId !== input.concernId ||
+    item.originSessionId !== origin.originSessionId ||
+    item.originMessageId !== origin.originMessageId ||
+    item.sessionId !== sessionId
+  )
+    return {
+      reason: {
+        ok: false,
+        reason: 'Request key already belongs to another consultation or input.',
+      },
+    };
+  return item.status === 'cancelled' || item.status === 'admitted'
+    ? { reason: { ok: false, reason: 'This queued consultation is no longer available.' } }
+    : { value: item };
+}
 
 export function requireNeoExecutionChoice(
   input: { targetSessionId?: string | null },
@@ -199,6 +235,7 @@ export function createNeoOperations(service: NeoService) {
         : [];
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = service.consultations.list(scope ?? undefined);
+    const waiters = service.consultationWaiters.queued(scope ?? undefined);
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -209,9 +246,10 @@ export function createNeoOperations(service: NeoService) {
       consultations: consultations.map((item) =>
         detailed ? item : { ...item, question: '', answer: null }
       ),
+      consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
       askOrigins: projectNeoSnapshotAskOrigins(
         visibleWork,
-        consultations,
+        [...consultations, ...waiters],
         service.resolveAskOrigin
       ),
       work: visibleWork.map((item) =>
@@ -258,48 +296,42 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin, sessionId: string) => {
-        const item = service.consultations.reserve({
-          ...input,
-          id: crypto.randomUUID(),
-          ...root,
-          sessionId,
-        });
-        return item
-          ? { value: item }
-          : {
-              reason: {
-                ok: false,
-                reason: 'This context holder already has a pending consultation.',
-              },
-            };
-      },
-      ['input', 'admission', 'sessionId'],
-      'result:admission'
-    )
-    .pipe(
       (
         input: z.infer<typeof Consult>,
-        item: z.infer<typeof Consultation>,
-        origin: NeoConsultationOrigin
-      ) =>
-        item.question === input.question &&
-        item.concernId === input.concernId &&
-        item.originMessageId === origin.originMessageId
-          ? { value: item }
-          : {
-              reason: {
-                ok: false,
-                reason: 'Request key already belongs to another consultation or input.',
-              },
-            },
-      ['input', 'admission', 'origin'],
+        root: NeoConsultationOrigin,
+        sessionId: string,
+        caller: OperationCaller
+      ) => {
+        const live = requireLiveNeoConsultationOrigin(root, caller.neoTurn);
+        if ('reason' in live) return live;
+        const item =
+          service.consultations.find(root.originSessionId, input.requestKey) ??
+          service.consultationWaiters.find(root.originSessionId, input.requestKey) ??
+          service.consultationWaiters.enqueue({
+            ...input,
+            id: crypto.randomUUID(),
+            ...root,
+            sessionId,
+          });
+        return { value: item };
+      },
+      ['input', 'admission', 'sessionId', 'caller'],
       'result:admission'
     )
     .pipe(
-      async (item: z.infer<typeof Consultation>) => {
-        await service.syncConsultation(item.id);
-        return { ok: true as const, consultation: service.consultations.get(item.id)! };
+      requireNeoConsultationReceipt,
+      ['input', 'admission', 'origin', 'sessionId'],
+      'result:admission'
+    )
+    .pipe(
+      async (item: NeoConsultation | NeoConsultationWaiter) => {
+        if (item.status === 'queued') await service.dispatchConsultationWaiter(item.concernId);
+        const consultation = service.consultations.get(item.id);
+        if (consultation) {
+          await service.syncConsultation(item.id);
+          return { ok: true as const, consultation: service.consultations.get(item.id)! };
+        }
+        return { ok: true as const, waiter: service.consultationWaiters.get(item.id)! };
       },
       'admission',
       'admission'
@@ -364,6 +396,12 @@ export function createNeoOperations(service: NeoService) {
     'neo.concern.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
     async ({ id }) => {
+      const waiter = service.consultationWaiters.get(id);
+      if (waiter?.status === 'queued' || waiter?.status === 'cancelled') {
+        const cancelled = service.consultationWaiters.cancel(id)!;
+        await service.dispatchConsultationWaiter(cancelled.concernId);
+        return { ok: true as const, waiter: cancelled };
+      }
       const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
       if (!item) return { ok: false as const, reason: 'Consultation not found.' };
       await service.syncConsultation(id);

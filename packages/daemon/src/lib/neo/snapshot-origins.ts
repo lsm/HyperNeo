@@ -1,4 +1,8 @@
-import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoConsultation,
+  NeoConsultationWaiter,
+  NeoWork,
+} from '@hyperneo/shared/types/neo-context';
 import type { NeoReceiptAskOrigin } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAskOrigin } from './ask-origin.ts';
@@ -12,7 +16,7 @@ type Resolver = (input: Input['input']) => NeoAskOrigin | null;
 
 export function selectNeoSnapshotOriginInputs(
   work: readonly NeoWork[],
-  consultations: readonly NeoConsultation[]
+  consultations: readonly (NeoConsultation | NeoConsultationWaiter)[]
 ): Input[] {
   return [
     ...work.map((item) => ({
@@ -49,6 +53,6 @@ export const projectNeoSnapshotAskOrigins = (
   .pipe(readNeoSnapshotAskOrigins, ['receipts', 'resolve'], 'origins')
   .end('origins') as (
   work: readonly NeoWork[],
-  consultations: readonly NeoConsultation[],
+  consultations: readonly (NeoConsultation | NeoConsultationWaiter)[],
   resolve: Resolver
 ) => NeoReceiptAskOrigin[];

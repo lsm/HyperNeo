@@ -1,4 +1,4 @@
-import type { NeoConcern, NeoConsultation, NeoWork } from './neo-context.ts';
+import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
@@ -12,6 +12,7 @@ export interface NeoSnapshot {
   concerns: NeoConcern[];
   work: NeoWork[];
   consultations?: NeoConsultation[];
+  consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
 }
 

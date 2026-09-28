@@ -22,6 +22,13 @@ export class NeoConsultationRepository {
       .get(id) as NeoConsultation | null;
   }
 
+  find(originSessionId: string, requestKey: string): NeoConsultation | null {
+    return this.db
+      .prepare(`SELECT ${columns} FROM neo_consultations
+      WHERE origin_session_id = ? AND request_key = ?`)
+      .get(originSessionId, requestKey) as NeoConsultation | null;
+  }
+
   list(concernId?: string): NeoConsultation[] {
     return this.db
       .prepare(`SELECT ${columns} FROM neo_consultations
