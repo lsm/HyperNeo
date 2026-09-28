@@ -16,7 +16,7 @@ import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { initializeProviders } from '../../../../src/lib/providers/factory';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   query,
   type CanUseTool,
@@ -27,7 +27,11 @@ import type { Database } from '../../../../src/storage/database';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations';
+import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
+import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -305,13 +309,17 @@ describe('QueryRunner', () => {
 
   describe('Neo coordinator input isolation', () => {
     let sqlite: SQLite;
+    let evidenceDb: Database;
     let queue: MessageQueue;
     const providerId = 'custom:neo-input-unit';
-    beforeEach(() => {
+    beforeEach(async () => {
       resetSdkStartupGateForTests();
-      sqlite = new SQLite(':memory:');
+      evidenceDb = await createTestDb();
+      sqlite = evidenceDb.getDatabase();
       createNeoTables(sqlite);
       runMigration279(sqlite);
+      runMigration282(sqlite);
+      runMigration283(sqlite);
       queue = new MessageQueue();
       initializeProviders().register({
         id: providerId,
@@ -331,16 +339,103 @@ describe('QueryRunner', () => {
       }));
     });
 
-    it.each(['neo', 'concern', 'worker', 'ordinary'] as const)(
-      'keeps %s inputs on their intended query boundary',
-      async (kind) => {
+    it.each([
+      'neo',
+      'concern',
+      'worker',
+      'ordinary',
+      'neo-return',
+      'holder-request',
+      'work-return',
+      'unknown-system',
+    ] as const)(
+      'keeps %s inputs and human attribution on their intended boundary',
+      async (variant) => {
+        const delayed = ['neo-return', 'holder-request', 'work-return', 'unknown-system'].includes(
+          variant
+        );
+        const kind =
+          variant === 'concern' || variant === 'holder-request'
+            ? 'concern'
+            : variant === 'worker'
+              ? 'worker'
+              : variant === 'ordinary'
+                ? 'ordinary'
+                : 'neo';
         const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
         const isolated = kind === 'neo' || kind === 'concern';
+        const rootId = kind === 'concern' && delayed ? 'neo:root' : sessionId;
+        const firstId = delayed ? 'ask-B' : 'ask-A';
+        const nextId =
+          variant === 'work-return'
+            ? 'work-A'
+            : variant === 'unknown-system'
+              ? 'unknown-system'
+              : delayed
+                ? `neo-consult:check-A:${kind === 'concern' ? 'request' : 'reply'}`
+                : 'ask-B';
+        const askA = { sessionId: rootId, messageId: 'ask-A' };
         const repo = new NeoRepository(sqlite);
         if (kind === 'concern')
           repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
         if (kind !== 'ordinary')
           repo.reserveBinding({ sessionId, concernId: kind === 'concern' ? 'club' : null, kind });
+        if (kind === 'concern' && delayed)
+          repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
+        if (variant === 'neo-return' || variant === 'holder-request') {
+          const holderId = kind === 'concern' ? sessionId : 'neo:holder';
+          if (kind === 'neo') {
+            repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+            repo.reserveBinding({ sessionId: holderId, concernId: 'club', kind: 'concern' });
+          }
+          const consultations = new NeoConsultationRepository(sqlite, () => {});
+          consultations.reserve({
+            id: 'check-A',
+            requestKey: 'check-A',
+            concernId: 'club',
+            originSessionId: rootId,
+            originMessageId: askA.messageId,
+            sessionId: holderId,
+            question: 'Project A status',
+          });
+          if (kind === 'neo') consultations.finish('check-A', 'reported', 'Reported A evidence');
+        }
+        if (variant === 'work-return') {
+          const work = repo.proposeWork({
+            id: nextId,
+            requestKey: 'work-A',
+            concernId: null,
+            originSessionId: rootId,
+            originMessageId: askA.messageId,
+            title: 'A',
+            instruction: 'Draft only',
+          })!;
+          const queued = repo.transitionWork(work.id, work, {
+            status: 'queued',
+            sessionId: 'worker',
+          })!;
+          repo.transitionWork(work.id, queued, {
+            status: 'reported',
+            report: 'Reported A evidence',
+          });
+        }
+        const storedPrompt = (
+          id: string,
+          uuid: string
+        ): SDKUserMessage & { inputKind: 'system' | 'human' } => ({
+          type: 'user',
+          uuid: uuid as SDKUserMessage['uuid'],
+          session_id: id,
+          parent_tool_use_id: null,
+          inputKind: delayed && uuid === nextId ? 'system' : 'human',
+          message: { role: 'user', content: 'Reported context, never lineage instructions' },
+        });
+        for (const id of new Set([sessionId, rootId]))
+          evidenceDb.createSession(createTestSession(id));
+        evidenceDb.saveUserMessage(rootId, storedPrompt(rootId, askA.messageId));
+        if (firstId !== askA.messageId || sessionId !== rootId)
+          evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, firstId));
+        evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, nextId));
         const identities: Array<{ messageId: string; human: boolean; live: boolean }> = [];
         const getTurns: Array<() => OperationCaller['neoTurn']> = [];
         const createServer = mock((getTurn: () => OperationCaller['neoTurn']) => {
@@ -380,6 +475,7 @@ describe('QueryRunner', () => {
                 uuid: `answer-${first.value!.uuid}`,
                 parent_tool_use_id: null,
                 neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
+                neoAskOrigin: { sessionId: 'forged', messageId: 'ask-B' },
                 message: { role: 'assistant', content: [{ type: 'text', text: 'Answer' }] },
               } as unknown as SDKMessage);
               yield emit({
@@ -387,6 +483,7 @@ describe('QueryRunner', () => {
                 subtype: 'success',
                 uuid: `result-${first.value!.uuid}`,
                 neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
+                neoAskOrigin: { sessionId: 'forged', messageId: 'ask-B' },
               } as unknown as SDKMessage);
             },
           })
@@ -401,16 +498,16 @@ describe('QueryRunner', () => {
           db: {
             ...mockDb,
             getDatabase: () => sqlite,
-            getSDKMessageRepo: () => ({
-              getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
-            }),
+            getSDKMessageRepo: () => evidenceDb.getSDKMessageRepo(),
           } as unknown as Database,
           messageQueue: queue,
           createNeoTurnMcpServer: createServer,
         });
         runner = new QueryRunner(ctx);
-        const firstSent = queue.enqueueWithId('ask-A', 'Project A?', false, { durable: true });
-        const nextSent = queue.enqueueWithId('ask-B', 'Company B?', false, { durable: true });
+        const firstSent = queue.enqueueWithId(firstId, 'Current ask', false, { durable: true });
+        const nextSent = queue.enqueueWithId(nextId, 'Delayed A or unrelated ask', false, {
+          durable: true,
+        });
         void firstSent.catch(() => {});
         void nextSent.catch(() => {});
         await runner.start();
@@ -418,30 +515,42 @@ describe('QueryRunner', () => {
         await firstSent;
         expect(handleErrorSpy).not.toHaveBeenCalled();
         if (isolated) {
-          expect(received).toEqual(['ask-A']);
+          expect(received).toEqual([firstId]);
           expect(endings).toEqual([true]);
           expect(queue.size()).toBe(1);
-          expect(identities).toEqual([{ messageId: 'ask-A', human: true, live: true }]);
+          expect(identities).toEqual([{ messageId: firstId, human: true, live: true }]);
           expect(getTurns[0]()?.isLive()).toBe(false);
           expect(reconcile).not.toHaveBeenCalled();
           expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
-            { sessionId, messageId: 'ask-A' },
-            { sessionId, messageId: 'ask-A' },
+            { sessionId, messageId: firstId },
+            { sessionId, messageId: firstId },
+          ]);
+          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoAskOrigin)).toEqual([
+            { sessionId, messageId: firstId },
+            { sessionId, messageId: firstId },
           ]);
           await runner.start();
           await ctx.queryPromise;
           await nextSent;
-          expect(received).toEqual(['ask-A', 'ask-B']);
+          expect(received).toEqual([firstId, nextId]);
           expect(endings).toEqual([true, true]);
-          expect(identities[1]).toEqual({ messageId: 'ask-B', human: true, live: true });
+          expect(identities[1]).toEqual({ messageId: nextId, human: !delayed, live: true });
           expect(createServer).toHaveBeenCalledTimes(2);
           expect(getTurns[1]()?.isLive()).toBe(false);
           expect(queue.size()).toBe(0);
           expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
-            { sessionId, messageId: 'ask-A' },
-            { sessionId, messageId: 'ask-A' },
-            { sessionId, messageId: 'ask-B' },
-            { sessionId, messageId: 'ask-B' },
+            { sessionId, messageId: firstId },
+            { sessionId, messageId: firstId },
+            { sessionId, messageId: nextId },
+            { sessionId, messageId: nextId },
+          ]);
+          const secondAsk =
+            variant === 'unknown-system' ? null : delayed ? askA : { sessionId, messageId: nextId };
+          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoAskOrigin)).toEqual([
+            { sessionId, messageId: firstId },
+            { sessionId, messageId: firstId },
+            secondAsk,
+            secondAsk,
           ]);
         } else {
           expect(received).toEqual(['ask-A', 'ask-B']);

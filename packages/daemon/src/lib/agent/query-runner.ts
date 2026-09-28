@@ -34,6 +34,9 @@ import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-to
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
+import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -663,6 +666,7 @@ export class QueryRunner {
 
     let runAbortController: AbortController | null = null;
     let holderTurn: NeoHolderTurn | undefined;
+    let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
@@ -810,6 +814,16 @@ export class QueryRunner {
           () => runAbortController?.abort()
         );
         const isolated = holderTurn;
+        const neo = new NeoRepository(this.ctx.db.getDatabase());
+        const consultations = new NeoConsultationRepository(this.ctx.db.getDatabase(), () => {});
+        resolveAskOrigin = createNeoAskOriginResolver({
+          getBinding: (id) => neo.getBindingBySession(id),
+          getPrompts: (id, messageId) =>
+            this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, messageId),
+          getConsultation: (id) => consultations.get(id),
+          getWork: (id) => neo.getWork(id),
+          getRootBinding: () => neo.getBindingForConcern(null),
+        });
         queryOptions.mcpServers = {
           'hyperneo-operations': this.ctx.createNeoTurnMcpServer(() => isolated.identity()),
         };
@@ -1275,7 +1289,12 @@ export class QueryRunner {
           }
 
           if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
-            message = stampNeoResponseInput(message, session.id, holderTurn.identity()?.messageId);
+            message = stampNeoResponseInput(
+              message,
+              session.id,
+              holderTurn.identity()?.messageId,
+              resolveAskOrigin
+            );
 
           try {
             await this.handleSDKMessage(message, queryGeneration);
