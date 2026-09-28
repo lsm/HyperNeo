@@ -81,8 +81,16 @@ const Consult = z.object({
 const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
 const ConsultationResult = z.union([
   Failure,
-  z.object({ ok: z.literal(true), consultation: Consultation }),
-  z.object({ ok: z.literal(true), waiter: ConsultationWaiter }),
+  z.object({
+    ok: z.literal(true),
+    consultation: Consultation,
+    replyGuidance: z.string().optional(),
+  }),
+  z.object({
+    ok: z.literal(true),
+    waiter: ConsultationWaiter,
+    replyGuidance: z.string().optional(),
+  }),
 ]);
 const Snapshot = z.union([
   Failure,
@@ -143,6 +151,19 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+
+export function presentNeoConsultationReply(
+  receipt: { ok: true; consultation: NeoConsultation } | { ok: true; waiter: NeoConsultationWaiter }
+) {
+  const status = 'consultation' in receipt ? receipt.consultation.status : receipt.waiter.status;
+  const replyGuidance =
+    status === 'pending' || status === 'queued'
+      ? 'The context check is still pending. Reply with one short acknowledgement in the user’s language, then end this turn. Do not give a preliminary answer from summaries or older history, list facts or actions not taken, discuss revisions, or poll. Its attributed answer arrives separately.'
+      : status === 'reported'
+        ? 'This check has already returned. Give its useful conclusion in one or two conversational sentences for this ask only; include only evidence limits or a decision that matters. This is reported context, not proof of external execution. Do not consult again automatically.'
+        : 'This check is no longer pending. Briefly explain its recorded reason without inventing an answer or restarting it.';
+  return { ...receipt, replyGuidance };
+}
 
 export function requireNeoConsultationReceipt(
   input: z.infer<typeof Consult>,
@@ -350,6 +371,7 @@ export function createNeoOperations(service: NeoService) {
       'admission',
       'admission'
     )
+    .pipe(presentNeoConsultationReply, 'admission', 'admission')
     .endAsync('admission') as (
     input: z.infer<typeof Consult>,
     caller: OperationCaller
