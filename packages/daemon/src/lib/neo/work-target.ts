@@ -1,14 +1,20 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import {
+  type NeoAgentWorkOwner,
+  requireNeoAgentWorkBinding,
+  requireNeoAgentWorkReference,
+  requireNeoAgentWorkSession,
+} from './agent-work-target.ts';
 
-type ExecutionSession = {
+export type ExecutionSession = {
   readonly id: string;
   readonly status: string;
   readonly scopeOwned?: number;
   readonly neoBound?: number;
 };
-type Rejection = {
+export type NeoWorkTargetRejection = {
   accepted: false;
   reason:
     | 'invalid_work_id'
@@ -17,15 +23,22 @@ type Rejection = {
     | 'target_session_not_found'
     | 'target_session_not_active'
     | 'target_owned_context'
+    | 'invalid_agent_reference'
+    | 'target_agent_unavailable'
+    | 'ambiguous_target_agent'
+    | 'target_agent_not_active'
+    | 'target_space_not_active'
     | 'invalid_target_binding'
     | 'target_is_coordinator';
 };
+type Rejection = NeoWorkTargetRejection;
 type Gate<T> = { value: T } | { reason: Rejection };
 type Resolution = { accepted: true; workId: string; targetSessionId: string | null } | Rejection;
 export interface NeoWorkTargetDependencies {
   readTarget(workId: string): NeoWorkTarget | null;
   readSession(sessionId: string): ExecutionSession | null;
   readBinding(sessionId: string): NeoBinding | null;
+  readAgentOwner?(agent: NonNullable<NeoWorkTarget['agent']>): NeoAgentWorkOwner | null;
 }
 
 export function admitNeoWorkTargetId(workId: string): Gate<string> {
@@ -87,6 +100,7 @@ export function createNeoWorkTargetResolver(deps: NeoWorkTargetDependencies) {
       ['target', 'stored'],
       'result:target'
     )
+    .pipe(requireNeoAgentWorkReference, 'target', 'result:target')
     .pipe(
       (target: NeoWorkTarget) => ({
         session:
@@ -98,9 +112,22 @@ export function createNeoWorkTargetResolver(deps: NeoWorkTargetDependencies) {
       'session'
     )
     .pipe(
-      (target: NeoWorkTarget, { session }: { session: ExecutionSession | null }) =>
-        requireNeoWorkTargetSession(target, session),
-      ['target', 'session'],
+      (target: NeoWorkTarget) => ({
+        owner: target.agent ? (deps.readAgentOwner?.(target.agent) ?? null) : null,
+      }),
+      'target',
+      'agentOwner'
+    )
+    .pipe(
+      (
+        target: NeoWorkTarget,
+        { session }: { session: ExecutionSession | null },
+        { owner }: { owner: NeoAgentWorkOwner | null }
+      ) =>
+        target.agent
+          ? requireNeoAgentWorkSession(target, session, owner)
+          : requireNeoWorkTargetSession(target, session),
+      ['target', 'session', 'agentOwner'],
       'result:target'
     )
     .pipe(
@@ -115,7 +142,9 @@ export function createNeoWorkTargetResolver(deps: NeoWorkTargetDependencies) {
     )
     .pipe(
       (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
-        requireNeoWorkTargetBinding(target, binding),
+        target.agent
+          ? requireNeoAgentWorkBinding(target, binding)
+          : requireNeoWorkTargetBinding(target, binding),
       ['target', 'binding'],
       'result:target'
     )
