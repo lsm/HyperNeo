@@ -4,6 +4,8 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient } from './neo-intake.ts';
+import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
+import { projectNeoConcernBoard } from './neo-concern-board.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -141,6 +143,8 @@ export function useNeo() {
     store,
     snapshot,
     viewSnapshot: selectedId ? scopedSnapshot : snapshot,
+    projectBoard: (inventory: DaemonSnapshot | null) =>
+      projectNeoConcernBoard(selectedId ? scopedSnapshot : snapshot, selectedId, inventory),
     selectedId,
     sessionId,
     error,
