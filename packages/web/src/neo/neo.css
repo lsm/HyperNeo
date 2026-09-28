@@ -275,12 +275,6 @@
   .neo-arrive {
     animation: neo-arrive 180ms ease-out both;
   }
-  .neo-mark {
-    transition: transform 180ms ease-out;
-  }
-  button:hover .neo-mark {
-    transform: rotate(-9deg);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
