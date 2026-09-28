@@ -7,6 +7,10 @@ import {
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { Database } from '../../../../src/storage/database.ts';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
+import {
+  CONSULTATION_EXPIRED,
+  CONSULTATION_STOPPED,
+} from '../../../../src/lib/neo/consultation-policy.ts';
 
 const identity = Object.freeze({
   id: 'context-A',
@@ -75,8 +79,21 @@ describe('presentNeoConsultationReply', () => {
       const result = presentNeoConsultationReply(receipt);
       expect(result.replyGuidance).toContain('no longer pending');
       expect(result.replyGuidance).toContain('without inventing an answer or restarting it');
-      expect(result.replyGuidance).toContain('Stopping waiting is not a timeout');
+      expect(result.replyGuidance).not.toContain('not a timeout');
       expect(result).toMatchObject(receipt);
+    }
+  );
+
+  test.each([CONSULTATION_EXPIRED, CONSULTATION_STOPPED, 'Other failure', null])(
+    'failure guidance preserves the actual reason without reclassifying it: %j',
+    (answer) => {
+      const recorded = Object.freeze({ ...consultation('failed'), answer });
+      const result = presentNeoConsultationReply({ ok: true, consultation: recorded });
+      expect(result.replyGuidance).toContain('Briefly explain its recorded reason');
+      expect(result.replyGuidance).not.toContain('not a timeout');
+      expect(result.replyGuidance).not.toContain('timed out');
+      expect(result).toHaveProperty('consultation', recorded);
+      expect(recorded.answer).toBe(answer);
     }
   );
 

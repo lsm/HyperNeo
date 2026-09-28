@@ -161,7 +161,7 @@ export function presentNeoConsultationReply(
       ? 'The context check is still pending. Reply with one short acknowledgement in the user’s language, then end this turn. Do not give a preliminary answer from summaries or older history, list facts or actions not taken, discuss revisions, or poll. Its attributed answer arrives separately.'
       : status === 'reported'
         ? 'This check has already returned. Give its useful conclusion in one or two conversational sentences for this ask only; include only evidence limits or a decision that matters. This is reported context, not proof of external execution. Do not consult again automatically.'
-        : 'This check is no longer pending. Briefly explain its recorded reason without inventing an answer or restarting it. Stopping waiting is not a timeout and does not undo saved context or execution.';
+        : 'This check is no longer pending. Briefly explain its recorded reason without inventing an answer or restarting it.';
   return { ...receipt, replyGuidance };
 }
 
