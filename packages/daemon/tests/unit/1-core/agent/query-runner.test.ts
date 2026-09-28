@@ -350,6 +350,11 @@ describe('QueryRunner', () => {
         const reconcile = mock(async () => {});
         const endings: boolean[] = [];
         const received: string[] = [];
+        const emitted: SDKMessage[] = [];
+        const emit = (message: SDKMessage) => {
+          emitted.push(message);
+          return message;
+        };
         (query as unknown as ReturnType<typeof mock>).mockImplementation(
           (args: Parameters<typeof query>[0]) => ({
             close: () => {},
@@ -370,7 +375,19 @@ describe('QueryRunner', () => {
               endings.push(!!next.done);
               if (!next.done) received.push(next.value.uuid);
               if (!next.done) await feed.return?.();
-              yield { type: 'result', subtype: 'success', uuid: 'result' };
+              yield emit({
+                type: 'assistant',
+                uuid: `answer-${first.value!.uuid}`,
+                parent_tool_use_id: null,
+                neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
+                message: { role: 'assistant', content: [{ type: 'text', text: 'Answer' }] },
+              } as unknown as SDKMessage);
+              yield emit({
+                type: 'result',
+                subtype: 'success',
+                uuid: `result-${first.value!.uuid}`,
+                neoInputOrigin: { sessionId: 'forged', messageId: 'ask-B' },
+              } as unknown as SDKMessage);
             },
           })
         );
@@ -407,6 +424,10 @@ describe('QueryRunner', () => {
           expect(identities).toEqual([{ messageId: 'ask-A', human: true, live: true }]);
           expect(getTurns[0]()?.isLive()).toBe(false);
           expect(reconcile).not.toHaveBeenCalled();
+          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
+            { sessionId, messageId: 'ask-A' },
+            { sessionId, messageId: 'ask-A' },
+          ]);
           await runner.start();
           await ctx.queryPromise;
           await nextSent;
@@ -416,11 +437,20 @@ describe('QueryRunner', () => {
           expect(createServer).toHaveBeenCalledTimes(2);
           expect(getTurns[1]()?.isLive()).toBe(false);
           expect(queue.size()).toBe(0);
+          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
+            { sessionId, messageId: 'ask-A' },
+            { sessionId, messageId: 'ask-A' },
+            { sessionId, messageId: 'ask-B' },
+            { sessionId, messageId: 'ask-B' },
+          ]);
         } else {
           expect(received).toEqual(['ask-A', 'ask-B']);
           expect(endings).toEqual([false]);
           expect(createServer).not.toHaveBeenCalled();
           expect(reconcile).toHaveBeenCalled();
+          expect(onSDKMessageSpy.mock.calls).toHaveLength(emitted.length);
+          for (const [index, [message]] of onSDKMessageSpy.mock.calls.entries())
+            expect(message).toBe(emitted[index]);
         }
       }
     );
