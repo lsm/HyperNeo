@@ -41,6 +41,7 @@ const work: NeoWork = {
   requestKey: 'request',
   concernId: null,
   originSessionId: 'neo',
+  originMessageId: null,
   title: 'Draft the agenda',
   instruction: 'Eight people, Sunday. Do not book anything.',
   sessionId: null,

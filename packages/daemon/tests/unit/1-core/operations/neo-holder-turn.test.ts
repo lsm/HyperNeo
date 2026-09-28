@@ -7,6 +7,7 @@ import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -35,6 +36,7 @@ describe('Neo isolated holder turns', () => {
     runMigration279(sqlite);
     runMigration280(sqlite);
     runMigration282(sqlite);
+    runMigration283(sqlite);
     db = {
       getDatabase: () => sqlite,
       getSDKMessageRepo: () => ({
