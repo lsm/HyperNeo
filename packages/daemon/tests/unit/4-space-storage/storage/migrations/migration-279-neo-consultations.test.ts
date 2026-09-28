@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../../src/storage/schema/m279-neo-consultations.ts';
+import { runMigration282 } from '../../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { NeoConsultationRepository } from '../../../../../src/storage/repositories/neo-consultation-repository.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +20,7 @@ describe('migration 279 and consultation persistence', () => {
       );
       runMigration279(db);
       runMigration279(db);
+      runMigration282(db);
       let repo = new NeoConsultationRepository(db, () => {});
       const input = {
         id: 'one',

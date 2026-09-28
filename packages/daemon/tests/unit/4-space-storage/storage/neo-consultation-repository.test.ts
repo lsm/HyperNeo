@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
+import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
 import {
   CONSULTATION_EXPIRED,
@@ -19,6 +20,7 @@ describe('NeoConsultationRepository deadlines', () => {
     try {
       createNeoTables(db);
       runMigration279(db);
+      runMigration282(db);
       db.exec(
         "INSERT INTO neo_concerns VALUES ('club', 'Club', 'Sunday', 'Keep this context', 1, 1, 1)"
       );
@@ -31,6 +33,7 @@ describe('NeoConsultationRepository deadlines', () => {
         requestKey: 'old',
         concernId: 'club',
         originSessionId: 'root',
+        originMessageId: 'ask-A',
         sessionId: 'holder',
         question: 'Next?',
       };
@@ -49,6 +52,7 @@ describe('NeoConsultationRepository deadlines', () => {
       expect(repo.finish('old', 'reported', 'Late answer')).toMatchObject({
         status: 'failed',
         answer: CONSULTATION_EXPIRED,
+        originMessageId: 'ask-A',
       });
       expect(notifications).toBe(2);
       expect(repo.unsettled()).toHaveLength(1);

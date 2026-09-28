@@ -6,7 +6,8 @@ import {
 } from '../../lib/neo/consultation-policy.ts';
 
 const columns = `id, request_key AS requestKey, concern_id AS concernId,
-  origin_session_id AS originSessionId, session_id AS sessionId, question, status,
+  origin_session_id AS originSessionId, origin_message_id AS originMessageId,
+  session_id AS sessionId, question, status,
   answer, created_at AS createdAt`;
 
 export class NeoConsultationRepository {
@@ -36,16 +37,22 @@ export class NeoConsultationRepository {
       .all() as NeoConsultation[];
   }
 
-  reserve(input: Omit<NeoConsultation, 'status' | 'answer' | 'createdAt'>): NeoConsultation | null {
+  reserve(
+    input: Omit<NeoConsultation, 'status' | 'answer' | 'createdAt' | 'originMessageId'> & {
+      originMessageId?: string | null;
+    }
+  ): NeoConsultation | null {
     const result = this.db
       .prepare(`INSERT INTO neo_consultations
-      (id, request_key, concern_id, origin_session_id, session_id, question, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT DO NOTHING`)
+      (id, request_key, concern_id, origin_session_id, origin_message_id,
+      session_id, question, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT DO NOTHING`)
       .run(
         input.id,
         input.requestKey,
         input.concernId,
         input.originSessionId,
+        input.originMessageId ?? null,
         input.sessionId,
         input.question,
         Date.now()

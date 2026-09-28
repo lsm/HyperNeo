@@ -6,6 +6,7 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
+import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -31,6 +32,9 @@ import {
   CONSULTATION_TIMEOUT_MS,
 } from '../../../../src/lib/neo/consultation-policy.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
+import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const concern = {
@@ -71,6 +75,7 @@ describe('Neo MVP', () => {
     createNeoTables(sqlite);
     runMigration279(sqlite);
     runMigration280(sqlite);
+    runMigration282(sqlite);
     created = [];
     active = new Set();
     jobs = [];
@@ -96,6 +101,7 @@ describe('Neo MVP', () => {
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
       getSDKMessageRepo: () => ({
+        getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
         findMessageIdByUuid: (id: string, uuid: string) =>
           delivered.has(`${id}:${uuid}`) ? uuid : null,
         hasTerminalResultAfter: (id: string) => terminalSessions?.has(id) ?? terminal,
@@ -762,7 +768,7 @@ describe('Neo MVP', () => {
   async function consultation() {
     await invoke('neo.concern.save', concern);
     const root = await service.open(null);
-    const caller: OperationCaller = { source: 'mcp', role: 'neo', sessionId: root };
+    const caller = holderInput(root);
     const input = {
       concernId: concern.id,
       requestKey: 'ask-once',
@@ -776,6 +782,187 @@ describe('Neo MVP', () => {
     const holder: OperationCaller = { source: 'mcp', role: 'neo', sessionId: item.sessionId };
     return { item, caller, holder, input };
   }
+
+  test('correlates unrelated root inputs through durable consultation returns', async () => {
+    await invoke('neo.concern.save', concern);
+    await invoke('neo.concern.save', { ...concern, id: 'research' });
+    const root = await service.open(null);
+    const caller = (messageId: string): OperationCaller => ({
+      ...holderInput(root),
+      neoTurn: { messageId, human: true, isLive: () => true },
+    });
+    const input = { concernId: concern.id, requestKey: 'first', question: 'Next?' };
+    expect(
+      await invoke('neo.concern.consult', { ...input, originMessageId: 'forged' }, caller('ask-A'))
+    ).toMatchObject({ value: { consultation: { originMessageId: 'ask-A' } } });
+    expect(
+      await invoke(
+        'neo.concern.consult',
+        { ...input, concernId: 'research', requestKey: 'second' },
+        caller('ask-B')
+      )
+    ).toMatchObject({ value: { consultation: { originMessageId: 'ask-B' } } });
+    await invoke('neo.concern.consult', input, caller('ask-A'));
+    expect(service.consultations.list()).toHaveLength(2);
+    expect(service.repo.listWork()).toEqual([]);
+    for (const item of service.consultations.list()) {
+      expect(
+        JSON.stringify(
+          jobs.find((job) => job.payload.messageUuid === `neo-consult:${item.id}:request`)
+        )
+      ).toContain(item.originMessageId);
+      await invoke(
+        'neo.concern.respond',
+        { id: item.id, answer: `Answer ${item.originMessageId}` },
+        holderInput(item.sessionId, item.id)
+      );
+      expect(
+        JSON.stringify(
+          jobs.find((job) => job.payload.messageUuid === `neo-consult:${item.id}:reply`)
+        )
+      ).toContain(item.originMessageId);
+    }
+    await service.recover();
+    expect(jobs).toHaveLength(4);
+    expect(await invoke('neo.snapshot', {}, human)).toMatchObject({
+      value: {
+        consultations: expect.arrayContaining([
+          expect.objectContaining({ originMessageId: 'ask-A', status: 'reported' }),
+          expect.objectContaining({ originMessageId: 'ask-B', status: 'reported' }),
+        ]),
+      },
+    });
+  });
+
+  test('a request key cannot borrow another input’s consultation receipt', async () => {
+    const { item, caller, holder, input } = await consultation();
+    await invoke('neo.concern.respond', { id: item.id, answer: 'A result' }, holder);
+    const unrelated: OperationCaller = {
+      ...caller,
+      neoTurn: { messageId: 'ask-B', human: true, isLive: () => true },
+    };
+    expect(await invoke('neo.concern.consult', input, unrelated)).toMatchObject({
+      value: { ok: false },
+    });
+    expect(service.consultations.list()).toEqual([
+      { ...item, status: 'reported', answer: 'A result' },
+    ]);
+    expect(jobs).toHaveLength(2);
+  });
+
+  test('MCP consultations use the isolated runtime input despite forged provenance', async () => {
+    await invoke('neo.concern.save', concern);
+    await invoke('neo.concern.save', { ...concern, id: 'research' });
+    const root = await service.open(null);
+    const attempts = new QueryAttemptRegistry();
+    const first = new NeoHolderTurn(db, root, attempts.allocate(), () => {});
+    const turns = [first];
+    const registry = createOperationRegistry(createNeoOperations(service));
+    const handler = (current: NeoHolderTurn) =>
+      createOperationMcpHandler(registry, () => ({
+        sessionId: root,
+        role: 'neo',
+        neoTurn: current.identity(),
+      }));
+    const request = {
+      name: 'neo.concern.consult',
+      input: {
+        concernId: concern.id,
+        requestKey: 'first',
+        question: 'Next?',
+        originMessageId: 'forged',
+        neoTurn: { messageId: 'forged', human: true },
+      },
+      caller: { source: 'rpc', principal: 'local', neoTurn: { messageId: 'forged' } },
+    };
+    try {
+      first.bind('ask-A');
+      const result = await handler(first)(request);
+      expect(JSON.parse(result.content[0].text)).toMatchObject({
+        ok: true,
+        consultation: { originMessageId: 'ask-A', originSessionId: root },
+      });
+      const next = new NeoHolderTurn(db, root, attempts.allocate(), () => {});
+      turns.push(next);
+      next.bind('ask-B');
+      const independent = {
+        ...request,
+        input: { ...request.input, concernId: 'research', requestKey: 'second' },
+      };
+      expect(JSON.parse((await handler(first)(independent)).content[0].text)).toMatchObject({
+        ok: false,
+      });
+      expect(JSON.parse((await handler(next)(independent)).content[0].text)).toMatchObject({
+        ok: true,
+        consultation: { originMessageId: 'ask-B' },
+      });
+      expect(service.consultations.list()).toHaveLength(2);
+      expect(jobs).toHaveLength(2);
+      expect(service.repo.listWork()).toEqual([]);
+    } finally {
+      turns.forEach((current) => current.dispose());
+    }
+  });
+
+  test('an unbound root cannot create a consultation', async () => {
+    await invoke('neo.concern.save', concern);
+    const root = await service.open(null);
+    expect(
+      await invoke(
+        'neo.concern.consult',
+        {
+          concernId: concern.id,
+          requestKey: 'unbound',
+          question: 'Next?',
+        },
+        { source: 'mcp', role: 'neo', sessionId: root }
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.consultations.list()).toEqual([]);
+    expect(created).toHaveLength(1);
+    expect(jobs).toEqual([]);
+  });
+
+  test('superseding the input during holder opening prevents reservation and delivery', async () => {
+    await invoke('neo.concern.save', concern);
+    const root = await service.open(null);
+    let live = true;
+    let opened!: () => void;
+    let release!: () => void;
+    const opening = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = service.open.bind(service);
+    service.open = async (id) => {
+      const sessionId = await original(id);
+      opened();
+      await held;
+      return sessionId;
+    };
+    const result = invoke(
+      'neo.concern.consult',
+      {
+        concernId: concern.id,
+        requestKey: 'late',
+        question: 'Next?',
+      },
+      {
+        source: 'mcp',
+        role: 'neo',
+        sessionId: root,
+        neoTurn: { messageId: 'ask-A', human: true, isLive: () => live },
+      }
+    );
+    await opening;
+    live = false;
+    release();
+    expect(await result).toMatchObject({ value: { ok: false } });
+    expect(service.consultations.list()).toEqual([]);
+    expect(jobs).toEqual([]);
+  });
 
   test('consults the persistent holder once, returns through the mailbox, and starts no worker', async () => {
     const { item, caller, holder, input } = await consultation();
