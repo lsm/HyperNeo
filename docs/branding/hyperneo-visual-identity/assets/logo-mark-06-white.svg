@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="377" viewBox="0 0 144 377" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo mark 06, white</title>
+  <desc id="desc">A continuous vertical white bar beside a split white bar.</desc>
+  <g fill="#F2F4EF">
+    <rect x="0" y="0" width="55" height="377" rx="5.5" />
+    <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
+    <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+  </g>
+</svg>

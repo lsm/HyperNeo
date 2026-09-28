@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="377" viewBox="0 0 144 377" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo mark 06</title>
+  <desc id="desc">A continuous vertical jade bar beside a split jade bar.</desc>
+  <g fill="#53E59A">
+    <rect x="0" y="0" width="55" height="377" rx="5.5" />
+    <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
+    <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+  </g>
+</svg>

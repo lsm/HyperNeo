@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo visual identity, built around mark 06</title>
+  <desc id="desc">A brand board showing the selected two-bar Qian mark, calm decision-led story, jade and forest palette, typography, and a Neo product example.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#0C1D13" />
+      <stop offset="1" stop-color="#07110C" />
+    </linearGradient>
+    <radialGradient id="stage" cx="50%" cy="46%" r="72%">
+      <stop stop-color="#183B28" />
+      <stop offset="1" stop-color="#0B1710" />
+    </radialGradient>
+    <linearGradient id="jade" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#76ECAF" />
+      <stop offset="1" stop-color="#53E59A" />
+    </linearGradient>
+    <g id="mark" fill="url(#jade)">
+      <rect width="55" height="377" rx="5.5" />
+      <rect x="89" width="55" height="171.5" rx="5.5" />
+      <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+    </g>
+    <style>
+      .sans { font-family: Inter, "Helvetica Neue", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+    </style>
+  </defs>
+  <rect width="1600" height="1200" fill="url(#background)" />
+  <text x="72" y="67" class="mono" fill="#9EAEA3" font-size="14" letter-spacing="4">HYPERNEO   /   VISUAL IDENTITY 01</text>
+  <text x="1528" y="67" class="mono" fill="#53E59A" font-size="13" letter-spacing="3" text-anchor="end">SELECTED MARK   06</text>
+  <path d="M72 96H1528" stroke="#FFFFFF" stroke-opacity=".12" />
+
+  <text x="72" y="193" class="sans" fill="#F2F4EF" font-size="70" font-weight="520" letter-spacing="-5">Calm enough to see.</text>
+  <text x="72" y="277" class="sans" fill="#53E59A" font-size="70" font-weight="520" letter-spacing="-5">Clear enough to act.</text>
+  <text x="75" y="337" class="sans" fill="#DCE5DD" font-size="19">A quiet center for consequential decisions.</text>
+  <text x="75" y="373" class="sans" fill="#A0B0A5" font-size="16">See through the noise. Make complexity legible. Move with confidence.</text>
+  <g transform="translate(75 426)">
+    <circle cx="5" cy="0" r="4" fill="#53E59A" />
+    <text x="20" y="5" class="mono" fill="#A0B0A5" font-size="11" letter-spacing="1.5">QUIET CLARITY</text>
+    <circle cx="184" cy="0" r="4" fill="#53E59A" />
+    <text x="199" y="5" class="mono" fill="#A0B0A5" font-size="11" letter-spacing="1.5">DECISIVE ACTION</text>
+    <circle cx="390" cy="0" r="4" fill="#53E59A" />
+    <text x="405" y="5" class="mono" fill="#A0B0A5" font-size="11" letter-spacing="1.5">谦 · GROUNDED STRENGTH</text>
+  </g>
+
+  <rect x="990" y="122" width="538" height="372" rx="24" fill="url(#stage)" stroke="#FFFFFF" stroke-opacity=".12" />
+  <path d="M1259 145V452M1020 300H1498" stroke="#FFFFFF" stroke-opacity=".08" />
+  <g transform="translate(1208.6 170) scale(.7)"><use href="#mark" /></g>
+  <text x="1020" y="461" class="mono" fill="#93A69A" font-size="11" letter-spacing="1.4">55 UNIT BAR   /   34 UNIT OPENINGS</text>
+  <text x="1498" y="461" class="mono" fill="#F2F4EF" font-size="11" letter-spacing="1.4" text-anchor="end">144 × 377</text>
+
+  <g class="sans">
+    <g transform="translate(72 530)">
+      <rect width="468" height="198" rx="18" fill="#0B1710" stroke="#2B4033" />
+      <text x="24" y="34" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.6">01 / NOTICE</text>
+      <text x="24" y="84" fill="#F2F4EF" font-size="23" font-weight="520">See through the surface.</text>
+      <text x="24" y="120" fill="#A0B0A5" font-size="14">Look past the noise, connect the signals,</text>
+      <text x="24" y="143" fill="#A0B0A5" font-size="14">and understand what is really happening.</text>
+    </g>
+    <g transform="translate(566 530)">
+      <rect width="468" height="198" rx="18" fill="#0B1710" stroke="#2B4033" />
+      <text x="24" y="34" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.6">02 / UNDERSTAND</text>
+      <text x="24" y="84" fill="#F2F4EF" font-size="23" font-weight="520">Hold complexity simply.</text>
+      <text x="24" y="120" fill="#A0B0A5" font-size="14">Turn many moving parts into a small number</text>
+      <text x="24" y="143" fill="#A0B0A5" font-size="14">of clear and useful choices.</text>
+    </g>
+    <g transform="translate(1060 530)">
+      <rect width="468" height="198" rx="18" fill="#0B1710" stroke="#2B4033" />
+      <text x="24" y="34" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.6">03 / DECIDE</text>
+      <text x="24" y="84" fill="#F2F4EF" font-size="23" font-weight="520">Make the move.</text>
+      <text x="24" y="120" fill="#A0B0A5" font-size="14">Act with measured confidence, without</text>
+      <text x="24" y="143" fill="#A0B0A5" font-size="14">mistaking calm for hesitation.</text>
+    </g>
+  </g>
+
+  <g transform="translate(72 760)">
+    <rect width="690" height="350" rx="18" fill="#0B1710" stroke="#2B4033" />
+    <text x="24" y="38" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.6">COLOR / SIGNAL IN A QUIET FIELD</text>
+    <g transform="translate(24 76)" class="sans">
+      <g><rect width="92" height="117" rx="11" fill="#07110C" stroke="#2B4033"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Night</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#07110C</text></g>
+      <g transform="translate(104)"><rect width="92" height="117" rx="11" fill="#102019" stroke="#2B4033"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Forest</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#102019</text></g>
+      <g transform="translate(208)"><rect width="92" height="117" rx="11" fill="#53E59A"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Jade</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#53E59A</text></g>
+      <g transform="translate(312)"><rect width="92" height="117" rx="11" fill="#9AF2C0"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Mint</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#9AF2C0</text></g>
+      <g transform="translate(416)"><rect width="92" height="117" rx="11" fill="#DCE5DD"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Mist</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#DCE5DD</text></g>
+      <g transform="translate(520)"><rect width="92" height="117" rx="11" fill="#F2F4EF"/><text x="0" y="144" fill="#F2F4EF" font-size="12">Paper</text><text x="0" y="164" class="mono" fill="#93A69A" font-size="10">#F2F4EF</text></g>
+    </g>
+    <text x="24" y="315" class="sans" fill="#A0B0A5" font-size="12">Jade marks the signal. Let the rest of the interface breathe.</text>
+  </g>
+
+  <g transform="translate(780 760)">
+    <rect width="340" height="350" rx="18" fill="#0B1710" stroke="#2B4033" />
+    <text x="22" y="38" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.5">TYPE / DIRECT &amp; MEASURED</text>
+    <text x="22" y="121" class="sans" fill="#F2F4EF" font-size="36" font-weight="500" letter-spacing="-2">See the signal.</text>
+    <text x="22" y="167" class="sans" fill="#53E59A" font-size="36" font-weight="500" letter-spacing="-2">Choose the move.</text>
+    <path d="M22 200H318" stroke="#2B4033" />
+    <text x="22" y="237" class="sans" fill="#DCE5DD" font-size="13">Plain words. Specific trade-offs.</text>
+    <text x="22" y="260" class="sans" fill="#A0B0A5" font-size="13">A clear recommendation, then room</text>
+    <text x="22" y="281" class="sans" fill="#A0B0A5" font-size="13">for the person to decide.</text>
+    <text x="22" y="322" class="mono" fill="#829589" font-size="10">INTER / HELVETICA NEUE / SANS</text>
+  </g>
+
+  <g transform="translate(1138 760)">
+    <rect width="390" height="350" rx="18" fill="#0B1710" stroke="#2B4033" />
+    <text x="22" y="38" class="mono" fill="#53E59A" font-size="11" letter-spacing="1.5">IN PRODUCT / NEO</text>
+    <rect x="22" y="60" width="346" height="266" rx="14" fill="#F2F4EF" />
+    <rect x="22" y="60" width="346" height="57" rx="14" fill="#FFFFFF" />
+    <path d="M22 103H368" stroke="#DCE5DD" />
+    <rect x="38" y="73" width="32" height="32" rx="10" fill="#07110C" />
+    <g transform="translate(49.1 78) scale(.0318302)" fill="#53E59A">
+      <rect width="55" height="377" rx="5.5"/><rect x="89" width="55" height="171.5" rx="5.5"/><rect x="89" y="205.5" width="55" height="171.5" rx="5.5"/>
+    </g>
+    <text x="82" y="91" class="sans" fill="#1D2A21" font-size="13" font-weight="600">Neo</text>
+    <text x="82" y="105" class="sans" fill="#758278" font-size="9">Decision partner · ready</text>
+    <rect x="115" y="137" width="230" height="48" rx="13" fill="#E4EAE4" />
+    <text x="130" y="158" class="sans" fill="#26352B" font-size="10">Which path gives us the</text>
+    <text x="130" y="173" class="sans" fill="#26352B" font-size="10">strongest position next quarter?</text>
+    <text x="82" y="215" class="mono" fill="#738278" font-size="8" letter-spacing="1">NEO / RECOMMENDATION</text>
+    <text x="82" y="240" class="sans" fill="#26352B" font-size="10">Expand the partnership first.</text>
+    <text x="82" y="257" class="sans" fill="#637268" font-size="9">Faster market test, lower team load.</text>
+    <text x="82" y="272" class="sans" fill="#637268" font-size="9">Keep acquisition as a second-stage option.</text>
+    <text x="22" y="337" class="mono" fill="#829589" font-size="9">ATTENTIVE, NEVER THEATRICAL</text>
+  </g>
+
+  <text x="72" y="1158" class="mono" fill="#87988D" font-size="10" letter-spacing="1.6">HYPERNEO   /   QUIET CLARITY FOR CONSEQUENTIAL WORK</text>
+  <text x="1528" y="1158" class="mono" fill="#53E59A" font-size="10" letter-spacing="1.6" text-anchor="end">NOTICE   ·   UNDERSTAND   ·   DECIDE</text>
+</svg>
