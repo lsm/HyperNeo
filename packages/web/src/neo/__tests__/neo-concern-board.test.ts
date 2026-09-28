@@ -25,6 +25,7 @@ const work = (id: string, concernId: string | null, sessionId: string | null = n
   requestKey: id,
   concernId,
   originSessionId: 'root',
+  originMessageId: null,
   title: id,
   instruction: 'Do this',
   sessionId,

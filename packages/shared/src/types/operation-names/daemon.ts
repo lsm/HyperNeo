@@ -4,4 +4,5 @@ export const DAEMON_OPERATION_NAMES = [
   'daemon.list',
   'daemon.probe',
   'daemon.snapshot',
+  'daemon.session.inspect',
 ] as const;

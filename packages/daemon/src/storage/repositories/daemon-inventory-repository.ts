@@ -86,6 +86,17 @@ const LINKS = [
   ['evolution_scope', 'evolutionScopeId'],
 ] as const;
 
+export interface SessionInspectionRecord {
+  id: string;
+  name: string;
+  status: string;
+  lastActiveAt: string;
+  workspacePath: string | null;
+  processingStatus: string | null;
+  scopeOwned: number;
+  neoBound: number;
+}
+
 function entryFromRow(row: InventoryRow): DaemonInventoryEntry {
   return {
     id: row.id,
@@ -99,6 +110,32 @@ function entryFromRow(row: InventoryRow): DaemonInventoryEntry {
 
 export class DaemonInventoryRepository {
   constructor(private readonly db: Database) {}
+
+  readSession(sessionId: string): SessionInspectionRecord | null {
+    return (
+      (this.db
+        .prepare(`SELECT s.id, s.title AS name, s.status,
+      s.last_active_at AS lastActiveAt, COALESCE(s.main_repo_path, s.workspace_path) AS workspacePath,
+      CASE WHEN json_valid(s.processing_state) THEN
+        CASE WHEN json_type(s.processing_state, '$.status') = 'text'
+          THEN json_extract(s.processing_state, '$.status') ELSE NULL END
+        ELSE s.processing_state END AS processingStatus,
+      (s.space_id IS NOT NULL OR s.task_id IS NOT NULL OR COALESCE(s.type, 'worker') != 'worker'
+        OR CASE WHEN s.session_context IS NULL THEN 0 WHEN json_valid(s.session_context) THEN
+          json_type(s.session_context) != 'object'
+          OR json_type(s.session_context, '$.spaceId') IS NOT NULL
+          OR json_type(s.session_context, '$.taskId') IS NOT NULL
+          OR json_type(s.session_context, '$.roomId') IS NOT NULL
+          OR json_type(s.session_context, '$.lobbyId') IS NOT NULL ELSE 1 END
+        OR EXISTS (SELECT 1 FROM direct_task_session_provenance p WHERE p.session_id = s.id)
+        OR EXISTS (SELECT 1 FROM node_executions e WHERE e.agent_session_id = s.id)
+        OR EXISTS (SELECT 1 FROM space_long_horizon_agents a
+          WHERE a.session_id = s.id OR a.session_id = s.parent_id)) AS scopeOwned,
+      EXISTS (SELECT 1 FROM neo_session_bindings b WHERE b.session_id = s.id OR b.session_id = s.parent_id) AS neoBound
+      FROM sessions s WHERE s.id = ? LIMIT 1`)
+        .get(sessionId) as SessionInspectionRecord | null) ?? null
+    );
+  }
 
   read({
     limit,
