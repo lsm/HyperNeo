@@ -7,7 +7,7 @@ const concernColumns = `id, title, summary, context, revision,
 const bindingColumns = 'session_id AS sessionId, concern_id AS concernId, kind';
 const workColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
-  title, instruction, session_id AS sessionId,
+  title, instruction, target_session_id AS targetSessionId, session_id AS sessionId,
   status, report, created_at AS createdAt, updated_at AS updatedAt`;
 
 export type NeoConcernInput = Pick<NeoConcern, 'id' | 'title' | 'summary' | 'context'>;

@@ -52,11 +52,15 @@ export function NeoWorkCard({
           {work.status === 'proposed' ? 'Review the work brief' : 'What was delegated'}
         </summary>
         <p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">{work.instruction}</p>
+        {work.targetSessionId && (
+          <p class="mt-2 break-all text-xs">Existing chat: {work.targetSessionId}</p>
+        )}
       </details>
       {work.status === 'proposed' && (
         <p class="mt-3 text-xs leading-relaxed text-fg-muted">
-          Starts a real HyperNeo session with its existing tools and permissions, in a temporary
-          scratch workspace — no folder of yours is selected.
+          {work.targetSessionId
+            ? 'Continues in the selected existing HyperNeo chat, keeping its workspace, tools and permissions.'
+            : 'Starts a real HyperNeo session with its existing tools and permissions, in a temporary scratch workspace — no folder of yours is selected.'}
         </p>
       )}
       {work.report && (
@@ -83,7 +87,13 @@ export function NeoWorkCard({
             disabled={disabled || busy}
             onClick={() => onAction(work.id, 'cancel')}
           >
-            {busy ? 'Updating…' : active ? 'Stop work' : 'Not now'}
+            {busy
+              ? 'Updating…'
+              : active
+                ? work.targetSessionId
+                  ? 'Stop waiting'
+                  : 'Stop work'
+                : 'Not now'}
           </Button>
         )}
         {work.sessionId && (
@@ -98,7 +108,11 @@ export function NeoWorkCard({
         )}
       </div>
       {work.status === 'cancelled' && (
-        <p class="mt-2 text-xs text-fg-muted">Stopping does not undo changes already made.</p>
+        <p class="mt-2 text-xs text-fg-muted">
+          {work.targetSessionId
+            ? 'Stopped waiting for this result. The existing chat and its other work continue; changes are not undone.'
+            : 'Stopping does not undo changes already made.'}
+        </p>
       )}
     </article>
   );

@@ -176,8 +176,8 @@ describe('NeoService shared recipient lifecycle', () => {
     expect(interrupt).not.toHaveBeenCalled();
   }
 
-  test.each(['ordinary', 'project', 'manager', 'holder', 'missing'])(
-    'legacy Start never reserves or reconfigures existing target %s',
+  test.each(['manager', 'holder', 'missing'])(
+    'Start never reserves or reconfigures inadmissible existing target %s',
     async (target) => {
       const work = propose('A', target);
       const before = captureResources();
@@ -189,8 +189,8 @@ describe('NeoService shared recipient lifecycle', () => {
     }
   );
 
-  test.each(['ordinary', 'project', 'manager'])(
-    'recovery does not redeliver through the scratch-worker path for %s',
+  test.each(['manager'])(
+    'recovery does not deliver through the scratch-worker path for protected %s',
     async (target) => {
       const work = queue('A', target);
       const before = captureResources();

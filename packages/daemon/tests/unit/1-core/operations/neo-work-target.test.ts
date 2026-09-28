@@ -269,15 +269,19 @@ describe('NeoService work-target read facet', () => {
         );
       const before = capture();
       event.mockClear();
-      for (const workId of ['project-chat', 'family-chat', 'space-manager'])
+      for (const workId of ['project-chat', 'family-chat'])
         expect(service.resolveWorkTarget(workId)).toEqual({
           accepted: true,
           workId,
           targetSessionId: workId,
         });
+      expect(service.resolveWorkTarget('space-manager')).toEqual({
+        accepted: false,
+        reason: 'target_owned_context',
+      });
       expect(service.resolveWorkTarget('holder')).toEqual({
         accepted: false,
-        reason: 'target_is_coordinator',
+        reason: 'target_owned_context',
       });
       expect(service.resolveWorkTarget('missing')).toEqual({
         accepted: false,

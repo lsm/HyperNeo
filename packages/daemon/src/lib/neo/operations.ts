@@ -3,6 +3,14 @@ import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
+import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
+import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import {
+  requireNeoWorkTargetSession,
+  requireNeoWorkTargetBinding,
+  type presentNeoWorkTarget,
+} from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
@@ -29,6 +37,7 @@ const Work = z.object({
   originMessageId: z.string().nullable(),
   title: z.string(),
   instruction: z.string(),
+  targetSessionId: z.string().nullable().optional(),
   sessionId: z.string().nullable(),
   status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
   report: z.string().nullable(),
@@ -82,6 +91,7 @@ const Propose = z.object({
   concernId: z.string().min(1).nullable().default(null),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(16000),
+  targetSessionId: z.string().min(1).max(160).nullable().default(null),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -132,6 +142,7 @@ export function admitNeoCaller(
 }
 
 export function createNeoOperations(service: NeoService) {
+  const inventory = new DaemonInventoryRepository(service.db.getDatabase());
   function path<I, O>(
     name: string,
     scope: (input: I) => string | null | undefined,
@@ -383,33 +394,89 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'admission'],
       'result:admission'
     )
+    .pipe((origin: NeoWorkOrigin) => origin, 'admission', 'origin')
     .pipe(
-      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, caller: OperationCaller) => {
+      (input: z.infer<typeof Propose>) => ({
+        id: crypto.randomUUID(),
+        targetSessionId: input.targetSessionId,
+      }),
+      'input',
+      'candidate'
+    )
+    .pipe(
+      (target: NeoWorkTarget) => ({
+        session:
+          target.targetSessionId === null ? null : inventory.readSession(target.targetSessionId),
+      }),
+      'candidate',
+      'targetSession'
+    )
+    .pipe(
+      (target: NeoWorkTarget, { session }: { session: ReturnType<typeof inventory.readSession> }) =>
+        requireNeoWorkTargetSession(target, session),
+      ['candidate', 'targetSession'],
+      'result:admission'
+    )
+    .pipe(
+      (target: NeoWorkTarget) => ({
+        binding:
+          target.targetSessionId === null
+            ? null
+            : service.repo.getBindingBySession(target.targetSessionId),
+      }),
+      'admission',
+      'targetBinding'
+    )
+    .pipe(
+      (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
+        requireNeoWorkTargetBinding(target, binding),
+      ['admission', 'targetBinding'],
+      'result:admission'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Propose>,
+        origin: NeoWorkOrigin,
+        caller: OperationCaller,
+        target: NeoWorkTarget
+      ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
         const work = service.repo.proposeWork({
           ...input,
           ...origin,
           requestKey: `${origin.originSessionId}:${input.requestKey}`,
-          id: crypto.randomUUID(),
+          id: target.id,
         });
         return work.originMessageId === origin.originMessageId &&
           work.originSessionId === origin.originSessionId
-          ? { value: { ok: true as const, work } }
+          ? work.targetSessionId === target.targetSessionId
+            ? { value: { ok: true as const, work } }
+            : {
+                reason: {
+                  ok: false,
+                  reason: 'This request key belongs to another execution target.',
+                },
+              }
           : { reason: { ok: false, reason: 'This request key belongs to another input.' } };
       },
-      ['input', 'admission', 'caller'],
+      ['input', 'origin', 'caller', 'admission'],
       'result:admission'
     )
     .endAsync('admission') as (
     input: z.infer<typeof Propose>,
     caller: OperationCaller
-  ) => Promise<z.infer<typeof WorkResult>>;
+  ) => Promise<
+    | z.infer<typeof WorkResult>
+    | Extract<ReturnType<typeof presentNeoWorkTarget>, { accepted: false }>
+  >;
   const start = path(
     'neo.work.start',
     (_input: z.infer<typeof WorkId>) => undefined,
     async ({ id }) => {
       if (!service.repo.getWork(id)) return { ok: false as const, reason: 'Work not found.' };
+      const target = service.resolveWorkTarget(id);
+      if (!target.accepted) return { ok: false as const, reason: target.reason };
       await service.start(id);
       return { ok: true as const, work: service.repo.getWork(id)! };
     }
@@ -481,11 +548,14 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Reuse requestKey only to retry that input, not another ask. This does not start execution.',
+        'Propose work for user approval from the current live input. Optional targetSessionId is an exact existing ordinary project/non-project chat from daemon.snapshot, not a Space/task/workflow-owned or coordinator session. Null uses a new scratch worker. The target is immutable for this requestKey. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: propose,
+      execute: async (input, caller) => {
+        const result = await propose(input, caller);
+        return 'accepted' in result ? { ok: false as const, reason: result.reason } : result;
+      },
     }),
     defineOperation({
       name: 'neo.work.report',
