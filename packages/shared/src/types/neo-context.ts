@@ -19,6 +19,7 @@ export interface NeoConsultation {
   requestKey: string;
   concernId: string;
   originSessionId: string;
+  originMessageId: string | null;
   sessionId: string;
   question: string;
   status: 'pending' | 'reported' | 'failed';

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
+import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
@@ -32,6 +33,7 @@ describe('Neo request-bound context storage', () => {
     db.exec('PRAGMA foreign_keys = ON');
     createNeoTables(db);
     runMigration279(db);
+    runMigration282(db);
     notices = 0;
     repo = new NeoRepository(db, () => {
       notices++;

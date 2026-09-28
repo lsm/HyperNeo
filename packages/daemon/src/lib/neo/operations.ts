@@ -5,6 +5,11 @@ import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { createNeoIntakeOperation } from './intake.ts';
+import {
+  admitNeoConsultationOrigin,
+  requireLiveNeoConsultationOrigin,
+  type NeoConsultationOrigin,
+} from './consultation-origin.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -34,6 +39,7 @@ const Consultation = z.object({
   requestKey: z.string(),
   concernId: z.string(),
   originSessionId: z.string(),
+  originMessageId: z.string().nullable(),
   sessionId: z.string(),
   question: z.string(),
   status: z.enum(['pending', 'reported', 'failed']),
@@ -168,30 +174,36 @@ export function createNeoOperations(service: NeoService) {
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (caller: OperationCaller) => {
-        const root = caller.sessionId && service.repo.getBindingBySession(caller.sessionId);
-        return caller.source === 'mcp' && root && root.kind === 'neo'
-          ? { value: root.sessionId }
-          : { reason: { ok: false, reason: 'Only root Neo can consult.' } };
-      },
+      (caller: OperationCaller) =>
+        admitNeoConsultationOrigin(
+          caller,
+          caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null
+        ),
       'caller',
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Consult>, root: string) =>
+      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin) =>
         service.repo.getConcern(input.concernId)
           ? { value: root }
           : { reason: { ok: false, reason: 'Concern not found.' } },
       ['input', 'admission'],
       'result:admission'
     )
+    .pipe((origin: NeoConsultationOrigin) => origin, 'admission', 'origin')
     .pipe((input: z.infer<typeof Consult>) => service.open(input.concernId), 'input', 'sessionId')
     .pipe(
-      (input: z.infer<typeof Consult>, root: string, sessionId: string) => {
+      (origin: NeoConsultationOrigin, caller: OperationCaller) =>
+        requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
+      ['origin', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin, sessionId: string) => {
         const item = service.consultations.reserve({
           ...input,
           id: crypto.randomUUID(),
-          originSessionId: root,
+          ...root,
           sessionId,
         });
         return item
@@ -207,13 +219,22 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Consult>, item: z.infer<typeof Consultation>) =>
-        item.question === input.question && item.concernId === input.concernId
+      (
+        input: z.infer<typeof Consult>,
+        item: z.infer<typeof Consultation>,
+        origin: NeoConsultationOrigin
+      ) =>
+        item.question === input.question &&
+        item.concernId === input.concernId &&
+        item.originMessageId === origin.originMessageId
           ? { value: item }
           : {
-              reason: { ok: false, reason: 'Request key already belongs to another consultation.' },
+              reason: {
+                ok: false,
+                reason: 'Request key already belongs to another consultation or input.',
+              },
             },
-      ['input', 'admission'],
+      ['input', 'admission', 'origin'],
       'result:admission'
     )
     .pipe(
@@ -371,7 +392,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.concern.consult',
       description:
-        'Ask a context holder a bounded question. Returns a durable receipt; the answer arrives asynchronously. Reuse requestKey on retry.',
+        'Ask a context holder a bounded question from the current root input. Returns a correlated durable receipt; the answer arrives asynchronously. Reuse requestKey only for retries of this input; use a new key for another ask.',
       inputSchema: Consult,
       resultSchema: ConsultationResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
