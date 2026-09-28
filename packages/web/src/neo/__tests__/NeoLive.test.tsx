@@ -363,8 +363,9 @@ describe('Neo MVP controls', () => {
     const conversation = screen.getByRole('region', { name: 'Conversation with Neo' });
     expect(within(conversation).getByText('42.').tagName).toBe('P');
     expect(within(conversation).getByText('What is 17 plus 25?')).toBeTruthy();
-    fireEvent.click(within(conversation).getByRole('button', { name: 'What happened' }));
-    expect(within(conversation).getByText('Neo answered directly.')).toBeTruthy();
+    expect(within(conversation).queryByRole('button', { name: 'What happened' })).toBeNull();
+    expect(within(conversation).queryByText('How this is being handled')).toBeNull();
+    expect(within(conversation).queryByRole('link', { name: /technical trace/ })).toBeNull();
     expect(within(conversation).queryByText('Internal worker report')).toBeNull();
     expect(within(conversation).queryByText('Internal consultation question')).toBeNull();
     expect(within(conversation).queryByText('Internal consultation answer')).toBeNull();
@@ -402,7 +403,7 @@ describe('Neo MVP controls', () => {
     expect(within(reply).getByText('Dear neighbors, join us Sunday.')).toBeTruthy();
     expect(within(reply).getByRole('button', { name: 'Copy work result' })).toBeTruthy();
   });
-  it('keeps each reply’s activity beside its own copy control', () => {
+  it('keeps direct replies copyable without a legacy activity or technical-trace fallback', () => {
     const store = makeStore();
     store.sdkMessages.value = [
       { type: 'user', uuid: 'human', message: { role: 'user', content: 'Brief' } },
@@ -426,13 +427,9 @@ describe('Neo MVP controls', () => {
     render(<NeoConversation store={store} sessionId="neo" />);
     const reply = screen.getByText('All clear.').closest('article')!;
     expect(within(reply).getByRole('button', { name: 'Copy Neo’s message' })).toBeTruthy();
-    const activityButton = within(reply).getByRole('button', { name: 'What happened' });
-    fireEvent.click(activityButton);
-    expect(within(reply).getByText('Checked what Neo knows')).toBeTruthy();
-    expect(
-      within(reply).getByRole('link', { name: 'Open technical trace ↗' }).getAttribute('href')
-    ).toBe('/session/neo');
-    fireEvent.click(within(reply).getByRole('button', { name: 'Hide activity' }));
+    expect(within(reply).queryByRole('button', { name: 'What happened' })).toBeNull();
+    expect(within(reply).queryByRole('link', { name: /technical trace/ })).toBeNull();
+    expect(within(reply).queryByText('How this is being handled')).toBeNull();
     expect(within(reply).queryByText('Checked what Neo knows')).toBeNull();
   });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {

@@ -1,10 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
+import type { ChatMessage } from '@hyperneo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoLive } from '../NeoLive.tsx';
 
 const request = vi.hoisted(() => vi.fn());
-const stores = vi.hoisted(() => [] as { isWorking: { value: boolean } }[]);
+const stores = vi.hoisted(
+  () => [] as { isWorking: { value: boolean }; sdkMessages: { value: ChatMessage[] } }[]
+);
 const connected = signal('connected');
 vi.mock('../../lib/state.ts', () => ({
   get connectionState() {
@@ -20,7 +23,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 vi.mock('../../lib/session-store.ts', () => ({
   SessionStore: class {
     sessionInfo = signal({ metadata: {} });
-    sdkMessages = signal([]);
+    sdkMessages = signal<ChatMessage[]>([]);
     messagesLoaded = signal(true);
     activeSessionId = signal<string | null>(null);
     loadErrorKind = signal(null);
@@ -37,7 +40,9 @@ vi.mock('../../lib/session-store.ts', () => ({
     async destroy() {}
   },
 }));
-vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => null }));
+vi.mock('../../components/chat/MarkdownRenderer.tsx', () => ({
+  default: ({ content }: { content: string }) => <div>{content}</div>,
+}));
 vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
 vi.mock('../NeoVoice.tsx', () => ({ NeoVoice: () => null }));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
@@ -101,7 +106,7 @@ afterEach(() => {
 async function open() {
   render(<NeoLive />);
   const input = await screen.findByRole('textbox', { name: 'Message Neo' });
-  await screen.findByRole('button', { name: 'Research Things to learn.' });
+  await screen.findByRole('button', { name: /Research .*Things to learn\./ });
   await waitFor(() =>
     expect(request.mock.calls.some((call) => call[1]?.name === 'neo.snapshot')).toBe(true)
   );
@@ -122,21 +127,58 @@ async function attach(name: string, content: string, type: string) {
 }
 
 describe('Neo live durable intake', () => {
-  it('opens the actual optional board without making unrelated intake wait on inventory', async () => {
-    await open();
-    expect(request.mock.calls.some((call) => call[1]?.name === 'daemon.snapshot')).toBe(false);
+  it('opens A’s request board without making unrelated intake wait on inventory', async () => {
+    const askA = '11111111-1111-4111-8111-111111111111';
+    const active = {
+      ...snapshot(),
+      work: [
+        {
+          id: 'work-A',
+          requestKey: 'work-A',
+          concernId: 'research',
+          originSessionId: 'neo:root',
+          originMessageId: askA,
+          title: 'Work for A',
+          instruction: 'A bounded draft.',
+          sessionId: 'executor-A',
+          status: 'queued',
+          report: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      askOrigins: [
+        { kind: 'work', id: 'work-A', origin: { sessionId: 'neo:root', messageId: askA } },
+      ],
+    };
     let complete!: (value: unknown) => void;
     request.mockImplementation(
-      async (_method: string, { name, input }: { name: string; input: IntakeInput }) => {
+      async (
+        _method: string,
+        { name, input }: { name: string; input: IntakeInput & { concernId?: string } }
+      ) => {
         if (name === 'daemon.snapshot')
           return new Promise((resolve) => {
             complete = resolve;
           });
         if (name === 'neo.message.send') return accepted(input);
-        return snapshot();
+        return input.concernId ? snapshot('neo:research') : active;
       }
     );
-    fireEvent.click(screen.getByText('How Neo is handling things'));
+    await open();
+    act(() => {
+      stores[0].sdkMessages.value = [
+        {
+          type: 'user',
+          uuid: askA,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'Project request A' },
+        },
+      ] as ChatMessage[];
+    });
+    expect(request.mock.calls.some((call) => call[1]?.name === 'daemon.snapshot')).toBe(false);
+    expect(screen.queryByText('How Neo is handling things')).toBeNull();
+    fireEvent.click(screen.getByText('How this is being handled'));
     await screen.findByRole('region', { name: 'Concern board' });
     await screen.findByText('Checking linked resources…');
     submit('A separate family question');
@@ -147,8 +189,9 @@ describe('Neo live durable intake', () => {
     );
     await act(async () => complete({ capturedAt: 123, resources: [], capabilities: [] }));
     expect(await screen.findByText(/Resource details captured/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Research Things to learn.' }));
-    await screen.findByText('How this is being handled');
+    fireEvent.click(screen.getByRole('button', { name: /Research .*Things to learn\./ }));
+    await screen.findByText('One part of your world · 分身');
+    expect(screen.queryByText('How this is being handled')).toBeNull();
     expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull();
     expect(request.mock.calls.filter((call) => call[1]?.name === 'daemon.snapshot')).toHaveLength(
       1
