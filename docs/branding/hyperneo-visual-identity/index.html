@@ -66,7 +66,7 @@
       gap: 70px;
     }
     h1, h2, h3, p { margin-top: 0; }
-    h1 { max-width: 700px; margin: 20px 0 22px; font-size: clamp(54px, 7vw, 88px); line-height: .98; font-weight: 510; letter-spacing: -.075em; }
+    h1 { max-width: 700px; margin: 20px 0 22px; font-size: clamp(52px, 5.5vw, 74px); line-height: .98; font-weight: 510; letter-spacing: -.075em; }
     h1 span { color: var(--jade); }
     .hero-copy > p:not(.eyebrow) { max-width: 520px; color: var(--mist); font-size: 17px; line-height: 1.7; }
     .hero-foot { display: flex; gap: 24px; margin-top: 32px; color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
@@ -143,6 +143,39 @@
     .guideline .index { margin-bottom: 15px; }
     .guideline h3 { margin-bottom: 6px; font-size: 13px; font-weight: 550; }
     .guideline p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .photo-layout { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; }
+    .photo-sample, .photo-notes { overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #0b1710; }
+    .photo-sample { margin: 0; }
+    .photo-sample img { display: block; width: 100%; height: 100%; min-height: 350px; object-fit: cover; }
+    .photo-notes { padding: 24px; }
+    .photo-notes h3 { margin: 0 0 8px; font-size: 15px; font-weight: 550; }
+    .photo-notes p, .photo-notes li { color: var(--muted); font-size: 12px; line-height: 1.75; }
+    .photo-notes ul { margin: 12px 0 22px; padding-left: 19px; }
+    .type-spec { overflow-x: auto; margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .type-spec .spec-table td:last-child { color: var(--mist); }
+    .cjk-sample { margin-top: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #102019; font-family: var(--hn-font-cjk); }
+    .cjk-sample strong { display: block; margin-bottom: 8px; color: var(--paper); font-size: 27px; font-weight: 500; letter-spacing: 0; }
+    .cjk-sample span { color: var(--muted); font-size: 12px; }
+    .print-spec { overflow-x: auto; margin-top: 26px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .print-spec .spec-table { min-width: 660px; }
+    .print-spec .spec-table td:last-child { color: var(--mist); }
+    .note-panel { margin-top: 17px; padding: 15px 17px; border-left: 2px solid var(--jade); background: #102019; color: var(--muted); font-size: 11px; line-height: 1.75; }
+    .note-panel strong { color: var(--mist); font-weight: 550; }
+    .template-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .template-card { overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: #0b1710; }
+    .template-card img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #102019; }
+    .template-card div { padding: 15px; }
+    .template-card h3 { margin: 0 0 5px; font-size: 13px; font-weight: 550; }
+    .template-card p { min-height: 37px; margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.65; }
+    .template-card a { color: var(--mint); font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+    .state-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 18px; }
+    .state { min-height: 126px; padding: 17px; border: 1px solid var(--line); border-radius: 13px; background: #0b1710; }
+    .state span { display: inline-block; margin-bottom: 13px; color: var(--jade); font: 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .state p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+    .rights-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 24px; padding: 23px; border: 1px solid #53e59a44; border-radius: 16px; background: #102019; }
+    .rights-panel p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .rights-panel strong { display: block; margin-bottom: 5px; color: var(--paper); font-size: 14px; font-weight: 550; }
+    .rights-panel a { color: var(--mint); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; font-size: 11px; }
     .asset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .asset-card { padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: #0b1710; }
     .asset-card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 560; }
@@ -206,7 +239,9 @@
       .palette { grid-template-columns: repeat(3, 1fr); }
       .story-grid, .principles { grid-template-columns: repeat(2, 1fr); }
       .mark-grid, .type-layout, .product-grid, .system-grid { grid-template-columns: 1fr; }
-      .asset-grid, .guideline-list { grid-template-columns: repeat(2, 1fr); }
+      .asset-grid, .guideline-list, .template-grid { grid-template-columns: repeat(2, 1fr); }
+      .photo-layout { grid-template-columns: 1fr; }
+      .state-grid { grid-template-columns: repeat(3, 1fr); }
     }
     @media (max-width: 560px) {
       .shell { width: min(100% - 32px, 440px); }
@@ -224,12 +259,16 @@
       .surface-pair { grid-template-columns: 1fr; }
       .surface-demo { justify-content: flex-start; padding-left: 30px; }
       .palette { grid-template-columns: repeat(2, 1fr); }
-      .pattern-grid, .asset-grid, .guideline-list { grid-template-columns: 1fr; }
+      .pattern-grid, .asset-grid, .guideline-list, .template-grid { grid-template-columns: 1fr; }
       .swatch-color { height: 85px; }
       .scale-row { align-items: center; gap: 11px; padding: 16px 10px; }
       .scale-item { min-width: 50px; }
       .scale-box { width: 52px; height: 52px; border-radius: 15px; }
       .scale-note { display: none; }
+      .state-grid { grid-template-columns: repeat(2, 1fr); }
+      .rights-panel { grid-template-columns: 1fr; }
+      .rights-panel a { white-space: normal; }
+      .photo-sample img { min-height: 230px; }
       footer { flex-direction: column; }
     }
     @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
@@ -275,6 +314,12 @@
         <article class="story-card"><p class="index">02 / Understand</p><h3>Hold complexity simply</h3><p>Turn many moving parts into a small number of clear, useful choices.</p></article>
         <article class="story-card"><p class="index">03 / Decide</p><h3>Make the move</h3><p>Act with measured confidence, without mistaking calm for hesitation.</p></article>
       </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Promise</p><h3>Clarity for consequential work</h3><p>Help capable leaders see what matters, understand what changes, and choose with confidence.</p></article>
+        <article class="guideline"><p class="index">Difference</p><h3>Full capability, less exposed complexity</h3><p>Make powerful agent workflows feel natural while keeping evidence, uncertainty, and meaningful controls available.</p></article>
+        <article class="guideline"><p class="index">Expression</p><h3>Calm, candid, exact</h3><p>Never confuse confidence with certainty. Explain what is known, what is assumed, and what still belongs to the human.</p></article>
+      </div>
+      <p class="note-panel"><strong>Brand architecture:</strong> HyperNeo is the product and platform. Neo is the agent presence inside it: a clear, capable decision partner. “Matrix” is an internal story reference for seeing through a convincing surface; public creative should use original HyperNeo imagery and language, not film logos, stills, or signature code-rain graphics.</p>
     </section>
 
     <section class="section" id="mark" aria-labelledby="mark-title">
@@ -294,6 +339,11 @@
       <div class="lockup-row" aria-label="Horizontal wordmark lockups">
         <div class="lockup-sample"><img src="assets/lockup-06-dark.svg" alt="Jade mark with white HyperNeo wordmark"></div>
         <div class="lockup-sample light"><img src="assets/lockup-06-light.svg" alt="Ink mark with ink HyperNeo wordmark"></div>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Small-scale mark</p><h3>Protect legibility</h3><p>Minimum mark height: 24 CSS px. Prefer 32 px for an avatar. At 16 px, use a simplified avatar tile or wordmark rather than shrinking the full mark.</p></article>
+        <article class="guideline"><p class="index">Lockup</p><h3>Keep the wordmark readable</h3><p>Use the horizontal lockup at 200 px wide or larger. Below that size, use the standalone mark with a clear brand label nearby.</p></article>
+        <article class="guideline"><p class="index">Clear space</p><h3>One opening on every side</h3><p>Keep at least 34 master units around the mark. Never place a rule, crop, text edge, or competing icon inside the exclusion zone.</p></article>
       </div>
     </section>
 
@@ -329,6 +379,26 @@
           <tr><td>Coral</td><td>#F38B80</td><td>Risk / urgent</td></tr>
         </tbody></table></article>
       </div>
+      <div class="print-spec">
+        <p class="eyebrow">Production reference &nbsp; / &nbsp; sRGB → process CMYK</p>
+        <table class="spec-table"><thead><tr><th>Token</th><th>sRGB hex</th><th>RGB</th><th>CMYK % · C / M / Y / K</th></tr></thead><tbody>
+          <tr><td>Night</td><td>#07110C</td><td>7 / 17 / 12</td><td>86 / 58 / 66 / 100</td></tr>
+          <tr><td>Forest</td><td>#102019</td><td>16 / 32 / 25</td><td>95 / 36 / 71 / 100</td></tr>
+          <tr><td>Forest raised</td><td>#16281F</td><td>22 / 40 / 31</td><td>83 / 33 / 74 / 94</td></tr>
+          <tr><td>Jade</td><td>#53E59A</td><td>83 / 229 / 154</td><td>55 / 0 / 59 / 0</td></tr>
+          <tr><td>Mint</td><td>#9AF2C0</td><td>154 / 242 / 192</td><td>36 / 0 / 37 / 0</td></tr>
+          <tr><td>Mist</td><td>#DCE5DD</td><td>220 / 229 / 221</td><td>16 / 5 / 13 / 0</td></tr>
+          <tr><td>Paper</td><td>#F2F4EF</td><td>242 / 244 / 239</td><td>6 / 2 / 6 / 0</td></tr>
+          <tr><td>Muted</td><td>#A0B0A5</td><td>160 / 176 / 165</td><td>40 / 20 / 33 / 5</td></tr>
+          <tr><td>Slate</td><td>#829589</td><td>130 / 149 / 137</td><td>49 / 27 / 41 / 14</td></tr>
+          <tr><td>Line</td><td>#2B4033</td><td>43 / 64 / 51</td><td>76 / 38 / 72 / 73</td></tr>
+          <tr><td>Sky</td><td>#8ABCF4</td><td>138 / 188 / 244</td><td>49 / 18 / 0 / 0</td></tr>
+          <tr><td>Amber</td><td>#EFC276</td><td>239 / 194 / 118</td><td>4 / 24 / 60 / 2</td></tr>
+          <tr><td>Coral</td><td>#F38B80</td><td>243 / 139 / 128</td><td>0 / 57 / 42 / 0</td></tr>
+        </tbody></table>
+        <p class="note-panel"><strong>Press condition:</strong> CGATS21-2 CRPC6 (GRACoL 2013), relative-colorimetric conversion. These are reference separations; the printer’s press profile and proof on the final stock take precedence. No Pantone spot ink is assigned. Select any required spot color from a current physical fan deck and approve a press proof. Font and profile binaries are not bundled.</p>
+      </div>
+      <p class="note-panel"><strong>Accessibility:</strong> Paper or Mist on Night exceeds WCAG AA text contrast. Jade is an accent on deep green, not a text color on Paper. Do not rely on hue alone to communicate success, risk, or status; add a label and a distinct shape or icon.</p>
     </section>
 
     <section class="section" id="patterns" aria-labelledby="patterns-title">
@@ -347,20 +417,48 @@
       </div>
     </section>
 
+    <section class="section" id="imagery" aria-labelledby="imagery-title">
+      <div class="section-head">
+        <p class="eyebrow">05 &nbsp; / &nbsp; Imagery & photography</p>
+        <div><h2 id="imagery-title">Human presence. <span>Unforced insight.</span></h2><p>Photography should make leadership feel real, thoughtful, and grounded. Show the moment of understanding or the work around a decision, rather than illustrating intelligence with glowing interfaces.</p></div>
+      </div>
+      <div class="photo-layout">
+        <figure class="photo-sample"><img src="assets/imagery/photography-direction-01.png" alt="Candid leadership team in a quiet meeting, with natural window light, thoughtful expressions, and blank decision cards on the table"></figure>
+        <article class="photo-notes">
+          <p class="eyebrow">Photography direction &nbsp; / &nbsp; reference</p>
+          <h3>Observe, don’t stage.</h3>
+          <p>Favor natural window light, candid collaboration, composed spaces, and restrained color. Let a person’s attention or a small practical gesture carry the story. Keep the frame calm enough to leave room for a headline or decision point.</p>
+          <ul><li>Use real, specific environments and believable work moments.</li><li>Choose diverse leaders without reducing people to stock-photo roles.</li><li>Keep screens and documents abstract or unreadable unless approved facts are supplied.</li><li>Avoid handshake clichés, staged pointing, code rain, neon HUDs, and synthetic “AI brain” imagery.</li></ul>
+          <span class="micro">AI-assisted art-direction reference · not a customer or product photograph</span>
+        </article>
+      </div>
+    </section>
+
     <section class="section" id="type" aria-labelledby="type-title">
       <div class="section-head">
-        <p class="eyebrow">05 &nbsp; / &nbsp; Type & voice</p>
+        <p class="eyebrow">06 &nbsp; / &nbsp; Type & voice</p>
         <div><h2 id="type-title">Direct language. <span>Measured weight.</span></h2><p>Use a modern sans-serif for product and headlines, then reserve a monospaced face for small labels, metrics, and system state. Favor short statements, plain words, and specific recommendations.</p></div>
       </div>
       <div class="type-layout">
-        <div class="type-display"><span class="eyebrow">Display / Helvetica Neue · Inter · sans-serif</span><div class="display-sample">See the signal.<br><span>Choose the move.</span></div><div class="type-meta"><span>Headlines: medium, close tracking</span><span>Body: regular, generous leading</span></div></div>
+        <div class="type-display"><span class="eyebrow">Display / Inter · Noto Sans SC · sans-serif</span><div class="display-sample">See the signal.<br><span>Choose the move.</span></div><div class="type-meta"><span>Headlines: medium, close tracking</span><span>Body: regular, generous leading</span></div></div>
         <div class="voice-card"><span class="eyebrow">Voice / Calm, candid, useful</span><blockquote>“The acquisition is faster. The trade-off is less control over the roadmap.”</blockquote><p>Say what matters, name the trade-off, and leave space for the person making the decision.</p></div>
       </div>
+      <div class="type-spec"><p class="eyebrow">Type scale &nbsp; / &nbsp; px at 100% browser zoom</p><table class="spec-table"><thead><tr><th>Role</th><th>Size</th><th>Weight</th><th>Line height</th><th>Use</th></tr></thead><tbody>
+        <tr><td>Display</td><td>64 px</td><td>500</td><td>1.05</td><td>Campaign idea, title slide</td></tr>
+        <tr><td>H1</td><td>48 px</td><td>500–600</td><td>1.10</td><td>Page or decision title</td></tr>
+        <tr><td>H2</td><td>32 px</td><td>500–600</td><td>1.20</td><td>Section heading</td></tr>
+        <tr><td>H3</td><td>20 px</td><td>500–600</td><td>1.20</td><td>Card or subsection</td></tr>
+        <tr><td>Body</td><td>16 px</td><td>400</td><td>1.60</td><td>Core product and document reading</td></tr>
+        <tr><td>Small</td><td>13 px</td><td>400–500</td><td>1.60</td><td>Secondary explanation</td></tr>
+        <tr><td>Label</td><td>11 px</td><td>500–600</td><td>1.20</td><td>Metadata; never dense body copy</td></tr>
+      </tbody></table></div>
+      <div class="cjk-sample" lang="zh-Hans"><strong>谦以持心，决而后动。</strong><span>简体中文排版：正文不加英文式字距；保持清晰层级与充分行距。 / Simplified Chinese: do not apply English tracking to running text; keep hierarchy clear and line spacing generous.</span></div>
+      <p class="note-panel"><strong>Font fallback:</strong> Inter for Latin text; Noto Sans SC for Simplified Chinese when installed; then platform fonts such as PingFang SC, Microsoft YaHei, or Hiragino Sans GB. Use SF Mono or platform monospace for compact metadata. Font files are third-party software and are not included in this package.</p>
     </section>
 
     <section class="section" id="product" aria-labelledby="product-title">
       <div class="section-head">
-        <p class="eyebrow">06 &nbsp; / &nbsp; In product</p>
+        <p class="eyebrow">07 &nbsp; / &nbsp; In product</p>
         <div><h2 id="product-title">A helpful presence, never a <span>performance.</span></h2><p>Neo should feel attentive in conversation and composed in the decision view. Use the mark as a quiet anchor, with status and recommendations written in the same clear voice.</p></div>
       </div>
       <div class="product-grid">
@@ -381,11 +479,19 @@
         <div class="scale-item"><div class="scale-box"><img src="assets/logo-mark-06-jade.svg" alt="" style="height:48px"></div><span class="scale-label">48 px</span></div>
         <p class="scale-note">Render the SVG at its natural ratio. In square avatars and favicons, center it on a high-contrast tile and keep its vertical silhouette intact.</p>
       </div>
+      <div class="state-grid" aria-label="Neo agent interface states">
+        <article class="state"><span>Ready</span><p>Quiet anchor. Invite the user to bring a question; avoid a busy idle animation.</p></article>
+        <article class="state"><span>Thinking</span><p>Show a single, restrained pulse or progress cue with plain-language status.</p></article>
+        <article class="state"><span>Needs input</span><p>State the missing decision or permission and make the next action explicit.</p></article>
+        <article class="state"><span>Complete</span><p>Present the answer, recommendation, sources, and remaining uncertainty together.</p></article>
+        <article class="state"><span>Needs attention</span><p>Name what failed and offer a safe, understandable recovery path.</p></article>
+      </div>
+      <p class="note-panel"><strong>Agent behavior:</strong> The UI can hide implementation complexity, but it must keep consequential actions, evidence, uncertainty, and permission boundaries legible. Neo supports judgment; the human owns the decision.</p>
     </section>
 
     <section class="section" aria-labelledby="motion-title">
       <div class="section-head">
-        <p class="eyebrow">07 &nbsp; / &nbsp; Motion & craft</p>
+        <p class="eyebrow">08 &nbsp; / &nbsp; Motion & craft</p>
         <div><h2 id="motion-title">Quiet motion, <span>clear intent.</span></h2><p>Motion should help the user notice that Neo has focused or reached a conclusion. It should be subtle, short, and optional; the mark itself never morphs into a different shape.</p></div>
       </div>
       <div class="principles">
@@ -396,9 +502,24 @@
       </div>
     </section>
 
+    <section class="section" id="templates" aria-labelledby="templates-title">
+      <div class="section-head">
+        <p class="eyebrow">09 &nbsp; / &nbsp; Applications</p>
+        <div><h2 id="templates-title">A system that travels <span>with the decision.</span></h2><p>Use these editable vector layouts as starting points for executive communication. Replace bracketed copy, verify facts and type, then export a final PDF or image for its intended medium.</p></div>
+      </div>
+      <div class="template-grid">
+        <article class="template-card"><img src="templates/executive-decision-brief.svg" alt="Executive decision brief layout preview"><div><h3>Executive decision brief</h3><p>Recommendation, evidence, trade-off, options, owner, and next step.</p><a href="templates/executive-decision-brief.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/presentation-title.svg" alt="Dark presentation title layout preview"><div><h3>Presentation title</h3><p>Dark 16:9 opening slide for a strategic review or decision.</p><a href="templates/presentation-title.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/presentation-content.svg" alt="Light presentation content slide layout preview"><div><h3>Presentation content</h3><p>One idea, evidence, implications, trade-off, and bottom line.</p><a href="templates/presentation-content.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/letterhead-a4.svg" alt="A4 portrait letterhead layout preview"><div><h3>A4 letterhead</h3><p>Calm stationery with a compact logo and generous writing space.</p><a href="templates/letterhead-a4.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/social-post-square.svg" alt="Square social insight layout preview"><div><h3>Square social insight</h3><p>A single concise thought designed to stay readable in a feed.</p><a href="templates/social-post-square.svg" download>Download editable SVG</a></div></article>
+      </div>
+      <p class="note-panel"><strong>Template discipline:</strong> Keep one main idea per page or slide. Make sources and assumptions visible. Avoid unsupported superlatives and decorative metrics. Leave room for the reader to assess the recommendation.</p>
+    </section>
+
     <section class="section" id="assets" aria-labelledby="assets-title">
       <div class="section-head">
-        <p class="eyebrow">08 &nbsp; / &nbsp; Brand files</p>
+        <p class="eyebrow">10 &nbsp; / &nbsp; Brand files</p>
         <div><h2 id="assets-title">One source. <span>Ready to ship.</span></h2><p>Use SVG for product and web. PDF is suitable for print and presentations; EPS supports legacy print workflows. The logo mark is geometry only and scales cleanly at any size.</p></div>
       </div>
       <div class="asset-grid">
@@ -407,11 +528,26 @@
         <article class="asset-card"><h3>Print vectors · PDF / EPS</h3><p><a href="assets/exports/mark-06-jade.pdf">Jade mark PDF</a> · <a href="assets/exports/mark-06-jade.eps">Jade mark EPS</a> · <a href="assets/exports/lockup-06-horizontal-dark.pdf">Dark lockup PDF</a> · <a href="assets/exports/lockup-06-horizontal-dark.eps">Dark lockup EPS</a><br><a href="assets/exports/index.html">Browse every export</a></p></article>
         <article class="asset-card"><h3>Patterns & elements · SVG</h3><p><a href="patterns/01-signal-field.svg">Signal field</a> · <a href="patterns/02-quiet-grid.svg">Quiet grid</a> · <a href="elements/01-open-decision-frame.svg">Decision frame</a> · <a href="elements/02-split-rule.svg">Split rule</a> · <a href="elements/03-focus-corner.svg">Focus corner</a></p></article>
         <article class="asset-card"><h3>Design tokens</h3><p><a href="brand-tokens.css">CSS custom properties</a> · <a href="brand-tokens.json">JSON tokens</a></p></article>
-        <article class="asset-card"><h3>Source & usage</h3><p><a href="README.md">Implementation notes and export guide</a> · <a href="identity-system-board-02.svg">Identity system board</a></p></article>
+        <article class="asset-card"><h3>Reusable layouts · SVG</h3><p><a href="templates/index.html">Browse and download templates</a> · Executive brief · Presentation · Letterhead · Social post</p></article>
+        <article class="asset-card"><h3>Source & usage</h3><p><a href="README.md">Implementation notes</a> · <a href="identity-system-board-02.svg">Identity system board</a> · <a href="ASSET-LICENSE.md">Brand asset license</a></p></article>
       </div>
-      <p class="asset-note">The SVG lockups keep the wordmark live in the Inter / Helvetica Neue system stack. PDF and EPS lockups use standard Helvetica text; convert the wordmark to outlines in your design tool before sending a printer a final mechanical.</p>
+      <p class="asset-note">The SVG lockups keep the wordmark as live text in the Inter / system stack. PDF and EPS lockups use standard Helvetica text; confirm the font, then outline the wordmark in your design tool before sending a printer a final mechanical.</p>
     </section>
-    <footer><span><strong>HyperNeo</strong> &nbsp; / &nbsp; Visual identity 01</span><span>Quiet clarity for consequential work.</span></footer>
+
+    <section class="section" id="governance" aria-labelledby="governance-title">
+      <div class="section-head">
+        <p class="eyebrow">11 &nbsp; / &nbsp; Governance</p>
+        <div><h2 id="governance-title">One master. <span>Clear ownership.</span></h2><p>Keep mark 06 and its source vectors as the canonical identity. Update the token source and export library together so implementation teams and production partners receive matching specifications.</p></div>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Source of truth</p><h3>Master SVG + tokens</h3><p>Maintain logo geometry in SVG. Update `brand-tokens.json` first, then synchronize CSS and guide examples. Record approval date and version in the source package.</p></article>
+        <article class="guideline"><p class="index">Production</p><h3>Check every output</h3><p>Generate PDF/EPS from the approved master, inspect the outline, verify font handling, and request a print proof. Keep third-party font and profile terms with their providers.</p></article>
+        <article class="guideline"><p class="index">Accessibility</p><h3>Make meaning perceivable</h3><p>Provide useful alt text for informative marks, preserve AA text contrast, pair color with a label or shape, and respect reduced-motion preferences.</p></article>
+      </div>
+      <div class="rights-panel"><div><strong>Brand assets are all rights reserved.</strong><p>The logo, wordmark, guide, patterns, tokens, templates, and included art-direction materials are excluded from the repository’s Apache-2.0 software license. The vector exporter remains Apache-2.0. No trademark permission is implied. See the scope and third-party notes in the asset license.</p></div><a href="ASSET-LICENSE.md">Read ASSET-LICENSE.md</a></div>
+      <p class="note-panel"><strong>Rights-holder detail:</strong> The notice currently names HyperNeo. Before public release, confirm that this matches the legal person or entity that owns the brand materials, and replace it if needed.</p>
+    </section>
+    <footer><span><strong>HyperNeo</strong> &nbsp; / &nbsp; Visual identity 01 · 2026</span><span>Quiet clarity for consequential work. &nbsp; · &nbsp; <a href="ASSET-LICENSE.md">All rights reserved</a></span></footer>
   </main>
 </body>
 </html>

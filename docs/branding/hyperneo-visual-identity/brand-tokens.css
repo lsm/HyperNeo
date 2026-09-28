@@ -14,7 +14,8 @@
   --hn-data-sky: #8abcf4;
   --hn-data-amber: #efc276;
   --hn-data-coral: #f38b80;
-  --hn-font-sans: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --hn-font-sans: Inter, "Noto Sans SC", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --hn-font-cjk: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
   --hn-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --hn-type-display: 4rem;
   --hn-type-h1: 3rem;

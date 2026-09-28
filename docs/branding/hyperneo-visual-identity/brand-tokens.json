@@ -1,4 +1,10 @@
 {
+  "brand": {
+    "name": "HyperNeo",
+    "mark": "06",
+    "version": "1.0.0",
+    "updated": "2026-09-28"
+  },
   "color": {
     "night": "#07110C",
     "forest": "#102019",
@@ -18,9 +24,50 @@
       "coral": "#F38B80"
     }
   },
+  "colorManagement": {
+    "digitalProfile": "sRGB IEC61966-2.1",
+    "printReferenceProfile": "CGATS21-2 CRPC6 (GRACoL 2013), relative colorimetric",
+    "printValuesAreEstimates": true,
+    "pantoneSpot": {
+      "status": "not-assigned",
+      "instruction": "Do not infer a Pantone spot color from a screen. Approve from a physical swatch and production proof."
+    },
+    "rgb": {
+      "night": [7, 17, 12],
+      "forest": [16, 32, 25],
+      "forestRaised": [22, 40, 31],
+      "jade": [83, 229, 154],
+      "mint": [154, 242, 192],
+      "mist": [220, 229, 221],
+      "paper": [242, 244, 239],
+      "muted": [160, 176, 165],
+      "slate": [130, 149, 137],
+      "line": [43, 64, 51],
+      "sky": [138, 188, 244],
+      "amber": [239, 194, 118],
+      "coral": [243, 139, 128]
+    },
+    "cmykPercent": {
+      "night": [86, 58, 66, 100],
+      "forest": [95, 36, 71, 100],
+      "forestRaised": [83, 33, 74, 94],
+      "jade": [55, 0, 59, 0],
+      "mint": [36, 0, 37, 0],
+      "mist": [16, 5, 13, 0],
+      "paper": [6, 2, 6, 0],
+      "muted": [40, 20, 33, 5],
+      "slate": [49, 27, 41, 14],
+      "line": [76, 38, 72, 73],
+      "sky": [49, 18, 0, 0],
+      "amber": [4, 24, 60, 2],
+      "coral": [0, 57, 42, 0]
+    }
+  },
   "font": {
-    "sans": "Inter, Helvetica Neue, Helvetica, Arial, sans-serif",
-    "mono": "SFMono-Regular, Consolas, Liberation Mono, monospace"
+    "sans": "Inter, Noto Sans SC, Helvetica Neue, Helvetica, Arial, sans-serif",
+    "cjk": "Noto Sans SC, PingFang SC, Microsoft YaHei, Hiragino Sans GB, sans-serif",
+    "mono": "SFMono-Regular, Consolas, Liberation Mono, monospace",
+    "thirdPartyFontFilesIncluded": false
   },
   "typeScalePx": {
     "display": 64,
@@ -32,6 +79,7 @@
     "label": 11
   },
   "lineHeight": {
+    "display": 1.05,
     "tight": 1.1,
     "heading": 1.2,
     "body": 1.6,
@@ -52,7 +100,8 @@
   },
   "motionMs": {
     "quick": 160,
-    "standard": 240
+    "standard": 240,
+    "maximumForStatusFeedback": 320
   },
   "grid": {
     "columns": 12,
@@ -70,6 +119,10 @@
     "viewBox": [0, 0, 144, 377],
     "barWidth": 55,
     "opening": 34,
-    "minimumClearSpace": 34
+    "minimumClearSpace": 34,
+    "minimumDigitalMarkHeightPx": 24,
+    "preferredDigitalMarkHeightPx": 32,
+    "minimumHorizontalLockupWidthPx": 200,
+    "minimumFaviconTilePx": 32
   }
 }

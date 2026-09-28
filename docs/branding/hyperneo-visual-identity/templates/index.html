@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07110c">
+  <title>HyperNeo — Layout templates</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.6 Inter, "Noto Sans SC", "Helvetica Neue", Arial, sans-serif; background: #07110c; color: #f2f4ef; }
+    * { box-sizing: border-box; }
+    body { max-width: 1160px; margin: 0 auto; padding: 40px 24px 80px; }
+    a { color: #9af2c0; }
+    header { padding: 50px 0 36px; border-bottom: 1px solid #2b4033; }
+    .eyebrow, small { color: #a0b0a5; font: 11px/1.5 SFMono-Regular, Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 700px; margin: 15px 0; font-size: clamp(40px, 8vw, 72px); line-height: 1; font-weight: 520; letter-spacing: -.06em; }
+    header p:last-child { max-width: 670px; color: #a0b0a5; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 30px; }
+    article { overflow: hidden; border: 1px solid #2b4033; border-radius: 16px; background: #0b1710; }
+    .preview { display: block; width: 100%; aspect-ratio: 16/10; object-fit: contain; background: #102019; }
+    .copy { padding: 20px; }
+    h2 { margin: 0 0 7px; font-size: 19px; font-weight: 540; }
+    .copy p { min-height: 50px; margin: 0 0 18px; color: #a0b0a5; font-size: 13px; }
+    .actions { display: flex; gap: 18px; font-size: 13px; }
+    .note { margin-top: 28px; padding: 17px 20px; border-left: 2px solid #53e59a; background: #102019; color: #a0b0a5; font-size: 13px; }
+    footer { margin-top: 38px; padding-top: 18px; border-top: 1px solid #2b4033; color: #829589; font-size: 11px; }
+    @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } body { padding-inline: 17px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">HyperNeo  /  Visual identity 01</p>
+    <h1>Layouts for clear decisions.</h1>
+    <p>Editable SVG starting points for executive communication. Open a file in Figma, Illustrator, or another vector editor, then replace every bracketed placeholder and confirm typography before export.</p>
+  </header>
+  <main class="grid">
+    <article><img class="preview" src="executive-decision-brief.svg" alt="Preview of the executive decision brief template"><div class="copy"><h2>Executive decision brief</h2><p>A one-page recommendation with evidence, trade-off, alternatives, owner, and next step.</p><small>16:10 · 1600 × 1000</small><div class="actions"><a href="executive-decision-brief.svg" download>Download SVG</a><a href="executive-decision-brief.svg">Open</a></div></div></article>
+    <article><img class="preview" src="presentation-title.svg" alt="Preview of the dark presentation title slide"><div class="copy"><h2>Presentation title</h2><p>A restrained opening slide for a strategic review or consequential decision.</p><small>16:9 · 1920 × 1080</small><div class="actions"><a href="presentation-title.svg" download>Download SVG</a><a href="presentation-title.svg">Open</a></div></div></article>
+    <article><img class="preview" src="presentation-content.svg" alt="Preview of the light presentation content slide"><div class="copy"><h2>Presentation content</h2><p>One idea, supporting evidence, implication, trade-off, and bottom line.</p><small>16:9 · 1920 × 1080</small><div class="actions"><a href="presentation-content.svg" download>Download SVG</a><a href="presentation-content.svg">Open</a></div></div></article>
+    <article><img class="preview" src="letterhead-a4.svg" alt="Preview of the A4 letterhead template"><div class="copy"><h2>Letterhead</h2><p>A quiet, legible document page with a compact mark and broad writing area.</p><small>A4 portrait ratio · 595 × 842</small><div class="actions"><a href="letterhead-a4.svg" download>Download SVG</a><a href="letterhead-a4.svg">Open</a></div></div></article>
+    <article><img class="preview" src="social-post-square.svg" alt="Preview of the square social post template"><div class="copy"><h2>Social insight</h2><p>A single useful idea with enough open space to read at feed scale.</p><small>Square · 1200 × 1200</small><div class="actions"><a href="social-post-square.svg" download>Download SVG</a><a href="social-post-square.svg">Open</a></div></div></article>
+  </main>
+  <p class="note">Use these layouts as structure, not as a replacement for sound analysis. Keep claims attributable, mark assumptions, and preserve the audience's ability to judge the evidence. Brand material usage is governed by <a href="../ASSET-LICENSE.md">the all-rights-reserved notice</a>.</p>
+  <footer><a href="../index.html">Back to the visual identity guide</a> · HyperNeo · 2026</footer>
+</body>
+</html>

@@ -13,3 +13,5 @@ All files in this directory are vector artwork. Each PDF and EPS is a single-pag
 | Stacked dark lockup | `lockup-06-stacked-dark.pdf` | `lockup-06-stacked-dark.eps` |
 
 The mark paths are resolution-independent. Lockup wordmarks remain live text and use standard Helvetica in these print exports; use the SVG masters if the Inter / Helvetica Neue system stack is required.
+
+Brand artwork in this directory is all rights reserved. See [`../../ASSET-LICENSE.md`](../../ASSET-LICENSE.md) before using or redistributing it. The exporter code remains under the repository's Apache-2.0 license.
