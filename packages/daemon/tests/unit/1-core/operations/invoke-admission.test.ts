@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import {
   admitOperationCaller,
   invokeOperation,
@@ -14,6 +15,7 @@ import {
 } from '../../../../src/lib/operations/registry';
 
 const MCP_ROLES: readonly OperationCallerRole[] = [
+  'neo',
   'long_term_agent',
   'workflow_worker',
   'direct_task_worker',
@@ -101,11 +103,29 @@ describe('invokeOperation caller admission', () => {
     }
   });
 
-  test('admission no longer runs before input parsing; bad input still reports invalid_input', async () => {
+  test.each([...MCP_ROLES, undefined])('bad input stops effects for role %s', async (role) => {
     const { registry, execute } = fixture({ safetyClass: 'human_only' });
     expect(
-      await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller('long_term_agent'))
+      await invokeOperation(registry, 'task.act', { content: '' }, mcpCaller(role))
     ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
     expect(execute).not.toHaveBeenCalled();
   });
+
+  test.each(['neo:root', 'neo:holder'])(
+    'the MCP adapter preserves trusted Neo identity for %s instead of impersonating RPC',
+    async (sessionId) => {
+      const { registry, execute } = fixture({ safetyClass: 'mutate', roles: ['long_term_agent'] });
+      const caller: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
+      const mcp = createOperationMcpHandler(registry, () => caller);
+      const result = await mcp({
+        name: 'task.act',
+        input: { content: 'hello' },
+        caller: { source: 'rpc', principal: 'local', role: 'long_term_agent' },
+      });
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual({ accepted: 'hello' });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith({ content: 'hello' }, caller);
+    }
+  );
 });

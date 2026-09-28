@@ -235,6 +235,15 @@ describe('operation listing by caller', () => {
     expect(names).toEqual(ALL_NAMES);
   });
 
+  test.each(['neo:root', 'neo:holder'])(
+    'Neo can discover the full catalog from %s',
+    async (sessionId) => {
+      expect(
+        await listedNames(policyFixture(), { source: 'mcp', sessionId, role: 'neo' }, { all: true })
+      ).toEqual(ALL_NAMES);
+    }
+  );
+
   test('an operation left off the list still describes as found', async () => {
     const registry = policyFixture();
     const member: OperationCaller = { source: 'mcp', sessionId: 'member', role: 'long_term_agent' };

@@ -308,8 +308,8 @@ describe('Neo MVP', () => {
       value: { ok: false },
     });
     expect(await invoke('neo.work.start', { id: 'work' }, caller)).toMatchObject({
-      kind: 'failed',
-      code: 'forbidden',
+      kind: 'completed',
+      value: { ok: false, reason: 'This action needs the user.' },
     });
     const definitions = createNeoOperations(service);
     expect(
@@ -317,13 +317,17 @@ describe('Neo MVP', () => {
         (item) => item.name
       )
     ).toEqual([
+      'neo.concern.cancel',
       'neo.concern.consult',
       'neo.concern.respond',
+      'neo.open',
       'neo.snapshot',
       'neo.concern.save',
       'neo.work.propose',
+      'neo.work.start',
+      'neo.work.cancel',
     ]);
-    expect(isOperationAdmitted({ ...definitions[0], name: 'session.create' }, caller)).toBe(false);
+    expect(isOperationAdmitted({ ...definitions[0], name: 'session.create' }, caller)).toBe(true);
     expect(
       isOperationAdmitted(
         { ...definitions[0], name: 'session.create' },
@@ -949,8 +953,8 @@ describe('Neo MVP', () => {
     const { item, caller, holder } = await consultation();
     for (const denied of [caller, holder]) {
       expect(await invoke('neo.concern.cancel', { id: item.id }, denied)).toMatchObject({
-        kind: 'failed',
-        code: 'forbidden',
+        kind: 'completed',
+        value: { ok: false, reason: 'This action needs the user.' },
       });
     }
     expect(
