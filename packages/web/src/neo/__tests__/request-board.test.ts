@@ -3,6 +3,7 @@ import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoRequestOrigin,
+  neoRequestConsultationProgress,
   projectNeoRequestSnapshot,
   scopeNeoRequestReceipts,
   selectNeoRequestSnapshot,
@@ -92,6 +93,119 @@ describe('request origin selection', () => {
   });
   it('rejects an unbound view', () => {
     expect(neoRequestOrigin(message({ type: 'user' }), '')).toBeNull();
+  });
+});
+
+describe('queued consultation request projection', () => {
+  const source = (): NeoSnapshot => {
+    const snapshot = fixture();
+    snapshot.work = [];
+    snapshot.askOrigins = snapshot.askOrigins!.filter((row) => row.kind === 'consultation');
+    snapshot.consultationWaiters = ['queued-b', 'queued-other'].map((id) => ({
+      id,
+      requestKey: id,
+      concernId: id === 'queued-b' ? 'shared' : 'other',
+      originSessionId: 'root',
+      originMessageId: id === 'queued-b' ? 'ask-a' : 'ask-other',
+      sessionId: id === 'queued-b' ? 'holder' : 'other-holder',
+      question: id,
+      status: 'queued',
+      createdAt: 2,
+    }));
+    snapshot.askOrigins!.push(
+      { kind: 'consultation', id: 'queued-b', origin },
+      {
+        kind: 'consultation',
+        id: 'queued-other',
+        origin: { ...origin, messageId: 'ask-other' },
+      }
+    );
+    return snapshot;
+  };
+
+  it('retains a waiter-only ask without borrowing the active same-holder request', () => {
+    const snapshot = source();
+    const before = structuredClone(snapshot);
+    const selected = selectNeoRequestSnapshot(snapshot, origin);
+    if ('reason' in selected) throw new Error('Expected selection');
+    const scoped = scopeNeoRequestReceipts(selected.value);
+    expect(scoped).toHaveProperty('value');
+    const result = projectNeoRequestSnapshot(snapshot, origin)!;
+    expect(result.consultationWaiters).toEqual([snapshot.consultationWaiters![0]]);
+    expect(result.consultations).toEqual([]);
+    expect(result.work).toEqual([]);
+    expect(result.concerns.map((row) => row.id)).toEqual(['shared']);
+    expect(result.askOrigins).toEqual([{ kind: 'consultation', id: 'queued-b', origin }]);
+    expect(neoRequestConsultationProgress(result)).toEqual([
+      { id: 'queued-b', status: 'queued', label: 'Waiting for shared’s context…' },
+    ]);
+    expect(snapshot).toEqual(before);
+  });
+
+  it.each(['admitted', 'cancelled'] as const)(
+    'does not present a %s waiter as queued',
+    (status) => {
+      const snapshot = source();
+      snapshot.consultationWaiters![0].status = status;
+      expect(projectNeoRequestSnapshot(snapshot, origin)).toBeNull();
+      expect(neoRequestConsultationProgress(snapshot).map((row) => row.id)).not.toContain(
+        'queued-b'
+      );
+    }
+  );
+
+  it.each([undefined, [], [{ kind: 'consultation', id: 'queued-b', origin: null }]])(
+    'keeps missing waiter attribution fail-closed: %j',
+    (askOrigins) => {
+      expect(
+        projectNeoRequestSnapshot({ ...source(), askOrigins } as NeoSnapshot, origin)
+      ).toBeNull();
+    }
+  );
+
+  it.each([origin, { ...origin, messageId: 'ask-other' }, null])(
+    'rejects duplicate waiter attribution rather than borrowing a nearby ask: %j',
+    (duplicate) => {
+      const snapshot = source();
+      snapshot.askOrigins!.push({ kind: 'consultation', id: 'queued-b', origin: duplicate });
+      expect(projectNeoRequestSnapshot(snapshot, origin)).toBeNull();
+    }
+  );
+
+  it('keeps the receipt identity on promotion and tolerates a transient duplicate waiter', () => {
+    const snapshot = source();
+    const waiter = snapshot.consultationWaiters![0];
+    snapshot.consultations!.push({ ...waiter, status: 'pending', answer: null });
+    const result = projectNeoRequestSnapshot(snapshot, origin)!;
+    expect(result.consultationWaiters).toEqual([]);
+    expect(result.consultations!.map((row) => row.id)).toEqual(['queued-b']);
+    expect(neoRequestConsultationProgress(result)).toEqual([
+      { id: 'queued-b', status: 'pending', label: 'Checking shared’s context…' },
+    ]);
+    expect(
+      neoRequestConsultationProgress(snapshot).filter((row) => row.id === waiter.id)
+    ).toHaveLength(1);
+  });
+
+  it.each(['reported', 'failed'] as const)(
+    'removes inline progress on %s without inventing a result',
+    (status) => {
+      const snapshot = source();
+      const waiter = snapshot.consultationWaiters![0];
+      snapshot.consultations!.push({ ...waiter, status, answer: null });
+      expect(neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot, origin))).toEqual(
+        []
+      );
+    }
+  );
+
+  it('uses a generic context label when the bounded snapshot has no concern detail', () => {
+    const snapshot = source();
+    snapshot.concerns = [];
+    expect(neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot, origin))).toEqual([
+      { id: 'queued-b', status: 'queued', label: 'Waiting for context…' },
+    ]);
+    expect(neoRequestConsultationProgress(null)).toEqual([]);
   });
 });
 

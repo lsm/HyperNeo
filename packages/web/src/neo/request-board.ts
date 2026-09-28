@@ -63,17 +63,44 @@ export function scopeNeoRequestReceipts({ snapshot, origin }: Selection): Gate<N
   const consultations = (snapshot.consultations ?? []).filter((item) =>
     matches('consultation', item.id)
   );
-  if (!work.length && !consultations.length) return { reason: null };
-  const concerns = new Set([...work, ...consultations].map((item) => item.concernId));
+  const consultationWaiters = (snapshot.consultationWaiters ?? []).filter(
+    (item) =>
+      item.status === 'queued' &&
+      matches('consultation', item.id) &&
+      !consultations.some((active) => active.id === item.id)
+  );
+  if (!work.length && !consultations.length && !consultationWaiters.length) return { reason: null };
+  const concerns = new Set(
+    [...work, ...consultations, ...consultationWaiters].map((item) => item.concernId)
+  );
   return {
     value: {
       ...snapshot,
       concerns: snapshot.concerns.filter((item) => concerns.has(item.id)),
       work,
       consultations,
+      consultationWaiters,
       askOrigins: snapshot.askOrigins?.filter((row) => matches(row.kind, row.id)),
     },
   };
+}
+
+export function neoRequestConsultationProgress(snapshot: NeoSnapshot | null) {
+  return [
+    ...(snapshot?.consultations ?? []).filter((item) => item.status === 'pending'),
+    ...(snapshot?.consultationWaiters ?? []).filter(
+      (item) =>
+        item.status === 'queued' &&
+        !snapshot?.consultations?.some((active) => active.id === item.id)
+    ),
+  ].map((item) => {
+    const title = snapshot?.concerns.find((concern) => concern.id === item.concernId)?.title;
+    return {
+      id: item.id,
+      status: item.status,
+      label: `${item.status === 'queued' ? 'Waiting for' : 'Checking'} ${title ? `${title}’s context` : 'context'}…`,
+    };
+  });
 }
 
 export const projectNeoRequestSnapshot = (superpipe({})('neo-request-board') as PipelineAPI)

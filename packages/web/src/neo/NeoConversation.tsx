@@ -7,7 +7,11 @@ import { NeoMessage } from './NeoMessage.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { projectNeoReplyContext } from './reply-context.ts';
-import { neoRequestOrigin } from './request-board.ts';
+import {
+  neoRequestOrigin,
+  neoRequestConsultationProgress,
+  projectNeoRequestSnapshot,
+} from './request-board.ts';
 import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
 
 export function conversationText(message: ChatMessage): string {
@@ -124,6 +128,10 @@ export function NeoConversation({
         {visible.map((message) => {
           const context = projectNeoReplyContext(message, sessionId, visible, conversationText);
           const requestOrigin = neoRequestOrigin(message, sessionId);
+          const checks =
+            message.type === 'user' && requestOrigin
+              ? neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot, requestOrigin))
+              : [];
           return (
             <NeoMessage
               key={message.uuid}
@@ -133,6 +141,23 @@ export function NeoConversation({
               sessionId={sessionId}
               replyTo={typeof context === 'object' ? context : undefined}
             >
+              {checks.map((check) => (
+                <p
+                  key={check.id}
+                  role="status"
+                  aria-live="polite"
+                  class="mt-2 flex items-center justify-end gap-2 text-xs text-fg-muted"
+                >
+                  {check.status === 'pending' && (
+                    <span class="neo-progress-dots" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  )}
+                  {check.label}
+                </p>
+              ))}
               {requestOrigin && snapshot && (
                 <NeoConcernBoardPanel
                   snapshot={snapshot}

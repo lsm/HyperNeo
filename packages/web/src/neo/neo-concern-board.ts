@@ -1,4 +1,9 @@
-import type { NeoConcern, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoConcern,
+  NeoConsultation,
+  NeoConsultationWaiter,
+  NeoWork,
+} from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type {
   DaemonInventoryEntry,
@@ -12,8 +17,14 @@ type Selection = {
   concern: NeoConcern | null;
   work: NeoWork[];
   consultations: NeoConsultation[];
+  consultationWaiters: NeoConsultationWaiter[];
 };
-type Receipt = (NeoWork & { kind: 'work' }) | (NeoConsultation & { kind: 'consultation' });
+type Receipt =
+  | (NeoWork & { kind: 'work' })
+  | (Omit<NeoConsultation, 'status'> & {
+      kind: 'consultation';
+      status: NeoConsultation['status'] | 'queued';
+    });
 type Relation = { from: DaemonInventoryLink; to: DaemonInventoryLink };
 type Participant = { ref: DaemonInventoryLink; metadata: DaemonInventoryEntry | null };
 export type NeoConcernBoard = {
@@ -47,6 +58,12 @@ export function selectNeoConcernBoard(
       consultations: (snapshot.consultations ?? []).filter(
         (item) => concernId === null || item.concernId === concernId
       ),
+      consultationWaiters: (snapshot.consultationWaiters ?? []).filter(
+        (item) =>
+          item.status === 'queued' &&
+          (concernId === null || item.concernId === concernId) &&
+          !snapshot.consultations?.some((active) => active.id === item.id)
+      ),
     },
   };
 }
@@ -55,6 +72,12 @@ export function neoBoardReceipts(selection: Selection): Receipt[] {
   return [
     ...selection.work.map((item) => ({ ...item, kind: 'work' as const })),
     ...selection.consultations.map((item) => ({ ...item, kind: 'consultation' as const })),
+    ...selection.consultationWaiters.map((item) => ({
+      ...item,
+      kind: 'consultation' as const,
+      status: 'queued' as const,
+      answer: null,
+    })),
   ].sort((a, b) => b.createdAt - a.createdAt || compare(refKey(a), refKey(b)));
 }
 

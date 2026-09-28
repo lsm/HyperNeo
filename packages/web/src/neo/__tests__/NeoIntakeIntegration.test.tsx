@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { ChatMessage } from '@hyperneo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -127,6 +127,72 @@ async function attach(name: string, content: string, type: string) {
 }
 
 describe('Neo live durable intake', () => {
+  it('accepts unrelated C while B waits on a busy holder and B’s board inventory is unfinished', async () => {
+    const queued = {
+      id: 'receipt-B',
+      requestKey: 'B',
+      concernId: 'research',
+      originSessionId: 'neo:root',
+      originMessageId: 'B',
+      sessionId: 'neo:research',
+      question: 'Correction B',
+      status: 'queued',
+      createdAt: 2,
+    };
+    const active = {
+      ...snapshot(),
+      consultations: [
+        { ...queued, id: 'receipt-A', originMessageId: 'A', status: 'pending', answer: null },
+      ],
+      consultationWaiters: [queued],
+      askOrigins: ['A', 'B'].map((id) => ({
+        kind: 'consultation',
+        id: `receipt-${id}`,
+        origin: { sessionId: 'neo:root', messageId: id },
+      })),
+    };
+    let complete!: (value: unknown) => void;
+    request.mockImplementation(
+      async (
+        _method: string,
+        { name, input }: { name: string; input: IntakeInput & { concernId?: string } }
+      ) => {
+        if (name === 'daemon.snapshot')
+          return new Promise((resolve) => {
+            complete = resolve;
+          });
+        if (name === 'neo.message.send') return accepted(input);
+        return input.concernId ? snapshot('neo:research') : active;
+      }
+    );
+    await open();
+    act(() => {
+      stores[0].sdkMessages.value = ['A', 'B'].map((id) => ({
+        type: 'user',
+        uuid: id,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: `Research request ${id}` },
+      })) as ChatMessage[];
+    });
+    const b = screen.getByText('Research request B').closest('article')!;
+    expect(within(b).getByText('Waiting for Research’s context…')).toBeTruthy();
+    fireEvent.click(within(b).getByText('How this is being handled'));
+    await within(b).findByRole('region', { name: 'Concern board' });
+    await within(b).findByText('Checking linked resources…');
+    const input = screen.getByRole('textbox', { name: 'Message Neo' });
+    expect((input as HTMLTextAreaElement).disabled).toBe(false);
+    submit('Unrelated family request C');
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(asks()[0][1].input.content).toBe('Unrelated family request C');
+    expect(asks()[0][1].input.requestId).toBeTruthy();
+    await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(''));
+    expect(within(b).getByText('Waiting for Research’s context…')).toBeTruthy();
+    await act(async () => complete({ capturedAt: 123, resources: [], capabilities: [] }));
+    expect(await within(b).findByText(/Resource details captured/)).toBeTruthy();
+    expect(within(b).getByText('Receipt: receipt-B')).toBeTruthy();
+    expect(within(b).queryByText('Receipt: receipt-A')).toBeNull();
+  });
+
   it('opens A’s request board without making unrelated intake wait on inventory', async () => {
     const askA = '11111111-1111-4111-8111-111111111111';
     const active = {
