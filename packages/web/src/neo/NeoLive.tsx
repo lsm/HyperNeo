@@ -250,7 +250,12 @@ export function NeoLive() {
             </div>
           )}
           {ready && neo.sessionId ? (
-            <NeoConversation store={neo.store} sessionId={neo.sessionId} works={relevant} />
+            <NeoConversation
+              store={neo.store}
+              sessionId={neo.sessionId}
+              works={relevant}
+              snapshot={view}
+            />
           ) : (
             !neo.error && (
               <p role="status" class="py-8 text-sm text-fg-muted">

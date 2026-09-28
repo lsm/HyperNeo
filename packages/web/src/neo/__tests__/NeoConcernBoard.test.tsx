@@ -188,6 +188,91 @@ describe('NeoConcernBoardView', () => {
 });
 
 describe('NeoConcernBoardPanel', () => {
+  it('scopes same-concern handoffs to one human input and keeps stable scope across rerenders', async () => {
+    const source: NeoSnapshot = {
+      ...snapshot,
+      work: snapshot.work.map((row) => ({ ...row, concernId: 'a' })),
+      askOrigins: [
+        { kind: 'work', id: 'work-a', origin: { sessionId: 'root', messageId: 'ask-a' } },
+        { kind: 'work', id: 'work-b', origin: { sessionId: 'root', messageId: 'ask-b' } },
+        { kind: 'consultation', id: 'check-a', origin: { sessionId: 'root', messageId: 'ask-a' } },
+      ],
+    };
+    const props = {
+      snapshot: source,
+      concernId: null,
+      requestOrigin: { sessionId: 'root', messageId: 'ask-a' },
+    };
+    const view = render(<NeoConcernBoardPanel {...props} />);
+    expect(request).not.toHaveBeenCalled();
+    expand();
+    await screen.findByText('Draft worker');
+    expect(screen.getByText(/For this request/)).toBeTruthy();
+    expect(screen.getByText('Work a')).toBeTruthy();
+    expect(screen.queryByText('Work b')).toBeNull();
+    expect(screen.queryByText('Other worker')).toBeNull();
+    view.rerender(<NeoConcernBoardPanel {...props} requestOrigin={{ ...props.requestOrigin }} />);
+    await act(async () => {});
+    expect(request).toHaveBeenCalledTimes(1);
+    const updated = {
+      ...source,
+      work: source.work.map((row) => ({
+        ...row,
+        report: 'Actual return',
+        status: 'reported' as const,
+      })),
+    };
+    view.rerender(<NeoConcernBoardPanel {...props} snapshot={updated} />);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Actual return')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close board' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Concern board' })).toBeNull());
+  });
+  it('invalidates a pending inventory read when the selected request changes', async () => {
+    const first = pending();
+    request.mockReturnValueOnce(first.promise).mockResolvedValue(inventory());
+    const source = {
+      ...snapshot,
+      askOrigins: snapshot.work.map((row) => ({
+        kind: 'work' as const,
+        id: row.id,
+        origin: { sessionId: 'root', messageId: row.originMessageId! },
+      })),
+    };
+    const view = render(
+      <NeoConcernBoardPanel
+        snapshot={source}
+        concernId={null}
+        requestOrigin={{ sessionId: 'root', messageId: 'ask-a' }}
+      />
+    );
+    expand();
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <NeoConcernBoardPanel
+        snapshot={source}
+        concernId={null}
+        requestOrigin={{ sessionId: 'root', messageId: 'ask-b' }}
+      />
+    );
+    await screen.findByText('Other worker');
+    await act(async () => first.resolve(inventory('Stale A worker')));
+    expect(screen.getByText('Work b')).toBeTruthy();
+    expect(screen.queryByText('Work a')).toBeNull();
+    expect(screen.queryByText('Stale A worker')).toBeNull();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it('does not offer an unrelated global board when attribution is unknown', () => {
+    render(
+      <NeoConcernBoardPanel
+        snapshot={snapshot}
+        concernId={null}
+        requestOrigin={{ sessionId: 'root', messageId: 'ask-a' }}
+      />
+    );
+    expect(screen.queryByText(/How /)).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
   it('does no reads until opened and closes from the bottom without a second transcript', async () => {
     render(<NeoConcernBoardPanel snapshot={snapshot} concernId="a" />);
     expect(request).not.toHaveBeenCalled();
