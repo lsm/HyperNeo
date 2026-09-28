@@ -15,7 +15,11 @@ export type NeoWorkInput = Pick<
   NeoWork,
   'id' | 'requestKey' | 'concernId' | 'originSessionId' | 'title' | 'instruction'
 > &
-  Partial<Pick<NeoWork, 'originMessageId'>>;
+  Partial<Pick<NeoWork, 'originMessageId'>> & { targetSessionId?: string | null };
+export interface NeoWorkTarget {
+  readonly id: string;
+  readonly targetSessionId: string | null;
+}
 export type NeoWorkState = Pick<NeoWork, 'status' | 'sessionId' | 'report'>;
 
 export class NeoRepository {
@@ -140,13 +144,21 @@ export class NeoRepository {
       .get(sessionId) as NeoWork | null;
   }
 
+  getWorkTarget(id: string): NeoWorkTarget | null {
+    return (
+      (this.db
+        .prepare('SELECT id, target_session_id AS targetSessionId FROM neo_work WHERE id = ?')
+        .get(id) as NeoWorkTarget | null) ?? null
+    );
+  }
+
   proposeWork(input: NeoWorkInput): NeoWork {
     const now = Date.now();
     const result = this.db
       .prepare(`INSERT INTO neo_work
-        (id, request_key, concern_id, origin_session_id, origin_message_id, title, instruction,
+        (id, request_key, concern_id, origin_session_id, origin_message_id, target_session_id, title, instruction,
           session_id, status, report, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?)
         ON CONFLICT(request_key) DO NOTHING`)
       .run(
         input.id,
@@ -154,6 +166,7 @@ export class NeoRepository {
         input.concernId,
         input.originSessionId,
         input.originMessageId ?? null,
+        input.targetSessionId ?? null,
         input.title,
         input.instruction,
         now,

@@ -11,6 +11,7 @@ import { Logger } from '../logger.ts';
 import { neoPrompt } from './prompt.ts';
 import { neoCoordinatorNativeTools } from './session-policy.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
+import { createNeoWorkTargetResolver } from './work-target.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +23,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 export class NeoService {
   readonly repo: NeoRepository;
   readonly consultations: NeoConsultationRepository;
+  readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -38,6 +40,11 @@ export class NeoService {
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
+    this.resolveWorkTarget = createNeoWorkTargetResolver({
+      readTarget: (id) => this.repo.getWorkTarget(id),
+      readSession: (id) => db.getSession(id),
+      readBinding: (id) => this.repo.getBindingBySession(id),
+    });
     this.unsubscribe = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
