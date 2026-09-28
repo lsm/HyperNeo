@@ -23,6 +23,7 @@ import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
 import type { QueryLike } from './query-like.ts';
+import { neoCoordinatorBinding, neoCoordinatorRuntimePath } from '../neo/session-policy.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
@@ -66,7 +67,8 @@ export class ModelSwitchHandler {
   constructor(private ctx: ModelSwitchHandlerContext) {}
 
   private getSDKWorkspacePath(): string {
-    const { session } = this.ctx;
+    const { session, db } = this.ctx;
+    if (neoCoordinatorBinding(db, session.id)) return neoCoordinatorRuntimePath(session.id);
     return session.worktree
       ? session.worktree.worktreePath
       : (session.workspacePath ?? process.cwd());

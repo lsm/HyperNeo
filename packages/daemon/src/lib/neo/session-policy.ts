@@ -3,6 +3,13 @@ import type { Database } from '../../storage/database.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { neoPrompt } from './prompt.ts';
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+export function neoCoordinatorRuntimePath(sessionId: string): string {
+  return join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+}
 
 export function neoCoordinatorBinding(
   db: Database | undefined,
@@ -18,7 +25,15 @@ export function neoCoordinatorBinding(
   return row ?? null;
 }
 
-export function restrictNeoQuery(options: Options, concernId: string | null = null): void {
+export function restrictNeoQuery(
+  options: Options,
+  concernId: string | null = null,
+  sessionId?: string
+): void {
+  if (sessionId) {
+    options.cwd = neoCoordinatorRuntimePath(sessionId);
+    mkdirSync(options.cwd, { recursive: true });
+  }
   options.systemPrompt = neoPrompt(concernId);
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
   options.tools = ['AskUserQuestion'];

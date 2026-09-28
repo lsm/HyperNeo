@@ -26,6 +26,13 @@ import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import { disposeAcpSessions } from '../../../../src/lib/acp/acp-model-fetcher';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { Database as SQLite } from '../../../../src/storage/sqlite-compat';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
+import { neoCoordinatorRuntimePath } from '../../../../src/lib/neo/session-policy';
+import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 
 const TEST_MODELS: ModelInfo[] = [
   {
@@ -231,6 +238,7 @@ describe('ModelSwitchHandler', () => {
 
     mockLogger = {
       log: mock(() => {}),
+      info: mock(() => {}),
       error: mock(() => {}),
       warn: mock(() => {}),
       debug: mock(() => {}),
@@ -329,6 +337,118 @@ describe('ModelSwitchHandler', () => {
 
   describe('switchModel', () => {
     const VALID_MODEL = 'opus';
+
+    describe('transcript cleanup on provider switches', () => {
+      let sdkDir: string;
+      let previousSdkDir: string | undefined;
+      let sqlite: SQLite;
+
+      beforeEach(() => {
+        previousSdkDir = process.env.TEST_SDK_SESSION_DIR;
+        sdkDir = mkdtempSync(join(tmpdir(), 'hyperneo-model-switch-'));
+        process.env.TEST_SDK_SESSION_DIR = sdkDir;
+        sqlite = new SQLite(':memory:');
+        createNeoTables(sqlite);
+        mockDb = { ...mockDb, getDatabase: () => sqlite } as unknown as Database;
+        mockSession.sdkSessionId = generateUUID();
+        mockSession.config.model = 'glm-5';
+        mockSession.config.provider = 'glm';
+      });
+
+      afterEach(() => {
+        sqlite.close();
+        if (previousSdkDir === undefined) delete process.env.TEST_SDK_SESSION_DIR;
+        else process.env.TEST_SDK_SESSION_DIR = previousSdkDir;
+        rmSync(sdkDir, { recursive: true, force: true });
+      });
+
+      const cases = [
+        { name: 'Neo', binding: 'neo', path: 'coordinator' },
+        { name: 'context holder', binding: 'concern', path: 'coordinator' },
+        { name: 'delegated worker', binding: 'worker', path: 'workspace' },
+        { name: 'ordinary workspace', binding: null, path: 'workspace' },
+        { name: 'ordinary worktree', binding: null, path: 'worktree' },
+        { name: 'unbound Neo-prefixed session', binding: null, path: 'cwd', neoPrefix: true },
+        { name: 'ordinary workspace-free session', binding: null, path: 'cwd' },
+      ] as const;
+
+      for (const scenario of cases) {
+        for (const active of [false, true]) {
+          it(`strips only the ${scenario.name} transcript with an ${active ? 'active' : 'idle'} query`, async () => {
+            if (scenario.binding || ('neoPrefix' in scenario && scenario.neoPrefix)) {
+              mockSession.id = `neo:${mockSession.id}`;
+            }
+            mockSession.workspacePath =
+              scenario.path === 'workspace' || scenario.path === 'worktree'
+                ? '/test/workspace'
+                : null;
+            if (scenario.path === 'worktree') {
+              mockSession.worktree = {
+                isWorktree: true,
+                worktreePath: '/test/worktree',
+                branch: 'session/test',
+                mainRepoPath: '/test/workspace',
+              };
+            }
+            if (scenario.binding) {
+              const concernId = scenario.binding === 'concern' ? 'project' : null;
+              if (concernId) {
+                sqlite
+                  .prepare('INSERT INTO neo_concerns VALUES (?, ?, ?, ?, 1, 0, 0)')
+                  .run(concernId, 'Project', '', '');
+              }
+              sqlite
+                .prepare('INSERT INTO neo_session_bindings VALUES (?, ?, ?)')
+                .run(mockSession.id, concernId, scenario.binding);
+            }
+
+            const coordinatorPath = neoCoordinatorRuntimePath(mockSession.id);
+            const workspacePath =
+              scenario.path === 'coordinator'
+                ? coordinatorPath
+                : scenario.path === 'worktree'
+                  ? '/test/worktree'
+                  : (mockSession.workspacePath ?? process.cwd());
+            const decoyPath =
+              scenario.path === 'coordinator'
+                ? process.cwd()
+                : scenario.path === 'worktree'
+                  ? mockSession.workspacePath!
+                  : coordinatorPath;
+            const sdkId = mockSession.sdkSessionId!;
+            const transcript = getSDKSessionFilePath(workspacePath, sdkId);
+            const decoy = getSDKSessionFilePath(decoyPath, sdkId);
+            const content = `${JSON.stringify({
+              type: 'assistant',
+              message: {
+                role: 'assistant',
+                content: [
+                  { type: 'thinking', thinking: 'Private reasoning', signature: 'old-provider' },
+                  { type: 'text', text: 'Answer stays' },
+                  { type: 'tool_use', id: 'tool', name: 'test', input: {} },
+                ],
+              },
+            })}\n`;
+            for (const path of [transcript, decoy]) {
+              mkdirSync(dirname(path), { recursive: true });
+              writeFileSync(path, content);
+            }
+
+            handler = createHandler({ queryObject: active ? createContext().queryObject : null });
+            const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+            expect(result.success).toBe(true);
+            expect(mockSession.sdkSessionId).toBe(sdkId);
+            expect(JSON.parse(readFileSync(transcript, 'utf8')).message.content).toEqual([
+              { type: 'text', text: 'Answer stays' },
+              { type: 'tool_use', id: 'tool', name: 'test', input: {} },
+            ]);
+            expect(readFileSync(decoy, 'utf8')).toBe(content);
+            expect(restartSpy).toHaveBeenCalledTimes(active ? 1 : 0);
+          });
+        }
+      }
+    });
 
     describe('when query not started', () => {
       it('should update config without starting an empty query when query not started', async () => {

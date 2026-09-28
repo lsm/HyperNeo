@@ -14,7 +14,11 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import { NeoService, neoWorkScratchDir } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { neoCoordinatorBinding, restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
+import {
+  neoCoordinatorBinding,
+  neoCoordinatorRuntimePath,
+  restrictNeoQuery,
+} from '../../../../src/lib/neo/session-policy.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -44,6 +48,8 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('call neo.work.propose in that turn');
     expect(prompt).toContain('never render a pretend card');
     expect(prompt).toContain('Start work button is the approval to execute');
+    expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
+    expect(prompt).toContain('ask one short clarifying question');
   });
 
   let sqlite: SQLite;
@@ -166,6 +172,7 @@ describe('Neo MVP', () => {
       permissionMode: 'dontAsk',
       sdkToolsPreset: ['AskUserQuestion'],
     });
+    expect(created[0].workspacePath).toBeNull();
     expect(service.repo.listConcerns()).toEqual([]);
     expect(await service.open(null)).toBe(ids[0]);
     expect(neoCoordinatorBinding(db, ids[0])?.kind).toBe('neo');
@@ -735,7 +742,7 @@ describe('Neo MVP', () => {
       agent: 'coder',
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
-    restrictNeoQuery(options);
+    restrictNeoQuery(options, null, 'neo:runtime-test');
     expect(options.tools).toEqual(['AskUserQuestion']);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
     expect(options.allowedTools).toEqual(['AskUserQuestion', 'mcp__hyperneo-operations__invoke']);
@@ -743,6 +750,8 @@ describe('Neo MVP', () => {
     expect(options.settingSources).toEqual([]);
     expect(options.agent).toBeUndefined();
     expect(options.agents).toEqual({});
+    expect(options.cwd).toBe(neoCoordinatorRuntimePath('neo:runtime-test'));
+    expect(options.cwd).not.toBe(process.cwd());
   });
 
   async function consultation() {

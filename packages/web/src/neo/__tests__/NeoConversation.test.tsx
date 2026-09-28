@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
+  completedActivities,
   completedConversation,
   completedWorkReplies,
   conversationText,
@@ -63,6 +64,36 @@ describe('completedConversation', () => {
     ]);
     expect(visible.map((message) => conversationText(message))).toEqual(['Try again']);
     expect(completedConversation([])).toEqual([]);
+  });
+});
+
+describe('completedActivities', () => {
+  it('keeps a concise, turn-specific activity trail without showing tool output', () => {
+    const tool = {
+      type: 'assistant',
+      uuid: 'tool',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            name: 'mcp__hyperneo-operations__invoke',
+            input: { name: 'neo.snapshot', input: {} },
+          },
+        ],
+      },
+    } as unknown as ChatMessage;
+    const activities = completedActivities([
+      user('u1', 'Brief'),
+      tool,
+      assistant('a1', 'Nothing underway.'),
+      result('success'),
+      user('u2', 'Thanks'),
+      assistant('a2', 'Of course.'),
+      result('success'),
+    ]);
+    expect(activities.get('a1')).toEqual(['Checked what Neo knows']);
+    expect(activities.has('a2')).toBe(false);
   });
 });
 

@@ -562,7 +562,7 @@ export class QueryOptionsBuilder {
     }
 
     const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
-    if (neoBinding) restrictNeoQuery(queryOptions, neoBinding.concernId);
+    if (neoBinding) restrictNeoQuery(queryOptions, neoBinding.concernId, this.ctx.session.id);
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
