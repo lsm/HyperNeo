@@ -8,6 +8,7 @@ import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consult
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -78,6 +79,7 @@ describe('Neo MVP', () => {
     runMigration280(sqlite);
     runMigration282(sqlite);
     runMigration283(sqlite);
+    runMigration285(sqlite);
     created = [];
     active = new Set();
     jobs = [];
@@ -1148,6 +1150,27 @@ describe('Neo MVP', () => {
     expect(created).toHaveLength(2);
   });
 
+  test('rechecks the immutable input inside receipt persistence before any queue write', async () => {
+    await invoke('neo.concern.save', concern);
+    const root = await service.open(null);
+    let checks = 0;
+    const source: OperationCaller = {
+      ...holderInput(root),
+      neoTurn: { messageId: 'ask-B', human: true, isLive: () => ++checks < 3 },
+    };
+    expect(
+      await invoke(
+        'neo.concern.consult',
+        { concernId: concern.id, requestKey: 'B', question: 'Correction B' },
+        source
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(checks).toBe(3);
+    expect(service.consultationWaiters.queued()).toEqual([]);
+    expect(service.consultations.list()).toEqual([]);
+    expect(jobs).toEqual([]);
+  });
+
   test('admits root consultations only and attributes replies to the exact assigned holder', async () => {
     const { item, caller, holder, input } = await consultation();
     await invoke('neo.concern.save', { ...concern, id: 'private' });
@@ -1191,17 +1214,18 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('rejects conflicting request keys and simultaneous different questions without losing the first request', async () => {
+  test('rejects conflicting keys while retaining a separate queued question', async () => {
     const { item, caller, input } = await consultation();
-    for (const change of [
-      { question: 'Changed question' },
-      { requestKey: 'second-question' },
-      { concernId: 'missing' },
-    ]) {
+    for (const change of [{ question: 'Changed question' }, { concernId: 'missing' }]) {
       expect(await invoke('neo.concern.consult', { ...input, ...change }, caller)).toMatchObject({
         value: { ok: false },
       });
     }
+    expect(service.consultations.list()).toEqual([item]);
+    expect(jobs).toHaveLength(1);
+    expect(
+      await invoke('neo.concern.consult', { ...input, requestKey: 'second-question' }, caller)
+    ).toMatchObject({ value: { ok: true, waiter: { status: 'queued' } } });
     expect(service.consultations.list()).toEqual([item]);
     expect(jobs).toHaveLength(1);
   });

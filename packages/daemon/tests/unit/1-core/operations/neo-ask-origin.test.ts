@@ -27,6 +27,7 @@ import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const root: NeoBinding = { sessionId: 'root', concernId: null, kind: 'neo' };
@@ -400,6 +401,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration279(mailbox.db);
     runMigration282(mailbox.db);
     runMigration283(mailbox.db);
+    runMigration285(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
