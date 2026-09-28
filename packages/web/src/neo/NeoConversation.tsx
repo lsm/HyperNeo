@@ -1,11 +1,14 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { projectNeoWorkReply } from './work-reply.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoMessage } from './NeoMessage.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { projectNeoReplyContext } from './reply-context.ts';
+import { neoRequestOrigin } from './request-board.ts';
+import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -130,10 +133,12 @@ export function NeoConversation({
   store,
   sessionId,
   works = [],
+  snapshot = null,
 }: {
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
+  snapshot?: NeoSnapshot | null;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -171,6 +176,7 @@ export function NeoConversation({
         )}
         {visible.map((message) => {
           const context = projectNeoReplyContext(message, sessionId, visible, conversationText);
+          const requestOrigin = neoRequestOrigin(message, sessionId);
           return (
             <NeoMessage
               key={message.uuid}
@@ -180,7 +186,15 @@ export function NeoConversation({
               activity={activities.get(message.uuid ?? '')}
               sessionId={sessionId}
               replyTo={typeof context === 'object' ? context : undefined}
-            />
+            >
+              {requestOrigin && snapshot && (
+                <NeoConcernBoardPanel
+                  snapshot={snapshot}
+                  concernId={null}
+                  requestOrigin={requestOrigin}
+                />
+              )}
+            </NeoMessage>
           );
         })}
         {progress && (

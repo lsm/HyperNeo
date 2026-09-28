@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
@@ -11,6 +12,10 @@ import { neoMessageAnchor } from '../reply-context.ts';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const interrupt = vi.hoisted(() => vi.fn());
+const inventoryRequest = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/connection-manager.ts', () => ({
+  connectionManager: { getHub: async () => ({ request: inventoryRequest }) },
+}));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
   useInterrupt: () => ({ handleInterrupt: interrupt, interrupting: false }),
 }));
@@ -55,6 +60,7 @@ const work: NeoWork = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  inventoryRequest.mockResolvedValue({ capturedAt: 1, capabilities: [], resources: [] });
   sendMessage.mockResolvedValue({
     ok: true,
     requestId: 'request',
@@ -114,6 +120,76 @@ describe('Neo correlated work detail', () => {
 });
 
 describe('Neo MVP controls', () => {
+  it('opens A’s actual board under a delayed return without mixing in B’s same-concern work', async () => {
+    const store = makeStore();
+    store.sdkMessages.value = [
+      { type: 'user', uuid: 'A', message: { content: 'Project request A' } },
+      { type: 'user', uuid: 'B', message: { content: 'Project request B' } },
+      {
+        type: 'assistant',
+        uuid: 'reply-B',
+        neoAskOrigin: { sessionId: 'neo', messageId: 'B' },
+        message: { content: 'B answer' },
+      },
+      { type: 'result', uuid: 'result-B' },
+      {
+        type: 'assistant',
+        uuid: 'reply-A',
+        neoAskOrigin: { sessionId: 'neo', messageId: 'A' },
+        message: { content: 'Late A answer' },
+      },
+      { type: 'result', uuid: 'result-A' },
+      { type: 'assistant', uuid: 'legacy', message: { content: 'Unattributed answer' } },
+      { type: 'result', uuid: 'legacy-result' },
+    ] as unknown as ChatMessage[];
+    const snapshot: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      concerns: [],
+      consultations: [],
+      work: ['A', 'B'].map((id) => ({
+        ...work,
+        id,
+        title: `Actual work ${id}`,
+        status: 'queued',
+        originMessageId: id,
+        sessionId: `worker-${id}`,
+      })),
+      askOrigins: ['A', 'B'].map((id) => ({
+        kind: 'work',
+        id,
+        origin: { sessionId: 'neo', messageId: id },
+      })),
+    };
+    render(<NeoConversation store={store} sessionId="neo" snapshot={snapshot} />);
+    const a = screen.getByText('Late A answer').closest('article')!;
+    const b = screen.getByText('B answer').closest('article')!;
+    expect(inventoryRequest).not.toHaveBeenCalled();
+    expect(within(b).getByText('How this is being handled')).toBeTruthy();
+    expect(
+      within(screen.getByText('Unattributed answer').closest('article')!).queryByText(
+        'How this is being handled'
+      )
+    ).toBeNull();
+    expect(
+      within(screen.getByText('Project request A').closest('article')!).getByText(
+        'How this is being handled'
+      )
+    ).toBeTruthy();
+    fireEvent.click(within(a).getByText('How this is being handled'));
+    await waitFor(() => expect(inventoryRequest).toHaveBeenCalledTimes(1));
+    expect(within(a).getByText('Actual work A')).toBeTruthy();
+    expect(within(a).queryByText('Actual work B')).toBeNull();
+    expect(within(a).getByText('worker-A')).toBeTruthy();
+    expect(within(a).queryByText('worker-B')).toBeNull();
+    expect(within(a).getByRole('button', { name: 'Copy Neo’s message' })).toBeTruthy();
+    expect(within(a).queryByRole('link')).toBeNull();
+    fireEvent.click(within(a).getByRole('button', { name: 'Close board' }));
+    await waitFor(() =>
+      expect(within(a).queryByRole('region', { name: 'Concern board' })).toBeNull()
+    );
+    expect(screen.getByText('Project request B')).toBeTruthy();
+  });
   it('ties late A to its actual request while B stays direct and clicking remains in this view', () => {
     const store = makeStore();
     const human = (uuid: string, text: string) => ({

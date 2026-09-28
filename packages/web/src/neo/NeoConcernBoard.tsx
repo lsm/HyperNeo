@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -6,6 +6,7 @@ import { connectionState } from '../lib/state.ts';
 import { readDaemonInventory } from '../lib/daemon-inventory.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { projectNeoConcernBoard, type NeoConcernBoard } from './neo-concern-board.ts';
+import { projectNeoRequestSnapshot, type NeoRequestOrigin } from './request-board.ts';
 
 const statusLabels = {
   proposed: 'Your call',
@@ -17,14 +18,25 @@ const statusLabels = {
 };
 const refKey = (ref: DaemonInventoryLink) => JSON.stringify([ref.kind, ref.id]);
 
-export function NeoConcernBoardView({ board }: { board: NeoConcernBoard }) {
+export function NeoConcernBoardView({
+  board,
+  requestScoped = false,
+}: {
+  board: NeoConcernBoard;
+  requestScoped?: boolean;
+}) {
   const name = (ref: DaemonInventoryLink) =>
     board.participants.find((item) => refKey(item.ref) === refKey(ref))?.metadata?.name || ref.id;
   return (
     <>
       <p class="mb-4 text-xs leading-relaxed text-fg-muted">
-        {board.concern ? `For ${board.concern.title}.` : 'Across your concerns.'} These are recorded
-        requests and links, not a second conversation. A response is not verified completion.
+        {requestScoped
+          ? 'For this request.'
+          : board.concern
+            ? `For ${board.concern.title}.`
+            : 'Across your concerns.'}{' '}
+        These are recorded requests and links, not a second conversation. A response is not verified
+        completion.
       </p>
       <h3 class="mb-3 text-sm font-medium">What’s being handled</h3>
       <p class="mb-3 text-xs text-fg-faint">
@@ -123,9 +135,11 @@ export function NeoConcernBoardView({ board }: { board: NeoConcernBoard }) {
 export function NeoConcernBoardPanel({
   snapshot,
   concernId,
+  requestOrigin,
 }: {
   snapshot: NeoSnapshot | null;
   concernId: string | null;
+  requestOrigin?: NeoRequestOrigin;
 }) {
   const [open, setOpen] = useState(false);
   const [inventory, setInventory] = useState<DaemonSnapshot | null>(null);
@@ -134,7 +148,12 @@ export function NeoConcernBoardPanel({
   const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const connected = connectionState.value === 'connected';
-  const board = projectNeoConcernBoard(snapshot, concernId, inventory);
+  const scopedSnapshot = useMemo(
+    () =>
+      requestOrigin === undefined ? snapshot : projectNeoRequestSnapshot(snapshot, requestOrigin),
+    [snapshot, requestOrigin?.sessionId, requestOrigin?.messageId, requestOrigin === undefined]
+  );
+  const board = projectNeoConcernBoard(scopedSnapshot, concernId, inventory);
 
   useLayoutEffect(() => {
     const ticket = ++generation.current;
@@ -160,7 +179,7 @@ export function NeoConcernBoardPanel({
       alive = false;
       ++generation.current;
     };
-  }, [open, connected, snapshot, concernId, refresh]);
+  }, [open, connected, scopedSnapshot, concernId, refresh]);
 
   if (!board) return null;
   return (
@@ -171,14 +190,23 @@ export function NeoConcernBoardPanel({
         ++generation.current;
         setOpen(event.currentTarget.open);
       }}
-      class="my-5 rounded-2xl border border-line bg-surface/40 p-4 sm:p-5"
+      class={
+        requestOrigin ? 'mt-2' : 'my-5 rounded-2xl border border-line bg-surface/40 p-4 sm:p-5'
+      }
     >
-      <summary class="cursor-pointer text-sm text-fg-muted hover:text-accent">
-        {concernId === null ? 'How Neo is handling things' : 'How this is being handled'}
+      <summary
+        class={`cursor-pointer text-fg-muted hover:text-accent ${requestOrigin ? 'text-xs' : 'text-sm'}`}
+      >
+        {requestOrigin || concernId !== null
+          ? 'How this is being handled'
+          : 'How Neo is handling things'}
       </summary>
       {open && (
-        <section aria-label="Concern board" class="mt-5">
-          <NeoConcernBoardView board={board} />
+        <section
+          aria-label="Concern board"
+          class={requestOrigin ? 'mt-3 rounded-xl border border-line bg-surface p-4' : 'mt-5'}
+        >
+          <NeoConcernBoardView board={board} requestScoped={!!requestOrigin} />
           {!connected && (
             <p role="status" class="mt-3 text-xs text-warning">
               Reconnect to refresh resource details.

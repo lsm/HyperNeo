@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
@@ -33,6 +34,7 @@ export function NeoMessage({
   activity,
   sessionId,
   replyTo,
+  children,
 }: {
   message: ChatMessage;
   text: string;
@@ -40,6 +42,7 @@ export function NeoMessage({
   activity?: string[];
   sessionId?: string;
   replyTo?: NeoReplyContext;
+  children?: ComponentChildren;
 }) {
   const user = message.type === 'user';
   const [showActivity, setShowActivity] = useState(false);
@@ -145,6 +148,7 @@ export function NeoMessage({
           </button>
         )}
       </div>
+      {children}
       {showActivity && sessionId && (
         <div
           ref={activityPanel}
