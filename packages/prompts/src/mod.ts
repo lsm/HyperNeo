@@ -37,6 +37,7 @@ import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
+import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -151,6 +152,7 @@ const registry: Record<string, string> = {
   'coordinator/verifier.md': mdcoordinatorVerifier,
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
+  'neo/capabilities.md': mdneoCapabilities,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
@@ -215,6 +217,7 @@ export const {
   SUBAGENT_VERIFIER_PROMPT,
   GITHUB_ROUTER_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT,
+  NEO_CAPABILITIES_BRIEFING,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
