@@ -56,6 +56,14 @@ function ViewProbe() {
       <p>Overview work: {neo.snapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
       <p>View work: {neo.viewSnapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
       <p>View checks: {neo.viewSnapshot?.consultations?.map((item) => item.id).join(',') ?? ''}</p>
+      <p>
+        Board work:{' '}
+        {neo
+          .projectBoard(null)
+          ?.receipts.filter((item) => item.kind === 'work')
+          .map((item) => item.id)
+          .join(',') ?? 'loading'}
+      </p>
       {neo.error && <p role="alert">{neo.error}</p>}
     </>
   );
@@ -145,9 +153,43 @@ describe('useNeo selected concern', () => {
     const result = (sessionId: string, workId: string, checkId: string) => ({
       ok: true,
       sessionId,
-      concerns: [{ id: 'a' }, { id: 'b' }],
-      work: [{ id: workId }],
-      consultations: [{ id: checkId }],
+      concerns: ['a', 'b'].map((id) => ({
+        id,
+        title: id,
+        summary: 'Summary',
+        context: 'Context',
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+      work: [
+        {
+          id: workId,
+          requestKey: workId,
+          concernId: sessionId === 'root' ? null : sessionId,
+          originSessionId: 'root',
+          sessionId: workId,
+          title: workId,
+          instruction: 'Do this',
+          status: 'queued',
+          report: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      consultations: [
+        {
+          id: checkId,
+          requestKey: checkId,
+          concernId: sessionId,
+          originSessionId: 'root',
+          sessionId: `${sessionId}-holder`,
+          question: 'Next?',
+          status: 'pending',
+          answer: null,
+          createdAt: 1,
+        },
+      ],
     });
     request.mockImplementation(
       async (_method: string, { name, input }: { name: string; input: { concernId?: string } }) => {
@@ -165,13 +207,16 @@ describe('useNeo selected concern', () => {
     );
     render(<ViewProbe />);
     await waitFor(() => expect(screen.getByText('View work: global')).toBeTruthy());
+    expect(screen.getByText('Board work: global')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open A' }));
     await waitFor(() => expect(screen.getByText('View work: a-old')).toBeTruthy());
+    expect(screen.getByText('Board work: a-old')).toBeTruthy();
     expect(screen.getByText('Overview work: global')).toBeTruthy();
     expect(screen.getByText('View checks: a-check')).toBeTruthy();
     aVersion = 'a-refreshed';
     act(() => neoEvents.changed?.());
     await waitFor(() => expect(screen.getByText('View work: a-refreshed')).toBeTruthy());
+    expect(screen.getByText('Board work: a-refreshed')).toBeTruthy();
     deferA = true;
     act(() => neoEvents.changed?.());
     await waitFor(() => expect(rejectA).not.toBeNull());
@@ -179,9 +224,11 @@ describe('useNeo selected concern', () => {
     await waitFor(() => expect(screen.getByText('View work: b-old')).toBeTruthy());
     await act(async () => rejectA?.(new Error('Stale A failure')));
     expect(screen.getByText('View work: b-old')).toBeTruthy();
+    expect(screen.getByText('Board work: b-old')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Open Neo' }));
     await waitFor(() => expect(screen.getByText('View work: global')).toBeTruthy());
+    expect(screen.getByText('Board work: global')).toBeTruthy();
     expect(screen.getByText('View checks: global-check')).toBeTruthy();
   });
 });
