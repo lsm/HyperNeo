@@ -91,7 +91,7 @@ const Propose = z.object({
   concernId: z.string().min(1).nullable().default(null),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(16000),
-  targetSessionId: z.string().min(1).max(160).nullable().default(null),
+  targetSessionId: z.string().min(1).max(160).nullable().optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -109,6 +109,21 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+
+export function requireNeoExecutionChoice(
+  input: { targetSessionId?: string | null },
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: Rejection } {
+  return caller.source !== 'mcp' || input.targetSessionId !== undefined
+    ? { value: caller }
+    : {
+        reason: {
+          ok: false,
+          reason:
+            'Choose targetSessionId explicitly: use the exact existing chat ID to reuse it, or null for genuinely self-contained scratch work. An instruction mentioning a chat does not bind its execution target. Inspect operations.describe for neo.work.propose, then retry.',
+        },
+      };
+}
 
 export function admitNeoCaller(
   service: NeoService,
@@ -377,6 +392,7 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(requireNeoExecutionChoice, ['input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         input.concernId && !service.repo.getConcern(input.concernId)
@@ -398,7 +414,7 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: z.infer<typeof Propose>) => ({
         id: crypto.randomUUID(),
-        targetSessionId: input.targetSessionId,
+        targetSessionId: input.targetSessionId ?? null,
       }),
       'input',
       'candidate'
@@ -548,7 +564,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Optional targetSessionId is an exact existing ordinary project/non-project chat from daemon.snapshot, not a Space/task/workflow-owned or coordinator session. Null uses a new scratch worker. The target is immutable for this requestKey. This does not start execution.',
+        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat from daemon.snapshot, or null for self-contained scratch work. Space/task/workflow-owned and Neo-bound sessions keep their owning operations. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import {
+  createNeoOperations,
+  requireNeoExecutionChoice,
+} from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { requireNeoWorkTargetSession } from '../../../../src/lib/neo/work-target.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -217,6 +220,29 @@ describe('Neo existing chat work', () => {
     });
     expect(service.repo.listWork()).toEqual([work]);
     expect(jobs('project')).toEqual([]);
+  });
+
+  test('implicit MCP scratch proposals reject before storage while explicit choices and local-human compatibility survive', async () => {
+    const { targetSessionId: _target, ...withoutTarget } = input();
+    expect(requireNeoExecutionChoice(withoutTarget, source('ask-A'))).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining('Choose targetSessionId explicitly') },
+    });
+    expect(requireNeoExecutionChoice({ targetSessionId: null }, source('ask-A'))).toMatchObject({
+      value: { sessionId: 'root' },
+    });
+    expect(
+      requireNeoExecutionChoice({ targetSessionId: 'project' }, source('ask-A'))
+    ).toMatchObject({ value: { sessionId: 'root' } });
+    expect(requireNeoExecutionChoice(withoutTarget, human)).toEqual({ value: human });
+    expect(await invoke('neo.work.propose', withoutTarget, source('ask-A'))).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('Choose targetSessionId explicitly') },
+    });
+    expect(service.repo.listWork()).toEqual([]);
+    expect(await invoke('neo.work.propose', withoutTarget)).toMatchObject({
+      value: { ok: true, work: { targetSessionId: null, status: 'proposed' } },
+    });
+    expect(jobs('project')).toEqual([]);
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   test.each(['', ' '.repeat(161)])(
