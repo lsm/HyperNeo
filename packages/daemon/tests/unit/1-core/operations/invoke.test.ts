@@ -10,6 +10,7 @@ import {
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 
 const caller = { source: 'rpc' as const, sessionId: 'sender' };
+const callers = [caller, { source: 'mcp' as const, role: 'neo' as const, sessionId: 'neo:root' }];
 function fixture() {
   const execute = mock(async (input: { content: string }) => ({ accepted: input.content }));
   const operation = defineOperation({
@@ -78,10 +79,10 @@ describe('shared operation invocation', () => {
     });
     expect(execute).not.toHaveBeenCalled();
   });
-  test('does not retry a failed execution', async () => {
+  test.each(callers)('does not retry a failed execution for $source', async (actor) => {
     const { registry, execute } = fixture();
     execute.mockRejectedValue(new Error('unavailable'));
-    expect(await invokeOperation(registry, 'message.send', { content: 'hello' }, caller)).toEqual({
+    expect(await invokeOperation(registry, 'message.send', { content: 'hello' }, actor)).toEqual({
       kind: 'failed',
       code: 'execution_failed',
       message: 'unavailable',
@@ -106,11 +107,11 @@ describe('shared operation invocation', () => {
       code: 'invalid_input',
     });
   });
-  test('invalid output is a failure after execution, not a completed result', async () => {
+  test.each(callers)('invalid output is a failure after execution for $source', async (actor) => {
     const { operation } = fixture();
     const registry = createOperationRegistry([{ ...operation, execute: async () => null }]);
     expect(
-      await invokeOperation(registry, 'message.send', { content: 'hello' }, caller)
+      await invokeOperation(registry, 'message.send', { content: 'hello' }, actor)
     ).toMatchObject({
       kind: 'failed',
       code: 'invalid_result',
