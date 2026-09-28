@@ -24,6 +24,11 @@ import {
   type Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
+import { Database as SQLite } from '../../../../src/storage/sqlite-compat';
+import { createNeoTables } from '../../../../src/storage/schema/neo';
+import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
+import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -296,6 +301,129 @@ describe('QueryRunner', () => {
       runner = createRunner();
       expect(runner).toBeDefined();
     });
+  });
+
+  describe('Neo coordinator input isolation', () => {
+    let sqlite: SQLite;
+    let queue: MessageQueue;
+    const providerId = 'custom:neo-input-unit';
+    beforeEach(() => {
+      resetSdkStartupGateForTests();
+      sqlite = new SQLite(':memory:');
+      createNeoTables(sqlite);
+      runMigration279(sqlite);
+      queue = new MessageQueue();
+      initializeProviders().register({
+        id: providerId,
+        displayName: 'Neo input unit test',
+        isAvailable: async () => true,
+        getAuthStatus: async () => ({ isAuthenticated: true, method: 'api_key' }),
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Provider);
+    });
+    afterEach(() => {
+      queue.clear();
+      queue.stop();
+      sqlite.close();
+      initializeProviders().unregister(providerId);
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(async () => ({
+        interrupt: () => {},
+      }));
+    });
+
+    it.each(['neo', 'concern', 'worker', 'ordinary'] as const)(
+      'keeps %s inputs on their intended query boundary',
+      async (kind) => {
+        const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
+        const isolated = kind === 'neo' || kind === 'concern';
+        const repo = new NeoRepository(sqlite);
+        if (kind === 'concern')
+          repo.saveConcern({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
+        if (kind !== 'ordinary')
+          repo.reserveBinding({ sessionId, concernId: kind === 'concern' ? 'club' : null, kind });
+        const identities: Array<{ messageId: string; human: boolean; live: boolean }> = [];
+        const getTurns: Array<() => OperationCaller['neoTurn']> = [];
+        const createServer = mock((getTurn: () => OperationCaller['neoTurn']) => {
+          getTurns.push(getTurn);
+          return { type: 'stdio' as const, command: 'isolated-unit-server' };
+        });
+        const reconcile = mock(async () => {});
+        const endings: boolean[] = [];
+        const received: string[] = [];
+        (query as unknown as ReturnType<typeof mock>).mockImplementation(
+          (args: Parameters<typeof query>[0]) => ({
+            close: () => {},
+            interrupt: async () => {},
+            setMcpServers: reconcile,
+            [Symbol.asyncIterator]: async function* () {
+              const feed = (args.prompt as AsyncIterable<{ uuid: string }>)[Symbol.asyncIterator]();
+              const first = await feed.next();
+              received.push(first.value!.uuid);
+              const identity = getTurns.at(-1)?.();
+              if (identity)
+                identities.push({
+                  messageId: identity.messageId,
+                  human: identity.human,
+                  live: identity.isLive(),
+                });
+              const next = await feed.next();
+              endings.push(!!next.done);
+              if (!next.done) received.push(next.value.uuid);
+              if (!next.done) await feed.return?.();
+              yield { type: 'result', subtype: 'success', uuid: 'result' };
+            },
+          })
+        );
+        const ctx = createContext({
+          session: {
+            ...mockSession,
+            id: sessionId,
+            workspacePath: null,
+            config: { model: 'unit', provider: providerId },
+          },
+          db: {
+            ...mockDb,
+            getDatabase: () => sqlite,
+            getSDKMessageRepo: () => ({
+              getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
+            }),
+          } as unknown as Database,
+          messageQueue: queue,
+          createNeoTurnMcpServer: createServer,
+        });
+        runner = new QueryRunner(ctx);
+        const firstSent = queue.enqueueWithId('ask-A', 'Project A?', false, { durable: true });
+        const nextSent = queue.enqueueWithId('ask-B', 'Company B?', false, { durable: true });
+        void firstSent.catch(() => {});
+        void nextSent.catch(() => {});
+        await runner.start();
+        await ctx.queryPromise;
+        await firstSent;
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        if (isolated) {
+          expect(received).toEqual(['ask-A']);
+          expect(endings).toEqual([true]);
+          expect(queue.size()).toBe(1);
+          expect(identities).toEqual([{ messageId: 'ask-A', human: true, live: true }]);
+          expect(getTurns[0]()?.isLive()).toBe(false);
+          expect(reconcile).not.toHaveBeenCalled();
+          await runner.start();
+          await ctx.queryPromise;
+          await nextSent;
+          expect(received).toEqual(['ask-A', 'ask-B']);
+          expect(endings).toEqual([true, true]);
+          expect(identities[1]).toEqual({ messageId: 'ask-B', human: true, live: true });
+          expect(createServer).toHaveBeenCalledTimes(2);
+          expect(getTurns[1]()?.isLive()).toBe(false);
+          expect(queue.size()).toBe(0);
+        } else {
+          expect(received).toEqual(['ask-A', 'ask-B']);
+          expect(endings).toEqual([false]);
+          expect(createServer).not.toHaveBeenCalled();
+          expect(reconcile).toHaveBeenCalled();
+        }
+      }
+    );
   });
 
   function makeRegistryForResolver(
