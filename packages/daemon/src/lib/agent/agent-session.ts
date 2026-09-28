@@ -1450,7 +1450,7 @@ export class AgentSession
   ): void {
     const queryObject = this.queryObject;
     if (!queryObject) return;
-    if (neoCoordinatorBinding(this.db, this.session.id)?.kind === 'concern') return;
+    if (neoCoordinatorBinding(this.db, this.session.id)) return;
 
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
     if (!setMcpServers) return;
