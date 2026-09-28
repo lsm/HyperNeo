@@ -61,6 +61,35 @@ function ViewProbe() {
   );
 }
 
+function IntakeProbe() {
+  const neo = useNeo();
+  return (
+    <button onClick={() => void neo.send({ sessionId: 'neo:root', text: 'Project A?' })}>
+      Send ask
+    </button>
+  );
+}
+
+describe('useNeo intake client', () => {
+  it('exposes the durable intake path without changing existing composer messaging', async () => {
+    request.mockImplementation(
+      async (_method: string, { name, input }: { name: string; input: { requestId?: string } }) =>
+        name === 'neo.message.send'
+          ? { ok: true, requestId: input.requestId, messageId: input.requestId, created: true }
+          : { ok: true, sessionId: 'neo:root', concerns: [], work: [] }
+    );
+    render(<IntakeProbe />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send ask' }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.message.send',
+        input: { sessionId: 'neo:root', requestId: expect.any(String), content: 'Project A?' },
+      })
+    );
+    expect(request.mock.calls.some((call) => call[0] === 'message.send')).toBe(false);
+  });
+});
+
 describe('useNeo stop waiting', () => {
   it('uses the consultation operation, exposes failure, and refreshes after a successful retry', async () => {
     let pending = true;

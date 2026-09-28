@@ -3,9 +3,11 @@ import type { NeoResult, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
+import { createNeoIntakeClient } from './neo-intake.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
+  const intake = useMemo(() => createNeoIntakeClient(() => connectionManager.getHub()), []);
   const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
   const [scopedSnapshot, setScopedSnapshot] = useState<NeoSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -146,6 +148,7 @@ export function useNeo() {
     busyWork,
     open,
     act,
+    send: intake.send,
     retry: () => setAttempt((value) => value + 1),
   };
 }
