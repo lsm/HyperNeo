@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="595" height="842" viewBox="0 0 595 842" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo A4 letterhead template</title>
+  <desc id="desc">A4 portrait letterhead with a restrained brand header, readable text area, and simple footer.</desc>
+  <defs>
+    <symbol id="hn-mark" viewBox="0 0 144 377"><path fill="currentColor" d="M5.5 0h44A5.5 5.5 0 0 1 55 5.5v366a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 0 371.5V5.5A5.5 5.5 0 0 1 5.5 0Zm89 0h44a5.5 5.5 0 0 1 5.5 5.5V166a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 89 166V5.5A5.5 5.5 0 0 1 94.5 0Zm0 205.5h44a5.5 5.5 0 0 1 5.5 5.5v160.5a5.5 5.5 0 0 1-5.5 5.5h-44a5.5 5.5 0 0 1-5.5-5.5V211a5.5 5.5 0 0 1 5.5-5.5Z"/></symbol>
+    <style>.sans{font-family:Inter,"Noto Sans SC","Helvetica Neue",Arial,sans-serif}.mono{font-family:SFMono-Regular,Consolas,monospace;letter-spacing:1px}</style>
+  </defs>
+  <rect width="595" height="842" fill="#F2F4EF"/>
+  <g transform="translate(56 48) scale(.095)" color="#102019"><use href="#hn-mark" width="144" height="377"/></g>
+  <text x="86" y="72" class="sans" font-size="20" font-weight="600" fill="#102019">HyperNeo</text>
+  <text x="539" y="69" class="mono" text-anchor="end" font-size="7.5" fill="#829589">QUIET CLARITY FOR CONSEQUENTIAL WORK</text>
+  <path d="M56 101H539" stroke="#C6D1C8"/><path d="M56 101H154" stroke="#53E59A" stroke-width="2"/>
+  <text x="56" y="158" class="mono" font-size="8" fill="#829589">[DATE]</text>
+  <text x="56" y="197" class="sans" font-size="11" font-weight="600" fill="#102019">[RECIPIENT NAME]</text>
+  <text x="56" y="216" class="sans" font-size="10" fill="#536359">[Title / Organization]</text>
+  <text x="56" y="233" class="sans" font-size="10" fill="#536359">[Address]</text>
+  <text x="56" y="280" class="sans" font-size="10" fill="#102019">[Dear name,]</text>
+  <text x="56" y="319" class="sans" font-size="10" fill="#536359">[Write in clear, direct language. Keep paragraphs short, make the</text>
+  <text x="56" y="336" class="sans" font-size="10" fill="#536359">recommendation easy to find, and state the next step and owner.]</text>
+  <text x="56" y="382" class="sans" font-size="10" fill="#536359">[Add supporting context, evidence, or a thoughtful trade-off here.]</text>
+  <text x="56" y="428" class="sans" font-size="10" fill="#536359">[Close with a specific invitation or action.]</text>
+  <text x="56" y="475" class="sans" font-size="10" fill="#102019">[Sincerely,]</text>
+  <text x="56" y="529" class="sans" font-size="10" font-weight="600" fill="#102019">[Name]</text>
+  <text x="56" y="547" class="sans" font-size="9" fill="#536359">[Role]  ·  HyperNeo</text>
+  <path d="M56 764H539" stroke="#C6D1C8"/>
+  <text x="56" y="786" class="mono" font-size="7" fill="#829589">[EMAIL]  ·  [WEBSITE]  ·  [LOCATION]</text>
+  <text x="539" y="786" class="mono" text-anchor="end" font-size="7" fill="#829589">HYPERNEO</text>
+</svg>

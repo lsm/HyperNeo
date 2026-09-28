@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo executive decision brief template</title>
+  <desc id="desc">Editable one-page decision brief with recommendation, evidence, trade-off, and next step.</desc>
+  <defs>
+    <symbol id="hn-mark" viewBox="0 0 144 377"><path fill="currentColor" d="M5.5 0h44A5.5 5.5 0 0 1 55 5.5v366a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 0 371.5V5.5A5.5 5.5 0 0 1 5.5 0Zm89 0h44a5.5 5.5 0 0 1 5.5 5.5V166a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 89 166V5.5A5.5 5.5 0 0 1 94.5 0Zm0 205.5h44a5.5 5.5 0 0 1 5.5 5.5v160.5a5.5 5.5 0 0 1-5.5 5.5h-44a5.5 5.5 0 0 1-5.5-5.5V211a5.5 5.5 0 0 1 5.5-5.5Z"/></symbol>
+    <style>.sans{font-family:Inter,"Noto Sans SC","Helvetica Neue",Arial,sans-serif}.mono{font-family:SFMono-Regular,Consolas,monospace;letter-spacing:1.5px}.label{font-size:14px;fill:#A0B0A5}.body{font-size:20px;fill:#DCE5DD}.rule{stroke:#2B4033;stroke-width:1}</style>
+  </defs>
+  <rect width="1600" height="1000" fill="#F2F4EF"/>
+  <rect width="1600" height="18" fill="#53E59A"/>
+  <g transform="translate(96 69) scale(.105)" color="#102019"><use href="#hn-mark" width="144" height="377"/></g>
+  <text x="128" y="91" class="sans" font-size="23" font-weight="600" fill="#102019">HyperNeo</text>
+  <text x="1504" y="88" class="mono" text-anchor="end" font-size="13" fill="#829589">DECISION BRIEF  /  [DATE]</text>
+  <path d="M96 126H1504" stroke="#C6D1C8"/>
+  <text x="96" y="183" class="mono" font-size="13" fill="#829589">DECISION NEEDED  /  [OWNER OR TEAM]</text>
+  <text x="96" y="250" class="sans" font-size="48" font-weight="560" letter-spacing="-1.5" fill="#102019">[Decision question in one clear sentence]</text>
+  <rect x="96" y="292" width="1408" height="172" rx="16" fill="#102019"/>
+  <path d="M96 310a18 18 0 0 1 18-18h4v172h-4a18 18 0 0 1-18-18Z" fill="#53E59A"/>
+  <text x="144" y="339" class="mono" font-size="13" fill="#9AF2C0">RECOMMENDATION</text>
+  <text x="144" y="390" class="sans" font-size="34" font-weight="520" fill="#F2F4EF">[Choose option A and start with a measured pilot.]</text>
+  <text x="144" y="431" class="sans" font-size="18" fill="#A0B0A5">[One sentence explaining the expected value and why this is the right moment.]</text>
+  <text x="96" y="520" class="mono" font-size="13" fill="#829589">WHAT MATTERS</text>
+  <text x="96" y="565" class="sans" font-size="23" font-weight="550" fill="#102019">Evidence</text>
+  <text x="96" y="601" class="sans body" fill="#536359">[Two or three concise facts supporting the recommendation.]</text>
+  <text x="96" y="669" class="sans" font-size="23" font-weight="550" fill="#102019">Trade-off</text>
+  <text x="96" y="705" class="sans body" fill="#536359">[Name the cost, uncertainty, or capability we give up.]</text>
+  <text x="96" y="773" class="sans" font-size="23" font-weight="550" fill="#102019">Next step</text>
+  <text x="96" y="809" class="sans body" fill="#536359">[Owner]  ·  [specific action]  ·  [date or checkpoint]</text>
+  <path d="M970 516V824" class="rule"/>
+  <text x="1020" y="520" class="mono" font-size="13" fill="#829589">OPTIONS AT A GLANCE</text>
+  <rect x="1020" y="548" width="484" height="67" rx="10" fill="#DDEDE2"/>
+  <text x="1042" y="578" class="sans" font-size="18" font-weight="600" fill="#102019">A  /  [Recommended path]</text>
+  <text x="1042" y="600" class="sans" font-size="13" fill="#536359">[Best fit and key condition]</text>
+  <path d="M1020 642H1504M1020 710H1504M1020 778H1504" class="rule"/>
+  <text x="1042" y="674" class="sans" font-size="18" font-weight="520" fill="#102019">B  /  [Alternative]</text>
+  <text x="1042" y="696" class="sans" font-size="13" fill="#829589">[Main advantage and cost]</text>
+  <text x="1042" y="742" class="sans" font-size="18" font-weight="520" fill="#102019">C  /  [Defer or decline]</text>
+  <text x="1042" y="764" class="sans" font-size="13" fill="#829589">[Consequence of waiting]</text>
+  <text x="96" y="930" class="mono" font-size="11" fill="#829589">HYPERNEO  /  QUIET CLARITY FOR CONSEQUENTIAL WORK</text>
+  <text x="1504" y="930" class="mono" text-anchor="end" font-size="11" fill="#829589">CONFIDENTIAL  ·  [AUDIENCE]</text>
+</svg>

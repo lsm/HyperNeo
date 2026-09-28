@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">HyperNeo</title>
+  <rect width="32" height="32" rx="8" fill="#07110C" />
+  <g fill="#53E59A" transform="translate(11.8 5) scale(.0583554)">
+    <rect x="0" y="0" width="55" height="377" rx="5.5" />
+    <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
+    <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+  </g>
+</svg>

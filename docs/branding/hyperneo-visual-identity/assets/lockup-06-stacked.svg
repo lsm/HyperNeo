@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="230" viewBox="0 0 320 230" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo stacked lockup</title>
+  <desc id="desc">The jade HyperNeo mark centered above the white HyperNeo wordmark.</desc>
+  <g fill="#53E59A" transform="translate(134.08 18) scale(.36)">
+    <rect x="0" y="0" width="55" height="377" rx="5.5" />
+    <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
+    <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+  </g>
+  <text x="160" y="218" text-anchor="middle" fill="#F2F4EF" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-size="47" font-weight="550" letter-spacing="-2.3">HyperNeo</text>
+</svg>

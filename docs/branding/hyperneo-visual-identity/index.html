@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07110C">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon-06.svg">
+  <link rel="stylesheet" href="brand-tokens.css">
+  <title>HyperNeo — Visual Identity</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: var(--hn-color-night);
+      --forest: var(--hn-color-forest);
+      --forest-raised: var(--hn-color-forest-raised);
+      --jade: var(--hn-color-jade);
+      --mint: var(--hn-color-mint);
+      --paper: var(--hn-color-paper);
+      --mist: var(--hn-color-mist);
+      --muted: var(--hn-color-muted);
+      --line: var(--hn-color-line);
+      --serif: Georgia, "Times New Roman", serif;
+      --sans: var(--hn-font-sans);
+      --mono: var(--hn-font-mono);
+      font-family: var(--sans);
+      background: var(--ink);
+      color: var(--paper);
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(ellipse at 14% 2%, #173324 0, transparent 34%), var(--ink);
+      color: var(--paper);
+      line-height: var(--hn-leading-body);
+    }
+    a { color: inherit; text-decoration: none; }
+    .shell { width: min(1180px, calc(100% - 48px)); margin: auto; }
+    .topbar {
+      min-height: 78px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid #ffffff16;
+    }
+    .wordmark { display: flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 620; letter-spacing: -.045em; }
+    .wordmark img { width: auto; height: 31px; }
+    nav { display: flex; gap: 26px; color: var(--muted); font-size: 12px; }
+    nav a:hover { color: var(--mint); }
+    .eyebrow, .index, .micro, .token, .caption {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .eyebrow, .index, .token { color: var(--jade); }
+    .hero {
+      min-height: 590px;
+      padding: 76px 0 82px;
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      align-items: center;
+      gap: 70px;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 700px; margin: 20px 0 22px; font-size: clamp(52px, 5.5vw, 74px); line-height: .98; font-weight: 510; letter-spacing: -.075em; }
+    h1 span { color: var(--jade); }
+    .hero-copy > p:not(.eyebrow) { max-width: 520px; color: var(--mist); font-size: 17px; line-height: 1.7; }
+    .hero-foot { display: flex; gap: 24px; margin-top: 32px; color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .hero-foot span { display: inline-flex; align-items: center; gap: 9px; }
+    .hero-foot i { width: 5px; height: 5px; border-radius: 50%; background: var(--jade); }
+    .mark-stage {
+      min-height: 430px;
+      border: 1px solid #ffffff18;
+      border-radius: 28px;
+      background: radial-gradient(ellipse at center, #183b28 0, #0b1710 64%);
+      display: grid;
+      place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .mark-stage::before, .mark-stage::after { content: ""; position: absolute; background: #ffffff15; }
+    .mark-stage::before { width: 1px; height: 76%; }
+    .mark-stage::after { height: 1px; width: 76%; }
+    .hero-mark { height: 278px; width: auto; z-index: 1; filter: drop-shadow(0 0 28px #53e59a20); }
+    .stage-label { position: absolute; z-index: 2; bottom: 24px; left: 24px; color: var(--muted); }
+    .stage-label strong { display: block; margin-top: 6px; color: var(--paper); font-size: 13px; font-weight: 500; }
+    .stage-index { position: absolute; top: 24px; right: 24px; z-index: 2; color: #8CA193; }
+    .section { padding: 92px 0; border-top: 1px solid #ffffff18; }
+    .section-head { display: grid; grid-template-columns: 180px 1fr; gap: 35px; align-items: start; margin-bottom: 44px; }
+    .section-head h2 { max-width: 720px; margin: 0; font-size: clamp(34px, 4.5vw, 56px); line-height: 1.05; font-weight: 480; letter-spacing: -.06em; }
+    .section-head h2 span { color: var(--jade); }
+    .section-head p { max-width: 700px; margin: 15px 0 0; color: var(--muted); line-height: 1.7; }
+    .story-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+    .story-card { min-height: 205px; padding: 26px; background: #0b1710; }
+    .story-card .index { margin-bottom: 33px; }
+    .story-card h3 { margin-bottom: 9px; font-size: 18px; font-weight: 520; letter-spacing: -.025em; }
+    .story-card p { max-width: 310px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .mark-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .specimen, .rules { border: 1px solid var(--line); border-radius: 20px; background: #0b1710; }
+    .specimen { min-height: 400px; position: relative; display: grid; place-items: center; background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px); background-size: 34px 34px; }
+    .specimen img { height: 245px; width: auto; }
+    .specimen .caption { position: absolute; left: 22px; bottom: 20px; color: var(--muted); }
+    .rules { padding: 27px; display: flex; flex-direction: column; justify-content: space-between; }
+    .rule-row { display: grid; grid-template-columns: 34px 1fr; gap: 13px; padding: 18px 0; border-bottom: 1px solid #ffffff16; }
+    .rule-row:last-child { border: 0; }
+    .rule-num { color: var(--jade); font-family: var(--mono); font-size: 11px; }
+    .rule-row h3 { margin: 0 0 5px; font-size: 14px; font-weight: 550; }
+    .rule-row p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .lockup-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+    .lockup-sample { display: grid; place-items: center; min-height: 126px; padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: #0b1710; }
+    .lockup-sample.light { background: var(--paper); border-color: var(--paper); }
+    .lockup-sample img { width: min(100%, 370px); height: auto; }
+    .palette { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+    .swatch { overflow: hidden; border: 1px solid #ffffff20; border-radius: 15px; background: #0b1710; }
+    .swatch-color { height: 114px; }
+    .swatch-info { padding: 14px; }
+    .swatch-info strong { display: block; font-size: 12px; font-weight: 560; }
+    .swatch-info span { display: block; margin-top: 4px; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .color-note { display: flex; gap: 12px; align-items: center; margin-top: 20px; color: var(--muted); font-size: 12px; }
+    .color-note::before { content: ""; height: 1px; width: 34px; background: var(--jade); }
+    .system-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+    .system-card { min-width: 0; padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: #0b1710; }
+    .system-card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 550; }
+    .system-card > p { margin: 0 0 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .pattern-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .pattern { min-height: 170px; overflow: hidden; position: relative; border: 1px solid #ffffff18; border-radius: 14px; background-color: #102019; background-repeat: repeat; }
+    .pattern.signal { background-image: url("patterns/01-signal-field.svg"); background-size: 144px 189px; }
+    .pattern.grid { background-image: url("patterns/02-quiet-grid.svg"); background-size: 136px 136px; }
+    .pattern-label { position: absolute; right: 10px; bottom: 10px; padding: 6px 8px; border-radius: 6px; background: #07110Cdd; color: var(--mist); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .element-list { display: grid; gap: 12px; }
+    .element { min-height: 86px; display: grid; place-items: center; padding: 15px; border: 1px solid #ffffff18; border-radius: 12px; background: #102019; }
+    .element img { display: block; max-width: 100%; max-height: 68px; }
+    .spec-table { width: 100%; border-collapse: collapse; color: var(--mist); font-size: 11px; }
+    .spec-table th, .spec-table td { padding: 11px 8px; border-bottom: 1px solid #ffffff18; text-align: left; vertical-align: top; }
+    .spec-table th { color: var(--muted); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .spec-table td:last-child { color: var(--jade); font-family: var(--mono); white-space: nowrap; }
+    .guideline-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .guideline { padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: #0b1710; }
+    .guideline .index { margin-bottom: 15px; }
+    .guideline h3 { margin-bottom: 6px; font-size: 13px; font-weight: 550; }
+    .guideline p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .photo-layout { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; }
+    .photo-sample, .photo-notes { overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #0b1710; }
+    .photo-sample { margin: 0; }
+    .photo-sample img { display: block; width: 100%; height: 100%; min-height: 350px; object-fit: cover; }
+    .photo-notes { padding: 24px; }
+    .photo-notes h3 { margin: 0 0 8px; font-size: 15px; font-weight: 550; }
+    .photo-notes p, .photo-notes li { color: var(--muted); font-size: 12px; line-height: 1.75; }
+    .photo-notes ul { margin: 12px 0 22px; padding-left: 19px; }
+    .type-spec { overflow-x: auto; margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .type-spec .spec-table td:last-child { color: var(--mist); }
+    .cjk-sample { margin-top: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #102019; font-family: var(--hn-font-cjk); }
+    .cjk-sample strong { display: block; margin-bottom: 8px; color: var(--paper); font-size: 27px; font-weight: 500; letter-spacing: 0; }
+    .cjk-sample span { color: var(--muted); font-size: 12px; }
+    .print-spec { overflow-x: auto; margin-top: 26px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .print-spec .spec-table { min-width: 660px; }
+    .print-spec .spec-table td:last-child { color: var(--mist); }
+    .note-panel { margin-top: 17px; padding: 15px 17px; border-left: 2px solid var(--jade); background: #102019; color: var(--muted); font-size: 11px; line-height: 1.75; }
+    .note-panel strong { color: var(--mist); font-weight: 550; }
+    .template-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .template-card { overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: #0b1710; }
+    .template-card img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #102019; }
+    .template-card div { padding: 15px; }
+    .template-card h3 { margin: 0 0 5px; font-size: 13px; font-weight: 550; }
+    .template-card p { min-height: 37px; margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.65; }
+    .template-card a { color: var(--mint); font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+    .state-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 18px; }
+    .state { min-height: 126px; padding: 17px; border: 1px solid var(--line); border-radius: 13px; background: #0b1710; }
+    .state span { display: inline-block; margin-bottom: 13px; color: var(--jade); font: 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .state p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+    .rights-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 24px; padding: 23px; border: 1px solid #53e59a44; border-radius: 16px; background: #102019; }
+    .rights-panel p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .rights-panel strong { display: block; margin-bottom: 5px; color: var(--paper); font-size: 14px; font-weight: 550; }
+    .rights-panel a { color: var(--mint); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; font-size: 11px; }
+    .asset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .asset-card { padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: #0b1710; }
+    .asset-card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 560; }
+    .asset-card p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .asset-card a { color: var(--mint); text-decoration: underline; text-decoration-color: #9af2c055; text-underline-offset: 3px; }
+    .asset-card a:hover { color: white; }
+    .asset-note { margin-top: 16px; padding: 14px 16px; border-left: 2px solid var(--jade); background: #102019; color: var(--muted); font-size: 11px; line-height: 1.7; }
+    .surface-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+    .surface-demo { min-height: 130px; display: flex; align-items: center; justify-content: center; gap: 24px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .surface-demo img { height: 78px; width: auto; }
+    .surface-demo span { color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.6; }
+    .surface-demo.light { background: var(--paper); border-color: var(--paper); }
+    .surface-demo.light span { color: #536359; }
+    .type-layout { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; }
+    .type-display, .voice-card { min-height: 310px; border: 1px solid var(--line); border-radius: 19px; background: #0b1710; padding: 30px; }
+    .type-display .display-sample { margin: 27px 0; font-size: clamp(38px, 5.5vw, 68px); line-height: 1; font-weight: 470; letter-spacing: -.07em; }
+    .type-display .display-sample span { color: var(--jade); }
+    .type-meta { display: flex; justify-content: space-between; gap: 20px; color: var(--muted); font-size: 11px; }
+    .voice-card { display: flex; flex-direction: column; justify-content: space-between; }
+    .voice-card blockquote { margin: 25px 0; color: var(--mist); font-family: var(--serif); font-size: 23px; line-height: 1.4; }
+    .voice-card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .product-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 18px; }
+    .chat, .decision { min-height: 336px; border-radius: 20px; overflow: hidden; }
+    .chat { color: #1D2A21; background: #F4F6F2; }
+    .chat-head { display: flex; align-items: center; gap: 11px; padding: 17px 20px; border-bottom: 1px solid #DDE4DE; background: white; }
+    .avatar { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--ink); }
+    .avatar img { height: 22px; width: auto; }
+    .chat-head strong { display: block; font-size: 12px; font-weight: 650; }
+    .chat-head small { display: block; margin-top: 3px; color: #6E7C72; font-size: 10px; }
+    .chat-body { padding: 24px 20px; }
+    .prompt { max-width: 82%; margin: 0 0 19px auto; padding: 11px 13px; border-radius: 14px 14px 4px 14px; background: #E4EAE4; font-size: 12px; }
+    .answer-row { display: flex; align-items: flex-start; gap: 12px; }
+    .answer-copy { padding-top: 2px; }
+    .answer-copy .micro { color: #738278; font-size: 9px; }
+    .answer-copy p { max-width: 395px; margin: 8px 0 0; padding: 13px 14px; border: 1px solid #E2E8E1; border-radius: 4px 14px 14px; background: white; font-size: 12px; line-height: 1.65; }
+    .decision { padding: 25px; color: var(--paper); border: 1px solid var(--line); background: linear-gradient(145deg, #12231A, #0A1510); }
+    .decision-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); }
+    .decision-tag { padding: 6px 9px; border: 1px solid #53E59A45; border-radius: 20px; color: var(--jade); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+    .decision h3 { margin: 29px 0 9px; font-size: 25px; line-height: 1.1; font-weight: 490; letter-spacing: -.045em; }
+    .decision > p { max-width: 440px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .decision-line { display: flex; justify-content: space-between; gap: 15px; padding: 13px 0; border-top: 1px solid #ffffff18; font-size: 11px; }
+    .decision-line span:last-child { color: var(--jade); }
+    .scale-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 30px; border: 1px solid var(--line); border-radius: 18px; background: #0b1710; }
+    .scale-item { min-width: 80px; text-align: center; }
+    .scale-box { width: 72px; height: 72px; display: grid; place-items: center; margin: 0 auto 12px; border: 1px solid #ffffff1b; border-radius: 20px; background: #102019; }
+    .scale-box img { display: block; width: auto; }
+    .scale-label { color: var(--mist); font-family: var(--mono); font-size: 10px; }
+    .scale-note { max-width: 310px; margin: 0 0 12px auto; color: var(--muted); font-size: 11px; line-height: 1.65; }
+    .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .principle { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: #0b1710; }
+    .principle .symbol { width: 25px; height: 25px; display: grid; place-items: center; margin-bottom: 22px; color: var(--jade); font-family: var(--mono); font-size: 13px; }
+    .principle h3 { margin-bottom: 6px; font-size: 13px; font-weight: 560; }
+    .principle p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px 0 34px; border-top: 1px solid #ffffff18; color: var(--muted); font-size: 10px; }
+    footer strong { color: var(--paper); font-weight: 550; }
+    @media (max-width: 800px) {
+      .hero { grid-template-columns: 1fr; gap: 38px; padding-top: 62px; }
+      .mark-stage { min-height: 340px; }
+      .hero-mark { height: 225px; }
+      .section-head { grid-template-columns: 1fr; gap: 14px; }
+      .palette { grid-template-columns: repeat(3, 1fr); }
+      .story-grid, .principles { grid-template-columns: repeat(2, 1fr); }
+      .mark-grid, .type-layout, .product-grid, .system-grid { grid-template-columns: 1fr; }
+      .asset-grid, .guideline-list, .template-grid { grid-template-columns: repeat(2, 1fr); }
+      .photo-layout { grid-template-columns: 1fr; }
+      .state-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 32px, 440px); }
+      .topbar { min-height: 66px; }
+      nav { gap: 12px; font-size: 10px; }
+      nav a:nth-child(2) { display: none; }
+      h1 { font-size: clamp(51px, 15vw, 70px); }
+      .hero { min-height: auto; padding: 54px 0 62px; }
+      .hero-foot { flex-direction: column; gap: 11px; }
+      .section { padding: 65px 0; }
+      .story-grid, .principles { grid-template-columns: 1fr; }
+      .story-card { min-height: 165px; }
+      .story-card .index { margin-bottom: 21px; }
+      .lockup-row { grid-template-columns: 1fr; }
+      .surface-pair { grid-template-columns: 1fr; }
+      .surface-demo { justify-content: flex-start; padding-left: 30px; }
+      .palette { grid-template-columns: repeat(2, 1fr); }
+      .pattern-grid, .asset-grid, .guideline-list, .template-grid { grid-template-columns: 1fr; }
+      .swatch-color { height: 85px; }
+      .scale-row { align-items: center; gap: 11px; padding: 16px 10px; }
+      .scale-item { min-width: 50px; }
+      .scale-box { width: 52px; height: 52px; border-radius: 15px; }
+      .scale-note { display: none; }
+      .state-grid { grid-template-columns: repeat(2, 1fr); }
+      .rights-panel { grid-template-columns: 1fr; }
+      .rights-panel a { white-space: normal; }
+      .photo-sample img { min-height: 230px; }
+      footer { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <header class="topbar shell">
+    <a class="wordmark" href="#top" aria-label="HyperNeo visual identity home">
+      <img src="assets/logo-mark-06-jade.svg" alt="">
+      <span>HyperNeo</span>
+    </a>
+    <nav aria-label="Visual identity sections">
+      <a href="#principle">Principle</a>
+      <a href="#mark">Mark</a>
+      <a href="#system">System</a>
+      <a href="#patterns">Patterns</a>
+      <a href="#product">In product</a>
+      <a href="#assets">Files</a>
+    </nav>
+  </header>
+  <main id="top" class="shell">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">HyperNeo &nbsp; / &nbsp; Visual identity 01</p>
+        <h1 id="hero-title">Calm enough to see.<br><span>Clear enough to act.</span></h1>
+        <p>HyperNeo helps people carrying consequential decisions cut through complexity and move with confidence. Its identity is quiet, exact, and capable: power held in reserve, made simple at the moment it matters.</p>
+        <div class="hero-foot"><span><i></i>Quiet clarity</span><span><i></i>Decisive action</span><span><i></i>谦 · grounded strength</span></div>
+      </div>
+      <div class="mark-stage" aria-label="The approved HyperNeo Qian mark, version 06">
+        <span class="stage-index micro">06 &nbsp; / &nbsp; QIAN</span>
+        <img class="hero-mark" src="assets/logo-mark-06-jade.svg" alt="A solid vertical bar beside a split vertical bar">
+        <div class="stage-label micro">The center pair<strong>One steady line. One deliberate opening.</strong></div>
+      </div>
+    </section>
+
+    <section class="section" id="principle" aria-labelledby="principle-title">
+      <div class="section-head">
+        <p class="eyebrow">01 &nbsp; / &nbsp; Brand idea</p>
+        <div><h2 id="principle-title">A quiet center in a world of <span>noise.</span></h2><p>From Matrix-like information overload to the pressure of a founder’s next move, Neo sees the underlying pattern. The mark pares the Qian hexagram down to its center pair: a calm <code>1</code> beside an intentional <code>0</code>. It signals perception without spectacle, and complexity resolved into a clear next step.</p></div>
+      </div>
+      <div class="story-grid">
+        <article class="story-card"><p class="index">01 / Notice</p><h3>See through the surface</h3><p>Look past the noise, connect the signals, and understand what is really happening.</p></article>
+        <article class="story-card"><p class="index">02 / Understand</p><h3>Hold complexity simply</h3><p>Turn many moving parts into a small number of clear, useful choices.</p></article>
+        <article class="story-card"><p class="index">03 / Decide</p><h3>Make the move</h3><p>Act with measured confidence, without mistaking calm for hesitation.</p></article>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Promise</p><h3>Clarity for consequential work</h3><p>Help capable leaders see what matters, understand what changes, and choose with confidence.</p></article>
+        <article class="guideline"><p class="index">Difference</p><h3>Full capability, less exposed complexity</h3><p>Make powerful agent workflows feel natural while keeping evidence, uncertainty, and meaningful controls available.</p></article>
+        <article class="guideline"><p class="index">Expression</p><h3>Calm, candid, exact</h3><p>Never confuse confidence with certainty. Explain what is known, what is assumed, and what still belongs to the human.</p></article>
+      </div>
+      <p class="note-panel"><strong>Brand architecture:</strong> HyperNeo is the product and platform. Neo is the agent presence inside it: a clear, capable decision partner. “Matrix” is an internal story reference for seeing through a convincing surface; public creative should use original HyperNeo imagery and language, not film logos, stills, or signature code-rain graphics.</p>
+    </section>
+
+    <section class="section" id="mark" aria-labelledby="mark-title">
+      <div class="section-head">
+        <p class="eyebrow">02 &nbsp; / &nbsp; The mark</p>
+        <div><h2 id="mark-title">Two forms. A deliberate <span>pause.</span></h2><p>Mark 06 uses neighboring Fibonacci dimensions: each bar is 55 units wide, and both openings are 34 units. Its 144 × 377 canvas gives it a slender, unmistakable silhouette. Keep the proportions and the open space exactly as drawn.</p></div>
+      </div>
+      <div class="mark-grid">
+        <div class="specimen"><img src="assets/logo-mark-06-jade.svg" alt="The selected mark 06 at large size"><span class="caption">144 × 377 &nbsp; / &nbsp; 55 : 34</span></div>
+        <div class="rules">
+          <div class="rule-row"><span class="rule-num">01</span><div><h3>Hold the orientation</h3><p>The uninterrupted bar stays on the left. The split bar stays on the right.</p></div></div>
+          <div class="rule-row"><span class="rule-num">02</span><div><h3>Protect the opening</h3><p>Never join the two right segments or close either gap. The pause is part of the idea.</p></div></div>
+          <div class="rule-row"><span class="rule-num">03</span><div><h3>Use clear space</h3><p>Leave at least 34 design units around the mark. Keep adjacent text and interface edges outside this zone.</p></div></div>
+          <div class="rule-row"><span class="rule-num">04</span><div><h3>Choose contrast first</h3><p>Use jade on deep forest, or the ink variant on paper. Avoid jade directly on white.</p></div></div>
+        </div>
+      </div>
+      <div class="lockup-row" aria-label="Horizontal wordmark lockups">
+        <div class="lockup-sample"><img src="assets/lockup-06-dark.svg" alt="Jade mark with white HyperNeo wordmark"></div>
+        <div class="lockup-sample light"><img src="assets/lockup-06-light.svg" alt="Ink mark with ink HyperNeo wordmark"></div>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Small-scale mark</p><h3>Protect legibility</h3><p>Minimum mark height: 24 CSS px. Prefer 32 px for an avatar. At 16 px, use a simplified avatar tile or wordmark rather than shrinking the full mark.</p></article>
+        <article class="guideline"><p class="index">Lockup</p><h3>Keep the wordmark readable</h3><p>Use the horizontal lockup at 200 px wide or larger. Below that size, use the standalone mark with a clear brand label nearby.</p></article>
+        <article class="guideline"><p class="index">Clear space</p><h3>One opening on every side</h3><p>Keep at least 34 master units around the mark. Never place a rule, crop, text edge, or competing icon inside the exclusion zone.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="system" aria-labelledby="system-title">
+      <div class="section-head">
+        <p class="eyebrow">03 &nbsp; / &nbsp; Visual language</p>
+        <div><h2 id="system-title">Restrained color. Room to <span>think.</span></h2><p>Jade marks the signal and the moment of action. Deep greens create a composed workspace. Warm paper and soft neutrals support long reading without turning the product into a neon Matrix pastiche.</p></div>
+      </div>
+      <div class="palette" aria-label="HyperNeo color palette">
+        <div class="swatch"><div class="swatch-color" style="background:#07110C"></div><div class="swatch-info"><strong>Night</strong><span>#07110C · primary ground</span></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#102019"></div><div class="swatch-info"><strong>Forest</strong><span>#102019 · surfaces</span></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#53E59A"></div><div class="swatch-info"><strong>Jade</strong><span>#53E59A · signal</span></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#9AF2C0"></div><div class="swatch-info"><strong>Mint</strong><span>#9AF2C0 · hover / glow</span></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#DCE5DD"></div><div class="swatch-info"><strong>Mist</strong><span>#DCE5DD · quiet text</span></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#F2F4EF"></div><div class="swatch-info"><strong>Paper</strong><span>#F2F4EF · light canvas</span></div></div>
+      </div>
+      <div class="surface-pair" aria-label="Mark color on dark and light surfaces">
+        <div class="surface-demo"><img src="assets/logo-mark-06-jade.svg" alt=""><span>JADE ON FOREST<br>PRIMARY MARK</span></div>
+        <div class="surface-demo light"><img src="assets/logo-mark-06-ink.svg" alt=""><span>INK ON PAPER<br>LIGHT SURFACE</span></div>
+      </div>
+      <p class="color-note">Use jade as a precise accent; keep most screens neutral and easy to scan.</p>
+      <div class="system-grid">
+        <article class="system-card"><h3>Contrast pairs</h3><p>Approved foreground and surface combinations, measured for accessible text and marks.</p><table class="spec-table"><thead><tr><th>Pair</th><th>Ratio</th><th>Use</th></tr></thead><tbody>
+          <tr><td>Paper / Night</td><td>17.3:1</td><td>Body text</td></tr>
+          <tr><td>Mist / Night</td><td>14.9:1</td><td>Secondary text</td></tr>
+          <tr><td>Jade / Night</td><td>11.9:1</td><td>Mark, action</td></tr>
+          <tr><td>Jade / Paper</td><td>1.45:1</td><td>Do not pair</td></tr>
+        </tbody></table></article>
+        <article class="system-card"><h3>Color in information</h3><p>Color may reinforce meaning, but never carries status by itself. Pair every state with a label, icon, or shape.</p><table class="spec-table"><thead><tr><th>Token</th><th>Hex</th><th>Role</th></tr></thead><tbody>
+          <tr><td>Jade</td><td>#53E59A</td><td>Focus / positive</td></tr>
+          <tr><td>Sky</td><td>#8ABCF4</td><td>Context / neutral</td></tr>
+          <tr><td>Amber</td><td>#EFC276</td><td>Watch / trade-off</td></tr>
+          <tr><td>Coral</td><td>#F38B80</td><td>Risk / urgent</td></tr>
+        </tbody></table></article>
+      </div>
+      <div class="print-spec">
+        <p class="eyebrow">Production reference &nbsp; / &nbsp; sRGB → process CMYK</p>
+        <table class="spec-table"><thead><tr><th>Token</th><th>sRGB hex</th><th>RGB</th><th>CMYK % · C / M / Y / K</th></tr></thead><tbody>
+          <tr><td>Night</td><td>#07110C</td><td>7 / 17 / 12</td><td>86 / 58 / 66 / 100</td></tr>
+          <tr><td>Forest</td><td>#102019</td><td>16 / 32 / 25</td><td>95 / 36 / 71 / 100</td></tr>
+          <tr><td>Forest raised</td><td>#16281F</td><td>22 / 40 / 31</td><td>83 / 33 / 74 / 94</td></tr>
+          <tr><td>Jade</td><td>#53E59A</td><td>83 / 229 / 154</td><td>55 / 0 / 59 / 0</td></tr>
+          <tr><td>Mint</td><td>#9AF2C0</td><td>154 / 242 / 192</td><td>36 / 0 / 37 / 0</td></tr>
+          <tr><td>Mist</td><td>#DCE5DD</td><td>220 / 229 / 221</td><td>16 / 5 / 13 / 0</td></tr>
+          <tr><td>Paper</td><td>#F2F4EF</td><td>242 / 244 / 239</td><td>6 / 2 / 6 / 0</td></tr>
+          <tr><td>Muted</td><td>#A0B0A5</td><td>160 / 176 / 165</td><td>40 / 20 / 33 / 5</td></tr>
+          <tr><td>Slate</td><td>#829589</td><td>130 / 149 / 137</td><td>49 / 27 / 41 / 14</td></tr>
+          <tr><td>Line</td><td>#2B4033</td><td>43 / 64 / 51</td><td>76 / 38 / 72 / 73</td></tr>
+          <tr><td>Sky</td><td>#8ABCF4</td><td>138 / 188 / 244</td><td>49 / 18 / 0 / 0</td></tr>
+          <tr><td>Amber</td><td>#EFC276</td><td>239 / 194 / 118</td><td>4 / 24 / 60 / 2</td></tr>
+          <tr><td>Coral</td><td>#F38B80</td><td>243 / 139 / 128</td><td>0 / 57 / 42 / 0</td></tr>
+        </tbody></table>
+        <p class="note-panel"><strong>Press condition:</strong> CGATS21_CRPC6.icc profile for CGATS21-2-CRPC6, converted with relative-colorimetric intent. These are reference separations; the printer’s press profile and proof on the final stock take precedence. No Pantone spot ink is assigned. Select any required spot color from a current physical fan deck and approve a press proof. Font and profile binaries are not bundled.</p>
+      </div>
+      <p class="note-panel"><strong>Accessibility:</strong> Paper or Mist on Night exceeds WCAG AA text contrast. Jade is an accent on deep green, not a text color on Paper. Do not rely on hue alone to communicate success, risk, or status; add a label and a distinct shape or icon.</p>
+    </section>
+
+    <section class="section" id="patterns" aria-labelledby="patterns-title">
+      <div class="section-head">
+        <p class="eyebrow">04 &nbsp; / &nbsp; Patterns & components</p>
+        <div><h2 id="patterns-title">A visual language that <span>gets out of the way.</span></h2><p>The Qian mark supplies geometry, not decoration. Patterns stay low contrast and mostly monochrome; component lines create focus, structure a decision, or signal a considered pause.</p></div>
+      </div>
+      <div class="system-grid">
+        <article class="system-card"><h3>Repeatable fields</h3><p>Use as cropped backdrops or quiet texture at 8–16% opacity. Keep text on a solid, contrast-safe surface.</p><div class="pattern-grid"><div class="pattern signal"><span class="pattern-label">Signal field</span></div><div class="pattern grid"><span class="pattern-label">Quiet grid</span></div></div></article>
+        <article class="system-card"><h3>Decision components</h3><p>Open frames bracket a recommendation without enclosing it. The split rule carries the mark’s measured pause into editorial layouts.</p><div class="element-list"><div class="element"><img src="elements/01-open-decision-frame.svg" alt="Open decision frame graphic element"></div><div class="element"><img src="elements/02-split-rule.svg" alt="Split rule graphic element"></div><div class="element"><img src="elements/03-focus-corner.svg" alt="Focus corner graphic element"></div></div></article>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">01 / Layout</p><h3>Give the decision room</h3><p>Use a 12-column grid, 24px gutters, and a 1200px content maximum. Align edges; let whitespace make hierarchy.</p></article>
+        <article class="guideline"><p class="index">02 / Icons</p><h3>One clear silhouette</h3><p>Use 16, 20, or 24px sizes with a 2px rounded stroke. Avoid tiny internal details and decorative glows.</p></article>
+        <article class="guideline"><p class="index">03 / Imagery</p><h3>Real, composed, human</h3><p>Choose natural light, architectural calm, and candid moments. Avoid code rain, sci-fi HUDs, and generic executive stock photos.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="imagery" aria-labelledby="imagery-title">
+      <div class="section-head">
+        <p class="eyebrow">05 &nbsp; / &nbsp; Imagery & photography</p>
+        <div><h2 id="imagery-title">Human presence. <span>Unforced insight.</span></h2><p>Photography should make leadership feel real, thoughtful, and grounded. Show the moment of understanding or the work around a decision, rather than illustrating intelligence with glowing interfaces.</p></div>
+      </div>
+      <div class="photo-layout">
+        <figure class="photo-sample"><img src="assets/imagery/photography-direction-01.png" alt="Candid leadership team in a quiet meeting, with natural window light, thoughtful expressions, and blank decision cards on the table"></figure>
+        <article class="photo-notes">
+          <p class="eyebrow">Photography direction &nbsp; / &nbsp; reference</p>
+          <h3>Observe, don’t stage.</h3>
+          <p>Favor natural window light, candid collaboration, composed spaces, and restrained color. Let a person’s attention or a small practical gesture carry the story. Keep the frame calm enough to leave room for a headline or decision point.</p>
+          <ul><li>Use real, specific environments and believable work moments.</li><li>Choose diverse leaders without reducing people to stock-photo roles.</li><li>Keep screens and documents abstract or unreadable unless approved facts are supplied.</li><li>Avoid handshake clichés, staged pointing, code rain, neon HUDs, and synthetic “AI brain” imagery.</li></ul>
+          <span class="micro">AI-assisted art-direction reference · not a customer or product photograph</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="type" aria-labelledby="type-title">
+      <div class="section-head">
+        <p class="eyebrow">06 &nbsp; / &nbsp; Type & voice</p>
+        <div><h2 id="type-title">Direct language. <span>Measured weight.</span></h2><p>Use a modern sans-serif for product and headlines, then reserve a monospaced face for small labels, metrics, and system state. Favor short statements, plain words, and specific recommendations.</p></div>
+      </div>
+      <div class="type-layout">
+        <div class="type-display"><span class="eyebrow">Display / Inter · Noto Sans SC · sans-serif</span><div class="display-sample">See the signal.<br><span>Choose the move.</span></div><div class="type-meta"><span>Headlines: medium, close tracking</span><span>Body: regular, generous leading</span></div></div>
+        <div class="voice-card"><span class="eyebrow">Voice / Calm, candid, useful</span><blockquote>“The acquisition is faster. The trade-off is less control over the roadmap.”</blockquote><p>Say what matters, name the trade-off, and leave space for the person making the decision.</p></div>
+      </div>
+      <div class="type-spec"><p class="eyebrow">Type scale &nbsp; / &nbsp; px at 100% browser zoom</p><table class="spec-table"><thead><tr><th>Role</th><th>Size</th><th>Weight</th><th>Line height</th><th>Use</th></tr></thead><tbody>
+        <tr><td>Display</td><td>64 px</td><td>500</td><td>1.05</td><td>Campaign idea, title slide</td></tr>
+        <tr><td>H1</td><td>48 px</td><td>500–600</td><td>1.10</td><td>Page or decision title</td></tr>
+        <tr><td>H2</td><td>32 px</td><td>500–600</td><td>1.20</td><td>Section heading</td></tr>
+        <tr><td>H3</td><td>20 px</td><td>500–600</td><td>1.20</td><td>Card or subsection</td></tr>
+        <tr><td>Body</td><td>16 px</td><td>400</td><td>1.60</td><td>Core product and document reading</td></tr>
+        <tr><td>Small</td><td>13 px</td><td>400–500</td><td>1.60</td><td>Secondary explanation</td></tr>
+        <tr><td>Label</td><td>11 px</td><td>500–600</td><td>1.20</td><td>Metadata; never dense body copy</td></tr>
+      </tbody></table></div>
+      <div class="cjk-sample" lang="zh-Hans"><strong>谦以持心，决而后动。</strong><span>简体中文排版：正文不加英文式字距；保持清晰层级与充分行距。 / Simplified Chinese: do not apply English tracking to running text; keep hierarchy clear and line spacing generous.</span></div>
+      <p class="note-panel"><strong>Font fallback:</strong> Inter for Latin text; Noto Sans SC for Simplified Chinese when installed; then platform fonts such as PingFang SC, Microsoft YaHei, or Hiragino Sans GB. Use SF Mono or platform monospace for compact metadata. Font files are third-party software and are not included in this package.</p>
+    </section>
+
+    <section class="section" id="product" aria-labelledby="product-title">
+      <div class="section-head">
+        <p class="eyebrow">07 &nbsp; / &nbsp; In product</p>
+        <div><h2 id="product-title">A helpful presence, never a <span>performance.</span></h2><p>Neo should feel attentive in conversation and composed in the decision view. Use the mark as a quiet anchor, with status and recommendations written in the same clear voice.</p></div>
+      </div>
+      <div class="product-grid">
+        <article class="chat" aria-label="Neo assistant conversation example">
+          <header class="chat-head"><div class="avatar"><img src="assets/logo-mark-06-jade.svg" alt=""></div><div><strong>Neo</strong><small>Decision partner · ready</small></div></header>
+          <div class="chat-body"><div class="prompt">Which path gives us the strongest position next quarter?</div><div class="answer-row"><div class="avatar"><img src="assets/logo-mark-06-jade.svg" alt=""></div><div class="answer-copy"><span class="micro">NEO / RECOMMENDATION</span><p>Expand the existing partnership first. It reaches the market sooner and keeps the team focused. Revisit acquisition after the next revenue milestone.</p></div></div></div>
+        </article>
+        <article class="decision" aria-label="Decision brief example">
+          <div class="decision-top"><span class="micro">Decision brief &nbsp; / &nbsp; Q3</span><span class="decision-tag">Recommended</span></div>
+          <h3>Expand the partnership first.</h3><p>A faster market test with lower execution load. Keep acquisition diligence active as a second-stage option.</p>
+          <div class="decision-line"><span>Time to market</span><span>Faster</span></div><div class="decision-line"><span>Team load</span><span>Lower</span></div><div class="decision-line"><span>Strategic control</span><span>Trade-off to watch</span></div>
+        </article>
+      </div>
+      <div class="scale-row" style="margin-top:18px" aria-label="Mark size study">
+        <div class="scale-item"><div class="scale-box"><img src="assets/logo-mark-06-jade.svg" alt="" style="height:16px"></div><span class="scale-label">16 px</span></div>
+        <div class="scale-item"><div class="scale-box"><img src="assets/logo-mark-06-jade.svg" alt="" style="height:24px"></div><span class="scale-label">24 px</span></div>
+        <div class="scale-item"><div class="scale-box"><img src="assets/logo-mark-06-jade.svg" alt="" style="height:32px"></div><span class="scale-label">32 px</span></div>
+        <div class="scale-item"><div class="scale-box"><img src="assets/logo-mark-06-jade.svg" alt="" style="height:48px"></div><span class="scale-label">48 px</span></div>
+        <p class="scale-note">Render the SVG at its natural ratio. In square avatars and favicons, center it on a high-contrast tile and keep its vertical silhouette intact.</p>
+      </div>
+      <div class="state-grid" aria-label="Neo agent interface states">
+        <article class="state"><span>Ready</span><p>Quiet anchor. Invite the user to bring a question; avoid a busy idle animation.</p></article>
+        <article class="state"><span>Thinking</span><p>Show a single, restrained pulse or progress cue with plain-language status.</p></article>
+        <article class="state"><span>Needs input</span><p>State the missing decision or permission and make the next action explicit.</p></article>
+        <article class="state"><span>Complete</span><p>Present the answer, recommendation, sources, and remaining uncertainty together.</p></article>
+        <article class="state"><span>Needs attention</span><p>Name what failed and offer a safe, understandable recovery path.</p></article>
+      </div>
+      <p class="note-panel"><strong>Agent behavior:</strong> The UI can hide implementation complexity, but it must keep consequential actions, evidence, uncertainty, and permission boundaries legible. Neo supports judgment; the human owns the decision.</p>
+    </section>
+
+    <section class="section" aria-labelledby="motion-title">
+      <div class="section-head">
+        <p class="eyebrow">08 &nbsp; / &nbsp; Motion & craft</p>
+        <div><h2 id="motion-title">Quiet motion, <span>clear intent.</span></h2><p>Motion should help the user notice that Neo has focused or reached a conclusion. It should be subtle, short, and optional; the mark itself never morphs into a different shape.</p></div>
+      </div>
+      <div class="principles">
+        <article class="principle"><span class="symbol">01</span><h3>Anchor</h3><p>Keep the solid left bar steady during thinking and response.</p></article>
+        <article class="principle"><span class="symbol">02</span><h3>Reveal</h3><p>Let the two right segments arrive together with a small, quiet fade.</p></article>
+        <article class="principle"><span class="symbol">03</span><h3>Resolve</h3><p>Use a single jade pulse when a recommendation is ready; do not loop it.</p></article>
+        <article class="principle"><span class="symbol">04</span><h3>Respect</h3><p>Honor reduced-motion settings and keep every static state fully legible.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="templates" aria-labelledby="templates-title">
+      <div class="section-head">
+        <p class="eyebrow">09 &nbsp; / &nbsp; Applications</p>
+        <div><h2 id="templates-title">A system that travels <span>with the decision.</span></h2><p>Use these editable vector layouts as starting points for executive communication. Replace bracketed copy, verify facts and type, then export a final PDF or image for its intended medium.</p></div>
+      </div>
+      <div class="template-grid">
+        <article class="template-card"><img src="templates/executive-decision-brief.svg" alt="Executive decision brief layout preview"><div><h3>Executive decision brief</h3><p>Recommendation, evidence, trade-off, options, owner, and next step.</p><a href="templates/executive-decision-brief.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/presentation-title.svg" alt="Dark presentation title layout preview"><div><h3>Presentation title</h3><p>Dark 16:9 opening slide for a strategic review or decision.</p><a href="templates/presentation-title.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/presentation-content.svg" alt="Light presentation content slide layout preview"><div><h3>Presentation content</h3><p>One idea, evidence, implications, trade-off, and bottom line.</p><a href="templates/presentation-content.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/letterhead-a4.svg" alt="A4 portrait letterhead layout preview"><div><h3>A4 letterhead</h3><p>Calm stationery with a compact logo and generous writing space.</p><a href="templates/letterhead-a4.svg" download>Download editable SVG</a></div></article>
+        <article class="template-card"><img src="templates/social-post-square.svg" alt="Square social insight layout preview"><div><h3>Square social insight</h3><p>A single concise thought designed to stay readable in a feed.</p><a href="templates/social-post-square.svg" download>Download editable SVG</a></div></article>
+      </div>
+      <p class="note-panel"><strong>Template discipline:</strong> Keep one main idea per page or slide. Make sources and assumptions visible. Avoid unsupported superlatives and decorative metrics. Leave room for the reader to assess the recommendation.</p>
+    </section>
+
+    <section class="section" id="assets" aria-labelledby="assets-title">
+      <div class="section-head">
+        <p class="eyebrow">10 &nbsp; / &nbsp; Brand files</p>
+        <div><h2 id="assets-title">One source. <span>Ready to ship.</span></h2><p>Use SVG for product and web. PDF is suitable for print and presentations; EPS supports legacy print workflows. The logo mark is geometry only and scales cleanly at any size.</p></div>
+      </div>
+      <div class="asset-grid">
+        <article class="asset-card"><h3>Primary marks · SVG</h3><p><a href="assets/logo-mark-06-jade.svg">Jade</a> · <a href="assets/logo-mark-06-ink.svg">Ink</a> · <a href="assets/logo-mark-06-white.svg">White</a> · <a href="assets/favicon-06.svg">Favicon tile</a></p></article>
+        <article class="asset-card"><h3>Lockups · SVG</h3><p><a href="assets/lockup-06-dark.svg">Horizontal dark</a> · <a href="assets/lockup-06-light.svg">Horizontal light</a> · <a href="assets/lockup-06-white.svg">Horizontal white</a> · <a href="assets/lockup-06-stacked.svg">Stacked dark</a></p></article>
+        <article class="asset-card"><h3>Print vectors · PDF / EPS</h3><p><a href="assets/exports/mark-06-jade.pdf">Jade mark PDF</a> · <a href="assets/exports/mark-06-jade.eps">Jade mark EPS</a> · <a href="assets/exports/lockup-06-horizontal-dark.pdf">Dark lockup PDF</a> · <a href="assets/exports/lockup-06-horizontal-dark.eps">Dark lockup EPS</a><br><a href="assets/exports/index.html">Browse every export</a></p></article>
+        <article class="asset-card"><h3>Patterns & elements · SVG</h3><p><a href="patterns/01-signal-field.svg">Signal field</a> · <a href="patterns/02-quiet-grid.svg">Quiet grid</a> · <a href="elements/01-open-decision-frame.svg">Decision frame</a> · <a href="elements/02-split-rule.svg">Split rule</a> · <a href="elements/03-focus-corner.svg">Focus corner</a></p></article>
+        <article class="asset-card"><h3>Design tokens</h3><p><a href="brand-tokens.css">CSS custom properties</a> · <a href="brand-tokens.json">JSON tokens</a></p></article>
+        <article class="asset-card"><h3>Reusable layouts · SVG</h3><p><a href="templates/index.html">Browse and download templates</a> · Executive brief · Presentation · Letterhead · Social post</p></article>
+        <article class="asset-card"><h3>Source & usage</h3><p><a href="README.md">Implementation notes</a> · <a href="identity-system-board-02.svg">Identity system board</a> · <a href="ASSET-LICENSE.md">Brand asset license</a></p></article>
+      </div>
+      <p class="asset-note">The SVG lockups keep the wordmark as live text in the Inter / system stack. PDF and EPS lockups use standard Helvetica text; confirm the font, then outline the wordmark in your design tool before sending a printer a final mechanical.</p>
+    </section>
+
+    <section class="section" id="governance" aria-labelledby="governance-title">
+      <div class="section-head">
+        <p class="eyebrow">11 &nbsp; / &nbsp; Governance</p>
+        <div><h2 id="governance-title">One master. <span>Clear ownership.</span></h2><p>Keep mark 06 and its source vectors as the canonical identity. Update the token source and export library together so implementation teams and production partners receive matching specifications.</p></div>
+      </div>
+      <div class="guideline-list">
+        <article class="guideline"><p class="index">Source of truth</p><h3>Master SVG + tokens</h3><p>Maintain logo geometry in SVG. Update <code>brand-tokens.json</code> first, then synchronize CSS and guide examples. Record approval date and version in the source package.</p></article>
+        <article class="guideline"><p class="index">Production</p><h3>Check every output</h3><p>Generate PDF/EPS from the approved master, inspect the outline, verify font handling, and request a print proof. Keep third-party font and profile terms with their providers.</p></article>
+        <article class="guideline"><p class="index">Accessibility</p><h3>Make meaning perceivable</h3><p>Provide useful alt text for informative marks, preserve AA text contrast, pair color with a label or shape, and respect reduced-motion preferences.</p></article>
+      </div>
+      <div class="rights-panel"><div><strong>Brand assets are all rights reserved.</strong><p>The logo, wordmark, guide, patterns, tokens, templates, and included art-direction materials are excluded from the repository’s Apache-2.0 software license. The vector exporter remains Apache-2.0. No trademark permission is implied. See the scope and third-party notes in the asset license.</p></div><a href="ASSET-LICENSE.md">Read ASSET-LICENSE.md</a></div>
+      <p class="note-panel"><strong>Rights-holder detail:</strong> The notice currently names HyperNeo. Before public release, confirm that this matches the legal person or entity that owns the brand materials, and replace it if needed.</p>
+    </section>
+    <footer><span><strong>HyperNeo</strong> &nbsp; / &nbsp; Visual identity 01 · 2026</span><span>Quiet clarity for consequential work. &nbsp; · &nbsp; <a href="ASSET-LICENSE.md">All rights reserved</a></span></footer>
+  </main>
+</body>
+</html>

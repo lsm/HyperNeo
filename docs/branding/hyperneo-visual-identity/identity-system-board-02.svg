@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo visual identity system</title>
+  <desc id="desc">A brand board for HyperNeo mark 06 with its story, logo family, color palette, graphic language, and product application.</desc>
+  <defs>
+    <pattern id="quiet-grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M34 0H0V34" fill="none" stroke="#DCE5DD" stroke-opacity=".12" stroke-width="1"/>
+    </pattern>
+    <pattern id="signal-field" width="144" height="189" patternUnits="userSpaceOnUse">
+      <g fill="#53E59A" opacity=".13" transform="translate(13.5 0) scale(.5)">
+        <rect width="55" height="377" rx="5.5"/>
+        <rect x="89" width="55" height="171.5" rx="5.5"/>
+        <rect x="89" y="205.5" width="55" height="171.5" rx="5.5"/>
+      </g>
+    </pattern>
+    <g id="mark" fill="currentColor">
+      <rect width="55" height="377" rx="5.5"/>
+      <rect x="89" width="55" height="171.5" rx="5.5"/>
+      <rect x="89" y="205.5" width="55" height="171.5" rx="5.5"/>
+    </g>
+    <style>
+      .sans { font-family: Inter, 'Helvetica Neue', Arial, sans-serif; }
+      .mono { font-family: 'SFMono-Regular', Consolas, monospace; letter-spacing: 1.6px; }
+      .label { font-size: 11px; fill: #53E59A; }
+      .small { font-size: 13px; fill: #A0B0A5; }
+      .panel { fill: #0B1710; stroke: #2B4033; }
+    </style>
+  </defs>
+  <rect width="1600" height="1200" fill="#07110C"/>
+  <circle cx="280" cy="160" r="410" fill="#173324" opacity=".16"/>
+  <text x="56" y="59" class="mono label">HYPERNEO / BRAND STANDARDS</text>
+  <text x="1544" y="59" text-anchor="end" class="mono small">01 — VISUAL IDENTITY SYSTEM · 2026</text>
+  <path d="M56 82H1544" stroke="#2B4033"/>
+
+  <rect x="56" y="110" width="978" height="410" rx="20" class="panel"/>
+  <rect x="56" y="110" width="978" height="410" rx="20" fill="url(#quiet-grid)" opacity=".55"/>
+  <text x="88" y="151" class="mono label">THE QUIET CENTER / MARK 06</text>
+  <g transform="translate(145 184) scale(.55)" color="#53E59A"><use href="#mark"/></g>
+  <text x="274" y="364" class="sans" font-size="68" font-weight="550" letter-spacing="-3.2" fill="#F2F4EF">HyperNeo</text>
+  <text x="90" y="432" class="sans" font-size="25" fill="#F2F4EF">Calm enough to see.</text>
+  <text x="90" y="467" class="sans" font-size="25" fill="#53E59A">Clear enough to act.</text>
+  <text x="90" y="496" class="sans small">A quiet mind for decisions with consequence.</text>
+  <path d="M676 432V488" stroke="#2B4033"/>
+  <text x="706" y="445" class="mono label">NOTICE</text>
+  <text x="706" y="469" class="mono small">See the signal.</text>
+  <text x="826" y="445" class="mono label">UNDERSTAND</text>
+  <text x="826" y="469" class="mono small">Hold complexity.</text>
+  <text x="946" y="445" class="mono label">DECIDE</text>
+  <text x="946" y="469" class="mono small">Make the move.</text>
+
+  <rect x="1054" y="110" width="490" height="410" rx="20" class="panel"/>
+  <text x="1084" y="151" class="mono label">01 / COLOR · SIGNAL IN A QUIET FIELD</text>
+  <g class="sans" font-size="13" fill="#F2F4EF">
+    <rect x="1084" y="177" width="132" height="92" rx="10" fill="#07110C" stroke="#2B4033"/><text x="1098" y="296">Night</text><text x="1098" y="315" class="mono small">#07110C</text>
+    <rect x="1232" y="177" width="132" height="92" rx="10" fill="#102019" stroke="#2B4033"/><text x="1246" y="296">Forest</text><text x="1246" y="315" class="mono small">#102019</text>
+    <rect x="1380" y="177" width="132" height="92" rx="10" fill="#53E59A"/><text x="1394" y="296">Jade</text><text x="1394" y="315" class="mono small">#53E59A</text>
+    <rect x="1084" y="339" width="132" height="64" rx="10" fill="#9AF2C0"/><text x="1098" y="426">Mint · #9AF2C0</text>
+    <rect x="1232" y="339" width="132" height="64" rx="10" fill="#DCE5DD"/><text x="1246" y="426">Mist · #DCE5DD</text>
+    <rect x="1380" y="339" width="132" height="64" rx="10" fill="#F2F4EF"/><text x="1394" y="426" fill="#07110C">Paper · #F2F4EF</text>
+  </g>
+  <text x="1084" y="484" class="sans small">Jade is for focus. Neutrals carry the reading.</text>
+
+  <rect x="56" y="544" width="480" height="300" rx="20" class="panel"/>
+  <text x="84" y="582" class="mono label">02 / LOGO FAMILY</text>
+  <g transform="translate(108 616) scale(.32)" color="#53E59A"><use href="#mark"/></g>
+  <text x="174" y="710" class="sans" font-size="38" font-weight="550" letter-spacing="-1.8" fill="#F2F4EF">HyperNeo</text>
+  <path d="M84 750H508" stroke="#2B4033"/>
+  <text x="84" y="781" class="sans small">Solid left / split right / preserve both openings.</text>
+  <text x="84" y="812" class="mono small">SVG PRIMARY · PDF / EPS PRINT · NO DISTORTION</text>
+
+  <rect x="554" y="544" width="480" height="300" rx="20" class="panel"/>
+  <text x="582" y="582" class="mono label">03 / GRAPHIC LANGUAGE</text>
+  <rect x="582" y="606" width="188" height="150" rx="12" fill="#102019"/>
+  <rect x="582" y="606" width="188" height="150" rx="12" fill="url(#signal-field)"/>
+  <rect x="786" y="606" width="220" height="150" rx="12" fill="#102019"/>
+  <rect x="786" y="606" width="220" height="150" rx="12" fill="url(#quiet-grid)"/>
+  <path d="M818 685V638H970V672M970 703V728H818V711" fill="none" stroke="#53E59A" stroke-width="2" stroke-linecap="round"/>
+  <path d="M582 786H752M800 786H1006" stroke="#53E59A" stroke-opacity=".8" stroke-width="2"/>
+  <circle cx="776" cy="786" r="3" fill="#53E59A"/>
+  <text x="582" y="824" class="sans small">Subtle pattern. Open frame. Deliberate pause.</text>
+
+  <rect x="1054" y="544" width="490" height="300" rx="20" class="panel"/>
+  <text x="1084" y="582" class="mono label">04 / IN PRODUCT</text>
+  <rect x="1084" y="605" width="430" height="198" rx="13" fill="#F2F4EF"/>
+  <rect x="1084" y="605" width="430" height="50" rx="13" fill="#FFFFFF"/>
+  <rect x="1102" y="616" width="28" height="28" rx="8" fill="#07110C"/>
+  <g transform="translate(1111 619) scale(.052)" color="#53E59A"><use href="#mark"/></g>
+  <text x="1143" y="626" class="sans" font-size="14" font-weight="600" fill="#1D2A21">Neo</text>
+  <text x="1143" y="643" class="sans" font-size="10" fill="#6E7C72">Decision partner · ready</text>
+  <path d="M1084 655H1514" stroke="#DCE5DD"/>
+  <rect x="1288" y="675" width="201" height="34" rx="12" fill="#E4EAE4"/>
+  <text x="1301" y="697" class="sans" font-size="11" fill="#26352B">Which move protects focus?</text>
+  <rect x="1102" y="727" width="28" height="28" rx="8" fill="#07110C"/>
+  <g transform="translate(1111 730) scale(.052)" color="#53E59A"><use href="#mark"/></g>
+  <text x="1143" y="739" class="sans" font-size="11" font-weight="600" fill="#1D2A21">RECOMMENDATION</text>
+  <text x="1143" y="759" class="sans" font-size="12" fill="#26352B">Make one clear move. Explain the trade-off.</text>
+
+  <rect x="56" y="868" width="1488" height="246" rx="20" class="panel"/>
+  <text x="86" y="910" class="mono label">05 / BEHAVIORAL PRINCIPLES</text>
+  <g class="sans">
+    <text x="86" y="958" font-size="25" fill="#F2F4EF">Quiet, not passive.</text><text x="86" y="985" class="small">Still presence; decisive when needed.</text>
+    <path d="M431 934V1014" stroke="#2B4033"/>
+    <text x="466" y="958" font-size="25" fill="#F2F4EF">Insight, not spectacle.</text><text x="466" y="985" class="small">Let the clarity be the impression.</text>
+    <path d="M832 934V1014" stroke="#2B4033"/>
+    <text x="868" y="958" font-size="25" fill="#F2F4EF">Power, held in reserve.</text><text x="868" y="985" class="small">Use the smallest signal that helps.</text>
+    <path d="M1234 934V1014" stroke="#2B4033"/>
+    <text x="1270" y="958" font-size="25" fill="#53E59A">谦 / QIAN</text><text x="1270" y="985" class="small">Grounded strength.</text>
+  </g>
+  <path d="M86 1040H1514" stroke="#2B4033"/>
+  <text x="86" y="1080" class="sans" font-size="16" fill="#DCE5DD">HyperNeo gives leaders the clarity to see through complexity and act with calm conviction.</text>
+  <text x="1514" y="1080" text-anchor="end" class="mono small">NOTICE · UNDERSTAND · DECIDE</text>
+  <text x="56" y="1163" class="mono small">HYPERNEO / VISUAL IDENTITY</text>
+  <text x="1544" y="1163" text-anchor="end" class="mono small">MARK 06 · QIAN CENTER PAIR</text>
+</svg>

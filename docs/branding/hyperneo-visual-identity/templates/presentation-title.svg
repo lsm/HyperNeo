@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo presentation title slide template</title>
+  <desc id="desc">Dark 16 by 9 title slide with mark 06, quiet-grid pattern, and editable presentation title.</desc>
+  <defs>
+    <symbol id="hn-mark" viewBox="0 0 144 377"><path fill="currentColor" d="M5.5 0h44A5.5 5.5 0 0 1 55 5.5v366a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 0 371.5V5.5A5.5 5.5 0 0 1 5.5 0Zm89 0h44a5.5 5.5 0 0 1 5.5 5.5V166a5.5 5.5 0 0 1-5.5 5.5h-44A5.5 5.5 0 0 1 89 166V5.5A5.5 5.5 0 0 1 94.5 0Zm0 205.5h44a5.5 5.5 0 0 1 5.5 5.5v160.5a5.5 5.5 0 0 1-5.5 5.5h-44a5.5 5.5 0 0 1-5.5-5.5V211a5.5 5.5 0 0 1 5.5-5.5Z"/></symbol>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#DCE5DD" stroke-opacity=".055"/></pattern>
+    <pattern id="signal" width="144" height="189" patternUnits="userSpaceOnUse"><g transform="translate(13.5 0) scale(.45)" fill="#53E59A" opacity=".14"><rect width="55" height="377" rx="6"/><rect x="89" width="55" height="171.5" rx="6"/><rect x="89" y="205.5" width="55" height="171.5" rx="6"/></g></pattern>
+    <style>.sans{font-family:Inter,"Noto Sans SC","Helvetica Neue",Arial,sans-serif}.mono{font-family:SFMono-Regular,Consolas,monospace;letter-spacing:2px}</style>
+  </defs>
+  <rect width="1920" height="1080" fill="#07110C"/><rect width="1920" height="1080" fill="url(#grid)"/>
+  <circle cx="1554" cy="420" r="400" fill="#102019"/><circle cx="1554" cy="420" r="380" fill="url(#signal)"/>
+  <g transform="translate(128 104) scale(.11)" color="#53E59A"><use href="#hn-mark" width="144" height="377"/></g>
+  <text x="166" y="132" class="sans" font-size="27" font-weight="600" fill="#F2F4EF">HyperNeo</text>
+  <text x="176" y="356" class="mono" font-size="16" fill="#9AF2C0">[PRESENTATION / DATE]</text>
+  <text x="176" y="452" class="sans" font-size="74" font-weight="540" letter-spacing="-3" fill="#F2F4EF">[A clear title that states</text>
+  <text x="176" y="544" class="sans" font-size="74" font-weight="540" letter-spacing="-3" fill="#53E59A">the central question]</text>
+  <text x="176" y="632" class="sans" font-size="25" fill="#A0B0A5">[One-line context: audience, decision, or strategic moment.]</text>
+  <path d="M176 761H752" stroke="#2B4033"/><path d="M176 761H294" stroke="#53E59A" stroke-width="3"/>
+  <text x="176" y="812" class="mono" font-size="13" fill="#829589">[PRESENTER / TEAM]</text>
+  <text x="176" y="994" class="mono" font-size="11" fill="#829589">QUIET CLARITY FOR CONSEQUENTIAL WORK</text>
+  <text x="1792" y="994" class="mono" text-anchor="end" font-size="11" fill="#829589">01  /  [DECK NAME]</text>
+</svg>

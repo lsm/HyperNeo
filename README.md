@@ -82,3 +82,5 @@ Quick overview:
 ## License
 
 [Apache-2.0](LICENSE)
+
+The HyperNeo brand identity materials in [`docs/branding/hyperneo-visual-identity/`](docs/branding/hyperneo-visual-identity/README.md) are excluded from Apache-2.0 and are all rights reserved under their [asset license](docs/branding/hyperneo-visual-identity/ASSET-LICENSE.md). The vector export helper remains Apache-2.0.
