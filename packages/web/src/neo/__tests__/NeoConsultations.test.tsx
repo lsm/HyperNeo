@@ -33,6 +33,7 @@ describe('NeoLive consultation status', () => {
       sessionId: 'neo',
       selectedId: null as string | null,
       snapshot,
+      viewSnapshot: snapshot as typeof snapshot | null,
       error: null,
       setError: vi.fn(),
       open,
@@ -67,18 +68,31 @@ describe('NeoLive consultation status', () => {
       neoState.value = { ...model, busyWork: 'consult-one' };
     });
     expect(screen.getByRole('button', { name: 'Closing…' }).hasAttribute('disabled')).toBe(true);
+    const reported = {
+      ...snapshot,
+      consultations: [{ ...snapshot.consultations[0], status: 'reported' }],
+    };
     act(() => {
-      neoState.value = {
-        ...model,
-        snapshot: {
-          ...snapshot,
-          consultations: [{ ...snapshot.consultations[0], status: 'reported' }],
-        },
-      };
+      neoState.value = { ...model, snapshot: reported, viewSnapshot: reported };
     });
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
     act(() => {
       neoState.value = { ...model, selectedId: 'different' };
+    });
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    act(() => {
+      neoState.value = {
+        ...model,
+        selectedId: 'club',
+        snapshot: { ...snapshot, consultations: [] },
+        viewSnapshot: snapshot,
+      };
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('Checking with Book club')
+    );
+    act(() => {
+      neoState.value = { ...model, selectedId: 'club', viewSnapshot: null };
     });
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });
