@@ -176,7 +176,8 @@ describe('Neo MVP', () => {
     expect(created).toHaveLength(1);
     expect(created[0].config).toMatchObject({
       permissionMode: 'dontAsk',
-      sdkToolsPreset: ['AskUserQuestion'],
+      sdkToolsPreset: [],
+      allowedTools: ['mcp__hyperneo-operations__invoke'],
     });
     expect(created[0].workspacePath).toBeNull();
     expect(service.repo.listConcerns()).toEqual([]);
@@ -196,6 +197,10 @@ describe('Neo MVP', () => {
     });
     const id = await service.open(concern.id);
     expect(await service.open(concern.id)).toBe(id);
+    expect(created[0].config).toMatchObject({
+      sdkToolsPreset: ['AskUserQuestion'],
+      allowedTools: ['AskUserQuestion', 'mcp__hyperneo-operations__invoke'],
+    });
     expect(await invoke('neo.snapshot')).toMatchObject({
       value: { concerns: [{ context: concern.context }] },
     });
@@ -754,9 +759,9 @@ describe('Neo MVP', () => {
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
     restrictNeoQuery(options, null, 'neo:runtime-test');
-    expect(options.tools).toEqual(['AskUserQuestion']);
+    expect(options.tools).toEqual([]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
-    expect(options.allowedTools).toEqual(['AskUserQuestion', 'mcp__hyperneo-operations__invoke']);
+    expect(options.allowedTools).toEqual(['mcp__hyperneo-operations__invoke']);
     expect(options.plugins).toEqual([]);
     expect(options.settingSources).toEqual([]);
     expect(options.agent).toBeUndefined();

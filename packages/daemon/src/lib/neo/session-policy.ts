@@ -25,6 +25,10 @@ export function neoCoordinatorBinding(
   return row ?? null;
 }
 
+export function neoCoordinatorNativeTools(concernId: string | null): 'AskUserQuestion'[] {
+  return concernId ? ['AskUserQuestion'] : [];
+}
+
 export function restrictNeoQuery(
   options: Options,
   concernId: string | null = null,
@@ -36,11 +40,12 @@ export function restrictNeoQuery(
   }
   options.systemPrompt = neoPrompt(concernId);
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
-  options.tools = ['AskUserQuestion'];
+  const nativeTools = neoCoordinatorNativeTools(concernId);
+  options.tools = nativeTools;
   options.agents = {};
   delete options.agent;
   options.plugins = [];
   options.settingSources = [];
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
-  options.allowedTools = ['AskUserQuestion', `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
+  options.allowedTools = [...nativeTools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
 }
