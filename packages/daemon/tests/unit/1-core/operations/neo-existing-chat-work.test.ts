@@ -301,6 +301,96 @@ describe('Neo existing chat work', () => {
     expect(createSession).not.toHaveBeenCalled();
   });
 
+  test.each(['archived', 'deleted', 'owned'])(
+    'queued work reports an unavailable %s target once across recovery',
+    async (change) => {
+      const work = await propose();
+      await service.start(work.id);
+      if (change === 'archived')
+        db.getDatabase()
+          .prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'")
+          .run();
+      if (change === 'deleted')
+        db.getDatabase().prepare("DELETE FROM sessions WHERE id = 'project'").run();
+      if (change === 'owned')
+        db.getDatabase()
+          .prepare(
+            "UPDATE space_long_horizon_agents SET session_id = 'project' WHERE id = 'manager-a'"
+          )
+          .run();
+      const reason =
+        change === 'deleted'
+          ? 'target_session_not_found'
+          : change === 'archived'
+            ? 'target_session_not_active'
+            : 'target_owned_context';
+      await service.recover();
+      await service.recover();
+      expect(service.repo.getWork(work.id)).toMatchObject({
+        status: 'failed',
+        sessionId: 'project',
+        originMessageId: 'ask-A',
+        report: expect.stringContaining(reason),
+      });
+      expect(jobs('root', work.id)).toHaveLength(1);
+      expect(content(jobs('root', work.id)[0])).toContain('"originMessageId":"ask-A"');
+      expect(jobs('project', work.id)).toHaveLength(1);
+      expect(createSession).not.toHaveBeenCalled();
+      expect(getSessionAsync).not.toHaveBeenCalled();
+    }
+  );
+
+  test('reconcile fails an inadmissible shared target without reading its SDK output', async () => {
+    const work = await propose();
+    await service.start(work.id);
+    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'").run();
+    const messages = db.getSDKMessageRepo();
+    spyOn(db, 'getSDKMessageRepo').mockReturnValue(messages);
+    const terminal = spyOn(messages, 'hasTerminalResultAfter');
+    await service.reconcile(work.id);
+    expect(service.repo.getWork(work.id)?.status).toBe('failed');
+    expect(jobs('root', work.id)).toHaveLength(1);
+    expect(terminal).not.toHaveBeenCalled();
+    expect(getSessionAsync).not.toHaveBeenCalled();
+  });
+
+  test('a target lost after reservation fails before dispatch with no scratch fallback', async () => {
+    const work = await propose();
+    const resolve = service.resolveWorkTarget;
+    let reads = 0;
+    spyOn(service, 'resolveWorkTarget').mockImplementation((id) => {
+      if (++reads === 2)
+        db.getDatabase()
+          .prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'")
+          .run();
+      return resolve(id);
+    });
+    await service.start(work.id);
+    expect(service.repo.getWork(work.id)).toMatchObject({
+      status: 'failed',
+      report: expect.stringContaining('target_session_not_active'),
+    });
+    expect(jobs('project', work.id)).toHaveLength(0);
+    expect(jobs('root', work.id)).toHaveLength(1);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  test('a lost failure CAS cannot overwrite cancellation or return another result', async () => {
+    const work = await propose();
+    await service.start(work.id);
+    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = 'project'").run();
+    const transition = service.repo.transitionWork.bind(service.repo);
+    const race = spyOn(service.repo, 'transitionWork').mockImplementation((id, expected) => {
+      race.mockRestore();
+      expect(transition(id, expected, { status: 'cancelled' })).not.toBeNull();
+      return null;
+    });
+    await service.start(work.id);
+    expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
+    expect(jobs('root', work.id)).toHaveLength(0);
+    expect(getSessionAsync).not.toHaveBeenCalled();
+  });
+
   test('restart recovery preserves each exact request and deduplicates its pending handoff', async () => {
     const a = await propose('A');
     const b = await propose('B');
