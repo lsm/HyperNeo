@@ -1,11 +1,23 @@
 import type { NeoAgentWorkOwner } from '../../lib/neo/agent-work-target.ts';
 import type { Database } from '../sqlite-compat.ts';
-import type { NeoWorkTarget } from './neo-repository.ts';
+import type { NeoRepository, NeoWorkInput, NeoWorkTarget } from './neo-repository.ts';
 
 type AgentTarget = NonNullable<NeoWorkTarget['agent']>;
 
 export class NeoAgentWorkTargetRepository {
   constructor(private readonly db: Database) {}
+
+  propose(repo: NeoRepository, input: NeoWorkInput, agent?: AgentTarget) {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare('SELECT id FROM neo_work WHERE request_key = ?')
+        .get(input.requestKey);
+      const work = repo.proposeWork(input);
+      if (!existing && agent && !this.reserve(work.id, agent))
+        throw new Error('Native target reservation failed.');
+      return { work, agent: this.get(work.id) };
+    })();
+  }
 
   get(workId: string): AgentTarget | null {
     if (
