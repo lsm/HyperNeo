@@ -84,6 +84,20 @@ const Propose = z.object({
   instruction: z.string().trim().min(1).max(16000),
 });
 const WorkId = z.object({ id: z.string().min(1) });
+const WorkReport = z.object({
+  id: z.string().min(1),
+  status: z.enum(['reported', 'failed']),
+  report: z.string().min(1).max(12000),
+});
+const WorkReportResult = z.union([
+  z.object({ accepted: z.literal(false), reason: z.string() }),
+  z.object({
+    accepted: z.literal(true),
+    workId: z.string(),
+    status: z.enum(['reported', 'failed']),
+    replayed: z.boolean(),
+  }),
+]);
 type Rejection = { ok: false; reason: string };
 
 export function admitNeoCaller(
@@ -472,6 +486,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: propose,
+    }),
+    defineOperation({
+      name: 'neo.work.report',
+      description:
+        'Return explicit reported or failed evidence (up to 12,000 characters) for the exact work receipt assigned to this execution session. The actual MCP recipient must match; roles or arguments cannot replace it. Identical retries reuse the report. A report is a claim, not independently verified completion.',
+      inputSchema: WorkReport,
+      resultSchema: WorkReportResult,
+      policy: { safetyClass: 'mutate' },
+      execute: (input, caller) => service.reportWork(input, caller),
     }),
     defineOperation({
       name: 'neo.work.start',
