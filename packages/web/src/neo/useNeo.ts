@@ -7,6 +7,7 @@ import { SessionStore } from '../lib/session-store.ts';
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
   const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const [scopedSnapshot, setScopedSnapshot] = useState<NeoSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -14,20 +15,39 @@ export function useNeo() {
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   const refreshGeneration = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
   const alive = useRef(true);
 
   async function refresh() {
     const ticket = ++refreshGeneration.current;
-    const hub = await connectionManager.getHub();
-    const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {});
-    if (!result.ok) throw new Error(result.reason);
-    if (alive.current && ticket === refreshGeneration.current) setSnapshot(result);
+    const concernId = selectedIdRef.current;
+    const current = () =>
+      alive.current && ticket === refreshGeneration.current && selectedIdRef.current === concernId;
+    try {
+      const hub = await connectionManager.getHub();
+      const [result, scoped] = await Promise.all([
+        invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {}),
+        concernId
+          ? invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { concernId })
+          : Promise.resolve(null),
+      ]);
+      if (!current()) return;
+      if (!result.ok) throw new Error(result.reason);
+      if (scoped && !scoped.ok) throw new Error(scoped.reason);
+      setSnapshot(result);
+      setScopedSnapshot(scoped);
+    } catch (cause) {
+      if (current()) throw cause;
+    }
   }
 
   async function open(id: string | null) {
     const ticket = ++generation.current;
+    ++refreshGeneration.current;
+    selectedIdRef.current = id;
     setSelectedId(id);
     setSessionId(null);
+    setScopedSnapshot(null);
     setError('');
     try {
       const hub = await connectionManager.getHub();
@@ -118,6 +138,7 @@ export function useNeo() {
   return {
     store,
     snapshot,
+    viewSnapshot: selectedId ? scopedSnapshot : snapshot,
     selectedId,
     sessionId,
     error,

@@ -27,7 +27,9 @@ export function NeoLive() {
   const concerns = neo.snapshot?.concerns ?? [];
   const selected = concerns.find((item) => item.id === neo.selectedId);
   const works = neo.snapshot?.work ?? [];
-  const relevant = works.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
+  const view = neo.viewSnapshot;
+  const viewWorks = view?.work ?? [];
+  const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
   const current = relevant.filter((work) => work.status === 'proposed' || work.status === 'queued');
   const history = relevant.filter((work) => work.status !== 'proposed' && work.status !== 'queued');
   const ready =
@@ -255,7 +257,7 @@ export function NeoLive() {
               </p>
             )
           )}
-          {neo.snapshot?.consultations
+          {view?.consultations
             ?.filter(
               (item) =>
                 item.status === 'pending' && (!neo.selectedId || item.concernId === neo.selectedId)

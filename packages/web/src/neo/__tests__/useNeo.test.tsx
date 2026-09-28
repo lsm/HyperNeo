@@ -3,9 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useNeo } from '../useNeo.ts';
 
 const request = vi.hoisted(() => vi.fn());
+const neoEvents = vi.hoisted(() => ({ changed: null as (() => void) | null }));
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
-    getHub: async () => ({ request, onEvent: () => () => {}, onConnection: () => () => {} }),
+    getHub: async () => ({
+      request,
+      onEvent: (_name: string, callback: () => void) => {
+        neoEvents.changed = callback;
+        return () => {
+          neoEvents.changed = null;
+        };
+      },
+      onConnection: () => () => {},
+    }),
   },
 }));
 vi.mock('../../lib/session-store.ts', () => ({
@@ -17,6 +27,7 @@ vi.mock('../../lib/session-store.ts', () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  neoEvents.changed = null;
 });
 
 function Probe() {
@@ -31,6 +42,21 @@ function Probe() {
       </button>
       {neo.error && <p role="alert">{neo.error}</p>}
       <p>Pending: {neo.snapshot?.consultations?.length ?? 0}</p>
+    </>
+  );
+}
+
+function ViewProbe() {
+  const neo = useNeo();
+  return (
+    <>
+      <button onClick={() => void neo.open('a')}>Open A</button>
+      <button onClick={() => void neo.open('b')}>Open B</button>
+      <button onClick={() => void neo.open(null)}>Open Neo</button>
+      <p>Overview work: {neo.snapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
+      <p>View work: {neo.viewSnapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
+      <p>View checks: {neo.viewSnapshot?.consultations?.map((item) => item.id).join(',') ?? ''}</p>
+      {neo.error && <p role="alert">{neo.error}</p>}
     </>
   );
 }
@@ -79,5 +105,54 @@ describe('useNeo stop waiting', () => {
     });
     await waitFor(() => expect(screen.getByText('Pending: 0')).toBeTruthy());
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('useNeo selected concern', () => {
+  it('keeps the global overview while refreshing scoped work and ignores a late prior concern', async () => {
+    let aVersion = 'a-old';
+    let deferA = false;
+    let rejectA: ((reason: Error) => void) | null = null;
+    const result = (sessionId: string, workId: string, checkId: string) => ({
+      ok: true,
+      sessionId,
+      concerns: [{ id: 'a' }, { id: 'b' }],
+      work: [{ id: workId }],
+      consultations: [{ id: checkId }],
+    });
+    request.mockImplementation(
+      async (_method: string, { name, input }: { name: string; input: { concernId?: string } }) => {
+        if (name === 'neo.open') return result(input.concernId ?? 'root', 'unused', 'unused');
+        if (input.concernId === 'a') {
+          if (deferA)
+            return new Promise((_resolve, reject) => {
+              rejectA = reject;
+            });
+          return result('a', aVersion, 'a-check');
+        }
+        if (input.concernId === 'b') return result('b', 'b-old', 'b-check');
+        return result('root', 'global', 'global-check');
+      }
+    );
+    render(<ViewProbe />);
+    await waitFor(() => expect(screen.getByText('View work: global')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Open A' }));
+    await waitFor(() => expect(screen.getByText('View work: a-old')).toBeTruthy());
+    expect(screen.getByText('Overview work: global')).toBeTruthy();
+    expect(screen.getByText('View checks: a-check')).toBeTruthy();
+    aVersion = 'a-refreshed';
+    act(() => neoEvents.changed?.());
+    await waitFor(() => expect(screen.getByText('View work: a-refreshed')).toBeTruthy());
+    deferA = true;
+    act(() => neoEvents.changed?.());
+    await waitFor(() => expect(rejectA).not.toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Open B' }));
+    await waitFor(() => expect(screen.getByText('View work: b-old')).toBeTruthy());
+    await act(async () => rejectA?.(new Error('Stale A failure')));
+    expect(screen.getByText('View work: b-old')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Neo' }));
+    await waitFor(() => expect(screen.getByText('View work: global')).toBeTruthy());
+    expect(screen.getByText('View checks: global-check')).toBeTruthy();
   });
 });
