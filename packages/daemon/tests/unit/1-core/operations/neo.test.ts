@@ -7,6 +7,7 @@ import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -76,6 +77,7 @@ describe('Neo MVP', () => {
     runMigration279(sqlite);
     runMigration280(sqlite);
     runMigration282(sqlite);
+    runMigration283(sqlite);
     created = [];
     active = new Set();
     jobs = [];
@@ -394,6 +396,139 @@ describe('Neo MVP', () => {
     jobs = [];
     await service.recover();
     expect(jobs).toHaveLength(0);
+  });
+
+  test.each([null, concern.id])(
+    'work origins survive %s MCP retries, successor inputs and returns',
+    async (scope) => {
+      await invoke('neo.concern.save', concern);
+      const sessionId = await service.open(scope);
+      const attempts = new QueryAttemptRegistry();
+      const first = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
+      const turns = [first];
+      const registry = createOperationRegistry(createNeoOperations(service));
+      const handler = (turn: NeoHolderTurn) =>
+        createOperationMcpHandler(registry, () => ({
+          sessionId,
+          role: 'neo',
+          neoTurn: turn.identity(),
+        }));
+      const request = {
+        name: 'neo.work.propose',
+        input: {
+          requestKey: 'first',
+          concernId: scope,
+          title: 'Draft an agenda',
+          instruction: 'Draft only.',
+          originMessageId: 'forged',
+          neoTurn: { messageId: 'forged' },
+        },
+        caller: { source: 'rpc', principal: 'local' },
+      };
+      try {
+        first.bind('ask-A');
+        const receipt = JSON.parse((await handler(first)(request)).content[0].text);
+        expect(receipt).toMatchObject({
+          ok: true,
+          work: {
+            originSessionId: sessionId,
+            originMessageId: 'ask-A',
+            status: 'proposed',
+            sessionId: null,
+          },
+        });
+        expect(JSON.parse((await handler(first)(request)).content[0].text)).toEqual(receipt);
+        const next = new NeoHolderTurn(db, sessionId, attempts.allocate(), () => {});
+        turns.push(next);
+        next.bind('ask-B');
+        expect(JSON.parse((await handler(first)(request)).content[0].text)).toMatchObject({
+          ok: false,
+        });
+        expect(JSON.parse((await handler(next)(request)).content[0].text)).toMatchObject({
+          ok: false,
+          reason: 'This request key belongs to another input.',
+        });
+        expect(service.repo.listWork()).toEqual([receipt.work]);
+        const independent = { ...request, input: { ...request.input, requestKey: 'second' } };
+        expect(JSON.parse((await handler(next)(independent)).content[0].text)).toMatchObject({
+          ok: true,
+          work: { originMessageId: 'ask-B' },
+        });
+        expect(service.repo.listWork()).toHaveLength(2);
+        expect(jobs).toHaveLength(0);
+        expect(created).toHaveLength(1);
+        expect(await invoke('neo.snapshot')).toMatchObject({
+          value: {
+            work: expect.arrayContaining([
+              expect.objectContaining({
+                id: receipt.work.id,
+                originSessionId: sessionId,
+                originMessageId: 'ask-A',
+              }),
+            ]),
+          },
+        });
+        await service.start(receipt.work.id);
+        terminal = true;
+        await service.reconcile(receipt.work.id);
+        if (scope) {
+          const review = service.consultations.get(`neo-work:${receipt.work.id}:review`)!;
+          expect(review.originMessageId).toBeNull();
+          expect(review.question).toContain(`"originSessionId":"${sessionId}"`);
+          expect(review.question).toContain('"originMessageId":"ask-A"');
+        } else {
+          const response = jobs.find(
+            (job) =>
+              job.payload.messageUuid === receipt.work.id &&
+              (job.payload.to as { sessionId: string }).sessionId === sessionId
+          )!;
+          const content = (response.payload.message as { message: { content: string } }).message
+            .content;
+          expect(content).toContain(`"originSessionId":"${sessionId}"`);
+          expect(content).toContain('"originMessageId":"ask-A"');
+        }
+        expect(service.repo.getWork(receipt.work.id)?.originMessageId).toBe('ask-A');
+      } finally {
+        turns.forEach((turn) => turn.dispose());
+      }
+    }
+  );
+
+  test('work reservation rechecks a live input after admission', async () => {
+    const root = await service.open(null);
+    let checks = 0;
+    const caller: OperationCaller = {
+      source: 'mcp',
+      sessionId: root,
+      neoTurn: { messageId: 'ask-A', human: true, isLive: () => ++checks === 1 },
+    };
+    expect(
+      await invoke(
+        'neo.work.propose',
+        { requestKey: 'one', title: 'Draft only', instruction: 'Draft only' },
+        caller
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(checks).toBe(2);
+    expect(service.repo.listWork()).toEqual([]);
+  });
+
+  test('manual work proposals stay unknown and missing-input MCP proposals cannot mutate storage', async () => {
+    const root = await service.open(null);
+    const input = {
+      requestKey: 'manual',
+      title: 'Draft only',
+      instruction: 'Draft only',
+      originMessageId: 'forged',
+    };
+    expect(
+      await invoke('neo.work.propose', input, { source: 'mcp', sessionId: root })
+    ).toMatchObject({ value: { ok: false } });
+    expect(service.repo.listWork()).toEqual([]);
+    expect(await invoke('neo.work.propose', input)).toMatchObject({
+      value: { ok: true, work: { originMessageId: null, originSessionId: root } },
+    });
+    expect(service.repo.listWork()).toHaveLength(1);
   });
 
   test('reports runtime failure rather than successful completion', async () => {

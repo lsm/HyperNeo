@@ -5,6 +5,7 @@ import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { createNeoIntakeOperation } from './intake.ts';
+import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import {
   admitNeoConsultationOrigin,
   requireLiveNeoConsultationOrigin,
@@ -25,6 +26,7 @@ const Work = z.object({
   requestKey: z.string(),
   concernId: z.string().nullable(),
   originSessionId: z.string(),
+  originMessageId: z.string().nullable(),
   title: z.string(),
   instruction: z.string(),
   sessionId: z.string().nullable(),
@@ -342,24 +344,53 @@ export function createNeoOperations(service: NeoService) {
           };
     }
   );
-  const propose = path(
-    'neo.work.propose',
-    (input: z.infer<typeof Propose>) => input.concernId,
-    (input, caller) => {
-      if (input.concernId && !service.repo.getConcern(input.concernId))
-        return { ok: false as const, reason: 'Concern not found.' };
-      const originSessionId =
-        caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId;
-      if (!originSessionId) return { ok: false as const, reason: 'Open Neo first.' };
-      const work = service.repo.proposeWork({
-        ...input,
-        requestKey: `${originSessionId}:${input.requestKey}`,
-        id: crypto.randomUUID(),
-        originSessionId,
-      });
-      return { ok: true as const, work };
-    }
-  );
+  const propose = (superpipe({})('neo.work.propose') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        admitNeoCaller(service, caller, 'neo.work.propose', input.concernId),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        input.concernId && !service.repo.getConcern(input.concernId)
+          ? { reason: { ok: false, reason: 'Concern not found.' } }
+          : { value: caller },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        admitNeoWorkOrigin(
+          caller,
+          caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
+        ),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, caller: OperationCaller) => {
+        const live = requireLiveNeoWorkOrigin(origin, caller);
+        if ('reason' in live) return live;
+        const work = service.repo.proposeWork({
+          ...input,
+          ...origin,
+          requestKey: `${origin.originSessionId}:${input.requestKey}`,
+          id: crypto.randomUUID(),
+        });
+        return work.originMessageId === origin.originMessageId &&
+          work.originSessionId === origin.originSessionId
+          ? { value: { ok: true as const, work } }
+          : { reason: { ok: false, reason: 'This request key belongs to another input.' } };
+      },
+      ['input', 'admission', 'caller'],
+      'result:admission'
+    )
+    .endAsync('admission') as (
+    input: z.infer<typeof Propose>,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof WorkResult>>;
   const start = path(
     'neo.work.start',
     (_input: z.infer<typeof WorkId>) => undefined,
@@ -436,7 +467,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval. Reuse requestKey to avoid duplicate proposals. This does not start execution.',
+        'Propose work for user approval from the current live input. Reuse requestKey only to retry that input, not another ask. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

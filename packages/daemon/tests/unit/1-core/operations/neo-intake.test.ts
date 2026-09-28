@@ -16,6 +16,7 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -62,6 +63,7 @@ describe('durable Neo intake operation', () => {
   beforeEach(() => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
+    runMigration283(mailbox.db);
     mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(input.sessionId);
     repo = new NeoRepository(mailbox.db);
     repo.reserveBinding(binding);

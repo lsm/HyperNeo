@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 
 const concern = { id: 'launch', title: 'Launch', summary: 'Prepare launch', context: 'Friday' };
@@ -25,6 +26,7 @@ describe('NeoRepository', () => {
     db = new Database(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
     createNeoTables(db);
+    runMigration283(db);
     notify = mock(() => {});
     repo = new NeoRepository(db, notify);
   });
@@ -165,20 +167,25 @@ describe('NeoRepository', () => {
     const first = new Database(path);
     try {
       createNeoTables(first);
+      runMigration283(first);
       const initial = new NeoRepository(first);
       initial.saveConcern(concern, 0);
       initial.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
-      initial.proposeWork(proposal);
+      initial.proposeWork({ ...proposal, originMessageId: 'persisted-ask' });
     } finally {
       first.close();
     }
     const reopened = new Database(path);
     try {
       createNeoTables(reopened);
+      runMigration283(reopened);
       const restored = new NeoRepository(reopened);
       expect(restored.getConcern(concern.id)).toMatchObject({ ...concern, revision: 1 });
       expect(restored.getBindingForConcern(null)?.sessionId).toBe('root');
-      expect(restored.getWork(proposal.id)).toMatchObject(proposal);
+      expect(restored.getWork(proposal.id)).toMatchObject({
+        ...proposal,
+        originMessageId: 'persisted-ask',
+      });
     } finally {
       reopened.close();
       rmSync(directory, { recursive: true, force: true });
