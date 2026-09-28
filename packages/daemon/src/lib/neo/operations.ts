@@ -4,6 +4,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
+import { createNeoIntakeOperation } from './intake.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -357,6 +358,7 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
+    createNeoIntakeOperation(service.db, service.repo),
     defineOperation({
       name: 'neo.concern.cancel',
       description:
