@@ -181,6 +181,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveryGeneration = 0;
 
+  private credentialRefreshInFlight: Promise<StoredCredentials | undefined> | null = null;
+
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
@@ -503,7 +505,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return codexModels;
   }
 
-  private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+  private refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+    if (this.credentialRefreshInFlight) return this.credentialRefreshInFlight;
+    const attempt = this.refreshStoredOauthCredentialsUncached().finally(() => {
+      if (this.credentialRefreshInFlight === attempt) this.credentialRefreshInFlight = null;
+    }) as Promise<StoredCredentials | undefined>;
+    this.credentialRefreshInFlight = attempt;
+    return attempt;
+  }
+
+  private async refreshStoredOauthCredentialsUncached(): Promise<StoredCredentials | undefined> {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
       return undefined;
@@ -670,6 +681,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
     const discovery = this.refreshDiscoveredCodexModels(auth);
+    if (!this.discoveredModels) await discovery;
     void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
     await discovery;

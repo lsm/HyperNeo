@@ -1350,6 +1350,7 @@ export async function createOpenAIResponsesBridgeServer(
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
   let modelsResponse = modelsListResponse(config.models);
+  let modelAliases = config.modelAliases;
   let contextWindowByModelId = buildContextWindowMap(config.models, config.modelAliases);
   const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
   const continuations = new Map<string, ResponseContinuation>();
@@ -1504,7 +1505,7 @@ export async function createOpenAIResponsesBridgeServer(
         );
       }
 
-      let model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, modelAliases);
       const sessionId = route.sessionId;
       const sessionModelOverride = sessionModelAliasOverrides.get(
         sessionModelKey(sessionId, body.model)
@@ -1775,9 +1776,10 @@ export async function createOpenAIResponsesBridgeServer(
     setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
       sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
     },
-    updateModels: (models: readonly OpenAIResponsesBridgeModel[], modelAliases?) => {
+    updateModels: (models: readonly OpenAIResponsesBridgeModel[], aliases?) => {
+      modelAliases = aliases;
       modelsResponse = modelsListResponse(models);
-      contextWindowByModelId = buildContextWindowMap(models, modelAliases);
+      contextWindowByModelId = buildContextWindowMap(models, aliases);
     },
     stop: () => {
       for (const continuation of continuations.values()) {

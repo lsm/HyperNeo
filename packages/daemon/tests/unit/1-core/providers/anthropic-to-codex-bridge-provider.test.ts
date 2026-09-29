@@ -1327,7 +1327,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(byId.get('gpt-5.3-codex')?.available).toBe(false);
       expect(byId.get('gpt-5.4')?.available).toBe(false);
       expect(models[0]?.id).toBe('gpt-6-astra');
-      expect(probeBodies[0]?.model).not.toBe('gpt-6-astra');
+      expect(probeBodies[0]?.model).toBe('gpt-5.5');
     });
 
     it('keeps a saved selection buildable when discovery drops it', async () => {
