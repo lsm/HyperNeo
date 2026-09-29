@@ -13,6 +13,8 @@ import {
   projectNeoRequestSnapshot,
 } from './request-board.ts';
 import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
+import { connectionState } from '../lib/state.ts';
+import { projectNeoProcessingActivity } from './processing-activity.ts';
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -101,14 +103,25 @@ export function NeoConversation({
   );
   const visible = completedConversation(conversation);
   const workReplies = completedWorkReplies(conversation, works, sessionId);
-  const progress =
-    state.status === 'queued' || state.status === 'processing'
-      ? state.status === 'queued' || state.phase === 'initializing'
-        ? 'Neo is getting ready…'
-        : 'Neo is working on a reply…'
-      : state.status === 'rate_limit_cooldown'
-        ? 'Neo is waiting to retry…'
-        : null;
+  const progress = projectNeoProcessingActivity(
+    sessionId,
+    store.activeSessionId?.value ?? null,
+    store.sessionState?.value ?? null,
+    state,
+    connectionState.value === 'connected',
+    store.isRecovering?.value ?? true,
+    visible
+  );
+  const renderProgress = (label: string) => (
+    <div role="status" class="neo-progress" aria-live="polite">
+      <span class="neo-progress-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span>{label}</span>
+    </div>
+  );
   return (
     <>
       <section aria-label="Conversation with Neo" class="space-y-6">
@@ -132,6 +145,10 @@ export function NeoConversation({
             message.type === 'user' && requestOrigin
               ? neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot, requestOrigin))
               : [];
+          const askProgress =
+            progress !== 'inactive' &&
+            message.type === 'user' &&
+            progress.messageId === message.uuid;
           return (
             <NeoMessage
               key={message.uuid}
@@ -158,6 +175,7 @@ export function NeoConversation({
                   {check.label}
                 </p>
               ))}
+              {askProgress && renderProgress(progress.label)}
               {requestOrigin && snapshot && (
                 <NeoConcernBoardPanel
                   snapshot={snapshot}
@@ -168,16 +186,7 @@ export function NeoConversation({
             </NeoMessage>
           );
         })}
-        {progress && (
-          <div role="status" class="neo-progress" aria-live="polite">
-            <span class="neo-progress-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span>{progress}</span>
-          </div>
-        )}
+        {progress !== 'inactive' && !progress.messageId && renderProgress(progress.label)}
         {pending && (
           <QuestionPrompt
             pendingHeading="A quick choice"
