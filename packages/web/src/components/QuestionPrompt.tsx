@@ -7,6 +7,7 @@ import type {
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
+import { toast } from '../lib/toast.ts';
 
 const questionColors = {
   active: {
@@ -200,7 +201,11 @@ export function QuestionPrompt({
 
       onResolved?.('submitted', responses);
     } catch (cause) {
-      onError?.(cause);
+      if (onError) onError(cause);
+      else
+        toast.error(
+          cause instanceof Error ? cause.message : 'Could not send your choice. Try again.'
+        );
     } finally {
       setIsSubmitting(false);
     }
@@ -218,7 +223,11 @@ export function QuestionPrompt({
 
       onResolved?.('cancelled', []);
     } catch (cause) {
-      onError?.(cause);
+      if (onError) onError(cause);
+      else
+        toast.error(
+          cause instanceof Error ? cause.message : 'Could not send your choice. Try again.'
+        );
     } finally {
       setIsCancelling(false);
     }

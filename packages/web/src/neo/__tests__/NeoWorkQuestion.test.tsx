@@ -6,6 +6,7 @@ import { QuestionPrompt } from '../../components/QuestionPrompt.tsx';
 import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { markAllSessionStoresRecovering } from '../../lib/session-store.ts';
+import { toast } from '../../lib/toast.ts';
 
 const controls = vi.hoisted(() => ({
   hub: null as unknown,
@@ -69,7 +70,7 @@ let join: ReturnType<typeof vi.fn>;
 let leave: ReturnType<typeof vi.fn>;
 let handlers: Map<string, Set<Handler>>;
 let states: Map<string, SessionState>;
-let failure: Error | null;
+let failure: unknown;
 let disconnectedResult: boolean;
 let connections: Set<(state: string) => void>;
 let initial: Promise<SessionState> | null;
@@ -85,6 +86,7 @@ beforeEach(() => {
   connections = new Set();
   failure = null;
   disconnectedResult = false;
+  vi.mocked(toast.error).mockClear();
   initial = null;
   join = vi.fn();
   leave = vi.fn();
@@ -188,6 +190,7 @@ describe('NeoWorkQuestion native controls', () => {
       fireEvent.click(await choice());
       fireEvent.click(actionButton(method === 'question.respond'));
       expect((await screen.findByRole('alert')).textContent).toContain('Native answer rejected');
+      expect(toast.error).not.toHaveBeenCalled();
       expect(screen.getByText('A quick choice')).toBeTruthy();
       failure = null;
       fireEvent.click(actionButton(method === 'question.respond'));
@@ -201,6 +204,7 @@ describe('NeoWorkQuestion native controls', () => {
     fireEvent.click(await choice());
     fireEvent.click(submit());
     expect((await screen.findByRole('alert')).textContent).toContain('Connection lost');
+    expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByText('A quick choice')).toBeTruthy();
   });
   it.each(['respond', 'cancel'] as const)(
@@ -218,7 +222,14 @@ describe('NeoWorkQuestion native controls', () => {
       await waitFor(() => expect(button().disabled).toBe(false));
       expect(request.mock.calls[0]?.[0]).toBe(respond ? 'question.respond' : 'question.cancel');
       expect(onResolved).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith('Connection lost. Reconnect and try again.');
       disconnectedResult = false;
+      failure = 'Native answer rejected';
+      fireEvent.click(button());
+      await waitFor(() => expect(button().disabled).toBe(false));
+      expect(onResolved).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenLastCalledWith('Could not send your choice. Try again.');
+      failure = null;
       fireEvent.click(button());
       await waitFor(() =>
         expect(onResolved).toHaveBeenCalledWith(
@@ -228,7 +239,7 @@ describe('NeoWorkQuestion native controls', () => {
             : []
         )
       );
-      expect(request).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledTimes(3);
     }
   );
   it('follows native question changes without retaining a previous selection', async () => {
