@@ -664,8 +664,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
-    if (!auth || auth.source !== 'chatgpt_oauth') {
-      throw new Error('OpenAI (Codex) model discovery requires ChatGPT subscription auth');
+    if (!auth) {
+      throw new Error('OpenAI (Codex) provider is not authenticated');
+    }
+    if (auth.source !== 'chatgpt_oauth') {
+      return this.getCachedModels();
     }
     await this.refreshDiscoveredCodexModels(auth, options?.force === true);
     const discovered = this.discoveredModels?.filter((model) => model.available) ?? [];

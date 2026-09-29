@@ -1488,11 +1488,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(counts.models).toBe(2);
     });
 
-    it('listRemoteModels rejects when auth is not the ChatGPT subscription path', async () => {
+    it('listRemoteModels returns the static catalog for API-key auth', async () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, hyperneoDir, tmpDir);
-      await expect(provider.listRemoteModels()).rejects.toThrow(
-        'requires ChatGPT subscription auth'
-      );
+      const models = await provider.listRemoteModels();
+      expect(models.some((model) => model.id === 'gpt-5.6-sol')).toBe(true);
+      expect(models.every((model) => model.available)).toBe(true);
+    });
+
+    it('listRemoteModels rejects when the provider is not authenticated', async () => {
+      provider = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
     });
 
     it('ownsModel and getModelForTier follow the discovered catalog', async () => {
