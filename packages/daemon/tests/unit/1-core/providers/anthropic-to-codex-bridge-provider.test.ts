@@ -1506,7 +1506,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
     });
 
-    it('clearModelCache re-discovers once the persisted cache is also stale', async () => {
+    it('clearModelCache serves the static backstop without re-attempting discovery within the TTL', async () => {
       let catalog = DISCOVERY_CATALOG;
       const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
       provider = oauthProvider(impl);
@@ -1515,13 +1515,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(counts.models).toBe(1);
 
       provider.clearModelCache();
-      const persisted = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'codex-models-cache.json'), 'utf-8')
-      ) as { fetchedAt: number };
-      writeFileSync(
-        path.join(hyperneoDir, 'codex-models-cache.json'),
-        JSON.stringify({ ...persisted, fetchedAt: Date.now() - 24 * 60 * 60_000 })
-      );
       catalog = [
         ...DISCOVERY_CATALOG,
         {
@@ -1535,8 +1528,32 @@ describe('AnthropicToCodexBridgeProvider', () => {
       ];
       const models = await provider.getModels();
 
-      expect(counts.models).toBe(2);
-      expect(models.some((model) => model.id === 'gpt-7-nova' && model.available)).toBe(true);
+      expect(counts.models).toBe(1);
+      expect(models.some((model) => model.id === 'gpt-5.6-sol' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-7-nova')).toBe(false);
+    });
+
+    it('keeps the network backoff while serving last-good during an outage', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+      writeFileSync(
+        path.join(hyperneoDir, 'codex-models-cache.json'),
+        JSON.stringify({
+          version: 1,
+          accountId: 'acct-discovery',
+          fetchedAt: Date.now() - 24 * 60 * 60_000,
+          models: DISCOVERY_CATALOG,
+        })
+      );
+
+      const first = await provider.getModels();
+      expect(first.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+
+      provider.clearModelCache();
+      const second = await provider.getModels();
+
+      expect(counts.models).toBe(1);
+      expect(second.length).toBeGreaterThan(0);
     });
 
     it('listRemoteModels returns the merged catalog and honors force', async () => {
@@ -1624,6 +1641,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       try {
         await provider.getModels();
         expect(provider.getModelForTier('default')).toBe('gpt-5.5');
+        expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
+        expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
       } finally {
         policy.pinnedDefault = previousPinned;
       }

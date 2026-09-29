@@ -173,9 +173,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveredModels: ModelInfo[] | null = null;
 
-  private discoveredAt = 0;
-
-  private discoveryFailedAt = 0;
+  private discoveryAttemptAt = 0;
 
   private discoveryInFlight: Promise<void> | null = null;
 
@@ -202,8 +200,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): void {
     this.discoveredModels = null;
-    this.discoveredAt = 0;
-    this.discoveryFailedAt = 0;
+    this.discoveryAttemptAt = 0;
     this.discoveryGeneration += 1;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
@@ -311,8 +308,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private applyDiscoveredModels(models: readonly ModelInfo[]): void {
     this.discoveredModels = mergeCodexDiscoveredWithStatic(models);
-    this.discoveredAt = Date.now();
-    this.discoveryFailedAt = 0;
+    this.discoveryAttemptAt = Date.now();
   }
 
   private async fetchAndPersistDiscoveredModels(
@@ -364,22 +360,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ): Promise<void> {
     if (!auth || auth.source !== 'chatgpt_oauth') {
       this.discoveredModels = null;
-      this.discoveredAt = 0;
-      this.discoveryFailedAt = 0;
+      this.discoveryAttemptAt = 0;
       this.discoveryGeneration += 1;
       return;
     }
-    if (!force) {
-      if (this.discoveredModels && Date.now() - this.discoveredAt < CODEX_DISCOVERY_TTL_MS) {
-        return;
-      }
-      if (
-        !this.discoveredModels &&
-        this.discoveryFailedAt > 0 &&
-        Date.now() - this.discoveryFailedAt < CODEX_DISCOVERY_TTL_MS
-      ) {
-        return;
-      }
+    if (
+      !force &&
+      this.discoveryAttemptAt > 0 &&
+      Date.now() - this.discoveryAttemptAt < CODEX_DISCOVERY_TTL_MS
+    ) {
+      return;
     }
     const authKey = this.bridgeAuthCacheKey(auth);
     if (this.discoveryInFlight && this.discoveryInFlightKey === authKey) {
@@ -410,7 +400,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth, isStaleAttempt);
         if (!recoveredFromCache) {
           this.discoveredModels = null;
-          this.discoveryFailedAt = Date.now();
+          this.discoveryAttemptAt = Date.now();
         }
       }
     })();
@@ -682,7 +672,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   clearModelCache(): void {
     this.discoveredModels = null;
-    this.discoveredAt = 0;
   }
 
   getCachedModels(): ModelInfo[] {
@@ -718,9 +707,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const staticId = map[tier];
     const discovered = this.discoveredModels?.filter((model) => model.available) ?? [];
     if (discovered.length > 0) {
-      const pinnedDefault = CODEX_MODEL_POLICY.pinnedDefault;
-      if (pinnedDefault && discovered.some((model) => model.id === pinnedDefault)) {
-        return pinnedDefault;
+      if (tier === 'default') {
+        const pinnedDefault = CODEX_MODEL_POLICY.pinnedDefault;
+        if (pinnedDefault && discovered.some((model) => model.id === pinnedDefault)) {
+          return pinnedDefault;
+        }
       }
       if (discovered.some((model) => model.id === staticId)) return staticId;
       if (tier === 'haiku') {
@@ -1059,8 +1050,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
     this.discoveredModels = null;
-    this.discoveredAt = 0;
-    this.discoveryFailedAt = 0;
+    this.discoveryAttemptAt = 0;
     this.discoveryGeneration += 1;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
