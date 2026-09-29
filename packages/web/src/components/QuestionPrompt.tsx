@@ -42,6 +42,7 @@ interface QuestionPromptProps {
   finalResponses?: QuestionDraftResponse[];
   cancelReason?: QuestionCancelReason;
   onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
+  onError?: (cause: unknown) => void;
 }
 
 export function QuestionPrompt({
@@ -52,6 +53,7 @@ export function QuestionPrompt({
   finalResponses,
   cancelReason,
   onResolved,
+  onError,
 }: QuestionPromptProps) {
   const { questions, toolUseId, draftResponses } = pendingQuestion;
   const { callIfConnected } = useMessageHub();
@@ -189,14 +191,16 @@ export function QuestionPrompt({
         }))
         .filter((r) => r.selectedLabels.length > 0 || r.customText);
 
-      await callIfConnected('question.respond', {
+      const result = await callIfConnected('question.respond', {
         sessionId,
         toolUseId,
         responses,
       });
+      if (onError && result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('submitted', responses);
-    } catch {
+    } catch (cause) {
+      onError?.(cause);
     } finally {
       setIsSubmitting(false);
     }
@@ -206,13 +210,15 @@ export function QuestionPrompt({
     setIsCancelling(true);
 
     try {
-      await callIfConnected('question.cancel', {
+      const result = await callIfConnected('question.cancel', {
         sessionId,
         toolUseId,
       });
+      if (onError && result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('cancelled', []);
-    } catch {
+    } catch (cause) {
+      onError?.(cause);
     } finally {
       setIsCancelling(false);
     }

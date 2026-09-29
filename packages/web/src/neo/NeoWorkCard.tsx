@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { Button } from '../components/ui/Button.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
+import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 
 const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
@@ -56,6 +57,7 @@ export function NeoWorkCard({
           <p class="mt-2 break-all text-xs">Existing chat: {work.targetSessionId}</p>
         )}
       </details>
+      {active && work.sessionId && <NeoWorkQuestion key={work.id} work={work} />}
       {work.status === 'proposed' && (
         <p class="mt-3 text-xs leading-relaxed text-fg-muted">
           {work.targetSessionId
