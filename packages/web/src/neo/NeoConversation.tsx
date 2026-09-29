@@ -2,6 +2,7 @@ import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { projectNeoWorkReply } from './work-reply.ts';
+import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoMessage } from './NeoMessage.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
@@ -34,7 +35,13 @@ export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
   for (const message of messages) {
     const text = conversationText(message);
     const syntheticDelivery = (message as { inputKind?: string }).inputKind === 'system';
-    if (message.type === 'user' && text && !syntheticDelivery) visible.push(message);
+    if (
+      message.type === 'user' &&
+      !message.parent_tool_use_id &&
+      (text || neoMessageImageSources(message).length > 0) &&
+      !syntheticDelivery
+    )
+      visible.push(message);
     if (message.type === 'assistant' && text) reply = message;
     if (message.type === 'result') {
       if (reply) visible.push(reply);

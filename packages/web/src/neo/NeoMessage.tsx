@@ -4,6 +4,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
+import { neoMessageImageSources } from './neo-message-images.ts';
 
 export function messageTime(timestamp: unknown, now = new Date()) {
   if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return null;
@@ -42,19 +43,7 @@ export function NeoMessage({
   children?: ComponentChildren;
 }) {
   const user = message.type === 'user';
-  const content =
-    message.type === 'user' || message.type === 'assistant' ? message.message?.content : null;
-  const images = Array.isArray(content)
-    ? content.flatMap((block) => {
-        if (
-          block.type !== 'image' ||
-          block.source.type !== 'base64' ||
-          !/^image\/(png|jpeg|gif|webp)$/.test(block.source.media_type)
-        )
-          return [];
-        return [`data:${block.source.media_type};base64,${block.source.data}`];
-      })
-    : [];
+  const images = neoMessageImageSources(message);
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);
   return (
     <article
