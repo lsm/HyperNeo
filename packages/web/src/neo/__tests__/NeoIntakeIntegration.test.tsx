@@ -17,7 +17,7 @@ vi.mock('../../lib/state.ts', () => ({
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHub: async () => ({ request, onEvent: () => () => {}, onConnection: () => () => {} }),
-    getHubIfConnected: () => ({ request }),
+    getHubIfConnected: () => ({ request, onEvent: () => () => {} }),
   },
 }));
 vi.mock('../../lib/session-store.ts', () => ({

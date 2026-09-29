@@ -17,7 +17,9 @@ vi.mock('../../hooks/useInterrupt.ts', () => ({
 }));
 vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
 vi.mock('../NeoVoice.tsx', () => ({ NeoVoice: () => null }));
-vi.mock('../../lib/state.ts', () => ({ connectionState: { value: 'connected' } }));
+vi.mock('../../lib/state.ts', () => ({
+  connectionState: { value: 'connected', subscribe: () => () => {} },
+}));
 beforeEach(() => {
   sendMessage.mockReset();
   sendMessage.mockResolvedValue({

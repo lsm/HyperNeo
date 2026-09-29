@@ -9,6 +9,7 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
+import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import './neo.css';
 
@@ -38,6 +39,12 @@ export function NeoLive() {
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
   const draftKey = neo.selectedId === null ? 'root' : `concern:${neo.selectedId}`;
+  useNeoVoiceRecovery(
+    neo.sessionId,
+    drafts[draftKey] ?? '',
+    () => drafts[draftKey] ?? '',
+    (text) => setDrafts((items) => ({ ...items, [draftKey]: text }))
+  );
   const messageCount = neo.store.sdkMessages.value.length;
   const connected = connectionState.value === 'connected';
 
