@@ -160,6 +160,14 @@ describe('NeoComposer Enter behavior', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the touch send hint at phone widths, not only on >=640px', () => {
+    setPointerCoarse(true);
+    renderComposer();
+    const hint = document.querySelector('[role="status"]') as HTMLElement;
+    expect(hint.className).not.toContain('hidden');
+    expect(hint.textContent).toContain('Return adds a line');
+  });
+
   it('keeps the send button labeled and keyboard reachable', () => {
     setPointerCoarse(true);
     renderComposer();
