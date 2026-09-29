@@ -5,7 +5,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { QuestionPrompt } from '../../components/QuestionPrompt.tsx';
 import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
-import { markAllSessionStoresRecovering } from '../../lib/session-store.ts';
+import { markAllSessionStoresRecovering, SessionStore } from '../../lib/session-store.ts';
 import { toast } from '../../lib/toast.ts';
 
 const controls = vi.hoisted(() => ({
@@ -72,6 +72,7 @@ let handlers: Map<string, Set<Handler>>;
 let states: Map<string, SessionState>;
 let failure: unknown;
 let disconnectedResult: boolean;
+let delayedReply: { sessionId: string; promise: Promise<unknown> } | null;
 let connections: Set<(state: string) => void>;
 let initial: Promise<SessionState> | null;
 const push = (sessionId: string, state: SessionState) => {
@@ -86,6 +87,7 @@ beforeEach(() => {
   connections = new Set();
   failure = null;
   disconnectedResult = false;
+  delayedReply = null;
   vi.mocked(toast.error).mockClear();
   initial = null;
   join = vi.fn();
@@ -99,6 +101,7 @@ beforeEach(() => {
       if (method === 'liveQuery.subscribe') return { subscriptionId: data.subscriptionId };
       if (method === 'message.count') return { count: 0 };
       if (method === 'question.respond' || method === 'question.cancel') {
+        if (delayedReply?.sessionId === data.sessionId) return delayedReply.promise;
         if (failure) throw failure;
         if (disconnectedResult) return null;
         const old = states.get(data.sessionId)!;
@@ -131,6 +134,7 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup();
   await waitFor(() => expect(connections.size).toBe(0));
+  vi.restoreAllMocks();
 });
 const choice = () => screen.findByRole('button', { name: /Keep draft/ });
 const submit = () => screen.getByRole('button', { name: 'Submit Response' }) as HTMLButtonElement;
@@ -140,6 +144,18 @@ const expectRequest = (method: string, data: unknown) =>
   waitFor(() => expect(request).toHaveBeenCalledWith(method, data, { timeout: 30000 }));
 
 describe('NeoWorkQuestion native controls', () => {
+  it('shows the actual SessionStore error instead of generic read fallback text', async () => {
+    states.set(sessionId, {
+      ...waiting(),
+      agentState: { status: 'idle' },
+      error: { message: 'This session is no longer available.', occurredAt: 2 },
+    });
+    render(<NeoWorkQuestion work={work} />);
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'This session is no longer available.'
+    );
+    expect(screen.queryByText('Could not check this agent’s questions.')).toBeNull();
+  });
   it('answers from the actual work card through the exact native RPC and releases its subscriptions', async () => {
     const view = render(
       <NeoWorkCard work={work} busy={false} disabled={false} onAction={vi.fn()} />
@@ -207,6 +223,19 @@ describe('NeoWorkQuestion native controls', () => {
     expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByText('A quick choice')).toBeTruthy();
   });
+  it.each([
+    ['answered', { status: 'idle' as const }],
+    ['cancelled', { status: 'interrupted' as const }],
+  ])('hides the failed-reply alert when the question is externally %s', async (outcome, state) => {
+    failure = new Error('Native answer rejected');
+    render(<NeoWorkQuestion work={work} />);
+    fireEvent.click(await choice());
+    fireEvent.click(actionButton(outcome === 'answered'));
+    expect((await screen.findByRole('alert')).textContent).toContain('Native answer rejected');
+    await act(async () => push(sessionId, { ...waiting(), revision: 2, agentState: state }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('A quick choice')).toBeNull();
+  });
   it.each(['respond', 'cancel'] as const)(
     'keeps a legacy native %s retryable after disconnect',
     async (action) => {
@@ -243,10 +272,15 @@ describe('NeoWorkQuestion native controls', () => {
     }
   );
   it('follows native question changes without retaining a previous selection', async () => {
+    failure = new Error('Old question rejected');
     render(<NeoWorkQuestion work={work} />);
     fireEvent.click(await choice());
     expect(submit().disabled).toBe(false);
+    fireEvent.click(submit());
+    expect((await screen.findByRole('alert')).textContent).toContain('Old question rejected');
+    failure = null;
     await act(async () => push('manager-A', { ...waiting(pending('choice-next')), revision: 2 }));
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(submit().disabled).toBe(true);
     fireEvent.click(await choice());
     fireEvent.click(submit());
@@ -326,6 +360,51 @@ describe('NeoWorkQuestion native controls', () => {
         ([method, data]) => method === 'question.respond' && data.sessionId === 'manager-A'
       )
     ).toBe(false);
+  });
+  it.each(['work', 'recipient'] as const)(
+    'ignores a delayed old reply failure after a %s change',
+    async (change) => {
+      let rejectOld!: (cause: unknown) => void;
+      delayedReply = { sessionId, promise: new Promise((_, reject) => (rejectOld = reject)) };
+      const view = render(<NeoWorkQuestion work={work} />);
+      fireEvent.click(await choice());
+      fireEvent.click(submit());
+      await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-A' }));
+      delayedReply = null;
+      const nextWork =
+        change === 'work'
+          ? { ...work, id: 'work-B' }
+          : { ...work, sessionId: 'manager-B', targetSessionId: 'manager-B' };
+      if (change === 'work') {
+        await act(async () =>
+          push(sessionId, { ...waiting(pending('choice-B', sessionId, 'work-B')), revision: 2 })
+        );
+      } else {
+        states.set('manager-B', waiting(pending('choice-B', 'manager-B')));
+      }
+      view.rerender(<NeoWorkQuestion work={nextWork} />);
+      await choice();
+      failure = new Error('Current question failed');
+      fireEvent.click(await choice());
+      fireEvent.click(submit());
+      expect((await screen.findByRole('alert')).textContent).toContain('Current question failed');
+      await act(async () => rejectOld(new Error('Stale question failed')));
+      expect(screen.getByRole('alert').textContent).toContain('Current question failed');
+      expect(screen.getByRole('alert').textContent).not.toContain('Stale question failed');
+    }
+  );
+  it('does not refresh after an unmounted question reply succeeds', async () => {
+    let resolveOld!: (value: unknown) => void;
+    delayedReply = { sessionId, promise: new Promise((resolve) => (resolveOld = resolve)) };
+    const refresh = vi.spyOn(SessionStore.prototype, 'refresh');
+    const view = render(<NeoWorkQuestion work={work} />);
+    fireEvent.click(await choice());
+    refresh.mockClear();
+    fireEvent.click(submit());
+    await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-A' }));
+    view.unmount();
+    await act(async () => resolveOld({ success: true }));
+    expect(refresh).not.toHaveBeenCalled();
   });
   it.each(['reported', 'failed', 'cancelled'] as const)(
     'withdraws choice controls for %s work',
