@@ -12,6 +12,7 @@ import {
   pendingVoiceAudioRecords,
   recordingFromEntry,
   refreshPendingVoiceAudio,
+  type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
 import { VoiceWaveform } from '../components/voice/VoiceWaveform.tsx';
 import { PendingVoiceAudioTray } from '../components/voice/PendingVoiceAudioTray.tsx';
@@ -30,7 +31,7 @@ export function NeoVoice({
   sessionId: string;
   connected: boolean;
   onTranscript: (text: string) => void;
-  onSendVoice: (text: string) => Promise<void>;
+  onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
   onError: (message: string) => void;
   onBusy: (busy: boolean) => void;
 }) {
@@ -66,6 +67,16 @@ export function NeoVoice({
     }
   }
 
+  async function deliverSendIntent(recordId: string, text: string) {
+    const outcome = await onSendVoice(text, recordId);
+    if (outcome.kind === 'accepted') {
+      await deleteVoiceRecord(recordId);
+      return;
+    }
+    if (outcome.kind === 'refused') onError(outcome.reason);
+    else onError('Could not send that recording. It is saved below so you can retry.');
+  }
+
   async function transcribe(intent: 'draft' | 'send' = 'draft', entry?: VoiceRecordEntry) {
     if (running.current || (entry && isVoiceAudioBusy(entry.id))) return;
     running.current = true;
@@ -74,6 +85,10 @@ export function NeoVoice({
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
     try {
+      if (intent === 'send' && entry?.sendText) {
+        await deliverSendIntent(entry.id, entry.sendText);
+        return;
+      }
       const result = await runVoiceSubmit(
         { sessionId, mode: 'stay', retrySilent: !!entry, intent },
         {
@@ -86,11 +101,11 @@ export function NeoVoice({
       if (result.kind === 'routed') {
         if ('transcript' in result.outcome) {
           if (intent === 'send') {
-            await onSendVoice(result.outcome.transcript);
+            await deliverSendIntent(result.recordId, result.outcome.transcript);
           } else {
             onTranscript(result.outcome.transcript);
+            await deleteVoiceRecord(result.recordId);
           }
-          await deleteVoiceRecord(result.recordId);
         } else if (result.outcome.reason) onError(result.outcome.reason);
       } else if (result.kind === 'silent-recording')
         onError('I didn’t hear anything. Try speaking closer to the microphone.');
@@ -122,7 +137,7 @@ export function NeoVoice({
             records={records}
             resendingId={transcribing}
             isBusy={(id) => !connected || active || isVoiceAudioBusy(id)}
-            onResend={(entry) => void transcribe('draft', entry)}
+            onResend={(entry) => void transcribe(entry.intent ?? 'draft', entry)}
             onDelete={(entry) => {
               void deleteVoiceRecord(entry.id).then(refreshPendingVoiceAudio);
             }}

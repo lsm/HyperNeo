@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useCoarsePointer } from './useCoarsePointer.ts';
 import type { SessionStore } from '../lib/session-store.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { Button } from '../components/ui/Button.tsx';
@@ -9,6 +10,8 @@ import { NeoPreferences } from './NeoPreferences.tsx';
 import { NeoVoice } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
+import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
+import { submitVoiceSendIntent, type VoiceSendOutcome } from '../lib/voice/voice-audio-outbox.ts';
 import type { createNeoIntakeClient } from './neo-intake.ts';
 
 export function neoEnterSends(
@@ -60,9 +63,8 @@ export function NeoComposer({
   );
   const working = store.isWorking.value;
   const connected = connectionState.value === 'connected';
-  async function send(overrideText?: string) {
-    const submitted =
-      overrideText !== undefined ? combineVoiceSubmission(draft, overrideText) : draft;
+  async function send() {
+    const submitted = draft;
     const files = attachments.files;
     if (
       (!submitted.trim() && !files.length) ||
@@ -91,6 +93,34 @@ export function NeoComposer({
     } finally {
       inFlight.current = false;
       if (current()) setSending(false);
+    }
+  }
+  async function sendVoice(
+    record: VoiceRecordEntry,
+    transcript: string
+  ): Promise<VoiceSendOutcome> {
+    const composed = combineVoiceSubmission(draft, transcript);
+    if (!composed.trim() || inFlight.current || sending || !connected)
+      return { kind: 'unconfirmed' };
+    inFlight.current = true;
+    setSending(true);
+    onError('');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      inFlight.current = false;
+      setSending(false);
+      return { kind: 'unconfirmed' };
+    }
+    try {
+      const outcome = await submitVoiceSendIntent(hub, record, composed);
+      if (outcome.kind === 'accepted' && currentDraft.current === draft) onDraft('');
+      else if (outcome.kind === 'refused' && alive.current) onError(outcome.reason);
+      return outcome;
+    } catch {
+      return { kind: 'unconfirmed' };
+    } finally {
+      inFlight.current = false;
+      if (alive.current) setSending(false);
     }
   }
   return (
@@ -196,8 +226,10 @@ export function NeoComposer({
             sessionId={sessionId}
             connected={connected}
             onTranscript={onTranscript}
-            onSendVoice={async (text) => {
-              await send(text);
+            onSendVoice={async (text, recordId) => {
+              const record = await getVoiceRecord(recordId);
+              if (!record) return { kind: 'unconfirmed' } as const;
+              return sendVoice(record, text);
             }}
             onError={onError}
             onBusy={setVoiceBusy}
