@@ -1495,6 +1495,53 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const idsAfter = provider.getCachedModels().map((model) => model.id);
       expect(idsAfter).toContain('gpt-b-only');
       expect(idsAfter).not.toContain('gpt-a-only');
+
+      const persistedAfterStale = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'codex-models-cache.json'), 'utf-8')
+      ) as { accountId?: string; models: Array<{ slug: string }> };
+      expect(persistedAfterStale.accountId).toBe('acct-b');
+      expect(persistedAfterStale.models.some((model) => model.slug === 'gpt-b-only')).toBe(true);
+      expect(persistedAfterStale.models.some((model) => model.slug === 'gpt-a-only')).toBe(false);
+    });
+
+    it('refreshes a running bridge catalog after re-discovery', async () => {
+      let catalog: Array<Record<string, unknown>> = DISCOVERY_CATALOG;
+      const { impl } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      await provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-bridge-refresh',
+      });
+      const config = provider.buildSdkConfig('gpt-6-astra', {
+        workspacePath: '/tmp/ws-bridge-refresh',
+      });
+      const baseUrl = config.envVars.ANTHROPIC_BASE_URL as string;
+
+      const before = (await (await fetch(`${baseUrl}/v1/models`)).json()) as {
+        data: Array<{ id: string }>;
+      };
+      expect(before.data.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+      expect(before.data.some((model) => model.id === 'gpt-7-nova')).toBe(false);
+
+      catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-7-nova',
+          display_name: 'GPT-7-Nova',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 1,
+          context_window: 400000,
+        },
+      ];
+      await provider.listRemoteModels({ force: true });
+
+      const after = (await (await fetch(`${baseUrl}/v1/models`)).json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      expect(after.data.some((model) => model.id === 'gpt-7-nova')).toBe(true);
+      expect(after.data.find((model) => model.id === 'gpt-7-nova')?.context_window).toBe(400000);
     });
 
     it('creates exactly one bridge server for concurrent ensureBridgeStarted calls', async () => {
