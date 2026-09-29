@@ -1424,7 +1424,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const account = headers['ChatGPT-Account-ID'];
         return catalogResponse(catalogByAccount[account ?? 'acct-discovery'] ?? []);
       });
-      const codexDir = path.join(tmpDir, 'codex-imported');
       provider = oauthProvider(impl);
 
       const first = await provider.getModels();
