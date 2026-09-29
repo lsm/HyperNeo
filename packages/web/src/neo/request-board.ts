@@ -80,6 +80,9 @@ export function scopeNeoRequestReceipts({ snapshot, origin }: Selection): Gate<N
       work,
       consultations,
       consultationWaiters,
+      workResources: snapshot.workResources?.filter((row) =>
+        work.some((item) => item.id === row.workId)
+      ),
       askOrigins: snapshot.askOrigins?.filter((row) => matches(row.kind, row.id)),
     },
   };

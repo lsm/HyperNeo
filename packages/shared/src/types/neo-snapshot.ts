@@ -1,4 +1,10 @@
 import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
+import type { DaemonInventoryLink } from './daemon-snapshot.ts';
+
+export interface NeoWorkResourceReceipt {
+  workId: string;
+  refs: DaemonInventoryLink[] | null;
+}
 
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
@@ -14,6 +20,7 @@ export interface NeoSnapshot {
   consultations?: NeoConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
+  workResources?: NeoWorkResourceReceipt[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

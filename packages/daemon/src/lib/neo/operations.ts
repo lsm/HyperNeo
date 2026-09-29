@@ -102,6 +102,10 @@ const Snapshot = z.union([
     work: z.array(Work),
     consultations: z.array(Consultation),
     consultationWaiters: z.array(ConsultationWaiter).optional(),
+    workResources: z
+      .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
+      .max(100)
+      .optional(),
     askOrigins: z
       .array(
         z.object({
@@ -284,6 +288,10 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
+      workResources: visibleWork.map((item) => ({
+        workId: item.id,
+        refs: service.db?.neoWorkResources?.get(item.id) ?? null,
+      })),
       askOrigins: projectNeoSnapshotAskOrigins(
         visibleWork,
         [...consultations, ...waiters],

@@ -38,6 +38,7 @@ export type NeoConcernBoard = {
 const refKey = ({ kind, id }: DaemonInventoryLink) => JSON.stringify([kind, id]);
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const validRef = (ref: DaemonInventoryLink) =>
+  !!ref &&
   typeof ref.kind === 'string' &&
   !!ref.kind.trim() &&
   typeof ref.id === 'string' &&
@@ -82,6 +83,17 @@ export function neoBoardReceipts(selection: Selection): Receipt[] {
 }
 
 export function neoBoardReferences(selection: Selection, receipts: readonly Receipt[]) {
+  const workIds = new Set(receipts.filter((item) => item.kind === 'work').map((item) => item.id));
+  const reported = new Map<string, DaemonInventoryLink[] | null>();
+  for (const row of selection.snapshot.workResources ?? []) {
+    if (!row || !workIds.has(row.workId)) continue;
+    reported.set(
+      row.workId,
+      reported.has(row.workId) || !Array.isArray(row.refs) || row.refs.length > 16
+        ? null
+        : row.refs.filter(validRef).map((ref) => ({ ...ref }))
+    );
+  }
   const targets = receipts
     .flatMap((item) => (item.sessionId ? [{ kind: 'session', id: item.sessionId }] : []))
     .filter(validRef);
@@ -91,6 +103,7 @@ export function neoBoardReferences(selection: Selection, receipts: readonly Rece
       : []),
     ...receipts.map((item) => ({ kind: 'session', id: item.originSessionId })),
     ...targets,
+    ...[...reported.values()].flatMap((refs) => refs ?? []),
   ].filter(validRef);
   return { seeds, targets };
 }
