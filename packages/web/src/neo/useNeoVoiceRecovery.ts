@@ -14,19 +14,27 @@ export function useNeoVoiceRecovery(
   writeRef.current = writeDraft;
   const adoptedRef = useRef<{ sessionId: string; draft: string } | null>(null);
 
-  useEffect(() => {
+  const clearDaemonDraft = (): Promise<void> => {
     const adopted = adoptedRef.current;
-    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return;
-    if (draftValue.trim() !== '') return;
-    adoptedRef.current = null;
+    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return Promise.resolve();
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
-    hub
+    if (!hub) return Promise.resolve();
+    return hub
       .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
         sessionId,
         expected: adopted.draft,
       })
+      .then((result) => {
+        if (result?.cleared !== false) adoptedRef.current = null;
+      })
       .catch(() => {});
+  };
+
+  useEffect(() => {
+    const adopted = adoptedRef.current;
+    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return;
+    if (draftValue.trim() !== '') return;
+    void clearDaemonDraft();
   }, [draftValue, sessionId]);
 
   useEffect(() => {
@@ -80,6 +88,7 @@ export function useNeoVoiceRecovery(
       }
       register();
       void adopt();
+      void clearDaemonDraft();
     });
     void adopt();
 

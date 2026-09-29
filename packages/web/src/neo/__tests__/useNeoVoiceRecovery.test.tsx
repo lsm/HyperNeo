@@ -159,6 +159,39 @@ describe('useNeoVoiceRecovery', () => {
     expect(clears).toHaveLength(1);
   });
 
+  it('keeps the clear pending while offline and retries it after reconnect', async () => {
+    const { connectionManager } = await import('../../lib/connection-manager');
+    const { getHubIfConnected } = connectionManager as unknown as {
+      getHubIfConnected: ReturnType<typeof vi.fn>;
+    };
+    const onlineHub = { request: hubRequest, onEvent };
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft } = setup();
+
+    await vi.waitFor(() => expect(draft.value).toBe('buy oat milk'));
+    hubRequest.mockClear();
+    hubRequest.mockImplementation(async (method: string, payload: unknown) => {
+      if (method === 'session.clearInputDraftIf') return { cleared: true };
+      return { session: { metadata: { inputDraft: 'buy oat milk' } } };
+    });
+    getHubIfConnected.mockImplementation(() => null as never);
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(
+      hubRequest.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
+    ).toHaveLength(0);
+
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+    connectionState.value = 'connected';
+    await vi.waitFor(() =>
+      expect(
+        hubRequest.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
+      ).toHaveLength(1)
+    );
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+  });
+
   it('never clears the daemon draft without a prior adoption', async () => {
     const { draft } = setup('typed by hand');
     draft.value = '';
