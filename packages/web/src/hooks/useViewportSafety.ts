@@ -2,6 +2,10 @@ import { useEffect } from 'preact/hooks';
 
 const KEYBOARD_THRESHOLD = 50;
 
+function isZoomed(vv: VisualViewport): boolean {
+  return Math.abs(vv.scale - 1) > 0.01;
+}
+
 function isIpadSafari(): boolean {
   if (typeof navigator === 'undefined' || typeof window === 'undefined') {
     return false;
@@ -30,7 +34,7 @@ function isKeyboardVisible(vv: VisualViewport): boolean {
 }
 
 function resetDocumentScroll(): void {
-  window.scrollTo(0, 0);
+  window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
 }
 
 export function useViewportSafety(): void {
@@ -45,6 +49,8 @@ export function useViewportSafety(): void {
     let savedBottomBarHeight: string | null = null;
 
     const handleResize = () => {
+      if (isZoomed(vv)) return;
+
       if (ipadSafari) {
         updateSafeHeight(vv);
       }
@@ -90,7 +96,7 @@ export function useViewportSafety(): void {
       updateSafeHeight(vv);
     }
 
-    if (isKeyboardVisible(vv)) {
+    if (!isZoomed(vv) && isKeyboardVisible(vv)) {
       keyboardOpen = true;
       document.documentElement.classList.add('keyboard-open');
       document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);

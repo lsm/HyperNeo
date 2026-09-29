@@ -359,7 +359,7 @@ describe('useViewportSafety — keyboard detection', () => {
     mockVV.height = WINDOW_INNER_HEIGHT;
     mockVV._trigger('resize');
 
-    expect(scrollSpy).toHaveBeenCalledWith(0, 0);
+    expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
     scrollSpy.mockRestore();
   });
 
