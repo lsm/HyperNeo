@@ -59,10 +59,11 @@ describe('prioritizedConcerns', () => {
 describe('NeoConcerns', () => {
   it('shows one parked attention cue per concern and still opens the selected holder', () => {
     const onOpen = vi.fn();
+    const works = [work('Book club', 'proposed', 3), work('Book club', 'proposed', 4)];
     render(
       <NeoConcerns
         concerns={[concern('Book club', 1), concern('Garden', 2)]}
-        works={[work('Book club', 'proposed', 3), work('Book club', 'proposed', 4)]}
+        works={works}
         selectedId={null}
         onOpen={onOpen}
       />
@@ -77,5 +78,23 @@ describe('NeoConcerns', () => {
     fireEvent.click(within(list).getByRole('button', { name: /Book club/ }));
     expect(onOpen).toHaveBeenCalledWith('Book club');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('counts held work with no concern of its own', () => {
+    const works = [work(null, 'proposed', 1), work(null, 'queued', 2), work('c', 'reported', 3)];
+    render(
+      <NeoConcerns
+        concerns={[concern('Garden', 2)]}
+        works={works}
+        selectedId={null}
+        onOpen={() => {}}
+      />
+    );
+    const trigger = screen.getByRole('button', {
+      name: 'Your concerns · 3 · 1 thing needs your call',
+    });
+    fireEvent.click(trigger);
+    const list = screen.getByRole('complementary', { name: 'Your concerns' });
+    expect(within(list).getByText('3 things I’m holding for you')).toBeTruthy();
   });
 });

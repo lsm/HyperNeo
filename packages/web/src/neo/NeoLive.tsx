@@ -157,9 +157,10 @@ export function NeoLive() {
             onWorkAction={(id, action) => void neo.act(id, action)}
             onJumpToWork={(id) => {
               nearBottom.current = false;
-              document
-                .getElementById(`inline-work-${id}`)
-                ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              const target = document.getElementById(`inline-work-${id}`);
+              if (!target) return false;
+              target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              return true;
             }}
           />
           <a

@@ -3,7 +3,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 
 const labels: Record<string, string> = {
   proposed: 'Your call',
-  queued: 'Running',
+  queued: 'Handed to HyperNeo',
 };
 
 export function NeoWorkRow({
@@ -40,6 +40,15 @@ export function NeoWorkRow({
           {work.title}
         </button>
       </div>
+      {work.instruction && (
+        <details class="mt-1 text-xs text-fg-muted">
+          <summary class="cursor-pointer">Review the work brief</summary>
+          <p class="mt-1 whitespace-pre-wrap break-words leading-relaxed">{work.instruction}</p>
+          {work.targetSessionId && (
+            <p class="mt-1 break-all text-fg-faint">Existing chat: {work.targetSessionId}</p>
+          )}
+        </details>
+      )}
       <div class="mt-1 flex items-center gap-3 text-xs">
         {proposed ? (
           <>
@@ -67,7 +76,7 @@ export function NeoWorkRow({
             onClick={() => onAction(work.id, 'cancel')}
             class="text-danger-soft underline-offset-2 hover:underline disabled:opacity-50"
           >
-            {busy ? 'Stopping…' : 'Stop work'}
+            {busy ? 'Stopping…' : work.targetSessionId ? 'Stop waiting' : 'Stop work'}
           </button>
         )}
         {work.sessionId && (

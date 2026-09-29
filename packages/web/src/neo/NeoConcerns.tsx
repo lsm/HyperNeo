@@ -50,7 +50,7 @@ export function NeoConcerns({
   workBusy = null,
   workDisabled = false,
   onWorkAction = () => {},
-  onJumpToWork = () => {},
+  onJumpToWork = () => false,
 }: {
   concerns: NeoConcern[];
   works?: NeoWork[];
@@ -60,7 +60,7 @@ export function NeoConcerns({
   workBusy?: string | null;
   workDisabled?: boolean;
   onWorkAction?: (id: string, action: 'start' | 'cancel') => void;
-  onJumpToWork?: (id: string) => void;
+  onJumpToWork?: (id: string) => boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -68,6 +68,7 @@ export function NeoConcerns({
   useClickOutside(ref, () => setExpanded(false), expanded);
   const ordered = prioritizedConcerns(concerns, works, consultations);
   const openWork = works.filter((work) => work.status === 'proposed' || work.status === 'queued');
+  const held = concerns.length + openWork.filter((work) => !work.concernId).length;
   const decisionCount =
     ordered.filter((item) => item.attention === 'decision').length +
     works.filter((work) => work.status === 'proposed' && !work.concernId).length;
@@ -82,8 +83,8 @@ export function NeoConcerns({
         class="neo-concerns-trigger relative rounded-xl border border-accent/20 bg-accent/10 p-2 text-accent hover:bg-accent/20"
         aria-label={
           concerns.length
-            ? `Your concerns · ${concerns.length}${decisionCount ? ` · ${decisionLabel}` : ''}`
-            : `Work in flight · ${openWork.length}`
+            ? `Your concerns · ${held}${decisionCount ? ` · ${decisionLabel}` : ''}`
+            : `Work in flight · ${held}`
         }
         aria-expanded={expanded}
         aria-controls="neo-concerns-list"
@@ -97,7 +98,7 @@ export function NeoConcerns({
           />
         )}
         <span class="absolute -right-1 -top-1 rounded-full bg-accent px-1.5 text-[10px] text-accent-fg">
-          {concerns.length}
+          {held}
         </span>
       </button>
       <aside
@@ -108,7 +109,7 @@ export function NeoConcerns({
         <div class="mb-3 flex items-center justify-between gap-2">
           <div>
             <h2 class="text-xs font-medium text-fg-muted">
-              {concerns.length} {concerns.length === 1 ? 'thing' : 'things'} I’m holding for you
+              {held} {held === 1 ? 'thing' : 'things'} I’m holding for you
             </h2>
             {decisionCount > 0 && <p class="mt-1 text-xs text-warning">{decisionLabel}</p>}
           </div>
@@ -137,7 +138,9 @@ export function NeoConcerns({
                   busy={workBusy === work.id}
                   disabled={workDisabled}
                   onAction={onWorkAction}
-                  onJump={() => onJumpToWork(work.id)}
+                  onJump={() => {
+                    if (onJumpToWork(work.id)) setExpanded(false);
+                  }}
                 />
               ))}
             </div>
