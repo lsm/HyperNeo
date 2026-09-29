@@ -1384,9 +1384,75 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       await provider.getModels();
       await provider.getModels();
-      await provider.listRemoteModels().catch(() => {});
+      await provider.listRemoteModels();
 
       expect(counts.models).toBe(1);
+    });
+
+    it('preserves the discovery-failure backoff across clearModelCache', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      provider.clearModelCache();
+      await provider.getModels();
+
+      expect(counts.models).toBe(1);
+    });
+
+    it('discards a stale in-flight discovery after an account switch', async () => {
+      let releaseA: (() => void) | undefined;
+      const gateA = new Promise<void>((resolve) => {
+        releaseA = resolve;
+      });
+      let responder: () => Response | Promise<Response> = async () => {
+        await gateA;
+        return catalogResponse([
+          {
+            slug: 'gpt-a-only',
+            display_name: 'GPT A Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ]);
+      };
+      const { impl } = discoveryFetch(() => responder());
+      provider = oauthProvider(impl);
+
+      const staleGet = provider.getModels();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await provider.logout();
+      responder = () =>
+        catalogResponse([
+          ...DISCOVERY_CATALOG,
+          {
+            slug: 'gpt-b-only',
+            display_name: 'GPT B Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ]);
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'discovery-access-token',
+        refresh: 'discovery-refresh-token',
+        expires: Date.now() + 3600_000,
+        accountId: 'acct-b',
+      });
+
+      const modelsB = await provider.getModels();
+      expect(modelsB.some((model) => model.id === 'gpt-b-only')).toBe(true);
+
+      releaseA?.();
+      await staleGet;
+
+      const idsAfter = provider.getCachedModels().map((model) => model.id);
+      expect(idsAfter).toContain('gpt-b-only');
+      expect(idsAfter).not.toContain('gpt-a-only');
     });
 
     it('creates exactly one bridge server for concurrent ensureBridgeStarted calls', async () => {
@@ -1473,14 +1539,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.some((model) => model.id === 'gpt-7-nova' && model.available)).toBe(true);
     });
 
-    it('listRemoteModels returns the discovered catalog and honors force', async () => {
-      let catalog = DISCOVERY_CATALOG;
+    it('listRemoteModels returns the merged catalog and honors force', async () => {
+      let catalog: Array<Record<string, unknown>> = DISCOVERY_CATALOG;
       const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
       provider = oauthProvider(impl);
 
       await provider.getModels();
       const first = await provider.listRemoteModels();
-      expect(first.map((model) => model.id)).toEqual(['gpt-6-astra', 'gpt-5.5']);
+      const firstById = new Map(first.map((model) => [model.id, model]));
+      expect(firstById.get('gpt-6-astra')?.available).toBe(true);
+      expect(firstById.get('gpt-5.3-codex')?.available).toBe(false);
 
       catalog = [
         ...DISCOVERY_CATALOG,
@@ -1493,7 +1561,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         },
       ];
       const forced = await provider.listRemoteModels({ force: true });
-      expect(forced.map((model) => model.id)).toContain('gpt-7-nova');
+      expect(forced.some((model) => model.id === 'gpt-7-nova' && model.available)).toBe(true);
       expect(counts.models).toBe(2);
     });
 

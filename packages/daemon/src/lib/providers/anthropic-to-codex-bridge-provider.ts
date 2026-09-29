@@ -181,6 +181,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveryInFlightKey: string | undefined = undefined;
 
+  private discoveryGeneration = 0;
+
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
@@ -202,6 +204,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.discoveredModels = null;
     this.discoveredAt = 0;
     this.discoveryFailedAt = 0;
+    this.discoveryGeneration += 1;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
@@ -343,9 +346,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return discovered;
   }
 
-  private async settleDiscoveredModelsFromCache(auth: OpenAIResponsesBridgeAuth): Promise<boolean> {
+  private async settleDiscoveredModelsFromCache(
+    auth: OpenAIResponsesBridgeAuth,
+    isStaleAttempt: () => boolean
+  ): Promise<boolean> {
     const lastGoodRaw = await this.modelsCache.loadLastGood(auth.accountId);
-    if (!lastGoodRaw) return false;
+    if (!lastGoodRaw || isStaleAttempt()) return false;
     const lastGood = normalizeCodexRemoteModels(lastGoodRaw);
     if (lastGood.length === 0) return false;
     this.applyDiscoveredModels(lastGood);
@@ -360,6 +366,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.discoveredModels = null;
       this.discoveredAt = 0;
       this.discoveryFailedAt = 0;
+      this.discoveryGeneration += 1;
       return;
     }
     if (!force) {
@@ -378,6 +385,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (this.discoveryInFlight && this.discoveryInFlightKey === authKey) {
       return this.discoveryInFlight;
     }
+    const generationAtStart = this.discoveryGeneration;
+    const isStaleAttempt = () => this.discoveryGeneration !== generationAtStart;
     const attempt = (async () => {
       try {
         if (!force) {
@@ -385,18 +394,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           if (freshCached) {
             const discovered = normalizeCodexRemoteModels(freshCached);
             if (discovered.length > 0) {
-              this.applyDiscoveredModels(discovered);
+              if (!isStaleAttempt()) this.applyDiscoveredModels(discovered);
               return;
             }
           }
         }
-        this.applyDiscoveredModels(await this.fetchAndPersistDiscoveredModels(auth));
+        const discovered = await this.fetchAndPersistDiscoveredModels(auth);
+        if (!isStaleAttempt()) this.applyDiscoveredModels(discovered);
       } catch (error) {
         logger.warn(
           'AnthropicToCodexBridgeProvider: model discovery failed, falling back to cached catalog:',
           error
         );
-        const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth);
+        if (isStaleAttempt()) return;
+        const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth, isStaleAttempt);
         if (!recoveredFromCache) {
           this.discoveredModels = null;
           this.discoveryFailedAt = Date.now();
@@ -665,21 +676,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!auth) {
       throw new Error('OpenAI (Codex) provider is not authenticated');
     }
-    if (auth.source !== 'chatgpt_oauth') {
-      return this.getCachedModels();
-    }
     await this.refreshDiscoveredCodexModels(auth, options?.force === true);
-    const discovered = this.discoveredModels?.filter((model) => model.available) ?? [];
-    if (discovered.length === 0) {
-      throw new Error('Codex models discovery is unavailable');
-    }
-    return discovered;
+    return this.getCachedModels();
   }
 
   clearModelCache(): void {
     this.discoveredModels = null;
     this.discoveredAt = 0;
-    this.discoveryFailedAt = 0;
   }
 
   getCachedModels(): ModelInfo[] {
@@ -1058,6 +1061,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.discoveredModels = null;
     this.discoveredAt = 0;
     this.discoveryFailedAt = 0;
+    this.discoveryGeneration += 1;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
