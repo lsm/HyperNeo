@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { projectNeoWorkReply } from './work-reply.ts';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -16,6 +17,9 @@ import {
 import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
 import { connectionState } from '../lib/state.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
+
+type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
+type QuestionFailure = { epoch: QuestionEpoch; message: string };
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -105,6 +109,30 @@ export function NeoConversation({
   const maps = useMessageMaps(messages, sessionId);
   const state = store.agentState.value;
   const pending = state.status === 'waiting_for_input' ? state.pendingQuestion : null;
+  const epoch = useMemo(
+    () => (pending ? Object.freeze({ store, sessionId, toolUseId: pending.toolUseId }) : null),
+    [store, sessionId, pending?.toolUseId]
+  );
+  const currentEpoch = useRef<QuestionEpoch | null>(epoch);
+  currentEpoch.current = epoch;
+  useEffect(
+    () => () => {
+      currentEpoch.current = null;
+    },
+    []
+  );
+  const [questionFailure, setQuestionFailure] = useState<QuestionFailure | null>(null);
+  const isCurrentEpoch = (candidate: QuestionEpoch) => {
+    const current = candidate.store.agentState.value;
+    return (
+      currentEpoch.current === candidate &&
+      candidate.store.activeSessionId.value === candidate.sessionId &&
+      current.status === 'waiting_for_input' &&
+      current.pendingQuestion.toolUseId === candidate.toolUseId
+    );
+  };
+  const replyError =
+    pending && epoch && questionFailure?.epoch === epoch ? questionFailure.message : null;
   const conversation = messages.filter(
     (message) => !maps.replacementStatusMap.has(message.uuid ?? '')
   );
@@ -194,13 +222,25 @@ export function NeoConversation({
           );
         })}
         {progress !== 'inactive' && !progress.messageId && renderProgress(progress.label)}
-        {pending && (
+        {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"
-            key={pending.toolUseId}
+            key={`${sessionId}:${pending.toolUseId}`}
             sessionId={sessionId}
             pendingQuestion={pending}
-            onResolved={() => void store.refresh()}
+            onResolved={() => {
+              if (!isCurrentEpoch(epoch)) return;
+              setQuestionFailure(null);
+              void epoch.store.refresh();
+            }}
+            onError={(cause) => {
+              if (!isCurrentEpoch(epoch)) return;
+              setQuestionFailure({
+                epoch,
+                message:
+                  cause instanceof Error ? cause.message : 'Could not send your choice. Try again.',
+              });
+            }}
           />
         )}
         {store.error.value && (
@@ -209,6 +249,14 @@ export function NeoConversation({
             class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
           >
             {store.error.value.message}
+          </p>
+        )}
+        {replyError && (
+          <p
+            role="alert"
+            class="rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger"
+          >
+            {replyError}
           </p>
         )}
       </section>
