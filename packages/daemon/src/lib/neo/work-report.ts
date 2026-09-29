@@ -1,11 +1,14 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { DaemonInventoryLink } from '@hyperneo/shared/types/daemon-snapshot';
 import type { OperationCaller } from '../operations/registry.ts';
+import { canonicalNeoWorkResourceRefs, selectNeoWorkResourceRefs } from './work-resource-refs.ts';
 
 export interface NeoWorkReportInput {
   id: string;
   status: 'reported' | 'failed';
   report: string;
+  resourceRefs?: DaemonInventoryLink[];
 }
 type Rejection = {
   accepted: false;
@@ -38,18 +41,33 @@ export interface NeoWorkReportDependencies {
     patch: Pick<NeoWork, 'status' | 'report'>
   ): NeoWork | null;
   returnReport(work: NeoWork): Promise<void>;
+  resourceReports?: {
+    get(workId: string): DaemonInventoryLink[] | null;
+    settle(
+      expected: NeoWork,
+      input: NeoWorkReportInput,
+      resourceRefs: DaemonInventoryLink[]
+    ): NeoWork | null;
+  };
 }
 const reject = (reason: Rejection['reason']): { reason: Rejection } => ({
   reason: { accepted: false, reason },
 });
 
 export function admitNeoWorkReportInput(input: NeoWorkReportInput): Gate<NeoWorkReportInput> {
-  return input.id.trim() &&
-    input.report.trim() &&
-    input.report.length <= 12000 &&
-    ['reported', 'failed'].includes(input.status)
-    ? { value: { id: input.id, status: input.status, report: input.report } }
-    : reject('invalid_report');
+  if (
+    !input.id.trim() ||
+    !input.report.trim() ||
+    input.report.length > 12000 ||
+    !['reported', 'failed'].includes(input.status)
+  )
+    return reject('invalid_report');
+  const value = { id: input.id, status: input.status, report: input.report };
+  if (input.resourceRefs === undefined) return { value };
+  const refs = selectNeoWorkResourceRefs(input.resourceRefs);
+  return 'reason' in refs
+    ? reject('invalid_report')
+    : { value: { ...value, resourceRefs: canonicalNeoWorkResourceRefs(refs.value) } };
 }
 
 export function admitNeoWorkReportCaller(caller: OperationCaller): Gate<{ sessionId: string }> {
@@ -90,6 +108,18 @@ export function planNeoWorkReport(work: NeoWork, input: NeoWorkReportInput): Gat
       ? { value: { replayed: true } }
       : reject('report_conflict');
   return reject('work_not_pending');
+}
+
+export function requireNeoWorkReportResources(
+  input: NeoWorkReportInput,
+  plan: Plan,
+  record: { supported: boolean; refs: DaemonInventoryLink[] | null }
+): Gate<Plan> {
+  if (input.resourceRefs === undefined) return { value: plan };
+  if (!record.supported) return reject('invalid_report');
+  return !plan.replayed || JSON.stringify(record.refs) === JSON.stringify(input.resourceRefs)
+    ? { value: plan }
+    : reject('report_conflict');
 }
 
 export function requireSettledNeoWorkReport(
@@ -135,9 +165,23 @@ export function createNeoWorkReporter(deps: NeoWorkReportDependencies) {
     .pipe((plan: Plan) => plan, 'report', 'plan')
     .pipe(
       (work: NeoWork, input: NeoWorkReportInput, plan: Plan) => ({
+        supported: !!deps.resourceReports,
+        refs:
+          plan.replayed && input.resourceRefs !== undefined
+            ? (deps.resourceReports?.get(work.id) ?? null)
+            : null,
+      }),
+      ['work', 'input', 'plan'],
+      'resources'
+    )
+    .pipe(requireNeoWorkReportResources, ['input', 'plan', 'resources'], 'result:report')
+    .pipe(
+      (work: NeoWork, input: NeoWorkReportInput, plan: Plan) => ({
         work: plan.replayed
           ? work
-          : deps.transitionWork(work.id, work, { status: input.status, report: input.report }),
+          : input.resourceRefs !== undefined
+            ? (deps.resourceReports?.settle(work, input, input.resourceRefs) ?? null)
+            : deps.transitionWork(work.id, work, { status: input.status, report: input.report }),
       }),
       ['work', 'input', 'plan'],
       'settled'
