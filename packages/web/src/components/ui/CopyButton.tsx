@@ -4,9 +4,14 @@ import { copyToClipboard } from '../../lib/utils.ts';
 interface CopyButtonProps {
   text: string;
   label?: string;
+  disabled?: boolean;
 }
 
-export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProps) {
+export function CopyButton({
+  text,
+  label = 'Copy to clipboard',
+  disabled = false,
+}: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
   const textRef = useRef(text);
   textRef.current = text;
@@ -25,21 +30,26 @@ export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProp
   }, [text]);
 
   const handleCopy = async () => {
+    if (disabled) return;
     const value = text;
     const success = await copyToClipboard(value);
     if (success && textRef.current === value) {
       setCopied(true);
     }
   };
+  const stateClasses = disabled
+    ? 'text-fg-muted opacity-50 cursor-not-allowed'
+    : copied
+      ? 'text-success'
+      : 'text-fg-muted hover:text-fg-soft hover:bg-fill-strong';
 
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={handleCopy}
       title={copied ? 'Copied!' : label}
-      class={`p-1.5 rounded transition-colors ${
-        copied ? 'text-success' : 'text-fg-muted hover:text-fg-soft hover:bg-fill-strong'
-      }`}
+      class={`p-1.5 rounded transition-colors ${stateClasses}`}
     >
       {copied ? (
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

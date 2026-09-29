@@ -44,6 +44,7 @@ export function NeoMessage({
 }) {
   const user = message.type === 'user';
   const images = neoMessageImageSources(message);
+  const copyDisabled = !text.trim();
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);
   return (
     <article
@@ -117,7 +118,11 @@ export function NeoMessage({
         )}
       </div>
       <div class={`mt-1 flex items-center gap-3 ${user ? 'justify-end' : ''}`}>
-        <CopyButton text={text} label={user ? 'Copy your message' : 'Copy Neo’s message'} />
+        <CopyButton
+          text={text}
+          label={user ? 'Copy your message' : 'Copy Neo’s message'}
+          disabled={copyDisabled}
+        />
       </div>
       {children}
     </article>
