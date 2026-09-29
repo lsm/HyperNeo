@@ -1167,6 +1167,19 @@ a:focus-visible {
   height: var(--safe-height, 100svh);
 }
 
+/* App shell viewport height.
+   Same --safe-height contract as .h-safe-screen, but the fallback is 100dvh
+   so the shell exactly matches the html/body sizing when no keyboard is open.
+   The virtual keyboard overlays iOS Safari without resizing the layout
+   viewport (100dvh keeps the pre-keyboard height), which used to strand the
+   composer below the visual viewport and trigger Safari's document-level
+   focus scroll — the source of the shifted/clipped mobile layout. With this,
+   the shell tracks visualViewport.height while the keyboard is open and
+   snaps back to 100dvh when it closes. */
+.h-safe-app {
+  height: var(--safe-height, 100dvh);
+}
+
 .desktop-titlebar-row {
   display: none;
 }

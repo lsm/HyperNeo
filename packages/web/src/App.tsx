@@ -160,7 +160,7 @@ export function App() {
 
   return (
     <>
-      <div class="desktop-window-shell flex h-dvh overflow-hidden bg-app-sidebar relative pt-safe">
+      <div class="desktop-window-shell flex h-safe-app overflow-hidden bg-app-sidebar relative pt-safe">
         <ContextPanel />
 
         <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">

@@ -79,6 +79,9 @@ const DESKTOP_SAFARI_UA =
 const DESKTOP_CHROME_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+const IPHONE_SAFARI_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
 const CRIOS_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Mobile/15E148 Safari/604.1';
 
@@ -311,6 +314,53 @@ describe('useViewportSafety — keyboard detection', () => {
     mockVV._trigger('resize');
 
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+  });
+
+  it('treats iPhone Safari as an always-tracking browser (shell follows visual viewport)', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+
+    renderHook(() => useViewportSafety());
+
+    expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
+      `${WINDOW_INNER_HEIGHT}px`
+    );
+
+    mockVV.height = WINDOW_INNER_HEIGHT - 300;
+    mockVV._trigger('resize');
+
+    expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+    expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
+      `${WINDOW_INNER_HEIGHT - 300}px`
+    );
+
+    mockVV.height = WINDOW_INNER_HEIGHT;
+    mockVV._trigger('resize');
+
+    expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
+      `${WINDOW_INNER_HEIGHT}px`
+    );
+  });
+
+  it('resets document scroll drift when the keyboard closes', () => {
+    setNavigator(0, DESKTOP_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const scrollSpy = vi.spyOn(window, 'scrollTo');
+
+    renderHook(() => useViewportSafety());
+
+    mockVV.height = WINDOW_INNER_HEIGHT - 300;
+    mockVV._trigger('resize');
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    mockVV.height = WINDOW_INNER_HEIGHT;
+    mockVV._trigger('resize');
+
+    expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
+    scrollSpy.mockRestore();
   });
 
   it('does NOT trigger at threshold boundary (50px exactly)', () => {
