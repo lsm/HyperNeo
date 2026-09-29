@@ -162,7 +162,13 @@ export function NeoComposer({
         </div>
         <span
           role="status"
-          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${working || !connected || store.agentState.value.status === 'waiting_for_input' ? 'order-last flex w-full sm:order-none sm:w-auto' : 'hidden'}`}
+          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${
+            working || !connected || store.agentState.value.status === 'waiting_for_input'
+              ? 'order-last flex w-full sm:order-none sm:w-auto'
+              : coarsePointer
+                ? 'flex'
+                : 'hidden'
+          }`}
         >
           {working && (
             <span
