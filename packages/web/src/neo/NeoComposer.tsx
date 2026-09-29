@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCoarsePointer } from './useCoarsePointer.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
@@ -9,6 +10,14 @@ import { NeoVoice } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
 import type { createNeoIntakeClient } from './neo-intake.ts';
+
+export function neoEnterSends(
+  keyboard: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  coarsePointer: boolean
+): boolean {
+  const modifierSend = keyboard.metaKey || keyboard.ctrlKey;
+  return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
+}
 
 export function NeoComposer({
   store,
@@ -28,6 +37,7 @@ export function NeoComposer({
   onSend: ReturnType<typeof createNeoIntakeClient>['send'];
 }) {
   const [sending, setSending] = useState(false);
+  const coarsePointer = useCoarsePointer();
   const [voiceBusy, setVoiceBusy] = useState(false);
   const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -121,7 +131,13 @@ export function NeoComposer({
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+          if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+          if (
+            neoEnterSends(
+              { shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
+              coarsePointer
+            )
+          ) {
             event.preventDefault();
             void send();
           }
@@ -160,7 +176,9 @@ export function NeoComposer({
               ? 'A quick question for you above.'
               : working
                 ? 'Neo is thinking…'
-                : 'Enter to send · Shift + Enter for a new line'}
+                : coarsePointer
+                  ? 'Return adds a line · Tap the arrow to send'
+                  : 'Enter to send · Shift + Enter for a new line'}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice
