@@ -117,7 +117,8 @@ export function normalizeCodexRemoteModel(model: CodexRemoteModel): ModelInfo {
   const staticModel = staticModelForSlug(model.slug);
   const contextWindow =
     model.context_window ?? model.max_context_window ?? staticModel?.contextWindow ?? 128000;
-  const description = model.description ?? staticModel?.description ?? model.display_name;
+  const description =
+    model.description ?? staticModel?.description ?? (model.display_name || model.slug);
   return {
     id: model.slug,
     name: model.display_name || staticModel?.name || model.slug,

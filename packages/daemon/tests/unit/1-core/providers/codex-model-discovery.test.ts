@@ -137,8 +137,12 @@ describe('normalizeCodexRemoteModel', () => {
       remoteModel({ slug: 'gpt-5.5', display_name: 'GPT-5.5' })
     );
     expect(model.alias).toBe('codex-5.5');
-    expect(model.providerAliases).toContain('codex-5.5');
     expect(model.releaseDate).toBe('2026-04-01');
+    const multiAlias = normalizeCodexRemoteModel(
+      remoteModel({ slug: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' })
+    );
+    expect(multiAlias.alias).toBe('codex-latest');
+    expect(multiAlias.providerAliases).toContain('codex-5.6');
   });
 
   it('falls back to static metadata when discovery omits fields for a known slug', () => {
@@ -311,7 +315,7 @@ describe('fetchCodexRemoteModels', () => {
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       seenUrl = String(input);
       seenHeaders = init?.headers as Record<string, string>;
-      return new Response('{}', { status: 200 });
+      return new Response('{"models":[]}', { status: 200 });
     }) as unknown as typeof fetch;
     await fetchCodexRemoteModels(
       { apiKey: 'access-token', accountId: 'account-a' },
