@@ -8,11 +8,14 @@ import { NeoIcon, concernColor } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
+import { NeoWorkTray } from './NeoWorkTray.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
+import { useViewportSafety } from '../hooks/useViewportSafety.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import './neo.css';
 
 export function NeoLive() {
+  useViewportSafety();
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
@@ -311,19 +314,12 @@ export function NeoLive() {
               </p>
             </div>
           )}
-          {current.length > 0 && (
-            <section aria-label="Delegated work" class="mt-6 space-y-3">
-              {current.map((work) => (
-                <NeoWorkCard
-                  key={work.id}
-                  work={work}
-                  busy={neo.busyWork === work.id}
-                  disabled={!connected || !!neo.busyWork}
-                  onAction={(id, action) => void neo.act(id, action)}
-                />
-              ))}
-            </section>
-          )}
+          <NeoWorkTray
+            works={current}
+            busyId={neo.busyWork}
+            disabled={!connected || !!neo.busyWork}
+            onAction={(id, action) => void neo.act(id, action)}
+          />
           {history.length > 0 && (
             <section class="mt-6">
               <button
