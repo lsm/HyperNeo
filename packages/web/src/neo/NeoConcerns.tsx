@@ -1,4 +1,5 @@
 import type { NeoConcern, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import { NeoWorkRow } from './NeoWorkRow.tsx';
 import { useRef, useState } from 'preact/hooks';
 import { useClickOutside } from '../hooks/useClickOutside.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
@@ -46,29 +47,44 @@ export function NeoConcerns({
   consultations = [],
   selectedId,
   onOpen,
+  workBusy = null,
+  workDisabled = false,
+  onWorkAction = () => {},
+  onJumpToWork = () => {},
 }: {
   concerns: NeoConcern[];
   works?: NeoWork[];
   consultations?: NeoConsultation[];
   selectedId: string | null;
   onOpen: (id: string) => void;
+  workBusy?: string | null;
+  workDisabled?: boolean;
+  onWorkAction?: (id: string, action: 'start' | 'cancel') => void;
+  onJumpToWork?: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useClickOutside(ref, () => setExpanded(false), expanded);
   const ordered = prioritizedConcerns(concerns, works, consultations);
-  const decisionCount = ordered.filter((item) => item.attention === 'decision').length;
+  const openWork = works.filter((work) => work.status === 'proposed' || work.status === 'queued');
+  const decisionCount =
+    ordered.filter((item) => item.attention === 'decision').length +
+    works.filter((work) => work.status === 'proposed' && !work.concernId).length;
   const decisionLabel =
     decisionCount === 1 ? '1 thing needs your call' : `${decisionCount} things need your call`;
-  if (!concerns.length) return null;
+  if (!concerns.length && openWork.length === 0) return null;
   return (
     <div ref={ref} class="neo-concerns">
       <button
         ref={trigger}
         type="button"
         class="neo-concerns-trigger relative rounded-xl border border-accent/20 bg-accent/10 p-2 text-accent hover:bg-accent/20"
-        aria-label={`Your concerns · ${concerns.length}${decisionCount ? ` · ${decisionLabel}` : ''}`}
+        aria-label={
+          concerns.length
+            ? `Your concerns · ${concerns.length}${decisionCount ? ` · ${decisionLabel}` : ''}`
+            : `Work in flight · ${openWork.length}`
+        }
         aria-expanded={expanded}
         aria-controls="neo-concerns-list"
         onClick={() => setExpanded(!expanded)}
@@ -108,6 +124,25 @@ export function NeoConcerns({
             <NeoIcon name="close" />
           </button>
         </div>
+        {openWork.length > 0 && (
+          <div class="mb-3">
+            <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-faint">
+              Work · {openWork.length}
+            </p>
+            <div class="space-y-2" data-testid="neo-work-surface">
+              {openWork.map((work) => (
+                <NeoWorkRow
+                  key={work.id}
+                  work={work}
+                  busy={workBusy === work.id}
+                  disabled={workDisabled}
+                  onAction={onWorkAction}
+                  onJump={() => onJumpToWork(work.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
         <div class="space-y-2">
           {ordered.map(({ concern, attention }) => (
             <button

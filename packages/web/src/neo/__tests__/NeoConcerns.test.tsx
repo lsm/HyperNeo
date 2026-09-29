@@ -73,7 +73,7 @@ describe('NeoConcerns', () => {
     fireEvent.click(trigger);
     const list = screen.getByRole('complementary', { name: 'Your concerns' });
     expect(within(list).getByText('1 thing needs your call')).toBeTruthy();
-    expect(within(list).getByText('Your call')).toBeTruthy();
+    expect(within(list).getAllByText('Your call').length).toBeGreaterThan(0);
     fireEvent.click(within(list).getByRole('button', { name: /Book club/ }));
     expect(onOpen).toHaveBeenCalledWith('Book club');
     expect(trigger.getAttribute('aria-expanded')).toBe('false');

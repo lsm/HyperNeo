@@ -9,11 +9,13 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
+import { useViewportSafety } from '../hooks/useViewportSafety.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import './neo.css';
 
 export function NeoLive() {
+  useViewportSafety();
   const neo = useNeo();
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
@@ -115,7 +117,7 @@ export function NeoLive() {
   }
 
   return (
-    <div ref={shell} class="neo-shell relative flex h-dvh flex-col overflow-hidden text-fg">
+    <div ref={shell} class="neo-shell relative flex flex-col overflow-hidden text-fg">
       {dragging && (
         <div
           role="status"
@@ -150,6 +152,15 @@ export function NeoLive() {
             consultations={neo.snapshot?.consultations ?? []}
             selectedId={neo.selectedId}
             onOpen={open}
+            workBusy={neo.busyWork}
+            workDisabled={!connected || !!neo.busyWork}
+            onWorkAction={(id, action) => void neo.act(id, action)}
+            onJumpToWork={(id) => {
+              nearBottom.current = false;
+              document
+                .getElementById(`inline-work-${id}`)
+                ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }}
           />
           <a
             href="/"
@@ -260,6 +271,9 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               works={relevant}
               snapshot={view}
+              workBusy={neo.busyWork}
+              workDisabled={!connected || !!neo.busyWork}
+              onWorkAction={(id, action) => void neo.act(id, action)}
             />
           ) : (
             !neo.error && (
@@ -317,19 +331,6 @@ export function NeoLive() {
                 Work starts when you approve its card.
               </p>
             </div>
-          )}
-          {current.length > 0 && (
-            <section aria-label="Delegated work" class="mt-6 space-y-3">
-              {current.map((work) => (
-                <NeoWorkCard
-                  key={work.id}
-                  work={work}
-                  busy={neo.busyWork === work.id}
-                  disabled={!connected || !!neo.busyWork}
-                  onAction={(id, action) => void neo.act(id, action)}
-                />
-              ))}
-            </section>
           )}
           {history.length > 0 && (
             <section class="mt-6">
