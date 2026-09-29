@@ -7,6 +7,7 @@ import type {
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
+import { toast } from '../lib/toast.ts';
 
 const questionColors = {
   active: {
@@ -42,6 +43,7 @@ interface QuestionPromptProps {
   finalResponses?: QuestionDraftResponse[];
   cancelReason?: QuestionCancelReason;
   onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
+  onError?: (cause: unknown) => void;
 }
 
 export function QuestionPrompt({
@@ -52,6 +54,7 @@ export function QuestionPrompt({
   finalResponses,
   cancelReason,
   onResolved,
+  onError,
 }: QuestionPromptProps) {
   const { questions, toolUseId, draftResponses } = pendingQuestion;
   const { callIfConnected } = useMessageHub();
@@ -189,14 +192,20 @@ export function QuestionPrompt({
         }))
         .filter((r) => r.selectedLabels.length > 0 || r.customText);
 
-      await callIfConnected('question.respond', {
+      const result = await callIfConnected('question.respond', {
         sessionId,
         toolUseId,
         responses,
       });
+      if (result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('submitted', responses);
-    } catch {
+    } catch (cause) {
+      if (onError) onError(cause);
+      else
+        toast.error(
+          cause instanceof Error ? cause.message : 'Could not send your choice. Try again.'
+        );
     } finally {
       setIsSubmitting(false);
     }
@@ -206,13 +215,19 @@ export function QuestionPrompt({
     setIsCancelling(true);
 
     try {
-      await callIfConnected('question.cancel', {
+      const result = await callIfConnected('question.cancel', {
         sessionId,
         toolUseId,
       });
+      if (result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('cancelled', []);
-    } catch {
+    } catch (cause) {
+      if (onError) onError(cause);
+      else
+        toast.error(
+          cause instanceof Error ? cause.message : 'Could not send your choice. Try again.'
+        );
     } finally {
       setIsCancelling(false);
     }
