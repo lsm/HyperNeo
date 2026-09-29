@@ -1405,6 +1405,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('re-discovers after a credentials swap via the codex import path', async () => {
+      const codexDir = path.join(tmpDir, 'codex');
       const catalogByAccount: Record<string, Array<Record<string, unknown>>> = {
         'acct-discovery': DISCOVERY_CATALOG,
         'acct-imported': [
