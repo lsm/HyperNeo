@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 import { CODEX_MODEL_POLICY } from '../../../../src/lib/providers/codex-model-discovery';
 import {
@@ -1394,7 +1394,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = oauthProvider(impl);
 
       await provider.getModels();
-      provider.clearModelCache?.();
+      (provider as Provider).clearModelCache?.();
       await provider.getModels();
 
       expect(counts.models).toBe(1);
@@ -1514,7 +1514,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
       expect(counts.models).toBe(1);
 
-      provider.clearModelCache?.();
+      (provider as Provider).clearModelCache?.();
       catalog = [
         ...DISCOVERY_CATALOG,
         {
@@ -1550,7 +1550,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const first = await provider.getModels();
       expect(first.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
 
-      provider.clearModelCache?.();
+      (provider as Provider).clearModelCache?.();
       const second = await provider.getModels();
 
       expect(counts.models).toBe(1);

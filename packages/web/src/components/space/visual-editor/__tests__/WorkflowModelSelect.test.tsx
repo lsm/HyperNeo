@@ -1,69 +1,253 @@
-// @ts-nocheck
+import type { ModelInfo } from '@hyperneo/shared';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 
-import { cleanup, render, waitFor } from '@testing-library/preact';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkflowModelSelect } from '../WorkflowModelSelect';
+const mockModels = [
+  {
+    id: 'claude-sonnet-4-6',
+    display_name: 'Claude Sonnet 4.6',
+    description: '',
+    provider: 'anthropic',
+  },
+  {
+    id: 'glm-5.3[1m]',
+    display_name: 'GLM-5.3',
+    description: 'GLM-5.3 · 1M context window',
+    alias: 'glm-5.3',
+    provider: 'glm',
+    contextWindow: 1000000,
+  },
+  {
+    id: 'glm-5.3-flash[1m]',
+    display_name: 'GLM-5.3-Flash',
+    description: 'GLM-5.3-Flash · 1M context window',
+    alias: 'glm-5.3-flash',
+    provider: 'glm',
+    contextWindow: 1000000,
+  },
+  {
+    id: 'glm-4.6',
+    display_name: 'glm-4.6',
+    description: 'glm-4.6 via Z.ai',
+    alias: 'glm-4.6',
+    provider: 'glm',
+    contextWindow: 200000,
+  },
+  {
+    id: 'glm-5.3[1m]',
+    display_name: 'GLM-5.3 duplicate',
+    description: '',
+    provider: 'glm',
+    contextWindow: 1000000,
+  },
+  {
+    id: 'glm-reasoning',
+    display_name: 'GLM Reasoning',
+    description: '',
+    provider: 'glm',
+    contextWindow: 1000000,
+    thinkingModes: 'granular' as const,
+  },
+];
 
-const mockGetHub = vi.fn();
+const mockHub = {
+  request: vi.fn(async (method: string) => {
+    if (method === 'models.list') {
+      return { models: mockModels };
+    }
+    return {};
+  }),
+};
 
-vi.mock('../../../lib/connection-manager', () => ({
+vi.mock('../../../../lib/connection-manager', () => ({
   connectionManager: {
-    getHub: () => mockGetHub(),
+    getHub: () => Promise.resolve(mockHub),
+    getHubIfConnected: () => mockHub,
   },
 }));
 
-function makeHub(models: Array<Record<string, unknown>>) {
-  return {
-    request: vi.fn().mockImplementation((method: string) => {
-      if (method === 'models.list') {
-        return Promise.resolve({ models });
-      }
-      return Promise.resolve(null);
-    }),
-  };
+import { WorkflowModelSelect } from '../WorkflowModelSelect';
+
+afterEach(() => {
+  cleanup();
+});
+
+function encodeModelValue(provider: string, id: string): string {
+  return encodeURIComponent(JSON.stringify([provider, id]));
 }
 
 describe('WorkflowModelSelect', () => {
-  beforeEach(() => {
-    cleanup();
-    mockGetHub.mockReset();
-  });
+  describe('Z.ai provider parity', () => {
+    it('renders Z.ai models under a Z.ai optgroup', async () => {
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={vi.fn()} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
 
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('disables unavailable models and labels them', async () => {
-    mockGetHub.mockResolvedValue(
-      makeHub([
-        {
-          id: 'gpt-6-astra',
-          display_name: 'GPT-6-Astra',
-          description: '',
-          provider: 'anthropic-codex',
-        },
-        {
-          id: 'gpt-5.3-codex',
-          display_name: 'GPT-5.3 Codex',
-          description: '',
-          provider: 'anthropic-codex',
-          available: false,
-        },
-      ])
-    );
-
-    const { container } = render(
-      <WorkflowModelSelect testId="workflow-model" onChange={() => {}} />
-    );
-
-    await waitFor(() => {
-      expect(container.querySelector('select option[value=""]')).toBeTruthy();
+      const glmGroup = select.querySelector('optgroup[label="Z.ai"]');
+      expect(glmGroup).toBeTruthy();
+      const glmOptions = Array.from(glmGroup!.querySelectorAll('option')).map((o) => o.textContent);
+      expect(glmOptions).toContain('GLM-5.3 (glm-5.3[1m])');
+      expect(glmOptions).toContain('GLM-5.3-Flash (glm-5.3-flash[1m])');
+      expect(glmOptions).toContain('glm-4.6 (glm-4.6)');
     });
-    const options = [...container.querySelectorAll('option')];
-    const unavailable = options.find((option) => option.textContent?.includes('gpt-5.3-codex'));
-    const available = options.find((option) => option.textContent?.includes('gpt-6-astra'));
-    expect(unavailable?.disabled).toBe(true);
-    expect(unavailable?.textContent).toContain('unavailable');
-    expect(available?.disabled).toBe(false);
+
+    it('selects a Z.ai model and reports the glm provider', async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={onChange} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      select.value = encodeModelValue('glm', 'glm-5.3-flash[1m]');
+      fireEvent.change(select);
+
+      expect(onChange).toHaveBeenCalledWith('glm-5.3-flash[1m]', {
+        provider: 'glm',
+        modelId: 'glm-5.3-flash[1m]',
+      });
+    });
+
+    it('keeps [1m]-suffixed Z.ai model ids intact through selection', async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={onChange} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      for (const modelId of ['glm-5.3[1m]', 'glm-5.3-flash[1m]']) {
+        select.value = encodeModelValue('glm', modelId);
+        fireEvent.change(select);
+        expect(onChange).toHaveBeenLastCalledWith(modelId, {
+          provider: 'glm',
+          modelId,
+        });
+      }
+    });
+
+    it('shows a provider-qualified Z.ai value as selected', async () => {
+      const { getByTestId } = render(
+        <WorkflowModelSelect
+          value="glm-5.3-flash[1m]"
+          provider="glm"
+          onChange={vi.fn()}
+          testId="glm-model-select"
+        />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      expect(select.value).toBe(encodeModelValue('glm', 'glm-5.3-flash[1m]'));
+    });
+
+    it('backfills a providerless Z.ai value from the loaded list', async () => {
+      const { getByTestId } = render(
+        <WorkflowModelSelect value="glm-4.6" onChange={vi.fn()} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      expect(select.value).toBe(encodeModelValue('glm', 'glm-4.6'));
+    });
+
+    it('clears the override when the empty option is chosen', async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <WorkflowModelSelect
+          value="glm-4.6"
+          provider="glm"
+          onChange={onChange}
+          testId="glm-model-select"
+        />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      select.value = '';
+      fireEvent.change(select);
+
+      expect(onChange).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('model metadata and load lifecycle', () => {
+    it('reports thinkingModes in the selection payload', async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={onChange} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      select.value = encodeModelValue('glm', 'glm-reasoning');
+      fireEvent.change(select);
+
+      expect(onChange).toHaveBeenCalledWith('glm-reasoning', {
+        provider: 'glm',
+        modelId: 'glm-reasoning',
+        thinkingModes: 'granular',
+      });
+    });
+
+    it('calls onModelsLoad with the deduped loaded models', async () => {
+      const onModelsLoad = vi.fn();
+      render(
+        <WorkflowModelSelect
+          value={undefined}
+          onChange={vi.fn()}
+          onModelsLoad={onModelsLoad}
+          testId="glm-model-select"
+        />
+      );
+      await waitFor(() => expect(onModelsLoad).toHaveBeenCalled());
+
+      const loaded = onModelsLoad.mock.calls[0][0] as ModelInfo[];
+      expect(loaded.length).toBe(5);
+      const ids = loaded.map((m) => `${m.provider}:${m.id}`);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(loaded.some((m) => m.id === 'glm-reasoning' && m.thinkingModes === 'granular')).toBe(
+        true
+      );
+    });
+  });
+
+  describe('unavailable models', () => {
+    it('disables unavailable models and labels them', async () => {
+      mockHub.request.mockImplementationOnce(async () => ({
+        models: [
+          {
+            id: 'gpt-6-astra',
+            display_name: 'GPT-6-Astra',
+            description: '',
+            provider: 'anthropic-codex',
+          },
+          {
+            id: 'gpt-5.3-codex',
+            display_name: 'GPT-5.3 Codex',
+            description: '',
+            provider: 'anthropic-codex',
+            available: false,
+          },
+        ],
+      }));
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={vi.fn()} testId="codex-model-select" />
+      );
+      const select = getByTestId('codex-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBe(3));
+
+      const unavailable = Array.from(select.options).find((option) =>
+        option.textContent?.includes('gpt-5.3-codex')
+      );
+      const available = Array.from(select.options).find((option) =>
+        option.textContent?.includes('gpt-6-astra')
+      );
+      expect(unavailable?.disabled).toBe(true);
+      expect(unavailable?.textContent).toContain('unavailable');
+      expect(available?.disabled).toBe(false);
+    });
   });
 });
