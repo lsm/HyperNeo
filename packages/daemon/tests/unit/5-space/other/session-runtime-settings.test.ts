@@ -1,0 +1,306 @@
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { Session, SessionConfig } from '@hyperneo/shared';
+import type { ModelInfo } from '@hyperneo/shared';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { createSessionRuntimeSettingsOperations } from '../../../../src/lib/session/runtime-settings-operations';
+import type { OperationDefinition } from '../../../../src/lib/operations/registry';
+
+const catalog = mock(() => [] as ModelInfo[]);
+const curatedOut = mock((model: string) => model.endsWith('-hidden'));
+
+mock.module('../../../../src/lib/model-service.ts', () => ({
+  getAvailableModels: () => catalog(),
+  isCuratedOutModel: (_model: string, _provider: string) => curatedOut(_model),
+}));
+
+function model(id: string, provider = 'anthropic'): ModelInfo {
+  return {
+    id,
+    name: id,
+    alias: '',
+    family: provider,
+    provider,
+    contextWindow: 200000,
+    description: '',
+    releaseDate: '',
+    available: true,
+  };
+}
+
+function makeSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 'target-1',
+    type: 'space_chat',
+    status: 'active',
+    config: { model: 'claude-sonnet-5', provider: 'anthropic', maxTokens: 8192, temperature: 0 },
+    metadata: {},
+    ...overrides,
+  } as unknown as Session;
+}
+
+interface Harness {
+  sessions: Map<string, Session>;
+  live: Map<string, AgentSession>;
+  persisted: Map<string, SessionConfig>;
+  switched: Array<{ model: string; provider: string }>;
+  liveConfigs: Array<Partial<SessionConfig>>;
+  operations: Map<string, OperationDefinition>;
+}
+
+function makeLiveSession(h: Harness, sessionId: string, status: string): AgentSession {
+  const session = h.sessions.get(sessionId) ?? makeSession({ id: sessionId });
+  h.sessions.set(sessionId, session);
+  return {
+    getSessionData: () => h.sessions.get(sessionId) as Session,
+    getProcessingState: () => ({ status }),
+    handleModelSwitch: async (model: string, provider: string) => {
+      h.switched.push({ model, provider });
+      const current = h.sessions.get(sessionId) as Session;
+      h.sessions.set(sessionId, {
+        ...current,
+        config: { ...current.config, model, provider },
+      });
+      return { success: true, model };
+    },
+    updateConfig: async (updates: Partial<SessionConfig>) => {
+      h.liveConfigs.push(updates);
+      const current = h.sessions.get(sessionId) as Session;
+      h.sessions.set(sessionId, { ...current, config: { ...current.config, ...updates } });
+    },
+  } as unknown as AgentSession;
+}
+
+function harness(): Harness {
+  const h: Harness = {
+    sessions: new Map(),
+    live: new Map(),
+    persisted: new Map(),
+    switched: [],
+    liveConfigs: [],
+    operations: new Map(),
+  };
+  const ops = createSessionRuntimeSettingsOperations({
+    getDatabase: () => {
+      throw new Error('not used');
+    },
+    getLiveSession: (sessionId) => h.live.get(sessionId) ?? null,
+    getSession: (sessionId) => h.sessions.get(sessionId) ?? null,
+    sessionSpaceId: (session) =>
+      (session.context as { spaceId?: string } | undefined)?.spaceId ?? undefined,
+    persistColdSessionConfig: (sessionId, config) => {
+      h.persisted.set(sessionId, config);
+      const current = h.sessions.get(sessionId);
+      if (current) h.sessions.set(sessionId, { ...current, config });
+    },
+  });
+  for (const op of ops) h.operations.set(op.name, op);
+  return h;
+}
+
+async function run(h: Harness, name: string, input: unknown) {
+  const op = h.operations.get(name);
+  if (!op) throw new Error(`missing ${name}`);
+  return (await op.execute(input, { source: 'rpc' })) as Record<string, unknown>;
+}
+
+beforeEach(() => {
+  catalog.mockReturnValue([
+    model('claude-sonnet-5'),
+    model('claude-opus-5'),
+    model('claude-haiku-4-5'),
+  ]);
+  curatedOut.mockImplementation((m: string) => m.endsWith('-hidden'));
+});
+
+describe('session.runtimeSettings.read', () => {
+  test('classifies every ownership type and reports live state', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    h.sessions.set(
+      'project',
+      makeSession({ id: 'project', worktree: { path: '/w' } as Session['worktree'] })
+    );
+    h.sessions.set('task', makeSession({ id: 'x:task:1', type: 'space_task_agent' }));
+    h.sessions.set(
+      'agent-1',
+      makeSession({ id: 'agent-1', context: { spaceId: 'space-1' } as Session['context'] })
+    );
+    h.sessions.set('neo:root', makeSession({ id: 'neo:root' }));
+    h.live.set('agent-1', makeLiveSession(h, 'agent-1', 'processing'));
+
+    for (const [id, ownership] of [
+      ['plain', 'unknown'],
+      ['project', 'project'],
+      ['task', 'space-task'],
+      ['agent-1', 'space-agent'],
+      ['neo:root', 'neo'],
+    ] as const) {
+      const result = await run(h, 'session.runtimeSettings.read', { sessionId: id });
+      expect(result.ok).toBe(true);
+      expect((result.settings as Record<string, unknown>).ownership).toBe(ownership);
+    }
+    const agentResult = await run(h, 'session.runtimeSettings.read', { sessionId: 'agent-1' });
+    expect((agentResult.settings as Record<string, unknown>).live).toBe(true);
+    expect((agentResult.settings as Record<string, unknown>).runningNow).toBe(true);
+  });
+
+  test('fails for an unknown session', async () => {
+    const h = harness();
+    const result = await run(h, 'session.runtimeSettings.read', { sessionId: 'missing' });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('session_not_found');
+  });
+});
+
+describe('session.runtimeSettings.update', () => {
+  test('changes model on a live ordinary session through the live switch path', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'claude-opus-5',
+    });
+    expect(result.ok).toBe(true);
+    expect(h.switched).toEqual([{ model: 'claude-opus-5', provider: 'anthropic' }]);
+    expect((result.settings as Record<string, unknown>).model).toBe('claude-opus-5');
+    expect(result.appliesFrom).toBe('next-turn');
+    expect(result.changes).toMatchObject({ model: true });
+  });
+
+  test('persists model and thinking level for a cold session and reports the pickup note', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'claude-haiku-4-5',
+      thinkingLevel: 'think16k',
+    });
+    expect(result.ok).toBe(true);
+    expect(h.persisted.get('plain')).toMatchObject({
+      model: 'claude-haiku-4-5',
+      thinkingLevel: 'think16k',
+    });
+    expect((result.notes as string[]).join(' ')).toContain('starts under it next time');
+    expect(result.appliesFrom).toBe('next-turn');
+  });
+
+  test('a running turn is never mutated: config changes apply from the next turn', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    h.live.set('plain', makeLiveSession(h, 'plain', 'processing'));
+
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'claude-opus-5',
+    });
+    expect(result.ok).toBe(true);
+    expect((result.settings as Record<string, unknown>).runningNow).toBe(true);
+    expect(result.appliesFrom).toBe('next-turn');
+    expect(h.switched).toHaveLength(1);
+  });
+
+  test('invalid model fails with the valid catalog ids listed', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'gpt-not-here',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('invalid_model');
+    expect(result.availableModels).toEqual([
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-haiku-4-5',
+    ]);
+  });
+
+  test('curated-out models are refused with the curated list', async () => {
+    const h = harness();
+    catalog.mockReturnValue([model('claude-sonnet-5'), model('claude-secret-hidden')]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'claude-secret-hidden',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('curated_out');
+    expect(result.availableModels).toEqual(['claude-sonnet-5']);
+  });
+
+  test('empty catalog degrades to a stated catalog_unavailable error', async () => {
+    const h = harness();
+    catalog.mockReturnValue([]);
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'claude-sonnet-5',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('catalog_unavailable');
+  });
+
+  test('thinking level on a provider without thinking controls records a stated no-op', async () => {
+    const h = harness();
+    h.sessions.set(
+      'plain',
+      makeSession({
+        id: 'plain',
+        config: {
+          model: 'm',
+          provider: 'anthropic-copilot',
+          maxTokens: 1,
+          temperature: 0,
+        } as SessionConfig,
+      })
+    );
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      thinkingLevel: 'think32k',
+    });
+    expect(result.ok).toBe(true);
+    expect((result.notes as string[]).join(' ')).toContain('no-op');
+    expect(h.liveConfigs).toContainEqual({ thinkingLevel: 'think32k' });
+  });
+
+  test('thinking level normalizes unknown values to off', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      thinkingLevel: 'maximum',
+    });
+    expect(result.ok).toBe(true);
+    expect((result.settings as Record<string, unknown>).thinkingLevel).toBe('off');
+  });
+
+  test('provider-only updates apply without a model switch', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'anthropic',
+    });
+    expect(result.ok).toBe(true);
+    expect(h.liveConfigs).toContainEqual({ provider: 'anthropic' });
+  });
+
+  test('refuses an empty update and an unknown session', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const empty = await run(h, 'session.runtimeSettings.update', { sessionId: 'plain' });
+    expect(empty.ok).toBe(false);
+    expect(empty.reason).toContain('nothing_to_update');
+    const missing = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'nope',
+      model: 'claude-opus-5',
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.reason).toContain('session_not_found');
+  });
+});

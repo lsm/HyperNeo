@@ -6,5 +6,7 @@ export const SESSION_OPERATION_NAMES = [
   'session.list',
   'session.message.list',
   'session.message.send',
+  'session.runtimeSettings.read',
+  'session.runtimeSettings.update',
   'session.state.update',
 ] as const;
