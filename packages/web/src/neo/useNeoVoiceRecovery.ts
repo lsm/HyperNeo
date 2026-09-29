@@ -4,6 +4,7 @@ import { connectionState } from '../lib/state.ts';
 
 export function useNeoVoiceRecovery(
   sessionId: string | null,
+  draftValue: string,
   readDraft: () => string,
   writeDraft: (text: string) => void
 ): void {
@@ -12,6 +13,21 @@ export function useNeoVoiceRecovery(
   const writeRef = useRef(writeDraft);
   writeRef.current = writeDraft;
   const adoptedRef = useRef<{ sessionId: string; draft: string } | null>(null);
+
+  useEffect(() => {
+    const adopted = adoptedRef.current;
+    if (!sessionId || !adopted || adopted.sessionId !== sessionId) return;
+    if (draftValue.trim() !== '') return;
+    adoptedRef.current = null;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    hub
+      .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+        sessionId,
+        expected: adopted.draft,
+      })
+      .catch(() => {});
+  }, [draftValue, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;

@@ -41,6 +41,7 @@ export function NeoLive() {
   const draftKey = neo.selectedId === null ? 'root' : `concern:${neo.selectedId}`;
   useNeoVoiceRecovery(
     neo.sessionId,
+    drafts[draftKey] ?? '',
     () => drafts[draftKey] ?? '',
     (text) => setDrafts((items) => ({ ...items, [draftKey]: text }))
   );

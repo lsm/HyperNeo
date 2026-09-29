@@ -52,6 +52,7 @@ describe('useNeoVoiceRecovery', () => {
     const view = renderHook(() =>
       useNeoVoiceRecovery(
         'neo-1',
+        draft.value,
         () => draft.value,
         (text) => write(text)
       )
@@ -138,6 +139,34 @@ describe('useNeoVoiceRecovery', () => {
     emit('session.voiceLanded', 'session:neo-1');
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the daemon draft exactly once when the adopted text is sent or cleared', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft } = setup();
+
+    await vi.waitFor(() => expect(draft.value).toBe('buy oat milk'));
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const clears = hubRequest.mock.calls.filter(
+      ([method, payload]) =>
+        method === 'session.clearInputDraftIf' &&
+        (payload as { expected?: string }).expected === 'buy oat milk'
+    );
+    expect(clears).toHaveLength(1);
+  });
+
+  it('never clears the daemon draft without a prior adoption', async () => {
+    const { draft } = setup('typed by hand');
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const clears = hubRequest.mock.calls.filter(
+      ([method]) => method === 'session.clearInputDraftIf'
+    );
+    expect(clears).toHaveLength(0);
   });
 
   it('keeps the draft untouched while offline and adopts after reconnect', async () => {
