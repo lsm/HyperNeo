@@ -98,6 +98,7 @@ export function applyCodexDiscoveryPolicy(
   const allowed = models.filter(
     (model) =>
       model.visibility === 'list' &&
+      model.supported_in_api &&
       slugMatchesAny(model.slug, policy.allowPatterns) &&
       !slugMatchesAny(model.slug, policy.denyPatterns)
   );

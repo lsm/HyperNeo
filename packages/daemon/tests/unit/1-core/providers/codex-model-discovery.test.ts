@@ -93,6 +93,13 @@ describe('applyCodexDiscoveryPolicy', () => {
     expect(applied).toEqual([]);
   });
 
+  it('filters listed models the API cannot run', () => {
+    const applied = applyCodexDiscoveryPolicy([
+      remoteModel({ slug: 'gpt-7-nova', supported_in_api: false, priority: 1 }),
+    ]);
+    expect(applied).toEqual([]);
+  });
+
   it('pins ordered slugs ahead of priority ordering', () => {
     const applied = applyCodexDiscoveryPolicy(LIVE_SHAPED_CATALOG, {
       allowPatterns: [/^gpt-/],

@@ -1256,7 +1256,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     ];
 
     function discoveryFetch(
-      modelsResponder: () => Response,
+      modelsResponder: () => Response | Promise<Response>,
       probeStatus = 200
     ): { impl: typeof fetch; counts: { models: number; probe: number } } {
       const counts = { models: 0, probe: 0 };
@@ -1264,7 +1264,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const url = String(input);
         if (url.includes('/models')) {
           counts.models += 1;
-          return modelsResponder();
+          return await modelsResponder();
         }
         counts.probe += 1;
         return new Response('{}', { status: probeStatus });
@@ -1367,6 +1367,44 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.some((model) => model.id === 'gpt-6-astra')).toBe(false);
       expect(models.every((model) => model.available)).toBe(true);
       await provider.ensureBridgeStarted('gpt-5.5', { workspacePath: '/tmp/ws-offline' });
+    });
+
+    it('backs off repeated discovery attempts while the catalog endpoint is failing', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      await provider.getModels();
+      await provider.listRemoteModels().catch(() => {});
+
+      expect(counts.models).toBe(1);
+    });
+
+    it('creates exactly one bridge server for concurrent ensureBridgeStarted calls', async () => {
+      let releaseDiscovery: (() => void) | undefined;
+      const discoveryGate = new Promise<void>((resolve) => {
+        releaseDiscovery = resolve;
+      });
+      const { impl } = discoveryFetch(async () => {
+        await discoveryGate;
+        return catalogResponse(DISCOVERY_CATALOG);
+      });
+      provider = oauthProvider(impl);
+      await provider.getApiKey();
+
+      const first = provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-race-a',
+      });
+      const second = provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-race-b',
+      });
+      await Promise.resolve();
+      releaseDiscovery?.();
+      await Promise.all([first, second]);
+
+      const servers = (provider as unknown as { bridgeServers: Map<string, unknown> })
+        .bridgeServers;
+      expect(servers.size).toBe(1);
     });
 
     it('treats an all-filtered discovery response as a failure', async () => {

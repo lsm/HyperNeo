@@ -1529,6 +1529,26 @@ describe('mapRawModelsToModelInfos', () => {
     expect(result[0].alias).toBe('claude-sonnet-4-6');
   });
 
+  it('propagates available:false from the backend and defaults it to true', () => {
+    const result = mapRawModelsToModelInfos([
+      {
+        id: 'gpt-5.3-codex',
+        display_name: 'GPT-5.3 Codex',
+        description: '',
+        provider: 'anthropic-codex',
+        available: false,
+      },
+      {
+        id: 'gpt-6-astra',
+        display_name: 'GPT-6-Astra',
+        description: '',
+        provider: 'anthropic-codex',
+      },
+    ]);
+    expect(result[0].available).toBe(false);
+    expect(result[1].available).toBe(true);
+  });
+
   it('detects opus family', () => {
     const result = mapRawModelsToModelInfos([
       { id: 'claude-opus-4-6', display_name: 'Opus', description: '' },

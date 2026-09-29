@@ -179,6 +179,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveredAt = 0;
 
+  private discoveryFailedAt = 0;
+
   private discoveryInFlight: Promise<void> | null = null;
 
   private discoveryInFlightKey: string | undefined = undefined;
@@ -203,6 +205,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.discoveredModels = null;
     this.discoveredAt = 0;
+    this.discoveryFailedAt = 0;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
@@ -310,6 +313,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private applyDiscoveredModels(models: readonly ModelInfo[]): void {
     this.discoveredModels = mergeCodexDiscoveredWithStatic(models);
     this.discoveredAt = Date.now();
+    this.discoveryFailedAt = 0;
   }
 
   private async fetchAndPersistDiscoveredModels(
@@ -359,14 +363,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!auth || auth.source !== 'chatgpt_oauth') {
       this.discoveredModels = null;
       this.discoveredAt = 0;
+      this.discoveryFailedAt = 0;
       return;
     }
-    if (
-      !force &&
-      this.discoveredModels &&
-      Date.now() - this.discoveredAt < CODEX_DISCOVERY_TTL_MS
-    ) {
-      return;
+    if (!force) {
+      if (this.discoveredModels && Date.now() - this.discoveredAt < CODEX_DISCOVERY_TTL_MS) {
+        return;
+      }
+      if (
+        !this.discoveredModels &&
+        this.discoveryFailedAt > 0 &&
+        Date.now() - this.discoveryFailedAt < CODEX_DISCOVERY_TTL_MS
+      ) {
+        return;
+      }
     }
     const authKey = this.bridgeAuthCacheKey(auth);
     if (this.discoveryInFlight && this.discoveryInFlightKey === authKey) {
@@ -393,7 +403,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth);
         if (!recoveredFromCache) {
           this.discoveredModels = null;
-          this.discoveredAt = Date.now();
+          this.discoveryFailedAt = Date.now();
         }
       }
     })();
@@ -668,6 +678,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   clearModelCache(): void {
     this.discoveredModels = null;
     this.discoveredAt = 0;
+    this.discoveryFailedAt = 0;
   }
 
   getCachedModels(): ModelInfo[] {
@@ -781,14 +792,28 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (this.bridgeServers.has(bridgeKey)) return;
     const pending = this.bridgePromises.get(bridgeKey);
     if (pending) return pending;
+    const ready = this.startResponsesBridge(bridgeKey, authKey, auth);
+    this.bridgePromises.set(bridgeKey, ready);
+    return ready;
+  }
+
+  private async startResponsesBridge(
+    bridgeKey: string,
+    authKey: string,
+    auth: OpenAIResponsesBridgeAuth | undefined
+  ): Promise<void> {
     await this.refreshDiscoveredCodexModels(auth).catch(() => {});
+    if (this.bridgeServers.has(bridgeKey) || this.shutdownStarted) {
+      this.bridgePromises.delete(bridgeKey);
+      return;
+    }
     const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
     if (!auth) {
       logger.warn(
         'AnthropicToCodexBridgeProvider: starting Responses bridge without resolved auth; requests will fail until credentials are available'
       );
     }
-    const ready = createOpenAIResponsesBridgeServer({
+    await createOpenAIResponsesBridgeServer({
       auth: auth ?? { source: 'api_key', apiKey: '' },
       models: this.responsesBridgeModels(isChatgptOAuth),
       modelAliases: this.modelAliases(),
@@ -811,8 +836,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         throw error;
       }
     );
-    this.bridgePromises.set(bridgeKey, ready);
-    return ready;
   }
 
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
@@ -1028,6 +1051,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedApiKey = undefined;
     this.discoveredModels = null;
     this.discoveredAt = 0;
+    this.discoveryFailedAt = 0;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
