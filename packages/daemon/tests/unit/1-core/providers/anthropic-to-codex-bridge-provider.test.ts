@@ -1557,6 +1557,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(second.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
     });
 
+    it('forced listRemoteModels falls back to the static catalog without throwing during an outage', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      const models = await provider.listRemoteModels({ force: true });
+
+      expect(counts.models).toBe(1);
+      expect(models.some((model) => model.id === 'gpt-5.6-sol' && model.available)).toBe(true);
+      expect(models.every((model) => model.available)).toBe(true);
+    });
+
     it('listRemoteModels returns the merged catalog and honors force', async () => {
       let catalog: Array<Record<string, unknown>> = DISCOVERY_CATALOG;
       const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
