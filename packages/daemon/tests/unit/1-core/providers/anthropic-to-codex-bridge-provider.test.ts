@@ -1256,7 +1256,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
     ];
 
     function discoveryFetch(
-      modelsResponder: () => Response | Promise<Response>,
+      modelsResponder: (url?: string, init?: RequestInit) => Response | Promise<Response> = () =>
+        catalogResponse(DISCOVERY_CATALOG),
       probeStatus = 200
     ): {
       impl: typeof fetch;
@@ -1269,7 +1270,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const url = String(input);
         if (url.includes('/models')) {
           counts.models += 1;
-          return await modelsResponder();
+          return await modelsResponder(url, init);
         }
         counts.probe += 1;
         if (typeof init?.body === 'string') {
@@ -1323,7 +1324,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(byId.get('gpt-5.3-codex')?.available).toBe(false);
       expect(byId.get('gpt-5.4')?.available).toBe(false);
       expect(models[0]?.id).toBe('gpt-6-astra');
-      expect(probeBodies[0]?.model).toBe('gpt-6-astra');
+      expect(probeBodies[0]?.model).not.toBe('gpt-6-astra');
     });
 
     it('keeps a saved selection buildable when discovery drops it', async () => {
@@ -1398,6 +1399,45 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
 
       expect(counts.models).toBe(1);
+    });
+
+    it('re-discovers after a credentials swap via the codex import path', async () => {
+      const catalogByAccount: Record<string, Array<Record<string, unknown>>> = {
+        'acct-discovery': DISCOVERY_CATALOG,
+        'acct-imported': [
+          {
+            slug: 'gpt-b-only',
+            display_name: 'GPT B Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ],
+      };
+      const { impl } = discoveryFetch((_url?: string, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string>;
+        const account = headers['ChatGPT-Account-ID'];
+        return catalogResponse(catalogByAccount[account ?? 'acct-discovery'] ?? []);
+      });
+      const codexDir = path.join(tmpDir, 'codex-imported');
+      provider = oauthProvider(impl);
+
+      const first = await provider.getModels();
+      expect(first.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+
+      unlinkSync(path.join(hyperneoDir, 'auth.json'));
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'imported-access-token', account_id: 'acct-imported' },
+      });
+      (provider as unknown as { cachedCredentials: unknown }).cachedCredentials = null;
+      (provider as unknown as { cachedBridgeAuth: unknown }).cachedBridgeAuth = undefined;
+      await provider.getApiKey();
+
+      const second = await provider.getModels();
+      const ids = second.map((model) => model.id);
+      expect(ids).toContain('gpt-b-only');
+      expect(ids).not.toContain('gpt-6-astra');
     });
 
     it('discards a stale in-flight discovery after an account switch', async () => {

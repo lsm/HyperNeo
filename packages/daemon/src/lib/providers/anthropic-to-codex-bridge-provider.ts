@@ -199,9 +199,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
-    this.discoveredModels = null;
-    this.discoveryAttemptAt = 0;
-    this.discoveryGeneration += 1;
+    this.resetDiscoveryState();
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
@@ -306,6 +304,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return auth?.apiKey;
   }
 
+  private resetDiscoveryState(): void {
+    this.discoveredModels = null;
+    this.discoveryAttemptAt = 0;
+    this.discoveryGeneration += 1;
+  }
+
   private applyDiscoveredModels(models: readonly ModelInfo[]): void {
     this.discoveredModels = mergeCodexDiscoveredWithStatic(models);
     this.discoveryAttemptAt = Date.now();
@@ -359,9 +363,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     force = false
   ): Promise<void> {
     if (!auth || auth.source !== 'chatgpt_oauth') {
-      this.discoveredModels = null;
-      this.discoveryAttemptAt = 0;
-      this.discoveryGeneration += 1;
+      this.resetDiscoveryState();
       return;
     }
     if (
@@ -605,8 +607,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       headers['ChatGPT-Account-ID'] = auth.accountId;
     }
 
-    const probeModel =
-      this.discoveredModels?.find((model) => model.available)?.id ?? 'gpt-5.4-mini';
+    const probeModel = this.getModelForTier('haiku') ?? 'gpt-5.4-mini';
     const body: Record<string, unknown> = {
       model: probeModel,
       input: [
@@ -655,9 +656,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
-    await this.refreshDiscoveredCodexModels(auth);
+    const discovery = this.refreshDiscoveredCodexModels(auth);
     void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
+    await discovery;
     return this.getCachedModels();
   }
 
@@ -975,6 +977,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
               this.cachedCredentials = credentials;
               this.cachedBridgeAuth = this.toBridgeAuth(credentials) ?? null;
               this.cachedApiKey = credentials.access ?? '';
+              this.resetDiscoveryState();
               this.notifyCredentialsChanged(this.toProviderCredentials(credentials));
               if (this.activeOAuthFlow) {
                 this.activeOAuthFlow.completed = true;
@@ -1045,9 +1048,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuth = undefined;
     this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
-    this.discoveredModels = null;
-    this.discoveryAttemptAt = 0;
-    this.discoveryGeneration += 1;
+    this.resetDiscoveryState();
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
@@ -1130,6 +1131,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.cachedCredentials = creds;
       this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
       this.cachedApiKey = creds.access ?? '';
+      this.resetDiscoveryState();
       logger.info('AnthropicToCodexBridgeProvider: imported API key from ~/.codex/auth.json');
       return;
     }
@@ -1171,6 +1173,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = creds;
     this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
     this.cachedApiKey = creds.access ?? '';
+    this.resetDiscoveryState();
     logger.info('AnthropicToCodexBridgeProvider: imported OAuth token from ~/.codex/auth.json');
   }
 
