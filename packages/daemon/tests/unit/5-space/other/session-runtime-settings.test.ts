@@ -1,14 +1,17 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import type { Session, SessionConfig } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { createSessionRuntimeSettingsOperations } from '../../../../src/lib/session/runtime-settings-operations';
 import type { OperationDefinition } from '../../../../src/lib/operations/registry';
 
-const catalog = mock(() => [] as ModelInfo[]);
-const curatedOut = mock((model: string) => model.endsWith('-hidden'));
+const { catalog, curatedOut } = vi.hoisted(() => ({
+  catalog: vi.fn(() => [] as ModelInfo[]),
+  curatedOut: vi.fn((model: string) => model.endsWith('-hidden')),
+}));
 
-mock.module('../../../../src/lib/model-service.ts', () => ({
+vi.mock('../../../../src/lib/model-service.ts', () => ({
   getAvailableModels: () => catalog(),
   isCuratedOutModel: (_model: string, _provider: string) => curatedOut(_model),
 }));
