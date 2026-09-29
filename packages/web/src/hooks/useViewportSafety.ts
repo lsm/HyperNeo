@@ -29,6 +29,10 @@ function isKeyboardVisible(vv: VisualViewport): boolean {
   return window.innerHeight - vv.height > KEYBOARD_THRESHOLD;
 }
 
+function resetDocumentScroll(): void {
+  window.scrollTo(0, 0);
+}
+
 export function useViewportSafety(): void {
   useEffect(() => {
     const vv = window.visualViewport;
@@ -75,6 +79,8 @@ export function useViewportSafety(): void {
           document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
           savedBottomBarHeight = null;
         }
+
+        resetDocumentScroll();
 
         window.dispatchEvent(new Event('resize'));
       }
