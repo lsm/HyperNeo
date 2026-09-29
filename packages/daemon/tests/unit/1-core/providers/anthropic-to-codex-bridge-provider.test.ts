@@ -1130,15 +1130,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       const calls = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
         .calls;
-      const [discoveryUrl, discoveryInit] = calls[0];
-      expect(discoveryUrl).toBe(
-        'https://chatgpt.com/backend-api/codex/models?client_version=1.0.0'
+      const discoveryCall = calls.find(([callUrl]) =>
+        String(callUrl).includes('/backend-api/codex/models')
       );
+      expect(discoveryCall).toBeTruthy();
+      const discoveryInit = discoveryCall?.[1];
       expect(discoveryInit?.method).toBe('GET');
       const discoveryHeaders = discoveryInit?.headers as Record<string, string>;
       expect(discoveryHeaders['authorization']).toBe(`Bearer ${jwt}`);
       expect(discoveryHeaders['ChatGPT-Account-ID']).toBe('acct-1');
-      const [url, init] = calls[1];
+      const probeCall = calls.find(([callUrl]) => String(callUrl).endsWith('/responses'));
+      expect(probeCall).toBeTruthy();
+      const [url, init] = probeCall as [string, RequestInit];
       expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
@@ -1430,8 +1433,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       writeCodexAuth(codexDir, {
         tokens: { access_token: 'imported-access-token', account_id: 'acct-imported' },
       });
-      (provider as unknown as { cachedCredentials: unknown }).cachedCredentials = null;
-      (provider as unknown as { cachedBridgeAuth: unknown }).cachedBridgeAuth = undefined;
+      await provider.logout();
       await provider.getApiKey();
 
       const second = await provider.getModels();

@@ -310,13 +310,24 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.discoveryGeneration += 1;
   }
 
-  private applyDiscoveredModels(models: readonly ModelInfo[]): void {
+  private applyDiscoveredModels(
+    models: readonly ModelInfo[],
+    auth?: OpenAIResponsesBridgeAuth
+  ): void {
     this.discoveredModels = mergeCodexDiscoveredWithStatic(models);
     this.discoveryAttemptAt = Date.now();
+    if (!auth) return;
+    const bridgeKey = `responses:${this.bridgeAuthCacheKey(auth)}`;
+    const bridgeServer = this.bridgeServers.get(bridgeKey);
+    bridgeServer?.updateModels?.(
+      this.responsesBridgeModels(auth.source === 'chatgpt_oauth'),
+      this.modelAliases()
+    );
   }
 
   private async fetchAndPersistDiscoveredModels(
     auth: OpenAIResponsesBridgeAuth,
+    isStaleAttempt: () => boolean,
     retryOn401 = true
   ): Promise<ModelInfo[]> {
     let fetched: Awaited<ReturnType<typeof fetchCodexRemoteModels>>;
@@ -332,7 +343,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         if (refreshed?.access) {
           const refreshedAuth = this.toBridgeAuth(refreshed);
           if (refreshedAuth) {
-            return this.fetchAndPersistDiscoveredModels(refreshedAuth, false);
+            return this.fetchAndPersistDiscoveredModels(refreshedAuth, isStaleAttempt, false);
           }
         }
       }
@@ -342,7 +353,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (discovered.length === 0) {
       throw new Error('Codex models discovery returned no usable models');
     }
-    await this.modelsCache.save(fetched, auth.accountId);
+    if (!isStaleAttempt()) {
+      await this.modelsCache.save(fetched, auth.accountId);
+    }
     return discovered;
   }
 
@@ -354,7 +367,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!lastGoodRaw || isStaleAttempt()) return false;
     const lastGood = normalizeCodexRemoteModels(lastGoodRaw);
     if (lastGood.length === 0) return false;
-    this.applyDiscoveredModels(lastGood);
+    this.applyDiscoveredModels(lastGood, auth);
     return true;
   }
 
@@ -386,13 +399,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           if (freshCached) {
             const discovered = normalizeCodexRemoteModels(freshCached);
             if (discovered.length > 0) {
-              if (!isStaleAttempt()) this.applyDiscoveredModels(discovered);
+              if (!isStaleAttempt()) this.applyDiscoveredModels(discovered, auth);
               return;
             }
           }
         }
-        const discovered = await this.fetchAndPersistDiscoveredModels(auth);
-        if (!isStaleAttempt()) this.applyDiscoveredModels(discovered);
+        const discovered = await this.fetchAndPersistDiscoveredModels(auth, isStaleAttempt);
+        if (!isStaleAttempt()) this.applyDiscoveredModels(discovered, auth);
       } catch (error) {
         logger.warn(
           'AnthropicToCodexBridgeProvider: model discovery failed, falling back to cached catalog:',
