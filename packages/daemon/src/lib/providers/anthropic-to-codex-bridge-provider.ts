@@ -8,6 +8,7 @@ import type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
+  ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { THINKING_LEVEL_TOKENS } from '@hyperneo/shared';
@@ -21,6 +22,15 @@ import {
   CODEX_TO_SDK_MODEL,
   codexBackendContextWindow,
 } from './codex-models.js';
+import {
+  CODEX_DISCOVERY_TTL_MS,
+  CODEX_MODEL_POLICY,
+  CODEX_MODELS_CACHE_FILE_NAME,
+  CodexModelsCache,
+  fetchCodexRemoteModels,
+  mergeCodexDiscoveredWithStatic,
+  normalizeCodexRemoteModels,
+} from './codex-model-discovery.js';
 import { Logger } from '../logger.js';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import * as fs from 'fs/promises';
@@ -163,6 +173,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private static readonly PROBE_TIMEOUT_MS = 5000;
   private static readonly NEGATIVE_AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 
+  private readonly modelsCache: CodexModelsCache;
+
+  private discoveredModels: ModelInfo[] | null = null;
+
+  private discoveredAt = 0;
+
+  private discoveryInFlight: Promise<void> | null = null;
+
+  private discoveryInFlightKey: string | undefined = undefined;
+
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
@@ -171,6 +191,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ) {
     this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
+    this.modelsCache = new CodexModelsCache(
+      path.join(authDir ?? getDataDir(), CODEX_MODELS_CACHE_FILE_NAME)
+    );
   }
 
   async isAvailable(): Promise<boolean> {
@@ -178,6 +201,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
+    this.discoveredModels = null;
+    this.discoveredAt = 0;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
@@ -282,6 +307,108 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return auth?.apiKey;
   }
 
+  private applyDiscoveredModels(models: readonly ModelInfo[]): void {
+    this.discoveredModels = mergeCodexDiscoveredWithStatic(models);
+    this.discoveredAt = Date.now();
+  }
+
+  private async fetchAndPersistDiscoveredModels(
+    auth: OpenAIResponsesBridgeAuth,
+    retryOn401 = true
+  ): Promise<ModelInfo[]> {
+    let fetched: Awaited<ReturnType<typeof fetchCodexRemoteModels>>;
+    try {
+      fetched = await fetchCodexRemoteModels(
+        { apiKey: auth.apiKey, accountId: auth.accountId },
+        this.fetchImpl
+      );
+    } catch (error) {
+      const isAuthRejection = error instanceof Error && error.message.includes('(HTTP 401)');
+      if (isAuthRejection && retryOn401 && auth.source === 'chatgpt_oauth') {
+        const refreshed = await this.refreshStoredOauthCredentials();
+        if (refreshed?.access) {
+          const refreshedAuth = this.toBridgeAuth(refreshed);
+          if (refreshedAuth) {
+            return this.fetchAndPersistDiscoveredModels(refreshedAuth, false);
+          }
+        }
+      }
+      throw error;
+    }
+    const discovered = normalizeCodexRemoteModels(fetched);
+    if (discovered.length === 0) {
+      throw new Error('Codex models discovery returned no usable models');
+    }
+    await this.modelsCache.save(fetched, auth.accountId);
+    return discovered;
+  }
+
+  private async settleDiscoveredModelsFromCache(auth: OpenAIResponsesBridgeAuth): Promise<boolean> {
+    const lastGoodRaw = await this.modelsCache.loadLastGood(auth.accountId);
+    if (!lastGoodRaw) return false;
+    const lastGood = normalizeCodexRemoteModels(lastGoodRaw);
+    if (lastGood.length === 0) return false;
+    this.applyDiscoveredModels(lastGood);
+    return true;
+  }
+
+  private async refreshDiscoveredCodexModels(
+    auth: OpenAIResponsesBridgeAuth | undefined,
+    force = false
+  ): Promise<void> {
+    if (!auth || auth.source !== 'chatgpt_oauth') {
+      this.discoveredModels = null;
+      this.discoveredAt = 0;
+      return;
+    }
+    if (
+      !force &&
+      this.discoveredModels &&
+      Date.now() - this.discoveredAt < CODEX_DISCOVERY_TTL_MS
+    ) {
+      return;
+    }
+    const authKey = this.bridgeAuthCacheKey(auth);
+    if (this.discoveryInFlight && this.discoveryInFlightKey === authKey) {
+      return this.discoveryInFlight;
+    }
+    const attempt = (async () => {
+      try {
+        if (!force) {
+          const freshCached = await this.modelsCache.loadFresh(auth.accountId);
+          if (freshCached) {
+            const discovered = normalizeCodexRemoteModels(freshCached);
+            if (discovered.length > 0) {
+              this.applyDiscoveredModels(discovered);
+              return;
+            }
+          }
+        }
+        this.applyDiscoveredModels(await this.fetchAndPersistDiscoveredModels(auth));
+      } catch (error) {
+        logger.warn(
+          'AnthropicToCodexBridgeProvider: model discovery failed, falling back to cached catalog:',
+          error
+        );
+        const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth);
+        if (!recoveredFromCache) {
+          this.discoveredModels = null;
+          this.discoveredAt = Date.now();
+        }
+      }
+    })();
+    this.discoveryInFlight = attempt;
+    this.discoveryInFlightKey = authKey;
+    try {
+      await attempt;
+    } finally {
+      if (this.discoveryInFlight === attempt) {
+        this.discoveryInFlight = null;
+        this.discoveryInFlightKey = undefined;
+      }
+    }
+  }
+
   private toBridgeAuth(credentials: StoredCredentials): OpenAIResponsesBridgeAuth | undefined {
     if (!credentials.access) return undefined;
     if (credentials.type === 'api_key') {
@@ -333,7 +460,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private modelAliases(): Record<string, string> {
     const userAliases = Object.fromEntries(
-      ANTHROPIC_CODEX_MODELS.flatMap((model) => [
+      this.getCachedModels().flatMap((model) => [
         ...(model.alias ? [[model.alias, model.id] as const] : []),
         ...(model.providerAliases?.map((alias) => [alias, model.id] as const) ?? []),
       ])
@@ -342,10 +469,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private responsesBridgeModels(isChatgptOAuth: boolean) {
-    const codexModels = ANTHROPIC_CODEX_MODELS.map((model) => ({
+    const codexModels = this.getCachedModels().map((model) => ({
       id: model.id,
       display_name: model.name,
-      created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
+      created_at: `${model.releaseDate || '2026-01-01'}T00:00:00Z`,
       context_window: isChatgptOAuth
         ? (codexBackendContextWindow(model.id) ?? model.contextWindow)
         : model.contextWindow,
@@ -519,15 +646,35 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
+    await this.refreshDiscoveredCodexModels(auth);
     void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
     return this.getCachedModels();
   }
 
+  async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    const auth = await this.getBridgeAuth();
+    if (!auth || auth.source !== 'chatgpt_oauth') {
+      throw new Error('OpenAI (Codex) model discovery requires ChatGPT subscription auth');
+    }
+    await this.refreshDiscoveredCodexModels(auth, options?.force === true);
+    const discovered = this.discoveredModels?.filter((model) => model.available) ?? [];
+    if (discovered.length === 0) {
+      throw new Error('Codex models discovery is unavailable');
+    }
+    return discovered;
+  }
+
+  clearModelCache(): void {
+    this.discoveredModels = null;
+    this.discoveredAt = 0;
+  }
+
   getCachedModels(): ModelInfo[] {
     const usesApiKey =
       Boolean(this.env.OPENAI_API_KEY) || this.cachedBridgeAuth?.source === 'api_key';
-    return ANTHROPIC_CODEX_MODELS.map((model) => ({
+    const base = this.discoveredModels ?? ANTHROPIC_CODEX_MODELS;
+    return base.map((model) => ({
       ...model,
       contextWindow: usesApiKey
         ? model.contextWindow
@@ -537,7 +684,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   ownsModel(modelId: string): boolean {
-    return ANTHROPIC_CODEX_MODELS.some(
+    return this.getCachedModels().some(
       (m) => m.id === modelId || m.alias === modelId || m.providerAliases?.includes(modelId)
     );
   }
@@ -553,7 +700,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       haiku: 'gpt-5.6-luna',
       default: 'gpt-5.6-terra',
     };
-    return map[tier];
+    const staticId = map[tier];
+    const discovered = this.discoveredModels?.filter((model) => model.available) ?? [];
+    if (discovered.length > 0) {
+      const pinnedDefault = CODEX_MODEL_POLICY.pinnedDefault;
+      if (pinnedDefault && discovered.some((model) => model.id === pinnedDefault)) {
+        return pinnedDefault;
+      }
+      if (discovered.some((model) => model.id === staticId)) return staticId;
+      return discovered[0].id;
+    }
+    return staticId;
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
@@ -568,7 +725,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.bridgeServers.delete(key);
       this.bridgeServerAuthKeys.delete(key);
     }
-    const entry = ANTHROPIC_CODEX_MODELS.find(
+    const entry = this.getCachedModels().find(
       (m) => m.alias === modelId || m.id === modelId || m.providerAliases?.includes(modelId)
     );
     if (!entry) {
@@ -587,8 +744,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeBaseUrl =
       bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
-    const sdkModelId =
-      CODEX_TO_SDK_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
+    const sdkModelId = entry.sdkModelIds?.[0] ?? resolvedId;
     if (!sdkModelId) {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
@@ -625,6 +781,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (this.bridgeServers.has(bridgeKey)) return;
     const pending = this.bridgePromises.get(bridgeKey);
     if (pending) return pending;
+    await this.refreshDiscoveredCodexModels(auth).catch(() => {});
     const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
     if (!auth) {
       logger.warn(
@@ -869,6 +1026,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuth = undefined;
     this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
+    this.discoveredModels = null;
+    this.discoveredAt = 0;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
