@@ -186,8 +186,12 @@ export function WorkflowModelSelect({
       {Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
         <optgroup key={provider} label={PROVIDER_LABELS[provider] || getProviderLabel(provider)}>
           {providerModels.map((model) => (
-            <option key={encodeModelValue(model)} value={encodeModelValue(model)}>
-              {`${model.name} (${model.id})`}
+            <option
+              key={encodeModelValue(model)}
+              value={encodeModelValue(model)}
+              disabled={model.available === false}
+            >
+              {`${model.name} (${model.id})${model.available === false ? ' — unavailable' : ''}`}
             </option>
           ))}
         </optgroup>

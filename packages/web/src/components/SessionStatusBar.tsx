@@ -373,18 +373,29 @@ export default function SessionStatusBar({
                             const isCurrent =
                               model.id === currentModelInfo?.id &&
                               model.provider === currentModelInfo?.provider;
+                            const unavailable = model.available === false;
                             return (
                               <button
                                 key={`${model.provider}:${model.id}`}
-                                class={`w-full text-left px-3 py-1.5 hover:bg-fill-strong text-xs flex items-center gap-2 ${
-                                  isCurrent ? 'text-accent' : 'text-fg-soft'
-                                }`}
+                                class={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${
+                                  unavailable
+                                    ? 'cursor-not-allowed opacity-50'
+                                    : 'hover:bg-fill-strong'
+                                } ${isCurrent ? 'text-accent' : 'text-fg-soft'}`}
                                 onClick={() => handleModelSwitch(model)}
-                                disabled={modelSwitching}
+                                disabled={modelSwitching || unavailable}
                               >
                                 <span class="flex-1 truncate">
                                   {shortenModelName(model.name, model.provider)}
                                 </span>
+                                {unavailable && (
+                                  <span
+                                    class="text-fg-faint text-[10px]"
+                                    title="Not runnable on this account"
+                                  >
+                                    unavailable
+                                  </span>
+                                )}
                                 {isCurrent && <span class="text-accent text-[10px]">✓</span>}
                                 {needsRefresh && (
                                   <span class="text-warning text-[10px]" title="Token expiring">

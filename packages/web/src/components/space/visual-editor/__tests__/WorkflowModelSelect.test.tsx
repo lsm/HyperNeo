@@ -213,4 +213,41 @@ describe('WorkflowModelSelect', () => {
       );
     });
   });
+
+  describe('unavailable models', () => {
+    it('disables unavailable models and labels them', async () => {
+      mockHub.request.mockImplementationOnce(async () => ({
+        models: [
+          {
+            id: 'gpt-6-astra',
+            display_name: 'GPT-6-Astra',
+            description: '',
+            provider: 'anthropic-codex',
+          },
+          {
+            id: 'gpt-5.3-codex',
+            display_name: 'GPT-5.3 Codex',
+            description: '',
+            provider: 'anthropic-codex',
+            available: false,
+          },
+        ],
+      }));
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={vi.fn()} testId="codex-model-select" />
+      );
+      const select = getByTestId('codex-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBe(3));
+
+      const unavailable = Array.from(select.options).find((option) =>
+        option.textContent?.includes('gpt-5.3-codex')
+      );
+      const available = Array.from(select.options).find((option) =>
+        option.textContent?.includes('gpt-6-astra')
+      );
+      expect(unavailable?.disabled).toBe(true);
+      expect(unavailable?.textContent).toContain('unavailable');
+      expect(available?.disabled).toBe(false);
+    });
+  });
 });
