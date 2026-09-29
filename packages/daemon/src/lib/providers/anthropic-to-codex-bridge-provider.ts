@@ -670,10 +670,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.getCachedModels();
   }
 
-  clearModelCache(): void {
-    this.discoveredModels = null;
-  }
-
   getCachedModels(): ModelInfo[] {
     const usesApiKey =
       Boolean(this.env.OPENAI_API_KEY) || this.cachedBridgeAuth?.source === 'api_key';

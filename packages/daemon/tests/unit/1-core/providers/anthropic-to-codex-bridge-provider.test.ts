@@ -1389,12 +1389,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(counts.models).toBe(1);
     });
 
-    it('preserves the discovery-failure backoff across clearModelCache', async () => {
+    it('preserves the discovery-failure backoff across generic model-cache clears', async () => {
       const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
       provider = oauthProvider(impl);
 
       await provider.getModels();
-      provider.clearModelCache();
+      provider.clearModelCache?.();
       await provider.getModels();
 
       expect(counts.models).toBe(1);
@@ -1506,7 +1506,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
     });
 
-    it('clearModelCache serves the static backstop without re-attempting discovery within the TTL', async () => {
+    it('keeps the discovered catalog across generic model-cache clears', async () => {
       let catalog = DISCOVERY_CATALOG;
       const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
       provider = oauthProvider(impl);
@@ -1514,7 +1514,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
       expect(counts.models).toBe(1);
 
-      provider.clearModelCache();
+      provider.clearModelCache?.();
       catalog = [
         ...DISCOVERY_CATALOG,
         {
@@ -1529,7 +1529,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(counts.models).toBe(1);
-      expect(models.some((model) => model.id === 'gpt-5.6-sol' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-5.3-codex' && !model.available)).toBe(true);
       expect(models.some((model) => model.id === 'gpt-7-nova')).toBe(false);
     });
 
@@ -1549,11 +1550,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const first = await provider.getModels();
       expect(first.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
 
-      provider.clearModelCache();
+      provider.clearModelCache?.();
       const second = await provider.getModels();
 
       expect(counts.models).toBe(1);
-      expect(second.length).toBeGreaterThan(0);
+      expect(second.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
     });
 
     it('listRemoteModels returns the merged catalog and honors force', async () => {
