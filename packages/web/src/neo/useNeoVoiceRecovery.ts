@@ -34,6 +34,10 @@ export function useNeoVoiceRecovery(
         if (readRef.current().trim() !== '') return;
         adoptedRef.current = { sessionId, draft: composed };
         writeRef.current(composed);
+        await hub.request('session.update', {
+          sessionId,
+          metadata: { inputDraft: composed },
+        });
       } catch {
         return;
       }

@@ -112,6 +112,23 @@ describe('useNeoVoiceRecovery', () => {
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
   });
 
+  it('writes the adopted draft back so the daemon clears the staged pending', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { write } = setup();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+    const update = hubRequest.mock.calls.find(
+      ([method, payload]) =>
+        method === 'session.update' &&
+        (payload as { metadata?: { inputDraft?: string } }).metadata?.inputDraft === 'buy oat milk'
+    );
+    expect(update).toBeTruthy();
+    expect(update?.[1]).toEqual({
+      sessionId: 'neo-1',
+      metadata: { inputDraft: 'buy oat milk' },
+    });
+  });
+
   it('does not resurrect text after the user cleared an adopted draft', async () => {
     hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
     const { draft, write } = setup();
