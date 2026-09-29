@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionState, PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { QuestionPrompt } from '../../components/QuestionPrompt.tsx';
 import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { markAllSessionStoresRecovering } from '../../lib/session-store.ts';
@@ -20,6 +21,7 @@ vi.mock('../../components/chat/MarkdownRenderer.tsx', () => ({ default: () => nu
 import { connectionState } from '../../lib/state.ts';
 
 type Handler = (value: unknown, context: { channel: string }) => void;
+const sessionId = 'manager-A';
 const work: NeoWork = {
   id: 'work-A',
   requestKey: 'A',
@@ -28,8 +30,8 @@ const work: NeoWork = {
   originMessageId: 'ask-A',
   title: 'Review only this draft',
   instruction: 'No execution',
-  sessionId: 'manager-A',
-  targetSessionId: 'manager-A',
+  sessionId,
+  targetSessionId: sessionId,
   status: 'queued',
   report: null,
   createdAt: 1,
@@ -37,12 +39,12 @@ const work: NeoWork = {
 };
 const pending = (
   id = 'choice-A',
-  sessionId = 'manager-A',
-  workId = 'work-A'
+  recipient = sessionId,
+  workId = work.id
 ): PendingUserQuestion => ({
   toolUseId: id,
   askedAt: 1,
-  inputOrigin: { sessionId, messageId: workId },
+  inputOrigin: { sessionId: recipient, messageId: workId },
   questions: [
     {
       question: 'Which draft should I keep?',
@@ -73,8 +75,8 @@ let connections: Set<(state: string) => void>;
 let initial: Promise<SessionState> | null;
 const push = (sessionId: string, state: SessionState) => {
   states.set(sessionId, state);
-  for (const handler of handlers.get('state.session') ?? [])
-    handler(state, { channel: `session:${sessionId}` });
+  const context = { channel: `session:${sessionId}` };
+  for (const handler of handlers.get('state.session') ?? []) handler(state, context);
 };
 beforeEach(() => {
   connectionState.value = 'connected';
@@ -130,6 +132,8 @@ afterEach(async () => {
 });
 const choice = () => screen.findByRole('button', { name: /Keep draft/ });
 const submit = () => screen.getByRole('button', { name: 'Submit Response' }) as HTMLButtonElement;
+const actionButton = (respond: boolean) =>
+  screen.getByRole('button', { name: respond ? 'Submit Response' : 'Skip Question' });
 const expectRequest = (method: string, data: unknown) =>
   waitFor(() => expect(request).toHaveBeenCalledWith(method, data, { timeout: 30000 }));
 
@@ -182,19 +186,11 @@ describe('NeoWorkQuestion native controls', () => {
       failure = new Error('Native answer rejected');
       render(<NeoWorkQuestion work={work} />);
       fireEvent.click(await choice());
-      fireEvent.click(
-        method === 'question.respond'
-          ? submit()
-          : screen.getByRole('button', { name: 'Skip Question' })
-      );
+      fireEvent.click(actionButton(method === 'question.respond'));
       expect((await screen.findByRole('alert')).textContent).toContain('Native answer rejected');
       expect(screen.getByText('A quick choice')).toBeTruthy();
       failure = null;
-      fireEvent.click(
-        method === 'question.respond'
-          ? submit()
-          : screen.getByRole('button', { name: 'Skip Question' })
-      );
+      fireEvent.click(actionButton(method === 'question.respond'));
       await waitFor(() => expect(screen.queryByText('A quick choice')).toBeNull());
       await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     }
@@ -207,6 +203,34 @@ describe('NeoWorkQuestion native controls', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Connection lost');
     expect(screen.getByText('A quick choice')).toBeTruthy();
   });
+  it.each(['respond', 'cancel'] as const)(
+    'keeps a legacy native %s retryable after disconnect',
+    async (action) => {
+      const respond = action === 'respond';
+      disconnectedResult = true;
+      const onResolved = vi.fn();
+      render(
+        <QuestionPrompt sessionId={sessionId} pendingQuestion={pending()} onResolved={onResolved} />
+      );
+      const button = () => actionButton(respond) as HTMLButtonElement;
+      if (respond) fireEvent.click(await choice());
+      fireEvent.click(button());
+      await waitFor(() => expect(button().disabled).toBe(false));
+      expect(request.mock.calls[0]?.[0]).toBe(respond ? 'question.respond' : 'question.cancel');
+      expect(onResolved).not.toHaveBeenCalled();
+      disconnectedResult = false;
+      fireEvent.click(button());
+      await waitFor(() =>
+        expect(onResolved).toHaveBeenCalledWith(
+          respond ? 'submitted' : 'cancelled',
+          respond
+            ? [{ questionIndex: 0, selectedLabels: ['Keep draft'], customText: undefined }]
+            : []
+        )
+      );
+      expect(request).toHaveBeenCalledTimes(2);
+    }
+  );
   it('follows native question changes without retaining a previous selection', async () => {
     render(<NeoWorkQuestion work={work} />);
     fireEvent.click(await choice());

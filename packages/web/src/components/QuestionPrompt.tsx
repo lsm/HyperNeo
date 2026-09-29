@@ -196,7 +196,7 @@ export function QuestionPrompt({
         toolUseId,
         responses,
       });
-      if (onError && result === null) throw new Error('Connection lost. Reconnect and try again.');
+      if (result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('submitted', responses);
     } catch (cause) {
@@ -214,7 +214,7 @@ export function QuestionPrompt({
         sessionId,
         toolUseId,
       });
-      if (onError && result === null) throw new Error('Connection lost. Reconnect and try again.');
+      if (result === null) throw new Error('Connection lost. Reconnect and try again.');
 
       onResolved?.('cancelled', []);
     } catch (cause) {
