@@ -1258,18 +1258,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
     function discoveryFetch(
       modelsResponder: () => Response | Promise<Response>,
       probeStatus = 200
-    ): { impl: typeof fetch; counts: { models: number; probe: number } } {
+    ): {
+      impl: typeof fetch;
+      counts: { models: number; probe: number };
+      probeBodies: Array<Record<string, unknown>>;
+    } {
       const counts = { models: 0, probe: 0 };
-      const impl = (async (input: string | URL | Request) => {
+      const probeBodies: Array<Record<string, unknown>> = [];
+      const impl = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input);
         if (url.includes('/models')) {
           counts.models += 1;
           return await modelsResponder();
         }
         counts.probe += 1;
+        if (typeof init?.body === 'string') {
+          probeBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        }
         return new Response('{}', { status: probeStatus });
       }) as unknown as typeof fetch;
-      return { impl, counts };
+      return { impl, counts, probeBodies };
     }
 
     function catalogResponse(models: unknown[]): Response {
@@ -1300,7 +1308,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('serves the discovered catalog with static fallbacks marked unavailable', async () => {
-      const { impl } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      const { impl, probeBodies } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
       provider = oauthProvider(impl);
 
       const models = await provider.getModels();
@@ -1315,6 +1323,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(byId.get('gpt-5.3-codex')?.available).toBe(false);
       expect(byId.get('gpt-5.4')?.available).toBe(false);
       expect(models[0]?.id).toBe('gpt-6-astra');
+      expect(probeBodies[0]?.model).toBe('gpt-6-astra');
     });
 
     it('keeps a saved selection buildable when discovery drops it', async () => {
@@ -1509,6 +1518,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-6-astra')).toBe(true);
       expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
       expect(provider.getModelForTier('default')).toBe('gpt-6-astra');
+      expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
+    });
+
+    it('routes the haiku tier to the cheapest discovered model when the static id is absent', async () => {
+      const catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-6-luna',
+          display_name: 'GPT-6-Luna',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 5,
+          context_window: 272000,
+        },
+      ];
+      const { impl } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+
+      expect(provider.getModelForTier('haiku')).toBe('gpt-6-luna');
+      expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
     });
 
     it('keeps the static tier mapping for non-subscription auth', () => {

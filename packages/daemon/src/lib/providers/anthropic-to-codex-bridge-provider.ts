@@ -17,11 +17,7 @@ import {
   type OpenAIResponsesBridgeServer,
   createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import {
-  getCodexBridgeModelInfos,
-  CODEX_TO_SDK_MODEL,
-  codexBackendContextWindow,
-} from './codex-models.js';
+import { getCodexBridgeModelInfos, codexBackendContextWindow } from './codex-models.js';
 import {
   CODEX_DISCOVERY_TTL_MS,
   CODEX_MODEL_POLICY,
@@ -608,8 +604,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       headers['ChatGPT-Account-ID'] = auth.accountId;
     }
 
+    const probeModel =
+      this.discoveredModels?.find((model) => model.available)?.id ?? 'gpt-5.4-mini';
     const body: Record<string, unknown> = {
-      model: 'gpt-5.4-mini',
+      model: probeModel,
       input: [
         {
           type: 'message',
@@ -722,6 +720,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         return pinnedDefault;
       }
       if (discovered.some((model) => model.id === staticId)) return staticId;
+      if (tier === 'haiku') {
+        const cheap = discovered.find((model) => /mini|luna|haiku|fast|lite/i.test(model.id));
+        if (cheap) return cheap.id;
+        return discovered[discovered.length - 1].id;
+      }
       return discovered[0].id;
     }
     return staticId;
@@ -776,9 +779,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-sol'],
+        ANTHROPIC_DEFAULT_OPUS_MODEL: this.getModelForTier('opus') ?? sdkModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-luna'],
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: this.getModelForTier('haiku') ?? sdkModelId,
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

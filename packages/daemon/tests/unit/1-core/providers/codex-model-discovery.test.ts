@@ -141,7 +141,7 @@ describe('normalizeCodexRemoteModel', () => {
     expect(model.releaseDate).toBe('2026-04-01');
   });
 
-  it('falls back to the static context window and display name when discovery omits them', () => {
+  it('falls back to static metadata when discovery omits fields for a known slug', () => {
     const model = normalizeCodexRemoteModel(
       remoteModel({
         slug: 'gpt-5.6-sol',
@@ -151,7 +151,8 @@ describe('normalizeCodexRemoteModel', () => {
       })
     );
     expect(model.contextWindow).toBe(1050000);
-    expect(model.description).toBe('GPT-6-Astra');
+    expect(model.name).toBe('GPT-6-Astra');
+    expect(model.description).toBe('GPT-5.6 Sol · Flagship reasoning/coding model with Ultra mode');
   });
 
   it('derives safe defaults for brand-new slugs', () => {
