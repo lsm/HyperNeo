@@ -214,6 +214,44 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { concerns: [{ context: '' }] } });
   });
 
+  test('work origin message ids survive the snapshot boundary in every state', async () => {
+    service.repo.saveConcern({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
+    const root = await service.open(null);
+    const states = ['proposed', 'queued', 'reported'] as const;
+    const works = states.map((state) => {
+      const work = service.repo.proposeWork({
+        id: `origin-${state}`,
+        requestKey: `origin-${state}`,
+        concernId: 'book-club',
+        originSessionId: root,
+        originMessageId: `ask-${state}`,
+        title: `Origin-bearing ${state}`,
+        instruction: 'Draft a plan.',
+      });
+      if (state === 'queued')
+        service.repo.transitionWork(work.id, work, { status: 'queued', sessionId: 'exec' });
+      if (state === 'reported')
+        service.repo.transitionWork(
+          work.id,
+          { status: 'proposed', sessionId: null, report: null },
+          { status: 'reported', report: 'Done.' }
+        );
+      return work;
+    });
+    expect(works.map((work) => work.originMessageId)).toEqual([
+      'ask-proposed',
+      'ask-queued',
+      'ask-reported',
+    ]);
+    const snapshot = (await invoke('neo.snapshot')) as {
+      value: { work: Array<{ id: string; status: string; originMessageId: string | null }> };
+    };
+    const byState = new Map(snapshot.value.work.map((item) => [item.status, item]));
+    for (const state of states) {
+      expect(byState.get(state)?.originMessageId).toBe(`ask-${state}`);
+    }
+  });
+
   test('human snapshots retain a bounded set of older actionable work', async () => {
     service.repo.saveConcern({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
     const root = await service.open(null);
