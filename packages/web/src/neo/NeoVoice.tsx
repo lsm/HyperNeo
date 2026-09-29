@@ -23,12 +23,14 @@ export function NeoVoice({
   sessionId,
   connected,
   onTranscript,
+  onSendVoice,
   onError,
   onBusy,
 }: {
   sessionId: string;
   connected: boolean;
   onTranscript: (text: string) => void;
+  onSendVoice: (text: string) => Promise<void>;
   onError: (message: string) => void;
   onBusy: (busy: boolean) => void;
 }) {
@@ -64,7 +66,7 @@ export function NeoVoice({
     }
   }
 
-  async function transcribe(entry?: VoiceRecordEntry) {
+  async function transcribe(intent: 'draft' | 'send' = 'draft', entry?: VoiceRecordEntry) {
     if (running.current || (entry && isVoiceAudioBusy(entry.id))) return;
     running.current = true;
     const id = entry?.id ?? generateUUID();
@@ -73,7 +75,7 @@ export function NeoVoice({
     beginInteractiveVoiceSubmit();
     try {
       const result = await runVoiceSubmit(
-        { sessionId, mode: 'stay', retrySilent: !!entry },
+        { sessionId, mode: 'stay', retrySilent: !!entry, intent },
         {
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
           generateId: () => id,
@@ -83,7 +85,11 @@ export function NeoVoice({
       );
       if (result.kind === 'routed') {
         if ('transcript' in result.outcome) {
-          onTranscript(result.outcome.transcript);
+          if (intent === 'send') {
+            await onSendVoice(result.outcome.transcript);
+          } else {
+            onTranscript(result.outcome.transcript);
+          }
           await deleteVoiceRecord(result.recordId);
         } else if (result.outcome.reason) onError(result.outcome.reason);
       } else if (result.kind === 'silent-recording')
@@ -104,7 +110,7 @@ export function NeoVoice({
   }
 
   useEffect(() => {
-    if (recorder.durationLimitHit) void transcribe();
+    if (recorder.durationLimitHit) void transcribe('draft');
   }, [recorder.durationLimitHit]);
 
   if (!enabled && !active && !records.length) return null;
@@ -116,7 +122,7 @@ export function NeoVoice({
             records={records}
             resendingId={transcribing}
             isBusy={(id) => !connected || active || isVoiceAudioBusy(id)}
-            onResend={(entry) => void transcribe(entry)}
+            onResend={(entry) => void transcribe('draft', entry)}
             onDelete={(entry) => {
               void deleteVoiceRecord(entry.id).then(refreshPendingVoiceAudio);
             }}
@@ -141,10 +147,21 @@ export function NeoVoice({
             size="sm"
             variant="ghost"
             disabled={!!transcribing || recorder.isStarting}
-            onClick={() => void transcribe()}
-            aria-label="Finish voice input"
+            onClick={() => void transcribe('draft')}
+            aria-label="Stop recording and keep the text as a draft"
+            title="Stop — transcribe into an editable draft, never send"
           >
-            <NeoIcon name="check" class="text-cat-teal" />
+            <NeoIcon name="pause" class="text-cat-teal" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!!transcribing || recorder.isStarting}
+            onClick={() => void transcribe('send')}
+            aria-label="Stop recording and send the message"
+            title="Send — transcribe and send once, no second press"
+          >
+            <NeoIcon name="up" class="text-accent" />
           </Button>
         </div>
       ) : (

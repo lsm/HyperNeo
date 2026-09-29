@@ -6,6 +6,7 @@ export interface VoiceRecordEntry {
   hitDurationLimit?: boolean;
   peakLevel: number;
   createdAt: number;
+  intent?: 'draft' | 'send';
 }
 
 const DB_NAME = 'hyperneo-voice-audio';

@@ -64,6 +64,7 @@ describe('Neo voice', () => {
       sessionId: 'neo:root',
       connected: true,
       onTranscript: vi.fn(),
+      onSendVoice: vi.fn(async () => {}),
       onError: vi.fn(),
       onBusy: vi.fn(),
     };
@@ -91,18 +92,76 @@ describe('Neo voice', () => {
         sessionId="neo:club"
         connected
         onTranscript={onTranscript}
+        onSendVoice={vi.fn(async () => {})}
         onError={vi.fn()}
         onBusy={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Finish voice input' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('Remember Sunday'));
     expect(voice.submit).toHaveBeenCalledWith(
-      { sessionId: 'neo:club', mode: 'stay', retrySilent: false },
+      { sessionId: 'neo:club', mode: 'stay', retrySilent: false, intent: 'draft' },
       expect.objectContaining({ stopRecording: voice.stop })
     );
     expect(voice.deleteRecord).toHaveBeenCalledWith('recording');
   });
+  it('Send while recording routes the transcript through the composer send path once', async () => {
+    voice.recording = true;
+    voice.submit.mockResolvedValue({
+      kind: 'routed',
+      outcome: { kind: 'insert', transcript: 'Send me now', autoSend: false },
+      recordId: 'recording',
+    });
+    const onSendVoice = vi.fn(async () => {});
+    const onTranscript = vi.fn();
+    render(
+      <NeoVoice
+        sessionId="neo:club"
+        connected
+        onTranscript={onTranscript}
+        onSendVoice={onSendVoice}
+        onError={vi.fn()}
+        onBusy={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and send the message' }));
+    await waitFor(() => expect(onSendVoice).toHaveBeenCalledTimes(1));
+    expect(onSendVoice).toHaveBeenCalledWith('Send me now');
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(voice.submit).toHaveBeenCalledWith(
+      { sessionId: 'neo:club', mode: 'stay', retrySilent: false, intent: 'send' },
+      expect.objectContaining({})
+    );
+  });
+
+  it('Stop keeps the text as an editable draft and never sends', async () => {
+    voice.recording = true;
+    voice.submit.mockResolvedValue({
+      kind: 'routed',
+      outcome: { kind: 'insert', transcript: 'Keep as draft', autoSend: false },
+      recordId: 'recording',
+    });
+    const onSendVoice = vi.fn(async () => {});
+    const onTranscript = vi.fn();
+    render(
+      <NeoVoice
+        sessionId="neo:club"
+        connected
+        onTranscript={onTranscript}
+        onSendVoice={onSendVoice}
+        onError={vi.fn()}
+        onBusy={vi.fn()}
+      />
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('Keep as draft'));
+    expect(onSendVoice).not.toHaveBeenCalled();
+  });
+
   it('retains the original destination after switching context mid-transcription', async () => {
     voice.recording = true;
     let finish: (result: unknown) => void = () => {};
@@ -119,11 +178,14 @@ describe('Neo voice', () => {
         sessionId="neo:club"
         connected
         onTranscript={originalDraft}
+        onSendVoice={vi.fn(async () => {})}
         onError={vi.fn()}
         onBusy={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Finish voice input' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
     view.unmount();
     expect(dependencies?.isMounted()).toBe(false);
     expect(dependencies?.currentSessionId()).toBe('neo:club');
@@ -143,6 +205,7 @@ describe('Neo voice', () => {
       sessionId: 'neo:root',
       connected: true,
       onTranscript: vi.fn(),
+      onSendVoice: vi.fn(async () => {}),
       onError,
       onBusy: vi.fn(),
     };
@@ -157,7 +220,9 @@ describe('Neo voice', () => {
       dequeued: false,
     });
     view.rerender(<NeoVoice {...props} onBusy={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Finish voice input' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
     await waitFor(() =>
       expect(onError).toHaveBeenCalledWith(
         'Disconnected. Your recording is saved below. You can retry.'

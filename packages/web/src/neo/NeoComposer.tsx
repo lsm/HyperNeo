@@ -19,6 +19,10 @@ export function neoEnterSends(
   return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
 }
 
+export function combineVoiceSubmission(draft: string, transcript: string): string {
+  return [draft.trim(), transcript].filter(Boolean).join('\n');
+}
+
 export function NeoComposer({
   store,
   sessionId,
@@ -56,8 +60,9 @@ export function NeoComposer({
   );
   const working = store.isWorking.value;
   const connected = connectionState.value === 'connected';
-  async function send() {
-    const submitted = draft;
+  async function send(overrideText?: string) {
+    const submitted =
+      overrideText !== undefined ? combineVoiceSubmission(draft, overrideText) : draft;
     const files = attachments.files;
     if (
       (!submitted.trim() && !files.length) ||
@@ -191,6 +196,9 @@ export function NeoComposer({
             sessionId={sessionId}
             connected={connected}
             onTranscript={onTranscript}
+            onSendVoice={async (text) => {
+              await send(text);
+            }}
             onError={onError}
             onBusy={setVoiceBusy}
           />

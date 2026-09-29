@@ -21,6 +21,7 @@ export interface VoiceSubmitInput {
   sessionId: string;
   mode?: VoiceSubmitMode;
   retrySilent?: boolean;
+  intent?: 'draft' | 'send';
 }
 
 export interface VoiceSubmitDeps {
@@ -128,6 +129,7 @@ async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitP
     hitDurationLimit: recording.hitDurationLimit,
     peakLevel: recording.peakLevel,
     createdAt: ctx.startedAt,
+    intent: ctx.intent === 'send' ? 'send' : 'draft',
   };
   return { ...ctx, persisted: await ctx.deps.putRecord(entry) };
 }

@@ -56,6 +56,53 @@ export function endInteractiveVoiceSubmit(): void {
   interactiveSubmits = Math.max(0, interactiveSubmits - 1);
 }
 
+async function completeSendIntent(
+  hub: { request: <T>(method: string, payload: unknown) => Promise<T> },
+  entry: VoiceRecordEntry
+): Promise<boolean> {
+  let transcript: string | null = null;
+  try {
+    const result = await runVoiceSubmit(
+      { sessionId: entry.sessionId, intent: 'send' },
+      {
+        stopRecording: async () => recordingFromEntry(entry),
+        putRecord: async () => true,
+        deleteRecord: async () => true,
+        generateId: () => entry.id,
+        isMounted: () => false,
+        currentSessionId: () => entry.sessionId,
+      }
+    );
+    if (result.kind === 'routed' && 'transcript' in result.outcome) {
+      transcript = result.outcome.transcript;
+    } else if (result.kind === 'silent-recording') {
+      await deleteVoiceRecord(entry.id);
+      return true;
+    } else if (result.kind === 'transcribe-failed' && result.dequeued) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  if (!transcript) return false;
+  try {
+    await hub.request('neo.message.send', {
+      sessionId: entry.sessionId,
+      requestId: entry.id,
+      text: transcript,
+      images: [],
+    });
+    return true;
+  } catch (error) {
+    if (isPermanentAppendRefusal(error)) {
+      await enqueueTranscript(entry.sessionId, transcript, entry.id);
+      await deleteVoiceRecord(entry.id);
+      return true;
+    }
+    return false;
+  }
+}
+
 function hasInteractiveVoiceActivity(): boolean {
   return (
     interactiveSubmits > 0 ||
@@ -136,8 +183,18 @@ export async function flushPendingVoiceAudio(): Promise<void> {
       }
       markVoiceAudioBusy(entry.id);
       try {
+        if (entry.intent === 'send') {
+          const sent = await completeSendIntent(hub, entry);
+          if (sent) {
+            await deleteVoiceRecord(entry.id);
+            delivered += 1;
+          } else {
+            defer(entry.sessionId);
+          }
+          continue;
+        }
         const result = await runVoiceSubmit(
-          { sessionId: entry.sessionId },
+          { sessionId: entry.sessionId, intent: 'draft' },
           {
             stopRecording: async () => recordingFromEntry(entry),
             putRecord: async () => true,
