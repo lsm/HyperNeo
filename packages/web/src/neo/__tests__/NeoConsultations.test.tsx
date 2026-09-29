@@ -5,7 +5,9 @@ import { NeoLive } from '../NeoLive.tsx';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
-vi.mock('../../lib/state.ts', () => ({ connectionState: { value: 'connected' } }));
+vi.mock('../../lib/state.ts', () => ({
+  connectionState: { value: 'connected', subscribe: () => () => {} },
+}));
 vi.mock('../NeoComposer.tsx', () => ({ NeoComposer: () => null }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => <p>Latest conversation</p> }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
