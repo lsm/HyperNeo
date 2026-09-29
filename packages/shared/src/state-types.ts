@@ -74,6 +74,7 @@ export interface PendingUserQuestion {
   questions: UserQuestion[];
   askedAt: number;
   draftResponses?: QuestionDraftResponse[];
+  inputOrigin?: { sessionId: string; messageId: string } | null;
 }
 
 export interface QuestionDraftResponse {

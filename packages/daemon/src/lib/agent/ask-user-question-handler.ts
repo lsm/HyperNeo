@@ -15,6 +15,7 @@ import type {
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { MessageQueue } from './message-queue.ts';
 import { Logger } from '../logger.ts';
+import type { QuestionInputOriginSource } from './question-input-origin.ts';
 
 export interface AskUserQuestionHandlerContext {
   readonly session: Session;
@@ -79,7 +80,8 @@ export class AskUserQuestionHandler {
     toolUseID: string,
     input: Record<string, unknown>,
     viaChannel: 'can_use_tool' | 'pre_tool_use_hook',
-    attemptToken: { isLive(): boolean }
+    attemptToken: { isLive(): boolean },
+    inputOrigin?: QuestionInputOriginSource
   ): Promise<PermissionResult> {
     const { session, stateManager, internalEventBus } = this.ctx;
 
@@ -152,6 +154,7 @@ export class AskUserQuestionHandler {
         multiSelect: q.multiSelect,
       })),
       askedAt: Date.now(),
+      ...(inputOrigin ? { inputOrigin: inputOrigin() } : {}),
     };
 
     if (
@@ -268,7 +271,10 @@ export class AskUserQuestionHandler {
     return pending;
   }
 
-  createPreToolUseHook(attemptToken?: { isLive(): boolean }): HookCallback {
+  createPreToolUseHook(
+    attemptToken?: { isLive(): boolean },
+    inputOrigin?: QuestionInputOriginSource
+  ): HookCallback {
     const token = attemptToken ?? ATTEMPT_TOKEN_ALWAYS_LIVE;
     return async (input) => {
       const preInput = input as PreToolUseHookInput;
@@ -280,7 +286,8 @@ export class AskUserQuestionHandler {
         preInput.tool_use_id,
         (preInput.tool_input ?? {}) as Record<string, unknown>,
         'pre_tool_use_hook',
-        token
+        token,
+        inputOrigin
       );
 
       if (result.behavior === 'allow') {
@@ -302,7 +309,10 @@ export class AskUserQuestionHandler {
     };
   }
 
-  createCanUseToolCallback(attemptToken?: { isLive(): boolean }): CanUseTool {
+  createCanUseToolCallback(
+    attemptToken?: { isLive(): boolean },
+    inputOrigin?: QuestionInputOriginSource
+  ): CanUseTool {
     const token = attemptToken ?? ATTEMPT_TOKEN_ALWAYS_LIVE;
     return async (
       toolName,
@@ -327,7 +337,13 @@ export class AskUserQuestionHandler {
         return { behavior: 'allow', updatedInput: input };
       }
 
-      return this.interceptAskUserQuestion(options.toolUseID, input, 'can_use_tool', token);
+      return this.interceptAskUserQuestion(
+        options.toolUseID,
+        input,
+        'can_use_tool',
+        token,
+        inputOrigin
+      );
     };
   }
 

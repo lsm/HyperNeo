@@ -35,6 +35,7 @@ import { NeoHolderTurn } from '../neo/holder-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
+import { QuestionInputScope, type QuestionInputOriginSource } from './question-input-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -556,8 +557,11 @@ export class QueryRunner {
     this.ctx.attemptTokens.invalidateCurrent();
   }
 
-  private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
-    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook(attemptToken);
+  private createAttemptBoundPreToolUseHook(
+    attemptToken: QueryAttemptToken,
+    inputOrigin?: QuestionInputOriginSource
+  ): HookCallback {
+    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook(attemptToken, inputOrigin);
     return async (input, toolUseID, options) => {
       if (!attemptToken.isLive()) {
         const { session, logger } = this.ctx;
@@ -605,8 +609,14 @@ export class QueryRunner {
     };
   }
 
-  private createAttemptBoundCanUseTool(attemptToken: QueryAttemptToken): CanUseTool {
-    const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback(attemptToken);
+  private createAttemptBoundCanUseTool(
+    attemptToken: QueryAttemptToken,
+    inputOrigin?: QuestionInputOriginSource
+  ): CanUseTool {
+    const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback(
+      attemptToken,
+      inputOrigin
+    );
     return async (toolName, input, options) => {
       if (!attemptToken.isLive()) {
         const { session, logger } = this.ctx;
@@ -650,7 +660,12 @@ export class QueryRunner {
       this.ctx.getQueryGeneration() === queryGeneration
         ? this.ctx.attemptTokens.allocate()
         : QueryAttemptRegistry.detached();
-    const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken);
+    const questionInputs = new QuestionInputScope(
+      session.id,
+      () => attemptToken.isLive() && this.isRunOwnershipLive(queryGeneration)
+    );
+    const questionOrigin = () => questionInputs.origin();
+    const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken, questionOrigin);
 
     let startupPermit: SdkStartupPermit | null = null;
     const releaseStartupPermit = (reason: string): void => {
@@ -794,7 +809,7 @@ export class QueryRunner {
 
       let queryOptions = await optionsBuilder.build({
         askUserQuestionHook: attemptHook,
-        canUseTool: this.createAttemptBoundCanUseTool(attemptToken),
+        canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
         session: providerSession,
       });
 
@@ -974,7 +989,8 @@ export class QueryRunner {
         prompt: this.createMessageGeneratorWrapper(
           queryGeneration,
           recoveryState.startGuard,
-          holderTurn
+          holderTurn,
+          questionInputs
         ),
         options: queryOptions,
       });
@@ -1297,6 +1313,7 @@ export class QueryRunner {
             );
 
           try {
+            if (message.type === 'result') questionInputs.endTurn();
             await this.handleSDKMessage(message, queryGeneration);
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
@@ -2000,7 +2017,8 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(
     queryGeneration: number,
     startGuard?: () => void,
-    holderTurn?: NeoHolderTurn
+    holderTurn?: NeoHolderTurn,
+    questionInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
@@ -2073,6 +2091,7 @@ export class QueryRunner {
       );
 
       startGuard?.();
+      questionInputs?.recordInput(queuedMessage);
       yield message;
       onSent();
       if (holderTurn) return;
