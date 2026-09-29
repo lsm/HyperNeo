@@ -415,7 +415,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         );
         if (isStaleAttempt()) return;
         const recoveredFromCache = await this.settleDiscoveredModelsFromCache(auth, isStaleAttempt);
-        if (!recoveredFromCache) {
+        if (!recoveredFromCache && !isStaleAttempt()) {
           this.discoveredModels = null;
           this.discoveryAttemptAt = Date.now();
         }
