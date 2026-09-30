@@ -6,7 +6,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { ensurePrompt, PromptContentConflictError } from '../agent/message-delivery-outbox.ts';
+import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -74,32 +74,43 @@ export function neoIntakeMessage(
   };
 }
 
+export function requireNeoIntakeConversation(
+  root: NeoBinding | null,
+  session: Target | null
+): Gate<string> {
+  const id = root?.sessionId.startsWith('neo:') ? root.sessionId.slice(4) : null;
+  return root?.kind === 'neo' &&
+    root.concernId === null &&
+    id &&
+    z.uuid().safeParse(id).success &&
+    session?.id === root.sessionId &&
+    session.status !== 'archived'
+    ? { value: id }
+    : { reason: { ok: false, reason: 'The public Neo conversation is no longer available.' } };
+}
+
 export function persistNeoIntake(
   message: ReturnType<typeof neoIntakeMessage>,
   session: Target,
-  db: Database
+  db: Database,
+  conversationId: string
 ): IntakeResult {
-  try {
-    const receipt = ensurePrompt({
-      db: db.getDatabase(),
-      sdkMessageRepo: db.getSDKMessageRepo(),
-      jobQueue: db.getJobQueueRepo(),
-      sessionId: session.id,
-      message,
-      hold: session.config.queryMode === 'manual' ? 'manual' : 'immediate',
-      delivery: { origin: 'chat' },
-    });
-    return {
-      ok: true,
-      requestId: message.uuid,
-      messageId: message.uuid,
-      created: receipt.created,
-    };
-  } catch (error) {
-    if (error instanceof PromptContentConflictError)
-      return { ok: false, reason: 'This request id already belongs to a different ask.' };
-    throw error;
-  }
+  const receipt = new NeoConversationAskRepository(db.getDatabase()).acceptPrompt(
+    conversationId,
+    message,
+    session.config.queryMode === 'manual' ? 'manual' : 'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  return receipt.accepted
+    ? { ok: true, requestId: message.uuid, messageId: message.uuid, created: receipt.created }
+    : {
+        ok: false,
+        reason:
+          receipt.reason === 'ask_conflict'
+            ? 'This request id already belongs to a different ask.'
+            : 'This ask could not be admitted to the public conversation.',
+      };
 }
 
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
@@ -116,8 +127,17 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'session'
   )
   .pipe(requireNeoIntakeTarget, ['receipt', 'binding', 'session'], 'result:receipt')
+  .pipe((session: Target) => session, 'receipt', 'target')
+  .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
+  .pipe(
+    (root: NeoBinding | null, db: Database) =>
+      root ? (db.getSession(root.sessionId) ?? null) : null,
+    ['root', 'db'],
+    'rootSession'
+  )
+  .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:receipt')
   .pipe(neoIntakeMessage, 'input', 'message')
-  .pipe(persistNeoIntake, ['message', 'receipt', 'db'], 'receipt')
+  .pipe(persistNeoIntake, ['message', 'target', 'db', 'receipt'], 'receipt')
   .end('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,

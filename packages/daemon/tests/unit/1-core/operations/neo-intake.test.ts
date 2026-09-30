@@ -17,11 +17,12 @@ import type { Database } from '../../../../src/storage/database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const input = {
-  sessionId: 'neo:root',
+  sessionId: 'neo:10000000-0000-4000-8000-000000000001',
   requestId: 'c706b610-7d48-46d7-a0dd-397d09c070fe',
   content: 'What is happening with project A?',
 };
@@ -64,6 +65,7 @@ describe('durable Neo intake operation', () => {
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration283(mailbox.db);
+    runMigration289(mailbox.db);
     mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(input.sessionId);
     repo = new NeoRepository(mailbox.db);
     repo.reserveBinding(binding);
