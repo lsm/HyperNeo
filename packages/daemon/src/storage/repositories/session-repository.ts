@@ -127,6 +127,19 @@ export class SessionRepository {
     return this.rowToSession(row);
   }
 
+  getSessionIncarnation(id: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT i.incarnation FROM sessions s
+         LEFT JOIN session_incarnations i ON s.id = i.session_id WHERE s.id = ?`
+      )
+      .get(id) as { incarnation: number } | undefined;
+    if (!row) return null;
+    if (!Number.isSafeInteger(row.incarnation) || row.incarnation < 1)
+      throw new Error('Invalid session incarnation');
+    return row.incarnation;
+  }
+
   listSessions(options?: {
     status?: string;
     includeArchived?: boolean;

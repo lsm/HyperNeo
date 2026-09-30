@@ -200,6 +200,10 @@ export class Database {
     return this.sessionRepo.getSession(id);
   }
 
+  getSessionIncarnation(id: string): number | null {
+    return this.sessionRepo.getSessionIncarnation(id);
+  }
+
   listSessions(options?: {
     status?: string;
     includeArchived?: boolean;
