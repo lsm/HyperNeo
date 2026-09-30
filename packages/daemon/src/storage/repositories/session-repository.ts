@@ -8,6 +8,13 @@ import {
   SEARCHABLE_MESSAGE_TYPES,
   TERMINAL_SPACE_TASK_STATUSES,
 } from './message-search-admission.ts';
+import {
+  buildSessionRuntimeSettingsWrite,
+  type RuntimeSettingsPatch,
+  planRuntimeSettingsPatch,
+  type SessionRuntimeSettingsSnapshot,
+  sessionRuntimeSettingsSnapshotFromRow,
+} from './session-runtime-settings-write.ts';
 
 function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
@@ -318,6 +325,37 @@ export class SessionRepository {
         this.updateMessageSearchSessionTitle(id, updates.title);
       }
     }
+  }
+
+  captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
+    const row = this.db
+      .prepare(
+        `SELECT s.id AS id, i.incarnation AS incarnation, s.config AS config, s.metadata AS metadata,
+                s.session_context AS session_context, s.status AS status, s.type AS type,
+                s.archived_at AS archived_at, s.processing_state AS processing_state,
+                s.parent_id AS parent_id, s.workspace_path AS workspace_path,
+                s.is_worktree AS is_worktree, s.worktree_path AS worktree_path,
+                s.main_repo_path AS main_repo_path, s.worktree_branch AS worktree_branch,
+                s.sdk_session_id AS sdk_session_id, s.acp_session_id AS acp_session_id,
+                s.sdk_origin_path AS sdk_origin_path
+         FROM sessions s
+         LEFT JOIN session_incarnations i ON i.session_id = s.id
+         WHERE s.id = ?`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return sessionRuntimeSettingsSnapshotFromRow(row);
+  }
+
+  casSessionRuntimeSettings(
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch
+  ): 'won' | 'superseded' {
+    const incarnation = this.getSessionIncarnation(snapshot.id);
+    if (incarnation === null || incarnation !== snapshot.incarnation) return 'superseded';
+    const write = buildSessionRuntimeSettingsWrite(snapshot, planRuntimeSettingsPatch(patch));
+    const result = this.db.prepare(write.sql).run(...write.values);
+    return result.changes > 0 ? 'won' : 'superseded';
   }
 
   private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
