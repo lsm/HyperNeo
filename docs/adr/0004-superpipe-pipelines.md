@@ -123,6 +123,17 @@ The canonical rejection cascade — reference implementation
   domain, or return a tagged outcome. Prefixing the reason literals is not a
   remedy: a prefixed literal is still assignable to the overlapped success
   type, so the union still collapses.
+- **Every gate binds the same output name.** Reuse one
+  `result:<name>` across the cascade and `.end(<name>)`. A gate that binds a
+  *second* name silently drops the rejection: a `reason` arm resolves the run
+  with that earlier name unbound, so `.end(<name>)` yields `undefined` instead
+  of the reason literal. The failure is silent — the declared return type is a
+  lie the compiler cannot catch — and it only appears when an early gate
+  rejects, so a happy-path test passes. Gate state must therefore ride the
+  value arm under that one name (widen `X` as the cascade progresses) rather
+  than being handed off through a fresh name per stage. Measured on superpipe
+  0.18.0: identical gates, `.end` on a reused name returns the reason literal;
+  on a renamed one it returns `undefined`.
 - **Named dependencies and inputs, not a ctx object.** Each
   `.pipe(gate, 'in', 'result:admission')` line shows what flows in and out at
   the composition site; the dataflow is auditable without reading stage
