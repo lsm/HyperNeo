@@ -5,10 +5,19 @@ import type {
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { admitNeoConversationAsk } from '../../lib/neo/conversation-ask.ts';
+import {
+  ensurePrompt,
+  PromptContentConflictError,
+  type PromptHold,
+} from '../../lib/agent/message-delivery-outbox.ts';
+import type { JobQueueRepository } from './job-queue-repository.ts';
+import type { SDKMessageRepository } from './sdk-message-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
+type IntakePrompt = SDKUserMessage & { inputKind?: unknown };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
 const page = z.object({
   conversationId: z.uuid(),
@@ -75,6 +84,79 @@ const read = (superpipe({})('neo-conversation-ask-page') as PipelineAPI)
   )
   .end('asks') as (input: unknown, db: Database) => NeoConversationAsk[] | null;
 
+export function prepareNeoIntakeAsk(conversationId: string, message: IntakePrompt) {
+  if (message.type !== 'user' || message.inputKind !== 'human')
+    return { reason: { accepted: false as const, reason: 'invalid_ask' as const } };
+  const admitted = admitNeoConversationAsk({
+    conversationId,
+    requestId: message.uuid,
+    askOrigin: { sessionId: message.session_id, messageId: message.uuid },
+    content: message.message.content,
+  });
+  return 'value' in admitted
+    ? admitted
+    : { reason: { accepted: false as const, reason: 'invalid_ask' as const } };
+}
+
+function commitNeoIntake(
+  ask: NeoConversationAskInput,
+  message: IntakePrompt,
+  hold: PromptHold,
+  db: Database,
+  ledger: NeoConversationAskRepository,
+  sdkMessageRepo: SDKMessageRepository,
+  jobQueue: JobQueueRepository
+): NeoConversationAskAppendResult {
+  const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
+  if (active) throw new Error('Public ask intake must own its commit boundary');
+  let publish = () => {};
+  const receipt = db.transaction(() => {
+    const stored = ledger.append(ask);
+    if (!stored.accepted) return stored;
+    if (
+      !stored.created &&
+      sdkMessageRepo.getDeliveryMessageIdsByUuids(ask.askOrigin.sessionId, [ask.requestId])
+        .length === 0
+    )
+      return { ...stored, created: false };
+    const prompt = ensurePrompt({
+      db,
+      sdkMessageRepo,
+      jobQueue,
+      sessionId: ask.askOrigin.sessionId,
+      message,
+      hold,
+      delivery: { origin: 'chat' },
+      deferPostSaveSideEffects: (effect) => {
+        publish = effect;
+      },
+    });
+    return { ...stored, created: prompt.created };
+  })();
+  try {
+    publish();
+  } catch {}
+  return receipt;
+}
+
+const acceptPrompt = (superpipe({})('neo-public-ask-intake') as PipelineAPI)
+  .input(['conversationId', 'message', 'hold', 'db', 'ledger', 'sdkMessageRepo', 'jobQueue'])
+  .pipe(prepareNeoIntakeAsk, ['conversationId', 'message'], 'result:receipt')
+  .pipe(
+    commitNeoIntake,
+    ['receipt', 'message', 'hold', 'db', 'ledger', 'sdkMessageRepo', 'jobQueue'],
+    'receipt'
+  )
+  .end('receipt') as (
+  conversationId: string,
+  message: IntakePrompt,
+  hold: PromptHold,
+  db: Database,
+  ledger: NeoConversationAskRepository,
+  sdkMessageRepo: SDKMessageRepository,
+  jobQueue: JobQueueRepository
+) => NeoConversationAskAppendResult;
+
 export class NeoConversationAskRepository {
   constructor(private readonly db: Database) {}
 
@@ -85,5 +167,21 @@ export class NeoConversationAskRepository {
 
   list(conversationId: string, after = 0, limit = 50): NeoConversationAsk[] | null {
     return read({ conversationId, after, limit }, this.db);
+  }
+
+  acceptPrompt(
+    conversationId: string,
+    message: IntakePrompt,
+    hold: PromptHold,
+    sdkMessageRepo: SDKMessageRepository,
+    jobQueue: JobQueueRepository
+  ): NeoConversationAskAppendResult {
+    try {
+      return acceptPrompt(conversationId, message, hold, this.db, this, sdkMessageRepo, jobQueue);
+    } catch (error) {
+      if (error instanceof PromptContentConflictError)
+        return { accepted: false, reason: 'ask_conflict' };
+      throw error;
+    }
   }
 }
