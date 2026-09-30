@@ -287,8 +287,8 @@
 .neo-concerns-card {
   display: none;
   position: absolute;
-  top: 76px;
-  right: 20px;
+  top: 64px;
+  right: 8px;
   width: min(300px, calc(100vw - 40px));
   max-height: calc(100dvh - var(--neo-composer-height, 190px) - 100px);
   overflow-y: auto;
@@ -315,8 +315,8 @@
   }
   .neo-concerns-card {
     display: block;
-    top: 100px;
-    right: max(24px, calc((100vw - 1160px) / 2));
+    top: 88px;
+    right: calc(max(24px, calc((100vw - 1160px) / 2)) - 12px);
     width: 260px;
     background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
     box-shadow: none;
