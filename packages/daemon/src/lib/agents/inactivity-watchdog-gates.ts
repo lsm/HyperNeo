@@ -1,4 +1,4 @@
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export const INACTIVITY_WATCHDOG_PREDICATE_VERSION = 1;
 
@@ -43,7 +43,7 @@ export interface InactivityWatchdogClaimSnapshot {
   degraded: boolean;
 }
 
-export interface InactivityWatchdogCtx {
+export interface InactivityWatchdogInput {
   now: number;
   enabled: boolean;
   thresholdMs: number | null;
@@ -53,10 +53,9 @@ export interface InactivityWatchdogCtx {
   admissionRecheck: boolean;
   actor: InactivityWatchdogActorSnapshot | null;
   claim: InactivityWatchdogClaimSnapshot | null;
-  decision: InactivityNagDecision | null;
 }
 
-export type InactivityWatchdogInput = Omit<InactivityWatchdogCtx, 'decision'>;
+export type InactivityWatchdogSkipReason = InactivityNagSkipReason;
 
 export function resolveLastActivityAt(baseline: {
   latestConsumedMessageAt: number | null;
@@ -76,134 +75,141 @@ export function buildInactivityNagClaimKey(input: {
   return `inactivity-nag:${input.agentId}:${input.windowAnchoredAt}:${input.attemptGeneration}`;
 }
 
-function decided(
-  ctx: InactivityWatchdogCtx,
-  decision: InactivityNagDecision
-): InactivityWatchdogCtx {
-  return { ...ctx, decision };
-}
-
-export function applyWatchdogDisabledGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  return ctx.enabled ? ctx : decided(ctx, { action: 'none', reason: 'disabled' });
-}
-
-export function applyWatchdogUnconfiguredGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const threshold = ctx.thresholdMs;
-  return threshold !== null && Number.isFinite(threshold) && threshold > 0
-    ? ctx
-    : decided(ctx, { action: 'none', reason: 'unconfigured' });
-}
-
-function claimAnchoredToCurrentWindow(ctx: InactivityWatchdogCtx): boolean {
-  const claim = ctx.claim;
+export function claimAnchoredToCurrentWindow(input: InactivityWatchdogInput): boolean {
+  const claim = input.claim;
   if (claim === null) return false;
-  const currentWindow = ctx.actor?.lastActivityAt ?? null;
+  const currentWindow = input.actor?.lastActivityAt ?? null;
   return currentWindow !== null && claim.windowAnchoredAt === currentWindow;
 }
 
-export function applyDegradedGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const blocked = ctx.claim?.degraded === true && claimAnchoredToCurrentWindow(ctx);
-  return blocked ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
+export function gateWatchdogEnabled(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  return input.enabled ? { value: input } : { reason: 'disabled' };
 }
 
-export function applyStaleClaimGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  if (!ctx.admissionRecheck) return ctx;
-  const claim = ctx.claim;
-  if (claim === null || claim.state === 'none') {
-    return decided(ctx, { action: 'none', reason: 'stale_claim' });
-  }
-  if (!claimAnchoredToCurrentWindow(ctx)) {
-    return decided(ctx, { action: 'none', reason: 'stale_claim' });
-  }
-  if (claim.configRevision !== ctx.configRevision) {
-    return decided(ctx, { action: 'none', reason: 'stale_claim' });
-  }
-  if (claim.ownerToken !== ctx.callerToken) {
-    return decided(ctx, { action: 'none', reason: 'claim_held' });
-  }
-  return ctx;
+export function gateWatchdogConfigured(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  const threshold = input.thresholdMs;
+  const configured = threshold !== null && Number.isFinite(threshold) && threshold > 0;
+  return configured ? { value: input } : { reason: 'unconfigured' };
 }
 
-export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const actor = ctx.actor;
-  if (actor === null) return decided(ctx, { action: 'none', reason: 'actor_inactive' });
-  if (actor.agentStatus !== 'active') {
-    return decided(ctx, { action: 'none', reason: 'actor_inactive' });
-  }
-  if (!actor.spaceWakeable) return decided(ctx, { action: 'none', reason: 'actor_inactive' });
-  return ctx;
+export function gateClaimNotDegraded(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  const blocked = input.claim?.degraded === true && claimAnchoredToCurrentWindow(input);
+  return blocked ? { reason: 'degraded' } : { value: input };
 }
 
-export function applyBusySessionGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  return ctx.actor?.busyWithOtherWork
-    ? decided(ctx, { action: 'none', reason: 'session_busy' })
-    : ctx;
+export function gateClaimCurrent(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  if (!input.admissionRecheck) return { value: input };
+  const claim = input.claim;
+  if (claim === null || claim.state === 'none') return { reason: 'stale_claim' };
+  if (!claimAnchoredToCurrentWindow(input)) return { reason: 'stale_claim' };
+  if (claim.configRevision !== input.configRevision) return { reason: 'stale_claim' };
+  if (claim.ownerToken !== input.callerToken) return { reason: 'claim_held' };
+  return { value: input };
 }
 
-export function applyPendingDeliveryGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  return ctx.actor?.pendingOtherAcceptedDelivery
-    ? decided(ctx, { action: 'none', reason: 'delivery_pending' })
-    : ctx;
+export function gateActorWakeable(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  const actor = input.actor;
+  if (actor === null) return { reason: 'actor_inactive' };
+  if (actor.agentStatus !== 'active') return { reason: 'actor_inactive' };
+  if (!actor.spaceWakeable) return { reason: 'actor_inactive' };
+  return { value: input };
 }
 
-export function applyClaimHeldGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const claim = ctx.claim;
-  if (claim === null || claim.state === 'none') return ctx;
-  if (!claimAnchoredToCurrentWindow(ctx)) return ctx;
-  if (claim.configRevision !== ctx.configRevision) return ctx;
-  if (claim.ownerToken === ctx.callerToken) return ctx;
-  return decided(ctx, { action: 'none', reason: 'claim_held' });
+export function gateSessionIdle(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  return input.actor?.busyWithOtherWork ? { reason: 'session_busy' } : { value: input };
 }
 
-export function applyNotDueGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const actor = ctx.actor;
-  if (actor === null) return decided(ctx, { action: 'none', reason: 'not_due' });
-  const idleForMs = ctx.now - actor.lastActivityAt;
-  if (idleForMs < (ctx.thresholdMs ?? Infinity)) {
-    return decided(ctx, { action: 'none', reason: 'not_due' });
-  }
-  return ctx;
+export function gateDeliverySettled(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  return input.actor?.pendingOtherAcceptedDelivery
+    ? { reason: 'delivery_pending' }
+    : { value: input };
 }
 
-export function applyNagGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  const actor = ctx.actor;
-  if (actor === null) return decided(ctx, { action: 'none', reason: 'actor_inactive' });
-  const attemptGeneration = ctx.claim?.attemptGeneration ?? 0;
+export function gateClaimNotHeld(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  const claim = input.claim;
+  if (claim === null || claim.state === 'none') return { value: input };
+  if (!claimAnchoredToCurrentWindow(input)) return { value: input };
+  if (claim.configRevision !== input.configRevision) return { value: input };
+  if (claim.ownerToken === input.callerToken) return { value: input };
+  return { reason: 'claim_held' };
+}
+
+export function gateActorDue(
+  input: InactivityWatchdogInput
+): { value: InactivityWatchdogInput } | { reason: InactivityWatchdogSkipReason } {
+  const actor = input.actor;
+  if (actor === null) return { reason: 'not_due' };
+  const idleForMs = input.now - actor.lastActivityAt;
+  if (idleForMs < (input.thresholdMs ?? Infinity)) return { reason: 'not_due' };
+  return { value: input };
+}
+
+export function buildInactivityNag(
+  input: InactivityWatchdogInput
+): { value: InactivityNagDecision } | { reason: InactivityWatchdogSkipReason } {
+  const actor = input.actor;
+  if (actor === null) return { reason: 'actor_inactive' };
+  const attemptGeneration = input.claim?.attemptGeneration ?? 0;
   const windowAnchoredAt = actor.lastActivityAt;
-  return decided(ctx, {
-    action: 'nag',
-    predicateVersion: INACTIVITY_WATCHDOG_PREDICATE_VERSION,
-    windowAnchoredAt,
-    attemptGeneration,
-    claimKey: buildInactivityNagClaimKey({
-      agentId: ctx.agentId,
+  return {
+    value: {
+      action: 'nag',
+      predicateVersion: INACTIVITY_WATCHDOG_PREDICATE_VERSION,
       windowAnchoredAt,
       attemptGeneration,
-    }),
-    ownerToken: ctx.callerToken,
-    configRevision: ctx.configRevision,
-    idleForMs: ctx.now - actor.lastActivityAt,
-  });
+      claimKey: buildInactivityNagClaimKey({
+        agentId: input.agentId,
+        windowAnchoredAt,
+        attemptGeneration,
+      }),
+      ownerToken: input.callerToken,
+      configRevision: input.configRevision,
+      idleForMs: input.now - actor.lastActivityAt,
+    },
+  };
 }
 
-const inactivityWatchdogRun = decisionRun('inactivity-watchdog', [
-  applyWatchdogDisabledGate,
-  applyWatchdogUnconfiguredGate,
-  applyDegradedGate,
-  applyStaleClaimGate,
-  applyActorInactiveGate,
-  applyBusySessionGate,
-  applyPendingDeliveryGate,
-  applyClaimHeldGate,
-  applyNotDueGate,
-  applyNagGate,
-]);
+export const runInactivityWatchdog = (superpipe({})('inactivity-watchdog') as PipelineAPI)
+  .input(['input'])
+  .pipe(gateWatchdogEnabled, 'input', 'result:admission')
+  .pipe(gateWatchdogConfigured, 'admission', 'result:admission')
+  .pipe(gateClaimNotDegraded, 'admission', 'result:admission')
+  .pipe(gateClaimCurrent, 'admission', 'result:admission')
+  .pipe(gateActorWakeable, 'admission', 'result:admission')
+  .pipe(gateSessionIdle, 'admission', 'result:admission')
+  .pipe(gateDeliverySettled, 'admission', 'result:admission')
+  .pipe(gateClaimNotHeld, 'admission', 'result:admission')
+  .pipe(gateActorDue, 'admission', 'result:admission')
+  .pipe(buildInactivityNag, 'admission', 'result:admission')
+  .end('admission') as (
+  input: InactivityWatchdogInput
+) => InactivityNagDecision | InactivityWatchdogSkipReason;
+
+export function inactivityWatchdogOutcome(
+  outcome: InactivityNagDecision | InactivityWatchdogSkipReason
+): InactivityNagDecision {
+  return typeof outcome === 'string' ? { action: 'none', reason: outcome } : outcome;
+}
 
 export function decideInactivityNag(input: InactivityWatchdogInput): InactivityNagDecision {
-  const ctx = inactivityWatchdogRun(input);
-  return ctx.decision ?? { action: 'none', reason: 'not_due' };
+  return inactivityWatchdogOutcome(runInactivityWatchdog(input));
 }
-
 export type InactivityNagDeliveryStage =
   | 'pre_admission_failure'
   | 'accepted'
