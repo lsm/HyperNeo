@@ -1,4 +1,4 @@
-import { decisionRun } from '../../lib/space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const ROOM_SESSION_PREFIXES = [
@@ -89,72 +89,75 @@ export type MessageSearchAdmissionDecision =
 
 export type MessageSearchAdmissionFact = boolean | (() => boolean);
 
-export interface MessageSearchAdmissionCtx {
+export interface MessageSearchAdmissionInput {
   messageType: string;
   body: string;
   now: number;
   eligibility: MessageSearchEligibilityRow;
   isSuperseded: MessageSearchAdmissionFact;
   isSearchableUserStatus: MessageSearchAdmissionFact;
-  decision: MessageSearchAdmissionDecision | null;
 }
 
-export type MessageSearchAdmissionInput = Omit<MessageSearchAdmissionCtx, 'decision'>;
-
-function decided(
-  ctx: MessageSearchAdmissionCtx,
-  decision: MessageSearchAdmissionDecision
-): MessageSearchAdmissionCtx {
-  return { ...ctx, decision };
-}
-
-function readAdmissionFact(value: MessageSearchAdmissionFact): boolean {
+export function readAdmissionFact(value: MessageSearchAdmissionFact): boolean {
   return typeof value === 'function' ? value() : value;
 }
 
-export function applySupersededGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return readAdmissionFact(ctx.isSuperseded)
-    ? decided(ctx, { action: 'skip', reason: 'superseded' })
-    : ctx;
+export function gateSuperseded(
+  input: MessageSearchAdmissionInput
+): { value: MessageSearchAdmissionInput } | { reason: MessageSearchSkipReason } {
+  return readAdmissionFact(input.isSuperseded) ? { reason: 'superseded' } : { value: input };
 }
 
-export function applySearchableTypeGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return SEARCHABLE_MESSAGE_TYPE_SET.has(ctx.messageType)
-    ? ctx
-    : decided(ctx, { action: 'skip', reason: 'non_searchable_type' });
+export function gateSearchableType(
+  input: MessageSearchAdmissionInput
+): { value: MessageSearchAdmissionInput } | { reason: MessageSearchSkipReason } {
+  return SEARCHABLE_MESSAGE_TYPE_SET.has(input.messageType)
+    ? { value: input }
+    : { reason: 'non_searchable_type' };
 }
 
-export function applyEligibilityGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return isMessageSearchIndexEligible(ctx.eligibility, ctx.now)
-    ? ctx
-    : decided(ctx, { action: 'skip', reason: 'ineligible' });
+export function gateEligible(
+  input: MessageSearchAdmissionInput
+): { value: MessageSearchAdmissionInput } | { reason: MessageSearchSkipReason } {
+  return isMessageSearchIndexEligible(input.eligibility, input.now)
+    ? { value: input }
+    : { reason: 'ineligible' };
 }
 
-export function applyBodyNonemptyGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return ctx.body.length > 0 ? ctx : decided(ctx, { action: 'skip', reason: 'empty_body' });
+export function gateBodyNonempty(
+  input: MessageSearchAdmissionInput
+): { value: MessageSearchAdmissionInput } | { reason: MessageSearchSkipReason } {
+  return input.body.length > 0 ? { value: input } : { reason: 'empty_body' };
 }
 
-export function applyUserStatusGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return ctx.messageType === 'user' && !readAdmissionFact(ctx.isSearchableUserStatus)
-    ? decided(ctx, { action: 'skip', reason: 'user_status_not_searchable' })
-    : ctx;
+export function gateUserStatusSearchable(
+  input: MessageSearchAdmissionInput
+): { value: MessageSearchAdmissionInput } | { reason: MessageSearchSkipReason } {
+  if (input.messageType !== 'user') return { value: input };
+  return readAdmissionFact(input.isSearchableUserStatus)
+    ? { value: input }
+    : { reason: 'user_status_not_searchable' };
 }
 
-export function applyIndexGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return decided(ctx, { action: 'index' });
-}
+export const runMessageSearchAdmission = (superpipe({})('message-search-admission') as PipelineAPI)
+  .input(['input'])
+  .pipe(gateSuperseded, 'input', 'result:admission')
+  .pipe(gateSearchableType, 'admission', 'result:admission')
+  .pipe(gateEligible, 'admission', 'result:admission')
+  .pipe(gateBodyNonempty, 'admission', 'result:admission')
+  .pipe(gateUserStatusSearchable, 'admission', 'result:admission')
+  .end('admission') as (
+  input: MessageSearchAdmissionInput
+) => MessageSearchAdmissionInput | MessageSearchSkipReason;
 
-const messageSearchAdmissionRun = decisionRun('message-search-admission', [
-  applySupersededGate,
-  applySearchableTypeGate,
-  applyEligibilityGate,
-  applyBodyNonemptyGate,
-  applyUserStatusGate,
-  applyIndexGate,
-]);
+export function messageSearchAdmissionOutcome(
+  outcome: MessageSearchAdmissionInput | MessageSearchSkipReason
+): MessageSearchAdmissionDecision {
+  return typeof outcome === 'string' ? { action: 'skip', reason: outcome } : { action: 'index' };
+}
 
 export function decideMessageSearchAdmission(
   input: MessageSearchAdmissionInput
 ): MessageSearchAdmissionDecision {
-  return messageSearchAdmissionRun(input).decision ?? { action: 'index' };
+  return messageSearchAdmissionOutcome(runMessageSearchAdmission(input));
 }
