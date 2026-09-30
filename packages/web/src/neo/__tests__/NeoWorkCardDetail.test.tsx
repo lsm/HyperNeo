@@ -175,33 +175,28 @@ describe('NeoWorkCard detail opening', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it.each(['anchorNode', 'focusNode'] as const)(
-    'skips when the selection %s is inside the card but opens when the selection is elsewhere',
-    (endpoint) => {
-      const open = vi.fn();
-      const { card } = show(work('p', 'proposed'), open);
-      const label = within(card).getByText('Your call');
-      const outside = document.createElement('p');
-      outside.textContent = 'chosen elsewhere';
-      document.body.append(outside);
-      const pick = (node: Text) => {
-        const range = document.createRange();
-        range.setStart(node, 0);
-        range.setEnd(node, Math.min(4, node.length));
-        return range;
-      };
-      const selection = document.getSelection()!;
-      expect(typeof selection[endpoint]).toBe('object');
-      selection.removeAllRanges();
-      selection.addRange(pick(outside.firstChild as Text));
-      fireEvent.click(label);
-      expect(open).toHaveBeenCalledWith('p');
-      open.mockClear();
-      selection.removeAllRanges();
-      selection.addRange(pick(label.firstChild as Text));
-      fireEvent.click(label);
-      expect(open).not.toHaveBeenCalled();
-      outside.remove();
-    }
-  );
+  it.each([
+    ['both endpoints elsewhere', 'out', 'out', true],
+    ['anchor outside and focus inside', 'out', 'in', false],
+    ['anchor inside and focus outside', 'in', 'out', false],
+  ] as const)('honours a selection with %s', (_name, anchorIn, focusIn, opens) => {
+    const open = vi.fn();
+    const { card } = show(work('p', 'proposed'), open);
+    const label = within(card).getByText('Your call');
+    const outside = document.createElement('p');
+    outside.textContent = 'chosen elsewhere';
+    document.body.append(outside);
+    const selection = document.getSelection()!;
+    const at = (where: 'in' | 'out') => (where === 'in' ? label : outside).firstChild as Text;
+    selection.removeAllRanges();
+    selection.collapse(at(anchorIn), 0);
+    selection.extend(at(focusIn), Math.min(4, at(focusIn).length));
+    const side = (node: Node | null) => (node && card.contains(node) ? 'in' : 'out');
+    const owned = [side(selection.anchorNode), side(selection.focusNode)];
+    expect([owned, selection.isCollapsed]).toEqual([[anchorIn, focusIn], false]);
+    fireEvent.click(label);
+    expect(open).toHaveBeenCalledTimes(opens ? 1 : 0);
+    selection.removeAllRanges();
+    outside.remove();
+  });
 });

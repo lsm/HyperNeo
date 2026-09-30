@@ -228,7 +228,6 @@ describe('NeoLive work scene detail', () => {
     expect(within(detail()).queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(within(detail()).queryByRole('button', { name: 'Title a-reported' })).toBeNull();
   });
-
   it('keeps the grouped list order and counts unchanged across a round trip', () => {
     renderLive();
     const before = {
@@ -249,7 +248,6 @@ describe('NeoLive work scene detail', () => {
       outcomes: cards('Recent outcomes'),
     }).toEqual(before);
   });
-
   it('keeps the same ref visible in the board yet never shows a stale detail', () => {
     const { state } = renderLive();
     set(state, { selectedId: 'a' });
@@ -262,7 +260,6 @@ describe('NeoLive work scene detail', () => {
     expect(cards('Needs your attention')).toContain('Title a-proposed');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
   });
-
   it('makes a pending session unselectable and survives rapid committed scope changes', () => {
     const { state } = renderLive();
     set(state, { sessionId: null });
@@ -277,7 +274,6 @@ describe('NeoLive work scene detail', () => {
     expect(cards('Needs your attention')).toContain('Title a-proposed');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
   });
-
   it('closes honestly when the scene leaves the board and does not auto-reopen', () => {
     const { state } = renderLive();
     const view = snapshot(base());
@@ -290,7 +286,6 @@ describe('NeoLive work scene detail', () => {
     set(state, { viewSnapshot: null });
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
   });
-
   it('keeps the selected scene when a newer same-scope receipt arrives', () => {
     const { state } = renderLive();
     openScene('a-reported');
@@ -298,7 +293,6 @@ describe('NeoLive work scene detail', () => {
     set(state, { snapshot: newer, viewSnapshot: newer });
     expect(detailCards()).toEqual(['Title a-reported']);
   });
-
   it('preserves the scoped work correlation and the composer draft around detail', () => {
     const { state } = renderLive();
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'keep me' } });
@@ -345,12 +339,16 @@ describe('NeoLive work scene detail', () => {
   it('keeps composer focus when a queued scene settles to reported under the same id', () => {
     const { state } = renderLive();
     const draft = screen.getByLabelText('Draft');
+    openScene('a-queued');
+    expect(detail()).toBeTruthy();
     draft.focus();
+    expect(document.activeElement).toBe(draft);
     const settled = snapshot(
       base().map((item) => (item.id === 'a-queued' ? work('a-queued', 'reported', 30) : item))
     );
     set(state, { snapshot: settled, viewSnapshot: settled });
-    expect(cards('Recent outcomes')).toContain('Title a-queued');
+    expect(detailCards()).toEqual(['Title a-queued']);
+    expect(detail().textContent).toContain('Response ready');
     expect(document.activeElement).toBe(draft);
   });
 
@@ -362,10 +360,12 @@ describe('NeoLive work scene detail', () => {
     expect(document.activeElement?.textContent).toContain('Back to scenes');
     fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Title a-proposed' }));
+    fireEvent.click(opener);
+    expect(document.activeElement?.textContent).toContain('Back to scenes');
     set(state, { sessionId: 'holder' });
+    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(document.activeElement?.textContent).not.toContain('Back to scenes');
   });
-
   it('does not restore focus when Back commits together with a scope change', () => {
     const { state } = renderLive();
     fireEvent.click(screen.getByRole('button', { name: 'Title a-queued' }));
