@@ -4,6 +4,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
 import { createReturnSessionCloneOperation } from '../../session/clone-return-operation.ts';
 import { createSessionOperations } from '../../session/operations.ts';
+import { createSessionRuntimeSettingsReadOperations } from '../../session/runtime-settings-read-operation.ts';
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -56,6 +57,14 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
   return [
     spawn,
     returnToParent,
+    ...createSessionRuntimeSettingsReadOperations({
+      getLiveSession: (sessionId) =>
+        context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
+        context.deps.sessionManager.getCachedSession(sessionId) ??
+        null,
+      getSession: scopeDeps.getSession,
+      sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
+    }),
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),
       getLiveSession: (sessionId) =>
