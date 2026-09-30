@@ -46,7 +46,7 @@ describe('accepted public ask notification', () => {
   let sdk: SDKMessageRepository;
   let jobs: JobQueueRepository;
   let ledger: NeoConversationAskRepository;
-  let observed: string[][];
+  let observed: number[][];
   let notify: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
