@@ -17,6 +17,7 @@ import { createNeoTables } from './neo.ts';
 import { createNeoWorkResourceTable } from './m287-neo-work-resources.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createNeoConversationAskTable } from './m289-neo-conversation-asks.ts';
+import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
 import { createSessionIncarnationTable } from './m290-session-incarnations.ts';
 import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
@@ -162,6 +163,7 @@ export function createTables(db: BunDatabase): void {
   createNeoWorkResourceTable(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
+  createNeoConsultationPublicationTable(db);
   db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
