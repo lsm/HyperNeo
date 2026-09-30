@@ -15,6 +15,7 @@ import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
 import { createNeoTables } from './neo.ts';
 import { createNeoWorkResourceTable } from './m287-neo-work-resources.ts';
+import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
@@ -157,6 +158,7 @@ export { runMigration186 } from './migrations.ts';
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);
   createNeoWorkResourceTable(db);
+  createNeoPublicationTable(db);
   db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
