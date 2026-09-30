@@ -28,9 +28,14 @@ import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consult
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
+import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
-const root: NeoBinding = { sessionId: 'root', concernId: null, kind: 'neo' };
+const root: NeoBinding = {
+  sessionId: 'neo:10000000-0000-4000-8000-000000000001',
+  concernId: null,
+  kind: 'neo',
+};
 const holder: NeoBinding = { sessionId: 'holder:a', concernId: 'a', kind: 'concern' };
 const ask: NeoAskOrigin = { sessionId: root.sessionId, messageId: 'human:1' };
 const consultation: NeoConsultation = {
@@ -402,6 +407,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration282(mailbox.db);
     runMigration283(mailbox.db);
     runMigration285(mailbox.db);
+    runMigration289(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
