@@ -13,6 +13,13 @@ function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
 }
 
+export function sessionConfigReplacer(key: string, value: unknown): unknown {
+  if (key === 'mcpServers') return undefined;
+  if (key === 'workerOperations') return undefined;
+  if (typeof value === 'function') return undefined;
+  return value;
+}
+
 export class SessionRepository {
   constructor(private db: BunDatabase) {}
 
@@ -75,12 +82,7 @@ export class SessionRepository {
       session.createdAt,
       session.lastActiveAt,
       session.status,
-      JSON.stringify(session.config, (key, val) => {
-        if (key === 'mcpServers') return undefined;
-        if (key === 'workerOperations') return undefined;
-        if (typeof val === 'function') return undefined;
-        return val;
-      }),
+      JSON.stringify(session.config, sessionConfigReplacer),
       JSON.stringify(session.metadata),
       session.worktree?.isWorktree ? 1 : 0,
       session.worktree?.worktreePath ?? null,
@@ -219,12 +221,7 @@ export class SessionRepository {
       const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
       let serializedConfig: string;
       try {
-        serializedConfig = JSON.stringify(mergedConfig, (key, val) => {
-          if (key === 'mcpServers') return undefined;
-          if (key === 'workerOperations') return undefined;
-          if (typeof val === 'function') return undefined;
-          return val;
-        });
+        serializedConfig = JSON.stringify(mergedConfig, sessionConfigReplacer);
       } catch (err) {
         throw new Error(
           `updateSession: failed to serialize config for session "${id}": ${err instanceof Error ? err.message : String(err)}`
