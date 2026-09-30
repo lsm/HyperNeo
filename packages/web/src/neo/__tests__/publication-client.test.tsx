@@ -264,7 +264,7 @@ function Probe() {
   );
 }
 describe('useNeo client build reachability', () => {
-  it('exposes the real reusable reader without automatically changing current reads or UI', async () => {
+  it('retains the reusable reader while the consumer starts bounded publication reads', async () => {
     hookRequest.mockResolvedValue({
       ok: true,
       sessionId: `neo:${conversationId}`,
@@ -273,8 +273,10 @@ describe('useNeo client build reachability', () => {
     });
     render(<Probe />);
     await waitFor(() => expect(hookRequest).toHaveBeenCalled());
-    expect(hookRequest.mock.calls.some((call) => call[1]?.name === 'neo.publication.read')).toBe(
-      false
+    await waitFor(() =>
+      expect(hookRequest.mock.calls.some((call) => call[1]?.name === 'neo.publication.read')).toBe(
+        true
+      )
     );
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Read publications' }));
