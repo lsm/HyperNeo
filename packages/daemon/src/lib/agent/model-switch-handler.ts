@@ -23,10 +23,42 @@ import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
 import type { QueryLike } from './query-like.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoCoordinatorBinding, neoCoordinatorRuntimePath } from '../neo/session-policy.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
+type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
+
+export function gateSwitchIdle(guarded: boolean, busy: boolean) {
+  return guarded && busy ? { reason: 'session_busy' as const } : { value: true as const };
+}
+
+export function gateSwitchPair(guarded: boolean, expected: ModelPair, current: ModelPair) {
+  return guarded && (expected.model !== current.model || expected.provider !== current.provider)
+    ? { reason: 'session_settings_changed' as const }
+    : { value: true as const };
+}
+
+export function gateSwitchTurn(guarded: boolean, expected?: number, current?: number) {
+  return guarded && (expected === undefined || expected !== current)
+    ? { reason: 'session_turn_changed' as const }
+    : { value: true as const };
+}
+
+const admitNonInterruptingSwitch = (superpipe({})('non-interrupting-model-switch') as PipelineAPI)
+  .input(['guarded', 'busy', 'expected', 'current', 'generation', 'currentGeneration'])
+  .pipe(gateSwitchIdle, ['guarded', 'busy'], 'result:admission')
+  .pipe(gateSwitchPair, ['guarded', 'expected', 'current'], 'result:admission')
+  .pipe(gateSwitchTurn, ['guarded', 'generation', 'currentGeneration'], 'result:admission')
+  .end('admission') as (
+  guarded: boolean,
+  busy: boolean,
+  expected: ModelPair,
+  current: ModelPair,
+  generation?: number,
+  currentGeneration?: number
+) => true | 'session_busy' | 'session_settings_changed' | 'session_turn_changed';
 
 function preserveK3OneMSuffix(requestedModel: string, resolvedModel: string): string {
   if (
@@ -54,6 +86,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
+  getQueryGeneration?(): number;
   reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 }
 
@@ -134,7 +167,11 @@ export class ModelSwitchHandler {
     }
   }
 
-  async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
+  async switchModel(
+    newModel: string,
+    newProvider: string,
+    nonInterrupting = false
+  ): Promise<ModelSwitchResult> {
     const {
       session,
       db,
@@ -148,6 +185,9 @@ export class ModelSwitchHandler {
 
     const previousModel = session.config.model;
     const originalProvider = session.config.provider;
+    const originalPair = { model: previousModel, provider: originalProvider };
+    const generation = this.ctx.getQueryGeneration?.();
+    let appliedPair: ModelPair | null = null;
     const previousProvider =
       originalProvider ?? (previousModel ? inferProviderForModel(previousModel) : undefined);
     const previousAcpSessionId = session.acpSessionId;
@@ -197,10 +237,21 @@ export class ModelSwitchHandler {
         return { success: false, model: session.config.model, error: errMsg };
       }
 
+      const admission = admitNonInterruptingSwitch(
+        nonInterrupting,
+        this.isQueryActiveOrStarting(),
+        originalPair,
+        session.config,
+        generation,
+        this.ctx.getQueryGeneration?.()
+      );
+      if (admission !== true)
+        return { success: false, model: session.config.model, error: admission };
       const nextProvider = newProviderInstance.id as Provider;
       const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
       const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
 
+      appliedPair = { model: resolvedModel, provider: nextProvider };
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
@@ -227,6 +278,8 @@ export class ModelSwitchHandler {
 
         contextTracker.setModel(resolvedModel);
 
+        if (nonInterrupting)
+          this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
         const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         await internalEventBus.publish('session.updated', {
           sessionId: session.id,
@@ -234,7 +287,8 @@ export class ModelSwitchHandler {
           session: { config: session.config },
         });
 
-        this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
+        if (!nonInterrupting)
+          this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (reevaluation) {
           try {
@@ -310,6 +364,20 @@ export class ModelSwitchHandler {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
+
+      if (
+        nonInterrupting &&
+        (!appliedPair ||
+          admitNonInterruptingSwitch(
+            true,
+            this.isQueryActiveOrStarting(),
+            appliedPair,
+            session.config,
+            generation,
+            this.ctx.getQueryGeneration?.()
+          ) !== true)
+      )
+        return { success: false, model: session.config.model, error: errorMessage };
 
       session.config.model = previousModel;
       session.config.provider = originalProvider;
