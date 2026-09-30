@@ -12,7 +12,7 @@ import { NeoConcerns } from './NeoConcerns.tsx';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { type NeoScene, projectNeoScenes } from './neo-scenes.ts';
+import { type NeoScene, type NeoSceneRef, projectNeoScenes, selectNeoScene } from './neo-scenes.ts';
 import './neo.css';
 
 export function NeoLive() {
@@ -48,6 +48,22 @@ export function NeoLive() {
     ),
   }));
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+  const [sceneSelection, setSceneSelection] = useState<{
+    scope: string;
+    ref: NeoSceneRef;
+  } | null>(null);
+  const sceneScope =
+    neo.sessionId === null ? null : JSON.stringify([neo.sessionId, neo.selectedId]);
+  const picked =
+    sceneSelection && sceneScope === sceneSelection.scope
+      ? selectNeoScene(scenes, sceneSelection.ref)
+      : null;
+  const detail = picked && 'value' in picked ? picked.value : null;
+  const detailWork = detail?.receipt.kind === 'work' ? detail.receipt : null;
+  const detailLive = detail !== null;
+  useLayoutEffect(() => {
+    if (sceneSelection && (!sceneScope || !detailLive)) setSceneSelection(null);
+  }, [sceneSelection, sceneScope, detailLive]);
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -125,6 +141,15 @@ export function NeoLive() {
     nearBottom.current = true;
     lastScrollTop.current = 0;
     void neo.open(id);
+  }
+
+  function openScene(ref: NeoSceneRef) {
+    if (!sceneScope) return;
+    setSceneSelection({ scope: sceneScope, ref });
+  }
+
+  function closeScene() {
+    setSceneSelection(null);
   }
 
   return (
@@ -331,27 +356,49 @@ export function NeoLive() {
               </p>
             </div>
           )}
-          {sceneGroups.map((group) =>
-            group.scenes.length === 0 ? null : (
-              <section
-                key={group.key}
-                aria-label={group.label}
-                class="mt-6 space-y-3"
-                data-scene-group={group.key}
+          {detailWork ? (
+            <section aria-label="Selected work" class="mt-6 space-y-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={closeScene}
+                icon={<NeoIcon name="back" />}
+                aria-label="Back to scenes"
               >
-                <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} · {group.scenes.length}
-                </h2>
-                {group.scenes.map((scene) => (
-                  <NeoWorkCard
-                    key={scene.ref.id}
-                    work={scene.receipt}
-                    busy={neo.busyWork === scene.ref.id}
-                    disabled={!connected || !!neo.busyWork}
-                    onAction={(id, action) => void neo.act(id, action)}
-                  />
-                ))}
-              </section>
+                Back to scenes
+              </Button>
+              <NeoWorkCard
+                key={sceneSelection?.ref.id}
+                work={detailWork}
+                busy={neo.busyWork === detailWork.id}
+                disabled={!connected || !!neo.busyWork}
+                onAction={(id, action) => void neo.act(id, action)}
+              />
+            </section>
+          ) : (
+            sceneGroups.map((group) =>
+              group.scenes.length === 0 ? null : (
+                <section
+                  key={group.key}
+                  aria-label={group.label}
+                  class="mt-6 space-y-3"
+                  data-scene-group={group.key}
+                >
+                  <h2 class="text-xs font-medium text-fg-muted">
+                    {group.label} · {group.scenes.length}
+                  </h2>
+                  {group.scenes.map((scene) => (
+                    <NeoWorkCard
+                      key={scene.ref.id}
+                      work={scene.receipt}
+                      busy={neo.busyWork === scene.ref.id}
+                      disabled={!connected || !!neo.busyWork}
+                      onAction={(id, action) => void neo.act(id, action)}
+                      onOpen={() => openScene(scene.ref)}
+                    />
+                  ))}
+                </section>
+              )
             )
           )}
         </div>
