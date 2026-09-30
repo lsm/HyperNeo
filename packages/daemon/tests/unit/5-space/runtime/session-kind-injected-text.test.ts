@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space, SpaceWorkflow } from '@hyperneo/shared';
-import type { McpServer } from '@hyperneo/shared/sdk';
+import type { McpServer, McpServerConfig } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,
@@ -29,6 +29,12 @@ import type {
 } from '../../../../src/lib/briefings/contribution.ts';
 import { spaceScopeContribution } from '../../../../src/lib/space/runtime/space-scope-contribution.ts';
 import { createSpaceScopeResolver } from '../../../../src/lib/space/runtime/space-scope-resolver.ts';
+import {
+  isBuiltInMcpServer,
+  isBuiltInMcpServerName,
+  OPERATIONS_MCP_SERVER_NAME,
+  reservedMcpRenameSource,
+} from '../../../../src/lib/mcp/built-in-servers.ts';
 import { AgentMemoryRepository } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -163,7 +169,12 @@ function workerAgent() {
 
 function makeRecordingAgentSession(session: Session): AgentSession {
   return {
-    mergeRuntimeMcpServers: () => {},
+    mergeRuntimeMcpServers: (servers: Record<string, McpServerConfig>) => {
+      session.config = {
+        ...session.config,
+        mcpServers: { ...(session.config?.mcpServers ?? {}), ...servers },
+      };
+    },
     setRuntimeMcpServers: () => {},
     setOperationRegistryProvider: () => {},
     ensureOperationRegistryProvider: () => {},
@@ -326,7 +337,8 @@ describe('session kind injected text', () => {
 
   function makeBuilderContext(
     session: Session,
-    briefing: string | undefined
+    briefing: string | undefined,
+    operationMcpServer?: unknown
   ): QueryOptionsBuilderContext {
     return {
       session,
@@ -335,7 +347,8 @@ describe('session kind injected text', () => {
         prepareSDKOptions: async () => ({}),
       } as unknown as SettingsManager,
       getSpaceBriefing: () => briefing,
-    };
+      ...(operationMcpServer ? { getOperationMcpServer: () => operationMcpServer } : {}),
+    } as QueryOptionsBuilderContext;
   }
 
   describe('spaceScopeContribution', () => {
@@ -661,6 +674,90 @@ describe('session kind injected text', () => {
       expect(append.indexOf(CARD_AGENT_INSTRUCTIONS)).toBeLessThan(append.indexOf('## Your Space'));
       expect(append.indexOf('Goal Ownership & Outcome Review Contract')).toBeLessThan(
         append.indexOf('mcp__hyperneo-operations__invoke')
+      );
+    });
+  });
+
+  describe('ADR 0007 briefing contract', () => {
+    test('clause (a): the attached servers and the contributed servers are equal in both directions', async () => {
+      const mismatches: string[] = [];
+      for (const kind of SESSION_KINDS) {
+        const session = makeSessionOfKind(kind);
+        seedCreationConfig(kind, session);
+        const recorded = makeCapabilityRecordingAgentSession(session);
+        const service = buildService(kind, recorded.agentSession);
+        await service.reattachMemberSpaceTools(session.id);
+
+        const contributed = new Set([
+          OPERATIONS_CONTRIBUTION.server.name,
+          ...recorded.capabilities.map((entry) => entry.server.name),
+        ]);
+        const options = await new QueryOptionsBuilder(
+          makeBuilderContext(
+            session,
+            briefingFor(kind, session, recorded.capabilities),
+            OPERATIONS_CONTRIBUTION.server.config
+          )
+        ).build();
+        const attached = new Set(Object.keys(options.mcpServers ?? {}));
+
+        for (const name of contributed) {
+          if (!attached.has(name)) {
+            mismatches.push(
+              `${kind}: "${name}" is a capability contribution but absent from queryOptions.mcpServers`
+            );
+          }
+        }
+        for (const name of attached) {
+          if (!contributed.has(name)) {
+            mismatches.push(
+              `${kind}: "${name}" is in queryOptions.mcpServers but has no capability contribution`
+            );
+          }
+        }
+      }
+
+      expect(mismatches).toEqual([]);
+    });
+
+    test('clause (b): a first-party attachment contributes non-empty authored doctrine', async () => {
+      const violations: string[] = [];
+      for (const kind of SESSION_KINDS) {
+        const session = makeSessionOfKind(kind);
+        seedCreationConfig(kind, session);
+        const recorded = makeCapabilityRecordingAgentSession(session);
+        const service = buildService(kind, recorded.agentSession);
+        await service.reattachMemberSpaceTools(session.id);
+
+        for (const entry of recorded.capabilities) {
+          const config = entry.server.config as { type?: string; instance?: unknown };
+          if (!isBuiltInMcpServer(entry.server.name, config)) {
+            violations.push(`${kind}: "${entry.server.name}" is not first-party but contributed`);
+            continue;
+          }
+          if (entry.briefing.trim().length === 0) {
+            violations.push(`${kind}: "${entry.server.name}" contributed no doctrine`);
+          }
+        }
+      }
+
+      expect(violations).toEqual([]);
+    });
+
+    test('clause (b): a third-party attachment is self-describing, never authored prose', () => {
+      const thirdParty = { command: 'bun', args: ['x'] };
+
+      expect(isBuiltInMcpServer('fetch-mcp', thirdParty)).toBe(false);
+      expect(isBuiltInMcpServerName('fetch-mcp')).toBe(false);
+    });
+
+    test('clause (c): a foreign row cannot hold a first-party name', () => {
+      const foreignRow = { command: 'bun', args: ['evil'] };
+
+      expect(isBuiltInMcpServerName(OPERATIONS_MCP_SERVER_NAME)).toBe(true);
+      expect(isBuiltInMcpServer(OPERATIONS_MCP_SERVER_NAME, foreignRow)).toBe(false);
+      expect(reservedMcpRenameSource(`${OPERATIONS_MCP_SERVER_NAME}-2`)).toBe(
+        OPERATIONS_MCP_SERVER_NAME
       );
     });
   });
