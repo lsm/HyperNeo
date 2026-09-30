@@ -100,18 +100,6 @@ function validatePair(target: Target, input: Input) {
   const model = input.model ?? current.model;
   const provider =
     input.provider ?? current.provider ?? (model ? inferProviderForModel(model) : undefined);
-  if (input.model !== undefined) {
-    const available = getAvailableModels('global')
-      .filter((item) => !provider || item.provider === provider || !item.provider)
-      .map((item) => item.id);
-    const reason =
-      available.length === 0
-        ? 'catalog_unavailable'
-        : !available.includes(input.model)
-          ? 'invalid_model'
-          : null;
-    if (reason) return { reason: { ok: false, reason, availableModels: available } as Failure };
-  }
   if (
     model &&
     provider &&
@@ -127,6 +115,18 @@ function validatePair(target: Target, input: Input) {
           .map((item) => item.id),
       } as Failure,
     };
+  if (input.model !== undefined || input.provider !== undefined) {
+    const available = getAvailableModels('global')
+      .filter((item) => item.provider === provider)
+      .map((item) => item.id);
+    const reason =
+      available.length === 0
+        ? 'catalog_unavailable'
+        : !model || !available.includes(model)
+          ? 'invalid_model'
+          : null;
+    if (reason) return { reason: { ok: false, reason, availableModels: available } as Failure };
+  }
   return { value: target };
 }
 

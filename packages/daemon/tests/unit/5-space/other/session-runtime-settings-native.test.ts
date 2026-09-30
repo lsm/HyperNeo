@@ -12,11 +12,17 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { createTestSession } from '../../../helpers/database.ts';
 
-const models = vi.hoisted(() => ({ valid: vi.fn(async () => true) }));
+const models = vi.hoisted(() => ({
+  valid: vi.fn(async () => true),
+  catalog: vi.fn(() => [
+    { id: 'new-model', provider: 'anthropic' },
+    { id: 'old-model', provider: 'acp' },
+  ]),
+}));
 vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
   ...(await original<typeof import('../../../../src/lib/model-service.ts')>()),
   isValidModel: models.valid,
-  getAvailableModels: () => [{ id: 'new-model', provider: 'anthropic' }],
+  getAvailableModels: models.catalog,
   getModelInfo: async (model: string) => ({ id: model }),
   resolveModelAlias: async (model: string) => model,
   isCuratedOutModel: () => false,
@@ -40,6 +46,10 @@ describe('session.runtimeSettings.update native boundary', () => {
     session.processingState = JSON.stringify({ status: 'idle' });
     repo.createSession(session);
     models.valid.mockReset().mockResolvedValue(true);
+    models.catalog.mockReset().mockReturnValue([
+      { id: 'new-model', provider: 'anthropic' },
+      { id: 'old-model', provider: 'acp' },
+    ]);
   });
   afterEach(() => db.close());
   function row() {
@@ -225,6 +235,25 @@ describe('session.runtimeSettings.update native boundary', () => {
     });
     expect(f.cas).toHaveBeenCalledTimes(1);
     expect(f.restart).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { catalog: [], reason: 'catalog_unavailable' },
+    { catalog: [{ id: 'old-model', provider: 'anthropic' }], reason: 'catalog_unavailable' },
+    { catalog: [{ id: 'other-model', provider: 'openrouter' }], reason: 'invalid_model' },
+  ])('cold provider-only rejects $reason without writing any stored row', async (entry) => {
+    const f = fixture();
+    f.cold();
+    models.catalog.mockReturnValue(entry.catalog);
+    const before = row();
+    expect(await f.invoke({ provider: 'openrouter' })).toMatchObject({
+      ok: false,
+      reason: entry.reason,
+    });
+    expect(row()).toEqual(before);
+    expect(f.cas).not.toHaveBeenCalled();
+    expect(f.restart).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
   });
 
   test('a post-commit notification failure does not invent a rollback or rejection', async () => {

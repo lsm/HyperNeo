@@ -436,6 +436,7 @@ describe('session.runtimeSettings.update', () => {
 
   test('re-affirming the pair the session already runs is allowed', async () => {
     const h = harness();
+    catalog.mockReturnValue([model('claude-secret-hidden')]);
     h.sessions.set(
       'plain',
       makeSession({
