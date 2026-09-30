@@ -373,6 +373,7 @@ describe('Neo MVP', () => {
       'neo.message.send',
       'neo.publication.publish',
       'neo.publication.read',
+      'neo.conversation.asks.read',
       'neo.concern.cancel',
       'neo.concern.consult',
       'neo.concern.respond',
