@@ -339,8 +339,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).run('goal-1', 'space-1', 'Goal 1', 1, 1);
 
     expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: coordinator.id,
+      action: 'fallback',
+      fallbackAgentId: coordinator.id,
     });
 
     repo.assignGoal(coordinator.id, 'goal-1', 'owner');

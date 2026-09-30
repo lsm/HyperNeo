@@ -92,8 +92,6 @@ export interface AgentSessionInit {
 
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
 
-  coordinatorMode?: boolean;
-
   agent?: string;
 
   agents?: Record<string, import('@hyperneo/shared').AgentDefinition>;
@@ -711,7 +709,6 @@ export class AgentSession
       systemPrompt: init.systemPrompt,
       features,
       tools: type !== 'worker' ? { useClaudeCodePreset: false } : undefined,
-      coordinatorMode: init.coordinatorMode,
       agent: init.agent,
       agents: init.agents,
       sdkToolsPreset: init.sdkToolsPreset,

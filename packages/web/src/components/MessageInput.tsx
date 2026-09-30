@@ -190,9 +190,6 @@ interface MessageInputProps {
   isProcessing?: boolean;
   supportsQueueDelivery?: boolean;
   registerDropTarget?: RegisterFileDropTarget;
-  coordinatorMode?: boolean;
-  coordinatorSwitching?: boolean;
-  onCoordinatorModeChange?: (enabled: boolean) => void;
   sandboxEnabled?: boolean;
   sandboxSwitching?: boolean;
   onSandboxModeChange?: (enabled: boolean) => void;
@@ -208,9 +205,6 @@ export default function MessageInput({
   autoScroll,
   onAutoScrollChange,
   onOpenTools,
-  coordinatorMode = false,
-  coordinatorSwitching = false,
-  onCoordinatorModeChange,
   sandboxEnabled = false,
   sandboxSwitching = false,
   onSandboxModeChange,
@@ -1267,9 +1261,6 @@ export default function MessageInput({
               onAutoScrollChange={(enabled) => onAutoScrollChange?.(enabled)}
               onOpenTools={() => onOpenTools?.()}
               onAttachFile={openFilePicker}
-              coordinatorMode={coordinatorMode}
-              coordinatorSwitching={coordinatorSwitching}
-              onCoordinatorModeChange={onCoordinatorModeChange}
               sandboxEnabled={sandboxEnabled}
               sandboxSwitching={sandboxSwitching}
               onSandboxModeChange={onSandboxModeChange}

@@ -27,13 +27,6 @@ import mdagentsSystemContractsReviewerSystemContract from './agents/system-contr
   type: 'text',
 };
 import mdcommandsMergeSession from './commands/merge-session.md' with { type: 'text' };
-import mdcoordinatorCoder from './coordinator/coder.md' with { type: 'text' };
-import mdcoordinatorCoordinator from './coordinator/coordinator.md' with { type: 'text' };
-import mdcoordinatorDebugger from './coordinator/debugger.md' with { type: 'text' };
-import mdcoordinatorReviewer from './coordinator/reviewer.md' with { type: 'text' };
-import mdcoordinatorTester from './coordinator/tester.md' with { type: 'text' };
-import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
-import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
@@ -149,13 +142,6 @@ const registry: Record<string, string> = {
   'agents/system-contracts/reviewer-system-contract.md':
     mdagentsSystemContractsReviewerSystemContract,
   'commands/merge-session.md': mdcommandsMergeSession,
-  'coordinator/coder.md': mdcoordinatorCoder,
-  'coordinator/coordinator.md': mdcoordinatorCoordinator,
-  'coordinator/debugger.md': mdcoordinatorDebugger,
-  'coordinator/reviewer.md': mdcoordinatorReviewer,
-  'coordinator/tester.md': mdcoordinatorTester,
-  'coordinator/vcs.md': mdcoordinatorVcs,
-  'coordinator/verifier.md': mdcoordinatorVerifier,
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
@@ -218,13 +204,6 @@ export const {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
   MERGE_SESSION_COMMAND_PROMPT,
-  SUBAGENT_CODER_PROMPT,
-  COORDINATOR_PROMPT,
-  SUBAGENT_DEBUGGER_PROMPT,
-  SUBAGENT_REVIEWER_PROMPT,
-  SUBAGENT_TESTER_PROMPT,
-  SUBAGENT_VCS_PROMPT,
-  SUBAGENT_VERIFIER_PROMPT,
   GITHUB_ROUTER_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,

@@ -31,8 +31,6 @@ export interface ChatComposerProps {
   modelSwitching: boolean;
   modelLoading: boolean;
   autoScroll: boolean;
-  coordinatorMode: boolean;
-  coordinatorSwitching: boolean;
   sandboxEnabled: boolean;
   sandboxSwitching: boolean;
   isWaitingForInput: boolean;
@@ -40,7 +38,6 @@ export interface ChatComposerProps {
   isRecovering?: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   onAutoScrollChange: (enabled: boolean) => void;
-  onCoordinatorModeChange: (enabled: boolean) => void;
   onSandboxModeChange: (enabled: boolean) => void;
   onSend: (
     content: string,
@@ -79,8 +76,6 @@ export function ChatComposer({
   modelSwitching,
   modelLoading,
   autoScroll,
-  coordinatorMode,
-  coordinatorSwitching,
   sandboxEnabled,
   sandboxSwitching,
   isWaitingForInput,
@@ -88,7 +83,6 @@ export function ChatComposer({
   isRecovering,
   onModelSwitch,
   onAutoScrollChange,
-  onCoordinatorModeChange,
   onSandboxModeChange,
   onSend,
   onOpenTools,
@@ -138,7 +132,6 @@ export function ChatComposer({
           onAutoScrollChange={onAutoScrollChange}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
-          coordinatorSwitching={coordinatorSwitching}
           isRecovering={isRecovering}
         />
 
@@ -177,7 +170,6 @@ export function ChatComposer({
                 !isConnected ||
                 isRecovering ||
                 modelSwitching ||
-                coordinatorSwitching ||
                 sandboxSwitching
               }
               autoScroll={autoScroll}
@@ -191,9 +183,6 @@ export function ChatComposer({
               isProcessing={isProcessing}
               supportsQueueDelivery={supportsQueueDelivery}
               registerDropTarget={registerDropTarget}
-              coordinatorMode={coordinatorMode}
-              coordinatorSwitching={coordinatorSwitching}
-              onCoordinatorModeChange={onCoordinatorModeChange}
               sandboxEnabled={sandboxEnabled}
               sandboxSwitching={sandboxSwitching}
               onSandboxModeChange={onSandboxModeChange}

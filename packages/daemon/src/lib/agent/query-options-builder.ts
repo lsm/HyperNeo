@@ -6,7 +6,6 @@ import type {
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  AgentDefinition,
   AppMcpServer,
   AppMcpServerSourceType,
   ClaudeCodePreset,
@@ -57,7 +56,6 @@ import {
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { autoCompactReserveTokens } from './context-tracker.js';
-import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import {
@@ -535,29 +533,6 @@ export class QueryOptionsBuilder {
       queryOptions.disallowedTools = [
         ...new Set([...(queryOptions.disallowedTools ?? []), ...spaceRestrictedBuiltinTools]),
       ];
-    }
-
-    if (config.coordinatorMode) {
-      queryOptions.agent = 'Coordinator';
-      const agents = getCoordinatorAgents(
-        config.agents as Record<string, AgentDefinition> | undefined
-      );
-
-      if (this.ctx.session.worktree) {
-        const worktreeText = this.getWorktreeIsolationText();
-        for (const [name, agent] of Object.entries(agents)) {
-          if (name === 'Coordinator') continue;
-          agents[name] = {
-            ...agent,
-            prompt: agent.prompt + '\n\n' + worktreeText,
-          };
-        }
-      }
-
-      queryOptions.agents = agents as Options['agents'];
-
-      const existing = queryOptions.allowedTools ?? [];
-      queryOptions.allowedTools = [...new Set([...existing, ...FULL_BUILTIN_TOOL_LIST])];
     }
 
     queryOptions.tools = ensureAgentTools(

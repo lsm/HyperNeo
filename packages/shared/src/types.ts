@@ -230,8 +230,6 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
   autoScroll?: boolean;
 
-  coordinatorMode?: boolean;
-
   thinkingLevel?: ThinkingLevel;
 
   queryMode?: 'immediate' | 'manual';

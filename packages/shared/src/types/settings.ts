@@ -102,8 +102,6 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   githubPollingInterval?: number;
 
-  coordinatorMode?: boolean;
-
   maxConcurrentWorkers?: number;
 
   fallbackModels?: FallbackModelEntry[];
@@ -133,7 +131,6 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     allowInsecureTls: false,
     allowPrivateNetwork: false,
   },
-  coordinatorMode: false,
   maxConcurrentWorkers: 3,
   sandbox: {
     enabled: true,

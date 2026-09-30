@@ -4,9 +4,6 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-  SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
-  SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
-  SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
   type SpaceMcpSessionRole,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
 
@@ -98,39 +95,39 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 }
 
 describe('resolveSpaceMcpSessionPolicy', () => {
-  test('routes space_chat sessions to SpaceRuntime coordinator tools', () => {
+  test('routes space_chat sessions to the SpaceRuntime console tools', () => {
     const policy = resolveSpaceMcpSessionPolicy(
       makeSession({ id: 'space:chat:space-1', type: 'space_chat', context: { spaceId: 'space-1' } })
     );
 
     expect(policy).toMatchObject({
-      role: 'coordinator',
+      kind: 'space.chat',
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachCoordinatorTools: true,
       attachGenericSpaceTools: false,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_COORDINATOR_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['space-agent-tools']);
   });
 
-  test('routes ad-hoc Space sessions to SpaceRuntime generic member tools', () => {
+  test('routes non-agent Space sessions to SpaceRuntime generic member tools', () => {
     const policy = resolveSpaceMcpSessionPolicy(
       makeSession({ id: 'ad-hoc-1', type: 'worker', context: { spaceId: 'space-1' } })
     );
 
     expect(policy).toMatchObject({
-      role: 'ad_hoc_member',
+      kind: 'space.member',
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachGenericSpaceTools: true,
       attachCoordinatorTools: false,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['space-agent-tools']);
   });
 
-  test('routes post-approval sub-sessions as ad-hoc members requiring space-agent-tools (#852)', () => {
+  test('routes post-approval sub-sessions as their own kind requiring space-agent-tools (#852)', () => {
     const session = makeSession({
       id: 'space:space-1:task:task-1:post-approval:merger',
       type: 'worker',
@@ -145,13 +142,13 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
 
     expect(policy).toMatchObject({
-      role: 'ad_hoc_member',
+      kind: 'space.task.postApproval',
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachGenericSpaceTools: true,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['space-agent-tools']);
     expect(missingMcpServers(undefined, policy.requiredServers)).toEqual(['space-agent-tools']);
   });
 
@@ -170,14 +167,14 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
 
     expect(policy).toMatchObject({
-      role: 'workflow_worker',
+      kind: 'space.task.worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
       attachGenericSpaceTools: false,
       attachCoordinatorTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['node-agent']);
   });
 
   test('resolves workflow worker space from task when session context lacks spaceId', () => {
@@ -190,7 +187,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-from-task' }) },
     });
 
-    expect(policy.role).toBe('workflow_worker');
+    expect(policy.kind).toBe('space.task.worker');
     expect(policy.spaceId).toBe('space-from-task');
   });
 
@@ -209,13 +206,13 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
 
     expect(policy).toMatchObject({
-      role: 'workflow_worker',
+      kind: 'space.task.worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['node-agent']);
   });
 
   test('routes suffixed workflow workers by embedded execution id even when another session owns the row', () => {
@@ -234,13 +231,13 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     });
 
     expect(policy).toMatchObject({
-      role: 'workflow_worker',
+      kind: 'space.task.worker',
       spaceId: 'space-1',
       owner: 'task-agent-manager',
       attachGenericSpaceTools: false,
       isWorkflowWorker: true,
     });
-    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+    expect(policy.requiredServers).toEqual(['node-agent']);
   });
 
   test('routes long-term agents using canonical session identity and prompt provenance', () => {
@@ -260,7 +257,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     const policy = resolveSpaceMcpSessionPolicy(session);
 
     expect(policy).toMatchObject({
-      role: 'long_term_agent',
+      kind: 'space.agent',
       spaceId: 'space-1',
       owner: 'space-runtime',
       attachLongTermAgentTools: true,
@@ -275,7 +272,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     );
 
     expect(policy).toMatchObject({
-      role: 'legacy_task_agent',
+      kind: 'space.task.legacy',
       owner: 'none',
       attachGenericSpaceTools: false,
       attachCoordinatorTools: false,
@@ -284,11 +281,11 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.requiredServers).toEqual([]);
   });
 
-  test('resolves non-Space sessions to universal_read requiring the dispatcher server', () => {
+  test('resolves non-Space sessions to chat.default requiring the dispatcher server', () => {
     const policy = resolveSpaceMcpSessionPolicy(makeSession({ context: undefined }));
 
     expect(policy).toMatchObject({
-      role: 'universal_read',
+      kind: 'chat.default',
       owner: 'none',
       attachGenericSpaceTools: false,
       attachCoordinatorTools: false,
@@ -308,8 +305,6 @@ describe('SpaceMcpSessionRole', () => {
 
 describe('missingMcpServers', () => {
   test('returns only required servers missing from the MCP map', () => {
-    expect(
-      missingMcpServers({ 'other-server': {} }, SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS)
-    ).toEqual(['node-agent']);
+    expect(missingMcpServers({ 'other-server': {} }, ['node-agent'])).toEqual(['node-agent']);
   });
 });

@@ -2526,150 +2526,6 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
-  describe('coordinator mode', () => {
-    it('should set agent=Coordinator and include specialist agents when coordinatorMode is true', async () => {
-      mockSession.config.coordinatorMode = true;
-      const options = await builder.build();
-
-      expect(options.agent).toBe('Coordinator');
-      expect(options.agents).toBeDefined();
-      const agentNames = Object.keys(options.agents!);
-      expect(agentNames).toContain('Coordinator');
-      expect(agentNames).toContain('Coder');
-      expect(agentNames).toContain('Debugger');
-      expect(agentNames).toContain('Tester');
-      expect(agentNames).toContain('Reviewer');
-      expect(agentNames).toContain('VCS');
-      expect(agentNames).toContain('Verifier');
-      expect(agentNames).toHaveLength(7);
-    });
-
-    it('should NOT set agent or specialist agents when coordinatorMode is false', async () => {
-      mockSession.config.coordinatorMode = false;
-      const options = await builder.build();
-
-      expect(options.agent).toBeUndefined();
-      if (options.agents) {
-        const agentNames = Object.keys(options.agents);
-        expect(agentNames).not.toContain('Coordinator');
-      }
-    });
-
-    it('should NOT set coordinator agent when coordinatorMode is undefined', async () => {
-      const options = await builder.build();
-
-      expect(options.agent).toBeUndefined();
-    });
-
-    it('should transition from non-coordinator to coordinator options (OFF -> ON)', async () => {
-      mockSession.config.coordinatorMode = false;
-      const optionsOff = await builder.build();
-      expect(optionsOff.agent).toBeUndefined();
-
-      mockSession.config.coordinatorMode = true;
-      const builderOn = new QueryOptionsBuilder(mockContext);
-      const optionsOn = await builderOn.build();
-      expect(optionsOn.agent).toBe('Coordinator');
-      expect(Object.keys(optionsOn.agents!)).toHaveLength(7);
-    });
-
-    it('should transition ON -> OFF -> ON correctly', async () => {
-      mockSession.config.coordinatorMode = true;
-      let options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.agent).toBe('Coordinator');
-
-      mockSession.config.coordinatorMode = false;
-      options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.agent).toBeUndefined();
-
-      mockSession.config.coordinatorMode = true;
-      options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.agent).toBe('Coordinator');
-      expect(Object.keys(options.agents!)).toHaveLength(7);
-    });
-
-    it('should preserve user-defined agents alongside coordinator agents', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.config.agents = {
-        'my-custom-agent': {
-          description: 'Custom agent',
-          prompt: 'You are custom.',
-        },
-      };
-      const options = await builder.build();
-
-      expect(options.agents!['my-custom-agent']).toBeDefined();
-      expect(options.agents!['Coder']).toBeDefined();
-      expect(options.agents!['Coordinator']).toBeDefined();
-    });
-
-    it('should inject worktree isolation into specialist agents but not coordinator', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.worktree = {
-        worktreePath: '/worktree/path',
-        mainRepoPath: '/main/repo',
-        branch: 'session/test',
-      };
-      const newBuilder = new QueryOptionsBuilder({
-        session: mockSession,
-        settingsManager: mockSettingsManager,
-      });
-      const options = await newBuilder.build();
-
-      const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
-      expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
-
-      const coderPrompt = (options.agents!['Coder'] as { prompt: string }).prompt;
-      expect(coderPrompt).toContain('Git Worktree Isolation');
-    });
-
-    it('should NOT restrict session-level tools in coordinator mode (sub-agents need full tool access)', async () => {
-      mockSession.config.coordinatorMode = true;
-      const options = await builder.build();
-
-      expect(options.tools).not.toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
-    });
-
-    it('should preserve sdkToolsPreset in coordinator mode', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
-      const options = await builder.build();
-
-      expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
-    });
-
-    it('should set allowedTools for all tools in coordinator mode', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.config.permissionMode = 'acceptEdits';
-      const options = await builder.build();
-
-      expect(options.allowedTools).toBeDefined();
-      expect(options.allowedTools).toContain('Read');
-      expect(options.allowedTools).toContain('Write');
-      expect(options.allowedTools).toContain('Bash');
-      expect(options.allowedTools).toContain('Edit');
-      expect(options.allowedTools).toContain('Task');
-    });
-
-    it('should not add coordinator canUseTool wrapper', async () => {
-      mockSession.config.coordinatorMode = true;
-      const options = await builder.build();
-
-      expect(options.canUseTool).toBeUndefined();
-    });
-
-    it('should preserve a per-build canUseTool override when coordinatorMode is on', async () => {
-      mockSession.config.coordinatorMode = true;
-
-      const originalCallback = async () => {
-        return { behavior: 'allow' as const };
-      };
-      const options = await builder.build({ canUseTool: originalCallback });
-
-      expect(options.canUseTool).toBe(originalCallback);
-    });
-  });
-
   describe('provider-specific agent tool exposure', () => {
     afterEach(() => {
       resetProviderRegistry();
@@ -2841,20 +2697,6 @@ describe('QueryOptionsBuilder', () => {
         expect(options.tools).toContain('TaskStop');
         expect(options.tools).toContain('Read');
         expect(options.tools).toContain('Write');
-      });
-
-      it('expands tools for OpenAI coordinator mode', async () => {
-        registerCodexProvider();
-        mockSession.config.provider = 'anthropic-codex';
-        mockSession.config.model = 'gpt-5.5';
-        mockSession.config.coordinatorMode = true;
-        const codexBuilder = new QueryOptionsBuilder(mockContext);
-        const options = await codexBuilder.build();
-
-        expect(Array.isArray(options.tools)).toBe(true);
-        expect(options.tools).toContain('Task');
-        expect(options.tools).toContain('TaskOutput');
-        expect(options.tools).toContain('TaskStop');
       });
 
       it('leaves tools undefined for Anthropic when agents are configured', async () => {
@@ -4157,15 +3999,6 @@ describe('QueryOptionsBuilder', () => {
       expect(options.allowedTools).toContain('WebSearch');
       expect(options.allowedTools).toContain('WebFetch');
     });
-
-    it('coordinator mode allowedTools includes Skill, WebSearch, WebFetch', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.config.permissionMode = 'acceptEdits';
-      const options = await new QueryOptionsBuilder(mockContext).build();
-      expect(options.allowedTools).toContain('Skill');
-      expect(options.allowedTools).toContain('WebSearch');
-      expect(options.allowedTools).toContain('WebFetch');
-    });
   });
 
   describe('always-on agent/agents propagation (room agents)', () => {
@@ -4188,28 +4021,26 @@ describe('QueryOptionsBuilder', () => {
       prompt: 'You are a Coder Agent.',
     };
 
-    it('preserves config.agent exactly when coordinatorMode is off', async () => {
+    it('preserves config.agent exactly when agents are configured', async () => {
       mockSession.config.agent = 'Coder';
       mockSession.config.agents = {
         Coder: coderAgentDef,
         'coder-explorer': coderExplorerDef,
         'coder-tester': coderTesterDef,
       };
-      mockSession.config.coordinatorMode = false;
 
       const options = await builder.build();
 
       expect(options.agent).toBe('Coder');
     });
 
-    it('preserves config.agents map exactly when coordinatorMode is off', async () => {
+    it('preserves config.agents map exactly when agents are configured', async () => {
       mockSession.config.agent = 'Coder';
       mockSession.config.agents = {
         Coder: coderAgentDef,
         'coder-explorer': coderExplorerDef,
         'coder-tester': coderTesterDef,
       };
-      mockSession.config.coordinatorMode = false;
 
       const options = await builder.build();
 
@@ -4219,7 +4050,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.agents!['coder-tester']).toEqual(coderTesterDef);
     });
 
-    it('preserves config.agents when coordinatorMode is undefined (always-on default)', async () => {
+    it('preserves config.agents when no coordinator agents are configured', async () => {
       mockSession.config.agent = 'Coder';
       mockSession.config.agents = {
         Coder: coderAgentDef,
@@ -4232,36 +4063,6 @@ describe('QueryOptionsBuilder', () => {
       expect(options.agent).toBe('Coder');
       expect(Object.keys(options.agents!)).toHaveLength(3);
       expect(options.agents!['coder-explorer']).toEqual(coderExplorerDef);
-    });
-
-    it('coordinatorMode ON overwrites room agent config with coordinator agents', async () => {
-      mockSession.config.agent = 'Coder';
-      mockSession.config.agents = {
-        Coder: coderAgentDef,
-        'coder-explorer': coderExplorerDef,
-      };
-      mockSession.config.coordinatorMode = true;
-
-      const options = await builder.build();
-
-      expect(options.agent).toBe('Coordinator');
-      expect(options.agents!['Coordinator']).toBeDefined();
-      expect(options.agents!['Debugger']).toBeDefined();
-      expect(options.agents!['Coder']).toBeDefined();
-    });
-
-    it('coordinatorMode ON merges room custom agents into coordinator agents map', async () => {
-      mockSession.config.agents = {
-        'my-custom': { description: 'Custom agent', prompt: 'Custom.' },
-      };
-      mockSession.config.coordinatorMode = true;
-
-      const options = await builder.build();
-
-      expect(options.agent).toBe('Coordinator');
-      expect(options.agents!['my-custom']).toBeDefined();
-      expect(options.agents!['Coordinator']).toBeDefined();
-      expect(options.agents!['Coder']).toBeDefined();
     });
 
     it('worktree isolation is in system prompt but NOT injected into room agent sub-agents', async () => {
@@ -4292,27 +4093,6 @@ describe('QueryOptionsBuilder', () => {
       expect((options.agents!['coder-tester'] as { prompt: string }).prompt).toBe(
         coderTesterDef.prompt
       );
-    });
-
-    it('coordinator mode injects worktree isolation into specialist agent prompts', async () => {
-      mockSession.config.coordinatorMode = true;
-      mockSession.worktree = {
-        worktreePath: '/worktree/path',
-        mainRepoPath: '/main/repo',
-        branch: 'task/my-task',
-      };
-      const newBuilder = new QueryOptionsBuilder({
-        session: mockSession,
-        settingsManager: mockSettingsManager,
-      });
-
-      const options = await newBuilder.build();
-
-      const coderPrompt = (options.agents!['Coder'] as { prompt: string }).prompt;
-      expect(coderPrompt).toContain('Git Worktree Isolation');
-
-      const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
-      expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
     });
   });
 });

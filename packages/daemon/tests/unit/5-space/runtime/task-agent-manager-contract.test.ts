@@ -4,11 +4,12 @@ import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-m
 import type { SpaceWorkflow, NodeExecution, Space } from '@hyperneo/shared';
 
 describe('TaskAgentManager Runtime Execution Contract', () => {
-  function makeManager(): TaskAgentManager {
+  function makeManager(longHorizonAgentRepo?: unknown): TaskAgentManager {
     const db = new BunDatabase(':memory:');
     return new TaskAgentManager({
       db: { getDatabase: () => db },
       internalEventBus: { subscribe: () => () => {} },
+      ...(longHorizonAgentRepo ? { longHorizonAgentRepo } : {}),
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   }
 
@@ -33,6 +34,43 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     expect(contract).toContain(
       'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
     );
+  });
+
+  test('keeps the injected escalation target when an agent holds the escalation duty', () => {
+    const resolveDutyHolder = mock(() => ({ agentId: 'agent-1' }));
+    const manager = makeManager({ resolveDutyHolder });
+    const execution: NodeExecution = {
+      id: 'exec-duty-holder',
+      agentName: 'coder',
+      workflowNodeId: 'node-1',
+    } as NodeExecution;
+
+    const contract = (
+      manager as unknown as Record<string, (w: null, e: NodeExecution, s: Space | null) => string>
+    ).buildNodeExecutionRuntimeContract(null, execution, space);
+
+    expect(resolveDutyHolder).toHaveBeenCalledWith(space.id, 'escalation');
+    expect(contract).toContain(
+      'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
+    );
+  });
+
+  test('reports the human fallback when no agent holds the escalation duty', () => {
+    const resolveDutyHolder = mock(() => null);
+    const manager = makeManager({ resolveDutyHolder });
+    const execution: NodeExecution = {
+      id: 'exec-duty-fallback',
+      agentName: 'coder',
+      workflowNodeId: 'node-1',
+    } as NodeExecution;
+
+    const contract = (
+      manager as unknown as Record<string, (w: null, e: NodeExecution, s: Space | null) => string>
+    ).buildNodeExecutionRuntimeContract(null, execution, space);
+
+    expect(resolveDutyHolder).toHaveBeenCalledWith(space.id, 'escalation');
+    expect(contract).toContain('no agent in this Space holds the escalation role');
+    expect(contract).not.toContain('send_message({ target: "space-agent"');
   });
 
   test('includes the centrally injected escalation target inside a workflow run', () => {

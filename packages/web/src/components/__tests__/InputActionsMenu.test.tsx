@@ -204,16 +204,15 @@ describe('InputActionsMenu', () => {
   describe('Coordinator & Sandbox Toggles', () => {
     const featuresOn = { coordinator: true, worktree: true };
 
-    it('should show coordinator + sandbox items when features are enabled', () => {
+    it('should show the sandbox item when features are enabled', () => {
       const { container } = render(
         <InputActionsMenu {...defaultProps} isOpen={true} features={featuresOn} />
       );
       const text = container.textContent;
-      expect(text).toContain('Coordinator Mode');
       expect(text).toContain('Sandbox Mode');
     });
 
-    it('should hide coordinator + sandbox items when features are disabled', () => {
+    it('should hide the sandbox item when features are disabled', () => {
       const { container } = render(
         <InputActionsMenu
           {...defaultProps}
@@ -222,24 +221,7 @@ describe('InputActionsMenu', () => {
         />
       );
       const text = container.textContent;
-      expect(text).not.toContain('Coordinator Mode');
       expect(text).not.toContain('Sandbox Mode');
-    });
-
-    it('should disable coordinator toggle while a model switch is in progress', () => {
-      const { container } = render(
-        <InputActionsMenu
-          {...defaultProps}
-          isOpen={true}
-          features={featuresOn}
-          modelSwitching={true}
-        />
-      );
-      const buttons = container.querySelectorAll('button');
-      const coordinatorButton = Array.from(buttons).find((b) =>
-        b.textContent?.includes('Coordinator Mode')
-      ) as HTMLButtonElement;
-      expect(coordinatorButton?.disabled).toBe(true);
     });
 
     it('should disable sandbox toggle while a model switch is in progress', () => {
@@ -256,28 +238,6 @@ describe('InputActionsMenu', () => {
         b.textContent?.includes('Sandbox Mode')
       ) as HTMLButtonElement;
       expect(sandboxButton?.disabled).toBe(true);
-    });
-
-    it('should call onCoordinatorModeChange and close on click', () => {
-      const onCoordinatorModeChange = vi.fn(() => {});
-      const onClose = vi.fn(() => {});
-      const { container } = render(
-        <InputActionsMenu
-          {...defaultProps}
-          isOpen={true}
-          features={featuresOn}
-          coordinatorMode={true}
-          onCoordinatorModeChange={onCoordinatorModeChange}
-          onClose={onClose}
-        />
-      );
-      const buttons = container.querySelectorAll('button');
-      const coordinatorButton = Array.from(buttons).find((b) =>
-        b.textContent?.includes('Coordinator Mode')
-      );
-      coordinatorButton?.click();
-      expect(onCoordinatorModeChange).toHaveBeenCalledWith(false);
-      expect(onClose).toHaveBeenCalled();
     });
 
     it('should call onSandboxModeChange and close on click', () => {

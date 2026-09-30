@@ -307,7 +307,6 @@ export default function ChatContainer({
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [coordinatorMode, setCoordinatorMode] = useState(true);
   const [sandboxEnabled, setSandboxEnabled] = useState(true);
   const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
   const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
@@ -412,9 +411,6 @@ export default function ChatContainer({
     setSession(info);
     if (info?.config.autoScroll !== undefined) {
       setAutoScroll(info.config.autoScroll);
-    }
-    if (info?.config.coordinatorMode !== undefined) {
-      setCoordinatorMode(info.config.coordinatorMode);
     }
     if (info?.config.sandbox?.enabled !== undefined) {
       setSandboxEnabled(info.config.sandbox.enabled);
@@ -542,18 +538,14 @@ export default function ChatContainer({
     switchModel,
     currentAction,
     streamingPhase,
-    coordinatorSwitching,
     sandboxSwitching,
     handleModelSwitchWithConfirmation,
-    handleCoordinatorModeChange,
     handleSandboxModeChange,
   } = useChatComposerController({
     sessionId,
     agentState,
     messages,
     isProcessing,
-    coordinatorMode,
-    setCoordinatorMode,
     sandboxEnabled,
     setSandboxEnabled,
   });
@@ -984,7 +976,6 @@ export default function ChatContainer({
     isRecovering ||
     sessionTerminal ||
     modelSwitching ||
-    coordinatorSwitching ||
     sandboxSwitching;
   const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
@@ -1416,8 +1407,6 @@ export default function ChatContainer({
         modelSwitching={modelSwitching}
         modelLoading={modelLoading}
         autoScroll={autoScroll}
-        coordinatorMode={coordinatorMode}
-        coordinatorSwitching={coordinatorSwitching}
         sandboxEnabled={sandboxEnabled}
         sandboxSwitching={sandboxSwitching}
         isWaitingForInput={isWaitingForInput}
@@ -1425,7 +1414,6 @@ export default function ChatContainer({
         isRecovering={isRecovering}
         onModelSwitch={handleModelSwitchWithConfirmation}
         onAutoScrollChange={handleAutoScrollChange}
-        onCoordinatorModeChange={handleCoordinatorModeChange}
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}
         supportsQueueDelivery

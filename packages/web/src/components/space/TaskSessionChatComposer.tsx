@@ -242,15 +242,12 @@ export function TaskSessionChatComposer({
         modelLoading={modelLoading}
         contextUsage={contextInfo ?? undefined}
         autoScroll={autoScroll}
-        coordinatorMode={false}
-        coordinatorSwitching={false}
         sandboxEnabled={false}
         sandboxSwitching={false}
         isWaitingForInput={!canSend || isSending}
         isConnected={true}
         onModelSwitch={switchModel}
         onAutoScrollChange={onAutoScrollChange}
-        onCoordinatorModeChange={() => {}}
         onSandboxModeChange={() => {}}
         onSend={handleSend}
         onOpenTools={handleOpenTools}

@@ -123,10 +123,10 @@ describe('spaceGoal owner handlers', () => {
     });
   });
 
-  it('returns an unowned resolution for coordinator fallback and no recipient', async () => {
+  it('returns an unowned resolution for fallback and no recipient', async () => {
     const fallbackRepo = makeRepoMock({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: 'coordinator-1',
+      action: 'fallback',
+      fallbackAgentId: 'fallback-1',
     });
     const { handlers } = makeHarness(fallbackRepo);
     const fallback = await handlers.get('spaceGoal.getOwner')!(
@@ -134,7 +134,7 @@ describe('spaceGoal owner handlers', () => {
       makeContext()
     );
     expect(fallback).toEqual({
-      owner: { action: 'coordinator_fallback', coordinatorAgentId: 'coordinator-1' },
+      owner: { action: 'fallback', fallbackAgentId: 'fallback-1' },
     });
     const noneRepo = makeRepoMock({ action: 'no_recipient' });
     const noneHarness = makeHarness(noneRepo);

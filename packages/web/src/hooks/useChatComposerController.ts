@@ -1,7 +1,7 @@
 import type { AgentProcessingState, ModelInfo, ChatMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useCallback, useMemo, useState } from 'preact/hooks';
-import { switchCoordinatorMode, switchSandboxMode } from '../lib/api-helpers.ts';
+import { switchSandboxMode } from '../lib/api-helpers.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
 import { useModelSwitcher } from './useModelSwitcher.ts';
@@ -11,8 +11,6 @@ interface UseChatComposerControllerOptions {
   agentState: AgentProcessingState;
   messages: ChatMessage[];
   isProcessing: boolean;
-  coordinatorMode: boolean;
-  setCoordinatorMode: (value: boolean) => void;
   sandboxEnabled: boolean;
   setSandboxEnabled: (value: boolean) => void;
 }
@@ -22,12 +20,9 @@ export function useChatComposerController({
   agentState,
   messages,
   isProcessing,
-  coordinatorMode,
-  setCoordinatorMode,
   sandboxEnabled,
   setSandboxEnabled,
 }: UseChatComposerControllerOptions) {
-  const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
   const [sandboxSwitching, setSandboxSwitching] = useState(false);
 
   const {
@@ -62,28 +57,6 @@ export function useChatComposerController({
       await switchModel(model);
     },
     [switchModel, isProcessing, currentModelInfo]
-  );
-
-  const handleCoordinatorModeChange = useCallback(
-    async (newMode: boolean) => {
-      if (isProcessing) {
-        const confirmed = confirm(
-          'The agent is currently processing. Changing coordinator mode will interrupt the current operation. Continue?'
-        );
-        if (!confirmed) return;
-      }
-      setCoordinatorSwitching(true);
-      setCoordinatorMode(newMode);
-      try {
-        await switchCoordinatorMode(sessionId, newMode);
-      } catch {
-        setCoordinatorMode(!newMode);
-        toast.error('Failed to toggle coordinator mode');
-      } finally {
-        setCoordinatorSwitching(false);
-      }
-    },
-    [sessionId, isProcessing, setCoordinatorMode]
   );
 
   const handleSandboxModeChange = useCallback(
@@ -141,9 +114,6 @@ export function useChatComposerController({
     switchModel,
     currentAction,
     streamingPhase,
-    coordinatorMode,
-    coordinatorSwitching,
-    handleCoordinatorModeChange,
     sandboxEnabled,
     sandboxSwitching,
     handleSandboxModeChange,

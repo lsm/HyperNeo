@@ -26,7 +26,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
   let resolutions: Record<string, GoalOwnerResolutionDecision>;
-  let coordinatorAgent: { id: string; handle: string; status: string } | null;
+  let fallbackAgent: { id: string; handle: string; status: string } | null;
 
   function claimParams(
     overrides: Partial<ClaimOutcomeNotificationParams> = {}
@@ -58,13 +58,13 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       conflicts: [],
     };
     resolutions = {};
-    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
+    fallbackAgent = { id: 'fallback-1', handle: 'fallback-holder', status: 'active' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
       getPrimaryGoalOwner: mock((goalId: string) => resolutions[goalId] ?? resolution),
-      getCoordinator: mock(() => coordinatorAgent),
+      getGoalOwnerFallbackAgentId: mock(() => fallbackAgent?.id ?? null),
       getById: mock((id: string) =>
-        coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
+        fallbackAgent && id === fallbackAgent.id ? fallbackAgent : null
       ),
     } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
     service = new SpaceGoalService({
@@ -203,15 +203,15 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     expect(result).toMatchObject({ status: 'denied', reason: 'identity_mismatch' });
   });
 
-  it('admits the coordinator fallback when no owner resolves', () => {
-    resolution = { action: 'coordinator_fallback', coordinatorAgentId: 'coordinator-1' };
+  it('admits the fallback holder when no owner resolves', () => {
+    resolution = { action: 'fallback', fallbackAgentId: 'fallback-1' };
 
-    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'fallback-1' }));
 
     expect(result).toMatchObject({ status: 'claimed' });
   });
 
-  it('admits the existing coordinator when the owner is degraded', () => {
+  it('admits the existing fallback holder when the owner is degraded', () => {
     resolution = {
       action: 'degraded',
       reason: 'paused',
@@ -219,35 +219,35 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       conflicts: [],
     };
 
-    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'fallback-1' }));
 
     expect(result).toMatchObject({ status: 'claimed' });
   });
 
-  it('denies a degraded-owner claim when no coordinator exists', () => {
+  it('denies a degraded-owner claim when no fallback holder exists', () => {
     resolution = {
       action: 'degraded',
       reason: 'archived',
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
-    coordinatorAgent = null;
+    fallbackAgent = null;
 
-    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'fallback-1' }));
 
     expect(result).toMatchObject({ status: 'denied', reason: 'unauthorized' });
   });
 
-  it('denies a degraded-owner claim when the coordinator is inactive', () => {
+  it('denies a degraded-owner claim when the fallback holder is inactive', () => {
     resolution = {
       action: 'degraded',
       reason: 'paused',
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
-    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'paused' };
+    fallbackAgent = { id: 'fallback-1', handle: 'fallback-holder', status: 'paused' };
 
-    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'fallback-1' }));
 
     expect(result).toMatchObject({ status: 'denied', reason: 'unauthorized' });
   });
@@ -332,12 +332,12 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       expect(notifications).toEqual([]);
     });
 
-    it('discovers notifications the active coordinator can claim as fallback', () => {
-      resolution = { action: 'coordinator_fallback', coordinatorAgentId: 'coordinator-1' };
+    it('discovers notifications the active fallback holder can claim', () => {
+      resolution = { action: 'fallback', fallbackAgentId: 'fallback-1' };
 
       const notifications = service.listClaimableOutcomeNotifications({
         spaceId: goal.spaceId,
-        callerAgentId: 'coordinator-1',
+        callerAgentId: 'fallback-1',
         humanAdmissionAllowed: false,
       });
 

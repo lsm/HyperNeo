@@ -606,35 +606,6 @@ export function setupSessionHandlers(
     return result;
   });
 
-  messageHub.onRequest('session.coordinator.switch', async (data) => {
-    const { sessionId: targetSessionId, coordinatorMode } = data as {
-      sessionId: string;
-      coordinatorMode: boolean;
-    };
-
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
-    const session = agentSession.getSessionData();
-    const previousMode = session.config.coordinatorMode ?? false;
-
-    if (previousMode === coordinatorMode) {
-      return { success: true, coordinatorMode };
-    }
-
-    await sessionManager.updateSession(targetSessionId, {
-      config: { ...session.config, coordinatorMode },
-    });
-
-    const result = agentSession.isQueryActiveOrStarting()
-      ? await agentSession.resetQuery({ restartQuery: true })
-      : { success: true as const };
-
-    return { success: result.success, coordinatorMode, error: result.error };
-  });
-
   messageHub.onRequest('session.sandbox.switch', async (data) => {
     const { sessionId: targetSessionId, sandboxEnabled } = data as {
       sessionId: string;

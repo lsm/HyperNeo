@@ -401,44 +401,6 @@ describe('api-helpers', () => {
       });
     });
 
-    describe('switchCoordinatorMode', () => {
-      it('should call session.coordinator.switch with correct params', async () => {
-        const mockHub = {
-          request: vi
-            .fn()
-            .mockResolvedValue({ acknowledged: true })
-            .mockResolvedValue({ success: true, coordinatorMode: true }),
-        };
-        (
-          connectionManager as unknown as {
-            getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
-            getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
-          }
-        ).getHubIfConnected.mockReturnValue(mockHub);
-
-        const result = await apiHelpers.switchCoordinatorMode('sess-123', true);
-
-        expect(result).toEqual({ success: true, coordinatorMode: true });
-        expect(mockHub.request).toHaveBeenCalledWith('session.coordinator.switch', {
-          sessionId: 'sess-123',
-          coordinatorMode: true,
-        });
-      });
-
-      it('should throw ConnectionNotReadyError when not connected', async () => {
-        (
-          connectionManager as unknown as {
-            getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
-            getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
-          }
-        ).getHubIfConnected.mockReturnValue(null);
-
-        await expect(apiHelpers.switchCoordinatorMode('sess-123', true)).rejects.toThrow(
-          'Not connected to server'
-        );
-      });
-    });
-
     describe('archiveSession', () => {
       it('should archive session with confirmation', async () => {
         const mockHub = {

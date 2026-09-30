@@ -88,17 +88,6 @@ export async function retryMessageDelivery(
   );
 }
 
-export async function switchCoordinatorMode(
-  sessionId: string,
-  coordinatorMode: boolean
-): Promise<{ success: boolean; coordinatorMode: boolean; error?: string }> {
-  const hub = getHubOrThrow();
-  return await hub.request<{ success: boolean; coordinatorMode: boolean; error?: string }>(
-    'session.coordinator.switch',
-    { sessionId, coordinatorMode }
-  );
-}
-
 export async function switchSandboxMode(
   sessionId: string,
   sandboxEnabled: boolean

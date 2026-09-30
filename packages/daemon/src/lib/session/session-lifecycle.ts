@@ -203,7 +203,6 @@ export class SessionLifecycle {
         temperature: params.config?.temperature || this.config.temperature,
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
         thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
-        coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
         permissionMode: params.config?.permissionMode,
         provider: (params.config?.provider ?? resolvedProvider) as Provider,
         tools: params.config?.tools,

@@ -204,7 +204,6 @@ describe('SessionRepository', () => {
         maxTokens: 8192,
         temperature: 0.5,
         autoScroll: false,
-        coordinatorMode: true,
       };
       const metadata: SessionMetadata = {
         messageCount: 10,
@@ -222,7 +221,6 @@ describe('SessionRepository', () => {
       expect(session?.config.model).toBe('claude-opus-4-5-20251113');
       expect(session?.config.maxTokens).toBe(8192);
       expect(session?.config.autoScroll).toBe(false);
-      expect(session?.config.coordinatorMode).toBe(true);
       expect(session?.metadata.messageCount).toBe(10);
       expect(session?.metadata.totalTokens).toBe(1000);
       expect(session?.metadata.titleGenerated).toBe(true);
@@ -881,7 +879,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         lastActiveAt: newTime,
         metadata: { messageCount: 100 },
-        config: { coordinatorMode: true },
       });
 
       const session = repository.getSession('session-1');
@@ -889,7 +886,6 @@ describe('SessionRepository', () => {
       expect(session?.status).toBe('ended');
       expect(session?.lastActiveAt).toBe(newTime);
       expect(session?.metadata.messageCount).toBe(100);
-      expect(session?.config.coordinatorMode).toBe(true);
     });
 
     it('should correctly persist model and provider when updating config with plain fields', () => {

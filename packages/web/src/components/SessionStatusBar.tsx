@@ -143,7 +143,6 @@ interface SessionStatusBarProps {
   onAutoScrollChange: (enabled: boolean) => void;
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
-  coordinatorSwitching?: boolean;
   isRecovering?: boolean;
 }
 
@@ -164,7 +163,6 @@ export default function SessionStatusBar({
   onAutoScrollChange,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
-  coordinatorSwitching = false,
   isRecovering = false,
 }: SessionStatusBarProps) {
   const [connState, setConnState] = useState<ConnectionState>(connectionState.value);
@@ -331,7 +329,7 @@ export default function SessionStatusBar({
                 class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 style={pillStyle}
                 onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching || coordinatorSwitching || isRecovering}
+                disabled={modelLoading || modelSwitching || isRecovering}
                 title={
                   currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
                 }

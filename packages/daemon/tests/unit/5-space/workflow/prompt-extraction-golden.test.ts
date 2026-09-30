@@ -4,13 +4,6 @@ import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
 } from '@hyperneo/prompts';
-import { coderAgent } from '../../../../src/lib/agent/coordinator/coder.ts';
-import { COORDINATOR_AGENT } from '../../../../src/lib/agent/coordinator/coordinator.ts';
-import { debuggerAgent } from '../../../../src/lib/agent/coordinator/debugger.ts';
-import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts';
-import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
-import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
-import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
 import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
@@ -94,15 +87,8 @@ const GOLDEN: Record<string, string> = {
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
   QA_SYSTEM_CONTRACT: '60ea7a78cff979f2bcd8269108da1c47e67d411d170ca071407c81b270f41d51',
   REVIEWER_SYSTEM_CONTRACT: '5a6c8e8dce816c23fa409341b6a166eb9e0d6f8efa14f36d4ef8df41105c3671',
-  COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
   GITHUB_ROUTER_SYSTEM_PROMPT: '39f3b5c43689366029c130b0aa0d1a83c185ef527671cae1d858ed6213e322a6',
   GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',
-  SUBAGENT_CODER_PROMPT: '5f01cfb2266c6f8a2d154da7aea4162e2297236545bcad2248447a974d6a1dac',
-  SUBAGENT_DEBUGGER_PROMPT: '844cd806780d789b9d24466d7157be365e87a55064fa1108681ec7510b12aed1',
-  SUBAGENT_REVIEWER_PROMPT: '3d62ec5b500028f9513df1c9d4cd6dad24a8e956026a12969fc59c7117c76d8d',
-  SUBAGENT_TESTER_PROMPT: '9197c4c373bd99d8b3fb88dd7ed98788cd30521ca710c8adc8be139983a40bad',
-  SUBAGENT_VCS_PROMPT: 'ea28eae3d3fb3291df5324077b0f7d602ff9abe8222ffb2eec71c69fedbdb2b1',
-  SUBAGENT_VERIFIER_PROMPT: 'b5c24ec4a2b90c6ddc5b851e33e14da2fad554c528fa93027a9bc5a08dbfbfe0',
   POST_APPROVAL_COMPLETION_INSTRUCTIONS:
     '75598a241dc358e67b88139046bd4947d503c47520a091dc68bfbbdb54321f1f',
   PROMPT_TOO_LONG_CONTINUE_NAG: '6087c6a95dc3d926b9c7e683ea1f125dc8fd26052b6291c93fab1d0512f79005',
@@ -158,13 +144,6 @@ const VALUES: Record<string, string> = {
   NON_DELEGATING_GENERAL_PROMPT: NON_DELEGATING_GENERAL_AGENT.prompt,
   PRESET_CODER_PROMPT: byPreset.get('swe')!,
   PRESET_RESEARCH_PROMPT: byPreset.get('research')!,
-  COORDINATOR_PROMPT: COORDINATOR_AGENT.prompt,
-  SUBAGENT_CODER_PROMPT: coderAgent.prompt,
-  SUBAGENT_REVIEWER_PROMPT: reviewerAgent.prompt,
-  SUBAGENT_DEBUGGER_PROMPT: debuggerAgent.prompt,
-  SUBAGENT_TESTER_PROMPT: testerAgent.prompt,
-  SUBAGENT_VCS_PROMPT: vcsAgent.prompt,
-  SUBAGENT_VERIFIER_PROMPT: verifierAgent.prompt,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG: buildPromptTooLongContinueNag(),
   TITLE_GENERATION_PROMPT: buildTitleGenerationPrompt('').slice(0, -1),

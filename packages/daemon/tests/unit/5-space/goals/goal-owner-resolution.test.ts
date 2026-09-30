@@ -19,7 +19,7 @@ function input(overrides: Partial<GoalOwnerResolutionInput> = {}): GoalOwnerReso
   return {
     candidates: [],
     agentStates: {},
-    coordinatorAgentId: 'coordinator-1',
+    fallbackAgentId: 'fallback-1',
     ...overrides,
   };
 }
@@ -102,20 +102,20 @@ describe('decideGoalOwnerResolution', () => {
     });
   });
 
-  test('falls back to the coordinator when there is no owner row', () => {
+  test('falls back to the fallback holder when there is no owner row', () => {
     const result = decideGoalOwnerResolution(input({ candidates: [] }));
     expect(result).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: 'coordinator-1',
+      action: 'fallback',
+      fallbackAgentId: 'fallback-1',
     });
   });
 
-  test('reports no_recipient when there is no owner and no coordinator', () => {
-    const result = decideGoalOwnerResolution(input({ candidates: [], coordinatorAgentId: null }));
+  test('reports no_recipient when there is no owner and no fallback holder', () => {
+    const result = decideGoalOwnerResolution(input({ candidates: [], fallbackAgentId: null }));
     expect(result).toEqual({ action: 'no_recipient' });
   });
 
-  test('falls back to the coordinator when only non-owner relationships exist', () => {
+  test('falls back to the fallback holder when only non-owner relationships exist', () => {
     const result = decideGoalOwnerResolution(
       input({
         candidates: [{ agentId: 'agent-w', relationship: 'watcher', createdAt: 50 }],
@@ -123,8 +123,8 @@ describe('decideGoalOwnerResolution', () => {
       })
     );
     expect(result).toEqual({
-      action: 'coordinator_fallback',
-      coordinatorAgentId: 'coordinator-1',
+      action: 'fallback',
+      fallbackAgentId: 'fallback-1',
     });
   });
 

@@ -2120,7 +2120,7 @@ describe('SpaceRuntimeService', () => {
     test('resolves the owner when goal outcome wakes are enabled', async () => {
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getGoalOwnerFallbackAgentId: mock(() => 'coordinator-1'),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
@@ -2144,13 +2144,15 @@ describe('SpaceRuntimeService', () => {
         notification.goalId,
         notification.spaceId
       );
-      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getGoalOwnerFallbackAgentId).toHaveBeenCalledWith(
+        notification.spaceId
+      );
     });
 
     test('routes a no-recipient wake to the coordinator', async () => {
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getGoalOwnerFallbackAgentId: mock(() => 'coordinator-1'),
         getById: mock(() => null),
       } as unknown as SpaceLongHorizonAgentRepository;
       const goalService = {
@@ -2169,7 +2171,9 @@ describe('SpaceRuntimeService', () => {
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+      expect(longHorizonAgentRepo.getGoalOwnerFallbackAgentId).toHaveBeenCalledWith(
+        notification.spaceId
+      );
     });
 
     test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
@@ -2179,7 +2183,7 @@ describe('SpaceRuntimeService', () => {
       const mailbox = buildMailboxDeliveryDb([`space:chat:${mockSpace.id}`]);
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
-        ensureCoordinator: mock(() => ({ id: 'coordinator-alt' })),
+        getGoalOwnerFallbackAgentId: mock(() => 'coordinator-alt'),
         getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
@@ -3694,8 +3698,10 @@ describe('buildLongHorizonAgentSessionConfig — owner-review contract injection
     return prompt.append ?? '';
   }
 
-  test('injects the current owner-review contract for agents without instructions', async () => {
-    const config = await callBuilder(buildLongHorizonAgent({ instructions: '' }));
+  test('injects both contracts for an agent whose template owns goals and schedules', async () => {
+    const config = await callBuilder(
+      buildLongHorizonAgent({ templateKey: 'coordinator.default', instructions: '' })
+    );
     const append = systemPromptAppend(config);
     expect(append).toContain('## Goal Ownership & Outcome Review Contract');
     expect(append).toContain('## Scheduling & Task Systems');
@@ -3704,7 +3710,9 @@ describe('buildLongHorizonAgentSessionConfig — owner-review contract injection
   test('persisted agents with stale template instructions still receive the current contract', async () => {
     const staleInstructions =
       'Maintain marketing momentum. (drafted before the review tool existed)';
-    const config = await callBuilder(buildLongHorizonAgent({ instructions: staleInstructions }));
+    const config = await callBuilder(
+      buildLongHorizonAgent({ templateKey: 'coordinator.default', instructions: staleInstructions })
+    );
     const append = systemPromptAppend(config);
     expect(append).toContain(staleInstructions);
     expect(append).toContain('## Goal Ownership & Outcome Review Contract');
@@ -3713,11 +3721,37 @@ describe('buildLongHorizonAgentSessionConfig — owner-review contract injection
 
   test('user-customized instructions are preserved, not replaced, by the contract append', async () => {
     const custom = 'My bespoke positioning playbook.';
-    const config = await callBuilder(buildLongHorizonAgent({ instructions: custom }));
+    const config = await callBuilder(
+      buildLongHorizonAgent({ templateKey: 'coordinator.default', instructions: custom })
+    );
     const append = systemPromptAppend(config);
     expect(append.startsWith(custom)).toBe(true);
     expect(append).toContain('## Goal Ownership & Outcome Review Contract');
     expect(append.match(/## Goal Ownership & Outcome Review Contract/g)?.length).toBe(1);
+  });
+
+  test('an agent holding neither goals nor schedules gets no doctrine append', async () => {
+    const config = await callBuilder(
+      buildLongHorizonAgent({ templateKey: null, instructions: 'Just do my tasks.' })
+    );
+    const append = systemPromptAppend(config);
+
+    expect(append).toBe('Just do my tasks.');
+    expect(append).not.toContain('## Goal Ownership & Outcome Review Contract');
+    expect(append).not.toContain('## Scheduling & Task Systems');
+  });
+
+  test('an agent with an unknown legacy template key keeps both contracts', async () => {
+    const config = await callBuilder(
+      buildLongHorizonAgent({
+        templateKey: 'migration.legacy_space_agent',
+        instructions: 'Legacy.',
+      })
+    );
+    const append = systemPromptAppend(config);
+
+    expect(append).toContain('## Goal Ownership & Outcome Review Contract');
+    expect(append).toContain('## Scheduling & Task Systems');
   });
 });
 

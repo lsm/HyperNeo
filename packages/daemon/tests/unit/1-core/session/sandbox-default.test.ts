@@ -321,7 +321,6 @@ describe('Sandbox Default Configuration', () => {
         config: {
           model: 'opus',
           maxTokens: 4096,
-          coordinatorMode: true,
           thinkingLevel: 'think32k',
         },
       });
@@ -332,7 +331,6 @@ describe('Sandbox Default Configuration', () => {
           config: expect.objectContaining({
             model: 'opus',
             maxTokens: 4096,
-            coordinatorMode: true,
             thinkingLevel: 'think32k',
             sandbox: expect.objectContaining({
               enabled: true,

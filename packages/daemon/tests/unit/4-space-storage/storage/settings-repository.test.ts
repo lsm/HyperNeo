@@ -222,7 +222,6 @@ describe('SettingsRepository', () => {
         ...DEFAULT_GLOBAL_SETTINGS,
         model: 'opus',
         autoScroll: false,
-        coordinatorMode: true,
       };
 
       repository.saveGlobalSettings(settings);
@@ -230,7 +229,6 @@ describe('SettingsRepository', () => {
       const saved = repository.getGlobalSettings();
       expect(saved.model).toBe('opus');
       expect(saved.autoScroll).toBe(false);
-      expect(saved.coordinatorMode).toBe(true);
     });
 
     it('should update existing settings (upsert)', () => {
@@ -369,7 +367,6 @@ describe('SettingsRepository', () => {
       expect(settings.permissionMode).toBe('default');
       expect(settings.model).toBe('sonnet');
       expect(settings.autoScroll).toBe(true);
-      expect(settings.coordinatorMode).toBe(false);
       expect(settings.showArchived).toBe(false);
     });
   });

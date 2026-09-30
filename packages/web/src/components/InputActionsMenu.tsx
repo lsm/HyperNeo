@@ -19,9 +19,6 @@ export interface InputActionsMenuProps {
   onAutoScrollChange: (enabled: boolean) => void;
   onOpenTools: () => void;
   onAttachFile: () => void;
-  coordinatorMode?: boolean;
-  coordinatorSwitching?: boolean;
-  onCoordinatorModeChange?: (enabled: boolean) => void;
   sandboxEnabled?: boolean;
   sandboxSwitching?: boolean;
   onSandboxModeChange?: (enabled: boolean) => void;
@@ -44,9 +41,6 @@ export function InputActionsMenu({
   onAutoScrollChange,
   onOpenTools,
   onAttachFile,
-  coordinatorMode = false,
-  coordinatorSwitching = false,
-  onCoordinatorModeChange,
   sandboxEnabled = false,
   sandboxSwitching = false,
   onSandboxModeChange,
@@ -62,11 +56,6 @@ export function InputActionsMenu({
 
   const handleAutoScrollToggle = () => {
     onAutoScrollChange(!autoScroll);
-    onClose();
-  };
-
-  const handleCoordinatorToggle = () => {
-    onCoordinatorModeChange?.(!coordinatorMode);
     onClose();
   };
 
@@ -159,47 +148,6 @@ export function InputActionsMenu({
               </svg>
             )}
           </button>
-
-          {features.coordinator && (
-            <button
-              type="button"
-              onClick={handleCoordinatorToggle}
-              disabled={coordinatorSwitching || modelSwitching}
-              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-fg-soft hover:bg-fill-strong/50 disabled:opacity-50"
-            >
-              <span class="flex items-center gap-3">
-                <svg
-                  class={cn('w-5 h-5', coordinatorMode ? 'text-cat-purple' : 'text-fg-muted')}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-                  />
-                </svg>
-                <span class="text-sm">Coordinator Mode</span>
-              </span>
-              {coordinatorMode && (
-                <svg
-                  class="w-4 h-4 text-cat-purple"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2.5}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              )}
-            </button>
-          )}
 
           {features.worktree && (
             <button
