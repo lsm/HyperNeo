@@ -18,6 +18,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
+const rootId = 'neo:10000000-0000-4000-8000-000000000001';
 const ids = [
   '80d497a1-3a01-484d-a730-cc047a8c417a',
   'a1e6cbaa-67ed-4162-9b4e-4a3ec1c732ec',
@@ -50,10 +51,10 @@ describe('Neo durable busy consultation intake', () => {
     events = new InternalEventBus<DaemonInternalEventMap>();
     createSession.mockClear();
     getSessionAsync.mockClear();
-    for (const id of ['root', 'research-holder', 'family-holder'])
+    for (const id of [rootId, 'research-holder', 'family-holder'])
       db.createSession({ ...createTestSession(id), workspacePath: null });
     restart();
-    service.repo.reserveBinding({ sessionId: 'root', concernId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: rootId, concernId: null, kind: 'neo' });
     for (const id of ['research', 'family']) {
       service.repo.saveConcern(
         { id, title: id, summary: 'Current', context: 'Private original' },
@@ -78,7 +79,7 @@ describe('Neo durable busy consultation intake', () => {
     return {
       source: 'mcp',
       role: 'neo',
-      sessionId: 'root',
+      sessionId: rootId,
       neoTurn: { messageId, human: true, isLive: () => true },
     };
   }
@@ -86,7 +87,7 @@ describe('Neo durable busy consultation intake', () => {
     const messageId = ids[index];
     expect(
       await invoke('neo.message.send', {
-        sessionId: 'root',
+        sessionId: rootId,
         requestId: messageId,
         content: `Ask ${index}`,
       })
@@ -151,7 +152,7 @@ describe('Neo durable busy consultation intake', () => {
       value: {
         consultationWaiters: [{ id: waiter.id, question: '' }],
         askOrigins: expect.arrayContaining([
-          { kind: 'consultation', id: waiter.id, origin: { sessionId: 'root', messageId: ids[1] } },
+          { kind: 'consultation', id: waiter.id, origin: { sessionId: rootId, messageId: ids[1] } },
         ]),
       },
     });
@@ -196,16 +197,16 @@ describe('Neo durable busy consultation intake', () => {
     ).toMatchObject({ revision: 3 });
     await answer(admitted);
     expect(service.consultations.get(c.id)?.status).toBe('pending');
-    const returned = jobs('root', `neo-consult:${b.id}:reply`);
+    const returned = jobs(rootId, `neo-consult:${b.id}:reply`);
     expect(returned).toHaveLength(1);
     expect(JSON.stringify(returned[0].payload)).toContain(ids[1]);
     const payload = returned[0].payload as { message: { message: { content: string } } };
     db.getSDKMessageRepo().saveSDKMessage(
-      'root',
+      rootId,
       {
         type: 'user',
         uuid: `neo-consult:${b.id}:reply`,
-        session_id: 'root',
+        session_id: rootId,
         parent_tool_use_id: null,
         inputKind: 'system',
         message: { role: 'user', content: payload.message.message.content },
@@ -213,8 +214,8 @@ describe('Neo durable busy consultation intake', () => {
       'system'
     );
     expect(
-      service.resolveAskOrigin({ sessionId: 'root', messageId: `neo-consult:${b.id}:reply` })
-    ).toEqual({ sessionId: 'root', messageId: ids[1] });
+      service.resolveAskOrigin({ sessionId: rootId, messageId: `neo-consult:${b.id}:reply` })
+    ).toEqual({ sessionId: rootId, messageId: ids[1] });
     expect(service.repo.getConcern('family')?.revision).toBe(1);
     expect(service.consultations.list().filter((item) => item.status === 'pending')).toHaveLength(
       1
@@ -320,11 +321,11 @@ describe('Neo durable busy consultation intake', () => {
     await service.recoverConsultations();
     await service.recoverConsultations();
     expect(jobs(b.sessionId, `neo-consult:${b.id}:request`)).toHaveLength(1);
-    expect(jobs('root', `neo-consult:${a.id}:reply`)).toHaveLength(1);
+    expect(jobs(rootId, `neo-consult:${a.id}:reply`)).toHaveLength(1);
     expect(service.consultations.list()).toHaveLength(2);
     expect(service.consultationWaiters.queued()).toEqual([]);
     await answer(service.consultations.get(b.id)!);
-    expect(jobs('root', `neo-consult:${b.id}:reply`)).toHaveLength(1);
+    expect(jobs(rootId, `neo-consult:${b.id}:reply`)).toHaveLength(1);
   });
   test('an idle holder drains a persisted orphan queue without awaiting another holder', async () => {
     const source = await ask(1);
@@ -332,7 +333,7 @@ describe('Neo durable busy consultation intake', () => {
       id: 'persisted-B',
       requestKey: 'B',
       concernId: 'research',
-      originSessionId: 'root',
+      originSessionId: rootId,
       originMessageId: source.neoTurn!.messageId,
       sessionId: 'research-holder',
       question: 'Persisted correction',

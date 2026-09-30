@@ -123,6 +123,24 @@ describe('NewChatModelPicker', () => {
   });
 
   describe('model filtering', () => {
+    it('renders unavailable models as disabled and unselectable', async () => {
+      const models: ModelInfo[] = [
+        makeModel('model-alpha', 'anthropic', 'Model Alpha'),
+        { ...makeModel('model-beta', 'anthropic', 'Model Beta'), available: false },
+      ];
+      const { container } = renderPicker({ availableModels: models });
+      await openDropdown(container);
+
+      const option = [...container.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Model Beta')
+      )!;
+      expect(option.disabled).toBe(true);
+      expect(option.textContent).toContain('unavailable');
+
+      fireEvent.click(option);
+      expect(onSelectModel).not.toHaveBeenCalled();
+    });
+
     it('keeps a transiently failed provider selectable', async () => {
       mockGetHubIfConnected.mockReturnValue(
         makeHub([{ id: 'anthropic', isAuthenticated: false, errorKind: 'transient' }])

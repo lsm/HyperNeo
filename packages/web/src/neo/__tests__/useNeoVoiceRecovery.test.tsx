@@ -1,0 +1,224 @@
+import { renderHook } from '@testing-library/preact';
+import { signal } from '@preact/signals';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+type EventRecord = {
+  method: string;
+  handler: (data: unknown, context?: { channel?: string }) => void;
+};
+
+const hubRequest = vi.fn();
+const handlers: EventRecord[] = [];
+
+function onEvent(method: string, handler: (data: unknown, context?: { channel?: string }) => void) {
+  handlers.push({ method, handler });
+  return () => {
+    const index = handlers.findIndex((entry) => entry.handler === handler);
+    if (index >= 0) handlers.splice(index, 1);
+  };
+}
+
+vi.mock('../../lib/connection-manager', () => ({
+  connectionManager: {
+    getHubIfConnected: vi.fn(() => ({ request: hubRequest, onEvent })),
+  },
+}));
+
+import { connectionState } from '../../lib/state.ts';
+import { useNeoVoiceRecovery } from '../useNeoVoiceRecovery.ts';
+
+function emit(method: string, channel: string): void {
+  for (const entry of handlers.filter((item) => item.method === method)) {
+    entry.handler({ sessionId: channel }, { channel });
+  }
+}
+
+describe('useNeoVoiceRecovery', () => {
+  beforeEach(() => {
+    handlers.length = 0;
+    hubRequest.mockReset();
+    connectionState.value = 'disconnected';
+  });
+
+  afterEach(() => {
+    connectionState.value = 'disconnected';
+  });
+
+  function setup(initialDraft = '') {
+    const draft = signal(initialDraft);
+    const write = vi.fn((text: string) => {
+      draft.value = text;
+    });
+    const view = renderHook(() =>
+      useNeoVoiceRecovery(
+        'neo-1',
+        draft.value,
+        () => draft.value,
+        (text) => write(text)
+      )
+    );
+    return { draft, write, ...view };
+  }
+
+  it('adopts a staged voice transcript into the empty composer exactly once', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { write } = setup();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+    expect(write).toHaveBeenCalledTimes(1);
+
+    emit('session.voiceLanded', 'session:neo-1');
+    emit('session.voiceLanded', 'session:neo-1');
+    connectionState.value = 'connected';
+    await vi.waitFor(() => expect(hubRequest.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('never sends: the transcript lands as an editable draft value only', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft, write } = setup();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    expect(draft.value).toBe('buy oat milk');
+    const sent = hubRequest.mock.calls.some(([method]) => String(method).includes('send'));
+    expect(sent).toBe(false);
+  });
+
+  it('ignores voiceLanded events from other sessions', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+    const { write } = setup();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(write).not.toHaveBeenCalled();
+
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'other text' } } });
+    emit('session.voiceLanded', 'session:not-mine');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(write).not.toHaveBeenCalled();
+
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    emit('session.voiceLanded', 'session:neo-1');
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+  });
+
+  it('does not overwrite a draft the user is typing and adopts once the composer is free', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft, write } = setup('do not clobber this');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(write).not.toHaveBeenCalled();
+    expect(draft.value).toBe('do not clobber this');
+
+    draft.value = '';
+    emit('session.voiceLanded', 'session:neo-1');
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+  });
+
+  it('writes the adopted draft back so the daemon clears the staged pending', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { write } = setup();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+    const update = hubRequest.mock.calls.find(
+      ([method, payload]) =>
+        method === 'session.update' &&
+        (payload as { metadata?: { inputDraft?: string } }).metadata?.inputDraft === 'buy oat milk'
+    );
+    expect(update).toBeTruthy();
+    expect(update?.[1]).toEqual({
+      sessionId: 'neo-1',
+      metadata: { inputDraft: 'buy oat milk' },
+    });
+  });
+
+  it('does not resurrect text after the user cleared an adopted draft', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft, write } = setup();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    draft.value = '';
+    emit('session.voiceLanded', 'session:neo-1');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the daemon draft exactly once when the adopted text is sent or cleared', async () => {
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft } = setup();
+
+    await vi.waitFor(() => expect(draft.value).toBe('buy oat milk'));
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const clears = hubRequest.mock.calls.filter(
+      ([method, payload]) =>
+        method === 'session.clearInputDraftIf' &&
+        (payload as { expected?: string }).expected === 'buy oat milk'
+    );
+    expect(clears).toHaveLength(1);
+  });
+
+  it('keeps the clear pending while offline and retries it after reconnect', async () => {
+    const { connectionManager } = await import('../../lib/connection-manager');
+    const { getHubIfConnected } = connectionManager as unknown as {
+      getHubIfConnected: ReturnType<typeof vi.fn>;
+    };
+    const onlineHub = { request: hubRequest, onEvent };
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { draft } = setup();
+
+    await vi.waitFor(() => expect(draft.value).toBe('buy oat milk'));
+    hubRequest.mockClear();
+    hubRequest.mockImplementation(async (method: string, payload: unknown) => {
+      if (method === 'session.clearInputDraftIf') return { cleared: true };
+      return { session: { metadata: { inputDraft: 'buy oat milk' } } };
+    });
+    getHubIfConnected.mockImplementation(() => null as never);
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(
+      hubRequest.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
+    ).toHaveLength(0);
+
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+    connectionState.value = 'connected';
+    await vi.waitFor(() =>
+      expect(
+        hubRequest.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
+      ).toHaveLength(1)
+    );
+    getHubIfConnected.mockImplementation(() => onlineHub as never);
+  });
+
+  it('never clears the daemon draft without a prior adoption', async () => {
+    const { draft } = setup('typed by hand');
+    draft.value = '';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const clears = hubRequest.mock.calls.filter(
+      ([method]) => method === 'session.clearInputDraftIf'
+    );
+    expect(clears).toHaveLength(0);
+  });
+
+  it('keeps the draft untouched while offline and adopts after reconnect', async () => {
+    const { connectionManager } = await import('../../lib/connection-manager');
+    let online = false;
+    vi.mocked(connectionManager.getHubIfConnected).mockImplementation(() =>
+      online ? ({ request: hubRequest, onEvent } as never) : null
+    );
+    hubRequest.mockResolvedValue({ session: { metadata: { inputDraft: 'buy oat milk' } } });
+    const { write } = setup();
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(write).not.toHaveBeenCalled();
+
+    online = true;
+    connectionState.value = 'connected';
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('buy oat milk'));
+    vi.mocked(connectionManager.getHubIfConnected).mockImplementation(
+      () => ({ request: hubRequest, onEvent }) as never
+    );
+  });
+});

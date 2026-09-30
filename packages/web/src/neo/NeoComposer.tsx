@@ -1,14 +1,30 @@
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCoarsePointer } from './useCoarsePointer.ts';
 import type { SessionStore } from '../lib/session-store.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
 import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoPreferences } from './NeoPreferences.tsx';
-import { NeoVoice } from './NeoVoice.tsx';
+import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
+import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
+import {
+  combineVoiceSubmission,
+  submitVoiceSendIntent,
+  type VoiceSendOutcome,
+} from '../lib/voice/voice-audio-outbox.ts';
 import type { createNeoIntakeClient } from './neo-intake.ts';
+
+export function neoEnterSends(
+  keyboard: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  coarsePointer: boolean
+): boolean {
+  const modifierSend = keyboard.metaKey || keyboard.ctrlKey;
+  return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
+}
 
 export function NeoComposer({
   store,
@@ -28,7 +44,14 @@ export function NeoComposer({
   onSend: ReturnType<typeof createNeoIntakeClient>['send'];
 }) {
   const [sending, setSending] = useState(false);
-  const [voiceBusy, setVoiceBusy] = useState(false);
+  const coarsePointer = useCoarsePointer();
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
+  const voiceBusy = voicePhase !== 'idle';
+  const recordingVoice = voicePhase === 'recording';
+  const sendFromVoice = useRef<(() => void) | null>(null);
+  const registerSendFromVoice = useCallback((send: (() => void) | null) => {
+    sendFromVoice.current = send;
+  }, []);
   const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
@@ -47,6 +70,10 @@ export function NeoComposer({
   const working = store.isWorking.value;
   const connected = connectionState.value === 'connected';
   async function send() {
+    if (recordingVoice) {
+      sendFromVoice.current?.();
+      return;
+    }
     const submitted = draft;
     const files = attachments.files;
     if (
@@ -76,6 +103,36 @@ export function NeoComposer({
     } finally {
       inFlight.current = false;
       if (current()) setSending(false);
+    }
+  }
+  async function sendVoice(
+    record: VoiceRecordEntry,
+    transcript: string
+  ): Promise<VoiceSendOutcome> {
+    if (record.sendText === undefined && (attachments.files.length > 0 || attachments.reading > 0))
+      return { kind: 'unconfirmed' };
+    const composed = record.sendText ?? combineVoiceSubmission(draft, transcript);
+    if (!composed.trim() || inFlight.current || sending || !connected)
+      return { kind: 'unconfirmed' };
+    inFlight.current = true;
+    setSending(true);
+    onError('');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      inFlight.current = false;
+      setSending(false);
+      return { kind: 'unconfirmed' };
+    }
+    try {
+      const outcome = await submitVoiceSendIntent(hub, record, composed);
+      if (outcome.kind === 'accepted' && currentDraft.current === draft) onDraft('');
+      else if (outcome.kind === 'refused' && alive.current) onError(outcome.reason);
+      return outcome;
+    } catch {
+      return { kind: 'unconfirmed' };
+    } finally {
+      inFlight.current = false;
+      if (alive.current) setSending(false);
     }
   }
   return (
@@ -121,7 +178,13 @@ export function NeoComposer({
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+          if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+          if (
+            neoEnterSends(
+              { shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
+              coarsePointer
+            )
+          ) {
             event.preventDefault();
             void send();
           }
@@ -146,7 +209,16 @@ export function NeoComposer({
         </div>
         <span
           role="status"
-          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${working || !connected || store.agentState.value.status === 'waiting_for_input' ? 'order-last flex w-full sm:order-none sm:w-auto' : 'hidden'}`}
+          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${
+            working ||
+            recordingVoice ||
+            !connected ||
+            store.agentState.value.status === 'waiting_for_input'
+              ? 'order-last flex w-full sm:order-none sm:w-auto'
+              : coarsePointer
+                ? 'flex'
+                : 'hidden'
+          }`}
         >
           {working && (
             <span
@@ -156,19 +228,32 @@ export function NeoComposer({
           )}
           {!connected
             ? 'Reconnecting… your draft stays here.'
-            : store.agentState.value.status === 'waiting_for_input'
-              ? 'A quick question for you above.'
-              : working
-                ? 'Neo is thinking…'
-                : 'Enter to send · Shift + Enter for a new line'}
+            : recordingVoice
+              ? coarsePointer
+                ? 'Recording · Tap the arrow to stop and send'
+                : 'Recording · Click the arrow to stop and send'
+              : store.agentState.value.status === 'waiting_for_input'
+                ? 'A quick question for you above.'
+                : working
+                  ? 'Neo is thinking…'
+                  : coarsePointer
+                    ? 'Return adds a line · Tap the arrow to send'
+                    : 'Enter to send · Shift + Enter for a new line'}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice
             sessionId={sessionId}
             connected={connected}
+            draftText={draft}
             onTranscript={onTranscript}
+            onSendVoice={async (text, recordId) => {
+              const record = await getVoiceRecord(recordId);
+              if (!record) return { kind: 'unconfirmed' } as const;
+              return sendVoice(record, text);
+            }}
+            onSendHandle={registerSendFromVoice}
             onError={onError}
-            onBusy={setVoiceBusy}
+            onPhase={setVoicePhase}
           />
           {working && (
             <Button
@@ -187,11 +272,19 @@ export function NeoComposer({
             disabled={
               !connected ||
               sending ||
-              (!draft.trim() && !attachments.files.length) ||
-              voiceBusy ||
-              attachments.reading > 0
+              attachments.reading > 0 ||
+              (voiceBusy && !recordingVoice) ||
+              (!draft.trim() && !attachments.files.length && !recordingVoice) ||
+              (recordingVoice && attachments.files.length > 0)
             }
-            aria-label="Send message"
+            aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
+            title={
+              recordingVoice && attachments.files.length > 0
+                ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
+                : recordingVoice
+                  ? 'Stop recording and send it now'
+                  : undefined
+            }
           >
             <NeoIcon name="up" />
           </Button>

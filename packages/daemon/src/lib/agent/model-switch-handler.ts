@@ -3,8 +3,10 @@ import type {
   Session,
   SessionConfig,
   CurrentModelInfo,
+  ThinkingLevel,
   MessageHub,
 } from '@hyperneo/shared';
+import type { SessionRuntimeSettingsSnapshot } from '../../storage/repositories/session-runtime-settings-write.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import type { ErrorManager } from '../error-manager.ts';
@@ -23,10 +25,169 @@ import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
 import type { QueryLike } from './query-like.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoCoordinatorBinding, neoCoordinatorRuntimePath } from '../neo/session-policy.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
+type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
+
+export function gateSwitchIdle(guarded: boolean, busy: boolean) {
+  return guarded && busy ? { reason: 'session_busy' as const } : { value: true as const };
+}
+
+export function gateSwitchPair(guarded: boolean, expected: ModelPair, current: ModelPair) {
+  return guarded && (expected.model !== current.model || expected.provider !== current.provider)
+    ? { reason: 'session_settings_changed' as const }
+    : { value: true as const };
+}
+
+export function gateSwitchTurn(guarded: boolean, expected?: number, current?: number) {
+  return guarded && (expected === undefined || expected !== current)
+    ? { reason: 'session_turn_changed' as const }
+    : { value: true as const };
+}
+
+const admitNonInterruptingSwitch = (superpipe({})('non-interrupting-model-switch') as PipelineAPI)
+  .input(['guarded', 'busy', 'expected', 'current', 'generation', 'currentGeneration'])
+  .pipe(gateSwitchIdle, ['guarded', 'busy'], 'result:admission')
+  .pipe(gateSwitchPair, ['guarded', 'expected', 'current'], 'result:admission')
+  .pipe(gateSwitchTurn, ['guarded', 'generation', 'currentGeneration'], 'result:admission')
+  .end('admission') as (
+  guarded: boolean,
+  busy: boolean,
+  expected: ModelPair,
+  current: ModelPair,
+  generation?: number,
+  currentGeneration?: number
+) => true | 'session_busy' | 'session_settings_changed' | 'session_turn_changed';
+
+export interface RuntimeSettingsCommit {
+  readonly snapshot: SessionRuntimeSettingsSnapshot;
+  readonly thinkingLevel?: ThinkingLevel;
+  readonly isCurrentOwner?: () => boolean;
+}
+
+export function gateCommitOwner(owned: boolean) {
+  return owned ? { value: true as const } : { reason: 'session_settings_changed' as const };
+}
+
+export function providerIdentityClears(
+  previousProvider: string | undefined,
+  nextProvider: string
+): { clearAcpSession: boolean; clearSdkSession: boolean } {
+  return {
+    clearAcpSession: previousProvider === 'acp' && nextProvider !== 'acp',
+    clearSdkSession: previousProvider !== 'acp' && nextProvider === 'acp',
+  };
+}
+
+const PROCESSING_STATUSES = new Set([
+  'idle',
+  'queued',
+  'processing',
+  'waiting_for_input',
+  'rate_limit_cooldown',
+  'interrupted',
+]);
+
+export function snapshotPair(snapshot: SessionRuntimeSettingsSnapshot): ModelPair {
+  const config = JSON.parse(snapshot.config) as { model?: unknown; provider?: unknown };
+  if (typeof config.model !== 'string')
+    throw new Error(`runtime settings commit: snapshot ${snapshot.id} has no model`);
+  return { model: config.model, provider: config.provider as Provider };
+}
+
+export function snapshotProcessingStatus(snapshot: SessionRuntimeSettingsSnapshot): string | null {
+  const corrupt = `runtime settings commit: corrupt processing state for ${snapshot.id}`;
+  if (snapshot.processingState === null) return null;
+  let status: unknown = null;
+  try {
+    status = (JSON.parse(snapshot.processingState) as { status?: unknown } | null)?.status;
+  } catch {
+    status = null;
+  }
+  if (typeof status !== 'string' || !PROCESSING_STATUSES.has(status)) throw new Error(corrupt);
+  return status;
+}
+
+export function gateCommitTarget(
+  snapshot: SessionRuntimeSettingsSnapshot,
+  pair: ModelPair,
+  sessionId: string,
+  expected: ModelPair,
+  current: ModelPair
+) {
+  return snapshot.id !== sessionId ||
+    snapshot.status !== 'active' ||
+    snapshot.archivedAt !== null ||
+    pair.model !== expected.model ||
+    pair.provider !== expected.provider ||
+    pair.model !== current.model ||
+    pair.provider !== current.provider
+    ? { reason: 'session_settings_changed' as const }
+    : { value: true as const };
+}
+
+export function gateCommitIdle(
+  snapshotStatus: string | null,
+  nativeStatus: string,
+  queued: boolean,
+  queryActive: boolean
+) {
+  return (snapshotStatus !== null && snapshotStatus !== 'idle') ||
+    nativeStatus !== 'idle' ||
+    queued ||
+    queryActive
+    ? { reason: 'session_busy' as const }
+    : { value: true as const };
+}
+
+export function gateCommitTurn(generation?: number, currentGeneration?: number) {
+  return gateSwitchTurn(true, generation, currentGeneration);
+}
+
+const admitRuntimeSettingsCommit = (superpipe({})('runtime-settings-commit') as PipelineAPI)
+  .input([
+    'owned',
+    'snapshot',
+    'capturedPair',
+    'sessionId',
+    'expected',
+    'current',
+    'snapshotStatus',
+    'nativeStatus',
+    'queued',
+    'queryActive',
+    'generation',
+    'currentGeneration',
+  ])
+  .pipe(
+    gateCommitTarget,
+    ['snapshot', 'capturedPair', 'sessionId', 'expected', 'current'],
+    'result:admission'
+  )
+  .pipe(
+    gateCommitIdle,
+    ['snapshotStatus', 'nativeStatus', 'queued', 'queryActive'],
+    'result:admission'
+  )
+  .pipe(gateCommitTurn, ['generation', 'currentGeneration'], 'result:admission')
+  .pipe(gateCommitOwner, ['owned'], 'result:admission')
+  .end('admission') as (
+  owned: boolean,
+  snapshot: SessionRuntimeSettingsSnapshot,
+  capturedPair: ModelPair,
+  sessionId: string,
+  expected: ModelPair,
+  current: ModelPair,
+  snapshotStatus: string | null,
+  nativeStatus: string,
+  queued: boolean,
+  queryActive: boolean,
+  generation?: number,
+  currentGeneration?: number
+) => true | 'session_busy' | 'session_settings_changed' | 'session_turn_changed';
 
 function preserveK3OneMSuffix(requestedModel: string, resolvedModel: string): string {
   if (
@@ -54,6 +215,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
+  getQueryGeneration?(): number;
   reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 }
 
@@ -134,7 +296,14 @@ export class ModelSwitchHandler {
     }
   }
 
-  async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
+  async switchModel(
+    newModel: string,
+    newProvider: string,
+    nonInterrupting = false,
+    commit?: RuntimeSettingsCommit
+  ): Promise<ModelSwitchResult> {
+    if (commit && !nonInterrupting)
+      throw new Error('runtime settings commit requires the non-interrupting opt-in');
     const {
       session,
       db,
@@ -148,12 +317,29 @@ export class ModelSwitchHandler {
 
     const previousModel = session.config.model;
     const originalProvider = session.config.provider;
+    const originalPair = { model: previousModel, provider: originalProvider };
+    const generation = this.ctx.getQueryGeneration?.();
+    let appliedPair: ModelPair | null = null;
+    let durableCommit = false;
     const previousProvider =
       originalProvider ?? (previousModel ? inferProviderForModel(previousModel) : undefined);
     const previousAcpSessionId = session.acpSessionId;
     const previousSdkSessionId = session.sdkSessionId;
     const previousSdkOriginPath = session.sdkOriginPath;
     const previousMetadata = session.metadata;
+    const capturedPair = commit ? snapshotPair(commit.snapshot) : null;
+    const capturedStatus = commit ? snapshotProcessingStatus(commit.snapshot) : null;
+    if (commit && capturedPair) {
+      const early = gateCommitTarget(
+        commit.snapshot,
+        capturedPair,
+        session.id,
+        originalPair,
+        session.config
+      );
+      if ('reason' in early)
+        return { success: false, model: session.config.model, error: early.reason };
+    }
 
     try {
       if (!previousProvider) {
@@ -177,7 +363,11 @@ export class ModelSwitchHandler {
         await resolveModelAlias(session.config.model, 'global', previousProvider)
       );
 
-      if (currentResolvedModel === resolvedModel && session.config.provider === newProvider) {
+      if (
+        !commit &&
+        currentResolvedModel === resolvedModel &&
+        session.config.provider === newProvider
+      ) {
         return {
           success: true,
           model: resolvedModel,
@@ -197,10 +387,49 @@ export class ModelSwitchHandler {
         return { success: false, model: session.config.model, error: errMsg };
       }
 
+      const admission = admitNonInterruptingSwitch(
+        nonInterrupting,
+        this.isQueryActiveOrStarting(),
+        originalPair,
+        session.config,
+        generation,
+        this.ctx.getQueryGeneration?.()
+      );
+      if (admission !== true)
+        return { success: false, model: session.config.model, error: admission };
       const nextProvider = newProviderInstance.id as Provider;
-      const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
-      const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
+      const { clearAcpSession: clearAcpSessionId, clearSdkSession: clearSdkSessionState } =
+        providerIdentityClears(previousProvider, nextProvider);
 
+      appliedPair = { model: resolvedModel, provider: nextProvider };
+      if (commit) {
+        const admitted = admitRuntimeSettingsCommit(
+          commit.isCurrentOwner?.() ?? true,
+          commit.snapshot,
+          capturedPair as ModelPair,
+          session.id,
+          originalPair,
+          session.config,
+          capturedStatus,
+          stateManager.getState().status,
+          this.ctx.messageQueue.hasQueuedMessages(),
+          this.isQueryActiveOrStarting(),
+          generation,
+          this.ctx.getQueryGeneration?.()
+        );
+        if (admitted !== true)
+          return { success: false, model: session.config.model, error: admitted };
+        durableCommit =
+          this.ctx.db.casSessionRuntimeSettings(commit.snapshot, {
+            model: resolvedModel,
+            provider: nextProvider,
+            thinkingLevel: commit.thinkingLevel,
+            clearAcpSession: clearAcpSessionId,
+            clearSdkSession: clearSdkSessionState,
+          }) === 'won';
+        if (!durableCommit)
+          return { success: false, model: session.config.model, error: 'session_settings_changed' };
+      }
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
@@ -216,17 +445,23 @@ export class ModelSwitchHandler {
           session.sdkSessionId = undefined;
           session.sdkOriginPath = undefined;
         }
-        db.updateSession(session.id, {
-          config: {
-            model: resolvedModel,
-            provider: nextProvider,
-          } as SessionConfig,
-          ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
-          ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
-        });
+        if (commit?.thinkingLevel !== undefined)
+          session.config.thinkingLevel = commit.thinkingLevel;
+        if (!commit) {
+          db.updateSession(session.id, {
+            config: {
+              model: resolvedModel,
+              provider: nextProvider,
+            } as SessionConfig,
+            ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
+            ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
+          });
+        }
 
         contextTracker.setModel(resolvedModel);
 
+        if (nonInterrupting)
+          this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
         const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         await internalEventBus.publish('session.updated', {
           sessionId: session.id,
@@ -234,7 +469,8 @@ export class ModelSwitchHandler {
           session: { config: session.config },
         });
 
-        this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
+        if (!nonInterrupting)
+          this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (reevaluation) {
           try {
@@ -310,6 +546,27 @@ export class ModelSwitchHandler {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
+
+      if (commit) {
+        if (!durableCommit)
+          return { success: false, model: session.config.model, error: errorMessage };
+        logger.warn(`post-commit runtime settings side effect failed for ${session.id}:`, error);
+        return { success: true, model: session.config.model, error: errorMessage };
+      }
+
+      if (
+        nonInterrupting &&
+        (!appliedPair ||
+          admitNonInterruptingSwitch(
+            true,
+            this.isQueryActiveOrStarting(),
+            appliedPair,
+            session.config,
+            generation,
+            this.ctx.getQueryGeneration?.()
+          ) !== true)
+      )
+        return { success: false, model: session.config.model, error: errorMessage };
 
       session.config.model = previousModel;
       session.config.provider = originalProvider;

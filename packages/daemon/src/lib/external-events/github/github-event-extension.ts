@@ -34,7 +34,7 @@ import {
 } from './github-pr-head-ref-index.ts';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
-import { decideSelfEchoGate, resolveFilteredLogins } from './github-self-echo.ts';
+import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -1798,10 +1798,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (filterCurrentUser && !tokenStatus) this.triggerSelfEchoLoginRefresh();
     const tokenLogin = tokenLoginSnapshot ?? tokenStatus?.login ?? '';
     if (
-      decideSelfEchoGate({
+      decideSelfEchoFilter({
         initiatorLogin: event.initiatorLogin ?? event.actor,
         filteredLogins: resolveFilteredLogins({ filterCurrentUser, tokenLogin }),
-        filterCurrentUser,
+        enabled: filterCurrentUser,
       }) === 'drop'
     ) {
       log.debug('GitHub self-echo event dropped before publish', {

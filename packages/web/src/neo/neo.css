@@ -74,7 +74,70 @@
 }
 
 .neo-chat-rail {
+  padding-top: 68px;
   padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
+}
+
+.neo-float-dock {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.neo-float-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.neo-float-logo,
+.neo-float-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.neo-float-dock :is(button, a):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .neo-float-logo,
+  .neo-float-link {
+    background: var(--surface-raised);
+  }
+}
+
+.neo-float-actions > .neo-concerns > .neo-concerns-trigger {
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--line);
+}
+
+.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
+    background: var(--surface-raised);
+  }
 }
 
 .neo-message {
@@ -224,8 +287,8 @@
 .neo-concerns-card {
   display: none;
   position: absolute;
-  top: 76px;
-  right: 20px;
+  top: 64px;
+  right: 8px;
   width: min(300px, calc(100vw - 40px));
   max-height: calc(100dvh - var(--neo-composer-height, 190px) - 100px);
   overflow-y: auto;
@@ -252,8 +315,8 @@
   }
   .neo-concerns-card {
     display: block;
-    top: 100px;
-    right: max(24px, calc((100vw - 1160px) / 2));
+    top: 88px;
+    right: calc(max(24px, calc((100vw - 1160px) / 2)) - 12px);
     width: 260px;
     background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
     box-shadow: none;

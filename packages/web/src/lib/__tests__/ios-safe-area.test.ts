@@ -13,8 +13,8 @@ describe('iOS iPad Safari safe area support', () => {
     expect(appTsx).toContain('pt-safe');
   });
 
-  it('App.tsx uses h-dvh for the root container', () => {
-    expect(appTsx).toContain('h-dvh');
+  it('App.tsx uses h-safe-app for the root container so the shell tracks the visual viewport', () => {
+    expect(appTsx).toContain('h-safe-app');
   });
 
   it('styles.css defines the .h-safe-screen utility class (verified via hook referencing --safe-height)', () => {

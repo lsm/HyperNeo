@@ -13,6 +13,7 @@ import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
+import { createSessionIncarnationTable } from '../../../src/storage/schema/m290-session-incarnations';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
@@ -623,6 +624,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sessions(room_id) WHERE room_id IS NOT NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
   createSessionCounters(db);
+  createSessionIncarnationTable(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (

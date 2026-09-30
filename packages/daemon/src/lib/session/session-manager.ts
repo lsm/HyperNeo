@@ -491,6 +491,10 @@ export class SessionManager {
     return this.sessionCache.isLoading(sessionId);
   }
 
+  isRuntimeSettingsPreparing(sessionId: string): boolean {
+    return this.isSessionLoading(sessionId) || this.workflowMcpProvisioning.has(sessionId);
+  }
+
   getCachedSession(sessionId: string): AgentSession | null {
     return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
   }

@@ -188,14 +188,17 @@ export function NewChatModelPicker({
                   </div>
                   {models.map((model) => {
                     const isActive = `${model.provider}:${model.id}` === activeModelKey;
+                    const unavailable = model.available === false;
                     return (
                       <button
                         key={`${model.provider}:${model.id}`}
                         type="button"
-                        class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-fill-strong ${
-                          isActive ? 'text-accent' : 'text-fg-soft'
-                        }`}
+                        disabled={unavailable}
+                        class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                          unavailable ? 'cursor-not-allowed opacity-50' : 'hover:bg-fill-strong'
+                        } ${isActive ? 'text-accent' : 'text-fg-soft'}`}
                         onClick={() => {
+                          if (unavailable) return;
                           onSelectModel(model);
                           dropdown.close();
                         }}
@@ -203,6 +206,14 @@ export function NewChatModelPicker({
                         <span class="min-w-0 flex-1 truncate">
                           {shortenModelName(model.name, model.provider)}
                         </span>
+                        {unavailable && (
+                          <span
+                            class="text-[10px] text-fg-faint"
+                            title="Not runnable on this account"
+                          >
+                            unavailable
+                          </span>
+                        )}
                         {isActive && <span class="text-[10px] text-accent">✓</span>}
                       </button>
                     );

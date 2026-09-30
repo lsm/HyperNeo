@@ -4,13 +4,19 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient } from './neo-intake.ts';
+import { readNeoConversationAsks } from './conversation-ask-client.ts';
+import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { readNeoPublications } from './publication-client.ts';
+import { useNeoPublications } from './useNeoPublications.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
   const intake = useMemo(() => createNeoIntakeClient(() => connectionManager.getHub()), []);
   const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
+  const publications = useNeoPublications(snapshot?.sessionId ?? null);
+  const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
   const [scopedSnapshot, setScopedSnapshot] = useState<NeoSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -140,6 +146,10 @@ export function useNeo() {
   }
 
   return {
+    publications,
+    asks,
+    readPublications: readNeoPublications,
+    readAsks: readNeoConversationAsks,
     store,
     snapshot,
     viewSnapshot: selectedId ? scopedSnapshot : snapshot,

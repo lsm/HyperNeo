@@ -13,8 +13,9 @@ import {
 } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import { CODEX_MODEL_POLICY } from '../../../../src/lib/providers/codex-model-discovery';
 import {
   recordProviderFailure,
   resetProviderFailureStore,
@@ -1126,8 +1127,21 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const calls = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+        .calls;
+      const discoveryCall = calls.find(([callUrl]) =>
+        String(callUrl).includes('/backend-api/codex/models')
+      );
+      expect(discoveryCall).toBeTruthy();
+      const discoveryInit = discoveryCall?.[1];
+      expect(discoveryInit?.method).toBe('GET');
+      const discoveryHeaders = discoveryInit?.headers as Record<string, string>;
+      expect(discoveryHeaders['authorization']).toBe(`Bearer ${jwt}`);
+      expect(discoveryHeaders['ChatGPT-Account-ID']).toBe('acct-1');
+      const probeCall = calls.find(([callUrl]) => String(callUrl).endsWith('/responses'));
+      expect(probeCall).toBeTruthy();
+      const [url, init] = probeCall as [string, RequestInit];
       expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
@@ -1198,6 +1212,570 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('dynamic model discovery (ChatGPT subscription auth)', () => {
+    let tmpDir: string;
+    let hyperneoDir: string;
+
+    const DISCOVERY_CATALOG: Array<Record<string, unknown>> = [
+      {
+        slug: 'gpt-6-astra',
+        display_name: 'GPT-6-Astra',
+        description: 'Frontier intelligence for the most demanding work.',
+        visibility: 'list',
+        supported_in_api: true,
+        priority: 2,
+        context_window: 272000,
+        max_context_window: 872000,
+      },
+      {
+        slug: 'gpt-5.5',
+        display_name: 'GPT-5.5',
+        description: 'Frontier agentic coding model.',
+        visibility: 'list',
+        supported_in_api: true,
+        priority: 13,
+        context_window: 272000,
+        max_context_window: 872000,
+      },
+      {
+        slug: 'gpt-reserve',
+        display_name: 'GPT Reserve',
+        visibility: 'hide',
+        supported_in_api: true,
+        priority: 40,
+        context_window: 272000,
+      },
+      {
+        slug: 'codex-auto-review',
+        display_name: 'Codex Auto Review',
+        visibility: 'hide',
+        supported_in_api: true,
+        priority: 43,
+        context_window: 272000,
+      },
+    ];
+
+    function discoveryFetch(
+      modelsResponder: (url?: string, init?: RequestInit) => Response | Promise<Response> = () =>
+        catalogResponse(DISCOVERY_CATALOG),
+      probeStatus = 200
+    ): {
+      impl: typeof fetch;
+      counts: { models: number; probe: number };
+      probeBodies: Array<Record<string, unknown>>;
+    } {
+      const counts = { models: 0, probe: 0 };
+      const probeBodies: Array<Record<string, unknown>> = [];
+      const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('/models')) {
+          counts.models += 1;
+          return await modelsResponder(url, init);
+        }
+        counts.probe += 1;
+        if (typeof init?.body === 'string') {
+          probeBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        }
+        return new Response('{}', { status: probeStatus });
+      }) as unknown as typeof fetch;
+      return { impl, counts, probeBodies };
+    }
+
+    function catalogResponse(models: unknown[]): Response {
+      return new Response(JSON.stringify({ models }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    function oauthProvider(fetchImpl: typeof fetch): AnthropicToCodexBridgeProvider {
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'discovery-access-token',
+        refresh: 'discovery-refresh-token',
+        expires: Date.now() + 3600_000,
+        accountId: 'acct-discovery',
+      });
+      return makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'), fetchImpl);
+    }
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-discovery-'));
+      hyperneoDir = path.join(tmpDir, 'hyperneo');
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('serves the discovered catalog with static fallbacks marked unavailable', async () => {
+      const { impl, probeBodies } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      provider = oauthProvider(impl);
+
+      const models = await provider.getModels();
+      const byId = new Map(models.map((model) => [model.id, model]));
+
+      expect(byId.get('gpt-6-astra')?.available).toBe(true);
+      expect(byId.get('gpt-6-astra')?.sdkModelIds).toEqual(['gpt-6-astra']);
+      expect(byId.get('gpt-6-astra')?.contextWindow).toBe(272000);
+      expect(byId.get('gpt-5.5')?.available).toBe(true);
+      expect(byId.has('gpt-reserve')).toBe(false);
+      expect(byId.has('codex-auto-review')).toBe(false);
+      expect(byId.get('gpt-5.3-codex')?.available).toBe(false);
+      expect(byId.get('gpt-5.4')?.available).toBe(false);
+      expect(models[0]?.id).toBe('gpt-6-astra');
+      expect(probeBodies[0]?.model).toBe('gpt-5.5');
+    });
+
+    it('keeps a saved selection buildable when discovery drops it', async () => {
+      const { impl } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      await provider.ensureBridgeStarted('gpt-6-astra', { workspacePath: '/tmp/ws-discovery' });
+
+      const dynamicConfig = provider.buildSdkConfig('gpt-6-astra', {
+        workspacePath: '/tmp/ws-discovery',
+      });
+      expect(dynamicConfig.envVars.ANTHROPIC_BASE_URL).toContain('127.0.0.1');
+      expect(dynamicConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+
+      const savedConfig = provider.buildSdkConfig('gpt-5.3-codex', {
+        workspacePath: '/tmp/ws-discovery',
+      });
+      expect(savedConfig.envVars.ANTHROPIC_BASE_URL).toContain('127.0.0.1');
+    });
+
+    it('falls back to the persisted last-good catalog when the refresh fails', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 500 }));
+      provider = oauthProvider(impl);
+      writeFileSync(
+        path.join(hyperneoDir, 'codex-models-cache.json'),
+        JSON.stringify({
+          version: 1,
+          accountId: 'acct-discovery',
+          fetchedAt: Date.now() - 24 * 60 * 60_000,
+          models: DISCOVERY_CATALOG,
+        })
+      );
+
+      const models = await provider.getModels();
+
+      expect(counts.models).toBe(1);
+      const byId = new Map(models.map((model) => [model.id, model]));
+      expect(byId.get('gpt-6-astra')?.available).toBe(true);
+      expect(byId.has('gpt-reserve')).toBe(false);
+    });
+
+    it('falls back to the static catalog when discovery fails with no cache', async () => {
+      const { impl } = discoveryFetch(() => new Response('offline', { status: 503 }));
+      provider = oauthProvider(impl);
+
+      const models = await provider.getModels();
+
+      expect(models.length).toBeGreaterThan(0);
+      expect(models.some((model) => model.id === 'gpt-6-astra')).toBe(false);
+      expect(models.every((model) => model.available)).toBe(true);
+      await provider.ensureBridgeStarted('gpt-5.5', { workspacePath: '/tmp/ws-offline' });
+    });
+
+    it('backs off repeated discovery attempts while the catalog endpoint is failing', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      await provider.getModels();
+      await provider.listRemoteModels();
+
+      expect(counts.models).toBe(1);
+    });
+
+    it('preserves the discovery-failure backoff across generic model-cache clears', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      (provider as Provider).clearModelCache?.();
+      await provider.getModels();
+
+      expect(counts.models).toBe(1);
+    });
+
+    it('re-discovers after a credentials swap via the codex import path', async () => {
+      const codexDir = path.join(tmpDir, 'codex');
+      const catalogByAccount: Record<string, Array<Record<string, unknown>>> = {
+        'acct-discovery': DISCOVERY_CATALOG,
+        'acct-imported': [
+          {
+            slug: 'gpt-b-only',
+            display_name: 'GPT B Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ],
+      };
+      const { impl } = discoveryFetch((_url?: string, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string>;
+        const account = headers['ChatGPT-Account-ID'];
+        return catalogResponse(catalogByAccount[account ?? 'acct-discovery'] ?? []);
+      });
+      provider = oauthProvider(impl);
+
+      const first = await provider.getModels();
+      expect(first.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+
+      unlinkSync(path.join(hyperneoDir, 'auth.json'));
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'imported-access-token', account_id: 'acct-imported' },
+      });
+      await provider.logout();
+      await provider.getApiKey();
+
+      const second = await provider.getModels();
+      const ids = second.map((model) => model.id);
+      expect(ids).toContain('gpt-b-only');
+      expect(ids).not.toContain('gpt-6-astra');
+    });
+
+    it('discards a stale in-flight discovery after an account switch', async () => {
+      let releaseA: (() => void) | undefined;
+      const gateA = new Promise<void>((resolve) => {
+        releaseA = resolve;
+      });
+      let responder: () => Response | Promise<Response> = async () => {
+        await gateA;
+        return catalogResponse([
+          {
+            slug: 'gpt-a-only',
+            display_name: 'GPT A Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ]);
+      };
+      const { impl } = discoveryFetch(() => responder());
+      provider = oauthProvider(impl);
+
+      const staleGet = provider.getModels();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await provider.logout();
+      responder = () =>
+        catalogResponse([
+          ...DISCOVERY_CATALOG,
+          {
+            slug: 'gpt-b-only',
+            display_name: 'GPT B Only',
+            visibility: 'list',
+            supported_in_api: true,
+            priority: 1,
+            context_window: 272000,
+          },
+        ]);
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'discovery-access-token',
+        refresh: 'discovery-refresh-token',
+        expires: Date.now() + 3600_000,
+        accountId: 'acct-b',
+      });
+
+      const modelsB = await provider.getModels();
+      expect(modelsB.some((model) => model.id === 'gpt-b-only')).toBe(true);
+
+      releaseA?.();
+      await staleGet;
+
+      const idsAfter = provider.getCachedModels().map((model) => model.id);
+      expect(idsAfter).toContain('gpt-b-only');
+      expect(idsAfter).not.toContain('gpt-a-only');
+
+      const persistedAfterStale = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'codex-models-cache.json'), 'utf-8')
+      ) as { accountId?: string; models: Array<{ slug: string }> };
+      expect(persistedAfterStale.accountId).toBe('acct-b');
+      expect(persistedAfterStale.models.some((model) => model.slug === 'gpt-b-only')).toBe(true);
+      expect(persistedAfterStale.models.some((model) => model.slug === 'gpt-a-only')).toBe(false);
+    });
+
+    it('refreshes a running bridge catalog after re-discovery', async () => {
+      let catalog: Array<Record<string, unknown>> = DISCOVERY_CATALOG;
+      const { impl } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      await provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-bridge-refresh',
+      });
+      const config = provider.buildSdkConfig('gpt-6-astra', {
+        workspacePath: '/tmp/ws-bridge-refresh',
+      });
+      const baseUrl = config.envVars.ANTHROPIC_BASE_URL as string;
+
+      const before = (await (await fetch(`${baseUrl}/v1/models`)).json()) as {
+        data: Array<{ id: string }>;
+      };
+      expect(before.data.some((model) => model.id === 'gpt-6-astra')).toBe(true);
+      expect(before.data.some((model) => model.id === 'gpt-7-nova')).toBe(false);
+
+      catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-7-nova',
+          display_name: 'GPT-7-Nova',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 1,
+          context_window: 400000,
+        },
+      ];
+      await provider.listRemoteModels({ force: true });
+
+      const after = (await (await fetch(`${baseUrl}/v1/models`)).json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      expect(after.data.some((model) => model.id === 'gpt-7-nova')).toBe(true);
+      expect(after.data.find((model) => model.id === 'gpt-7-nova')?.context_window).toBe(400000);
+    });
+
+    it('creates exactly one bridge server for concurrent ensureBridgeStarted calls', async () => {
+      let releaseDiscovery: (() => void) | undefined;
+      const discoveryGate = new Promise<void>((resolve) => {
+        releaseDiscovery = resolve;
+      });
+      const { impl } = discoveryFetch(async () => {
+        await discoveryGate;
+        return catalogResponse(DISCOVERY_CATALOG);
+      });
+      provider = oauthProvider(impl);
+      await provider.getApiKey();
+
+      const first = provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-race-a',
+      });
+      const second = provider.ensureBridgeStarted('gpt-6-astra', {
+        workspacePath: '/tmp/ws-race-b',
+      });
+      await Promise.resolve();
+      releaseDiscovery?.();
+      await Promise.all([first, second]);
+
+      const servers = (provider as unknown as { bridgeServers: Map<string, unknown> })
+        .bridgeServers;
+      expect(servers.size).toBe(1);
+    });
+
+    it('treats an all-filtered discovery response as a failure', async () => {
+      const hiddenOnly = DISCOVERY_CATALOG.filter((model) => model.visibility !== 'list');
+      const { impl } = discoveryFetch(() => catalogResponse(hiddenOnly));
+      provider = oauthProvider(impl);
+
+      const models = await provider.getModels();
+
+      expect(models.some((model) => model.id === 'gpt-5.6-sol')).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-6-astra')).toBe(false);
+    });
+
+    it('seeds from a fresh persisted cache without hitting the network after a restart', async () => {
+      const first = oauthProvider(discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG)).impl);
+      await first.getModels();
+      first.stopAllBridgeServers();
+
+      const { impl, counts } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      provider = oauthProvider(impl);
+      const models = await provider.getModels();
+
+      expect(counts.models).toBe(0);
+      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+    });
+
+    it('keeps the discovered catalog across generic model-cache clears', async () => {
+      let catalog = DISCOVERY_CATALOG;
+      const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      expect(counts.models).toBe(1);
+
+      (provider as Provider).clearModelCache?.();
+      catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-7-nova',
+          display_name: 'GPT-7-Nova',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 1,
+          context_window: 272000,
+        },
+      ];
+      const models = await provider.getModels();
+
+      expect(counts.models).toBe(1);
+      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-5.3-codex' && !model.available)).toBe(true);
+      expect(models.some((model) => model.id === 'gpt-7-nova')).toBe(false);
+    });
+
+    it('keeps the network backoff while serving last-good during an outage', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+      writeFileSync(
+        path.join(hyperneoDir, 'codex-models-cache.json'),
+        JSON.stringify({
+          version: 1,
+          accountId: 'acct-discovery',
+          fetchedAt: Date.now() - 24 * 60 * 60_000,
+          models: DISCOVERY_CATALOG,
+        })
+      );
+
+      const first = await provider.getModels();
+      expect(first.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+
+      (provider as Provider).clearModelCache?.();
+      const second = await provider.getModels();
+
+      expect(counts.models).toBe(1);
+      expect(second.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
+    });
+
+    it('forced listRemoteModels falls back to the static catalog without throwing during an outage', async () => {
+      const { impl, counts } = discoveryFetch(() => new Response('offline', { status: 502 }));
+      provider = oauthProvider(impl);
+
+      const models = await provider.listRemoteModels({ force: true });
+
+      expect(counts.models).toBe(1);
+      expect(models.some((model) => model.id === 'gpt-5.6-sol' && model.available)).toBe(true);
+      expect(models.every((model) => model.available)).toBe(true);
+    });
+
+    it('listRemoteModels returns the merged catalog and honors force', async () => {
+      let catalog: Array<Record<string, unknown>> = DISCOVERY_CATALOG;
+      const { impl, counts } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+      const first = await provider.listRemoteModels();
+      const firstById = new Map(first.map((model) => [model.id, model]));
+      expect(firstById.get('gpt-6-astra')?.available).toBe(true);
+      expect(firstById.get('gpt-5.3-codex')?.available).toBe(false);
+
+      catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-7-nova',
+          display_name: 'GPT-7-Nova',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 1,
+        },
+      ];
+      const forced = await provider.listRemoteModels({ force: true });
+      expect(forced.some((model) => model.id === 'gpt-7-nova' && model.available)).toBe(true);
+      expect(counts.models).toBe(2);
+    });
+
+    it('listRemoteModels returns the static catalog for API-key auth', async () => {
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, hyperneoDir, tmpDir);
+      const models = await provider.listRemoteModels();
+      expect(models.some((model) => model.id === 'gpt-5.6-sol')).toBe(true);
+      expect(models.every((model) => model.available)).toBe(true);
+    });
+
+    it('listRemoteModels rejects when the provider is not authenticated', async () => {
+      provider = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
+    });
+
+    it('ownsModel and getModelForTier follow the discovered catalog', async () => {
+      const { impl } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+
+      expect(provider.ownsModel('gpt-6-astra')).toBe(true);
+      expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+      expect(provider.getModelForTier('default')).toBe('gpt-6-astra');
+      expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
+    });
+
+    it('routes the haiku tier to the cheapest discovered model when the static id is absent', async () => {
+      const catalog = [
+        ...DISCOVERY_CATALOG,
+        {
+          slug: 'gpt-6-luna',
+          display_name: 'GPT-6-Luna',
+          visibility: 'list',
+          supported_in_api: true,
+          priority: 5,
+          context_window: 272000,
+        },
+      ];
+      const { impl } = discoveryFetch(() => catalogResponse(catalog));
+      provider = oauthProvider(impl);
+
+      await provider.getModels();
+
+      expect(provider.getModelForTier('haiku')).toBe('gpt-6-luna');
+      expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
+    });
+
+    it('keeps the static tier mapping for non-subscription auth', () => {
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, hyperneoDir, tmpDir);
+      expect(provider.getModelForTier('default')).toBe('gpt-5.6-terra');
+    });
+
+    it('honors a product-pinned default model when the catalog contains it', async () => {
+      const { impl } = discoveryFetch(() => catalogResponse(DISCOVERY_CATALOG));
+      provider = oauthProvider(impl);
+      const policy = CODEX_MODEL_POLICY as { pinnedDefault?: string };
+      const previousPinned = policy.pinnedDefault;
+      policy.pinnedDefault = 'gpt-5.5';
+      try {
+        await provider.getModels();
+        expect(provider.getModelForTier('default')).toBe('gpt-5.5');
+        expect(provider.getModelForTier('opus')).toBe('gpt-6-astra');
+        expect(provider.getModelForTier('haiku')).toBe('gpt-5.5');
+      } finally {
+        policy.pinnedDefault = previousPinned;
+      }
+    });
+
+    it('refreshes an expired access token once when discovery hits HTTP 401', async () => {
+      const responses = [
+        new Response('token expired', { status: 401 }),
+        catalogResponse(DISCOVERY_CATALOG),
+      ];
+      const { impl, counts } = discoveryFetch(() => responses.shift() ?? catalogResponse([]));
+      const p = oauthProvider(impl);
+      const refreshedJwt = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-discovery' },
+        exp: Math.floor(Date.now() / 1000) + 60 * 60,
+      });
+      (p as unknown as { tryRefreshCodexToken: () => Promise<unknown> }).tryRefreshCodexToken =
+        async () => ({
+          ok: true,
+          token: {
+            access_token: refreshedJwt,
+            refresh_token: 'rotated-refresh',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          },
+        });
+      provider = p;
+
+      const models = await provider.getModels();
+
+      expect(counts.models).toBe(2);
+      expect(models.some((model) => model.id === 'gpt-6-astra' && model.available)).toBe(true);
     });
   });
 

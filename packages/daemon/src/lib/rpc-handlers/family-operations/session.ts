@@ -58,15 +58,29 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     spawn,
     returnToParent,
     ...createSessionRuntimeSettingsOperations({
-      getDatabase: () => context.deps.db.getDatabase(),
       getLiveSession: (sessionId) =>
         context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
         context.deps.sessionManager.getCachedSession(sessionId) ??
         null,
       getSession: scopeDeps.getSession,
-      sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
-      persistColdSessionConfig: (sessionId, config) => {
-        context.deps.db.updateSession(sessionId, { config });
+      sessionSpaceId: (session) =>
+        resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
+      capture: (id) => context.deps.db.captureSessionRuntimeSettings(id),
+      commit: (snapshot, patch) => context.deps.db.casSessionRuntimeSettings(snapshot, patch),
+      isPreparing: (id) =>
+        context.deps.sessionManager.isRuntimeSettingsPreparing(id) ||
+        context.taskAgentManager.isRuntimeSettingsPreparing(id),
+      hasPendingWork: (id) =>
+        context.deps.db.getJobQueueRepo().activeDeliveryMessageUuids(id).size > 0 ||
+        context.deps.db.getJobQueueRepo().activeMailboxMessageUuids(id).size > 0,
+      notify: async (id) => {
+        const session = context.deps.db.getSession(id);
+        if (session)
+          await context.deps.internalEventBus.publish('session.updated', {
+            sessionId: id,
+            source: 'runtime-settings',
+            session: { config: session.config },
+          });
       },
     }),
     ...createSessionOperations({

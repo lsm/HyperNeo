@@ -1,16 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  applyBodyNonemptyGate,
-  applyEligibilityGate,
-  applyIndexGate,
-  applySearchableTypeGate,
-  applySupersededGate,
-  applyUserStatusGate,
   decideMessageSearchAdmission,
+  gateBodyNonempty,
+  gateEligible,
+  gateSearchableType,
+  gateSuperseded,
+  gateUserStatusSearchable,
   isMessageSearchIndexEligible,
   isOlderThanMessageSearchTtl,
-  type MessageSearchAdmissionCtx,
-  type MessageSearchAdmissionDecision,
+  messageSearchAdmissionOutcome,
+  runMessageSearchAdmission,
   type MessageSearchAdmissionInput,
   type MessageSearchEligibilityRow,
 } from '../../../../src/storage/repositories/message-search-admission';
@@ -219,8 +218,10 @@ describe('isMessageSearchIndexEligible', () => {
   });
 });
 
-describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
-  function gateCtx(overrides: Partial<MessageSearchAdmissionCtx> = {}): MessageSearchAdmissionCtx {
+describe('admission gates (ADR 0004 result arms)', () => {
+  function gateInput(
+    overrides: Partial<MessageSearchAdmissionInput> = {}
+  ): MessageSearchAdmissionInput {
     return {
       messageType: 'user',
       body: 'searchable body',
@@ -228,78 +229,60 @@ describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
       eligibility: eligibleRow(),
       isSuperseded: false,
       isSearchableUserStatus: true,
-      decision: null,
       ...overrides,
     };
   }
 
-  test('passing gates return the ctx unchanged by reference', () => {
-    const passingGates = [
-      applySupersededGate,
-      applySearchableTypeGate,
-      applyEligibilityGate,
-      applyBodyNonemptyGate,
-      applyUserStatusGate,
-    ];
-    for (const gate of passingGates) {
-      const ctx = gateCtx();
-      expect(gate(ctx)).toBe(ctx);
+  const gates = [
+    gateSuperseded,
+    gateSearchableType,
+    gateEligible,
+    gateBodyNonempty,
+    gateUserStatusSearchable,
+  ] as const;
+
+  test('passing gates admit their input unchanged', () => {
+    for (const gate of gates) {
+      const input = gateInput();
+      expect(gate(input)).toEqual({ value: input });
     }
   });
 
-  function assertDecides(
-    gate: (ctx: MessageSearchAdmissionCtx) => MessageSearchAdmissionCtx,
-    overrides: Partial<MessageSearchAdmissionCtx>,
-    decision: MessageSearchAdmissionDecision
-  ): void {
-    const input = gateCtx(overrides);
-    const expected = { ...input, decision };
-    const result = gate(input);
-    expect(result).not.toBe(input);
-    expect(result).toEqual(expected);
-  }
-
-  test('each deciding gate stamps its skip reason on a copied ctx', () => {
-    assertDecides(
-      applySupersededGate,
-      { isSuperseded: true },
-      {
-        action: 'skip',
-        reason: 'superseded',
-      }
-    );
-    assertDecides(
-      applySearchableTypeGate,
-      { messageType: 'result' },
-      {
-        action: 'skip',
-        reason: 'non_searchable_type',
-      }
-    );
-    assertDecides(
-      applyEligibilityGate,
-      { eligibility: eligibleRow({ session_status: 'archived' }) },
-      { action: 'skip', reason: 'ineligible' }
-    );
-    assertDecides(
-      applyBodyNonemptyGate,
-      { body: '' },
-      {
-        action: 'skip',
-        reason: 'empty_body',
-      }
-    );
-    assertDecides(
-      applyUserStatusGate,
-      { isSearchableUserStatus: false },
-      {
-        action: 'skip',
-        reason: 'user_status_not_searchable',
-      }
-    );
+  test('each gate rejects with its own reason', () => {
+    expect(gateSuperseded(gateInput({ isSuperseded: true }))).toEqual({ reason: 'superseded' });
+    expect(gateSearchableType(gateInput({ messageType: 'result' }))).toEqual({
+      reason: 'non_searchable_type',
+    });
+    expect(
+      gateEligible(gateInput({ eligibility: eligibleRow({ session_status: 'archived' }) }))
+    ).toEqual({ reason: 'ineligible' });
+    expect(gateBodyNonempty(gateInput({ body: '' }))).toEqual({ reason: 'empty_body' });
+    expect(gateUserStatusSearchable(gateInput({ isSearchableUserStatus: false }))).toEqual({
+      reason: 'user_status_not_searchable',
+    });
   });
 
-  test('the index gate always decides', () => {
-    assertDecides(applyIndexGate, {}, { action: 'index' });
+  test('the user-status gate only applies to user messages', () => {
+    expect(
+      gateUserStatusSearchable(
+        gateInput({ messageType: 'assistant', isSearchableUserStatus: false })
+      )
+    ).toMatchObject({ value: expect.anything() });
+  });
+
+  test('the cascade reads each reason in precedence order', () => {
+    expect(
+      runMessageSearchAdmission(gateInput({ isSuperseded: true, messageType: 'result', body: '' }))
+    ).toBe('superseded');
+    expect(runMessageSearchAdmission(gateInput({ messageType: 'result', body: '' }))).toBe(
+      'non_searchable_type'
+    );
+    expect(runMessageSearchAdmission(gateInput({ body: '' }))).toBe('empty_body');
+  });
+
+  test('an admitted cascade returns the input it admitted', () => {
+    const admitted = gateInput();
+    expect(runMessageSearchAdmission(admitted)).toBe(admitted);
+    expect(messageSearchAdmissionOutcome(admitted)).toEqual({ action: 'index' });
   });
 });

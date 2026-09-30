@@ -16,6 +16,10 @@ import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observabili
 import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 import { SessionRepository } from './repositories/session-repository.ts';
+import type {
+  RuntimeSettingsPatch,
+  SessionRuntimeSettingsSnapshot,
+} from './repositories/session-runtime-settings-write.ts';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
 import { SettingsRepository } from './repositories/settings-repository.ts';
 import {
@@ -200,6 +204,10 @@ export class Database {
     return this.sessionRepo.getSession(id);
   }
 
+  getSessionIncarnation(id: string): number | null {
+    return this.sessionRepo.getSessionIncarnation(id);
+  }
+
   listSessions(options?: {
     status?: string;
     includeArchived?: boolean;
@@ -222,6 +230,16 @@ export class Database {
 
   updateSession(id: string, updates: Partial<Session>): void {
     this.sessionRepo.updateSession(id, updates);
+  }
+
+  captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
+    return this.sessionRepo.captureSessionRuntimeSettings(id);
+  }
+  casSessionRuntimeSettings(
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch
+  ): 'won' | 'superseded' {
+    return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
   }
 
   deleteSession(id: string): void {

@@ -12,6 +12,7 @@ const paths = {
   external: 'M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',
   work: 'M8 7V4h8v3M4 7h16v13H4V7Zm0 5c5 3 11 3 16 0M10 12h4',
   check: 'm5 12 4 4L19 6',
+  received: 'm2 12 4 4L16 6m-4 10L22 6',
   pause: 'M9 5v14M15 5v14',
   back: 'm12 5-7 7 7 7M5 12h14',
 };

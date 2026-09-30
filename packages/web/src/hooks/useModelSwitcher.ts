@@ -63,6 +63,7 @@ export interface RawModelEntry {
   contextWindow?: number;
   context_window?: number;
   thinkingModes?: 'off' | 'on' | 'granular';
+  available?: boolean;
 }
 
 export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
@@ -100,7 +101,7 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       contextWindow: typeof contextWindow === 'number' && contextWindow > 0 ? contextWindow : 0,
       description: m.description || '',
       releaseDate: '',
-      available: true,
+      available: m.available !== false,
       thinkingModes: m.thinkingModes,
     };
   });

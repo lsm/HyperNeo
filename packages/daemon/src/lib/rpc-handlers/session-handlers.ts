@@ -809,6 +809,7 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
+          available: m.available !== false,
           type: 'model' as const,
         })),
         cached: !didRefresh && availableModels.length > 0,

@@ -247,14 +247,17 @@ describe('Provider auth lifecycle regression matrix', () => {
       const models = await provider.getModels();
 
       expect(models.length).toBeGreaterThan(0);
-      expect(fetcher.calls).toHaveLength(1);
-      expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
-      const headers = new Headers(fetcher.calls[0].init.headers);
+      const probeCalls = fetcher.calls.filter((call) => call.url === probeUrlFor(mode));
+      expect(probeCalls).toHaveLength(1);
+      const headers = new Headers(probeCalls[0].init.headers);
       expect(headers.get('authorization')).toBe(
         mode === 'oauth' ? 'Bearer oauth-access-matrix' : 'Bearer sk-matrix-key'
       );
       if (mode === 'oauth') {
         expect(headers.get('ChatGPT-Account-ID')).toBe('acct-matrix');
+        expect(fetcher.calls.some((call) => call.url.includes('/backend-api/codex/models'))).toBe(
+          true
+        );
       }
     });
 
@@ -380,7 +383,7 @@ describe('Provider auth lifecycle regression matrix', () => {
         provider.setCredentials(loginCredsFor(mode, 1));
         expect(await provider.isAvailable()).toBe(true);
         expect((await provider.getModels()).length).toBeGreaterThan(0);
-        expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
+        expect(fetcher.calls.some((call) => call.url === probeUrlFor(mode))).toBe(true);
 
         await provider.logout();
         expect(await provider.isAvailable()).toBe(false);
@@ -389,9 +392,11 @@ describe('Provider auth lifecycle regression matrix', () => {
         provider.setCredentials(loginCredsFor(mode, 2));
         expect(await provider.isAvailable()).toBe(true);
         expect((await provider.getModels()).length).toBeGreaterThan(0);
-        expect(fetcher.calls).toHaveLength(2);
-        expect(fetcher.calls[1].url).toBe(probeUrlFor(mode));
-        const readdedHeaders = new Headers(fetcher.calls[1].init.headers);
+        const readdedProbeCalls = fetcher.calls
+          .filter((call) => call.url === probeUrlFor(mode))
+          .slice(-1);
+        expect(readdedProbeCalls).toHaveLength(1);
+        const readdedHeaders = new Headers(readdedProbeCalls[0].init.headers);
         expect(readdedHeaders.get('authorization')).toBe(
           mode === 'oauth' ? 'Bearer oauth-access-readded' : 'Bearer sk-readded-key'
         );
@@ -423,7 +428,7 @@ describe('Provider auth lifecycle regression matrix', () => {
       provider.setCredentials(loginCredsFor('oauth'));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
-      expect(fetcher.calls[0].url).toBe(OAUTH_PROBE_URL);
+      expect(fetcher.calls.some((call) => call.url === OAUTH_PROBE_URL)).toBe(true);
     });
 
     it('OAuth: removal then re-add then stale-token-cleanup clears again (no zombie cache)', async () => {

@@ -143,14 +143,23 @@ function ModelPickerModal({
                   {!isAuthenticated && <span class="text-fg-faint ml-1">(not authenticated)</span>}
                 </div>
                 {models.map((model) => {
+                  const unavailable = model.available === false;
                   return (
                     <button
                       key={`${model.provider}:${model.id}`}
-                      class="w-full text-left px-4 py-2 text-sm flex items-center gap-2 hover:bg-fill-strong transition-colors"
+                      class={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-colors ${
+                        unavailable ? 'cursor-not-allowed opacity-50' : 'hover:bg-fill-strong'
+                      }`}
+                      disabled={unavailable}
                       onClick={() => onSelect(model)}
                     >
                       <ProviderLogo provider={model.provider} class="h-4 w-4" />
                       <span class="flex-1 text-fg-soft truncate">{model.name}</span>
+                      {unavailable && (
+                        <span class="text-xs text-fg-faint" title="Not runnable on this account">
+                          unavailable
+                        </span>
+                      )}
                     </button>
                   );
                 })}

@@ -3,6 +3,11 @@ import { vi } from 'vitest';
 import type { Session, SessionConfig } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import type { RuntimeSettingsCommit } from '../../../../src/lib/agent/model-switch-handler';
+import type {
+  SessionRuntimeSettingsSnapshot,
+  RuntimeSettingsPatch,
+} from '../../../../src/storage/repositories/session-runtime-settings-write';
 import { createSessionRuntimeSettingsOperations } from '../../../../src/lib/session/runtime-settings-operations';
 import {
   createOperationRegistry,
@@ -53,6 +58,10 @@ interface Harness {
   switched: Array<{ model: string; provider: string }>;
   liveConfigs: Array<Partial<SessionConfig>>;
   operations: Map<string, OperationDefinition>;
+  commit: (
+    snapshot: SessionRuntimeSettingsSnapshot,
+    patch: RuntimeSettingsPatch
+  ) => 'won' | 'superseded';
 }
 
 function makeLiveSession(h: Harness, sessionId: string, status: string): AgentSession {
@@ -61,12 +70,23 @@ function makeLiveSession(h: Harness, sessionId: string, status: string): AgentSe
   return {
     getSessionData: () => h.sessions.get(sessionId) as Session,
     getProcessingState: () => ({ status }),
-    handleModelSwitch: async (model: string, provider: string) => {
+    isQueryActiveOrStarting: () => status !== 'idle',
+    handleModelSwitch: async (
+      model: string,
+      provider: string,
+      nonInterrupting: boolean,
+      commit: RuntimeSettingsCommit
+    ) => {
+      expect(nonInterrupting).toBe(true);
+      expect(commit.isCurrentOwner?.()).toBe(true);
+      expect(
+        h.commit(commit.snapshot, { model, provider, thinkingLevel: commit.thinkingLevel })
+      ).toBe('won');
       h.switched.push({ model, provider });
       const current = h.sessions.get(sessionId) as Session;
       h.sessions.set(sessionId, {
         ...current,
-        config: { ...current.config, model, provider },
+        config: { ...current.config, model, provider: provider as SessionConfig['provider'] },
       });
       return { success: true, model };
     },
@@ -86,20 +106,54 @@ function harness(): Harness {
     switched: [],
     liveConfigs: [],
     operations: new Map(),
+    commit: (snapshot, patch) => {
+      const current = h.sessions.get(snapshot.id);
+      if (!current || JSON.stringify(current.config) !== snapshot.config) return 'superseded';
+      const config = { ...current.config };
+      if (patch.model !== undefined) config.model = patch.model;
+      if (patch.provider !== undefined)
+        config.provider = patch.provider as SessionConfig['provider'];
+      if (patch.thinkingLevel !== undefined)
+        config.thinkingLevel = patch.thinkingLevel as SessionConfig['thinkingLevel'];
+      h.persisted.set(snapshot.id, config);
+      h.sessions.set(snapshot.id, { ...current, config });
+      return 'won';
+    },
   };
   const ops = createSessionRuntimeSettingsOperations({
-    getDatabase: () => {
-      throw new Error('not used');
-    },
     getLiveSession: (sessionId) => h.live.get(sessionId) ?? null,
     getSession: (sessionId) => h.sessions.get(sessionId) ?? null,
     sessionSpaceId: (session) =>
       (session.context as { spaceId?: string } | undefined)?.spaceId ?? undefined,
-    persistColdSessionConfig: (sessionId, config) => {
-      h.persisted.set(sessionId, config);
-      const current = h.sessions.get(sessionId);
-      if (current) h.sessions.set(sessionId, { ...current, config });
+    capture: (id) => {
+      const session = h.sessions.get(id);
+      return session
+        ? {
+            id,
+            incarnation: 1,
+            config: JSON.stringify(session.config),
+            metadata: '{}',
+            sessionContext: null,
+            status: session.status,
+            type: session.type ?? 'space_chat',
+            archivedAt: null,
+            processingState: null,
+            parentId: null,
+            workspacePath: null,
+            isWorktree: 0,
+            worktreePath: null,
+            mainRepoPath: null,
+            worktreeBranch: null,
+            sdkSessionId: null,
+            acpSessionId: null,
+            sdkOriginPath: null,
+          }
+        : null;
     },
+    commit: (snapshot, patch) => h.commit(snapshot, patch),
+    isPreparing: () => false,
+    hasPendingWork: () => false,
+    notify: async () => {},
   });
   for (const op of ops) h.operations.set(op.name, op);
   return h;
@@ -126,7 +180,10 @@ describe('session.runtimeSettings.read', () => {
     h.sessions.set('plain', makeSession({ id: 'plain' }));
     h.sessions.set(
       'project',
-      makeSession({ id: 'project', worktree: { path: '/w' } as Session['worktree'] })
+      makeSession({
+        id: 'project',
+        worktree: { isWorktree: true, worktreePath: '/w', mainRepoPath: '/r', branch: 'b' },
+      })
     );
     h.sessions.set('task', makeSession({ id: 'x:task:1', type: 'space_task_agent' }));
     h.sessions.set(
@@ -149,7 +206,7 @@ describe('session.runtimeSettings.read', () => {
     }
     const agentResult = await run(h, 'session.runtimeSettings.read', { sessionId: 'agent-1' });
     expect((agentResult.settings as Record<string, unknown>).live).toBe(true);
-    expect((agentResult.settings as Record<string, unknown>).runningNow).toBe(true);
+    expect((agentResult.settings as Record<string, unknown>).queryActive).toBe(true);
   });
 
   test('fails for an unknown session', async () => {
@@ -195,7 +252,7 @@ describe('session.runtimeSettings.update', () => {
     expect(result.appliesFrom).toBe('next-turn');
   });
 
-  test('a running turn is never mutated: config changes apply from the next turn', async () => {
+  test('a running turn refuses settings without entering the native switch', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
     h.live.set('plain', makeLiveSession(h, 'plain', 'processing'));
@@ -204,10 +261,10 @@ describe('session.runtimeSettings.update', () => {
       sessionId: 'plain',
       model: 'claude-opus-5',
     });
-    expect(result.ok).toBe(true);
-    expect((result.settings as Record<string, unknown>).runningNow).toBe(true);
-    expect(result.appliesFrom).toBe('next-turn');
-    expect(h.switched).toHaveLength(1);
+    expect(result).toMatchObject({ ok: false, reason: 'session_busy' });
+    expect(h.switched).toHaveLength(0);
+    expect(h.persisted.size).toBe(0);
+    expect(h.sessions.get('plain')?.config.model).toBe('claude-sonnet-5');
   });
 
   test('invalid model fails with the valid catalog ids listed', async () => {
@@ -272,7 +329,8 @@ describe('session.runtimeSettings.update', () => {
     });
     expect(result.ok).toBe(true);
     expect((result.notes as string[]).join(' ')).toContain('no-op');
-    expect(h.liveConfigs).toContainEqual({ thinkingLevel: 'think32k' });
+    expect(h.persisted.get('plain')).toMatchObject({ thinkingLevel: 'think32k' });
+    expect(h.liveConfigs).toHaveLength(0);
   });
 
   test('thinking level normalizes unknown values to off', async () => {
@@ -286,7 +344,7 @@ describe('session.runtimeSettings.update', () => {
     expect((result.settings as Record<string, unknown>).thinkingLevel).toBe('off');
   });
 
-  test('provider-only updates apply without a model switch', async () => {
+  test('provider-only updates use the non-interrupting joint switch', async () => {
     const h = harness();
     h.sessions.set('plain', makeSession({ id: 'plain' }));
     h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
@@ -295,7 +353,8 @@ describe('session.runtimeSettings.update', () => {
       provider: 'anthropic',
     });
     expect(result.ok).toBe(true);
-    expect(h.liveConfigs).toContainEqual({ provider: 'anthropic' });
+    expect(h.switched).toEqual([{ model: 'claude-sonnet-5', provider: 'anthropic' }]);
+    expect(h.liveConfigs).toHaveLength(0);
   });
 
   test('refuses an empty update and an unknown session', async () => {
@@ -395,7 +454,7 @@ describe('session.runtimeSettings.update', () => {
       provider: 'anthropic',
     });
     expect(result.ok).toBe(true);
-    expect(h.liveConfigs).toContainEqual({ provider: 'anthropic' });
+    expect(h.switched).toEqual([{ model: 'claude-secret-hidden', provider: 'anthropic' }]);
   });
 });
 
