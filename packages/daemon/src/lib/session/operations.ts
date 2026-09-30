@@ -458,7 +458,7 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
     defineOperation({
       name: 'session.list',
       policy: READ_POLICY,
-      description: `List the sessions in a Space with their derived status, type, workspace, and git branch: worktree workers run a Space task, agent sessions are an agent's own session. ${SCOPE_NOTE} Workflow workers may read sessions. Returns the summaries, newest activity first.`,
+      description: `List the sessions in a Space with their derived status, type, workspace, and git branch: worker sessions run a Space task (worktree or direct), agent sessions are an agent's own session. ${SCOPE_NOTE} Workflow workers may read sessions. Returns the summaries, newest activity first.`,
       inputSchema: ListSessionsInputSchema,
       resultSchema: SessionListResultSchema,
       execute: (input, caller) => list(input, caller),
