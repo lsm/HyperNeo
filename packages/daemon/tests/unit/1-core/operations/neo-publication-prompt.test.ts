@@ -5,7 +5,6 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 
 const draft = { shortText: 'Draft only.', fullText: 'Detail behind it.', links: [] };
-
 function options(): Options {
   return {
     systemPrompt: 'Legacy stored coordinator wording',
@@ -34,7 +33,6 @@ describe('direct human publication prompt', () => {
     expect(prompt).not.toContain('Legacy stored coordinator wording');
     expect(prompt).toContain('Reuse operations.describe for the exact schema');
   });
-
   test.each([null, 'research'])(
     'keeps existing %s model, tool and MCP policy intact',
     (concernId) => {
@@ -54,7 +52,6 @@ describe('direct human publication prompt', () => {
       expect(query.agents).toEqual({});
     }
   );
-
   test.each([null, 'research'])('supplies the four authored keys jointly for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain('neo.publication.publish {publicationId, shortText, fullText, links}');
@@ -69,13 +66,11 @@ describe('direct human publication prompt', () => {
       expect(accepted).toHaveProperty(key);
     }
   });
-
   test.each([null, 'research'])('requires one call before the turn ends for %s', (concernId) => {
     expect(delivered(concernId)).toContain(
       'publish that answer with neo.publication.publish {publicationId, shortText, fullText, links} in one call before ending the turn'
     );
   });
-
   test.each([null, 'research'])(
     'keeps the authored short reply and full detail in the same reasoning pass for %s',
     (concernId) => {
@@ -88,7 +83,6 @@ describe('direct human publication prompt', () => {
       expect(prompt).toContain('the labelled Neo scene references');
     }
   );
-
   test.each([null, 'research'])(
     'restricts publication to identical retries for %s',
     (concernId) => {
@@ -99,7 +93,6 @@ describe('direct human publication prompt', () => {
       );
     }
   );
-
   test.each([null, 'research'])(
     'derives identity at runtime and never flags authority for %s',
     (concernId) => {
@@ -115,7 +108,6 @@ describe('direct human publication prompt', () => {
       expect(producerInput).toBeDefined();
     }
   );
-
   test('keeps an actual holder origin distinct from root', () => {
     const holder = delivered('research');
     expect(holder).toContain('your own origin is your actual session');
@@ -123,7 +115,6 @@ describe('direct human publication prompt', () => {
     expect(holder).toContain('you are a context holder');
     expect(delivered(null)).toContain('the current input is a human message in this conversation');
   });
-
   test.each([null, 'research'])('links only inspected in-scope Neo ids for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
@@ -133,7 +124,6 @@ describe('direct human publication prompt', () => {
     expect(prompt).toContain('Never put a filesystem path, a private resource');
     expect(NeoPublicationSchema.shape.links).toBeDefined();
   });
-
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
@@ -142,7 +132,6 @@ describe('direct human publication prompt', () => {
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
   });
-
   test.each([null, 'research'])(
     'treats a rejected publication as a real failure for %s',
     (concernId) => {
@@ -152,7 +141,6 @@ describe('direct human publication prompt', () => {
       expect(prompt).toContain('never a publication you may fabricate');
     }
   );
-
   test('does not instruct consultation or returned-result turns to publish the same answer', () => {
     const holder = delivered('research');
     expect(holder).toContain(
@@ -165,7 +153,6 @@ describe('direct human publication prompt', () => {
     );
     expect(root).toContain('consult its holder before giving the substantive answer');
   });
-
   test('preserves the pinned consultation, context, discovery and execution-approval text', () => {
     const root = delivered(null);
     const holder = delivered('research');
