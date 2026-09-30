@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space, SpaceWorkflow } from '@hyperneo/shared';
-import type { McpServer } from '@hyperneo/shared/sdk';
+import type { McpServer, McpServerConfig } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,
@@ -169,7 +169,12 @@ function workerAgent() {
 
 function makeRecordingAgentSession(session: Session): AgentSession {
   return {
-    mergeRuntimeMcpServers: () => {},
+    mergeRuntimeMcpServers: (servers: Record<string, McpServerConfig>) => {
+      session.config = {
+        ...session.config,
+        mcpServers: { ...(session.config?.mcpServers ?? {}), ...servers },
+      };
+    },
     setRuntimeMcpServers: () => {},
     setOperationRegistryProvider: () => {},
     ensureOperationRegistryProvider: () => {},
@@ -674,31 +679,40 @@ describe('session kind injected text', () => {
   });
 
   describe('ADR 0007 briefing contract', () => {
-    test('clause (a): every contributed server is attached under the name it is contributed as', async () => {
+    test('clause (a): the attached servers and the contributed servers are equal in both directions', async () => {
       const mismatches: string[] = [];
       for (const kind of SESSION_KINDS) {
         const session = makeSessionOfKind(kind);
         seedCreationConfig(kind, session);
-        const merged: string[] = [];
         const recorded = makeCapabilityRecordingAgentSession(session);
-        (
-          recorded.agentSession as unknown as { mergeRuntimeMcpServers: (s: object) => void }
-        ).mergeRuntimeMcpServers = (servers) => {
-          merged.push(...Object.keys(servers));
-        };
         const service = buildService(kind, recorded.agentSession);
         await service.reattachMemberSpaceTools(session.id);
 
-        const contributed = new Set(recorded.capabilities.map((entry) => entry.server.name));
+        const contributed = new Set([
+          OPERATIONS_CONTRIBUTION.server.name,
+          ...recorded.capabilities.map((entry) => entry.server.name),
+        ]);
+        const options = await new QueryOptionsBuilder(
+          makeBuilderContext(
+            session,
+            briefingFor(kind, session, recorded.capabilities),
+            OPERATIONS_CONTRIBUTION.server.config
+          )
+        ).build();
+        const attached = new Set(Object.keys(options.mcpServers ?? {}));
+
         for (const name of contributed) {
-          if (!merged.includes(name)) {
-            mismatches.push(`${kind}: "${name}" contributed but never merged onto the session`);
+          if (!attached.has(name)) {
+            mismatches.push(
+              `${kind}: "${name}" is a capability contribution but absent from queryOptions.mcpServers`
+            );
           }
         }
-        for (const name of merged) {
-          const firstParty = isBuiltInMcpServerName(name);
-          if (firstParty && !contributed.has(name)) {
-            mismatches.push(`${kind}: first-party "${name}" attached with no contribution`);
+        for (const name of attached) {
+          if (!contributed.has(name)) {
+            mismatches.push(
+              `${kind}: "${name}" is in queryOptions.mcpServers but has no capability contribution`
+            );
           }
         }
       }
