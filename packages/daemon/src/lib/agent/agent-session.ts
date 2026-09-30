@@ -1400,9 +1400,12 @@ export class AgentSession
 
   async handleModelSwitch(
     newModel: string,
-    newProvider: string
+    newProvider: string,
+    nonInterrupting = false
   ): Promise<{ success: boolean; model: string; error?: string }> {
-    return this.modelSwitchHandler.switchModel(newModel, newProvider);
+    return nonInterrupting
+      ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
+      : this.modelSwitchHandler.switchModel(newModel, newProvider);
   }
 
   getCurrentModel(): CurrentModelInfo {
