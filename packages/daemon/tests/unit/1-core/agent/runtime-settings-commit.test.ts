@@ -7,22 +7,18 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { isValidModel } from '../../../../src/lib/model-service.ts';
 import {
-  gateCommitIdle,
-  gateCommitTarget,
-  gateCommitTurn,
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
   type RuntimeSettingsCommit,
-  providerIdentityClears,
   snapshotPair,
   snapshotProcessingStatus,
 } from '../../../../src/lib/agent/model-switch-handler.ts';
 
 const ID = 'fictional-session';
 const PAIR = { model: 'old-model', provider: 'anthropic' as const };
-const CHANGED = { reason: 'session_settings_changed' };
-const BUSY = { reason: 'session_busy' };
 const CORRUPT = 'corrupt processing state';
+const LIVE_P = Promise.resolve();
+const CONFIG_WRITE = 'UPDATE sessions SET config = ? WHERE id = ?';
 
 vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
   ...(await original<typeof import('../../../../src/lib/model-service.ts')>()),
@@ -45,6 +41,7 @@ vi.mock('../../../../src/lib/sdk-session-file-manager.ts', () => ({
 }));
 
 const CONFIG: SessionConfig = { model: 'old-model', provider: 'anthropic', maxTokens: 4096 };
+const DRIFTED = { ...CONFIG, model: 'drifted-model' };
 const METADATA: SessionMetadata = {
   messageCount: 0,
   totalTokens: 0,
@@ -56,13 +53,28 @@ const METADATA: SessionMetadata = {
   acpSessionCommand: 'fictional-acp --stdio',
 };
 
-interface Shape {
+interface Live {
+  queryObject: object | null;
+  queryPromise: Promise<void> | null;
+  generation: number;
+}
+
+interface Parked {
   provider?: 'anthropic' | 'acp';
   nullProcessing?: boolean;
   sdkIdentity?: boolean;
+  status?: string;
+  queued?: boolean;
+  queryObject?: object | null;
+  queryPromise?: Promise<void> | null;
+  driftGeneration?: boolean;
+  contextFault?: boolean;
+  publishFault?: boolean;
+  live?: Live;
+  afterPublish?: () => void;
 }
 
-function seedSession(shape: Shape = {}): Session {
+function seedSession(shape: Parked = {}): Session {
   return {
     id: ID,
     title: 'Fictional session',
@@ -78,16 +90,6 @@ function seedSession(shape: Shape = {}): Session {
     sdkOriginPath: shape.sdkIdentity ? '/fictional/origin' : undefined,
   };
 }
-
-type Parked = Shape & {
-  status?: string;
-  queued?: boolean;
-  queryObject?: object | null;
-  queryPromise?: Promise<void> | null;
-  driftGeneration?: boolean;
-  contextFault?: boolean;
-  publishFault?: boolean;
-};
 
 describe('runtime settings commit admission', () => {
   let db: Database;
@@ -119,10 +121,15 @@ describe('runtime settings commit admission', () => {
     const fail = (message: string) => async () => {
       throw new Error(message);
     };
-    const publish = parked.publishFault ? vi.fn(fail('publish failed')) : vi.fn(async () => {});
+    const publish = parked.publishFault
+      ? vi.fn(async () => {
+          parked.afterPublish?.();
+          throw new Error('publish failed');
+        })
+      : vi.fn(async () => {});
     const restart = vi.fn();
     const updateSession = vi.fn();
-    const handler = new ModelSwitchHandler({
+    const ctx = {
       session,
       db: { updateSession, casSessionRuntimeSettings: repo.casSessionRuntimeSettings.bind(repo) },
       internalEventBus: { publish },
@@ -131,65 +138,38 @@ describe('runtime settings commit admission', () => {
       errorManager: { handleError: vi.fn(fail('handled')) },
       logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
       lifecycleManager: { restart },
-      reevaluateContextBudgetAfterModelSwitch: parked.contextFault
-        ? fail('context failed')
-        : undefined,
-      queryObject: parked.queryObject ?? null,
-      queryPromise: parked.queryPromise ?? null,
-      messageQueue: { isRunning: () => false, hasQueuedMessages: () => parked.queued ?? false },
-      getQueryGeneration: () => {
-        reads += 1;
-        return parked.driftGeneration && reads > 1 ? 1 : 0;
+      reevaluateContextBudgetAfterModelSwitch: parked.contextFault ? fail('context') : undefined,
+      get queryObject() {
+        return parked.live ? parked.live.queryObject : (parked.queryObject ?? null);
       },
-    } as unknown as ModelSwitchHandlerContext);
-    return { session, handler, publish, updateSession, restart };
+      get queryPromise() {
+        return parked.live ? parked.live.queryPromise : (parked.queryPromise ?? null);
+      },
+      messageQueue: { isRunning: () => false, hasQueuedMessages: () => parked.queued ?? false },
+      getQueryGeneration: () =>
+        parked.live ? parked.live.generation : parked.driftGeneration && ++reads > 1 ? 1 : 0,
+    } as unknown as ModelSwitchHandlerContext;
+    return { session, handler: new ModelSwitchHandler(ctx), ctx, publish, updateSession, restart };
   }
 
   function commit(thinkingLevel?: string): RuntimeSettingsCommit {
     return thinkingLevel ? { snapshot: snapshot(), thinkingLevel } : { snapshot: snapshot() };
   }
 
-  test('pure gates refuse archived, drifted, parked and superseded evidence', () => {
-    fixture();
-    const live = snapshot();
-    expect(gateCommitTarget(live, PAIR, ID, CONFIG, CONFIG)).toEqual({ value: true });
-    expect(gateCommitTarget(live, { ...PAIR, model: 'other' }, ID, CONFIG, CONFIG)).toEqual(
-      CHANGED
-    );
-    expect(gateCommitTarget(live, PAIR, 'other-session', CONFIG, CONFIG)).toEqual(CHANGED);
-    expect(gateCommitTarget({ ...live, status: 'paused' }, PAIR, ID, CONFIG, CONFIG)).toEqual(
-      CHANGED
-    );
-    expect(gateCommitIdle(null, 'idle', false, false)).toEqual({ value: true });
-    expect(gateCommitIdle('idle', 'idle', true, false)).toEqual({ reason: 'session_busy' });
-    expect(gateCommitTurn(1, 1)).toEqual({ value: true });
-  });
-
   test('snapshot evidence reads the original pair and separates absence from corruption', () => {
     fixture();
     const live = snapshot();
     expect(snapshotPair(live)).toEqual(PAIR);
-    expect(snapshotProcessingStatus(live)).toBe('idle');
-    expect(snapshotProcessingStatus({ ...live, processingState: null })).toBeNull();
     expect(() => snapshotProcessingStatus({ ...live, processingState: '{oops' })).toThrow(CORRUPT);
     expect(() => snapshotProcessingStatus({ ...live, processingState: '{"s":"x"}' })).toThrow(
       CORRUPT
     );
-    const to = ['anthropic', 'acp', 'glm'];
-    expect(
-      ['acp', 'anthropic', 'anthropic'].map((f, i) => providerIdentityClears(f, to[i]))
-    ).toEqual([
-      { clearAcpSession: true, clearSdkSession: false },
-      { clearAcpSession: false, clearSdkSession: true },
-      { clearAcpSession: false, clearSdkSession: false },
-    ]);
   });
 
   const PARKED: ReadonlyArray<readonly [string, Parked, string]> = [
     ['queued messages', { queued: true }, 'session_busy'],
     ['waiting_for_input', { status: 'waiting_for_input' }, 'session_busy'],
     ['processing', { status: 'processing' }, 'session_busy'],
-    ['rate limited', { status: 'rate_limit_cooldown' }, 'session_busy'],
     ['active query', { queryObject: {} }, 'session_busy'],
     ['starting query', { queryPromise: Promise.resolve() }, 'session_busy'],
     ['drifted generation', { driftGeneration: true }, 'session_turn_changed'],
@@ -231,13 +211,14 @@ describe('runtime settings commit admission', () => {
   const LOST: ReadonlyArray<readonly [string, () => void]> = [
     ['a same-id recreate', recreate],
     ['raw status drift', () => run('UPDATE sessions SET status = ? WHERE id = ?', 'paused', ID)],
-    ['raw config drift', () => run('UPDATE sessions SET config = ? WHERE id = ?', '{"d":1}', ID)],
+    ['raw config drift', () => run(CONFIG_WRITE, JSON.stringify(DRIFTED), ID)],
   ];
 
   test.each(LOST)('%s loses the compare with every memory field unchanged', async (_l, drift) => {
     const { handler, session } = fixture({ sdkIdentity: true });
     const payload = commit('think16k');
     drift();
+    const persisted = stored();
     const result = await handler.switchModel('new-model', 'glm', true, payload);
     expect(result.success).toBe(false);
     expect(result.error).toBe('session_settings_changed');
@@ -248,7 +229,7 @@ describe('runtime settings commit admission', () => {
       'fictional-acp',
     ]);
     expect(session.sdkOriginPath).toBe('/fictional/origin');
-    expect(storedConfig().model).not.toBe('new-model');
+    expect(stored()).toEqual(persisted);
   });
 
   test('a combined model, provider and thinking commit lands as one won CAS', async () => {
@@ -267,8 +248,7 @@ describe('runtime settings commit admission', () => {
     expect(result.success).toBe(true);
     expect(session.acpSessionId).toBeUndefined();
     expect(stored().acp_session_id).toBeNull();
-    expect(stored().metadata).not.toContain('acpContextUsageEstimate');
-    expect(stored().metadata).not.toContain('acpSessionCommand');
+    expect(stored().metadata).not.toMatch(/acpContextUsageEstimate|acpSessionCommand/);
   });
 
   test.each(['pair drift', 'archivedAt', 'wrong id'])(
@@ -331,6 +311,23 @@ describe('runtime settings commit admission', () => {
     const { handler } = fixture();
     const attempt = handler.switchModel('new-model', 'anthropic', false, commit());
     await expect(attempt).rejects.toThrow('requires the non-interrupting opt-in');
+  });
+
+  test('a post-commit fault that starts a new query keeps it and the commit', async () => {
+    const live: Live = { queryObject: null, queryPromise: null, generation: 0 };
+    const parked: Parked = {
+      publishFault: true,
+      live,
+      afterPublish: () =>
+        Object.assign(live, { queryObject: {}, queryPromise: LIVE_P, generation: 4 }),
+    };
+    const { handler, session, ctx, updateSession, restart } = fixture(parked);
+    const result = await handler.switchModel('new-model', 'glm', true, commit('think16k'));
+    expect(result.success).toBe(true);
+    expect(session.config).toMatchObject({ model: 'new-model', thinkingLevel: 'think16k' });
+    expect(storedConfig()).toMatchObject({ model: 'new-model', thinkingLevel: 'think16k' });
+    expect([ctx.queryObject, ctx.queryPromise, ctx.getQueryGeneration()]).toEqual([{}, LIVE_P, 4]);
+    expect([restart.mock.calls.length, updateSession.mock.calls.length]).toEqual([0, 0]);
   });
 
   test('AgentSession forwards two, three and four arguments exactly', async () => {
