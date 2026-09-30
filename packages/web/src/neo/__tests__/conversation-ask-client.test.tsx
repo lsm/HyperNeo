@@ -277,7 +277,7 @@ function Probe() {
   );
 }
 describe('useNeo ask client build reachability', () => {
-  it('exposes the callable ask reader while never starting automatic ask reads', async () => {
+  it('exposes the callable ask reader while the consumer owns automatic ask reads', async () => {
     hookRequest.mockImplementation(async (_method: string, payload: { name?: string }) =>
       payload?.name === 'neo.publication.read'
         ? response()
@@ -293,8 +293,11 @@ describe('useNeo ask client build reachability', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Read asks' }));
     });
     await waitFor(() => expect(hookRequest).toHaveBeenCalledWith('read-result', 'stale'));
-    expect(
-      hookRequest.mock.calls.filter((call) => call[1]?.name === 'neo.conversation.asks.read')
-    ).toHaveLength(0);
+    await waitFor(() =>
+      expect(
+        hookRequest.mock.calls.filter((call) => call[1]?.name === 'neo.conversation.asks.read')
+          .length
+      ).toBeGreaterThan(0)
+    );
   });
 });
