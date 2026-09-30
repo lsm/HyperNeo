@@ -6,6 +6,9 @@ export interface VoiceRecordEntry {
   hitDurationLimit?: boolean;
   peakLevel: number;
   createdAt: number;
+  intent?: 'draft' | 'send';
+  sendDraft?: string;
+  sendText?: string;
 }
 
 const DB_NAME = 'hyperneo-voice-audio';
@@ -116,7 +119,10 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
     typeof entry.peakLevel === 'number' &&
     Number.isFinite(entry.peakLevel) &&
     typeof entry.createdAt === 'number' &&
-    Number.isFinite(entry.createdAt)
+    Number.isFinite(entry.createdAt) &&
+    (entry.intent === undefined || entry.intent === 'draft' || entry.intent === 'send') &&
+    (entry.sendDraft === undefined || typeof entry.sendDraft === 'string') &&
+    (entry.sendText === undefined || typeof entry.sendText === 'string')
   );
 }
 

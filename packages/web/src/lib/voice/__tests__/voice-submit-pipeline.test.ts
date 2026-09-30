@@ -68,6 +68,7 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
         hitDurationLimit: true,
         peakLevel: 0.9,
         createdAt: 1_725_000_000_000,
+        intent: 'draft',
       },
     ]);
     expect(result).toEqual({

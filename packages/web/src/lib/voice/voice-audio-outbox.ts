@@ -1,7 +1,14 @@
+import type { MessageHub } from '@hyperneo/shared';
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
+import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
 import { connectionState } from '../state';
-import { deleteVoiceRecord, listVoiceRecords, type VoiceRecordEntry } from './voice-audio-store.ts';
+import {
+  deleteVoiceRecord,
+  listVoiceRecords,
+  putVoiceRecord,
+  type VoiceRecordEntry,
+} from './voice-audio-store.ts';
 import { type VoiceRecording, voiceRecorderStore } from './voice-recorder-store.ts';
 import { runVoiceSubmit } from './voice-submit-pipeline.ts';
 import {
@@ -54,6 +61,96 @@ export function beginInteractiveVoiceSubmit(): void {
 
 export function endInteractiveVoiceSubmit(): void {
   interactiveSubmits = Math.max(0, interactiveSubmits - 1);
+}
+
+export type VoiceSendOutcome =
+  | { kind: 'accepted' }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'unconfirmed' };
+
+export function combineVoiceSubmission(draft: string, transcript: string): string {
+  return [draft.trim(), transcript].filter(Boolean).join('\n');
+}
+
+export async function submitVoiceSendIntent(
+  hub: MessageHub,
+  record: VoiceRecordEntry,
+  text: string
+): Promise<VoiceSendOutcome> {
+  if (!text.trim()) return { kind: 'unconfirmed' };
+  const settled = record.sendText ?? text;
+  if (record.sendText !== undefined && record.sendText !== text)
+    return refuseVoiceSend(
+      record,
+      settled,
+      'That recording already has a different message queued.'
+    );
+  if (record.sendText === undefined) {
+    const stored = await putVoiceRecord({ ...record, sendText: settled });
+    if (!stored) return { kind: 'unconfirmed' };
+  }
+  let receipt:
+    | { ok: true; requestId: string; messageId: string; created: boolean }
+    | { ok: false; reason: string };
+  try {
+    receipt = await submitNeoDraft(
+      { sessionId: record.sessionId, requestId: record.id, text: settled },
+      async () => hub
+    );
+  } catch {
+    return { kind: 'unconfirmed' };
+  }
+  if (receipt.ok) return { kind: 'accepted' };
+  if (receipt.reason === NEO_UNCONFIRMED_RECEIPT) return { kind: 'unconfirmed' };
+  return refuseVoiceSend(record, settled, receipt.reason);
+}
+
+async function refuseVoiceSend(
+  record: VoiceRecordEntry,
+  text: string,
+  reason: string
+): Promise<VoiceSendOutcome> {
+  if (!enqueueTranscript(record.sessionId, text, record.id)) {
+    removePendingTranscript(record.id);
+    return { kind: 'unconfirmed' };
+  }
+  return { kind: 'refused', reason };
+}
+
+type VoiceSendCompletion = 'sent' | 'parked' | 'discarded' | 'retry';
+
+async function completeSendIntent(
+  hub: MessageHub,
+  entry: VoiceRecordEntry
+): Promise<VoiceSendCompletion> {
+  let text = entry.sendText;
+  if (text === undefined) {
+    let result: Awaited<ReturnType<typeof runVoiceSubmit>>;
+    try {
+      result = await runVoiceSubmit(
+        { sessionId: entry.sessionId, intent: 'send' },
+        {
+          stopRecording: async () => recordingFromEntry(entry),
+          putRecord: async () => true,
+          deleteRecord: async () => true,
+          generateId: () => entry.id,
+          isMounted: () => false,
+          currentSessionId: () => entry.sessionId,
+        }
+      );
+    } catch {
+      return 'retry';
+    }
+    if (result.kind === 'silent-recording') return 'discarded';
+    if (result.kind === 'transcribe-failed') return result.dequeued ? 'discarded' : 'retry';
+    if (!('transcript' in result.outcome)) return 'discarded';
+    text = combineVoiceSubmission(entry.sendDraft ?? '', result.outcome.transcript);
+  }
+  if (!text.trim()) return 'discarded';
+  const outcome = await submitVoiceSendIntent(hub, entry, text);
+  if (outcome.kind === 'accepted') return 'sent';
+  if (outcome.kind === 'refused') return 'parked';
+  return 'retry';
 }
 
 function hasInteractiveVoiceActivity(): boolean {
@@ -136,8 +233,18 @@ export async function flushPendingVoiceAudio(): Promise<void> {
       }
       markVoiceAudioBusy(entry.id);
       try {
+        if (entry.intent === 'send') {
+          const completion = await completeSendIntent(hub, entry);
+          if (completion === 'retry') {
+            defer(entry.sessionId);
+            continue;
+          }
+          await deleteVoiceRecord(entry.id);
+          delivered += 1;
+          continue;
+        }
         const result = await runVoiceSubmit(
-          { sessionId: entry.sessionId },
+          { sessionId: entry.sessionId, intent: 'draft' },
           {
             stopRecording: async () => recordingFromEntry(entry),
             putRecord: async () => true,
