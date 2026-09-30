@@ -19,13 +19,12 @@ import {
   SpaceGoalSchema,
 } from './goal-result-schemas.ts';
 import type { SpaceGoalService } from './service.ts';
-import { hasSpaceAuthority } from '../space/runtime/space-mcp-session-policy.ts';
 
 const DISCOVERY_LIMIT = 100;
 const HUMAN_ADMISSION_ALLOWED = false;
 
 function outcomeAdmissionAllowed(caller: OperationCaller): boolean {
-  return hasSpaceAuthority(caller.role) || HUMAN_ADMISSION_ALLOWED;
+  return caller.role === 'neo' || HUMAN_ADMISSION_ALLOWED;
 }
 
 const listInputSchema = z.object({ ...GoalSpaceScopeShape }).strict();
