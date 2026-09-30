@@ -11,6 +11,8 @@ import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
+import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { type NeoScene, projectNeoScenes } from './neo-scenes.ts';
 import './neo.css';
 
 export function NeoLive() {
@@ -19,7 +21,6 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [showHistory, setShowHistory] = useState(false);
   const scroll = useRef<HTMLElement>(null);
   const footer = useRef<HTMLElement>(null);
   const shell = useRef<HTMLDivElement>(null);
@@ -32,8 +33,21 @@ export function NeoLive() {
   const view = neo.viewSnapshot;
   const viewWorks = view?.work ?? [];
   const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
-  const current = relevant.filter((work) => work.status === 'proposed' || work.status === 'queued');
-  const history = relevant.filter((work) => work.status !== 'proposed' && work.status !== 'queued');
+  const scenes = projectNeoScenes(projectNeoConcernBoard(view, neo.selectedId, null));
+  const sceneGroups = (
+    [
+      { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
+      { key: 'running', label: 'In progress', scenes: scenes?.running ?? [] },
+      { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
+    ] as const
+  ).map((group) => ({
+    ...group,
+    scenes: group.scenes.filter(
+      (scene): scene is NeoScene & { receipt: Extract<NeoScene['receipt'], { kind: 'work' }> } =>
+        scene.receipt.kind === 'work'
+    ),
+  }));
+  const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -105,12 +119,11 @@ export function NeoLive() {
   useEffect(() => {
     if (nearBottom.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [messageCount, neo.sessionId, current.length]);
+  }, [messageCount, neo.sessionId, workCount]);
 
   function open(id: string | null) {
     nearBottom.current = true;
     lastScrollTop.current = 0;
-    setShowHistory(false);
     void neo.open(id);
   }
 
@@ -318,46 +331,28 @@ export function NeoLive() {
               </p>
             </div>
           )}
-          {current.length > 0 && (
-            <section aria-label="Delegated work" class="mt-6 space-y-3">
-              {current.map((work) => (
-                <NeoWorkCard
-                  key={work.id}
-                  work={work}
-                  busy={neo.busyWork === work.id}
-                  disabled={!connected || !!neo.busyWork}
-                  onAction={(id, action) => void neo.act(id, action)}
-                />
-              ))}
-            </section>
-          )}
-          {history.length > 0 && (
-            <section class="mt-6">
-              <button
-                type="button"
-                aria-expanded={showHistory}
-                onClick={() => {
-                  nearBottom.current = false;
-                  setShowHistory(!showHistory);
-                }}
-                class="text-sm text-fg-muted hover:text-fg"
+          {sceneGroups.map((group) =>
+            group.scenes.length === 0 ? null : (
+              <section
+                key={group.key}
+                aria-label={group.label}
+                class="mt-6 space-y-3"
+                data-scene-group={group.key}
               >
-                {showHistory ? 'Hide' : 'Show'} recent work · {history.length}
-              </button>
-              {showHistory && (
-                <div class="mt-3 space-y-3">
-                  {history.map((work) => (
-                    <NeoWorkCard
-                      key={work.id}
-                      work={work}
-                      busy={false}
-                      disabled={!connected}
-                      onAction={(id, action) => void neo.act(id, action)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+                <h2 class="text-xs font-medium text-fg-muted">
+                  {group.label} · {group.scenes.length}
+                </h2>
+                {group.scenes.map((scene) => (
+                  <NeoWorkCard
+                    key={scene.ref.id}
+                    work={scene.receipt}
+                    busy={neo.busyWork === scene.ref.id}
+                    disabled={!connected || !!neo.busyWork}
+                    onAction={(id, action) => void neo.act(id, action)}
+                  />
+                ))}
+              </section>
+            )
           )}
         </div>
       </main>
