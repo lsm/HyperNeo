@@ -1,7 +1,12 @@
-import type { Session, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
-import { getThinkingOptionsForProvider, normalizeThinkingLevel } from '@hyperneo/shared';
+import type { Provider, Session, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
+import {
+  getThinkingOptionsForProvider,
+  normalizeThinkingLevel,
+  PROVIDER_THINKING_MODES,
+} from '@hyperneo/shared';
 import { z } from 'zod';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
+import { inferProviderForModel } from '../providers/registry.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import {
   defineOperation,
@@ -10,18 +15,15 @@ import {
 } from '../operations/registry.ts';
 import type { SessionOperationDependencies } from './operations.ts';
 
-const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker'];
-const WRITE_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
+const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker', 'neo'];
+const WRITE_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'neo'];
 const READ_POLICY: OperationPolicy = { safetyClass: 'read', roles: READ_ROLES };
 const MUTATE_POLICY: OperationPolicy = { safetyClass: 'mutate', roles: WRITE_ROLES };
 
-export type SessionOwnership =
-  | 'ordinary'
-  | 'project'
-  | 'space-task'
-  | 'space-agent'
-  | 'neo'
-  | 'unknown';
+const PROVIDER_IDS = Object.keys(PROVIDER_THINKING_MODES) as [Provider, ...Provider[]];
+const ProviderSchema = z.enum(PROVIDER_IDS);
+
+export type SessionOwnership = 'ordinary' | 'project' | 'space-task' | 'space-agent' | 'neo';
 
 export interface RuntimeSettings {
   readonly sessionId: string;
@@ -60,7 +62,7 @@ export function classifySessionOwnership(
   if (session.type === 'space_task_agent' || session.id.includes(':task:')) return 'space-task';
   if (session.worktree) return 'project';
   if (sessionSpaceId(session)) return 'space-agent';
-  return 'unknown';
+  return 'ordinary';
 }
 
 function thinkingOptionsFor(
@@ -105,6 +107,23 @@ function validateModel(
   return { ok: true };
 }
 
+function validateEffectivePair(
+  effectiveModel: string | undefined,
+  effectiveProvider: string | null,
+  currentModel: string | undefined,
+  currentProvider: string | null
+): { ok: true } | { ok: false; reason: string } {
+  if (!effectiveModel || !effectiveProvider) return { ok: true };
+  if (effectiveModel === currentModel && effectiveProvider === currentProvider) return { ok: true };
+  if (!isCuratedOutModel(effectiveModel, effectiveProvider)) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `curated_out: model '${effectiveModel}' is curated out for provider ` +
+      `'${effectiveProvider}' and cannot be set on this session`,
+  };
+}
+
 export function readRuntimeSettings(
   sessionId: string,
   deps: RuntimeSettingsDependencies
@@ -130,7 +149,7 @@ export function readRuntimeSettings(
 
 async function applyLive(
   live: AgentSession,
-  input: { model?: string; provider?: string; thinkingLevel?: string },
+  input: { model?: string; provider?: Provider; thinkingLevel?: string },
   notes: string[]
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (input.model !== undefined) {
@@ -141,7 +160,7 @@ async function applyLive(
     }
     notes.push('model applied to the live session');
   } else if (input.provider !== undefined) {
-    await live.updateConfig({ provider: input.provider as SessionConfig['provider'] });
+    await live.updateConfig({ provider: input.provider });
     notes.push('provider applied to the live session');
   }
   if (input.thinkingLevel !== undefined) {
@@ -160,7 +179,7 @@ async function applyLive(
 
 function applyCold(
   session: Session,
-  input: { model?: string; provider?: string; thinkingLevel?: string },
+  input: { model?: string; provider?: Provider; thinkingLevel?: string },
   notes: string[]
 ): SessionConfig {
   const config: SessionConfig = { ...session.config };
@@ -168,7 +187,7 @@ function applyCold(
     config.model = input.model;
     notes.push('model persisted; the session starts under it next time');
   }
-  if (input.provider !== undefined) config.provider = input.provider as SessionConfig['provider'];
+  if (input.provider !== undefined) config.provider = input.provider;
   if (input.thinkingLevel !== undefined) {
     const level = normalizeThinkingLevel(input.thinkingLevel);
     if (thinkingOptionsFor(config.provider ?? null).length === 0) {
@@ -186,12 +205,12 @@ const RuntimeSettingsRefSchema = z.object({ sessionId: z.string().min(1) });
 const RuntimeSettingsUpdateSchema = z.object({
   sessionId: z.string().min(1),
   model: z.string().min(1).optional(),
-  provider: z.string().min(1).optional(),
+  provider: ProviderSchema.optional(),
   thinkingLevel: z.string().min(1).optional(),
 });
 const RuntimeSettingsSchema = z.object({
   sessionId: z.string(),
-  ownership: z.enum(['ordinary', 'project', 'space-task', 'space-agent', 'neo', 'unknown']),
+  ownership: z.enum(['ordinary', 'project', 'space-task', 'space-agent', 'neo']),
   live: z.boolean(),
   runningNow: z.boolean(),
   model: z.string().nullable(),
@@ -211,7 +230,7 @@ export function createSessionRuntimeSettingsOperations(deps: RuntimeSettingsDepe
       name: 'session.runtimeSettings.read',
       policy: READ_POLICY,
       description:
-        'Read the effective runtime settings of any session — model, provider, thinking level — plus whether the session is live, whether a turn is streaming right now, its ownership type (ordinary, project, space-task, space-agent, neo, unknown), and the thinking levels its provider supports.',
+        'Read the effective runtime settings of any session — model, provider, thinking level — plus whether the session is live, whether a turn is streaming right now, its ownership type (ordinary, project, space-task, space-agent, neo), and the thinking levels its provider supports.',
       inputSchema: RuntimeSettingsRefSchema,
       resultSchema: z.union([
         z.object({ ok: z.literal(true), settings: RuntimeSettingsSchema }),
@@ -256,12 +275,28 @@ export function createSessionRuntimeSettingsOperations(deps: RuntimeSettingsDepe
         const live = deps.getLiveSession(input.sessionId);
         const session = live ? live.getSessionData() : deps.getSession(input.sessionId);
         if (!session) return { ok: false, reason: `session_not_found: ${input.sessionId}` };
+        const currentModel = session.config?.model;
+        const currentProvider = session.config?.provider ?? null;
         if (input.model !== undefined) {
-          const provider = input.provider ?? session.config?.provider ?? null;
+          const provider = input.provider ?? currentProvider;
           const valid = validateModel(input.model, provider);
           if (!valid.ok) {
             return { ok: false, reason: valid.reason, availableModels: valid.availableModels };
           }
+        }
+        if (input.provider !== undefined || input.model !== undefined) {
+          const effectiveModel = input.model ?? currentModel;
+          const effectiveProvider =
+            input.provider ??
+            currentProvider ??
+            (effectiveModel ? inferProviderForModel(effectiveModel) : null);
+          const pair = validateEffectivePair(
+            effectiveModel,
+            effectiveProvider,
+            currentModel,
+            currentProvider
+          );
+          if (!pair.ok) return { ok: false, reason: pair.reason };
         }
         const notes: string[] = [];
         if (live) {

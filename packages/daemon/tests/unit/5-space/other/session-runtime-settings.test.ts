@@ -4,7 +4,12 @@ import type { Session, SessionConfig } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { createSessionRuntimeSettingsOperations } from '../../../../src/lib/session/runtime-settings-operations';
-import type { OperationDefinition } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  type OperationDefinition,
+} from '../../../../src/lib/operations/registry';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
 
 const { catalog, curatedOut } = vi.hoisted(() => ({
   catalog: vi.fn(() => [] as ModelInfo[]),
@@ -132,7 +137,7 @@ describe('session.runtimeSettings.read', () => {
     h.live.set('agent-1', makeLiveSession(h, 'agent-1', 'processing'));
 
     for (const [id, ownership] of [
-      ['plain', 'unknown'],
+      ['plain', 'ordinary'],
       ['project', 'project'],
       ['task', 'space-task'],
       ['agent-1', 'space-agent'],
@@ -305,5 +310,121 @@ describe('session.runtimeSettings.update', () => {
     });
     expect(missing.ok).toBe(false);
     expect(missing.reason).toContain('session_not_found');
+  });
+
+  test('an unknown provider is refused by the input schema before anything is written', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.runtimeSettings.update',
+      { sessionId: 'plain', provider: 'not-a-provider' },
+      { source: 'mcp', sessionId: 'plain', role: 'neo' }
+    );
+    expect(outcome).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(h.liveConfigs).toHaveLength(0);
+    expect(h.switched).toHaveLength(0);
+  });
+
+  test('a provider-only change refuses a model curated out for the target provider', async () => {
+    const h = harness();
+    h.sessions.set(
+      'plain',
+      makeSession({
+        id: 'plain',
+        config: {
+          model: 'claude-secret-hidden',
+          provider: 'anthropic-copilot',
+          maxTokens: 1,
+          temperature: 0,
+        } as SessionConfig,
+      })
+    );
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'anthropic',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('curated_out');
+    expect(h.liveConfigs).toHaveLength(0);
+  });
+
+  test('a provider-only change on a cold session is checked against the effective pair', async () => {
+    const h = harness();
+    h.sessions.set(
+      'plain',
+      makeSession({
+        id: 'plain',
+        config: {
+          model: 'claude-secret-hidden',
+          provider: 'anthropic-copilot',
+          maxTokens: 1,
+          temperature: 0,
+        } as SessionConfig,
+      })
+    );
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'openrouter',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('curated_out');
+    expect(h.persisted.has('plain')).toBe(false);
+  });
+
+  test('re-affirming the pair the session already runs is allowed', async () => {
+    const h = harness();
+    h.sessions.set(
+      'plain',
+      makeSession({
+        id: 'plain',
+        config: {
+          model: 'claude-secret-hidden',
+          provider: 'anthropic',
+          maxTokens: 1,
+          temperature: 0,
+        } as SessionConfig,
+      })
+    );
+    h.live.set('plain', makeLiveSession(h, 'plain', 'idle'));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'anthropic',
+    });
+    expect(result.ok).toBe(true);
+    expect(h.liveConfigs).toContainEqual({ provider: 'anthropic' });
+  });
+});
+
+describe('Neo discoverability', () => {
+  test('operations.list offers both runtime settings operations to a Neo caller', () => {
+    const h = harness();
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const names = listOperationSummaries(registry, {
+      source: 'mcp',
+      sessionId: 'neo:root',
+      role: 'neo',
+    }).map((entry) => entry.name);
+    expect(names).toContain('session.runtimeSettings.read');
+    expect(names).toContain('session.runtimeSettings.update');
+  });
+
+  test('the read result passes the operation result schema through the door', async () => {
+    const h = harness();
+    h.sessions.set('neo:root', makeSession({ id: 'neo:root' }));
+    const registry = createOperationRegistry([...h.operations.values()]);
+    const outcome = await invokeOperation(
+      registry,
+      'session.runtimeSettings.read',
+      { sessionId: 'neo:root' },
+      { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+    );
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, settings: { ownership: 'neo' } },
+    });
   });
 });
