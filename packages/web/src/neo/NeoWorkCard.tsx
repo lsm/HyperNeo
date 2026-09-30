@@ -21,8 +21,9 @@ export function sceneOpenSelector(id: string): string {
 
 function insideUserSelection(scope: Element): boolean {
   const selection = document.getSelection?.();
-  const anchor = selection?.anchorNode;
-  return !!selection && !selection.isCollapsed && !!anchor && scope.contains(anchor);
+  if (!selection || selection.isCollapsed) return false;
+  const { anchorNode, focusNode } = selection;
+  return (!!anchorNode && scope.contains(anchorNode)) || (!!focusNode && scope.contains(focusNode));
 }
 
 export function NeoWorkCard({

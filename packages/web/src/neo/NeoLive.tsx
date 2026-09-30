@@ -62,19 +62,19 @@ export function NeoLive() {
   const detailWork = detail?.receipt.kind === 'work' ? detail.receipt : null;
   const detailLive = detail !== null;
   const detailPane = useRef<HTMLElement>(null);
-  const focusSceneId = useRef<string | null>(null);
+  const focusScene = useRef<{ id: string; scope: string } | null>(null);
   useLayoutEffect(() => {
     if (sceneSelection && (!sceneScope || !detailLive)) setSceneSelection(null);
   }, [sceneSelection, sceneScope, detailLive]);
   useLayoutEffect(() => {
     if (detailWork) detailPane.current?.querySelector('button')?.focus();
-  }, [detailWork?.id, detailWork?.status]);
+  }, [detailWork?.id]);
   useLayoutEffect(() => {
-    const id = focusSceneId.current;
-    if (!id) return;
-    focusSceneId.current = null;
-    if (!sceneScope) return;
-    document.querySelector<HTMLButtonElement>(sceneOpenSelector(id))?.focus();
+    const target = focusScene.current;
+    if (!target) return;
+    focusScene.current = null;
+    if (!sceneScope || target.scope !== sceneScope) return;
+    document.querySelector<HTMLButtonElement>(sceneOpenSelector(target.id))?.focus();
   });
   const ready =
     !!neo.sessionId &&
@@ -161,7 +161,8 @@ export function NeoLive() {
   }
 
   function closeScene() {
-    focusSceneId.current = sceneSelection?.ref.id ?? null;
+    focusScene.current =
+      sceneSelection && sceneScope ? { id: sceneSelection.ref.id, scope: sceneScope } : null;
     setSceneSelection(null);
   }
 

@@ -175,30 +175,33 @@ describe('NeoWorkCard detail opening', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it('does not navigate from a non-collapsed selection but still opens on a plain click', () => {
-    const open = vi.fn();
-    const { card } = show(work('p', 'proposed'), open);
-    const outside = document.createElement('p');
-    outside.textContent = 'chosen elsewhere';
-    document.body.append(outside);
-    const label = within(card).getByText('Your call');
-    const range = document.createRange();
-    range.setStart(outside.firstChild as Text, 0);
-    range.setEnd(outside.firstChild as Text, 6);
-    const selection = document.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    fireEvent.click(label);
-    expect(open).toHaveBeenCalledWith('p');
-    open.mockClear();
-    const inner = document.createRange();
-    inner.setStart(label.firstChild as Text, 0);
-    inner.setEnd(label.firstChild as Text, 4);
-    selection?.removeAllRanges();
-    selection?.addRange(inner);
-    fireEvent.click(label);
-    expect(open).not.toHaveBeenCalled();
-    selection?.removeAllRanges();
-    outside.remove();
-  });
+  it.each(['anchorNode', 'focusNode'] as const)(
+    'skips when the selection %s is inside the card but opens when the selection is elsewhere',
+    (endpoint) => {
+      const open = vi.fn();
+      const { card } = show(work('p', 'proposed'), open);
+      const label = within(card).getByText('Your call');
+      const outside = document.createElement('p');
+      outside.textContent = 'chosen elsewhere';
+      document.body.append(outside);
+      const pick = (node: Text) => {
+        const range = document.createRange();
+        range.setStart(node, 0);
+        range.setEnd(node, Math.min(4, node.length));
+        return range;
+      };
+      const selection = document.getSelection()!;
+      expect(typeof selection[endpoint]).toBe('object');
+      selection.removeAllRanges();
+      selection.addRange(pick(outside.firstChild as Text));
+      fireEvent.click(label);
+      expect(open).toHaveBeenCalledWith('p');
+      open.mockClear();
+      selection.removeAllRanges();
+      selection.addRange(pick(label.firstChild as Text));
+      fireEvent.click(label);
+      expect(open).not.toHaveBeenCalled();
+      outside.remove();
+    }
+  );
 });

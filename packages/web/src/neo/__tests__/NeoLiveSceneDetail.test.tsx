@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -6,16 +7,29 @@ import type { SessionStore } from '../../lib/session-store.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const seen = vi.hoisted(() => ({ workIds: [] as string[] }));
+type Handler = (value: unknown, context: { channel: string }) => void;
+const ctl = vi.hoisted(() => ({
+  hold: false,
+  hub: null as unknown,
+  open: [] as (() => void)[],
+  handlers: new Map<string, Set<Handler>>(),
+  connections: new Set<(state: string) => void>(),
+  stores: [] as unknown[],
+  inflight: [] as Promise<void>[],
+}));
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
 let calls = { live: 0, started: 0, destroys: 0, peak: 0 };
-let hold = false;
-let pending: (() => void)[] = [];
 
 beforeEach(async () => {
   vi.resetModules();
   calls = { live: 0, started: 0, destroys: 0, peak: 0 };
-  hold = false;
-  pending = [];
+  ctl.hold = false;
+  ctl.hub = null;
+  ctl.open = [];
+  ctl.handlers = new Map();
+  ctl.connections = new Set();
+  ctl.stores = [];
+  ctl.inflight = [];
   vi.doMock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
   vi.doMock('../../lib/state.ts', () => ({
     connectionState: { value: 'connected', subscribe: () => () => {} },
@@ -36,6 +50,31 @@ beforeEach(async () => {
     },
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+  vi.doMock('../../lib/connection-manager.ts', () => ({
+    connectionManager: {
+      getHub: async () => {
+        const hub = {
+          joinChannel: vi.fn(),
+          leaveChannel: vi.fn(),
+          request: async () => ({ success: true }),
+          onEvent: (method: string, handler: Handler) => {
+            const set = ctl.handlers.get(method) ?? new Set<Handler>();
+            set.add(handler);
+            ctl.handlers.set(method, set);
+            return () => set.delete(handler);
+          },
+          onConnection: (handler: (state: string) => void) => {
+            ctl.connections.add(handler);
+            return () => ctl.connections.delete(handler);
+          },
+        };
+        ctl.hub = hub;
+        if (ctl.hold) await new Promise<void>((resolve) => ctl.open.push(resolve));
+        return hub;
+      },
+      getHubIfConnected: () => ctl.hub,
+    },
+  }));
   const stores = await import('../../lib/session-store.ts');
   const select = stores.SessionStore.prototype.select;
   const destroy = stores.SessionStore.prototype.destroy;
@@ -46,21 +85,19 @@ beforeEach(async () => {
     calls.started += 1;
     calls.live += 1;
     calls.peak = Math.max(calls.peak, calls.live);
-    const real = select.call(this, id);
-    if (!hold) return real;
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    pending.push(release);
-    return real.then((value) => gate.then(() => value));
+    ctl.stores.push(this);
+    const running = select.call(this, id);
+    ctl.inflight.push(running);
+    return running;
   });
   vi.spyOn(stores.SessionStore.prototype, 'destroy').mockImplementation(function (
     this: SessionStore
   ) {
     calls.destroys += 1;
     calls.live -= 1;
-    return destroy.call(this);
+    const running = destroy.call(this);
+    ctl.inflight.push(running);
+    return running;
   });
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
@@ -288,35 +325,56 @@ describe('NeoLive work scene detail', () => {
     expect([calls.live, calls.started, calls.destroys, calls.peak]).toEqual([0, 4, 4, 1]);
   });
 
-  it('ignores an already-started real select that resolves after its owner went away', async () => {
-    hold = true;
+  it('does not revive a real store whose deferred hub resolves after its owner left', async () => {
+    ctl.hold = true;
     const { unmount } = renderLive();
-    expect([calls.live, calls.started, pending.length]).toEqual([1, 1, 1]);
+    await waitFor(() => expect(ctl.open.length).toBe(1));
+    const store = ctl.stores[0] as SessionStore;
     unmount();
-    for (const release of pending) release();
+    for (const release of ctl.open) release();
     await act(async () => {
-      await Promise.resolve();
+      await Promise.all(ctl.inflight);
     });
     expect([calls.live, calls.started, calls.destroys]).toEqual([0, 1, 1]);
+    expect([store.sessionState.value, store.activeSessionId.value]).toEqual([null, null]);
+    expect([...ctl.handlers.values()].every((set) => set.size === 0)).toBe(true);
+    expect(ctl.connections.size).toBe(0);
     expect(screen.queryByText('A quick choice')).toBeNull();
   });
 
-  it('moves focus to Back on open and restores the originating title on Back', () => {
-    renderLive();
+  it('keeps composer focus when a queued scene settles to reported under the same id', () => {
+    const { state } = renderLive();
+    const draft = screen.getByLabelText('Draft');
+    draft.focus();
+    const settled = snapshot(
+      base().map((item) => (item.id === 'a-queued' ? work('a-queued', 'reported', 30) : item))
+    );
+    set(state, { snapshot: settled, viewSnapshot: settled });
+    expect(cards('Recent outcomes')).toContain('Title a-queued');
+    expect(document.activeElement).toBe(draft);
+  });
+
+  it('moves focus to Back on open and restores only within the originating scope', () => {
+    const { state } = renderLive();
     const opener = screen.getByRole('button', { name: 'Title a-proposed' });
     opener.focus();
-    expect(document.activeElement).toBe(opener);
     fireEvent.click(opener);
     expect(document.activeElement?.textContent).toContain('Back to scenes');
     fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Title a-proposed' }));
-  });
-
-  it('never steals focus when a committed scope change invalidates the selection', () => {
-    const { state } = renderLive();
-    fireEvent.click(screen.getByRole('button', { name: 'Title a-proposed' }));
-    expect(document.activeElement?.textContent).toContain('Back to scenes');
     set(state, { sessionId: 'holder' });
     expect(document.activeElement?.textContent).not.toContain('Back to scenes');
+  });
+
+  it('does not restore focus when Back commits together with a scope change', () => {
+    const { state } = renderLive();
+    fireEvent.click(screen.getByRole('button', { name: 'Title a-queued' }));
+    expect(document.activeElement?.textContent).toContain('Back to scenes');
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+      state.value = { ...(state.value as object), sessionId: 'holder' } as typeof state.value;
+    });
+    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Title a-queued' }));
   });
 });
