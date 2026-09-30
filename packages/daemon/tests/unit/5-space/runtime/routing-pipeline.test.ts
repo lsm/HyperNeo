@@ -43,7 +43,9 @@ function makeInput(overrides: Partial<AgentMessageRoutingInput> = {}): AgentMess
   };
 }
 
-function makeCtx(overrides: Partial<AgentMessageRoutingInput> = {}): AgentMessageRoutingCtx {
+function makeCtx(
+  overrides: Partial<AgentMessageRoutingInput> = {}
+): AgentMessageRoutingInput & { decision: null } {
   return { ...makeInput(overrides), decision: null };
 }
 

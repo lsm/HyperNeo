@@ -144,6 +144,15 @@ export function settleRoutingDecision(ctx: ImmediateEventDeliveryCtx): Immediate
   if (decision.action === 'deliverStaleSession') {
     return settled(ctx, { action: 'deferred', reason: 'stale_session' });
   }
+  if (decision.action === 'deferStoppedTask') {
+    return settled(ctx, { action: 'deferred', reason: 'task_stopped' });
+  }
+  if (decision.action === 'deferNotActive') {
+    return settled(ctx, { action: 'deferred', reason: 'no_active_session' });
+  }
+  if (decision.action === 'queueForActivation') {
+    return settled(ctx, { action: 'deferred', reason: 'queue_for_activation' });
+  }
   if (decision.action === 'activateTarget' || decision.action === 'deliverLiveSession') {
     return ctx;
   }
