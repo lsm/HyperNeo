@@ -196,7 +196,11 @@ import { decideReconcileAdmission, selectStrandedDeliveries } from './message-de
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
-import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
+import {
+  ModelSwitchHandler,
+  type ModelSwitchHandlerContext,
+  type RuntimeSettingsCommit,
+} from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import {
@@ -1401,8 +1405,11 @@ export class AgentSession
   async handleModelSwitch(
     newModel: string,
     newProvider: string,
-    nonInterrupting = false
+    nonInterrupting = false,
+    commit?: RuntimeSettingsCommit
   ): Promise<{ success: boolean; model: string; error?: string }> {
+    if (commit)
+      return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit);
     return nonInterrupting
       ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
       : this.modelSwitchHandler.switchModel(newModel, newProvider);
