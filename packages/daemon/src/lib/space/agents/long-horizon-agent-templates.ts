@@ -11,6 +11,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     description:
       'Orchestrates goals, reminders, reactive subscriptions, and handoffs across the Space.',
     instructions: LH_COORDINATOR_INSTRUCTIONS,
+    duties: ['escalation'],
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {

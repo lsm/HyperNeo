@@ -44,6 +44,7 @@ export interface SpaceLongHorizonAgentTemplate {
   suggestedEventSubscriptions: SpaceLongHorizonAgentTemplateEventSubscription[];
   reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[];
   ownershipPatterns: SpaceLongHorizonAgentTemplateOwnershipPattern[];
+  duties?: string[];
   toolPermissions: Record<string, unknown>;
   model?: string | null;
   provider?: string | null;
@@ -194,7 +195,7 @@ export type SpaceGoalOwnerResolution =
       owner: SpaceGoalOwnerCandidate;
       conflicts: SpaceGoalOwnerCandidate[];
     }
-  | { action: 'coordinator_fallback'; coordinatorAgentId: string }
+  | { action: 'fallback'; fallbackAgentId: string }
   | { action: 'no_recipient' };
 
 export interface SpaceLongHorizonAgentForgeScope {

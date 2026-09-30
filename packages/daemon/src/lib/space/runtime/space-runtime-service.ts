@@ -471,10 +471,11 @@ export class SpaceRuntimeService {
     let authorizedId: string | null = null;
     if (resolution?.action === 'resolved') {
       authorizedId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      authorizedId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'fallback') {
+      authorizedId = resolution.fallbackAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      authorizedId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+      authorizedId =
+        this.config.longHorizonAgentRepo?.getGoalOwnerFallbackAgentId(goal.spaceId) ?? null;
     }
     return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
   }
@@ -506,10 +507,11 @@ export class SpaceRuntimeService {
     let targetAgentId: string | null = null;
     if (resolution?.action === 'resolved') {
       targetAgentId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      targetAgentId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'fallback') {
+      targetAgentId = resolution.fallbackAgentId;
     } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.longHorizonAgentRepo?.ensureCoordinator(goal.spaceId).id ?? null;
+      targetAgentId =
+        this.config.longHorizonAgentRepo?.getGoalOwnerFallbackAgentId(goal.spaceId) ?? null;
     }
     if (!targetAgentId) {
       log.warn(
@@ -1517,7 +1519,7 @@ export class SpaceRuntimeService {
           }
         } catch (err) {
           log.error(
-            `Failed to attach space tools to existing session ${session.id} (space ${policy.spaceId ?? '?'}, role ${policy.role}):`,
+            `Failed to attach space tools to existing session ${session.id} (space ${policy.spaceId ?? '?'}, kind ${policy.kind}):`,
             err
           );
         }
@@ -1665,7 +1667,7 @@ export class SpaceRuntimeService {
     }
 
     log.info(
-      `Attached space-agent-tools to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
+      `Attached space-agent-tools to member session ${session.id} (space ${space.id}, kind ${policy.kind}, type ${session.type ?? 'worker'})`
     );
   }
 

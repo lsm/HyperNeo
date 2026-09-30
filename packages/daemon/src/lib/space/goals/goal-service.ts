@@ -107,7 +107,7 @@ export interface SpaceGoalServiceDeps {
   onGoalResumed?: (goalId: string, spaceId: string) => void;
   longHorizonAgentRepo?: Pick<
     SpaceLongHorizonAgentRepository,
-    'assignGoal' | 'getPrimaryGoalOwner' | 'getCoordinator' | 'getById'
+    'assignGoal' | 'getPrimaryGoalOwner' | 'getGoalOwnerFallbackAgentId' | 'getById'
   >;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
@@ -720,11 +720,12 @@ export class SpaceGoalService {
     if (!repo) return [];
     const resolution = repo.getPrimaryGoalOwner(goal.id, goal.spaceId);
     if (resolution.action === 'resolved') return [resolution.owner.agentId];
-    const coordinator =
-      resolution.action === 'coordinator_fallback'
-        ? repo.getById(resolution.coordinatorAgentId)
-        : repo.getCoordinator(goal.spaceId);
-    return coordinator?.status === 'active' ? [coordinator.id] : [];
+    const fallbackId =
+      resolution.action === 'fallback'
+        ? resolution.fallbackAgentId
+        : repo.getGoalOwnerFallbackAgentId(goal.spaceId);
+    const fallback = fallbackId ? repo.getById(fallbackId) : null;
+    return fallback?.status === 'active' ? [fallback.id] : [];
   }
 
   claimScheduledTask(

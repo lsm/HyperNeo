@@ -426,8 +426,8 @@ describe('GoalDetailPanel', () => {
 
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = {
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-1',
+        action: 'fallback',
+        fallbackAgentId: 'agent-1',
       };
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
       return owner;
@@ -580,8 +580,8 @@ describe('GoalDetailPanel', () => {
     mockAgents.value = [makeAgent({ status: 'paused' })];
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = {
-        action: 'coordinator_fallback',
-        coordinatorAgentId: 'agent-1',
+        action: 'fallback',
+        fallbackAgentId: 'agent-1',
       };
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
       return owner;

@@ -229,12 +229,12 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
         </div>
       );
     }
-    if (owner.action === 'coordinator_fallback') {
+    if (owner.action === 'fallback') {
       return (
         <div class="space-y-1">
           {(() => {
             const coordinator = agents.find(
-              (item: SpaceLongHorizonAgent) => item.id === owner.coordinatorAgentId
+              (item: SpaceLongHorizonAgent) => item.id === owner.fallbackAgentId
             );
             if (!coordinator || coordinator.status !== 'active') {
               return (
@@ -250,7 +250,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
               <div class="flex items-center gap-2">
                 <StatusBadge tone="neutral" label="Unowned" />
                 <span class="text-sm text-fg-soft">
-                  Falls back to {agentLabel(owner.coordinatorAgentId)}
+                  Falls back to {agentLabel(owner.fallbackAgentId)}
                 </span>
               </div>
             );

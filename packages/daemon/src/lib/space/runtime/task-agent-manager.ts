@@ -181,7 +181,7 @@ import {
 
 const log = new Logger('task-agent-manager');
 
-const WORKFLOW_ESCALATION_TARGET = 'space-agent';
+const SPACE_ESCALATION_TARGET_TOKEN = 'space-agent';
 
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
@@ -3215,6 +3215,12 @@ export class TaskAgentManager {
     );
   }
 
+  private escalationAvailable(space: Space | null): boolean {
+    const repo = this.config.longHorizonAgentRepo;
+    if (space == null || typeof repo?.resolveDutyHolder !== 'function') return true;
+    return repo.resolveDutyHolder(space.id, 'escalation') !== null;
+  }
+
   private buildNodeExecutionRuntimeContract(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution,
@@ -3226,6 +3232,14 @@ export class TaskAgentManager {
     const spaceLevel = space?.autonomyLevel ?? 1;
     const requiredLevel = workflow?.completionAutonomyLevel ?? 5;
     const approveUnlocked = spaceLevel >= requiredLevel;
+
+    const escalationLines = this.escalationAvailable(space)
+      ? [
+          `Escalation: send_message({ target: "${SPACE_ESCALATION_TARGET_TOKEN}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
+        ]
+      : [
+          'Escalation: no agent in this Space holds the escalation role. Record the blocker in your task result (or save a blocked note artifact) and stop; the human operator picks it up.',
+        ];
 
     const endNodeContractLines = (indent: string): string[] => {
       if (!isEndNode) return [];
@@ -3262,7 +3276,7 @@ export class TaskAgentManager {
       'Tools available:',
       ...(dispatcherTools ?? []),
       ...typedTools,
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
+      ...escalationLines,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
 
@@ -3288,9 +3302,7 @@ export class TaskAgentManager {
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
     ];
 
-    lines.push(
-      `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
-    );
+    lines.push(...escalationLines);
     lines.push(
       'Only contact the task-agent via send_message if you are blocked or need human input.'
     );

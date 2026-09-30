@@ -21,6 +21,15 @@ import {
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
 } from '../../lib/space/goals/goal-owner-resolution.ts';
+import {
+  declaredDutySources,
+  deriveDuties,
+  isDutyFallback,
+  ownershipPatternSources,
+  resolveDutyHolders,
+  type Duty,
+  type DutyDeclarer,
+} from '../../lib/session-profile/duties.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
@@ -342,11 +351,36 @@ export class SpaceLongHorizonAgentRepository {
         agentStates[candidate.agentId] = { state: agent.status };
       }
     }
-    const coordinator = this.getCoordinator(spaceId);
     return decideGoalOwnerResolution({
       candidates,
       agentStates,
-      coordinatorAgentId: coordinator?.id ?? null,
+      fallbackAgentId: this.getGoalOwnerFallbackAgentId(spaceId),
+    });
+  }
+
+  getGoalOwnerFallbackAgentId(spaceId: string): string | null {
+    return this.resolveDutyHolder(spaceId, 'goal_owner_fallback')?.agentId ?? null;
+  }
+
+  resolveDutyHolder(spaceId: string, duty: Duty): DutyDeclarer | null {
+    const outcome = resolveDutyHolders({ duty, declarers: this.dutyDeclarers(spaceId) });
+    return isDutyFallback(outcome) ? null : (outcome.holders[0] ?? null);
+  }
+
+  private dutyDeclarers(spaceId: string): DutyDeclarer[] {
+    return this.listBySpaceId(spaceId).map((agent) => {
+      const template = agent.templateKey
+        ? getLongHorizonAgentTemplate(agent.templateKey)
+        : undefined;
+      return {
+        agentId: agent.id,
+        handle: agent.handle,
+        status: agent.status,
+        duties: deriveDuties([
+          ...ownershipPatternSources(template?.ownershipPatterns),
+          ...declaredDutySources(template?.duties),
+        ]),
+      };
     });
   }
 
