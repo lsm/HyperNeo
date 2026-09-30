@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
@@ -53,6 +54,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 export class NeoService {
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
+  readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly consultations: NeoConsultationRepository;
@@ -74,6 +76,7 @@ export class NeoService {
   ) {
     this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.publications = new NeoPublicationRepository(db.getDatabase());
+    this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
