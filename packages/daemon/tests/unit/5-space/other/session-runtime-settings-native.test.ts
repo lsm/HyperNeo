@@ -244,7 +244,7 @@ describe('session.runtimeSettings.update native boundary', () => {
   ])('cold provider-only rejects $reason without writing any stored row', async (entry) => {
     const f = fixture();
     f.cold();
-    models.catalog.mockReturnValue(entry.catalog);
+    models.catalog.mockReturnValue([...entry.catalog]);
     const before = row();
     expect(await f.invoke({ provider: 'openrouter' })).toMatchObject({
       ok: false,
