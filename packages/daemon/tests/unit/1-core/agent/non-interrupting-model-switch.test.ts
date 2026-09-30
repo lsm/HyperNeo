@@ -224,7 +224,7 @@ describe('non-interrupting model switch admission', () => {
     await AgentSession.prototype.handleModelSwitch.call(session, 'new-model', 'anthropic');
     expect(switchModel.mock.calls).toEqual([
       ['new-model', 'anthropic', true],
-      ['new-model', 'anthropic', false],
+      ['new-model', 'anthropic'],
     ]);
   });
 });

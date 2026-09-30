@@ -1403,7 +1403,9 @@ export class AgentSession
     newProvider: string,
     nonInterrupting = false
   ): Promise<{ success: boolean; model: string; error?: string }> {
-    return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting);
+    return nonInterrupting
+      ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
+      : this.modelSwitchHandler.switchModel(newModel, newProvider);
   }
 
   getCurrentModel(): CurrentModelInfo {
