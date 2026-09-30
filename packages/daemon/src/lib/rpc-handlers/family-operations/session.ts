@@ -4,7 +4,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
 import { createReturnSessionCloneOperation } from '../../session/clone-return-operation.ts';
 import { createSessionOperations } from '../../session/operations.ts';
-import { createSessionRuntimeSettingsReadOperations } from '../../session/runtime-settings-read-operation.ts';
+import { createSessionRuntimeSettingsOperations } from '../../session/runtime-settings-operations.ts';
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -57,7 +57,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
   return [
     spawn,
     returnToParent,
-    ...createSessionRuntimeSettingsReadOperations({
+    ...createSessionRuntimeSettingsOperations({
       getLiveSession: (sessionId) =>
         context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??
         context.deps.sessionManager.getCachedSession(sessionId) ??
@@ -65,6 +65,23 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
       getSession: scopeDeps.getSession,
       sessionSpaceId: (session) =>
         resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
+      capture: (id) => context.deps.db.captureSessionRuntimeSettings(id),
+      commit: (snapshot, patch) => context.deps.db.casSessionRuntimeSettings(snapshot, patch),
+      isPreparing: (id) =>
+        context.deps.sessionManager.isRuntimeSettingsPreparing(id) ||
+        context.taskAgentManager.isRuntimeSettingsPreparing(id),
+      hasPendingWork: (id) =>
+        context.deps.db.getJobQueueRepo().activeDeliveryMessageUuids(id).size > 0 ||
+        context.deps.db.getJobQueueRepo().activeMailboxMessageUuids(id).size > 0,
+      notify: async (id) => {
+        const session = context.deps.db.getSession(id);
+        if (session)
+          await context.deps.internalEventBus.publish('session.updated', {
+            sessionId: id,
+            source: 'runtime-settings',
+            session: { config: session.config },
+          });
+      },
     }),
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),

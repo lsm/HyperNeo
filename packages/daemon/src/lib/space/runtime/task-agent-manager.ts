@@ -2736,6 +2736,14 @@ export class TaskAgentManager {
     return this.agentSessionIndex.get(sessionId);
   }
 
+  isRuntimeSettingsPreparing(sessionId: string): boolean {
+    return (
+      this.sessionRestoreLocks.has(sessionId) ||
+      this.rehydrateInFlight.has(sessionId) ||
+      this.cancellingSessions.has(sessionId)
+    );
+  }
+
   getLiveSubSessionIdsForTasks(taskIds: string[]): string[] {
     const ids = new Set<string>();
     for (const taskId of taskIds) {
