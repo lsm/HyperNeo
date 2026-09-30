@@ -62,6 +62,7 @@ export class NeoService {
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
+  readonly notifyChanged: () => void;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -74,6 +75,9 @@ export class NeoService {
     hub: MessageHub,
     events: InternalEventBus<DaemonInternalEventMap>
   ) {
+    this.notifyChanged = () => {
+      hub.event('neo.changed', {});
+    };
     this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());

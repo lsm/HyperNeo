@@ -622,7 +622,7 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
-    createNeoIntakeOperation(service.db, service.repo),
+    createNeoIntakeOperation(service.db, service.repo, service.notifyChanged),
     createNeoPublicationOperation(service.publish),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
