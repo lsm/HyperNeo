@@ -1461,7 +1461,7 @@ export class AcpQueryRunner {
       const presentServers = Object.keys(queryOptions.mcpServers ?? {}).sort();
       if (isSpaceActionsDispatcherEnabled() && !presentServers.includes('space-actions')) {
         logger.info(
-          `[MCP invariant, soft] ACP session ${session.id} (role ${policy.role}) is missing ` +
+          `[MCP invariant, soft] ACP session ${session.id} (kind ${policy.kind}) is missing ` +
             `the space-actions dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is ` +
             `enabled; the server will be injected in a follow-up slice. Proceeding log-only. ` +
             `Present: [${presentServers.join(', ')}].`
@@ -1485,7 +1485,7 @@ export class AcpQueryRunner {
             sessionId: session.id,
             spaceId: policy.spaceId,
             sessionType: session.type,
-            role: policy.role,
+            kind: policy.kind,
             owner: policy.owner,
             requiredServers: policy.requiredServers,
             missingServers: missing,

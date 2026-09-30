@@ -2,11 +2,14 @@ import type { AgentDefinition, Session, Space, SpaceLongHorizonAgent } from '@hy
 import { isScopedBashToolEntry } from '@hyperneo/shared';
 import { findInModels, getAvailableModels } from '../model-service.ts';
 import { inferPersistableProviderForModel } from '../providers/registry.ts';
+import { classifySession, type DeclaredCapability } from '../session-profile/classify.ts';
+import { resolvePromptPlan } from '../session-profile/prompt-plan.ts';
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../space/agents/long-horizon-agent-tools.ts';
+import { getLongHorizonAgentTemplate } from '../space/agents/long-horizon-agent-templates.ts';
 import { deriveWorkerDisallowedTools } from '../space/agents/tool-policy.ts';
 
 const LONG_TERM_AGENT_SESSION_FEATURES = {
@@ -87,14 +90,40 @@ function agentPromptValues(input: AgentSessionConfigInput): {
   prompt: string;
   description: string;
 } {
-  const instructions = input.agent.instructions?.trim();
+  const profile = classifySession({
+    sessionId: input.agent.sessionId ?? '',
+    sessionType: 'long_horizon_agent',
+    spaceId: input.agent.spaceId,
+    agentId: input.agent.id,
+    isCanonicalAgentSession: true,
+    declaredCapabilities: declaredCapabilitiesFor(input.agent),
+  });
+  const plan = resolvePromptPlan({
+    profile,
+    instructions: input.agent.instructions,
+    ownerReviewContract: LONG_HORIZON_OWNER_REVIEW_CONTRACT,
+    schedulingGuardrail: LONG_HORIZON_SCHEDULING_GUARDRAIL,
+  });
   return {
-    append: instructions
-      ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
-      : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`,
+    append: plan.text ?? '',
     prompt: input.agent.instructions,
     description: `Long-horizon Space agent: ${input.agent.displayName}`,
   };
+}
+
+function declaredCapabilitiesFor(agent: SpaceLongHorizonAgent): DeclaredCapability[] {
+  const declared: DeclaredCapability[] = [];
+  if (!agent.templateKey) return declared;
+  const template = getLongHorizonAgentTemplate(agent.templateKey);
+  if (!template) return ['holds.goals', 'holds.schedules'];
+  if (template.ownershipPatterns.some((pattern) => pattern.target === 'goal')) {
+    declared.push('holds.goals');
+  }
+  if (template.reminderDefaults.length > 0 || template.suggestedEventSubscriptions.length > 0) {
+    declared.push('holds.schedules');
+  }
+  if (template.duties?.includes('escalation')) declared.push('responsibilities.escalation');
+  return declared;
 }
 
 function sanitizeLongTermAgentKey(name: string): string {

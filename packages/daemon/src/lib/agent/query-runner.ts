@@ -20,11 +20,10 @@ import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
+import { requiredMcpServersFor } from '../session-profile/classify.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-  SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
-  SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
@@ -279,7 +278,7 @@ function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: Provider
   };
 }
 
-const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_COORDINATOR_REQUIRED_MCP_SERVERS;
+const REQUIRED_SPACE_CHAT_MCP_SERVERS = requiredMcpServersFor('space.chat');
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'create_standalone_task',
   'get_task_detail',
@@ -755,7 +754,7 @@ export class QueryRunner {
         event: 'query.mcp.snapshot',
         sessionId: session.id,
         sessionType: session.type,
-        role: spacePolicy.role,
+        kind: spacePolicy.kind,
         owner: spacePolicy.owner,
         ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
         ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
@@ -771,7 +770,7 @@ export class QueryRunner {
 
       queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, attemptHook);
       if (isWorkflowSubSession) {
-        const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
+        const requiredServers = spacePolicy.requiredServers;
         const missingServers = missingMcpServers(
           queryOptions.mcpServers as Record<string, unknown> | undefined,
           requiredServers
@@ -783,7 +782,7 @@ export class QueryRunner {
             sessionId: session.id,
             spaceId: spacePolicy.spaceId,
             sessionType: session.type,
-            role: spacePolicy.role,
+            kind: spacePolicy.kind,
             owner: spacePolicy.owner,
             requiredServers,
             missingServers,
@@ -1761,7 +1760,7 @@ export class QueryRunner {
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
     if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
       logger.warn(
-        `[MCP invariant, soft] Space member session ${session.id} (role ${policy.role}) is ` +
+        `[MCP invariant, soft] Space member session ${session.id} (kind ${policy.kind}) is ` +
           `missing the space-actions dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER ` +
           `is enabled; proceeding log-only — the typed tool surface remains authoritative. ` +
           `Present: [${serverNames.join(', ')}].`
@@ -1778,7 +1777,7 @@ export class QueryRunner {
       sessionId: session.id,
       spaceId: policy.spaceId,
       sessionType: session.type,
-      role: policy.role,
+      kind: policy.kind,
       owner: policy.owner,
       requiredServers: policy.requiredServers,
       missingServers,
@@ -1826,7 +1825,7 @@ export class QueryRunner {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
     });
-    if (policy.role !== 'universal_read') return queryOptions;
+    if (policy.kind !== 'chat.default') return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
     if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
