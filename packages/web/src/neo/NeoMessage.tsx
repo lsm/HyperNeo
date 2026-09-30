@@ -5,6 +5,7 @@ import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { neoMessageAnchor, type NeoReplyContext } from './reply-context.ts';
 import { neoMessageImageSources } from './neo-message-images.ts';
+import { NeoIcon } from './NeoIcon.tsx';
 
 export function messageTime(timestamp: unknown, now = new Date()) {
   if (typeof timestamp !== 'number' && typeof timestamp !== 'string') return null;
@@ -46,6 +47,13 @@ export function NeoMessage({
   const images = neoMessageImageSources(message);
   const copyDisabled = !text.trim();
   const time = messageTime((message as ChatMessage & { timestamp?: number }).timestamp);
+  const accepted =
+    user &&
+    (message as { inputKind?: string }).inputKind === 'human' &&
+    !!sessionId?.trim() &&
+    !!message.uuid?.trim() &&
+    !message.parent_tool_use_id &&
+    (!message.session_id || message.session_id === sessionId);
   return (
     <article
       id={sessionId && message.uuid ? neoMessageAnchor(sessionId, message.uuid) : undefined}
@@ -59,6 +67,16 @@ export function NeoMessage({
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
           </time>
+        )}
+        {accepted && (
+          <span
+            role="img"
+            aria-label="Message accepted"
+            title="Accepted by Neo. This does not mean work is complete."
+            class="inline-flex self-center text-fg-faint"
+          >
+            <NeoIcon name="received" class="!h-3.5 !w-3.5" />
+          </span>
         )}
       </div>
       <div
