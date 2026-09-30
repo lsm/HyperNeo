@@ -65,7 +65,7 @@ test('stopped or mismatched provenance remains dormant without execution ownersh
     role: 'direct_task_worker',
     owner: 'none',
   });
-  sessions.updateSession('direct', { type: 'space_task_agent', context: { spaceId: 'other' } });
+  sessions.updateSession('direct', { type: 'worker', context: { spaceId: 'other' } });
   expect(policy()).toMatchObject({
     role: 'direct_task_worker',
     owner: 'none',

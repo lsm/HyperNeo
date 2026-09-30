@@ -63,17 +63,6 @@ export function resolveSpaceMcpSessionPolicy(
     };
   }
 
-  if (session.type === 'space_task_agent') {
-    return {
-      role: 'legacy_task_agent',
-      spaceId,
-      owner: 'none',
-      requiredServers: [],
-      attachLongTermAgentTools: false,
-      isWorkflowWorker: false,
-    };
-  }
-
   const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
   if (workflowExecution || isPostApprovalSession(session)) {
     const taskId = session.context?.taskId;

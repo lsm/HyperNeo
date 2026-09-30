@@ -48,7 +48,7 @@ const legacy: NeoWorkReportInput = {
   report: '  Draft evidence.\n未执行。  ',
 };
 const input: NeoWorkReportInput = { ...legacy, resourceRefs: [task, workflow] };
-const caller: OperationCaller = { source: 'mcp', sessionId: 'recipient', role: 'outside_space' };
+const caller: OperationCaller = { source: 'mcp', sessionId: 'recipient', role: 'universal_read' };
 const settled: NeoWork = { ...work, status: input.status, report: input.report };
 const rejected = (reason: string) => ({ accepted: false, reason });
 

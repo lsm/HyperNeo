@@ -50,7 +50,7 @@ const input: NeoWorkReportInput = Object.freeze({
 const caller: OperationCaller = Object.freeze({
   source: 'mcp',
   sessionId: work.sessionId!,
-  role: 'outside_space',
+  role: 'universal_read',
 });
 const binding: NeoBinding = { sessionId: caller.sessionId!, kind: 'worker', concernId: null };
 type Result = Awaited<ReturnType<ReturnType<typeof createNeoWorkReporter>>>;

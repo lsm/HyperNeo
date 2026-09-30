@@ -55,7 +55,6 @@ const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
   'coder',
   'leader',
   'space_chat',
-  'space_task_agent',
 ]);
 
 const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
@@ -961,7 +960,7 @@ delivery_rows AS (
     ) AS fromActor,
     json_object(
       'kind', CASE
-        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        WHEN session_type IS NULL OR session_type = 'worker' THEN 'worker'
         ELSE 'agent'
       END,
       'label', target_label,
@@ -1005,8 +1004,7 @@ delivery_rows AS (
       )} AS sender,
       s_kind.type AS session_type,
       COALESCE(
-        sa.display_name, ne.agent_name, tsm.provenance_agent_name,
-        CASE WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
+        sa.display_name, ne.agent_name, tsm.provenance_agent_name, 'agent'
       ) AS target_label,
       COALESCE(ne.agent_name, tsm.provenance_agent_name, '') AS target_role,
       tsm.session_id AS session_id,
@@ -1209,7 +1207,7 @@ delivery_rows AS (
     ) AS fromActor,
     json_object(
       'kind', CASE
-        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        WHEN session_type IS NULL OR session_type = 'worker' THEN 'worker'
         ELSE 'agent'
       END,
       'label', target_label,
@@ -1253,8 +1251,7 @@ delivery_rows AS (
       )} AS sender,
       dsess.session_type AS session_type,
       COALESCE(
-        sa.display_name, dse.agent_name, dsess.provenance_agent_name,
-        CASE WHEN dsess.session_type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
+        sa.display_name, dse.agent_name, dsess.provenance_agent_name, 'agent'
       ) AS target_label,
       COALESCE(dse.agent_name, dsess.provenance_agent_name, '') AS target_role,
       dt.session_id AS session_id,
@@ -2004,7 +2001,6 @@ contributing_sessions AS (
   FROM target_task tt
   JOIN sessions s ON s.id = tt.task_agent_session_id
   WHERE tt.task_agent_session_id IS NOT NULL
-    AND s.type = 'space_task_agent'
   UNION
   -- Task Agent after pause/cancel: stopActiveWorkflowTaskAgents clears
   -- task_agent_session_id (severing the pointer arm above), and the worker
@@ -2019,7 +2015,6 @@ contributing_sessions AS (
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
   JOIN sessions s ON s.id = sm.session_id
-  WHERE s.type = 'space_task_agent'
   UNION
   SELECT
     ne.agent_session_id AS session_id,
@@ -2107,27 +2102,21 @@ session_node_exec AS (
 all_sessions AS (
   SELECT
     cs.session_id AS session_id,
-    -- Task Agent vs node-agent classification: derived from sessions.type.
-    -- Using sessions.type (a stable property of the session row) rather than
-    -- comparing to the current task_agent_session_id ensures historical rows
-    -- stay correctly attributed if the orchestration pointer is rotated or
-    -- cleared (rehydrate self-heal, session replacement).
+    -- Task Agent vs node-agent classification: a session with a
+    -- node_executions row ran a workflow node; the task-level agent has none.
+    -- Keying on the execution row (not the transient task_agent_session_id
+    -- pointer) keeps historical rows correctly attributed when the pointer is
+    -- rotated or cleared (rehydrate self-heal, session replacement).
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      -- Post-approval workers have no node_executions row (sne is NULL), so
-      -- fall through to the session's promptProvenance.agentName. sa resolves
-      -- via provenance.agentId.
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
-      -- promptProvenance.agentName covers execution-less workers (e.g.
-      -- post-approval sessions whose node_executions row was never created
-      -- or was detached after the session emitted messages).
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     cs.task_id,
@@ -2364,22 +2353,21 @@ sdk_rows_raw AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
-    -- Task Agent vs node-agent classification — derived from sessions.type
-    -- (a stable property of the session row), not from the task's current
-    -- task_agent_session_id pointer. Pointer rotation/clearing must not
-    -- retype historical rows.
+    -- Task Agent vs node-agent classification — a session that ran a workflow
+    -- node (node_executions row, or a declared promptProvenance.nodeId) is a
+    -- node agent; the task-level agent has neither. Keying on that rather than
+    -- the task's current task_agent_session_id pointer keeps historical rows
+    -- attributed when the pointer is rotated or cleared.
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
-      -- promptProvenance.agentName attributes execution-less workers (e.g.
-      -- the post-approval merger) whose node_executions row is absent.
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
@@ -2755,15 +2743,15 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
     sm.id AS id,
     sm.session_id AS sessionId,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,

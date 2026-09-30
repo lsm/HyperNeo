@@ -10,18 +10,14 @@ describe('outboundSenderLevel', () => {
   test.each([
     ['long_term_agent', 'long-horizon-agent'],
     ['workflow_worker', 'node-agent'],
-    ['legacy_task_agent', 'task-agent'],
     ['direct_task_worker', 'session-agent'],
   ] as const)('maps %s to %s', (role, level) => {
     expect(outboundSenderLevel(role)).toBe(level);
   });
 
-  test.each(['universal_read', 'outside_space', undefined] as const)(
-    'has no sender level for %s',
-    (role) => {
-      expect(outboundSenderLevel(role as OperationCallerRole | undefined)).toBeNull();
-    }
-  );
+  test.each(['universal_read', undefined] as const)('has no sender level for %s', (role) => {
+    expect(outboundSenderLevel(role as OperationCallerRole | undefined)).toBeNull();
+  });
 });
 
 describe('resolveOutboundSender', () => {

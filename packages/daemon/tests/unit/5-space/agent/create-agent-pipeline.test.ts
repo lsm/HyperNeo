@@ -601,15 +601,6 @@ describe('gate order and rejection taxonomy', () => {
       expectRejection(await run(h, baseInput({ sessionId: 'other' })), 'does not belong to space');
     });
 
-    test('rejects a task agent session', async () => {
-      h.sessions.set('task', {
-        type: 'space_task_agent',
-        spaceId: 'space-1',
-        parentSessionId: null,
-      });
-      expectRejection(await run(h, baseInput({ sessionId: 'task' })), 'Task agent sessions cannot');
-    });
-
     test('rejects binding a spawned session as the primary', async () => {
       h.sessions.set('clone', { type: 'worker', spaceId: 'space-1', parentSessionId: 'other' });
       expectRejection(await run(h, baseInput({ sessionId: 'clone' })), 'spawned session');

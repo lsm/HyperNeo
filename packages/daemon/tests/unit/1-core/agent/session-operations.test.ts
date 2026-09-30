@@ -119,7 +119,7 @@ describe('session operation MCP attachment', () => {
       const resumed = manager.getSession('resumed')!;
       const createdId = await manager.createSession({ title: 'New provider session' });
       const created = manager.getSession(createdId)!;
-      db.createSession({ ...createTestSession('workflow'), type: 'space_task_agent' });
+      db.createSession({ ...createTestSession('workflow'), type: 'worker' });
       const workflow = await restore('workflow');
       const workflowServer = workflow.getOperationMcpServer();
       manager.registerSession(workflow);
@@ -274,7 +274,7 @@ describe('session operation MCP attachment', () => {
     expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
   });
 
-  test.each([undefined, 'lobby', 'worker', 'space_chat', 'space_task_agent'] as const)(
+  test.each([undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const)(
     'exposes canonical send for restored session type %s',
     async (type) => {
       const source: Session = { ...createTestSession('sender'), type };

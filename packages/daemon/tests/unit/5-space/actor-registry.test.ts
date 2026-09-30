@@ -102,7 +102,7 @@ describe('SpaceActorRegistryAdapter', () => {
     const member = makeSession('member-1', { context: { spaceId: space.id } });
     const legacyMember = makeSession('legacy-member');
     const taskAgent = makeSession('task-agent-1', {
-      type: 'space_task_agent',
+      type: 'worker',
       context: { spaceId: space.id },
     });
     const workerSubSession = makeSession('space:task:t1:exec:e1', {

@@ -118,12 +118,10 @@ describe('daemon.snapshot invocation', () => {
   test.each([
     ['rpc', undefined, true],
     ['mcp', 'neo', true],
-    ['mcp', 'outside_space', false],
     ['mcp', 'workflow_worker', false],
     ['mcp', 'direct_task_worker', false],
     ['mcp', 'long_term_agent', false],
     ['mcp', 'universal_read', false],
-    ['mcp', 'legacy_task_agent', false],
     ['mcp', undefined, false],
     ['internal', undefined, false],
   ] as const)('gates %s/%s before read ports: allowed=%s', async (source, role, allowed) => {

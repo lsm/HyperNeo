@@ -343,7 +343,7 @@ describe('space.audit.list operation', () => {
       registry,
       'space.audit.list',
       { spaceId: SPACE_ID },
-      mcpCaller('legacy_task_agent')
+      mcpCaller('universal_read')
     );
     expect(outcome).toMatchObject({ kind: 'completed', value: { ok: true } });
   });
@@ -351,7 +351,7 @@ describe('space.audit.list operation', () => {
 
 describe('resolveAuditScope', () => {
   test('maps an MCP caller carrying no Space to a space_scope_required rejection', () => {
-    const scope = resolveAuditScope({}, mcpCaller('legacy_task_agent', { spaceId: undefined }), {
+    const scope = resolveAuditScope({}, mcpCaller('universal_read', { spaceId: undefined }), {
       readOnly: true,
     });
     expect(scope).toEqual({

@@ -133,7 +133,7 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
 
   test('task_id attribution is unchanged for task and non-task sessions', () => {
     reactiveDb.db.createSession(makeSession('s-worker', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.createSession(makeSession('s-agent', 'space_task_agent', { taskId: 'task-2' }));
+    reactiveDb.db.createSession(makeSession('s-agent', 'worker', { taskId: 'task-2' }));
     reactiveDb.db.createSession(makeSession('s-plain', 'worker'));
     reactiveDb.db.createSession(makeSession('s-lobby', 'lobby', { taskId: 'task-ghost' }));
 

@@ -249,6 +249,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       sessionContext?: string,
       lastError?: string
     ): void {
+      const sessionType = type === 'space_task_agent' ? 'worker' : type;
       db.exec(`
 				INSERT INTO sessions (
 					id, title, workspace_path, created_at, last_active_at, status, config, metadata,
@@ -258,7 +259,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'${id}', 'Session', '/tmp/test-space', '${nowIso}', '${nowIso}', 'active', '{}', '{}',
 					0, NULL, NULL, NULL, NULL, NULL, NULL, '${processingState}', ${
             lastError ? `'${lastError}'` : 'NULL'
-          }, NULL, '${type}', '${sessionContext ?? '{}'}'
+          }, NULL, '${sessionType}', '${sessionContext ?? '{}'}'
 				)
 			`);
     }
@@ -7455,7 +7456,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'coder',
           'leader',
           'space_chat',
-          'space_task_agent',
         ]) {
           expect(filter({ sessionId: 's', sessionType: type })).toBe(false);
         }
@@ -7467,7 +7467,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           filter({ sessionId: 'space-worker', sessionType: 'worker', spaceId: 'space-1' })
         ).toBe(false);
         expect(
-          filter({ sessionId: 'task-agent', sessionType: 'space_task_agent', spaceId: 'space-1' })
+          filter({ sessionId: 'space-chat', sessionType: 'space_chat', spaceId: 'space-1' })
         ).toBe(false);
         expect(filter({ sessionId: 'room-chat', sessionType: 'room_chat', roomId: 'room-1' })).toBe(
           false
@@ -7490,7 +7490,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         `);
         db.exec(`
           INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
-          VALUES ('db-task-agent', 'Task Agent', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'space_task_agent', NULL)
+          VALUES ('db-space-chat', 'Space Chat', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'space_chat', NULL)
         `);
         db.exec(`
           INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
@@ -7498,7 +7498,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         `);
         const filter = buildFilter();
         expect(filter({ sessionId: 'db-worker' })).toBe(false);
-        expect(filter({ sessionId: 'db-task-agent' })).toBe(false);
+        expect(filter({ sessionId: 'db-space-chat' })).toBe(false);
         expect(filter({ sessionId: 'db-human' })).toBe(true);
         expect(filter({ sessionId: 'missing-session' })).toBe(true);
       });
@@ -7839,13 +7839,6 @@ describe('sessions.list reactive scope filter', () => {
     expect(spy.mock.calls).toHaveLength(0);
     expect(diffs).toHaveLength(1);
 
-    reactiveDb.db.createSession(
-      makeSession('task-agent-1', { spaceId: 'space-1' }, 'space_task_agent')
-    );
-    await flush();
-    expect(spy.mock.calls).toHaveLength(0);
-    expect(diffs).toHaveLength(1);
-
     reactiveDb.db.createSession(makeSession('room-chat-1', { roomId: 'room-1' }, 'room_chat'));
     await flush();
     expect(spy.mock.calls).toHaveLength(0);
@@ -7946,7 +7939,7 @@ describe('sessions.list reactive scope filter', () => {
     await flush();
     expect(diffs[0].rows).toHaveLength(1);
 
-    reactiveDb.db.updateSession('human-1', { type: 'space_task_agent' });
+    reactiveDb.db.updateSession('human-1', { type: 'space_chat' });
     await flush();
 
     expect(diffs).toHaveLength(2);

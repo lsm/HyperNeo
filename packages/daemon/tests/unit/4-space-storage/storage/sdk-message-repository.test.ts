@@ -2717,7 +2717,7 @@ describe('SDKMessageRepository', () => {
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
-        VALUES ('session-1', '{"taskId":"task-1"}', 'space_task_agent');
+        VALUES ('session-1', '{"taskId":"task-1"}', 'worker');
       `);
       const kickoffId = repository.saveUserMessage(
         'session-1',
@@ -3928,7 +3928,7 @@ describe('SDKMessageRepository', () => {
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
-        VALUES ('session-1', '{"taskId":"task-1"}', 'space_task_agent');
+        VALUES ('session-1', '{"taskId":"task-1"}', 'worker');
       `);
       const kickoffId = repository.saveUserMessage(
         'session-1',
@@ -6071,9 +6071,10 @@ describe('SDKMessageRepository', () => {
           task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
         )
       `);
-      db.prepare(
-        `INSERT INTO sessions (id, type, session_context) VALUES (?, 'space_task_agent', ?)`
-      ).run(sessionId, JSON.stringify({ taskId }));
+      db.prepare(`INSERT INTO sessions (id, type, session_context) VALUES (?, 'worker', ?)`).run(
+        sessionId,
+        JSON.stringify({ taskId })
+      );
     }
 
     function turnOf(id: string): number | null {

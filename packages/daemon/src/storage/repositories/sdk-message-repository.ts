@@ -823,7 +823,7 @@ export class SDKMessageRepository {
         .prepare(`SELECT task_id, type FROM sessions WHERE id = ?`)
         .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
       if (!row) return null;
-      const allowedTypes = ['space_task_agent', 'worker'];
+      const allowedTypes = ['worker'];
       if (!row.type || !allowedTypes.includes(row.type)) return null;
       return row.task_id ?? null;
     } catch (err) {

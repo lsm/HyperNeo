@@ -2119,9 +2119,9 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('M5: unconditional strict MCP + configurable settingSources', () => {
-    const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
+    const sessionTypes: Array<'worker' | 'worker' | 'general' | 'coder' | 'planner'> = [
       'worker',
-      'space_task_agent',
+      'worker',
       'general',
       'coder',
       'planner',
@@ -2146,7 +2146,7 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('preserves explicit mcpServers from session config under strict mode', async () => {
-      mockSession.type = 'space_task_agent';
+      mockSession.type = 'worker';
       mockSession.config.mcpServers = {
         'task-agent': { command: 'task-cmd' },
       };

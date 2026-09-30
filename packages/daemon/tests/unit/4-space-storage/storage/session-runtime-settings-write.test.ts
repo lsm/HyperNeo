@@ -42,7 +42,7 @@ function session(id = ID): Session {
     status: 'active',
     config: CONFIG,
     metadata: METADATA,
-    type: 'space_task_agent',
+    type: 'worker',
     context: { spaceId: 'space-1', taskId: 'task-1' },
     parentSessionId: 'parent-1',
     processingState: JSON.stringify({ status: 'idle' }),
@@ -102,7 +102,7 @@ describe('session runtime settings capture and conditional write', () => {
       taskId: 'task-1',
     });
     expect(snapshot?.status).toBe('active');
-    expect(snapshot?.type).toBe('space_task_agent');
+    expect(snapshot?.type).toBe('worker');
     expect(snapshot?.parentId).toBe('parent-1');
     expect(snapshot?.workspacePath).toBe('/fictional/workspace');
     expect(snapshot?.isWorktree).toBe(1);

@@ -146,7 +146,7 @@ describe('status-application interpretation (chain B4)', () => {
     db.prepare(
       `INSERT INTO sessions
          (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
-       VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'space_task_agent', ?)`
+       VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker', ?)`
     ).run(sessionId, sessionId, NOW, NOW, JSON.stringify({ taskId }));
   }
 

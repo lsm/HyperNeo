@@ -6,9 +6,7 @@ export type OperationCallerRole =
   | 'workflow_worker'
   | 'direct_task_worker'
   | 'long_term_agent'
-  | 'universal_read'
-  | 'legacy_task_agent'
-  | 'outside_space';
+  | 'universal_read';
 
 export interface OperationCaller {
   readonly source: 'rpc' | 'mcp' | 'internal';

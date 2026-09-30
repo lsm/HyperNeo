@@ -268,7 +268,9 @@ describe('session operation catalog', () => {
   test('listing filters by status and type', async () => {
     insertSession(h.db, {
       id: 'worker-9',
-      type: 'space_task_agent',
+      type: 'worker',
+      session_context: '{"spaceId":"space-1","taskId":"task-9"}',
+      task_id: 'task-9',
       processing_state: '{"status":"waiting_for_input"}',
     });
     const byType = await run('session.list', { type: 'worker' }, mcpCaller('long_term_agent'));
@@ -476,7 +478,7 @@ describe('session operation role admission', () => {
   });
 
   test('roles outside the space family may read as well', async () => {
-    for (const role of ['outside_space', 'legacy_task_agent', 'direct_task_worker'] as const) {
+    for (const role of [undefined, 'direct_task_worker'] as const) {
       expect(await run('session.list', {}, mcpCaller(role))).toMatchObject({ ok: true });
     }
   });

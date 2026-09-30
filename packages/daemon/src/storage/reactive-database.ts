@@ -40,7 +40,7 @@ interface MethodMapping {
   extractScope?: (args: unknown[], db: Database) => TableChangeScope | undefined;
 }
 
-const TASK_SESSION_TYPES = ['space_task_agent', 'worker'];
+const TASK_SESSION_TYPES = ['worker'];
 const SESSION_TABLE_WRITE_METHODS = new Set(['createSession', 'updateSession', 'deleteSession']);
 
 const taskIdCacheByDb = new WeakMap<Database, Map<string, string | null>>();

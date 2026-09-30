@@ -324,7 +324,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     reactiveDb.db.createSession(makeSession('sess-type'));
     events.length = 0;
 
-    reactiveDb.db.updateSession('sess-type', { type: 'space_task_agent' });
+    reactiveDb.db.updateSession('sess-type', { type: 'worker' });
 
     const sessionEvent = events[events.length - 1];
     expect(sessionEvent.tables).toContain('sessions');
