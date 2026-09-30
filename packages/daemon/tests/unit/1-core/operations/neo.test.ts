@@ -371,6 +371,7 @@ describe('Neo MVP', () => {
       )
     ).toEqual([
       'neo.message.send',
+      'neo.publication.publish',
       'neo.concern.cancel',
       'neo.concern.consult',
       'neo.concern.respond',

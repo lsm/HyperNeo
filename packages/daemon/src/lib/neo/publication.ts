@@ -8,7 +8,7 @@ const text = (max: number) =>
     .refine((value) => !!value.trim());
 const origin = z.object({ sessionId: text(160), messageId: text(160) }).strict();
 
-const publication = z
+export const NeoPublicationSchema = z
   .object({
     conversationId: z.string().uuid(),
     publicationId: z.string().uuid(),
@@ -33,6 +33,6 @@ const publication = z
 export function admitNeoPublication(
   input: unknown
 ): { value: NeoPublicationInput } | { reason: 'invalid_publication' } {
-  const parsed = publication.safeParse(input);
+  const parsed = NeoPublicationSchema.safeParse(input);
   return parsed.success ? { value: parsed.data } : { reason: 'invalid_publication' };
 }
