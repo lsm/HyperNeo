@@ -158,14 +158,14 @@ describe('classifyNeoScene', () => {
 describe('groupNeoScenes', () => {
   it('groups the whole status table once each, in board order', () => {
     const board = boardFor();
-    const before = [...board.receipts];
+    const before = structuredClone(board.receipts);
     const scenes = groupNeoScenes(classifyNeoScenes(board.receipts));
     const all = [...scenes.attention, ...scenes.running, ...scenes.outcomes];
     expect([
       [ids(scenes.attention), ids(scenes.running), ids(scenes.outcomes)],
       scenes.counts,
       [all.length, new Set(all.map((s) => `${s.ref.kind}:${s.ref.id}`)).size],
-      board.receipts === before,
+      board.receipts,
       projectNeoScenes(board),
     ]).toEqual([
       [
@@ -175,7 +175,7 @@ describe('groupNeoScenes', () => {
       ],
       { attention: 3, running: 3, outcomes: 3, total: 9 },
       [9, 9],
-      false,
+      before,
       scenes,
     ]);
   });
