@@ -138,10 +138,13 @@ export function classifyDelivery(ctx: ImmediateEventDeliveryCtx): ImmediateEvent
 
 export function settleRoutingDecision(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
   const decision = ctx.delivery;
+  if (decision.action === 'deferPausedSpace') {
+    return settled(ctx, { action: 'deferred', reason: 'space_paused' });
+  }
+  if (decision.action === 'deliverStaleSession') {
+    return settled(ctx, { action: 'deferred', reason: 'stale_session' });
+  }
   if (decision.action === 'activateTarget' || decision.action === 'deliverLiveSession') {
-    if (ctx.targetSpacePaused) {
-      return settled(ctx, { action: 'deferred', reason: 'space_paused' });
-    }
     return ctx;
   }
   if (decision.action === 'skip') {
