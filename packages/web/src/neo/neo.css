@@ -74,7 +74,67 @@
 }
 
 .neo-chat-rail {
+  padding-top: 68px;
   padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
+}
+
+.neo-float-dock {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.neo-float-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.neo-float-logo,
+.neo-float-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.neo-float-dock :is(button, a):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .neo-float-logo,
+  .neo-float-link {
+    background: var(--surface-raised);
+  }
+}
+
+.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
+    background: var(--surface-raised);
+  }
 }
 
 .neo-message {
