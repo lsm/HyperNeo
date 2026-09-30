@@ -14,6 +14,9 @@ export function admitSpaceCaller(
   requestedSpaceId: string | undefined,
   admission: SpaceCallerAdmission
 ): { value: string } | { reason: SpaceCallerRejection } {
+  if (caller.role === 'neo') {
+    return requestedSpaceId ? { value: requestedSpaceId } : { reason: 'space_scope_required' };
+  }
   if (caller.source !== 'mcp') {
     return requestedSpaceId ? { value: requestedSpaceId } : { reason: 'space_scope_required' };
   }

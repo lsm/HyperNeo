@@ -117,12 +117,12 @@ export function listAuditEntriesPage(
 
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 
-const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker'];
+const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker', 'neo'];
 
 const READ_POLICY: OperationPolicy = { safetyClass: 'read', roles: READ_ROLES };
 
 const SCOPE_NOTE =
-  'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it.';
+  'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it. Neo (MCP) callers name any Space.';
 
 export function createAuditOperations(deps: AuditOperationDependencies): OperationDefinition[] {
   const list = (superpipe({ deps, admission: READ_ADMISSION })('space-audit-list') as PipelineAPI)

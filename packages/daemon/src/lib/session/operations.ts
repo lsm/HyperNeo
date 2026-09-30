@@ -388,15 +388,15 @@ export async function interruptSpaceSession(
 const READ_ADMISSION: SpaceCallerAdmission = { readOnly: true };
 const WRITE_ADMISSION: SpaceCallerAdmission = { readOnly: false };
 
-const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker'];
-const WRITE_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
+const READ_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'workflow_worker', 'neo'];
+const WRITE_ROLES: readonly OperationCallerRole[] = ['long_term_agent', 'neo'];
 
 const READ_POLICY: OperationPolicy = { safetyClass: 'read', roles: READ_ROLES };
 const MUTATE_POLICY: OperationPolicy = { safetyClass: 'mutate', roles: WRITE_ROLES };
 const DESTRUCTIVE_POLICY: OperationPolicy = { safetyClass: 'destructive', roles: WRITE_ROLES };
 
 const SCOPE_NOTE =
-  'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it.';
+  'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it. Neo (MCP) callers name any Space.';
 
 function sessionPipeline<Input, Result>(
   label: string,

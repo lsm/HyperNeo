@@ -115,7 +115,10 @@ export interface AgentOperationDeps extends SpaceMcpSessionPolicyContext {
   readonly getSession: (sessionId: string) => Session | null;
 }
 
-export const AGENT_ROLES = ['long_term_agent'] as const satisfies readonly OperationCallerRole[];
+export const AGENT_ROLES = [
+  'long_term_agent',
+  'neo',
+] as const satisfies readonly OperationCallerRole[];
 
 export const AGENT_READ_POLICY: OperationPolicy = {
   safetyClass: 'read',
@@ -136,6 +139,11 @@ export function admitAgentCaller(
   deps: AgentOperationDeps,
   access: 'read' | 'mutate'
 ): { value: string } | { reason: AgentRejection } {
+  if (caller.role === 'neo') {
+    return input.spaceId
+      ? { value: input.spaceId }
+      : { reason: rejectAgent('space_required', 'spaceId is required for this caller') };
+  }
   if (caller.source !== 'mcp') {
     return input.spaceId
       ? { value: input.spaceId }
