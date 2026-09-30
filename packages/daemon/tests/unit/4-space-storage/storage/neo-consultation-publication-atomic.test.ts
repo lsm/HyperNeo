@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { vi } from 'vitest';
-import type { Mock } from 'vitest';
+import { type Mock, vi } from 'vitest';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   CONSULTATION_EXPIRED,
@@ -18,6 +17,7 @@ import { createTables } from '../../../../src/storage/schema/index.ts';
 import { runMigrations } from '../../../../src/storage/schema/migrations.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
+type PragmaRow = Record<string, string | null>;
 const root = `neo:${conversationId}`;
 const holder = 'neo:holder:research';
 const publication = (id = 1): NeoPublicationInput => ({
@@ -32,13 +32,18 @@ const publication = (id = 1): NeoPublicationInput => ({
 const count = (db: Database, table: string) =>
   (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
 const payloadOf = (db: Database) =>
-  (
-    db.prepare('SELECT payload_json AS payloadJson FROM neo_publications').get() as
-      | { payloadJson: string }
-      | undefined
-  )?.payloadJson;
-const columnCount = (db: Database) =>
-  (db.prepare('PRAGMA table_info(neo_consultation_publications)').all() as unknown[]).length;
+  (db.prepare('SELECT payload_json AS p FROM neo_publications').get() as { p: string } | undefined)
+    ?.p;
+const shapeOf = (db: Database) => ({
+  columns: db.prepare('PRAGMA table_info(neo_consultation_publications)').all() as PragmaRow[],
+  keys: db.prepare('PRAGMA foreign_key_list(neo_consultation_publications)').all() as PragmaRow[],
+  indexes: db
+    .prepare(
+      `SELECT name, sql FROM sqlite_master
+      WHERE type = 'index' AND tbl_name = 'neo_consultation_publications' ORDER BY name`
+    )
+    .all() as PragmaRow[],
+});
 
 describe('atomic consultation publication settlement', () => {
   let directory: string;
@@ -73,6 +78,7 @@ describe('atomic consultation publication settlement', () => {
     answer = 'Checked.',
     id = 'consult-1'
   ) => consultations.settleWithPublication({ consultationId: id, answer, publication: input });
+  const variant = (over: Partial<NeoPublicationInput>) => ({ ...publication(), ...over });
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'neo-consultation-publication-'));
@@ -181,30 +187,23 @@ describe('atomic consultation publication settlement', () => {
   });
 
   test.each([
-    { name: 'a different publication id', input: publication(2), answer: 'Checked.' },
+    { name: 'a different publication id', input: publication(2) },
     { name: 'a changed answer', input: publication(), answer: 'Different.' },
+    { name: 'a changed short reply', input: variant({ shortText: 'Reword.' }) },
+    { name: 'a changed full detail', input: variant({ fullText: 'Reword.' }) },
     {
-      name: 'a changed short reply',
-      input: { ...publication(), shortText: 'Rewritten.' },
-      answer: 'Checked.',
+      name: 'a changed scene label',
+      input: variant({ links: [{ label: 'Relabelled', kind: 'concern', id: 'research' }] }),
     },
     {
       name: 'a changed original ask',
-      input: {
-        ...publication(),
-        askOrigin: { sessionId: holder, messageId: 'other-human-ask' },
-      },
-      answer: 'Checked.',
+      input: variant({ askOrigin: { sessionId: holder, messageId: 'other-ask' } }),
     },
     {
       name: 'a changed producer',
-      input: {
-        ...publication(),
-        producerInput: { sessionId: holder, messageId: 'neo-consult:other:request' },
-      },
-      answer: 'Checked.',
+      input: variant({ producerInput: { sessionId: holder, messageId: 'other-request' } }),
     },
-  ])('refuses $name for a settled consultation', ({ input, answer }) => {
+  ])('refuses $name for a settled consultation', ({ input, answer = 'Checked.' }) => {
     settle();
     expect(settle(input, answer)).toEqual({ accepted: false, reason: 'publication_conflict' });
     expect(count(writer, 'neo_publications')).toBe(1);
@@ -224,12 +223,15 @@ describe('atomic consultation publication settlement', () => {
     expect(notified).toBe(1);
   });
 
-  test('rolls back all three writes when the association insert faults', () => {
+  test.each([
+    { name: 'association insert', table: 'neo_consultation_publications', event: 'INSERT' },
+    { name: 'publication insert', table: 'neo_publications', event: 'INSERT' },
+    { name: 'consultation settlement', table: 'neo_consultations', event: 'UPDATE' },
+  ])('rolls back all three writes when the $name faults', ({ table, event, name }) => {
     writer.exec(
-      `CREATE TRIGGER refuse BEFORE INSERT ON neo_consultation_publications
-      BEGIN SELECT RAISE(ABORT, 'association fault'); END`
+      `CREATE TRIGGER refuse BEFORE ${event} ON ${table} BEGIN SELECT RAISE(ABORT, '${name} fault'); END`
     );
-    expect(() => settle()).toThrow('association fault');
+    expect(() => settle()).toThrow(`${name} fault`);
     unchanged();
   });
 
@@ -239,18 +241,6 @@ describe('atomic consultation publication settlement', () => {
       BEGIN SELECT RAISE(IGNORE); END`
     );
     expect(settle()).toEqual({ accepted: false, reason: 'consultation_settled' });
-    expect(count(writer, 'neo_publications')).toBe(0);
-    expect(count(writer, 'neo_consultation_publications')).toBe(0);
-    expect(consultations.get('consult-1')?.status).toBe('pending');
-    expect(notified).toBe(0);
-  });
-
-  test('rolls back the publication when the settlement update faults', () => {
-    writer.exec(
-      `CREATE TRIGGER refuse_settle BEFORE UPDATE ON neo_consultations
-      BEGIN SELECT RAISE(ABORT, 'settlement fault'); END`
-    );
-    expect(() => settle()).toThrow('settlement fault');
     unchanged();
   });
 
@@ -315,41 +305,49 @@ describe('atomic consultation publication settlement', () => {
     const upgraded = new Database(':memory:');
     runMigrations(upgraded, () => {});
     createTables(upgraded);
-    expect(columnCount(upgraded)).toBe(6);
+    const fresh = new Database(':memory:');
+    createTables(fresh);
+    const shape = shapeOf(fresh);
+    expect(shapeOf(upgraded)).toEqual(shape);
+    expect(shape.columns).toHaveLength(6);
+    expect(shape.keys.map((key) => `${key.from} to ${key.table}.${key.to}`).sort()).toEqual([
+      'consultation_id to neo_consultations.id',
+      'conversation_id to neo_publications.conversation_id',
+      'publication_id to neo_publications.publication_id',
+    ]);
+    expect(shape.indexes).toEqual([
+      expect.objectContaining({
+        name: 'idx_neo_consultation_publications_publication',
+        sql: expect.stringContaining('CREATE UNIQUE INDEX'),
+      }),
+      { name: 'sqlite_autoindex_neo_consultation_publications_1', sql: null },
+    ]);
+    expect(shape.indexes[0].sql).toContain('(conversation_id, publication_id)');
     upgraded.exec('DROP TABLE neo_consultation_publications');
     upgraded.prepare('DELETE FROM migration_markers WHERE key LIKE ?').run('migration_291%');
     runMigrations(upgraded, () => {});
-    expect(columnCount(upgraded)).toBe(6);
-    const fresh = new Database(':memory:');
-    createTables(fresh);
-    expect(columnCount(fresh)).toBe(6);
+    expect(shapeOf(upgraded)).toEqual(shapeOf(fresh));
     expect(getExcludedTableNames()).toContain('neo_consultation_publications');
     upgraded.close();
     fresh.close();
   });
 
-  test('enforces both foreign keys against a seeded valid publication', () => {
+  test.each([
+    { name: 'a missing consultation', consult: 'absent', pub: publication(2).publicationId },
+    { name: 'a missing publication', consult: 'consult-3', pub: publication(9).publicationId },
+  ])('rejects an association for $name', ({ consult, pub: publicationId }) => {
     writer.exec('PRAGMA foreign_keys = ON');
     settle();
     new NeoPublicationRepository(writer).append(publication(2));
-    expect(() =>
-      writer
-        .prepare(
-          `INSERT INTO neo_consultation_publications
-          (consultation_id, conversation_id, publication_id, answer, payload_json, created_at)
-          VALUES ('absent', ?, ?, 'x', '{}', 'now')`
-        )
-        .run(conversationId, publication(2).publicationId)
-    ).toThrow();
     seed('consult-3');
     expect(() =>
       writer
         .prepare(
           `INSERT INTO neo_consultation_publications
           (consultation_id, conversation_id, publication_id, answer, payload_json, created_at)
-          VALUES ('consult-3', ?, '20000000-0000-4000-8000-000000009999', 'x', '{}', 'now')`
+          VALUES (?, ?, ?, 'x', '{}', 'now')`
         )
-        .run(conversationId)
+        .run(consult, conversationId, publicationId)
     ).toThrow();
   });
 });
