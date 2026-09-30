@@ -313,7 +313,7 @@ test('configured shared catalog discovers lazily and both transports persist the
   expect(tasks.getTask(taskId)?.status).toBe('in_progress');
 });
 
-test.each(['space_chat', 'general', 'space_task_agent'] as const)(
+test.each(['space_chat', 'general', 'worker'] as const)(
   'active persisted %s caller in the owning Space can cancel',
   async (type) => {
     const worker = sessions.getSession(sessionId)!;

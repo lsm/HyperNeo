@@ -4432,7 +4432,7 @@ describe('AgentSession', () => {
           totalCost: 0,
           toolCallCount: 0,
         },
-        type: 'space_task_agent',
+        type: 'worker',
         context: { spaceId: 's1', taskId: 't1' },
         sdkSessionId: preCapturedSdkSessionId,
       } as Session;
@@ -4462,7 +4462,7 @@ describe('AgentSession', () => {
       const init = {
         sessionId: session.id,
         workspacePath: session.workspacePath,
-        type: 'space_task_agent' as const,
+        type: 'worker' as const,
         context: session.context,
         model: session.config.model,
       };

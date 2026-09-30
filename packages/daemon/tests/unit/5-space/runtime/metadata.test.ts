@@ -104,7 +104,7 @@ test.each(['rpc', 'internal'] as const)(
   }
 );
 
-test.each(['space_chat', 'space_task_agent', 'worker'] as const)(
+test.each(['space_chat', 'worker', 'worker'] as const)(
   'allows persisted matching %s agent sessions',
   async (type) => {
     const session = persistSession({

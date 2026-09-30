@@ -47,7 +47,7 @@ export type {
 } from './types/sdk-config.ts';
 export * from './types/daemon-config.ts';
 
-export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat';
+export type SessionType = 'worker' | 'lobby' | 'space_chat';
 
 export interface SessionContext {
   roomId?: string;

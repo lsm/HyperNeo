@@ -14,7 +14,7 @@ import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operati
 import { createTestSession } from '../../../helpers/database';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
-const categories = [undefined, 'lobby', 'worker', 'space_chat', 'space_task_agent'] as const;
+const categories = [undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const;
 const cases = categories.flatMap((targetType) => [
   { source: 'rpc' as const, sourceType: undefined, targetType },
   ...categories.map((sourceType) => ({ source: 'mcp' as const, sourceType, targetType })),
@@ -30,7 +30,7 @@ function session(id: string, type: Session['type'], spaceId: string): Session {
   return {
     ...createTestSession(id),
     type,
-    ...(type === 'worker' || type === 'space_chat' || type === 'space_task_agent'
+    ...(type === 'worker' || type === 'space_chat' || type === 'worker'
       ? { context: { spaceId } }
       : {}),
   };

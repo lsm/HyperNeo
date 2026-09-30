@@ -75,7 +75,7 @@ export function resolveCompletionActor(
   const session = caller.sessionId ? getSession(caller.sessionId) : null;
   const denied = {
     reason: new Error(
-      'Pending completion decisions require a Space agent session in the owning space or a task-agent session'
+      'Pending completion decisions require a Space agent session in the owning space'
     ),
   };
   if (!session) return denied;
@@ -283,7 +283,7 @@ export function createOwnedPendingCompletionOperations(
     .strict();
 
   const DECISION_ADMISSION_DOC =
-    'MCP requires a Space agent session in the owning space or a legacy task-agent session, and a long-term agent caller needs the human-only autonomy level while a legacy task-agent session is exempt from that gate. Standalone tasks are unsupported.';
+    'MCP requires a Space agent session in the owning space, and the caller needs the human-only autonomy level. Standalone tasks are unsupported.';
 
   const decide = async (
     input: { taskId: string; reason?: string | null },

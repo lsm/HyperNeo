@@ -277,7 +277,7 @@ const SESSION_AXIS_CASES: RebuildCase[] = [
     ],
   },
   {
-    session: { id: 'space-task-agent-type-session', status: 'active', type: 'space_task_agent' },
+    session: { id: 'space-task-agent-type-session', status: 'active', type: 'worker' },
     messages: [message('m-sta-type', 'user', userTextMessage('u-stat', 'space task agent body'))],
   },
 ];

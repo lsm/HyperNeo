@@ -111,7 +111,7 @@ describe('classifySessionOwnership', () => {
     const cases: Array<[Partial<Session>, SessionOwnership]> = [
       [{ id: 'plain' }, 'ordinary'],
       [{ id: 'proj', worktree }, 'project'],
-      [{ id: 'w:task:1', type: 'space_task_agent' }, 'space-task'],
+      [{ id: 'w:task:1', type: 'worker' }, 'space-task'],
       [{ id: 'agent-1', context: inSpace('space-1') }, 'space-agent'],
       [{ id: 'neo:root' }, 'neo'],
     ];
@@ -124,8 +124,8 @@ describe('classifySessionOwnership', () => {
 
   test('applies the documented precedence when several markers match', () => {
     const cases: Array<[Partial<Session>, SessionOwnership]> = [
-      [{ id: 'neo:abc', type: 'space_task_agent', worktree, context: inSpace('s') }, 'neo'],
-      [{ id: 'w:task:9', type: 'space_task_agent', worktree, context: inSpace('s') }, 'space-task'],
+      [{ id: 'neo:abc', type: 'worker', worktree, context: inSpace('s') }, 'neo'],
+      [{ id: 'w:task:9', type: 'worker', worktree, context: inSpace('s') }, 'space-task'],
       [{ id: 'agent-2', worktree, context: inSpace('s') }, 'project'],
     ];
     for (const [overrides, ownership] of cases) {

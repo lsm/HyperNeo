@@ -189,8 +189,8 @@ describe('workflow catalog read operations', () => {
     expect(value).toEqual({ scope: { spaceId: SPACE_ID }, workflows: [summary(), disabled] });
   });
 
-  test('workflow.list admits a legacy_task_agent caller scoped to the Space', async () => {
-    const outcome = await outcomeOf(deps(), 'workflow.list', {}, mcpCaller('legacy_task_agent'));
+  test('workflow.list admits a non-agent caller scoped to the Space', async () => {
+    const outcome = await outcomeOf(deps(), 'workflow.list', {}, mcpCaller('universal_read'));
     expect(outcome).toMatchObject({ kind: 'completed', value: { workflows: [summary()] } });
   });
 

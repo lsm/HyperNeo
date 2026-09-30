@@ -168,7 +168,7 @@ describe('ReactiveDatabase', () => {
     test('deleteSession emits a bare session scope once the row is removed', () => {
       db.createSession(
         makeSession('scoped-2', {
-          type: 'space_task_agent',
+          type: 'worker',
           context: { spaceId: 'space-2', taskId: 'task-2' },
         })
       );

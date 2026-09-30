@@ -20,7 +20,6 @@ const MCP_ROLES: readonly OperationCallerRole[] = [
   'workflow_worker',
   'direct_task_worker',
   'universal_read',
-  'legacy_task_agent',
 ];
 
 function fixture(policy?: OperationPolicy) {

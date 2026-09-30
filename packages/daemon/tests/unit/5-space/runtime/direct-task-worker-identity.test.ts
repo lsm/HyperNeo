@@ -77,7 +77,7 @@ test('stopped and replaced attempts cannot retain execution identity', () => {
   expect(resolve('worker-2')).toMatchObject({ attemptId: 'attempt-2', generation: 2 });
 });
 
-test.each(['space_chat', 'space_task_agent', 'lobby'] as const)(
+test.each(['space_chat', 'lobby'] as const)(
   'session type %s cannot inherit direct-worker identity',
   (type) => {
     sessions.updateSession('worker-1', { type });

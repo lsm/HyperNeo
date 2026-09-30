@@ -129,7 +129,6 @@ describe('Neo recipient report owning operation', () => {
         'workflow_worker',
         'direct_task_worker',
         'long_term_agent',
-        'legacy_task_agent',
       ] as const) {
         const listed = await invokeOperation(
           registry,

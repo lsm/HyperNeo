@@ -111,40 +111,34 @@ function invoke(
   );
 }
 
-test.each(['default-agent', 'legacy-task'] as const)(
-  'admits persisted %s and preserves result and audit',
-  async (kind) => {
-    const session =
-      kind === 'default-agent'
-        ? persist(
-            'worker',
-            longTermAgentSessionId(spaceId, coordinator.id),
-            spaceId,
-            coordinator.id
-          )
-        : persist('space_task_agent');
-    const outcome = await invoke(session.id, { taskId: task.id, reason: '  raw  ' });
-    expect(outcome.kind).toBe('completed');
-    if (outcome.kind !== 'completed') throw new Error(outcome.message);
-    expect(outcome.value).toMatchObject({
-      id: task.id,
-      status: 'approved',
-      approvalSource: 'agent',
-      approvalReason: '  raw  ',
-      approvedAt: expect.any(Number),
-      pendingCheckpointType: null,
-    });
-    expect(order).toEqual(['dispatch', 'event', 'audit']);
-    expect(approvalSources).toEqual(['agent']);
-    expect(dependencies.audit).toHaveBeenCalledWith(
-      'task.approve',
-      expect.objectContaining({ id: session.id }),
-      expect.objectContaining({ status: 'review' }),
-      { taskId: task.id, approved: true, reason: '  raw  ' }
-    );
-    expect(dependencies.emitTaskUpdated).toHaveBeenCalledTimes(1);
-  }
-);
+test('admits a persisted Space agent and preserves result and audit', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId(spaceId, coordinator.id),
+    spaceId,
+    coordinator.id
+  );
+  const outcome = await invoke(session.id, { taskId: task.id, reason: '  raw  ' });
+  expect(outcome.kind).toBe('completed');
+  if (outcome.kind !== 'completed') throw new Error(outcome.message);
+  expect(outcome.value).toMatchObject({
+    id: task.id,
+    status: 'approved',
+    approvalSource: 'agent',
+    approvalReason: '  raw  ',
+    approvedAt: expect.any(Number),
+    pendingCheckpointType: null,
+  });
+  expect(order).toEqual(['dispatch', 'event', 'audit']);
+  expect(approvalSources).toEqual(['agent']);
+  expect(dependencies.audit).toHaveBeenCalledWith(
+    'task.approve',
+    expect.objectContaining({ id: session.id }),
+    expect.objectContaining({ status: 'review' }),
+    { taskId: task.id, approved: true, reason: '  raw  ' }
+  );
+  expect(dependencies.emitTaskUpdated).toHaveBeenCalledTimes(1);
+});
 
 test.each(['rpc', 'internal'] as const)(
   'trusted %s caller needs no session and creates no MCP audit',
@@ -239,13 +233,6 @@ test('denies a canonical space-chat caller below the required autonomy level', a
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
-test('legacy task-agent caller bypasses the operations-path autonomy gate entirely', async () => {
-  const session = persist('space_task_agent');
-  dependencies.getSpaceAutonomyLevel = async () => 1;
-  expect((await invoke(session.id)).kind).toBe('completed');
-  expect(tasks.getTask(task.id)?.status).toBe('approved');
-});
-
 test('denies workflow worker even with default-agent provenance', async () => {
   const session = persist('worker', 'worker', spaceId, coordinator.id);
   dependencies.policyContext = {
@@ -259,15 +246,21 @@ test('denies workflow worker even with default-agent provenance', async () => {
   expect(dependencies.getTaskManager).not.toHaveBeenCalled();
 });
 
-test('denies cross-Space actor before task mutation', async () => {
-  const session = persist('space_task_agent', 'foreign', 'other-space');
+test('denies an actor from another Space before task mutation', async () => {
+  const session = persist(
+    'worker',
+    longTermAgentSessionId('other-space', 'agent-1'),
+    'other-space',
+    'agent-1'
+  );
   const outcome = await invoke(session.id);
   expect(outcome).toMatchObject({
     kind: 'failed',
     code: 'execution_failed',
-    message: expect.stringContaining('does not belong'),
+    message: expect.stringContaining('require a Space agent session in the owning space'),
   });
   expect(order).toEqual([]);
+  expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
 test('target gates reject absent, standalone and non-review tasks', async () => {
@@ -320,7 +313,7 @@ test('committed dispatch warning survives catalog result validation', async () =
 });
 
 test('pre-commit failure produces no event or audit', async () => {
-  const session = persist('space_task_agent');
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
   dependencies.dispatchApproval = async () => {
     throw new Error('failure');
   };
@@ -333,7 +326,7 @@ test('pre-commit failure produces no event or audit', async () => {
 });
 
 test('rejection preserves reason and ignores best-effort event/audit failures', async () => {
-  const session = persist('space_task_agent');
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
   dependencies.emitTaskUpdated = async () => {
     order.push('event');
     throw new Error('event');
@@ -352,7 +345,7 @@ test('rejection preserves reason and ignores best-effort event/audit failures', 
 });
 
 test('opposing owned decisions admit one generation and produce one successful notification', async () => {
-  const session = persist('space_task_agent');
+  const session = persist('worker', longTermAgentSessionId(spaceId, 'agent-1'), spaceId, 'agent-1');
   let arrivals = 0;
   let release!: () => void;
   const barrier = new Promise<void>((resolve) => {
@@ -381,7 +374,12 @@ test('opposing owned decisions admit one generation and produce one successful n
 test.each([true, false])(
   'refreshed checkpoint supersedes owned decision before write (approved=%s)',
   async (approved) => {
-    const session = persist('space_task_agent');
+    const session = persist(
+      'worker',
+      longTermAgentSessionId(spaceId, 'agent-1'),
+      spaceId,
+      'agent-1'
+    );
     dependencies.getTaskManager = (owner) => {
       tasks.updateTask(task.id, {
         status: 'review',

@@ -2353,10 +2353,11 @@ sdk_rows_raw AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
-    -- Task Agent vs node-agent classification — derived from sessions.type
-    -- (a stable property of the session row), not from the task's current
-    -- task_agent_session_id pointer. Pointer rotation/clearing must not
-    -- retype historical rows.
+    -- Task Agent vs node-agent classification — a session that ran a workflow
+    -- node (node_executions row, or a declared promptProvenance.nodeId) is a
+    -- node agent; the task-level agent has neither. Keying on that rather than
+    -- the task's current task_agent_session_id pointer keeps historical rows
+    -- attributed when the pointer is rotated or cleared.
     CASE
       WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
       ELSE 'node_agent'

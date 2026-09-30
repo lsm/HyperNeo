@@ -478,7 +478,7 @@ describe('session operation role admission', () => {
   });
 
   test('roles outside the space family may read as well', async () => {
-    for (const role of [undefined, 'legacy_task_agent', 'direct_task_worker'] as const) {
+    for (const role of [undefined, 'direct_task_worker'] as const) {
       expect(await run('session.list', {}, mcpCaller(role))).toMatchObject({ ok: true });
     }
   });
