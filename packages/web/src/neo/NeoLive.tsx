@@ -167,7 +167,7 @@ export function NeoLive() {
   }
 
   return (
-    <div ref={shell} class="neo-shell relative flex h-dvh flex-col overflow-hidden text-fg">
+    <div ref={shell} class="neo-shell relative flex flex-col overflow-hidden text-fg">
       {dragging && (
         <div
           role="status"

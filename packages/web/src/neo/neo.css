@@ -1,4 +1,5 @@
 .neo-shell {
+  height: var(--safe-height, 100dvh);
   --bg: light-dark(#f6f7f8, #171a20);
   --surface: light-dark(#ffffff, #20242b);
   --surface-overlay: light-dark(#faf9f7, #24262b);
@@ -290,9 +291,10 @@
   top: 64px;
   right: 8px;
   width: min(300px, calc(100vw - 40px));
-  max-height: calc(100dvh - var(--neo-composer-height, 190px) - 100px);
+  max-height: calc(var(--safe-height, 100dvh) - var(--neo-composer-height, 190px) - 100px);
   overflow-y: auto;
   padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--surface-raised);
