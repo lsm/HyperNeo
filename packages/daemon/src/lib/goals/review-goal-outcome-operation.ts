@@ -23,6 +23,10 @@ import type { SpaceGoalService } from './service.ts';
 const DISCOVERY_LIMIT = 100;
 const HUMAN_ADMISSION_ALLOWED = false;
 
+function outcomeAdmissionAllowed(caller: OperationCaller): boolean {
+  return caller.role === 'neo' || HUMAN_ADMISSION_ALLOWED;
+}
+
 const listInputSchema = z.object({ ...GoalSpaceScopeShape }).strict();
 
 const resolveInputSchema = z
@@ -137,7 +141,7 @@ export function listOutcomeNotifications(
     notifications: deps.goalService.listClaimableOutcomeNotifications({
       spaceId,
       callerAgentId: caller.agentId ?? null,
-      humanAdmissionAllowed: HUMAN_ADMISSION_ALLOWED,
+      humanAdmissionAllowed: outcomeAdmissionAllowed(caller),
       limit: DISCOVERY_LIMIT,
     }),
   };
@@ -192,7 +196,7 @@ export function applyOutcomeClaim(
     claimedGoalId: claim.goalId,
     claimedTaskId: claim.taskId,
     actorAgentId: caller.agentId ?? null,
-    humanAdmissionAllowed: HUMAN_ADMISSION_ALLOWED,
+    humanAdmissionAllowed: outcomeAdmissionAllowed(caller),
     mutatesGoalState: claim.hasGoalUpdate,
     dispositionStatus: claim.dispositionStatus,
     isResubmission: input.observedGoalRevision != null,

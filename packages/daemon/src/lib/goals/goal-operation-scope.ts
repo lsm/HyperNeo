@@ -27,9 +27,9 @@ export type GoalRejectionReason = (typeof GOAL_REJECTION_REASONS)[number];
 export type GoalAccess = 'read' | 'mutate' | 'owner';
 
 const GOAL_ACCESS_ROLE_LISTS: Record<GoalAccess, readonly OperationCallerRole[]> = {
-  read: ['long_term_agent'],
-  mutate: ['long_term_agent'],
-  owner: ['long_term_agent'],
+  read: ['long_term_agent', 'neo'],
+  mutate: ['long_term_agent', 'neo'],
+  owner: ['long_term_agent', 'neo'],
 };
 
 export const GOAL_READ_POLICY = {
@@ -108,6 +108,7 @@ export function admitGoalSession(
   spaceId: string,
   deps: GoalCallerContext
 ): { value: true } | { reason: GoalRejection } {
+  if (caller.role === 'neo') return { value: true };
   if (caller.source !== 'mcp') return { value: true };
   const session = caller.sessionId ? deps.getSession(caller.sessionId) : null;
   return session?.status === 'active' && resolveSessionSpaceId(session, deps) === spaceId
@@ -123,6 +124,11 @@ export function resolveGoalSpaceId(
   requestedSpaceId: string | undefined
 ): { value: string } | { reason: GoalRejection } {
   if (caller.source !== 'mcp') {
+    return requestedSpaceId
+      ? { value: requestedSpaceId }
+      : goalDenial('space_unresolved', 'spaceId is required for this caller.');
+  }
+  if (caller.role === 'neo') {
     return requestedSpaceId
       ? { value: requestedSpaceId }
       : goalDenial('space_unresolved', 'spaceId is required for this caller.');
