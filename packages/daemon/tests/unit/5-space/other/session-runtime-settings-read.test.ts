@@ -9,6 +9,7 @@ import {
 } from '../../../../src/lib/session/runtime-settings-read-operation';
 import {
   createOperationRegistry,
+  type OperationCaller,
   type OperationDefinition,
 } from '../../../../src/lib/operations/registry';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
@@ -33,6 +34,7 @@ interface Harness {
   sessions: Map<string, Session>;
   live: Map<string, AgentSession>;
   operations: Map<string, OperationDefinition>;
+  getSessionCalls: string[];
 }
 
 function makeLiveSession(
@@ -50,20 +52,36 @@ function makeLiveSession(
 }
 
 function harness(): Harness {
-  const h: Harness = { sessions: new Map(), live: new Map(), operations: new Map() };
+  const h: Harness = {
+    sessions: new Map(),
+    live: new Map(),
+    operations: new Map(),
+    getSessionCalls: [],
+  };
   const deps: RuntimeSettingsReadDependencies = {
     getLiveSession: (id) => h.live.get(id) ?? null,
-    getSession: (id) => h.sessions.get(id) ?? null,
+    getSession: (id) => {
+      h.getSessionCalls.push(id);
+      return h.sessions.get(id) ?? null;
+    },
     sessionSpaceId: spaceId,
   };
   for (const op of createSessionRuntimeSettingsReadOperations(deps)) h.operations.set(op.name, op);
   return h;
 }
 
-async function read(h: Harness, id: string): Promise<Record<string, unknown>> {
+const RPC_CALLER: OperationCaller = { source: 'rpc' };
+const agent = (spaceId?: string, role: OperationCaller['role'] = 'long_term_agent') =>
+  ({ source: 'mcp', sessionId: 'caller-1', role, spaceId }) as OperationCaller;
+
+async function read(
+  h: Harness,
+  id: string,
+  caller: OperationCaller = RPC_CALLER
+): Promise<Record<string, unknown>> {
   const op = h.operations.get('session.runtimeSettings.read');
   if (!op) throw new Error('missing session.runtimeSettings.read');
-  return (await op.execute({ sessionId: id }, { source: 'rpc' })) as Record<string, unknown>;
+  return (await op.execute({ sessionId: id }, caller)) as Record<string, unknown>;
 }
 
 const settingsOf = (result: Record<string, unknown>) => result.settings as Record<string, unknown>;
@@ -147,6 +165,70 @@ describe('session.runtimeSettings.read', () => {
 
   test('reports session_not_found for an unknown session', async () => {
     expect(await read(harness(), 'missing')).toEqual({ ok: false, reason: 'session_not_found' });
+  });
+});
+
+describe('caller admission', () => {
+  const seed = () => {
+    const h = harness();
+    h.sessions.set('mine', makeSession({ id: 'mine', context: inSpace('space-a') }));
+    h.sessions.set('theirs', makeSession({ id: 'theirs', context: inSpace('space-b') }));
+    h.sessions.set('unowned', makeSession({ id: 'unowned' }));
+    return h;
+  };
+
+  test('an agent reads a session inside its own Space', async () => {
+    expect(settingsOf(await read(seed(), 'mine', agent('space-a')))).toMatchObject({
+      ownership: 'space-agent',
+      model: 'claude-sonnet-5',
+    });
+  });
+
+  test('a foreign Space session and a missing session are indistinguishable', async () => {
+    const h = seed();
+    const foreign = await read(h, 'theirs', agent('space-a'));
+    const missing = await read(h, 'ghost', agent('space-a'));
+    expect(foreign).toEqual({ ok: false, reason: 'session_not_found' });
+    expect(foreign).toEqual(missing);
+    expect(foreign).not.toHaveProperty('settings');
+  });
+
+  test('a session owned by no Space is refused to a Space-scoped agent', async () => {
+    expect(await read(seed(), 'unowned', agent('space-a'))).toEqual({
+      ok: false,
+      reason: 'session_not_found',
+    });
+  });
+
+  test('an agent with no resolved Space is refused without probing the target', async () => {
+    const h = seed();
+    const result = await read(h, 'mine', agent(undefined));
+    expect(result).toEqual({ ok: false, reason: 'space_scope_required' });
+    expect(h.getSessionCalls).toEqual([]);
+  });
+
+  test('a claimed spaceId in the payload is not read as authorization', async () => {
+    const h = seed();
+    const op = h.operations.get('session.runtimeSettings.read');
+    if (!op) throw new Error('missing session.runtimeSettings.read');
+    const result = (await op.execute(
+      { sessionId: 'theirs', spaceId: 'space-b' },
+      agent('space-a')
+    )) as Record<string, unknown>;
+    expect(result).toEqual({ ok: false, reason: 'session_not_found' });
+  });
+
+  test('Neo and local callers keep inventory access to any session', async () => {
+    for (const caller of [
+      { source: 'mcp', role: 'neo', sessionId: 'neo:root' } as OperationCaller,
+      { source: 'rpc' } as OperationCaller,
+      { source: 'internal' } as OperationCaller,
+    ]) {
+      expect(settingsOf(await read(seed(), 'theirs', caller))).toMatchObject({
+        ownership: 'space-agent',
+        model: 'claude-sonnet-5',
+      });
+    }
   });
 });
 
