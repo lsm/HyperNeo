@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { render as renderRoot } from 'preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@hyperneo/shared';
@@ -45,27 +46,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const mount = (originMessageId: string | null) => {
+const mount = (originMessageId: string | null, hasConcern = true, live = true) => {
   const snapshot: NeoSnapshot = {
     ok: true,
     sessionId: 'root',
-    concerns: [
-      {
-        id: 'a',
-        title: 'Concern A',
-        summary: 'Summary',
-        context: 'Context',
-        revision: 1,
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ],
+    concerns: hasConcern
+      ? [
+          {
+            id: 'a',
+            title: 'Concern A',
+            summary: 'Summary',
+            context: 'Context',
+            revision: 1,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ]
+      : [],
     consultations: [],
     work: [
       {
         id: 'work',
         requestKey: 'work',
-        concernId: 'a',
+        concernId: hasConcern ? 'a' : null,
         originSessionId: 'root',
         originMessageId,
         title: 'Draft the agenda',
@@ -111,7 +114,7 @@ const mount = (originMessageId: string | null) => {
     act,
     busyWork: null,
   });
-  render(<NeoLive />);
+  if (live) render(<NeoLive />);
   return { act };
 };
 
@@ -150,5 +153,46 @@ describe('original work surface reconciled with the live scenes', () => {
       'Keep my draft'
     );
     expect(act).not.toHaveBeenCalled();
+  });
+
+  it('keeps orphan decisions on their actionable scene, not an empty concerns panel', () => {
+    const { act } = mount('ask', false);
+    expect(screen.queryByRole('button', { name: /Work in flight|Your concerns/ })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Your concerns' })).toBeNull();
+    const attention = screen.getByRole('region', { name: 'Needs your attention' });
+    expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
+    fireEvent.click(within(attention).getByRole('button', { name: 'Not now' }));
+    expect(act).toHaveBeenCalledExactlyOnceWith('work', 'cancel');
+  });
+
+  it('the real Neo entry owns one viewport hook through keyboard resize and cleanup', async () => {
+    mount('ask', true, false);
+    const viewport = Object.assign(new EventTarget(), { height: 420, offsetTop: 0, scale: 1 });
+    const add = vi.spyOn(viewport, 'addEventListener');
+    const remove = vi.spyOn(viewport, 'removeEventListener');
+    vi.stubGlobal('visualViewport', viewport);
+    vi.stubGlobal('innerHeight', 800);
+    const root = document.createElement('div');
+    root.id = 'root';
+    document.body.append(root);
+    try {
+      await import('../client.tsx');
+      await waitFor(() =>
+        expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('420px')
+      );
+      expect(add).toHaveBeenCalledTimes(1);
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+      viewport.height = 380;
+      viewport.dispatchEvent(new Event('resize'));
+      expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('380px');
+      expect(root.querySelectorAll('.neo-shell')).toHaveLength(1);
+    } finally {
+      renderRoot(null, root);
+      root.remove();
+    }
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove.mock.calls[0]).toEqual(add.mock.calls[0]);
+    expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
+    expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
   });
 });

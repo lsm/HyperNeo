@@ -1,5 +1,4 @@
 import type { NeoConcern, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NeoWorkRow } from './NeoWorkRow.tsx';
 import { useRef, useState } from 'preact/hooks';
 import { useClickOutside } from '../hooks/useClickOutside.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
@@ -47,46 +46,29 @@ export function NeoConcerns({
   consultations = [],
   selectedId,
   onOpen,
-  workBusy = null,
-  workDisabled = false,
-  onWorkAction = () => {},
-  onJumpToWork = () => false,
-  sceneSurface = false,
 }: {
   concerns: NeoConcern[];
   works?: NeoWork[];
   consultations?: NeoConsultation[];
   selectedId: string | null;
   onOpen: (id: string) => void;
-  workBusy?: string | null;
-  workDisabled?: boolean;
-  onWorkAction?: (id: string, action: 'start' | 'cancel') => void;
-  onJumpToWork?: (id: string) => boolean;
-  sceneSurface?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [unresolved, setUnresolved] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useClickOutside(ref, () => setExpanded(false), expanded);
   const ordered = prioritizedConcerns(concerns, works, consultations);
-  const openWork = works.filter((work) => work.status === 'proposed' || work.status === 'queued');
-  const held = concerns.length + openWork.filter((work) => !work.concernId).length;
-  const decisionCount =
-    ordered.filter((item) => item.attention === 'decision').length +
-    works.filter((work) => work.status === 'proposed' && !work.concernId).length;
+  const decisionCount = ordered.filter((item) => item.attention === 'decision').length;
   const decisionLabel =
     decisionCount === 1 ? '1 thing needs your call' : `${decisionCount} things need your call`;
-  if (!concerns.length && openWork.length === 0) return null;
+  if (!concerns.length) return null;
   return (
     <div ref={ref} class="neo-concerns">
       <button
         ref={trigger}
         type="button"
         class="neo-concerns-trigger relative rounded-xl border border-accent/20 bg-accent/10 p-2 text-accent hover:bg-accent/20"
-        aria-label={`${concerns.length ? 'Your concerns' : 'Work in flight'} · ${held}${
-          decisionCount ? ` · ${decisionLabel}` : ''
-        }`}
+        aria-label={`Your concerns · ${concerns.length}${decisionCount ? ` · ${decisionLabel}` : ''}`}
         aria-expanded={expanded}
         aria-controls="neo-concerns-list"
         onClick={() => setExpanded(!expanded)}
@@ -99,18 +81,18 @@ export function NeoConcerns({
           />
         )}
         <span class="absolute -right-1 -top-1 rounded-full bg-accent px-1.5 text-[10px] text-accent-fg">
-          {held}
+          {concerns.length}
         </span>
       </button>
       <aside
         id="neo-concerns-list"
-        aria-label={sceneSurface ? 'Your concerns' : 'Your concerns and work'}
+        aria-label="Your concerns"
         class={`neo-concerns-card ${expanded ? 'is-open' : ''}`}
       >
         <div class="mb-3 flex items-center justify-between gap-2">
           <div>
             <h2 class="text-xs font-medium text-fg-muted">
-              {held} {held === 1 ? 'thing' : 'things'} I’m holding for you
+              {concerns.length} {concerns.length === 1 ? 'thing' : 'things'} I’m holding for you
             </h2>
             {decisionCount > 0 && <p class="mt-1 text-xs text-warning">{decisionLabel}</p>}
           </div>
@@ -126,35 +108,6 @@ export function NeoConcerns({
             <NeoIcon name="close" />
           </button>
         </div>
-        {!sceneSurface && openWork.length > 0 && (
-          <div class="mb-3">
-            <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-faint">
-              Work · {openWork.length}
-            </p>
-            <div class="space-y-2" data-testid="neo-work-surface">
-              {openWork.map((work) => (
-                <NeoWorkRow
-                  key={work.id}
-                  work={work}
-                  busy={workBusy === work.id}
-                  disabled={workDisabled}
-                  onAction={onWorkAction}
-                  onJump={() => {
-                    if (onJumpToWork(work.id)) {
-                      setUnresolved(null);
-                      setExpanded(false);
-                    } else setUnresolved(work.title);
-                  }}
-                />
-              ))}
-            </div>
-            {unresolved && (
-              <p role="status" class="mt-2 text-[11px] leading-relaxed text-fg-muted">
-                “{unresolved}” isn’t shown in this view — its brief is here, above.
-              </p>
-            )}
-          </div>
-        )}
         <div class="space-y-2">
           {ordered.map(({ concern, attention }) => (
             <button

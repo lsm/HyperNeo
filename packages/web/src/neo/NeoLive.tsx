@@ -193,30 +193,11 @@ export function NeoLive() {
         </button>
         <div class="neo-float-actions">
           <NeoConcerns
-            sceneSurface
             concerns={concerns}
             works={works}
             consultations={neo.snapshot?.consultations ?? []}
             selectedId={neo.selectedId}
             onOpen={open}
-            workBusy={neo.busyWork}
-            workDisabled={!connected || !!neo.busyWork}
-            onWorkAction={(id, action) => void neo.act(id, action)}
-            onJumpToWork={(id) => {
-              const scene = sceneGroups
-                .flatMap((group) => group.scenes)
-                .find((item) => item.ref.id === id);
-              if (scene) {
-                openScene(scene.ref);
-                return true;
-              }
-              const owner = works.find((work) => work.id === id)?.concernId;
-              if (owner !== undefined && owner !== neo.selectedId) {
-                open(owner ?? null);
-                return true;
-              }
-              return false;
-            }}
           />
           <a
             href="/"
@@ -325,11 +306,7 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
-              sceneSurface
               snapshot={view}
-              workBusy={neo.busyWork}
-              workDisabled={!connected || !!neo.busyWork}
-              onWorkAction={(id, action) => void neo.act(id, action)}
             />
           ) : (
             !neo.error && (

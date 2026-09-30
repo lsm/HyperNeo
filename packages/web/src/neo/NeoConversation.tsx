@@ -6,7 +6,6 @@ import { projectNeoWorkReply } from './work-reply.ts';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoMessage } from './NeoMessage.tsx';
-import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { projectNeoReplyContext } from './reply-context.ts';
@@ -58,39 +57,6 @@ export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
   return visible;
 }
 
-export function messageIdSet(messages: ChatMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const message of messages) if (message.uuid) ids.add(message.uuid);
-  return ids;
-}
-
-export function inlineOriginKey(
-  work: NeoWork,
-  sessionId: string,
-  visible: Set<string>
-): string | null {
-  const origin = work.originMessageId;
-  if (!origin || work.originSessionId !== sessionId) return null;
-  return visible.has(origin) ? origin : null;
-}
-
-export function inflightWorkByOrigin(
-  works: NeoWork[],
-  sessionId: string,
-  visible: Set<string>
-): Map<string, NeoWork[]> {
-  const byOrigin = new Map<string, NeoWork[]>();
-  for (const work of works) {
-    if (work.status !== 'proposed' && work.status !== 'queued') continue;
-    const origin = inlineOriginKey(work, sessionId, visible);
-    if (!origin) continue;
-    const bucket = byOrigin.get(origin) ?? [];
-    bucket.push(work);
-    byOrigin.set(origin, bucket);
-  }
-  return byOrigin;
-}
-
 export function completedWorkReplies(
   messages: ChatMessage[],
   works: NeoWork[],
@@ -132,20 +98,12 @@ export function NeoConversation({
   store,
   sessionId,
   works = [],
-  sceneSurface = false,
   snapshot = null,
-  workBusy = null,
-  workDisabled = false,
-  onWorkAction = () => {},
 }: {
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
-  sceneSurface?: boolean;
   snapshot?: NeoSnapshot | null;
-  workBusy?: string | null;
-  workDisabled?: boolean;
-  onWorkAction?: (id: string, action: 'start' | 'cancel') => void;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -180,18 +138,6 @@ export function NeoConversation({
   );
   const visible = completedConversation(conversation);
   const workReplies = completedWorkReplies(conversation, works, sessionId);
-  const inflight = inflightWorkByOrigin(
-    sceneSurface ? [] : works,
-    sessionId,
-    messageIdSet(visible)
-  );
-  const placed = new Set([...inflight.values()].flat().map((work) => work.id));
-  const unplaced = works.filter(
-    (work) =>
-      !sceneSurface &&
-      (work.status === 'proposed' || work.status === 'queued') &&
-      !placed.has(work.id)
-  );
   const progress = projectNeoProcessingActivity(
     sessionId,
     store.activeSessionId?.value ?? null,
@@ -264,16 +210,6 @@ export function NeoConversation({
                   {check.label}
                 </p>
               ))}
-              {(inflight.get(message.uuid ?? '') ?? []).map((work) => (
-                <div key={work.id} id={`inline-work-${work.id}`} class="mt-3">
-                  <NeoWorkCard
-                    work={work}
-                    busy={workBusy === work.id}
-                    disabled={workDisabled}
-                    onAction={onWorkAction}
-                  />
-                </div>
-              ))}
               {askProgress && renderProgress(progress.label)}
               {requestOrigin && snapshot && (
                 <NeoConcernBoardPanel
@@ -285,23 +221,6 @@ export function NeoConversation({
             </NeoMessage>
           );
         })}
-        {unplaced.length > 0 && (
-          <section aria-label="Work without a message here" class="mt-6">
-            <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-faint">
-              Work with no message here · {unplaced.length}
-            </p>
-            {unplaced.map((work) => (
-              <div key={work.id} id={`inline-work-${work.id}`} class="mt-3">
-                <NeoWorkCard
-                  work={work}
-                  busy={workBusy === work.id}
-                  disabled={workDisabled}
-                  onAction={onWorkAction}
-                />
-              </div>
-            ))}
-          </section>
-        )}
         {progress !== 'inactive' && !progress.messageId && renderProgress(progress.label)}
         {pending && epoch && (
           <QuestionPrompt
