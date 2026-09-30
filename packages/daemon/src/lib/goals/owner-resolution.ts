@@ -1,4 +1,4 @@
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type GoalOwnerAgentState =
   | { state: 'active' }
@@ -23,69 +23,53 @@ export type GoalOwnerResolutionDecision =
     }
   | { action: 'no_recipient' };
 
-export interface GoalOwnerResolutionCtx {
+export interface GoalOwnerResolutionInput {
   candidates: GoalOwnerCandidate[];
   agentStates: Record<string, GoalOwnerAgentState>;
-  decision: GoalOwnerResolutionDecision | null;
 }
 
-export type GoalOwnerResolutionInput = Omit<GoalOwnerResolutionCtx, 'decision'>;
-
-function decided(
-  ctx: GoalOwnerResolutionCtx,
-  decision: GoalOwnerResolutionDecision
-): GoalOwnerResolutionCtx {
-  return { ...ctx, decision };
+export interface GoalOwnerScope {
+  owners: GoalOwnerCandidate[];
+  primary: GoalOwnerCandidate | null;
+  conflicts: GoalOwnerCandidate[];
+  primaryState: GoalOwnerAgentState;
 }
 
-function ownerCandidates(candidates: GoalOwnerCandidate[]): GoalOwnerCandidate[] {
+export function orderOwnerCandidates(candidates: GoalOwnerCandidate[]): GoalOwnerCandidate[] {
   return candidates
-    .filter((c) => c.relationship === 'owner')
+    .filter((candidate) => candidate.relationship === 'owner')
     .slice()
     .sort((a, b) => a.createdAt - b.createdAt || a.agentId.localeCompare(b.agentId));
 }
 
-function agentState(ctx: GoalOwnerResolutionCtx, agentId: string): GoalOwnerAgentState {
-  return ctx.agentStates[agentId] ?? { state: 'missing' };
-}
-
-export function applyResolvedOwnerGate(ctx: GoalOwnerResolutionCtx): GoalOwnerResolutionCtx {
-  const owners = ownerCandidates(ctx.candidates);
-  if (owners.length < 1) return ctx;
-  const primary = owners[0];
-  const agent = agentState(ctx, primary.agentId);
-  if (agent.state !== 'active') return ctx;
-  return decided(ctx, { action: 'resolved', owner: primary, conflicts: owners.slice(1) });
-}
-
-export function applyDegradedOwnerGate(ctx: GoalOwnerResolutionCtx): GoalOwnerResolutionCtx {
-  const owners = ownerCandidates(ctx.candidates);
-  if (owners.length < 1) return ctx;
-  const primary = owners[0];
-  const agent = agentState(ctx, primary.agentId);
-  if (agent.state === 'active') return ctx;
-  return decided(ctx, {
-    action: 'degraded',
-    reason: agent.state,
-    owner: primary,
+export function resolveOwnerScope(input: GoalOwnerResolutionInput): GoalOwnerScope {
+  const owners = orderOwnerCandidates(input.candidates);
+  const primary = owners[0] ?? null;
+  return {
+    owners,
+    primary,
     conflicts: owners.slice(1),
-  });
+    primaryState: primary
+      ? (input.agentStates[primary.agentId] ?? { state: 'missing' })
+      : { state: 'missing' },
+  };
 }
 
-export function applyNoRecipientGate(ctx: GoalOwnerResolutionCtx): GoalOwnerResolutionCtx {
-  if (ownerCandidates(ctx.candidates).length >= 1) return ctx;
-  return decided(ctx, { action: 'no_recipient' });
+export function classifyGoalOwnerResolution(scope: GoalOwnerScope): GoalOwnerResolutionDecision {
+  if (scope.primary === null) return { action: 'no_recipient' };
+  if (scope.primaryState.state === 'active') {
+    return { action: 'resolved', owner: scope.primary, conflicts: scope.conflicts };
+  }
+  return {
+    action: 'degraded',
+    reason: scope.primaryState.state,
+    owner: scope.primary,
+    conflicts: scope.conflicts,
+  };
 }
 
-const ownerResolutionRun = decisionRun('goal-owner-resolution', [
-  applyResolvedOwnerGate,
-  applyDegradedOwnerGate,
-  applyNoRecipientGate,
-]);
-
-export function decideGoalOwnerResolution(
-  input: GoalOwnerResolutionInput
-): GoalOwnerResolutionDecision {
-  const ctx = ownerResolutionRun(input);
-  return ctx.decision ?? { action: 'no_recipient' };
-}
+export const decideGoalOwnerResolution = (superpipe({})('goal-owner-resolution') as PipelineAPI)
+  .input(['input'])
+  .pipe(resolveOwnerScope, 'input', 'scope')
+  .pipe(classifyGoalOwnerResolution, 'scope', 'decision')
+  .end('decision') as (input: GoalOwnerResolutionInput) => GoalOwnerResolutionDecision;
