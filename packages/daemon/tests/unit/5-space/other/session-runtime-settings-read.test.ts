@@ -13,10 +13,23 @@ import {
   type OperationDefinition,
 } from '../../../../src/lib/operations/registry';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery';
+import { registerSessionOperations } from '../../../../src/lib/rpc-handlers/family-operations/session';
+import { resolveSessionSpaceId } from '../../../../src/lib/space/runtime/space-caller-scope';
+import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
 
 const worktree = { worktreePath: '/w' } as Session['worktree'];
 const inSpace = (spaceId: string) => ({ spaceId }) as Session['context'];
-const spaceId = (session: Session) =>
+
+const policyContext: SpaceMcpSessionPolicyContext = {
+  longHorizonAgentRepo: { getById: () => null },
+  hasDirectWorkerProvenance: () => false,
+  resolveDirectWorker: () => null,
+};
+
+const sessionSpaceId = (session: Session) =>
+  resolveSessionSpaceId(session, policyContext) ?? session.context?.spaceId;
+
+const classificationSpaceId = (session: Session) =>
   (session.context as { spaceId?: string } | undefined)?.spaceId;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -38,18 +51,25 @@ interface Harness {
 }
 
 function makeLiveSession(
-  h: Harness,
+  sessions: Map<string, Session>,
   id: string,
   queryActive: boolean,
   status = 'idle'
 ): AgentSession {
-  if (!h.sessions.has(id)) h.sessions.set(id, makeSession({ id }));
+  if (!sessions.has(id)) sessions.set(id, makeSession({ id }));
   return {
-    getSessionData: () => h.sessions.get(id) as Session,
+    getSessionData: () => sessions.get(id) as Session,
     isQueryActiveOrStarting: () => queryActive,
     getProcessingState: () => ({ status }),
   } as unknown as AgentSession;
 }
+
+const spaceSessions = () =>
+  new Map([
+    ['member', makeSession({ id: 'member', context: inSpace('space-a') })],
+    ['other', makeSession({ id: 'other', context: inSpace('space-b') })],
+    ['unowned', makeSession({ id: 'unowned' })],
+  ]);
 
 function harness(): Harness {
   const h: Harness = {
@@ -64,7 +84,7 @@ function harness(): Harness {
       h.getSessionCalls.push(id);
       return h.sessions.get(id) ?? null;
     },
-    sessionSpaceId: spaceId,
+    sessionSpaceId,
   };
   for (const op of createSessionRuntimeSettingsReadOperations(deps)) h.operations.set(op.name, op);
   return h;
@@ -96,7 +116,9 @@ describe('classifySessionOwnership', () => {
       [{ id: 'neo:root' }, 'neo'],
     ];
     for (const [overrides, ownership] of cases) {
-      expect(classifySessionOwnership(makeSession(overrides), spaceId)).toBe(ownership);
+      expect(classifySessionOwnership(makeSession(overrides), classificationSpaceId)).toBe(
+        ownership
+      );
     }
   });
 
@@ -107,7 +129,9 @@ describe('classifySessionOwnership', () => {
       [{ id: 'agent-2', worktree, context: inSpace('s') }, 'project'],
     ];
     for (const [overrides, ownership] of cases) {
-      expect(classifySessionOwnership(makeSession(overrides), spaceId)).toBe(ownership);
+      expect(classifySessionOwnership(makeSession(overrides), classificationSpaceId)).toBe(
+        ownership
+      );
     }
   });
 });
@@ -143,12 +167,12 @@ describe('session.runtimeSettings.read', () => {
 
   test('reports query activity from the query itself, not the processing status', async () => {
     const h = harness();
-    h.live.set('idle-but-running', makeLiveSession(h, 'idle-but-running', true, 'idle'));
+    h.live.set('idle-but-running', makeLiveSession(h.sessions, 'idle-but-running', true, 'idle'));
     expect(settingsOf(await read(h, 'idle-but-running'))).toMatchObject({
       live: true,
       queryActive: true,
     });
-    h.live.set('busy-but-idle', makeLiveSession(h, 'busy-but-idle', false, 'processing'));
+    h.live.set('busy-but-idle', makeLiveSession(h.sessions, 'busy-but-idle', false, 'processing'));
     expect(settingsOf(await read(h, 'busy-but-idle'))).toMatchObject({
       live: true,
       queryActive: false,
@@ -171,14 +195,12 @@ describe('session.runtimeSettings.read', () => {
 describe('caller admission', () => {
   const seed = () => {
     const h = harness();
-    h.sessions.set('mine', makeSession({ id: 'mine', context: inSpace('space-a') }));
-    h.sessions.set('theirs', makeSession({ id: 'theirs', context: inSpace('space-b') }));
-    h.sessions.set('unowned', makeSession({ id: 'unowned' }));
+    for (const [id, session] of spaceSessions()) h.sessions.set(id, session);
     return h;
   };
 
   test('an agent reads a session inside its own Space', async () => {
-    expect(settingsOf(await read(seed(), 'mine', agent('space-a')))).toMatchObject({
+    expect(settingsOf(await read(seed(), 'member', agent('space-a')))).toMatchObject({
       ownership: 'space-agent',
       model: 'claude-sonnet-5',
     });
@@ -186,7 +208,9 @@ describe('caller admission', () => {
 
   test('a foreign Space session and a missing session are indistinguishable', async () => {
     const h = seed();
-    const foreign = await read(h, 'theirs', agent('space-a'));
+    expect(h.sessions.has('other')).toBe(true);
+    expect(h.sessions.has('ghost')).toBe(false);
+    const foreign = await read(h, 'other', agent('space-a'));
     const missing = await read(h, 'ghost', agent('space-a'));
     expect(foreign).toEqual({ ok: false, reason: 'session_not_found' });
     expect(foreign).toEqual(missing);
@@ -202,17 +226,19 @@ describe('caller admission', () => {
 
   test('an agent with no resolved Space is refused without probing the target', async () => {
     const h = seed();
-    const result = await read(h, 'mine', agent(undefined));
+    expect(h.sessions.has('member')).toBe(true);
+    const result = await read(h, 'member', agent(undefined));
     expect(result).toEqual({ ok: false, reason: 'space_scope_required' });
     expect(h.getSessionCalls).toEqual([]);
   });
 
   test('a claimed spaceId in the payload is not read as authorization', async () => {
     const h = seed();
+    expect(h.sessions.has('other')).toBe(true);
     const op = h.operations.get('session.runtimeSettings.read');
     if (!op) throw new Error('missing session.runtimeSettings.read');
     const result = (await op.execute(
-      { sessionId: 'theirs', spaceId: 'space-b' },
+      { sessionId: 'other', spaceId: 'space-b' },
       agent('space-a')
     )) as Record<string, unknown>;
     expect(result).toEqual({ ok: false, reason: 'session_not_found' });
@@ -224,11 +250,75 @@ describe('caller admission', () => {
       { source: 'rpc' } as OperationCaller,
       { source: 'internal' } as OperationCaller,
     ]) {
-      expect(settingsOf(await read(seed(), 'theirs', caller))).toMatchObject({
+      expect(settingsOf(await read(seed(), 'other', caller))).toMatchObject({
         ownership: 'space-agent',
         model: 'claude-sonnet-5',
       });
     }
+  });
+});
+
+describe('registerSessionOperations wiring', () => {
+  const wired = (sessions: Map<string, Session>, live: Map<string, AgentSession> = new Map()) => {
+    const context = {
+      deps: {
+        db: { getSession: (id: string) => sessions.get(id) ?? null, getDatabase: () => ({}) },
+        sessionManager: { getCachedSession: (id: string) => live.get(id) ?? null },
+      },
+      taskAgentManager: { getCachedAgentSessionById: (id: string) => live.get(id) ?? null },
+      hasDirectWorkerProvenance: () => false,
+      resolveDirectWorker: () => null,
+      longHorizonAgentRepo: policyContext.longHorizonAgentRepo,
+    } as unknown as Parameters<typeof registerSessionOperations>[0];
+    const op = registerSessionOperations(context).find(
+      (entry) => entry.name === 'session.runtimeSettings.read'
+    );
+    if (!op) throw new Error('registerSessionOperations did not register the read');
+    return op;
+  };
+
+  const agentCaller = {
+    source: 'mcp',
+    sessionId: 'worker-1',
+    role: 'long_term_agent',
+    spaceId: 'space-a',
+  } as OperationCaller;
+
+  const ask = async (op: OperationDefinition, id: string) =>
+    (await op.execute({ sessionId: id }, agentCaller)) as Record<string, unknown>;
+
+  test('an ordinary member chat in the caller Space reads cold, with its Space attribution', async () => {
+    const sessions = spaceSessions();
+    const before = structuredClone(sessions.get('member') as Session);
+    const result = await ask(wired(sessions), 'member');
+    expect(settingsOf(result)).toMatchObject({
+      ownership: 'space-agent',
+      live: false,
+      queryActive: false,
+      model: 'claude-sonnet-5',
+    });
+    expect(sessions.get('member')).toEqual(before);
+  });
+
+  test('the same member chat reads live, reporting real query activity', async () => {
+    const sessions = spaceSessions();
+    const live = new Map([['member', makeLiveSession(sessions, 'member', true)]]);
+    expect(settingsOf(await ask(wired(sessions, live), 'member'))).toMatchObject({
+      live: true,
+      queryActive: true,
+    });
+  });
+
+  test('a member chat in another Space and a missing session are both refused', async () => {
+    const sessions = spaceSessions();
+    expect(sessions.has('other')).toBe(true);
+    expect(sessions.has('ghost')).toBe(false);
+    const op = wired(sessions);
+    const foreign = await ask(op, 'other');
+    const missing = await ask(op, 'ghost');
+    expect(foreign).toEqual({ ok: false, reason: 'session_not_found' });
+    expect(foreign).toEqual(missing);
+    expect(foreign).not.toHaveProperty('settings');
   });
 });
 

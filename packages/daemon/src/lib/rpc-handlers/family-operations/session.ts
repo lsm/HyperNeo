@@ -63,7 +63,8 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
         context.deps.sessionManager.getCachedSession(sessionId) ??
         null,
       getSession: scopeDeps.getSession,
-      sessionSpaceId: (session) => resolveSessionSpaceId(session, scopeDeps),
+      sessionSpaceId: (session) =>
+        resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
     }),
     ...createSessionOperations({
       getDatabase: () => context.deps.db.getDatabase(),
