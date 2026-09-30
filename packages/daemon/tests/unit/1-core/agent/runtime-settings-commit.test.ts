@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
+import type { Session, SessionConfig, SessionMetadata, ThinkingLevel } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { isValidModel } from '../../../../src/lib/model-service.ts';
 import {
+  gateCommitIdle,
+  gateCommitTarget,
+  gateCommitTurn,
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
   type RuntimeSettingsCommit,
@@ -15,8 +18,10 @@ import {
 } from '../../../../src/lib/agent/model-switch-handler.ts';
 
 const ID = 'fictional-session';
-const PAIR = { model: 'old-model', provider: 'anthropic' as const };
 const CORRUPT = 'corrupt processing state';
+const REFUSE = { reason: 'session_settings_changed' };
+const BUSY = { reason: 'session_busy' };
+const TURN = { reason: 'session_turn_changed' };
 const LIVE_P = Promise.resolve();
 const CONFIG_WRITE = 'UPDATE sessions SET config = ? WHERE id = ?';
 
@@ -71,7 +76,6 @@ interface Parked {
   contextFault?: boolean;
   publishFault?: boolean;
   live?: Live;
-  afterPublish?: () => void;
 }
 
 function seedSession(shape: Parked = {}): Session {
@@ -123,7 +127,8 @@ describe('runtime settings commit admission', () => {
     };
     const publish = parked.publishFault
       ? vi.fn(async () => {
-          parked.afterPublish?.();
+          if (parked.live)
+            Object.assign(parked.live, { queryObject: {}, queryPromise: LIVE_P, generation: 4 });
           throw new Error('publish failed');
         })
       : vi.fn(async () => {});
@@ -152,19 +157,9 @@ describe('runtime settings commit admission', () => {
     return { session, handler: new ModelSwitchHandler(ctx), ctx, publish, updateSession, restart };
   }
 
-  function commit(thinkingLevel?: string): RuntimeSettingsCommit {
+  function commit(thinkingLevel?: ThinkingLevel): RuntimeSettingsCommit {
     return thinkingLevel ? { snapshot: snapshot(), thinkingLevel } : { snapshot: snapshot() };
   }
-
-  test('snapshot evidence reads the original pair and separates absence from corruption', () => {
-    fixture();
-    const live = snapshot();
-    expect(snapshotPair(live)).toEqual(PAIR);
-    expect(() => snapshotProcessingStatus({ ...live, processingState: '{oops' })).toThrow(CORRUPT);
-    expect(() => snapshotProcessingStatus({ ...live, processingState: '{"s":"x"}' })).toThrow(
-      CORRUPT
-    );
-  });
 
   const PARKED: ReadonlyArray<readonly [string, Parked, string]> = [
     ['queued messages', { queued: true }, 'session_busy'],
@@ -278,6 +273,44 @@ describe('runtime settings commit admission', () => {
     expect(stored().processing_state).toBeNull();
   });
 
+  test('gateCommitTarget admits only live, unarchived, native-matching evidence', () => {
+    fixture();
+    const live = snapshot();
+    const pair = snapshotPair(live);
+    expect(pair).toEqual({ model: 'old-model', provider: 'anthropic' });
+    expect(() => snapshotProcessingStatus({ ...live, processingState: '{oops' })).toThrow(CORRUPT);
+    expect(() => snapshotProcessingStatus({ ...live, processingState: '{"s":"x"}' })).toThrow(
+      CORRUPT
+    );
+    const cases = [
+      [live, pair, ID, CONFIG, true],
+      [live, { ...pair, model: 'other' }, ID, CONFIG, false],
+      [live, pair, ID, { ...CONFIG, provider: 'glm' }, false],
+      [live, pair, 'other-session', CONFIG, false],
+      [{ ...live, status: 'paused' }, pair, ID, CONFIG, false],
+      [{ ...live, archivedAt: '2026-02-01T00:00:00.000Z' }, pair, ID, CONFIG, false],
+    ] as const;
+    const admitted = cases.map(([s, p, id, cur]) => gateCommitTarget(s, p, id, CONFIG, cur));
+    expect(admitted).toEqual(cases.map(([, , , , ok]) => (ok ? { value: true } : REFUSE)));
+  });
+
+  test.each([
+    [null, 'idle', false, false, true],
+    ['idle', 'idle', false, false, true],
+    ['idle', 'queued', false, false, false],
+    [null, 'waiting_for_input', false, false, false],
+    ['processing', 'idle', false, false, false],
+    [null, 'idle', true, false, false],
+    [null, 'idle', false, true, false],
+  ])('gateCommitIdle record=%s native=%s queued=%s active=%s admits=%s', (s, n, q, a, ok) => {
+    expect(gateCommitIdle(s, n, q, a)).toEqual(ok ? { value: true } : BUSY);
+  });
+
+  test('gateCommitTurn admits only a matching known generation', () => {
+    expect(gateCommitTurn(4, 4)).toEqual({ value: true });
+    expect([gateCommitTurn(4, 5), gateCommitTurn(undefined, 5)]).toEqual([TURN, TURN]);
+  });
+
   test('a provider-only change into acp clears both sdk identity columns', async () => {
     const { handler, session } = fixture({ sdkIdentity: true });
     const result = await handler.switchModel('old-model', 'acp', true, commit());
@@ -315,18 +348,16 @@ describe('runtime settings commit admission', () => {
 
   test('a post-commit fault that starts a new query keeps it and the commit', async () => {
     const live: Live = { queryObject: null, queryPromise: null, generation: 0 };
-    const parked: Parked = {
-      publishFault: true,
-      live,
-      afterPublish: () =>
-        Object.assign(live, { queryObject: {}, queryPromise: LIVE_P, generation: 4 }),
-    };
+    const parked: Parked = { publishFault: true, live };
     const { handler, session, ctx, updateSession, restart } = fixture(parked);
     const result = await handler.switchModel('new-model', 'glm', true, commit('think16k'));
     expect(result.success).toBe(true);
-    expect(session.config).toMatchObject({ model: 'new-model', thinkingLevel: 'think16k' });
-    expect(storedConfig()).toMatchObject({ model: 'new-model', thinkingLevel: 'think16k' });
-    expect([ctx.queryObject, ctx.queryPromise, ctx.getQueryGeneration()]).toEqual([{}, LIVE_P, 4]);
+    const applied = { model: 'new-model', provider: 'glm', thinkingLevel: 'think16k' };
+    expect(session.config).toMatchObject(applied);
+    expect(storedConfig()).toMatchObject(applied);
+    expect(ctx.queryObject).toBe(live.queryObject);
+    expect(ctx.queryPromise).toBe(LIVE_P);
+    expect(ctx.getQueryGeneration()).toBe(4);
     expect([restart.mock.calls.length, updateSession.mock.calls.length]).toEqual([0, 0]);
   });
 
