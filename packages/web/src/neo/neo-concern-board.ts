@@ -180,3 +180,5 @@ export const projectNeoConcernBoard = (superpipe({})('neo-concern-board') as Pip
   concernId: string | null,
   inventory: DaemonSnapshot | null
 ) => NeoConcernBoard | null;
+
+export { projectNeoScenes } from './neo-scenes.ts';
