@@ -1,5 +1,5 @@
 import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   InjectContextResetPlan,
   TurnEndFlushContextResetPlan,
@@ -8,20 +8,13 @@ import { planInjectContextReset, planTurnEndFlushContextReset } from './context-
 import type { FlushDeliveryPlan, FlushMessage, FlushSkipEntry } from './message-ownership-gates.ts';
 import { decideDeferAdmission, planFlushDelivery } from './message-ownership-gates.ts';
 
-function decided<Ctx extends { decision: unknown }>(
-  ctx: Ctx,
-  decision: NonNullable<Ctx['decision']>
-): Ctx {
-  return { ...ctx, decision };
-}
-
 export type InjectDeliveryDecision =
   | { action: 'noop' }
   | { action: 'defer' }
   | InjectContextResetPlan
   | { action: 'deliver' };
 
-export interface InjectDeliveryCtx {
+export interface InjectDeliveryInput {
   existingSendStatus: SendStatus | null;
   deliveryMode: 'immediate' | 'defer';
   isBusy: boolean;
@@ -32,67 +25,71 @@ export interface InjectDeliveryCtx {
   slotResetsContext: boolean;
   hasActiveDeliveryJob: boolean;
   hasUnconsumedDeliveredWork: boolean;
-  reopenFailedDelivery: boolean;
-  decision: InjectDeliveryDecision | null;
 }
-
-export type InjectDeliveryInput = Omit<InjectDeliveryCtx, 'decision' | 'reopenFailedDelivery'>;
 
 export interface InjectDeliveryOutcome {
   decision: InjectDeliveryDecision;
   reopenFailedDelivery: boolean;
 }
 
-export function applyAlreadyConsumedGate(ctx: InjectDeliveryCtx): InjectDeliveryCtx {
-  return ctx.existingSendStatus === 'consumed' ? decided(ctx, { action: 'noop' }) : ctx;
+export function shouldReopenFailedDelivery(input: InjectDeliveryInput): boolean {
+  return input.existingSendStatus === 'failed';
 }
 
-export function applyFailedReopenGate(ctx: InjectDeliveryCtx): InjectDeliveryCtx {
-  return ctx.existingSendStatus === 'failed' ? { ...ctx, reopenFailedDelivery: true } : ctx;
+export function gateDeliveryNotConsumed(
+  input: InjectDeliveryInput
+): { value: InjectDeliveryInput } | { reason: InjectDeliveryDecision } {
+  return input.existingSendStatus === 'consumed'
+    ? { reason: { action: 'noop' } }
+    : { value: input };
 }
 
-export function applyDeferAdmissionGate(ctx: InjectDeliveryCtx): InjectDeliveryCtx {
+export function gateDeferredAdmission(
+  input: InjectDeliveryInput
+): { value: InjectDeliveryInput } | { reason: InjectDeliveryDecision } {
   const admission = decideDeferAdmission({
-    deliveryMode: ctx.deliveryMode,
-    isBusy: ctx.isBusy,
-    inRateLimitCooldown: ctx.inRateLimitCooldown,
-    parentTaskLimited: ctx.parentTaskLimited,
+    deliveryMode: input.deliveryMode,
+    isBusy: input.isBusy,
+    inRateLimitCooldown: input.inRateLimitCooldown,
+    parentTaskLimited: input.parentTaskLimited,
   });
-  return admission.action === 'defer' ? decided(ctx, admission) : ctx;
+  return admission.action === 'defer' ? { reason: { action: 'defer' } } : { value: input };
 }
 
-export function applyInjectContextResetGate(ctx: InjectDeliveryCtx): InjectDeliveryCtx {
-  return decided(
-    ctx,
-    planInjectContextReset({
-      inputKind: ctx.inputKind,
-      isBusy: ctx.isBusy,
-      hasPriorContext: ctx.hasPriorContext,
-      slotResetsContext: ctx.slotResetsContext,
-      hasActiveDeliveryJob: ctx.hasActiveDeliveryJob,
-      hasUnconsumedDeliveredWork: ctx.hasUnconsumedDeliveredWork,
-    })
-  );
+export function classifyInjectDelivery(input: InjectDeliveryInput): InjectDeliveryDecision {
+  return planInjectContextReset({
+    inputKind: input.inputKind,
+    isBusy: input.isBusy,
+    hasPriorContext: input.hasPriorContext,
+    slotResetsContext: input.slotResetsContext,
+    hasActiveDeliveryJob: input.hasActiveDeliveryJob,
+    hasUnconsumedDeliveredWork: input.hasUnconsumedDeliveredWork,
+  });
 }
 
-export function applyInjectFinalGate(ctx: InjectDeliveryCtx): InjectDeliveryCtx {
-  return decided(ctx, { action: 'deliver' });
-}
+export const runInjectDelivery = (superpipe({})('message-inject-delivery') as PipelineAPI)
+  .input(['input'])
+  .pipe(gateDeliveryNotConsumed, 'input', 'result:admission')
+  .pipe(gateDeferredAdmission, 'admission', 'result:admission')
+  .pipe(finalizeInjectDelivery, 'admission', 'result:admission')
+  .end('admission') as (input: InjectDeliveryInput) => InjectDeliveryOutcome;
 
-const injectDeliveryRun = decisionRun('message-inject-delivery', [
-  applyAlreadyConsumedGate,
-  applyFailedReopenGate,
-  applyDeferAdmissionGate,
-  applyInjectContextResetGate,
-  applyInjectFinalGate,
-]);
+function finalizeInjectDelivery(
+  input: InjectDeliveryInput
+): { value: InjectDeliveryOutcome } | { reason: InjectDeliveryDecision } {
+  return {
+    value: {
+      decision: classifyInjectDelivery(input),
+      reopenFailedDelivery: shouldReopenFailedDelivery(input),
+    },
+  };
+}
 
 export function decideInjectDelivery(input: InjectDeliveryInput): InjectDeliveryOutcome {
-  const ctx = injectDeliveryRun({ ...input, reopenFailedDelivery: false });
-  return {
-    decision: ctx.decision ?? { action: 'deliver' },
-    reopenFailedDelivery: ctx.reopenFailedDelivery,
-  };
+  const outcome = runInjectDelivery(input);
+  return 'decision' in outcome
+    ? outcome
+    : { decision: outcome, reopenFailedDelivery: shouldReopenFailedDelivery(input) };
 }
 
 export type TurnEndFlushPlan =
@@ -104,77 +101,63 @@ export type TurnEndFlushPlan =
       contextReset: TurnEndFlushContextResetPlan;
     };
 
-export interface TurnEndFlushCtx {
+export interface TurnEndFlushInput {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
   slotResetsContext: boolean;
   hasPriorContext: boolean;
   pendingTaskInput: boolean;
-  flushPlan: FlushDeliveryPlan | null;
-  contextReset: TurnEndFlushContextResetPlan | null;
-  decision: TurnEndFlushPlan | null;
 }
 
-export type TurnEndFlushInput = Omit<TurnEndFlushCtx, 'decision' | 'flushPlan' | 'contextReset'>;
-
-export function applyFlushEmptyGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
-  return ctx.messages.length === 0 ? decided(ctx, { action: 'noop' }) : ctx;
-}
-
-export function applyFlushOwnershipGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
-  return {
-    ...ctx,
-    flushPlan: planFlushDelivery({
-      messages: ctx.messages,
-      activeInJobQueue: ctx.activeInJobQueue,
-    }),
-  };
-}
-
-export function applyFlushContextResetGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
-  const flushPlan: FlushDeliveryPlan = ctx.flushPlan ?? { action: 'noop' };
+function planFlushContextReset(input: TurnEndFlushInput, flushPlan: FlushDeliveryPlan) {
   const deliverables = flushPlan.action === 'each' ? flushPlan.deliver : [];
   const deliverableSet = new Set(deliverables);
   const taskDeliverableCount =
-    ctx.messages.filter((message) => deliverableSet.has(message.uuid) && message.isTaskInput)
-      .length + (ctx.pendingTaskInput ? 1 : 0);
+    input.messages.filter((message) => deliverableSet.has(message.uuid) && message.isTaskInput)
+      .length + (input.pendingTaskInput ? 1 : 0);
+  return planTurnEndFlushContextReset({
+    slotResetsContext: input.slotResetsContext,
+    hasPriorContext: input.hasPriorContext,
+    hasActiveDeliveryJob: input.activeInJobQueue.size > 0,
+    taskDeliverableCount,
+  });
+}
+
+export function gateFlushHasMessages(
+  input: TurnEndFlushInput
+): { value: TurnEndFlushInput } | { reason: TurnEndFlushPlan } {
+  return input.messages.length === 0 ? { reason: { action: 'noop' } } : { value: input };
+}
+
+export function classifyTurnEndFlush(input: TurnEndFlushInput): TurnEndFlushPlan {
+  const flushPlan = planFlushDelivery({
+    messages: input.messages,
+    activeInJobQueue: input.activeInJobQueue,
+  });
+  if (flushPlan.action !== 'each') return { action: 'noop' };
   return {
-    ...ctx,
-    contextReset: planTurnEndFlushContextReset({
-      slotResetsContext: ctx.slotResetsContext,
-      hasPriorContext: ctx.hasPriorContext,
-      hasActiveDeliveryJob: ctx.activeInJobQueue.size > 0,
-      taskDeliverableCount,
-    }),
+    action: 'each',
+    deliver: flushPlan.deliver,
+    skip: flushPlan.skip,
+    contextReset: planFlushContextReset(input, flushPlan),
   };
 }
 
-export function applyFlushFinalGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
-  const flushPlan: FlushDeliveryPlan = ctx.flushPlan ?? { action: 'noop' };
-  const contextReset: TurnEndFlushContextResetPlan = ctx.contextReset ?? {
-    action: 'flush_without_clear',
-  };
-  if (flushPlan.action === 'each') {
-    return decided(ctx, {
-      action: 'each',
-      deliver: flushPlan.deliver,
-      skip: flushPlan.skip,
-      contextReset,
-    });
-  }
-  return decided(ctx, { action: 'noop' });
+export function finalizeTurnEndFlush(
+  input: TurnEndFlushInput
+): { value: TurnEndFlushPlan } | { reason: TurnEndFlushPlan } {
+  return { value: classifyTurnEndFlush(input) };
 }
 
-const turnEndFlushRun = decisionRun('message-turn-end-flush', [
-  applyFlushEmptyGate,
-  applyFlushOwnershipGate,
-  applyFlushContextResetGate,
-  applyFlushFinalGate,
-]);
+export const runTurnEndFlush = (superpipe({})('message-turn-end-flush') as PipelineAPI)
+  .input(['input'])
+  .pipe(gateFlushHasMessages, 'input', 'result:flush')
+  .pipe(finalizeTurnEndFlush, 'flush', 'result:flush')
+  .end('flush') as (input: TurnEndFlushInput) => TurnEndFlushPlan;
 
 export function decideTurnEndFlush(input: TurnEndFlushInput): TurnEndFlushPlan {
-  const ctx = turnEndFlushRun({ ...input, flushPlan: null, contextReset: null });
-  return ctx.decision ?? { action: 'noop' };
+  const outcome = runTurnEndFlush(input);
+  return outcome ?? { action: 'noop' };
 }
 
 export {

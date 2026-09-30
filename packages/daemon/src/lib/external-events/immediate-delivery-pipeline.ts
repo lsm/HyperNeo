@@ -15,11 +15,9 @@ import {
   type WorkflowTargetKey,
 } from './admission-gates.ts';
 import {
-  applyClaimConflictGate,
-  applySubscriptionGate,
-  applyTaskAdmissionGate,
-  applyTerminalGate,
-  type ExternalEventDeliveryCtx,
+  classifyExternalEventDelivery,
+  type ExternalEventDeliveryDecision,
+  type ExternalEventDeliveryInput,
 } from './delivery-pipeline.ts';
 
 export type ImmediateEventMechanics = 'steer' | 'turn';
@@ -67,7 +65,10 @@ export interface ImmediateEventDeliveryInput {
   deliveryKey: string;
 }
 
-interface ImmediateEventDeliveryCtx extends ImmediateEventDeliveryInput, ExternalEventDeliveryCtx {
+interface ImmediateEventDeliveryCtx
+  extends ImmediateEventDeliveryInput,
+    ExternalEventDeliveryInput {
+  delivery: ExternalEventDeliveryDecision;
   deps: ImmediateEventDeliveryDeps;
   sessionId?: string;
   mechanics?: ImmediateEventMechanics;
@@ -115,19 +116,29 @@ export function resolveTarget(ctx: ImmediateEventDeliveryCtx): ImmediateEventDel
     targetSpacePaused: ctx.deps.isTargetSpacePaused(ctx.target),
     executionPendingActivation:
       current?.status === 'pending' || current?.status === 'waiting_rebind',
-    decision: null,
+    delivery: { action: 'activateTarget' },
   };
 }
 
-function undecided<Ctx extends ExternalEventDeliveryCtx>(
-  gate: (ctx: Ctx) => Ctx
-): (ctx: Ctx) => Ctx {
-  return (ctx) => (ctx.decision === null ? gate(ctx) : ctx);
+export function classifyDelivery(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
+  return {
+    ...ctx,
+    delivery: classifyExternalEventDelivery({
+      deliveryTerminal: ctx.deliveryTerminal,
+      deliveryInFlight: ctx.deliveryInFlight,
+      subscriptionActive: ctx.subscriptionActive,
+      taskDecision: ctx.taskDecision,
+      targetHasSession: ctx.targetHasSession,
+      targetSessionLive: ctx.targetSessionLive,
+      targetSpacePaused: ctx.targetSpacePaused,
+      executionPendingActivation: ctx.executionPendingActivation,
+    }),
+  };
 }
 
 export function settleRoutingDecision(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
-  const decision = ctx.decision;
-  if (decision === null) {
+  const decision = ctx.delivery;
+  if (decision.action === 'activateTarget' || decision.action === 'deliverLiveSession') {
     if (ctx.targetSpacePaused) {
       return settled(ctx, { action: 'deferred', reason: 'space_paused' });
     }
@@ -239,10 +250,7 @@ const run = (
 )
   .input(['ctx'])
   .pipe(resolveTarget, 'ctx', 'ctx')
-  .pipe(undecided(applyTerminalGate), 'ctx', 'ctx')
-  .pipe(undecided(applyClaimConflictGate), 'ctx', 'ctx')
-  .pipe(undecided(applySubscriptionGate), 'ctx', 'ctx')
-  .pipe(undecided(applyTaskAdmissionGate), 'ctx', 'ctx')
+  .pipe(classifyDelivery, 'ctx', 'ctx')
   .pipe(settleRoutingDecision, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(pickMechanics, 'ctx', 'ctx')

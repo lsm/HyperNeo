@@ -4,23 +4,17 @@ import {
   planTurnEndFlushContextReset,
 } from '../../../../src/lib/agent/context-reset-planner';
 import {
-  applyAlreadyConsumedGate,
-  applyDeferAdmissionGate,
-  applyFailedReopenGate,
-  applyFlushContextResetGate,
-  applyFlushEmptyGate,
-  applyFlushFinalGate,
-  applyFlushOwnershipGate,
-  applyInjectContextResetGate,
-  applyInjectFinalGate,
+  classifyInjectDelivery,
   decideInjectDelivery,
   decideReconcileAdmission,
   decideTurnEndFlush,
-  type InjectDeliveryCtx,
+  gateDeferredAdmission,
+  gateDeliveryNotConsumed,
+  gateFlushHasMessages,
   type InjectDeliveryDecision,
   type InjectDeliveryInput,
   selectStrandedDeliveries,
-  type TurnEndFlushCtx,
+  shouldReopenFailedDelivery,
   type TurnEndFlushInput,
   type TurnEndFlushPlan,
 } from '../../../../src/lib/agent/message-delivery-pipeline';
@@ -50,10 +44,6 @@ function makeInjectInput(overrides: Partial<InjectDeliveryInput> = {}): InjectDe
   };
 }
 
-function makeInjectCtx(overrides: Partial<InjectDeliveryInput> = {}): InjectDeliveryCtx {
-  return { ...makeInjectInput(overrides), reopenFailedDelivery: false, decision: null };
-}
-
 function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
   return {
     uuid: 'uuid-1',
@@ -76,15 +66,6 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
     hasPriorContext: true,
     pendingTaskInput: false,
     ...overrides,
-  };
-}
-
-function makeFlushCtx(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlushCtx {
-  return {
-    ...makeFlushInput(overrides),
-    flushPlan: null,
-    contextReset: null,
-    decision: null,
   };
 }
 
@@ -204,45 +185,48 @@ describe('message inject delivery decision pipeline', () => {
     });
   });
 
-  describe('gate pass-through contract', () => {
-    test('gates with a no-op branch leave ctx untouched when not firing', () => {
-      const noOpCases: Array<
-        [(ctx: InjectDeliveryCtx) => InjectDeliveryCtx, Partial<InjectDeliveryInput>]
-      > = [
-        [applyAlreadyConsumedGate, { existingSendStatus: 'failed' }],
-        [applyAlreadyConsumedGate, { existingSendStatus: 'deferred' }],
-        [applyAlreadyConsumedGate, { existingSendStatus: null }],
-        [applyFailedReopenGate, { existingSendStatus: 'consumed' }],
-        [applyFailedReopenGate, { existingSendStatus: 'enqueued' }],
-        [applyFailedReopenGate, { existingSendStatus: null }],
-        [applyDeferAdmissionGate, { deliveryMode: 'defer', isBusy: false }],
-        [applyDeferAdmissionGate, { deliveryMode: 'immediate', isBusy: true }],
-      ];
-      for (const [gate, overrides] of noOpCases) {
-        const ctx = makeInjectCtx(overrides);
-        expect(gate(ctx)).toBe(ctx);
+  describe('admission gates', () => {
+    test('a consumed delivery admits nothing further', () => {
+      expect(gateDeliveryNotConsumed(makeInjectInput({ existingSendStatus: 'consumed' }))).toEqual({
+        reason: { action: 'noop' },
+      });
+    });
+
+    test('a non-consumed delivery passes through', () => {
+      for (const status of ['failed', 'deferred', null] as const) {
+        const input = makeInjectInput({ existingSendStatus: status });
+        expect(gateDeliveryNotConsumed(input)).toEqual({ value: input });
       }
     });
 
-    test('the failed-reopen gate annotates without deciding', () => {
-      const ctx = applyFailedReopenGate(makeInjectCtx({ existingSendStatus: 'failed' }));
-      expect(ctx.reopenFailedDelivery).toBe(true);
-      expect(ctx.decision).toBeNull();
+    test('a deferred admission rejects with defer', () => {
+      expect(
+        gateDeferredAdmission(makeInjectInput({ deliveryMode: 'defer', isBusy: true }))
+      ).toEqual({ reason: { action: 'defer' } });
     });
 
-    test('the inject final arbiter always decides', () => {
+    test('an admitted delivery passes through', () => {
       for (const overrides of [
-        {},
-        { existingSendStatus: 'failed' },
-        { inputKind: 'steer' },
-      ] as Partial<InjectDeliveryInput>[]) {
-        const decidedCtx = applyInjectFinalGate(makeInjectCtx(overrides));
-        expect(decidedCtx.decision).toEqual({ action: 'deliver' });
+        { deliveryMode: 'defer' as const, isBusy: false },
+        { deliveryMode: 'immediate' as const, isBusy: true },
+      ]) {
+        const input = makeInjectInput(overrides);
+        expect(gateDeferredAdmission(input)).toEqual({ value: input });
       }
+    });
+
+    test('the failed-reopen flag follows the persisted status, not the cascade', () => {
+      expect(shouldReopenFailedDelivery(makeInjectInput({ existingSendStatus: 'failed' }))).toBe(
+        true
+      );
+      expect(shouldReopenFailedDelivery(makeInjectInput({ existingSendStatus: 'consumed' }))).toBe(
+        false
+      );
+      expect(shouldReopenFailedDelivery(makeInjectInput({ existingSendStatus: null }))).toBe(false);
     });
   });
 
-  describe('delegation — pipeline output equals the underlying core output', () => {
+  describe('classification delegates to the core planners', () => {
     test('the inject decision matches the deciding core function for every table row', () => {
       for (const [, overrides] of cases) {
         const input = makeInjectInput(overrides);
@@ -270,7 +254,7 @@ describe('message inject delivery decision pipeline', () => {
       }
     });
 
-    test('the context-reset gate returns the core plan verbatim', () => {
+    test('the classifier returns the core plan verbatim', () => {
       for (const overrides of [
         {},
         { inputKind: 'steer' },
@@ -279,7 +263,7 @@ describe('message inject delivery decision pipeline', () => {
         { hasUnconsumedDeliveredWork: true },
       ] as Partial<InjectDeliveryInput>[]) {
         const input = makeInjectInput(overrides);
-        expect(applyInjectContextResetGate(makeInjectCtx(overrides)).decision).toEqual(
+        expect(classifyInjectDelivery(input)).toEqual(
           planInjectContextReset({
             inputKind: input.inputKind,
             isBusy: input.isBusy,
@@ -477,58 +461,18 @@ describe('message turn-end flush decision pipeline', () => {
     });
   });
 
-  describe('gate pass-through and annotation contract', () => {
-    test('the empty gate leaves ctx untouched for a non-empty queue', () => {
-      const ctx = makeFlushCtx({});
-      expect(applyFlushEmptyGate(ctx)).toBe(ctx);
-    });
-
-    test('the empty gate decides noop for an empty queue', () => {
-      expect(applyFlushEmptyGate(makeFlushCtx({ messages: [] })).decision).toEqual({
-        action: 'noop',
+  describe('flush admission and classification', () => {
+    test('an empty queue is rejected as a noop before anything is planned', () => {
+      expect(gateFlushHasMessages(makeFlushInput({ messages: [] }))).toEqual({
+        reason: { action: 'noop' },
       });
     });
 
-    test('the ownership gate annotates the core flush plan without deciding', () => {
-      const ctx = applyFlushOwnershipGate(makeFlushCtx({}));
-      expect(ctx.flushPlan).toEqual(
-        planFlushDelivery({
-          messages: ctx.messages,
-          activeInJobQueue: ctx.activeInJobQueue,
-        })
-      );
-      expect(ctx.decision).toBeNull();
+    test('a non-empty queue passes through', () => {
+      const input = makeFlushInput({});
+      expect(gateFlushHasMessages(input)).toEqual({ value: input });
     });
 
-    test('the context-reset gate annotates the core plan without deciding', () => {
-      const ownershipCtx = applyFlushOwnershipGate(makeFlushCtx({}));
-      const ctx = applyFlushContextResetGate(ownershipCtx);
-      expect(ctx.contextReset).toEqual(
-        planTurnEndFlushContextReset({
-          slotResetsContext: true,
-          hasPriorContext: true,
-          hasActiveDeliveryJob: false,
-          taskDeliverableCount: 2,
-        })
-      );
-      expect(ctx.decision).toBeNull();
-    });
-
-    test('the flush final arbiter always decides', () => {
-      expect(applyFlushFinalGate(makeFlushCtx({})).decision).toEqual({ action: 'noop' });
-      expect(
-        applyFlushFinalGate(applyFlushContextResetGate(applyFlushOwnershipGate(makeFlushCtx({}))))
-          .decision
-      ).toEqual({
-        action: 'each',
-        deliver: ['a', 'b'],
-        skip: [],
-        contextReset: { action: 'clear_then_flush' },
-      });
-    });
-  });
-
-  describe('delegation — pipeline output equals the underlying core output', () => {
     test('the flush plan is the core delivery plan annotated with the core context reset', () => {
       for (const [, overrides] of cases) {
         const input = makeFlushInput(overrides);
@@ -555,6 +499,10 @@ describe('message turn-end flush decision pipeline', () => {
               };
         expect(decideTurnEndFlush(input)).toEqual(expected);
       }
+    });
+
+    test('an empty queue reports noop through the pipeline', () => {
+      expect(decideTurnEndFlush(makeFlushInput({ messages: [] }))).toEqual({ action: 'noop' });
     });
   });
 });

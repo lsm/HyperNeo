@@ -1,5 +1,5 @@
 import { ErrorCategory } from '../error-manager.ts';
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 
 export type QueryRetryProviderFamily = 'anthropic' | 'provider';
@@ -75,11 +75,6 @@ export interface QueryRetryFinalizer {
 export interface QueryRetryDecision {
   route: QueryRetryRoute;
   finalizer: QueryRetryFinalizer;
-}
-
-interface QueryRetryDecisionCtx extends QueryRetryRouteInput {
-  route: QueryRetryRoute | null;
-  decision: QueryRetryDecision | null;
 }
 
 function isQueryInterrupted(
@@ -374,36 +369,19 @@ function resolveDecision(
   }
 }
 
-function decided(ctx: QueryRetryDecisionCtx, decision: QueryRetryDecision): QueryRetryDecisionCtx {
-  return { ...ctx, decision };
+export function classifyQueryRetryArm(input: QueryRetryRouteInput): QueryRetryRoute {
+  return classifyQueryRetryRoute({ errorSignal: input.errorSignal, env: input.env });
 }
 
-function applyClassifierGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
-  return {
-    ...ctx,
-    route: classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env }),
-  };
+export function mapQueryRetryArm(
+  input: QueryRetryRouteInput,
+  route: QueryRetryRoute
+): QueryRetryDecision {
+  return resolveDecision(route, input.env, input.errorSignal);
 }
 
-function applyArmMappingGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
-  const route =
-    ctx.route ?? classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env });
-  return decided(ctx, resolveDecision(route, ctx.env, ctx.errorSignal));
-}
-
-const queryRetryDecisionRun = decisionRun<QueryRetryDecisionCtx>('query-retry-arm', [
-  applyClassifierGate,
-  applyArmMappingGate,
-]);
-
-export function decideQueryRetry(input: QueryRetryRouteInput): QueryRetryDecision {
-  const ctx = queryRetryDecisionRun({
-    errorSignal: input.errorSignal,
-    env: input.env,
-    route: null,
-  });
-  return (
-    ctx.decision ??
-    resolveDecision(ctx.route ?? classifyQueryRetryRoute(input), input.env, input.errorSignal)
-  );
-}
+export const decideQueryRetry = (superpipe({})('query-retry-arm') as PipelineAPI)
+  .input(['input'])
+  .pipe(classifyQueryRetryArm, 'input', 'route')
+  .pipe(mapQueryRetryArm, ['input', 'route'], 'decision')
+  .end('decision') as (input: QueryRetryRouteInput) => QueryRetryDecision;

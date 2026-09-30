@@ -1,6 +1,11 @@
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { isTurnEndAckEligible } from './ack-selection.ts';
-import type { TurnEndEvent, TurnEndFlags, TurnEndPlan } from './turn-end-routing.ts';
+import type {
+  TurnEndEvent,
+  TurnEndFlags,
+  TurnEndPlan,
+  TurnEndResultEvent,
+} from './turn-end-routing.ts';
 import { routeTurnEnd } from './turn-end-routing.ts';
 import type { ResultUsage, UsageAccountingState } from './usage-accounting.ts';
 import { recordResultUsage } from './usage-accounting.ts';
@@ -20,7 +25,7 @@ export interface TurnEndPipelineDecision {
   plan: TurnEndPlan;
 }
 
-interface TurnEndPipelineCtx {
+export interface TurnEndPipelineInput {
   flags: TurnEndFlags;
   event: TurnEndEvent;
   queryMode: 'immediate' | 'manual';
@@ -29,28 +34,57 @@ interface TurnEndPipelineCtx {
   acknowledgedPersistedUserThisTurn: boolean;
   activeMessageId: string | null;
   ackRows: ReadonlyArray<TurnEndAckRow>;
-  usage: UsageAccountingState | null;
-  ackSelection: TurnEndAckSelection[] | null;
-  plan: TurnEndPlan | null;
-  decision: TurnEndPipelineDecision | null;
 }
 
-export type TurnEndPipelineInput = Omit<
-  TurnEndPipelineCtx,
-  'decision' | 'usage' | 'ackSelection' | 'plan'
->;
+interface TurnEndUsage {
+  usage: UsageAccountingState;
+  result: TurnEndResultEvent | null;
+}
 
-function applyUsageAccountingGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
-  const result = ctx.event.kind === 'result' ? ctx.event.result : null;
+function resolveTurnEndUsage(input: TurnEndPipelineInput): TurnEndUsage {
+  const result = input.event.kind === 'result' ? input.event.result : null;
   const accountUsage =
     result?.isTopLevel === true &&
     (result.isLimitRecoveryEngaged === true ||
       (result.isSuccess && result.isLimitRecoveryEngaged === false));
-  if (ctx.resultUsage === null || !accountUsage) {
-    return { ...ctx, usage: ctx.usageState };
-  }
-  return { ...ctx, usage: recordResultUsage(ctx.usageState, ctx.resultUsage) };
+  return {
+    usage:
+      input.resultUsage === null || !accountUsage
+        ? input.usageState
+        : recordResultUsage(input.usageState, input.resultUsage),
+    result,
+  };
 }
+
+export function selectTurnEndAcks(
+  input: TurnEndPipelineInput,
+  result: TurnEndResultEvent | null
+): TurnEndAckSelection[] {
+  const admitted =
+    result?.isTopLevel === true &&
+    result.isSuccess &&
+    result.isLimitRecoveryEngaged === false &&
+    !input.acknowledgedPersistedUserThisTurn &&
+    !input.flags.suppressIdleOnTurnEnd;
+  if (!admitted) return [];
+  return input.ackRows
+    .map((row) => selectTurnEndAckRow(row, input.activeMessageId))
+    .filter((selection): selection is TurnEndAckSelection => selection !== null);
+}
+
+export const decideTurnEnd = (superpipe({})('sdk-turn-end') as PipelineAPI)
+  .input(['input'])
+  .pipe(resolveTurnEndUsage, 'input', 'usage')
+  .pipe(
+    (usage: TurnEndUsage, input: TurnEndPipelineInput): TurnEndPipelineDecision => ({
+      usage: usage.usage,
+      ackSelection: selectTurnEndAcks(input, usage.result),
+      plan: routeTurnEnd(input.flags, input.event, { queryMode: input.queryMode }),
+    }),
+    ['usage', 'input'],
+    'decision'
+  )
+  .end('decision') as (input: TurnEndPipelineInput) => TurnEndPipelineDecision;
 
 export function selectTurnEndAckRow(
   row: TurnEndAckRow,
@@ -71,60 +105,4 @@ export function selectTurnEndAckRow(
     messageId: row.uuid,
     deliveryUuids: [row.uuid],
   };
-}
-
-function applyAckSelectionGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
-  const result = ctx.event.kind === 'result' ? ctx.event.result : null;
-  const admitted =
-    result?.isTopLevel === true &&
-    result.isSuccess &&
-    result.isLimitRecoveryEngaged === false &&
-    !ctx.acknowledgedPersistedUserThisTurn &&
-    !ctx.flags.suppressIdleOnTurnEnd;
-  if (!admitted) {
-    return { ...ctx, ackSelection: [] };
-  }
-  const ackSelection = ctx.ackRows
-    .map((row) => selectTurnEndAckRow(row, ctx.activeMessageId))
-    .filter((selection): selection is TurnEndAckSelection => selection !== null);
-  return { ...ctx, ackSelection };
-}
-
-function applyTurnEndRoutingGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
-  return { ...ctx, plan: routeTurnEnd(ctx.flags, ctx.event, { queryMode: ctx.queryMode }) };
-}
-
-function applyFinalGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
-  const plan = ctx.plan ?? routeTurnEnd(ctx.flags, ctx.event, { queryMode: ctx.queryMode });
-  return {
-    ...ctx,
-    decision: {
-      usage: ctx.usage ?? ctx.usageState,
-      ackSelection: ctx.ackSelection ?? [],
-      plan,
-    },
-  };
-}
-
-const turnEndPipelineRun = decisionRun('sdk-turn-end', [
-  applyUsageAccountingGate,
-  applyAckSelectionGate,
-  applyTurnEndRoutingGate,
-  applyFinalGate,
-]);
-
-export function decideTurnEnd(input: TurnEndPipelineInput): TurnEndPipelineDecision {
-  const ctx = turnEndPipelineRun({
-    ...input,
-    usage: null,
-    ackSelection: null,
-    plan: null,
-  });
-  return (
-    ctx.decision ?? {
-      usage: ctx.usage ?? ctx.usageState,
-      ackSelection: ctx.ackSelection ?? [],
-      plan: routeTurnEnd(ctx.flags, ctx.event, { queryMode: ctx.queryMode }),
-    }
-  );
 }
