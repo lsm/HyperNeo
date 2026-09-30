@@ -182,20 +182,16 @@ export function NeoLive() {
           </div>
         </div>
       )}
-      <header class="z-20 flex w-full shrink-0 items-center justify-between gap-4 px-5 py-4 sm:px-8">
+      <header class="neo-float-dock">
         <button
           type="button"
           onClick={() => open(null)}
           aria-label="Back to Neo"
-          class="flex items-center gap-3 rounded-lg text-xl font-semibold tracking-tight focus-visible:outline-accent"
+          class="neo-float-logo"
         >
           <HyperNeoMark />
-          neo
-          <span class="rounded-full bg-success/10 px-2 py-1 text-[10px] font-medium tracking-normal text-success">
-            MVP
-          </span>
         </button>
-        <div class="flex items-center gap-4">
+        <div class="neo-float-actions">
           <NeoConcerns
             concerns={concerns}
             works={works}
@@ -209,9 +205,8 @@ export function NeoLive() {
             rel="noreferrer"
             aria-label="Open HyperNeo"
             title="Open HyperNeo"
-            class="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center gap-2 rounded-lg px-2 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg focus-visible:outline-accent"
+            class="neo-float-link"
           >
-            <span class="hidden sm:inline">Open HyperNeo</span>
             <NeoIcon name="external" />
           </a>
         </div>
