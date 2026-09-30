@@ -38,6 +38,9 @@ type IntakeInput = z.infer<typeof Input>;
 type IntakeResult = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Extract<IntakeResult, { ok: false }> };
 type Target = Pick<Session, 'id' | 'status' | 'config'>;
+export type NeoIntakeNotifier = () => void;
+
+const noNotification: NeoIntakeNotifier = () => {};
 
 export function admitNeoIntake(input: IntakeInput, caller: OperationCaller): Gate<IntakeInput> {
   return caller.source === 'rpc' && caller.principal === 'local'
@@ -113,8 +116,20 @@ export function persistNeoIntake(
       };
 }
 
+export function notifyNeoIntakeAcceptance(
+  receipt: IntakeResult,
+  notify: NeoIntakeNotifier
+): IntakeResult {
+  if (receipt.ok) {
+    try {
+      notify();
+    } catch {}
+  }
+  return receipt;
+}
+
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo'])
+  .input(['input', 'caller', 'db', 'repo', 'notify'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(
     (input: IntakeInput, repo: NeoRepository) => repo.getBindingBySession(input.sessionId),
@@ -138,14 +153,20 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:receipt')
   .pipe(neoIntakeMessage, 'input', 'message')
   .pipe(persistNeoIntake, ['message', 'target', 'db', 'receipt'], 'receipt')
+  .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
   .end('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,
   db: Database,
-  repo: NeoRepository
+  repo: NeoRepository,
+  notify: NeoIntakeNotifier
 ) => IntakeResult;
 
-export function createNeoIntakeOperation(db: Database, repo: NeoRepository) {
+export function createNeoIntakeOperation(
+  db: Database,
+  repo: NeoRepository,
+  notify: NeoIntakeNotifier = noNotification
+) {
   return defineOperation({
     name: 'neo.message.send',
     description:
@@ -153,6 +174,6 @@ export function createNeoIntakeOperation(db: Database, repo: NeoRepository) {
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: async (input, caller) => runIntake(input, caller, db, repo),
+    execute: async (input, caller) => runIntake(input, caller, db, repo, notify),
   });
 }
