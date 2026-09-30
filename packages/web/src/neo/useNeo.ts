@@ -6,6 +6,7 @@ import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient } from './neo-intake.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { readNeoPublications } from './publication-client.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -140,6 +141,7 @@ export function useNeo() {
   }
 
   return {
+    readPublications: readNeoPublications,
     store,
     snapshot,
     viewSnapshot: selectedId ? scopedSnapshot : snapshot,
