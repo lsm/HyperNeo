@@ -24,6 +24,7 @@ import {
   type NeoAgentWorkOwner,
 } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
+import { createNeoPublicationOperation } from './publication-operation.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 import {
@@ -620,6 +621,7 @@ export function createNeoOperations(service: NeoService) {
   );
   return [
     createNeoIntakeOperation(service.db, service.repo),
+    createNeoPublicationOperation(service.publish),
     defineOperation({
       name: 'neo.concern.cancel',
       description:

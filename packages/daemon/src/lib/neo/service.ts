@@ -21,6 +21,7 @@ import { createNeoWorkReporter } from './work-report.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
+import { createNeoPublisher } from './publication-operation.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +53,7 @@ export function neoWorkScratchDir(sessionId: string): string {
 export class NeoService {
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
+  readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -95,6 +97,18 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       getWork: (id) => this.repo.getWork(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
+    });
+    this.publish = createNeoPublisher({
+      getBinding: (id) => this.repo.getBindingBySession(id),
+      getRootBinding: () => this.repo.getBindingForConcern(null),
+      hasConcern: (id) => !!this.repo.getConcern(id),
+      getWork: (id) => this.repo.getWork(id),
+      getConsultation: (id) => this.consultations.get(id),
+      resolveAskOrigin: (input) => this.resolveAskOrigin(input),
+      append: (input) => this.publications.append(input),
+      notify: () => {
+        void hub.event('neo.changed', {});
+      },
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {

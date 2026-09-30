@@ -5,6 +5,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.concern.save',
   'neo.message.send',
   'neo.open',
+  'neo.publication.publish',
   'neo.snapshot',
   'neo.work.cancel',
   'neo.work.propose',
