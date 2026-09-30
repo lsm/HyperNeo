@@ -65,6 +65,11 @@ const admitNonInterruptingSwitch = (superpipe({})('non-interrupting-model-switch
 export interface RuntimeSettingsCommit {
   readonly snapshot: SessionRuntimeSettingsSnapshot;
   readonly thinkingLevel?: ThinkingLevel;
+  readonly isCurrentOwner?: () => boolean;
+}
+
+export function gateCommitOwner(owned: boolean) {
+  return owned ? { value: true as const } : { reason: 'session_settings_changed' as const };
 }
 
 export function providerIdentityClears(
@@ -144,6 +149,7 @@ export function gateCommitTurn(generation?: number, currentGeneration?: number) 
 
 const admitRuntimeSettingsCommit = (superpipe({})('runtime-settings-commit') as PipelineAPI)
   .input([
+    'owned',
     'snapshot',
     'capturedPair',
     'sessionId',
@@ -167,7 +173,9 @@ const admitRuntimeSettingsCommit = (superpipe({})('runtime-settings-commit') as 
     'result:admission'
   )
   .pipe(gateCommitTurn, ['generation', 'currentGeneration'], 'result:admission')
+  .pipe(gateCommitOwner, ['owned'], 'result:admission')
   .end('admission') as (
+  owned: boolean,
   snapshot: SessionRuntimeSettingsSnapshot,
   capturedPair: ModelPair,
   sessionId: string,
@@ -396,6 +404,7 @@ export class ModelSwitchHandler {
       appliedPair = { model: resolvedModel, provider: nextProvider };
       if (commit) {
         const admitted = admitRuntimeSettingsCommit(
+          commit.isCurrentOwner?.() ?? true,
           commit.snapshot,
           capturedPair as ModelPair,
           session.id,
