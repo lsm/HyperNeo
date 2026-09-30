@@ -92,9 +92,7 @@ function normalizeProcessingStatus(row: SpaceSessionRow): SpaceSessionStatusFilt
 
 function sessionKind(row: SpaceSessionRow): SpaceSessionTypeFilter {
   const context = parseJsonValue(row.session_context) as Record<string, unknown> | null;
-  return row.type === 'space_task_agent' || typeof context?.taskId === 'string'
-    ? 'worker'
-    : 'ad-hoc';
+  return typeof context?.taskId === 'string' ? 'worker' : 'ad-hoc';
 }
 
 export function rowToSessionSummary(row: SpaceSessionRow): SpaceSessionSummary {
@@ -157,9 +155,9 @@ export function listSpaceSessionRows(
     );
   }
   if (filters.type === 'worker') {
-    clauses.push(`(type = 'space_task_agent' OR task_id IS NOT NULL)`);
+    clauses.push(`task_id IS NOT NULL`);
   } else if (filters.type === 'ad-hoc') {
-    clauses.push(`(type != 'space_task_agent' AND task_id IS NULL)`);
+    clauses.push(`task_id IS NULL`);
   }
   params.push(limit, offset);
   return db

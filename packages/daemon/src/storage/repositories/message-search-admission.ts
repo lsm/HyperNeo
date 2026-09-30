@@ -56,10 +56,7 @@ export function isMessageSearchIndexEligible(
   if (row.session_type && ROOM_SESSION_TYPE_SET.has(row.session_type)) return false;
   if (row.session_room_id) return false;
 
-  const isSpaceSession =
-    row.session_id.startsWith('space:') ||
-    row.session_type === 'space_chat' ||
-    row.session_type === 'space_task_agent';
+  const isSpaceSession = row.session_id.startsWith('space:') || row.session_type === 'space_chat';
   const isNormalSession =
     !row.session_id.includes(':') && (!row.session_type || row.session_type === 'worker');
   if (!isSpaceSession && !isNormalSession) return false;

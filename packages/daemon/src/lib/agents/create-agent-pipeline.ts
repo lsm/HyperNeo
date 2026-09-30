@@ -114,7 +114,7 @@ export function gateSession(
   if (session.spaceId !== spaceId) {
     return reject('session_invalid', `Session ${sessionId} does not belong to space ${spaceId}`);
   }
-  if (session.type === 'space_task_agent' || session.taskOwned) {
+  if (session.taskOwned) {
     return reject('session_invalid', 'Task agent sessions cannot be bound to a space agent');
   }
   if (session.parentSessionId) {

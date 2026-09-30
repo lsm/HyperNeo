@@ -23,7 +23,7 @@ import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-ad
 const recipient: OperationCaller = Object.freeze({
   source: 'mcp',
   sessionId: 'existing-recipient',
-  role: 'outside_space',
+  role: 'universal_read',
 });
 const input: NeoWorkReportInput = Object.freeze({
   id: 'work:α/A',
@@ -125,7 +125,7 @@ describe('Neo recipient report owning operation', () => {
     const report = spyOn(service, 'reportWork');
     try {
       for (const role of [
-        'outside_space',
+        'universal_read',
         'workflow_worker',
         'direct_task_worker',
         'long_term_agent',
@@ -290,7 +290,7 @@ describe('Neo recipient report owning operation', () => {
     const work = queued();
     const caller = mock(() => ({
       sessionId: recipient.sessionId!,
-      role: 'outside_space' as const,
+      role: 'universal_read' as const,
     }));
     const handler = createOperationMcpHandler(registry, caller);
     const report = spyOn(service, 'reportWork');

@@ -41,7 +41,7 @@ export function classifySessionOwnership(
   sessionSpaceId: (session: Session) => string | undefined
 ): SessionOwnership {
   if (session.id.startsWith('neo:')) return 'neo';
-  if (session.type === 'space_task_agent' || session.id.includes(':task:')) return 'space-task';
+  if (session.id.includes(':task:')) return 'space-task';
   if (session.worktree) return 'project';
   if (sessionSpaceId(session)) return 'space-agent';
   return 'ordinary';

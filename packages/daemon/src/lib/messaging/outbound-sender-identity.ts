@@ -28,8 +28,6 @@ export function outboundSenderLevel(
       return 'long-horizon-agent';
     case 'workflow_worker':
       return 'node-agent';
-    case 'legacy_task_agent':
-      return 'task-agent';
     case 'direct_task_worker':
       return 'session-agent';
     default:

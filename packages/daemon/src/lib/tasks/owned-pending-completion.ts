@@ -82,7 +82,7 @@ export function resolveCompletionActor(
   const policy = resolveSpaceMcpSessionPolicy(session, policyContext);
   const spaceId = resolveSessionSpaceId(session, policyContext, policy);
   if (!spaceId) return denied;
-  const allowed = policy.role === 'legacy_task_agent' || policy.role === 'long_term_agent';
+  const allowed = policy.role === 'long_term_agent';
   if (!allowed) return denied;
   const agentId =
     policy.role === 'long_term_agent' ? (session.metadata.promptProvenance?.agentId ?? null) : null;
@@ -95,7 +95,7 @@ export async function requireCompletionAutonomy(
   policyContext: SpaceMcpSessionPolicyContext,
   getSpaceAutonomyLevel: OwnedPendingCompletionDependencies['getSpaceAutonomyLevel']
 ): Promise<Gate<CompletionActor>> {
-  if (actor.source !== 'mcp' || actor.role === 'legacy_task_agent' || !actor.spaceId) {
+  if (actor.source !== 'mcp' || !actor.spaceId) {
     return { value: actor };
   }
   const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(actor.spaceId) : 1;

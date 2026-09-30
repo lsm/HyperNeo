@@ -17,7 +17,7 @@ export function humanSessionPredicate(rowPrefix: string): string {
   const p = rowPrefix ? `${rowPrefix}.` : '';
   const ctx = `${p}session_context`;
   return (
-    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')` +
+    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat')` +
     ` AND CASE WHEN json_valid(${ctx}) THEN (json_extract(${ctx}, '$.roomId') IS NULL AND json_extract(${ctx}, '$.spaceId') IS NULL) ELSE 1 END`
   );
 }
@@ -25,7 +25,7 @@ export function humanSessionPredicate(rowPrefix: string): string {
 export function humanSessionColumnsPredicate(rowPrefix: string): string {
   const p = rowPrefix ? `${rowPrefix}.` : '';
   return (
-    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')` +
+    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat')` +
     ` AND ${p}room_id IS NULL AND ${p}space_id IS NULL`
   );
 }

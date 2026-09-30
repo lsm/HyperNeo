@@ -153,7 +153,7 @@ export class SessionRepository {
     includeSpaceSessions?: boolean;
   }): Session[] {
     let sql = `SELECT * FROM sessions
-				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat')
 				AND room_id IS NULL`;
     const params: string[] = [];
     if (!options?.includeSpaceSessions) {
@@ -456,7 +456,7 @@ export class SessionRepository {
 					  AND (
 						(sm.session_id NOT LIKE '%:%' AND COALESCE(s.type, 'worker') = 'worker')
 						OR sm.session_id LIKE 'space:%'
-						OR s.type IN ('space_chat', 'space_task_agent')
+						OR s.type IN ('space_chat')
 					  )
 					  ${spaceTaskPolicy}
 				) projected

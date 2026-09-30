@@ -150,11 +150,12 @@ describe('updateSpaceAgent', () => {
       );
     });
 
-    test('rejects a task agent session', async () => {
+    test('rejects a task-owned session', async () => {
       h.sessions.set('task', {
-        type: 'space_task_agent',
+        type: 'worker',
         spaceId: 'space-1',
         parentSessionId: null,
+        taskOwned: true,
       });
       expectKind(await run(h, { id: 'agent-1', sessionId: 'task' }), 'session_invalid');
     });

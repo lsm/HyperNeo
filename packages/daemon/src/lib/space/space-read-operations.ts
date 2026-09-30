@@ -70,7 +70,7 @@ type GetResult = z.infer<typeof GetResultSchema>;
 
 export const SPACE_DISCOVERY_POLICY = {
   safetyClass: 'read',
-  roles: ['long_term_agent', 'workflow_worker', 'direct_task_worker', 'legacy_task_agent'],
+  roles: ['long_term_agent', 'workflow_worker', 'direct_task_worker'],
 } as const satisfies OperationPolicy;
 
 export function summarizeSpace(space: Space): SpaceSummary {

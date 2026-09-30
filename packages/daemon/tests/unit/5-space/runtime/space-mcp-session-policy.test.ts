@@ -417,13 +417,16 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.role).not.toBe('long_term_agent');
   });
 
-  test('leaves legacy space_task_agent sessions unowned', () => {
+  test('leaves a task session with no owning execution or agent unowned', () => {
     const policy = resolveSpaceMcpSessionPolicy(
-      makeSession({ type: 'space_task_agent', context: { spaceId: 'space-1' } })
+      makeSession({
+        type: 'worker',
+        context: { spaceId: 'space-1', taskId: 'task-1' },
+      })
     );
 
     expect(policy).toMatchObject({
-      role: 'legacy_task_agent',
+      role: 'universal_read',
       owner: 'none',
       isWorkflowWorker: false,
     });

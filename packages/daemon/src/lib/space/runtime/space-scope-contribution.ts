@@ -1,15 +1,11 @@
 import type { ScopeContribution } from '../../briefings/contribution.ts';
 import type { OperationCallerRole } from '../../operations/registry.ts';
 
-export type SpaceScopeRole = Exclude<
-  OperationCallerRole,
-  'universal_read' | 'outside_space' | 'neo'
->;
+export type SpaceScopeRole = Exclude<OperationCallerRole, 'universal_read' | 'neo'>;
 
 export function spaceScopeRole(role: OperationCallerRole): SpaceScopeRole | null {
   switch (role) {
     case 'universal_read':
-    case 'outside_space':
     case 'neo':
       return null;
     default:
@@ -37,8 +33,6 @@ function roleLine(scope: SpaceSessionScope): string {
       return 'Your role in it is a worker session running one node of a Space workflow for an assigned task.';
     case 'direct_task_worker':
       return 'Your role in it is a worker session running one assigned Space task directly, outside any workflow.';
-    case 'legacy_task_agent':
-      return 'Your role in it is a task agent session working the Space tasks assigned to it.';
   }
 }
 

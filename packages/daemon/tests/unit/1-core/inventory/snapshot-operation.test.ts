@@ -118,7 +118,7 @@ describe('daemon.snapshot invocation', () => {
   test.each([
     ['rpc', undefined, true],
     ['mcp', 'neo', true],
-    ['mcp', 'outside_space', false],
+    ['mcp', 'legacy_task_agent', false],
     ['mcp', 'workflow_worker', false],
     ['mcp', 'direct_task_worker', false],
     ['mcp', 'long_term_agent', false],

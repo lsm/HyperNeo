@@ -266,7 +266,7 @@ describe('workflow catalog read operations', () => {
     expect(value).toBe('workflow_not_found');
   });
 
-  test('workflow.get reads nothing for an outside_space caller that carries no Space', async () => {
+  test('workflow.get reads nothing for a caller that carries no Space', async () => {
     let reads = 0;
     const dependencies = deps({
       getWorkflow: () => {
@@ -274,7 +274,7 @@ describe('workflow catalog read operations', () => {
         return workflow();
       },
     });
-    const caller = mcpCaller('outside_space', null);
+    const caller = mcpCaller('universal_read', null);
     const outcome = await outcomeOf(dependencies, 'workflow.get', { workflowId: 'wf-1' }, caller);
     expect(outcome).toMatchObject({ kind: 'completed', value: 'space_not_resolved' });
     expect(
