@@ -20,6 +20,11 @@ export function createSessionIncarnationTable(db: Database): void {
       DELETE FROM session_incarnations WHERE session_id = OLD.id;
       INSERT OR REPLACE INTO session_incarnations(session_id) VALUES (NEW.id);
     END;
+    CREATE TRIGGER IF NOT EXISTS sessions_incarnation_revive AFTER UPDATE OF status ON sessions
+    WHEN OLD.status = 'archived' AND NEW.status IS NOT 'archived'
+    BEGIN
+      INSERT OR REPLACE INTO session_incarnations(session_id) VALUES (NEW.id);
+    END;
     INSERT INTO session_incarnations(session_id)
       SELECT id FROM sessions s
       WHERE NOT EXISTS (SELECT 1 FROM session_incarnations i WHERE i.session_id = s.id);`);
