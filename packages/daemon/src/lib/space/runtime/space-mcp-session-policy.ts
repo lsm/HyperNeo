@@ -8,7 +8,7 @@ import type { DirectTaskWorkerIdentity } from '../../tasks/direct-task-worker-id
 export type SpaceMcpSessionRole = OperationCallerRole;
 
 export function hasSpaceAuthority(role: SpaceMcpSessionRole | undefined): boolean {
-  return role === 'long_term_agent';
+  return role === 'long_term_agent' || role === 'neo';
 }
 
 export interface SpaceMcpSessionPolicyContext {
