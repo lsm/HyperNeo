@@ -36,6 +36,7 @@ import type { SpaceTaskRepository } from '../../../../src/storage/repositories/s
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createTestDb, createTestInternalEventBus } from '../../../helpers/database.ts';
+import { AGENT_MEMORY_MCP_SERVER_NAME } from '../../../../src/lib/mcp/built-in-servers.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   makeSessionKindLongHorizonAgent,
@@ -567,6 +568,66 @@ describe('session kind injected text', () => {
         'operations-discovery',
         'space-standing-instructions',
       ]);
+    });
+
+    test('refuses to assemble when an attached capability has no declared unit', async () => {
+      const wrapped = await createTestDb();
+      const session = makeSessionOfKind('direct_task_worker');
+      const agentSession = new AgentSession(
+        session,
+        wrapped,
+        {} as never,
+        await createTestInternalEventBus(),
+        async () => null
+      );
+
+      agentSession.setSpaceScopeResolver((sessionId) =>
+        sessionId === session.id ? scopeFor('direct_task_worker', session) : undefined
+      );
+      agentSession.setAttachedCapabilities([
+        {
+          kind: 'authored',
+          server: { name: 'undeclared-capability', config: {} },
+          briefing: 'doctrine for a server nobody declared',
+        },
+      ]);
+
+      try {
+        expect(() => agentSession.getSpaceBriefing()).toThrow(
+          'capability "undeclared-capability" has no declared unit'
+        );
+      } finally {
+        await agentSession.cleanup();
+      }
+    });
+
+    test('refuses to assemble when a declared capability contributes nothing to say', async () => {
+      const wrapped = await createTestDb();
+      const session = makeSessionOfKind('direct_task_worker');
+      const agentSession = new AgentSession(
+        session,
+        wrapped,
+        {} as never,
+        await createTestInternalEventBus(),
+        async () => null
+      );
+
+      agentSession.setSpaceScopeResolver((sessionId) =>
+        sessionId === session.id ? scopeFor('direct_task_worker', session) : undefined
+      );
+      agentSession.setAttachedCapabilities([
+        {
+          kind: 'authored',
+          server: { name: AGENT_MEMORY_MCP_SERVER_NAME, config: {} },
+          briefing: '   ',
+        },
+      ]);
+
+      try {
+        expect(() => agentSession.getSpaceBriefing()).toThrow('contributed an empty briefing');
+      } finally {
+        await agentSession.cleanup();
+      }
     });
   });
 

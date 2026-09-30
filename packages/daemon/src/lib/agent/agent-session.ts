@@ -31,6 +31,10 @@ import type { ChildProcess } from 'node:child_process';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.ts';
+import {
+  checkCapabilityCoverage,
+  describeCapabilityCoverageIssue,
+} from '../briefings/capability-registry.ts';
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
@@ -287,8 +291,22 @@ export class AgentSession
     if (!scope) return undefined;
     return assembleSessionBriefing({
       scope: [scope],
-      capabilities: [this.getOperationsCapabilityContribution(), ...this.attachedCapabilities],
+      capabilities: this.resolveCapabilityContributions(),
     }).text;
+  }
+
+  resolveCapabilityContributions(): readonly AuthoredCapabilityContribution[] {
+    const contributions: AuthoredCapabilityContribution[] = [
+      this.getOperationsCapabilityContribution(),
+      ...this.attachedCapabilities,
+    ];
+    const issues = checkCapabilityCoverage(contributions);
+    if (issues.length > 0) {
+      throw new Error(
+        `briefing coverage: ${issues.map(describeCapabilityCoverageIssue).join('; ')}`
+      );
+    }
+    return contributions;
   }
 
   setOperationRegistryProvider(provider: OperationRegistryProvider): void {
