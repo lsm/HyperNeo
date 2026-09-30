@@ -53,7 +53,7 @@ const SessionSummarySchema = z.object({
   id: z.string(),
   title: z.string(),
   status: z.string(),
-  type: z.enum(['worker', 'ad-hoc']),
+  type: z.enum(['worker', 'agent']),
   processing_state: ProcessingStateSchema,
   created_at: z.string(),
   last_active_at: z.string(),
@@ -137,7 +137,7 @@ const ListSessionsInputSchema = z
   .object({
     spaceId: SpaceScopeSchema,
     status: z.enum(['active', 'idle', 'waiting_for_input', 'error', 'archived']).optional(),
-    type: z.enum(['worker', 'ad-hoc']).optional(),
+    type: z.enum(['worker', 'agent']).optional(),
     limit: z.number().int().positive().max(SPACE_SESSION_LIMIT_MAX).optional(),
     offset: z.number().int().min(0).optional(),
   })
@@ -458,7 +458,7 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
     defineOperation({
       name: 'session.list',
       policy: READ_POLICY,
-      description: `List the ad-hoc and worker sessions in a Space with their derived status, type, workspace, and git branch. ${SCOPE_NOTE} Workflow workers may read sessions. Returns the summaries, newest activity first.`,
+      description: `List the sessions in a Space with their derived status, type, workspace, and git branch: worker sessions run a Space task (worktree or direct), agent sessions are an agent's own session. ${SCOPE_NOTE} Workflow workers may read sessions. Returns the summaries, newest activity first.`,
       inputSchema: ListSessionsInputSchema,
       resultSchema: SessionListResultSchema,
       execute: (input, caller) => list(input, caller),
