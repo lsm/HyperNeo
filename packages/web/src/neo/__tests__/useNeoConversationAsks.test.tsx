@@ -187,11 +187,12 @@ describe('neo conversation ask window stages', () => {
       Array.from({ length: 480 }, (_, i) => ask(i + 1)),
       480
     );
-    const grown = appendAskWindow(long, { state: 'ready', items: full, nextAfter: 50 });
+    const next = full.map((_, index) => ask(index + 481));
+    const grown = appendAskWindow(long, { state: 'ready', items: next, nextAfter: 530 });
     expect(grown.items).toHaveLength(500);
     expect(grown.items[0].sequence).toBe(31);
     expect(grown.hasEarlier).toBe(true);
-    expect(grown.nextAfter).toBe(50);
+    expect(grown.nextAfter).toBe(530);
     expect(
       appendAskWindow(state([ask(1)], 1), { state: 'ready', items: [], nextAfter: 1 })
     ).toEqual({
