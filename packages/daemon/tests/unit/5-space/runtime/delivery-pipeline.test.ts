@@ -1,14 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  applyClaimConflictGate,
-  applyExecutionRoutingGate,
-  applySessionRoutingGate,
-  applySubscriptionGate,
-  applyTaskAdmissionGate,
-  applyTerminalGate,
+  classifyExternalEventDelivery,
+  classifyPostActivationDelivery,
   decideExternalEventDelivery,
   decidePostActivationDelivery,
-  type ExternalEventDeliveryCtx,
   type ExternalEventDeliveryDecision,
   type ExternalEventDeliveryInput,
   type PostActivationDeliveryInput,
@@ -28,10 +23,6 @@ function makeInput(
     executionPendingActivation: false,
     ...overrides,
   };
-}
-
-function makeCtx(overrides: Partial<ExternalEventDeliveryInput> = {}): ExternalEventDeliveryCtx {
-  return { ...makeInput(overrides), decision: null };
 }
 
 function makePostInput(
@@ -173,86 +164,123 @@ describe('external-event delivery decision pipeline', () => {
     });
   });
 
-  describe('gate pass-through contract', () => {
-    test('gates with a no-op branch leave ctx untouched when not firing', () => {
-      const noOpCases: Array<
-        [
-          (ctx: ExternalEventDeliveryCtx) => ExternalEventDeliveryCtx,
-          Partial<ExternalEventDeliveryInput>,
-        ]
-      > = [
-        [applyTerminalGate, { deliveryTerminal: false }],
-        [applyClaimConflictGate, { deliveryInFlight: false }],
-        [applySubscriptionGate, { subscriptionActive: true }],
-        [applyTaskAdmissionGate, { taskDecision: { action: 'deliver' } }],
-        [applySessionRoutingGate, { targetHasSession: false }],
-      ];
-      for (const [gate, overrides] of noOpCases) {
-        const ctx = makeCtx(overrides);
-        expect(gate(ctx)).toBe(ctx);
-      }
+  describe('classification precedence', () => {
+    test('a terminal delivery skips before anything else is considered', () => {
+      expect(
+        classifyExternalEventDelivery(
+          makeInput({
+            deliveryTerminal: true,
+            deliveryInFlight: true,
+            subscriptionActive: false,
+          })
+        )
+      ).toEqual({ action: 'skip' });
     });
 
-    test('execution routing is the final arbiter and always decides', () => {
+    test('an in-flight delivery reports a claim conflict', () => {
       expect(
-        applyExecutionRoutingGate(makeCtx({ executionPendingActivation: true })).decision
-      ).not.toBeNull();
-      expect(applyExecutionRoutingGate(makeCtx({})).decision).toEqual({
-        action: 'activateTarget',
+        classifyExternalEventDelivery(
+          makeInput({ deliveryInFlight: true, subscriptionActive: false })
+        )
+      ).toEqual({ action: 'skipClaimConflict' });
+    });
+
+    test('a dead subscription fails the delivery', () => {
+      expect(classifyExternalEventDelivery(makeInput({ subscriptionActive: false }))).toEqual({
+        action: 'failDelivery',
+        reason: 'subscription_no_longer_active',
       });
     });
-  });
-});
 
-describe('post-activation delivery decision pipeline', () => {
-  const cases: Array<
-    [string, Partial<PostActivationDeliveryInput>, ExternalEventDeliveryDecision]
-  > = [
-    [
-      'activation failure queues with the failure reason',
-      { activationError: 'session spawn blew up' },
-      {
+    test('a held task defers, and a refused one fails with its reason', () => {
+      expect(
+        classifyExternalEventDelivery(makeInput({ taskDecision: { action: 'hold' } }))
+      ).toEqual({ action: 'deferStoppedTask' });
+      expect(
+        classifyExternalEventDelivery(
+          makeInput({ taskDecision: { action: 'refuse', reason: 'task_cancelled' } })
+        )
+      ).toEqual({ action: 'failDelivery', reason: 'task_cancelled' });
+    });
+
+    test('session routing decides live, stale and paused ahead of activation', () => {
+      expect(
+        classifyExternalEventDelivery(
+          makeInput({ targetHasSession: true, targetSessionLive: true })
+        )
+      ).toEqual({ action: 'deliverLiveSession' });
+      expect(
+        classifyExternalEventDelivery(
+          makeInput({ targetHasSession: true, targetSessionLive: false })
+        )
+      ).toEqual({ action: 'deliverStaleSession' });
+      expect(
+        classifyExternalEventDelivery(
+          makeInput({ targetHasSession: true, targetSessionLive: true, targetSpacePaused: true })
+        )
+      ).toEqual({ action: 'deferPausedSpace' });
+    });
+
+    test('activation routing is the final arbiter when no session is attached', () => {
+      expect(
+        classifyExternalEventDelivery(makeInput({ executionPendingActivation: true }))
+      ).toEqual({
         action: 'queueForActivation',
-        reason: 'deliveryMode:defer; activation_failed; session spawn blew up',
-      },
-    ],
-    ['activated live session delivers', {}, { action: 'deliverLiveSession' }],
-    [
-      'activated dead session id delivers via stale-session path',
-      { activatedSessionLive: false },
-      { action: 'deliverStaleSession' },
-    ],
-    [
-      'activated target without a session defers not-active',
-      { activatedHasSession: false },
-      { action: 'deferNotActive' },
-    ],
-    [
-      'no activated target queues with paused-space retry guard',
-      {
-        activatedTargetFound: false,
-        activatedHasSession: false,
-        activatedSessionLive: false,
-      },
-      {
+        reason: 'deliveryMode:defer; node_execution_pending',
+        preserveAttemptCount: true,
+      });
+      expect(classifyExternalEventDelivery(makeInput({}))).toEqual({ action: 'activateTarget' });
+    });
+
+    test('post-activation: an activation error queues, then a missing target queues', () => {
+      expect(
+        classifyPostActivationDelivery({
+          activationError: 'boom',
+          activatedTargetFound: true,
+          activatedHasSession: true,
+          activatedSessionLive: true,
+        })
+      ).toEqual({
+        action: 'queueForActivation',
+        reason: 'deliveryMode:defer; activation_failed; boom',
+      });
+      expect(
+        classifyPostActivationDelivery({
+          activationError: null,
+          activatedTargetFound: false,
+          activatedHasSession: false,
+          activatedSessionLive: false,
+        })
+      ).toEqual({
         action: 'queueForActivation',
         reason: 'deliveryMode:defer; node_execution_not_active',
         retryUnlessPaused: true,
-      },
-    ],
-  ];
-
-  for (const [label, overrides, expected] of cases) {
-    test(label, async () => {
-      expect(decidePostActivationDelivery(makePostInput(overrides))).toEqual(expected);
+      });
     });
-  }
 
-  test('activation error beats every routing outcome', async () => {
-    const decision = decidePostActivationDelivery(makePostInput({ activationError: 'boom' }));
-    expect(decision).toEqual({
-      action: 'queueForActivation',
-      reason: 'deliveryMode:defer; activation_failed; boom',
+    test('post-activation: an inactive session defers, a stale one delivers stale, live delivers', () => {
+      const base = { activationError: null, activatedTargetFound: true };
+      expect(
+        classifyPostActivationDelivery({
+          ...base,
+          activatedHasSession: false,
+          activatedSessionLive: false,
+        })
+      ).toEqual({ action: 'deferNotActive' });
+      expect(
+        classifyPostActivationDelivery({
+          ...base,
+          activatedHasSession: true,
+          activatedSessionLive: false,
+        })
+      ).toEqual({ action: 'deliverStaleSession' });
+      expect(
+        classifyPostActivationDelivery({
+          ...base,
+          activatedHasSession: true,
+          activatedSessionLive: true,
+        })
+      ).toEqual({ action: 'deliverLiveSession' });
     });
   });
 });

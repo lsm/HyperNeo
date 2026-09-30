@@ -5,14 +5,11 @@ import {
   resolveNodeAgentTargets,
 } from '../../../../src/lib/messaging/routing-gates';
 import {
-  type AgentMessageRoutingCtx,
   type AgentMessageRoutingDecision,
   type AgentMessageRoutingInput,
-  applyEmptyTopologyGate,
-  applyGenericAddressDispatchGate,
-  applyTargetResolutionGate,
-  applyTopologyAuthorizationGate,
+  classifyAgentMessageRouting,
   decideAgentMessageRouting,
+  isGenericAddress,
 } from '../../../../src/lib/messaging/routing-pipeline';
 
 const noPermittedReason = `No permitted targets for agent 'coder' in the declared channel topology.`;
@@ -46,7 +43,9 @@ function makeInput(overrides: Partial<AgentMessageRoutingInput> = {}): AgentMess
   };
 }
 
-function makeCtx(overrides: Partial<AgentMessageRoutingInput> = {}): AgentMessageRoutingCtx {
+function makeCtx(
+  overrides: Partial<AgentMessageRoutingInput> = {}
+): AgentMessageRoutingInput & { decision: null } {
   return { ...makeInput(overrides), decision: null };
 }
 
@@ -199,46 +198,36 @@ describe('agent message routing decision pipeline', () => {
     });
   });
 
-  describe('gate pass-through contract', () => {
-    test('gates with a no-op branch leave ctx untouched when not firing', () => {
-      const noOpCases: Array<
-        [(ctx: AgentMessageRoutingCtx) => AgentMessageRoutingCtx, Partial<AgentMessageRoutingInput>]
-      > = [
-        [applyGenericAddressDispatchGate, { target: 'reviewer', requestedTargets: ['reviewer'] }],
-        [applyGenericAddressDispatchGate, { target: [], requestedTargets: [] }],
-        [applyEmptyTopologyGate, { topologyEmpty: false }],
-        [applyTargetResolutionGate, { resolution: resolvedOutcome(['reviewer']) }],
-        [
-          applyTargetResolutionGate,
-          {
-            resolution: {
-              status: 'unauthorized',
-              unauthorized: ['security'],
-              permittedTargets: ['reviewer'],
-              reason: unauthorizedReason,
-            },
-          },
-        ],
-        [applyTopologyAuthorizationGate, { resolution: unknownGhostOutcome() }],
-        [
-          applyTopologyAuthorizationGate,
-          { resolution: { status: 'noPermittedTargets', reason: noPermittedReason } },
-        ],
-      ];
-      for (const [gate, overrides] of noOpCases) {
-        const ctx = makeCtx(overrides);
-        expect(gate(ctx)).toBe(ctx);
-      }
+  describe('classification precedence', () => {
+    test('a generic address delegates before anything else is considered', () => {
+      expect(
+        classifyAgentMessageRouting(
+          makeCtx({
+            requestedTargets: ['@coordinator'],
+            topologyEmpty: true,
+            resolution: { status: 'noPermittedTargets', reason: noPermittedReason },
+          })
+        )
+      ).toEqual({ action: 'delegateGeneric' });
     });
 
-    test('topology authorization is the final arbiter for live outcomes', () => {
+    test('an empty topology fails before the target is resolved', () => {
       expect(
-        applyTopologyAuthorizationGate(makeCtx({ resolution: resolvedOutcome(['reviewer']) }))
-          .decision
-      ).toEqual({ action: 'routeTargets', targetAgentNames: ['reviewer'] });
-      expect(
-        applyTopologyAuthorizationGate(
+        classifyAgentMessageRouting(
           makeCtx({
+            requestedTargets: ['reviewer'],
+            topologyEmpty: true,
+            resolution: unknownGhostOutcome(),
+          })
+        )
+      ).toEqual({ action: 'failNoTopology' });
+    });
+
+    test('an unauthorized target reports the unauthorized names and permitted targets', () => {
+      expect(
+        classifyAgentMessageRouting(
+          makeCtx({
+            requestedTargets: ['reviewer'],
             resolution: {
               status: 'unauthorized',
               unauthorized: ['security'],
@@ -246,13 +235,47 @@ describe('agent message routing decision pipeline', () => {
               reason: unauthorizedReason,
             },
           })
-        ).decision
+        )
       ).toEqual({
         action: 'failUnauthorized',
         reason: unauthorizedReason,
         unauthorizedAgentNames: ['security'],
         permittedTargets: ['reviewer'],
       });
+    });
+
+    test('a resolved target routes to every resolved agent', () => {
+      expect(
+        classifyAgentMessageRouting(
+          makeCtx({ requestedTargets: ['reviewer'], resolution: resolvedOutcome(['reviewer']) })
+        )
+      ).toEqual({ action: 'routeTargets', targetAgentNames: ['reviewer'] });
+    });
+
+    test('an unresolved target fails as unknown, reporting the reason', () => {
+      expect(
+        classifyAgentMessageRouting(
+          makeCtx({ requestedTargets: ['ghost'], resolution: unknownGhostOutcome() })
+        )
+      ).toEqual({ action: 'failUnknownTarget', reason: unknownGhostReason });
+    });
+
+    test('a topology with no permitted targets is unknown rather than unauthorized', () => {
+      expect(
+        classifyAgentMessageRouting(
+          makeCtx({
+            requestedTargets: ['coder'],
+            resolution: { status: 'noPermittedTargets', reason: noPermittedReason },
+          })
+        )
+      ).toEqual({ action: 'failUnknownTarget', reason: noPermittedReason });
+    });
+  });
+
+  describe('isGenericAddress', () => {
+    test('accepts a parseable address and rejects a bare name', () => {
+      expect(isGenericAddress('@coordinator')).toBe(true);
+      expect(isGenericAddress('reviewer')).toBe(false);
     });
   });
 });

@@ -349,6 +349,21 @@ describe('deliver-immediate-event pipeline', () => {
     const { outcome } = await deliver({ isTargetSessionLive: () => false });
     expect(outcome).toEqual({ action: 'deferred', reason: 'stale_session' });
   });
+  it('defers a delivery waiting on node activation with its own reason', async () => {
+    const { outcome, rec, db } = await deliver({
+      listExecutions: () => [
+        {
+          ...execution(),
+          agentSessionId: undefined,
+          status: 'pending',
+        } as unknown as NodeExecution,
+      ],
+    });
+    expect(outcome).toEqual({ action: 'deferred', reason: 'queue_for_activation' });
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
+    expect(rec.failed).toEqual([]);
+    expect(rec.delivered).toEqual([]);
+  });
 
   it('defers while the target session has an interrupt still in progress', async () => {
     const { outcome } = await deliver({ isSessionInterruptInProgress: () => true });

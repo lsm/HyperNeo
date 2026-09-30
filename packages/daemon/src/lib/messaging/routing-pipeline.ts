@@ -1,6 +1,6 @@
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { ResolveNodeAgentTargetsOutcome } from './routing-gates.ts';
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type AgentMessageRoutingDecision =
   | { action: 'delegateGeneric' }
@@ -14,24 +14,14 @@ export type AgentMessageRoutingDecision =
     }
   | { action: 'routeTargets'; targetAgentNames: string[] };
 
-export interface AgentMessageRoutingCtx {
+export interface AgentMessageRoutingInput {
   target: string | string[];
   requestedTargets: string[];
   topologyEmpty: boolean;
   resolution: ResolveNodeAgentTargetsOutcome;
-  decision: AgentMessageRoutingDecision | null;
 }
 
-export type AgentMessageRoutingInput = Omit<AgentMessageRoutingCtx, 'decision'>;
-
-function decided(
-  ctx: AgentMessageRoutingCtx,
-  decision: AgentMessageRoutingDecision
-): AgentMessageRoutingCtx {
-  return { ...ctx, decision };
-}
-
-function isGenericAddress(target: string): boolean {
+export function isGenericAddress(target: string): boolean {
   try {
     parseAddress(target);
     return true;
@@ -40,53 +30,30 @@ function isGenericAddress(target: string): boolean {
   }
 }
 
-export function applyGenericAddressDispatchGate(
-  ctx: AgentMessageRoutingCtx
-): AgentMessageRoutingCtx {
-  const delegates = ctx.requestedTargets.length > 0 && ctx.requestedTargets.every(isGenericAddress);
-  return delegates ? decided(ctx, { action: 'delegateGeneric' }) : ctx;
+export function delegatesToGenericAddress(input: AgentMessageRoutingInput): boolean {
+  return input.requestedTargets.length > 0 && input.requestedTargets.every(isGenericAddress);
 }
 
-export function applyEmptyTopologyGate(ctx: AgentMessageRoutingCtx): AgentMessageRoutingCtx {
-  return ctx.topologyEmpty ? decided(ctx, { action: 'failNoTopology' }) : ctx;
-}
-
-export function applyTargetResolutionGate(ctx: AgentMessageRoutingCtx): AgentMessageRoutingCtx {
-  if (ctx.resolution.status === 'resolved') return ctx;
-  if (ctx.resolution.status === 'unauthorized') return ctx;
-  return decided(ctx, { action: 'failUnknownTarget', reason: ctx.resolution.reason });
-}
-
-export function applyTopologyAuthorizationGate(
-  ctx: AgentMessageRoutingCtx
-): AgentMessageRoutingCtx {
-  if (ctx.resolution.status === 'unauthorized') {
-    return decided(ctx, {
-      action: 'failUnauthorized',
-      reason: ctx.resolution.reason,
-      unauthorizedAgentNames: ctx.resolution.unauthorized,
-      permittedTargets: ctx.resolution.permittedTargets,
-    });
-  }
-  if (ctx.resolution.status === 'resolved') {
-    return decided(ctx, {
-      action: 'routeTargets',
-      targetAgentNames: ctx.resolution.targetAgentNames,
-    });
-  }
-  return ctx;
-}
-
-const agentMessageRoutingDecisionRun = decisionRun('agent-message-routing', [
-  applyGenericAddressDispatchGate,
-  applyEmptyTopologyGate,
-  applyTargetResolutionGate,
-  applyTopologyAuthorizationGate,
-]);
-
-export function decideAgentMessageRouting(
+export function classifyAgentMessageRouting(
   input: AgentMessageRoutingInput
 ): AgentMessageRoutingDecision {
-  const ctx = agentMessageRoutingDecisionRun(input);
-  return ctx.decision ?? { action: 'routeTargets', targetAgentNames: [] };
+  if (delegatesToGenericAddress(input)) return { action: 'delegateGeneric' };
+  if (input.topologyEmpty) return { action: 'failNoTopology' };
+  if (input.resolution.status === 'unauthorized') {
+    return {
+      action: 'failUnauthorized',
+      reason: input.resolution.reason,
+      unauthorizedAgentNames: input.resolution.unauthorized,
+      permittedTargets: input.resolution.permittedTargets,
+    };
+  }
+  if (input.resolution.status === 'resolved') {
+    return { action: 'routeTargets', targetAgentNames: input.resolution.targetAgentNames };
+  }
+  return { action: 'failUnknownTarget', reason: input.resolution.reason };
 }
+
+export const decideAgentMessageRouting = (superpipe({})('agent-message-routing') as PipelineAPI)
+  .input(['input'])
+  .pipe(classifyAgentMessageRouting, 'input', 'decision')
+  .end('decision') as (input: AgentMessageRoutingInput) => AgentMessageRoutingDecision;

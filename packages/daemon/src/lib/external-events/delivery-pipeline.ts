@@ -1,4 +1,4 @@
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ExternalEventTaskDecision } from './admission-gates.ts';
 
 export type ExternalEventDeliveryDecision =
@@ -18,7 +18,7 @@ export type ExternalEventDeliveryDecision =
   | { action: 'deferNotActive' }
   | { action: 'activateTarget' };
 
-export interface ExternalEventDeliveryCtx {
+export interface ExternalEventDeliveryInput {
   deliveryTerminal: boolean;
   deliveryInFlight: boolean;
   subscriptionActive: boolean;
@@ -27,116 +27,71 @@ export interface ExternalEventDeliveryCtx {
   targetSessionLive: boolean;
   targetSpacePaused: boolean;
   executionPendingActivation: boolean;
-  decision: ExternalEventDeliveryDecision | null;
 }
 
-export type ExternalEventDeliveryInput = Omit<ExternalEventDeliveryCtx, 'decision'>;
-
-export interface PostActivationDeliveryCtx {
+export interface PostActivationDeliveryInput {
   activationError: string | null;
   activatedTargetFound: boolean;
   activatedHasSession: boolean;
   activatedSessionLive: boolean;
-  decision: ExternalEventDeliveryDecision | null;
 }
 
-export type PostActivationDeliveryInput = Omit<PostActivationDeliveryCtx, 'decision'>;
-
-function decided<T extends { decision: ExternalEventDeliveryDecision | null }>(
-  ctx: T,
-  decision: ExternalEventDeliveryDecision
-): T {
-  return { ...ctx, decision };
-}
-
-export function applyTerminalGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  return ctx.deliveryTerminal ? decided(ctx, { action: 'skip' }) : ctx;
-}
-
-export function applyClaimConflictGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  return ctx.deliveryInFlight ? decided(ctx, { action: 'skipClaimConflict' }) : ctx;
-}
-
-export function applySubscriptionGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  return ctx.subscriptionActive
-    ? ctx
-    : decided(ctx, { action: 'failDelivery', reason: 'subscription_no_longer_active' });
-}
-
-export function applyTaskAdmissionGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  if (ctx.taskDecision.action === 'deliver') return ctx;
-  if (ctx.taskDecision.action === 'hold') return decided(ctx, { action: 'deferStoppedTask' });
-  return decided(ctx, { action: 'failDelivery', reason: ctx.taskDecision.reason });
-}
-
-export function applySessionRoutingGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  if (!ctx.targetHasSession) return ctx;
-  if (!ctx.targetSessionLive) return decided(ctx, { action: 'deliverStaleSession' });
-  if (ctx.targetSpacePaused) return decided(ctx, { action: 'deferPausedSpace' });
-  return decided(ctx, { action: 'deliverLiveSession' });
-}
-
-export function applyExecutionRoutingGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  if (ctx.executionPendingActivation) {
-    return decided(ctx, {
+export function classifyExternalEventDelivery(
+  input: ExternalEventDeliveryInput
+): ExternalEventDeliveryDecision {
+  if (input.deliveryTerminal) return { action: 'skip' };
+  if (input.deliveryInFlight) return { action: 'skipClaimConflict' };
+  if (!input.subscriptionActive) {
+    return { action: 'failDelivery', reason: 'subscription_no_longer_active' };
+  }
+  if (input.taskDecision.action === 'hold') return { action: 'deferStoppedTask' };
+  if (input.taskDecision.action !== 'deliver') {
+    return { action: 'failDelivery', reason: input.taskDecision.reason };
+  }
+  if (input.targetHasSession) {
+    if (!input.targetSessionLive) return { action: 'deliverStaleSession' };
+    if (input.targetSpacePaused) return { action: 'deferPausedSpace' };
+    return { action: 'deliverLiveSession' };
+  }
+  if (input.executionPendingActivation) {
+    return {
       action: 'queueForActivation',
       reason: 'deliveryMode:defer; node_execution_pending',
       preserveAttemptCount: true,
-    });
+    };
   }
-  return decided(ctx, { action: 'activateTarget' });
+  return { action: 'activateTarget' };
 }
 
-export function applyActivationErrorGate(
-  ctx: PostActivationDeliveryCtx
-): PostActivationDeliveryCtx {
-  return ctx.activationError === null
-    ? ctx
-    : decided(ctx, {
-        action: 'queueForActivation',
-        reason: `deliveryMode:defer; activation_failed; ${ctx.activationError}`,
-      });
-}
-
-export function applyActivatedRoutingGate(
-  ctx: PostActivationDeliveryCtx
-): PostActivationDeliveryCtx {
-  if (!ctx.activatedTargetFound) {
-    return decided(ctx, {
+export function classifyPostActivationDelivery(
+  input: PostActivationDeliveryInput
+): ExternalEventDeliveryDecision {
+  if (input.activationError !== null) {
+    return {
+      action: 'queueForActivation',
+      reason: `deliveryMode:defer; activation_failed; ${input.activationError}`,
+    };
+  }
+  if (!input.activatedTargetFound) {
+    return {
       action: 'queueForActivation',
       reason: 'deliveryMode:defer; node_execution_not_active',
       retryUnlessPaused: true,
-    });
+    };
   }
-  if (!ctx.activatedHasSession) return decided(ctx, { action: 'deferNotActive' });
-  if (!ctx.activatedSessionLive) return decided(ctx, { action: 'deliverStaleSession' });
-  return decided(ctx, { action: 'deliverLiveSession' });
+  if (!input.activatedHasSession) return { action: 'deferNotActive' };
+  if (!input.activatedSessionLive) return { action: 'deliverStaleSession' };
+  return { action: 'deliverLiveSession' };
 }
 
-const deliveryDecisionRun = decisionRun('external-event-delivery', [
-  applyTerminalGate,
-  applyClaimConflictGate,
-  applySubscriptionGate,
-  applyTaskAdmissionGate,
-  applySessionRoutingGate,
-  applyExecutionRoutingGate,
-]);
+export const decideExternalEventDelivery = (superpipe({})('external-event-delivery') as PipelineAPI)
+  .input(['input'])
+  .pipe(classifyExternalEventDelivery, 'input', 'decision')
+  .end('decision') as (input: ExternalEventDeliveryInput) => ExternalEventDeliveryDecision;
 
-const postActivationDecisionRun = decisionRun('external-event-post-activation', [
-  applyActivationErrorGate,
-  applyActivatedRoutingGate,
-]);
-
-export function decideExternalEventDelivery(
-  input: ExternalEventDeliveryInput
-): ExternalEventDeliveryDecision {
-  const ctx = deliveryDecisionRun(input);
-  return ctx.decision ?? { action: 'skip' };
-}
-
-export function decidePostActivationDelivery(
-  input: PostActivationDeliveryInput
-): ExternalEventDeliveryDecision {
-  const ctx = postActivationDecisionRun(input);
-  return ctx.decision ?? { action: 'skip' };
-}
+export const decidePostActivationDelivery = (
+  superpipe({})('external-event-post-activation') as PipelineAPI
+)
+  .input(['input'])
+  .pipe(classifyPostActivationDelivery, 'input', 'decision')
+  .end('decision') as (input: PostActivationDeliveryInput) => ExternalEventDeliveryDecision;
