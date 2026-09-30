@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
   decideSelfEchoFilter,
-  decideSelfEchoGate,
   resolveFilteredLogins,
 } from '../../../../src/lib/external-events/github/github-self-echo';
 
@@ -66,38 +65,6 @@ describe('decideSelfEchoFilter', () => {
         initiatorLogin: 'alice',
         filteredLogins: ['alice'],
         enabled: false,
-      })
-    ).toBe('admit');
-  });
-});
-
-describe('decideSelfEchoGate', () => {
-  it('drops an initiator matching the filtered login when enabled', () => {
-    expect(
-      decideSelfEchoGate({
-        initiatorLogin: 'alice',
-        filteredLogins: ['alice'],
-        filterCurrentUser: true,
-      })
-    ).toBe('drop');
-  });
-
-  it('admits an initiator not in the filtered list when enabled', () => {
-    expect(
-      decideSelfEchoGate({
-        initiatorLogin: 'alice',
-        filteredLogins: ['bob'],
-        filterCurrentUser: true,
-      })
-    ).toBe('admit');
-  });
-
-  it('admits when disabled even if the initiator matches', () => {
-    expect(
-      decideSelfEchoGate({
-        initiatorLogin: 'alice',
-        filteredLogins: ['alice'],
-        filterCurrentUser: false,
       })
     ).toBe('admit');
   });

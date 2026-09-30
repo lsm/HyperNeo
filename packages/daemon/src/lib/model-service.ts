@@ -6,7 +6,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { QueryLike } from './agent/query-like.ts';
 import type { ProviderRepository } from '../storage/repositories/provider-repository.ts';
-import { decisionRun } from './space/runtime/decision-pipeline.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   COPILOT_ANTHROPIC_MODELS,
   COPILOT_CODEX_CONTEXT_WINDOW_OVERRIDES,
@@ -517,60 +517,63 @@ export function extractPersistedDiscoveredWrapper(configJson: string | undefined
   };
 }
 
-interface PersistedDiscoveryCtx {
+type PersistedDiscoverySkipReason = 'unavailable';
+
+interface PersistedDiscovery {
   provider: Provider;
-  providerRepository: ProviderRepository | null;
-  record?: ProviderRecord | null;
-  wrapper?: ReturnType<typeof extractPersistedDiscoveredWrapper>;
+  record: ProviderRecord | null;
+  wrapper?: NonNullable<ReturnType<typeof extractPersistedDiscoveredWrapper>>;
   endpointFingerprint?: string;
-  decision: PersistedDiscoveredEntry[] | null;
 }
 
-function loadRecordGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
-  if (!ctx.providerRepository) return { ...ctx, decision: [] };
+function loadRecordGate(
+  provider: Provider
+): { value: PersistedDiscovery } | { reason: PersistedDiscoverySkipReason } {
+  const repository = providerRepositoryRef;
+  if (!repository) return { reason: 'unavailable' };
   try {
-    const record = ctx.providerRepository.getProviderByProviderId(ctx.provider.id);
-    return { ...ctx, record };
+    return { value: { provider, record: repository.getProviderByProviderId(provider.id) } };
   } catch {
-    return { ...ctx, decision: [] };
+    return { reason: 'unavailable' };
   }
 }
 
-function extractWrapperGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
-  const wrapper = extractPersistedDiscoveredWrapper(ctx.record?.configJson);
-  if (!wrapper) return { ...ctx, decision: [] };
-  return { ...ctx, wrapper };
+function extractWrapperGate(
+  discovery: PersistedDiscovery
+): { value: PersistedDiscovery } | { reason: PersistedDiscoverySkipReason } {
+  const wrapper = extractPersistedDiscoveredWrapper(discovery.record?.configJson);
+  return wrapper ? { value: { ...discovery, wrapper } } : { reason: 'unavailable' };
 }
 
-function validateFingerprintGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
+function validateFingerprintGate(
+  discovery: PersistedDiscovery
+): { value: PersistedDiscovery } | { reason: PersistedDiscoverySkipReason } {
   let endpointFingerprint: string | undefined;
   try {
-    endpointFingerprint = ctx.provider.getDiscoveryEndpointFingerprint?.(ctx.record?.baseUrl);
+    endpointFingerprint = discovery.provider.getDiscoveryEndpointFingerprint?.(
+      discovery.record?.baseUrl
+    );
   } catch {
-    return { ...ctx, decision: [] };
+    return { reason: 'unavailable' };
   }
-  if (endpointFingerprint !== undefined && ctx.wrapper!.fingerprint !== endpointFingerprint) {
-    return { ...ctx, decision: [] };
+  if (endpointFingerprint !== undefined && discovery.wrapper!.fingerprint !== endpointFingerprint) {
+    return { reason: 'unavailable' };
   }
-  return { ...ctx, endpointFingerprint };
+  return { value: { ...discovery, endpointFingerprint } };
 }
 
-function finalizePersistedDiscoveryGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
-  return { ...ctx, decision: ctx.wrapper!.models };
-}
-
-const runPersistedDiscovery = decisionRun<PersistedDiscoveryCtx>('persisted-discovery', [
-  loadRecordGate,
-  extractWrapperGate,
-  validateFingerprintGate,
-  finalizePersistedDiscoveryGate,
-]);
+const runPersistedDiscovery = (superpipe({})('persisted-discovery') as PipelineAPI)
+  .input(['provider'])
+  .pipe(loadRecordGate, 'provider', 'result:discovery')
+  .pipe(extractWrapperGate, 'discovery', 'result:discovery')
+  .pipe(validateFingerprintGate, 'discovery', 'result:discovery')
+  .end('discovery') as (provider: Provider) => PersistedDiscovery | PersistedDiscoverySkipReason;
 
 export function endpointMatchingPersistedDiscovered(
   provider: Provider
 ): Array<PersistedDiscoveredEntry> {
-  const ctx = runPersistedDiscovery({ provider, providerRepository: providerRepositoryRef });
-  return ctx.decision ?? [];
+  const outcome = runPersistedDiscovery(provider);
+  return typeof outcome === 'string' ? [] : (outcome.wrapper?.models ?? []);
 }
 
 const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
