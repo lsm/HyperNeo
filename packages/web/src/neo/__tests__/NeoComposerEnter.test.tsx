@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/pr
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
-import { NeoComposer, combineVoiceSubmission } from '../NeoComposer.tsx';
+import { NeoComposer } from '../NeoComposer.tsx';
+import { combineVoiceSubmission } from '../../lib/voice/voice-audio-outbox.ts';
 import { neoEnterSends } from '../NeoComposer.tsx';
 
 const sendMessage = vi.hoisted(() => vi.fn(async () => ({ ok: true })));

@@ -71,6 +71,7 @@ describe('Neo voice', () => {
     const props = {
       sessionId: 'neo:root',
       connected: true,
+      draftText: 'typed first',
       onTranscript: vi.fn(),
       onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
       onError: vi.fn(),
@@ -100,6 +101,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={onTranscript}
         onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
         onError={vi.fn()}
@@ -112,7 +114,13 @@ describe('Neo voice', () => {
     );
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('Remember Sunday'));
     expect(voice.submit).toHaveBeenCalledWith(
-      { sessionId: 'neo:club', mode: 'stay', retrySilent: false, intent: 'draft' },
+      {
+        sessionId: 'neo:club',
+        mode: 'stay',
+        retrySilent: false,
+        intent: 'draft',
+        sendDraft: 'typed first',
+      },
       expect.objectContaining({ stopRecording: voice.stop })
     );
     expect(voice.deleteRecord).toHaveBeenCalledWith('recording');
@@ -134,6 +142,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={onTranscript}
         onSendVoice={onSendVoice}
         onSendHandle={register}
@@ -150,7 +159,13 @@ describe('Neo voice', () => {
     expect(onSendVoice).toHaveBeenCalledWith('Send me now', 'recording');
     expect(onTranscript).not.toHaveBeenCalled();
     expect(voice.submit).toHaveBeenCalledWith(
-      { sessionId: 'neo:club', mode: 'stay', retrySilent: false, intent: 'send' },
+      {
+        sessionId: 'neo:club',
+        mode: 'stay',
+        retrySilent: false,
+        intent: 'send',
+        sendDraft: 'typed first',
+      },
       expect.objectContaining({})
     );
     await waitFor(() => expect(voice.deleteRecord).toHaveBeenCalledWith('recording'));
@@ -163,6 +178,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={vi.fn()}
         onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
         onSendHandle={vi.fn()}
@@ -176,6 +192,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={vi.fn()}
         onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
         onSendHandle={vi.fn()}
@@ -199,6 +216,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={vi.fn()}
         onSendVoice={vi.fn(async () => ({ kind: 'unconfirmed' }) as const)}
         onError={onError}
@@ -232,6 +250,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={vi.fn()}
         onSendVoice={onSendVoice}
         onError={vi.fn()}
@@ -257,6 +276,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={onTranscript}
         onSendVoice={onSendVoice}
         onError={vi.fn()}
@@ -286,6 +306,7 @@ describe('Neo voice', () => {
       <NeoVoice
         sessionId="neo:club"
         connected
+        draftText="typed first"
         onTranscript={originalDraft}
         onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
         onError={vi.fn()}
@@ -314,6 +335,7 @@ describe('Neo voice', () => {
     const props = {
       sessionId: 'neo:root',
       connected: true,
+      draftText: 'typed first',
       onTranscript: vi.fn(),
       onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
       onError,

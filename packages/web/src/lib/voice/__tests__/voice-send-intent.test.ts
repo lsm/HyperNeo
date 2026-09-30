@@ -173,6 +173,20 @@ describe('voice send-intent recovery', () => {
     expect(store.records).toHaveLength(0);
   });
 
+  it('recovers the typed draft persisted at send-intent creation', async () => {
+    seedEntry({ intent: 'send', sendDraft: 'typed first' });
+    await flushPendingVoiceAudio();
+
+    expect(asks()[0]?.[1].input.content).toBe('typed first\nhello world');
+  });
+
+  it('sends a recovered transcript alone when no draft was pending', async () => {
+    seedEntry({ intent: 'send' });
+    await flushPendingVoiceAudio();
+
+    expect(asks()[0]?.[1].input.content).toBe('hello world');
+  });
+
   it('draft-intent records never send — they stage as an editable draft', async () => {
     seedEntry({ intent: 'draft' });
     await flushPendingVoiceAudio();

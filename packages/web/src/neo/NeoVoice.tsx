@@ -25,6 +25,7 @@ export type VoicePhase = 'idle' | 'recording' | 'working';
 export function NeoVoice({
   sessionId,
   connected,
+  draftText,
   onTranscript,
   onSendVoice,
   onSendHandle,
@@ -33,6 +34,7 @@ export function NeoVoice({
 }: {
   sessionId: string;
   connected: boolean;
+  draftText: string;
   onTranscript: (text: string) => void;
   onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
   onSendHandle: (send: (() => void) | null) => void;
@@ -96,7 +98,7 @@ export function NeoVoice({
         return;
       }
       const result = await runVoiceSubmit(
-        { sessionId, mode: 'stay', retrySilent: !!entry, intent },
+        { sessionId, mode: 'stay', retrySilent: !!entry, intent, sendDraft: draftText },
         {
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
           generateId: () => id,

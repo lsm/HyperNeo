@@ -22,6 +22,16 @@ vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   }),
 }));
 vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
+const attachmentFiles = vi.hoisted(() => ({ current: [] as unknown[] }));
+vi.mock('../neo-attachments.ts', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNeoAttachments: () => ({
+    files: attachmentFiles.current,
+    reading: 0,
+    add: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
 vi.mock('../../hooks/useInterrupt.ts', () => ({
   useInterrupt: () => ({ handleInterrupt: vi.fn(), interrupting: false }),
 }));
@@ -129,6 +139,7 @@ beforeEach(() => {
   hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
   store.puts.length = 0;
+  attachmentFiles.current = [];
   voice.recording = true;
   voice.stop.mockImplementation(async () => {
     voice.recording = false;
@@ -174,6 +185,70 @@ describe('NeoComposer and NeoVoice send integration', () => {
 
     releaseTranscribe({ text: 'spoken second' });
     await waitFor(() => expect(asks()).toHaveLength(1));
+  });
+
+  it('resending a persisted payload is not re-combined with the draft still in the box', async () => {
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'operation.invoke') throw new Error('Request timeout: operation.invoke');
+      if (method === 'voice.transcribe') return { text: 'spoken second' };
+      throw new Error(`No handler for method: ${method}`);
+    });
+    const { onError } = renderComposer();
+
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    const requestId = asks()[0]?.[1].input.requestId as string;
+    expect(store.records.get(requestId)?.sendText).toBe('typed first\nspoken second');
+    expect(store.records.size).toBe(1);
+
+    hubRequest.mockImplementation(defaultHub);
+    fireEvent.click(screen.getByTestId('resend-voice-audio'));
+
+    await waitFor(() => expect(asks()).toHaveLength(2));
+    expect(asks()[1]?.[1].input).toEqual(asks()[0]?.[1].input);
+    expect(reportedErrors(onError)).not.toContain(
+      'That recording already has a different message queued.'
+    );
+    await waitFor(() => expect(store.records.size).toBe(0));
+  });
+
+  it('blocks the recording Send while an attachment is staged', async () => {
+    attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
+    renderComposer();
+    await awaitRecordingComposer();
+
+    expect(sendControl().disabled).toBe(true);
+    expect(sendControl().title).toContain('attachments');
+    expect(stopControl().disabled).toBe(false);
+  });
+
+  it('persists the typed draft at record creation, before transcription finishes', async () => {
+    let releaseTranscribe: (value: Record<string, unknown>) => void = () => {};
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'voice.transcribe')
+        return new Promise((resolve) => {
+          releaseTranscribe = resolve;
+        });
+      if (method === 'operation.invoke')
+        return { ok: true, requestId: 'rec-1', messageId: 'rec-1', created: true };
+      throw new Error(`No handler for method: ${method}`);
+    });
+    renderComposer();
+
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+
+    await waitFor(() => expect(store.records.size).toBe(1));
+    const record = [...store.records.values()][0];
+    expect(record?.intent).toBe('send');
+    expect(record?.sendDraft).toBe('typed first');
+    expect(record?.sendText).toBeUndefined();
+    expect(asks()).toHaveLength(0);
+
+    releaseTranscribe({ text: 'spoken second' });
+    await waitFor(() => expect(asks()).toHaveLength(1));
+    expect(asks()[0]?.[1].input.content).toBe('typed first\nspoken second');
   });
 
   it('sends the typed draft plus the transcript under the durable record id', async () => {

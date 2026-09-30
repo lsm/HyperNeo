@@ -22,6 +22,7 @@ export interface VoiceSubmitInput {
   mode?: VoiceSubmitMode;
   retrySilent?: boolean;
   intent?: 'draft' | 'send';
+  sendDraft?: string;
 }
 
 export interface VoiceSubmitDeps {
@@ -130,6 +131,7 @@ async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitP
     peakLevel: recording.peakLevel,
     createdAt: ctx.startedAt,
     intent: ctx.intent === 'send' ? 'send' : 'draft',
+    sendDraft: ctx.intent === 'send' ? (ctx.sendDraft ?? '') : undefined,
   };
   return { ...ctx, persisted: await ctx.deps.putRecord(entry) };
 }

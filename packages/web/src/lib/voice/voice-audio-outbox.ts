@@ -68,6 +68,10 @@ export type VoiceSendOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'unconfirmed' };
 
+export function combineVoiceSubmission(draft: string, transcript: string): string {
+  return [draft.trim(), transcript].filter(Boolean).join('\n');
+}
+
 function voiceIntakePayload(record: VoiceRecordEntry, text: string) {
   return { sessionId: record.sessionId, requestId: record.id, content: text };
 }
@@ -147,7 +151,7 @@ async function completeSendIntent(
     if (result.kind === 'silent-recording') return 'discarded';
     if (result.kind === 'transcribe-failed') return result.dequeued ? 'discarded' : 'retry';
     if (!('transcript' in result.outcome)) return 'discarded';
-    text = result.outcome.transcript;
+    text = combineVoiceSubmission(entry.sendDraft ?? '', result.outcome.transcript);
   }
   if (!text.trim()) return 'discarded';
   const outcome = await submitVoiceSendIntent(hub, entry, text);

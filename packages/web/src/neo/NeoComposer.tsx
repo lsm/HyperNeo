@@ -11,7 +11,11 @@ import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
 import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
-import { submitVoiceSendIntent, type VoiceSendOutcome } from '../lib/voice/voice-audio-outbox.ts';
+import {
+  combineVoiceSubmission,
+  submitVoiceSendIntent,
+  type VoiceSendOutcome,
+} from '../lib/voice/voice-audio-outbox.ts';
 import type { createNeoIntakeClient } from './neo-intake.ts';
 
 export function neoEnterSends(
@@ -20,10 +24,6 @@ export function neoEnterSends(
 ): boolean {
   const modifierSend = keyboard.metaKey || keyboard.ctrlKey;
   return coarsePointer ? modifierSend : !keyboard.shiftKey || modifierSend;
-}
-
-export function combineVoiceSubmission(draft: string, transcript: string): string {
-  return [draft.trim(), transcript].filter(Boolean).join('\n');
 }
 
 export function NeoComposer({
@@ -109,7 +109,9 @@ export function NeoComposer({
     record: VoiceRecordEntry,
     transcript: string
   ): Promise<VoiceSendOutcome> {
-    const composed = combineVoiceSubmission(draft, transcript);
+    if (record.sendText === undefined && (attachments.files.length > 0 || attachments.reading > 0))
+      return { kind: 'unconfirmed' };
+    const composed = record.sendText ?? combineVoiceSubmission(draft, transcript);
     if (!composed.trim() || inFlight.current || sending || !connected)
       return { kind: 'unconfirmed' };
     inFlight.current = true;
@@ -242,6 +244,7 @@ export function NeoComposer({
           <NeoVoice
             sessionId={sessionId}
             connected={connected}
+            draftText={draft}
             onTranscript={onTranscript}
             onSendVoice={async (text, recordId) => {
               const record = await getVoiceRecord(recordId);
@@ -271,10 +274,17 @@ export function NeoComposer({
               sending ||
               attachments.reading > 0 ||
               (voiceBusy && !recordingVoice) ||
-              (!draft.trim() && !attachments.files.length && !recordingVoice)
+              (!draft.trim() && !attachments.files.length && !recordingVoice) ||
+              (recordingVoice && attachments.files.length > 0)
             }
             aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
-            title={recordingVoice ? 'Stop recording and send it now' : undefined}
+            title={
+              recordingVoice && attachments.files.length > 0
+                ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
+                : recordingVoice
+                  ? 'Stop recording and send it now'
+                  : undefined
+            }
           >
             <NeoIcon name="up" />
           </Button>

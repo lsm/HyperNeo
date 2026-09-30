@@ -7,6 +7,7 @@ export interface VoiceRecordEntry {
   peakLevel: number;
   createdAt: number;
   intent?: 'draft' | 'send';
+  sendDraft?: string;
   sendText?: string;
 }
 
@@ -120,6 +121,7 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
     typeof entry.createdAt === 'number' &&
     Number.isFinite(entry.createdAt) &&
     (entry.intent === undefined || entry.intent === 'draft' || entry.intent === 'send') &&
+    (entry.sendDraft === undefined || typeof entry.sendDraft === 'string') &&
     (entry.sendText === undefined || typeof entry.sendText === 'string')
   );
 }
