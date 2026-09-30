@@ -4,6 +4,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient } from './neo-intake.ts';
+import { readNeoConversationAsks } from './conversation-ask-client.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { readNeoPublications } from './publication-client.ts';
@@ -145,6 +146,7 @@ export function useNeo() {
   return {
     publications,
     readPublications: readNeoPublications,
+    readAsks: readNeoConversationAsks,
     store,
     snapshot,
     viewSnapshot: selectedId ? scopedSnapshot : snapshot,
