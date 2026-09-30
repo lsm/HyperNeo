@@ -60,6 +60,17 @@ vi.mock('../../lib/connection-manager.ts', () => ({
   },
 }));
 
+const parked = vi.hoisted(() => ({ entries: [] as unknown[], fail: false }));
+vi.mock('../../lib/voice/voice-transcript-outbox.ts', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueTranscript: (sessionId: string, text: string, id?: string) => {
+    if (parked.fail) return false;
+    parked.entries.push({ sessionId, text, id });
+    return true;
+  },
+  removePendingTranscript: vi.fn(),
+}));
+
 const store = vi.hoisted(() => ({
   records: new Map<string, Record<string, unknown>>(),
   puts: [] as Array<Record<string, unknown>>,
@@ -139,6 +150,8 @@ beforeEach(() => {
   hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
   store.puts.length = 0;
+  parked.entries.length = 0;
+  parked.fail = false;
   attachmentFiles.current = [];
   voice.recording = true;
   voice.stop.mockImplementation(async () => {
@@ -283,7 +296,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(persisted?.intent).toBe('send');
   });
 
-  it('keeps the recording and reports the refusal when intake says no', async () => {
+  it('parks the transcript, then removes the record, on an explicit refusal', async () => {
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'operation.invoke')
         return { ok: false, reason: 'Open a Neo conversation before sending.' };
@@ -298,8 +311,43 @@ describe('NeoComposer and NeoVoice send integration', () => {
     await waitFor(() =>
       expect(onError).toHaveBeenCalledWith('Open a Neo conversation before sending.')
     );
-    expect(store.records.size).toBe(1);
+    expect(parked.entries).toEqual([
+      { sessionId: 'neo-1', text: 'typed first\nspoken second', id: expect.any(String) },
+    ]);
+    await waitFor(() => expect(store.records.size).toBe(0));
     expect(onDraft).not.toHaveBeenCalledWith('');
+  });
+
+  it('retains the recording and parks nothing when the receipt cannot be read', async () => {
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'operation.invoke') return { ok: true, requestId: 'someone-else' };
+      if (method === 'voice.transcribe') return { text: 'spoken second' };
+      throw new Error(`No handler for method: ${method}`);
+    });
+    const { onError } = renderComposer();
+
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+
+    await waitFor(() => expect(reportedErrors(onError)).toHaveLength(1));
+    expect(parked.entries).toEqual([]);
+    expect(store.records.size).toBe(1);
+  });
+
+  it('retains the recording when parking the transcript is not durable', async () => {
+    parked.fail = true;
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'operation.invoke') return { ok: false, reason: 'Session archived.' };
+      if (method === 'voice.transcribe') return { text: 'spoken second' };
+      throw new Error(`No handler for method: ${method}`);
+    });
+    renderComposer();
+
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+
+    await waitFor(() => expect(store.records.size).toBe(1));
+    expect(parked.entries).toEqual([]);
   });
 
   it('keeps the recording when the send cannot be confirmed', async () => {

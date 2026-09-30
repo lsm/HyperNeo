@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
-import { invokeOperation } from '../operations.ts';
+import { NEO_UNCONFIRMED_RECEIPT, submitNeoDraft } from '../../neo/neo-intake.ts';
 import { connectionState } from '../state';
 import {
   deleteVoiceRecord,
@@ -72,33 +72,6 @@ export function combineVoiceSubmission(draft: string, transcript: string): strin
   return [draft.trim(), transcript].filter(Boolean).join('\n');
 }
 
-function voiceIntakePayload(record: VoiceRecordEntry, text: string) {
-  return { sessionId: record.sessionId, requestId: record.id, content: text };
-}
-
-export function readVoiceIntakeReceipt(response: unknown, requestId: string): VoiceSendOutcome {
-  if (typeof response !== 'object' || response === null || !('ok' in response)) {
-    return { kind: 'unconfirmed' };
-  }
-  const receipt = response as {
-    ok?: unknown;
-    requestId?: unknown;
-    messageId?: unknown;
-    created?: unknown;
-    reason?: unknown;
-  };
-  if (
-    receipt.ok === true &&
-    receipt.requestId === requestId &&
-    receipt.messageId === requestId &&
-    typeof receipt.created === 'boolean'
-  )
-    return { kind: 'accepted' };
-  if (receipt.ok === false && typeof receipt.reason === 'string' && receipt.reason.length > 0)
-    return { kind: 'refused', reason: receipt.reason };
-  return { kind: 'unconfirmed' };
-}
-
 export async function submitVoiceSendIntent(
   hub: MessageHub,
   record: VoiceRecordEntry,
@@ -107,21 +80,41 @@ export async function submitVoiceSendIntent(
   if (!text.trim()) return { kind: 'unconfirmed' };
   const settled = record.sendText ?? text;
   if (record.sendText !== undefined && record.sendText !== text)
-    return { kind: 'refused', reason: 'That recording already has a different message queued.' };
+    return refuseVoiceSend(
+      record,
+      settled,
+      'That recording already has a different message queued.'
+    );
   if (record.sendText === undefined) {
     const stored = await putVoiceRecord({ ...record, sendText: settled });
     if (!stored) return { kind: 'unconfirmed' };
   }
+  let receipt:
+    | { ok: true; requestId: string; messageId: string; created: boolean }
+    | { ok: false; reason: string };
   try {
-    const response = await invokeOperation<unknown>(
-      hub,
-      'neo.message.send',
-      voiceIntakePayload(record, settled)
+    receipt = await submitNeoDraft(
+      { sessionId: record.sessionId, requestId: record.id, text: settled },
+      async () => hub
     );
-    return readVoiceIntakeReceipt(response, record.id);
   } catch {
     return { kind: 'unconfirmed' };
   }
+  if (receipt.ok) return { kind: 'accepted' };
+  if (receipt.reason === NEO_UNCONFIRMED_RECEIPT) return { kind: 'unconfirmed' };
+  return refuseVoiceSend(record, settled, receipt.reason);
+}
+
+async function refuseVoiceSend(
+  record: VoiceRecordEntry,
+  text: string,
+  reason: string
+): Promise<VoiceSendOutcome> {
+  if (!enqueueTranscript(record.sessionId, text, record.id)) {
+    removePendingTranscript(record.id);
+    return { kind: 'unconfirmed' };
+  }
+  return { kind: 'refused', reason };
 }
 
 type VoiceSendCompletion = 'sent' | 'parked' | 'discarded' | 'retry';
@@ -156,11 +149,7 @@ async function completeSendIntent(
   if (!text.trim()) return 'discarded';
   const outcome = await submitVoiceSendIntent(hub, entry, text);
   if (outcome.kind === 'accepted') return 'sent';
-  if (outcome.kind === 'refused') {
-    if (enqueueTranscript(entry.sessionId, text, entry.id)) return 'parked';
-    removePendingTranscript(entry.id);
-    return 'retry';
-  }
+  if (outcome.kind === 'refused') return 'parked';
   return 'retry';
 }
 

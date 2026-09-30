@@ -77,12 +77,12 @@ export function NeoVoice({
 
   async function deliverSendIntent(recordId: string, text: string) {
     const outcome = await onSendVoice(text, recordId);
-    if (outcome.kind === 'accepted') {
-      await deleteVoiceRecord(recordId);
+    if (outcome.kind === 'refused') onError(outcome.reason);
+    else if (outcome.kind === 'unconfirmed') {
+      onError('Could not send that recording. It is saved below so you can retry.');
       return;
     }
-    if (outcome.kind === 'refused') onError(outcome.reason);
-    else onError('Could not send that recording. It is saved below so you can retry.');
+    await deleteVoiceRecord(recordId);
   }
 
   async function transcribe(intent: 'draft' | 'send' = 'draft', entry?: VoiceRecordEntry) {
