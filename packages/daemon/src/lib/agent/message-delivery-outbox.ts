@@ -52,6 +52,7 @@ export interface PersistPromptArgs extends PromptInput {
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
   materializeOnly?: boolean;
+  deferPostSaveSideEffects?: (publish: () => void) => void;
 }
 
 export interface PersistPromptResult {
@@ -775,7 +776,10 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
 function publishEnsuredPrompt(ctx: EnsurePromptAppliedCtx): EnsurePromptAppliedCtx {
   if (!ctx.created) return ctx;
   try {
-    ctx.deps.runPostSaveSideEffects(ctx.sessionId, ctx.dbMessageId, ctx.countsTowardsBadge);
+    const publish = () =>
+      ctx.deps.runPostSaveSideEffects(ctx.sessionId, ctx.dbMessageId, ctx.countsTowardsBadge);
+    if (ctx.deferPostSaveSideEffects) ctx.deferPostSaveSideEffects(publish);
+    else publish();
   } catch {}
   return ctx;
 }

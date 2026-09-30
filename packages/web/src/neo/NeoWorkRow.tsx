@@ -34,7 +34,7 @@ export function NeoWorkRow({
         <button
           type="button"
           onClick={onJump}
-          title="Jump to this work's card at its originating message"
+          title="Open this work's scene"
           class="min-w-0 flex-1 truncate text-left text-sm hover:text-accent focus-visible:outline-accent"
         >
           {work.title}

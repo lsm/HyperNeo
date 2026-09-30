@@ -3,6 +3,8 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
@@ -20,6 +22,7 @@ import { createNeoWorkReporter } from './work-report.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
+import { createNeoPublisher } from './publication-operation.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,12 +53,16 @@ export function neoWorkScratchDir(sessionId: string): string {
 
 export class NeoService {
   readonly repo: NeoRepository;
+  readonly publications: NeoPublicationRepository;
+  readonly asks: NeoConversationAskRepository;
+  readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
+  readonly notifyChanged: () => void;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -68,7 +75,12 @@ export class NeoService {
     hub: MessageHub,
     events: InternalEventBus<DaemonInternalEventMap>
   ) {
+    this.notifyChanged = () => {
+      hub.event('neo.changed', {});
+    };
     this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
+    this.publications = new NeoPublicationRepository(db.getDatabase());
+    this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
@@ -92,6 +104,18 @@ export class NeoService {
       getConsultation: (id) => this.consultations.get(id),
       getWork: (id) => this.repo.getWork(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
+    });
+    this.publish = createNeoPublisher({
+      getBinding: (id) => this.repo.getBindingBySession(id),
+      getRootBinding: () => this.repo.getBindingForConcern(null),
+      hasConcern: (id) => !!this.repo.getConcern(id),
+      getWork: (id) => this.repo.getWork(id),
+      getConsultation: (id) => this.consultations.get(id),
+      resolveAskOrigin: (input) => this.resolveAskOrigin(input),
+      append: (input) => this.publications.append(input),
+      notify: () => {
+        void hub.event('neo.changed', {});
+      },
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {

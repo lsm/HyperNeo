@@ -51,6 +51,7 @@ export function NeoConcerns({
   workDisabled = false,
   onWorkAction = () => {},
   onJumpToWork = () => false,
+  sceneSurface = false,
 }: {
   concerns: NeoConcern[];
   works?: NeoWork[];
@@ -61,6 +62,7 @@ export function NeoConcerns({
   workDisabled?: boolean;
   onWorkAction?: (id: string, action: 'start' | 'cancel') => void;
   onJumpToWork?: (id: string) => boolean;
+  sceneSurface?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [unresolved, setUnresolved] = useState<string | null>(null);
@@ -102,7 +104,7 @@ export function NeoConcerns({
       </button>
       <aside
         id="neo-concerns-list"
-        aria-label="Your concerns and work"
+        aria-label={sceneSurface ? 'Your concerns' : 'Your concerns and work'}
         class={`neo-concerns-card ${expanded ? 'is-open' : ''}`}
       >
         <div class="mb-3 flex items-center justify-between gap-2">
@@ -124,7 +126,7 @@ export function NeoConcerns({
             <NeoIcon name="close" />
           </button>
         </div>
-        {openWork.length > 0 && (
+        {!sceneSurface && openWork.length > 0 && (
           <div class="mb-3">
             <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-faint">
               Work · {openWork.length}

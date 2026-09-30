@@ -132,6 +132,7 @@ export function NeoConversation({
   store,
   sessionId,
   works = [],
+  sceneSurface = false,
   snapshot = null,
   workBusy = null,
   workDisabled = false,
@@ -140,6 +141,7 @@ export function NeoConversation({
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
+  sceneSurface?: boolean;
   snapshot?: NeoSnapshot | null;
   workBusy?: string | null;
   workDisabled?: boolean;
@@ -178,10 +180,17 @@ export function NeoConversation({
   );
   const visible = completedConversation(conversation);
   const workReplies = completedWorkReplies(conversation, works, sessionId);
-  const inflight = inflightWorkByOrigin(works, sessionId, messageIdSet(visible));
+  const inflight = inflightWorkByOrigin(
+    sceneSurface ? [] : works,
+    sessionId,
+    messageIdSet(visible)
+  );
   const placed = new Set([...inflight.values()].flat().map((work) => work.id));
   const unplaced = works.filter(
-    (work) => (work.status === 'proposed' || work.status === 'queued') && !placed.has(work.id)
+    (work) =>
+      !sceneSurface &&
+      (work.status === 'proposed' || work.status === 'queued') &&
+      !placed.has(work.id)
   );
   const progress = projectNeoProcessingActivity(
     sessionId,

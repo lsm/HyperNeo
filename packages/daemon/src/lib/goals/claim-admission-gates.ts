@@ -1,5 +1,5 @@
-import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 import type { SpaceGoalOutcomeNotificationStatus } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type ClaimAdmissionDenyReason =
   | 'unauthorized'
@@ -11,7 +11,7 @@ export type ClaimAdmissionDecision =
   | { action: 'admit' }
   | { action: 'deny'; reason: ClaimAdmissionDenyReason };
 
-export interface ClaimAdmissionCtx {
+export interface ClaimAdmissionInput {
   actorAgentId: string | null;
   authorizedAgentIds: string[];
   humanAdmissionAllowed: boolean;
@@ -25,61 +25,65 @@ export interface ClaimAdmissionCtx {
   isResubmission: boolean;
   observedGoalRevision: number | null;
   currentGoalRevision: number;
-  decision: ClaimAdmissionDecision | null;
 }
 
-export type ClaimAdmissionInput = Omit<ClaimAdmissionCtx, 'decision'>;
+export type ClaimAdmissionReason = ClaimAdmissionDenyReason;
 
-function decided(ctx: ClaimAdmissionCtx, decision: ClaimAdmissionDecision): ClaimAdmissionCtx {
-  return { ...ctx, decision };
+export function isAuthorizedActor(input: ClaimAdmissionInput): boolean {
+  if (input.actorAgentId === null) return input.humanAdmissionAllowed;
+  return input.authorizedAgentIds.includes(input.actorAgentId);
 }
 
-function isAuthorizedActor(ctx: ClaimAdmissionCtx): boolean {
-  if (ctx.actorAgentId === null) return ctx.humanAdmissionAllowed;
-  return ctx.authorizedAgentIds.includes(ctx.actorAgentId);
+export function claimRevisionBase(input: ClaimAdmissionInput): number {
+  return input.isResubmission
+    ? (input.observedGoalRevision ?? input.notificationGoalRevision)
+    : input.notificationGoalRevision;
 }
 
-export function applyAuthorizedGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  return isAuthorizedActor(ctx) ? ctx : decided(ctx, { action: 'deny', reason: 'unauthorized' });
+export function gateClaimActorAuthorized(
+  input: ClaimAdmissionInput
+): { value: ClaimAdmissionInput } | { reason: ClaimAdmissionReason } {
+  return isAuthorizedActor(input) ? { value: input } : { reason: 'unauthorized' };
 }
 
-export function applyUnsupersededGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  return ctx.notificationStatus === 'pending'
-    ? ctx
-    : decided(ctx, { action: 'deny', reason: 'superseded' });
+export function gateClaimNotificationPending(
+  input: ClaimAdmissionInput
+): { value: ClaimAdmissionInput } | { reason: ClaimAdmissionReason } {
+  return input.notificationStatus === 'pending' ? { value: input } : { reason: 'superseded' };
 }
 
-export function applyIdentityBoundGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  const taskMatches = ctx.claimedTaskId === ctx.notificationTaskId;
-  const goalMatches = ctx.claimedGoalId === ctx.notificationGoalId;
-  return goalMatches && taskMatches
-    ? ctx
-    : decided(ctx, { action: 'deny', reason: 'identity_mismatch' });
+export function gateClaimIdentityBound(
+  input: ClaimAdmissionInput
+): { value: ClaimAdmissionInput } | { reason: ClaimAdmissionReason } {
+  const matches =
+    input.claimedGoalId === input.notificationGoalId &&
+    input.claimedTaskId === input.notificationTaskId;
+  return matches ? { value: input } : { reason: 'identity_mismatch' };
 }
 
-export function applyRevisionMatchGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  if (!ctx.mutatesGoalState) return ctx;
-  const baseRevision = ctx.isResubmission
-    ? (ctx.observedGoalRevision ?? ctx.notificationGoalRevision)
-    : ctx.notificationGoalRevision;
-  return baseRevision === ctx.currentGoalRevision
-    ? ctx
-    : decided(ctx, { action: 'deny', reason: 'stale_revision' });
+export function gateClaimRevisionCurrent(
+  input: ClaimAdmissionInput
+): { value: ClaimAdmissionInput } | { reason: ClaimAdmissionReason } {
+  if (!input.mutatesGoalState) return { value: input };
+  return claimRevisionBase(input) === input.currentGoalRevision
+    ? { value: input }
+    : { reason: 'stale_revision' };
 }
 
-export function applyAdmitGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  return decided(ctx, { action: 'admit' });
+export function claimAdmissionOutcome(
+  input: ClaimAdmissionInput | ClaimAdmissionReason
+): ClaimAdmissionDecision {
+  return typeof input === 'string' ? { action: 'deny', reason: input } : { action: 'admit' };
 }
 
-const claimAdmissionRun = decisionRun('claim-admission', [
-  applyAuthorizedGate,
-  applyUnsupersededGate,
-  applyIdentityBoundGate,
-  applyRevisionMatchGate,
-  applyAdmitGate,
-]);
+export const runClaimAdmission = (superpipe({})('claim-admission') as PipelineAPI)
+  .input(['input'])
+  .pipe(gateClaimActorAuthorized, 'input', 'result:admission')
+  .pipe(gateClaimNotificationPending, 'admission', 'result:admission')
+  .pipe(gateClaimIdentityBound, 'admission', 'result:admission')
+  .pipe(gateClaimRevisionCurrent, 'admission', 'result:admission')
+  .end('admission') as (input: ClaimAdmissionInput) => ClaimAdmissionInput | ClaimAdmissionReason;
 
 export function decideClaimAdmission(input: ClaimAdmissionInput): ClaimAdmissionDecision {
-  const ctx = claimAdmissionRun(input);
-  return ctx.decision ?? { action: 'deny', reason: 'unauthorized' };
+  return claimAdmissionOutcome(runClaimAdmission(input));
 }

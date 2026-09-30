@@ -3,6 +3,7 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
+import { combineVoiceSubmission } from '../../lib/voice/voice-audio-outbox.ts';
 import { neoEnterSends } from '../NeoComposer.tsx';
 
 const sendMessage = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
@@ -166,6 +167,14 @@ describe('NeoComposer Enter behavior', () => {
     const hint = document.querySelector('[role="status"]') as HTMLElement;
     expect(hint.className).not.toContain('hidden');
     expect(hint.textContent).toContain('Return adds a line');
+  });
+
+  it('voice submissions combine with the typed draft instead of overwriting it', () => {
+    expect(combineVoiceSubmission('typed first', 'spoken second')).toBe(
+      'typed first\nspoken second'
+    );
+    expect(combineVoiceSubmission('', 'spoken only')).toBe('spoken only');
+    expect(combineVoiceSubmission('  ', 'spoken only')).toBe('spoken only');
   });
 
   it('keeps the send button labeled and keyboard reachable', () => {

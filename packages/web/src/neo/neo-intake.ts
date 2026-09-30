@@ -35,6 +35,8 @@ export function neoDraftPayload(submission: Submission) {
   };
 }
 
+export const NEO_UNCONFIRMED_RECEIPT = 'Could not confirm this message. Please try again.';
+
 export function requireNeoReceipt(
   response: unknown,
   submission: Submission
@@ -60,10 +62,10 @@ export function requireNeoReceipt(
         },
       };
   }
-  return { reason: { ok: false, reason: 'Could not confirm this message. Please try again.' } };
+  return { reason: { ok: false, reason: NEO_UNCONFIRMED_RECEIPT } };
 }
 
-const submitNeoDraft = (superpipe({})('neo-submit-draft') as PipelineAPI)
+export const submitNeoDraft = (superpipe({})('neo-submit-draft') as PipelineAPI)
   .input(['submission', 'getHub'])
   .pipe(admitNeoDraft, 'submission', 'result:receipt')
   .pipe(neoDraftPayload, 'receipt', 'payload')

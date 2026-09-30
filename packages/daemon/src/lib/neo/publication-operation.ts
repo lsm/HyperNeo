@@ -1,0 +1,232 @@
+import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoPublicationAppendResult,
+  NeoPublicationInput,
+  NeoPublicationLink,
+} from '@hyperneo/shared/types/neo-publication';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { NeoAskOrigin } from './ask-origin.ts';
+import { NeoPublicationSchema } from './publication.ts';
+import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
+
+const Draft = NeoPublicationSchema.omit({
+  conversationId: true,
+  askOrigin: true,
+  producerInput: true,
+});
+type Draft = z.infer<typeof Draft>;
+type Rejection = { accepted: false; reason: string };
+type Producer = {
+  binding: NeoBinding;
+  root: NeoBinding;
+  input: NeoAskOrigin;
+  turn: NonNullable<OperationCaller['neoTurn']>;
+};
+type Proof = Producer & { ask: NeoAskOrigin };
+type LinkEvidence = {
+  link: NeoPublicationLink;
+  exists: boolean;
+  concernId: string | null;
+  origin: NeoAskOrigin | null;
+};
+
+export interface NeoPublicationRuntime {
+  getBinding(id: string): NeoBinding | null;
+  getRootBinding(): NeoBinding | null;
+  hasConcern(id: string): boolean;
+  getWork(id: string): NeoWork | null;
+  getConsultation(id: string): NeoConsultation | null;
+  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
+  append(input: NeoPublicationInput): NeoPublicationAppendResult;
+  notify(): void;
+}
+
+export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
+  const parsed = Draft.safeParse(input);
+  return parsed.success
+    ? { value: parsed.data }
+    : { reason: { accepted: false, reason: 'invalid_publication' } };
+}
+
+export function requirePublicationProducer(
+  caller: OperationCaller,
+  binding: NeoBinding | null,
+  root: NeoBinding | null
+): { value: Producer } | { reason: Rejection } {
+  const turn = caller.neoTurn;
+  return caller.source === 'mcp' &&
+    binding &&
+    binding.sessionId === caller.sessionId &&
+    root?.kind === 'neo' &&
+    root.concernId === null &&
+    root.sessionId.startsWith('neo:') &&
+    ((binding.kind === 'neo' &&
+      binding.sessionId === root.sessionId &&
+      binding.concernId === null) ||
+      (binding.kind === 'concern' && binding.concernId !== null)) &&
+    turn?.messageId &&
+    turn.isLive()
+    ? {
+        value: {
+          binding,
+          root,
+          input: { sessionId: binding.sessionId, messageId: turn.messageId },
+          turn,
+        },
+      }
+    : { reason: { accepted: false, reason: 'live_avatar_required' } };
+}
+
+export function requirePublicationAsk(
+  producer: Producer,
+  ask: NeoAskOrigin | null
+): { value: Proof } | { reason: Rejection } {
+  return ask
+    ? { value: { ...producer, ask } }
+    : { reason: { accepted: false, reason: 'unknown_ask_origin' } };
+}
+
+export function requirePublicationLinks(
+  proof: Proof,
+  evidence: readonly LinkEvidence[]
+): { value: Proof } | { reason: Rejection } {
+  const valid = evidence.every(
+    ({ link, exists, concernId, origin }) =>
+      exists &&
+      (proof.binding.kind === 'neo' || concernId === proof.binding.concernId) &&
+      (link.kind === 'concern' ||
+        (origin?.sessionId === proof.ask.sessionId && origin.messageId === proof.ask.messageId))
+  );
+  return valid
+    ? { value: proof }
+    : { reason: { accepted: false, reason: 'invalid_scene_reference' } };
+}
+
+export function requirePublicationLifetime(
+  proof: Proof,
+  caller: OperationCaller,
+  binding: NeoBinding | null,
+  root: NeoBinding | null,
+  consultation: NeoConsultation | null = null,
+  now?: number
+): { value: Proof } | { reason: Rejection } {
+  return caller.neoTurn === proof.turn &&
+    caller.sessionId === proof.input.sessionId &&
+    proof.turn.messageId === proof.input.messageId &&
+    proof.turn.isLive() &&
+    (!proof.turn.consultationId ||
+      (consultation?.id === proof.turn.consultationId &&
+        consultation.status !== 'failed' &&
+        now !== undefined &&
+        now < consultation.createdAt + CONSULTATION_TIMEOUT_MS &&
+        consultation.sessionId === proof.input.sessionId &&
+        consultation.concernId === proof.binding.concernId &&
+        proof.input.messageId === `neo-consult:${consultation.id}:request`)) &&
+    binding?.kind === proof.binding.kind &&
+    binding.concernId === proof.binding.concernId &&
+    binding.sessionId === proof.binding.sessionId &&
+    root?.sessionId === proof.root.sessionId &&
+    root.kind === 'neo' &&
+    root.concernId === null
+    ? { value: proof }
+    : { reason: { accepted: false, reason: 'publication_superseded' } };
+}
+
+function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
+  if (link.kind === 'concern')
+    return { link, exists: runtime.hasConcern(link.id), concernId: link.id, origin: null };
+  const item = link.kind === 'work' ? runtime.getWork(link.id) : runtime.getConsultation(link.id);
+  const input = item?.originMessageId
+    ? { sessionId: item.originSessionId, messageId: item.originMessageId }
+    : link.kind === 'consultation' && item?.sessionId
+      ? { sessionId: item.sessionId, messageId: `neo-consult:${item.id}:request` }
+      : null;
+  return {
+    link,
+    exists: !!item,
+    concernId: item?.concernId ?? null,
+    origin: input ? runtime.resolveAskOrigin(input) : null,
+  };
+}
+
+export function createNeoPublisher(runtime: NeoPublicationRuntime) {
+  return (superpipe({})('neo-publication-publish') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitPublicationDraft, 'input', 'result:publication')
+    .pipe((draft: Draft) => draft, 'publication', 'draft')
+    .pipe(
+      (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
+      'caller',
+      'binding'
+    )
+    .pipe(() => runtime.getRootBinding(), 'caller', 'root')
+    .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
+    .pipe((producer: Producer) => runtime.resolveAskOrigin(producer.input), 'publication', 'ask')
+    .pipe(requirePublicationAsk, ['publication', 'ask'], 'result:publication')
+    .pipe(
+      (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),
+      'draft',
+      'links'
+    )
+    .pipe(requirePublicationLinks, ['publication', 'links'], 'result:publication')
+    .pipe(
+      (proof: Proof, caller: OperationCaller) =>
+        requirePublicationLifetime(
+          proof,
+          caller,
+          runtime.getBinding(proof.input.sessionId),
+          runtime.getRootBinding(),
+          proof.turn.consultationId ? runtime.getConsultation(proof.turn.consultationId) : null,
+          Date.now()
+        ),
+      ['publication', 'caller'],
+      'result:publication'
+    )
+    .pipe(
+      (draft: Draft, proof: Proof) =>
+        runtime.append({
+          ...draft,
+          conversationId: proof.root.sessionId.slice(4),
+          askOrigin: proof.ask,
+          producerInput: proof.input,
+        }),
+      ['draft', 'publication'],
+      'publication'
+    )
+    .pipe(
+      (receipt: NeoPublicationAppendResult) => {
+        if (receipt.accepted) runtime.notify();
+        return receipt;
+      },
+      'publication',
+      'publication'
+    )
+    .end('publication') as (
+    input: unknown,
+    caller: OperationCaller
+  ) => NeoPublicationAppendResult | Rejection;
+}
+
+export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {
+  return defineOperation({
+    name: 'neo.publication.publish',
+    description:
+      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+    policy: { safetyClass: 'mutate', roles: ['neo'] },
+    inputSchema: Draft,
+    resultSchema: z.union([
+      z.object({ accepted: z.literal(false), reason: z.string() }),
+      z.object({
+        accepted: z.literal(true),
+        created: z.boolean(),
+        publication: NeoPublicationSchema.extend({
+          sequence: z.number().int().positive(),
+          createdAt: z.string(),
+        }),
+      }),
+    ]),
+    execute: async (input, caller) => publish(input, caller),
+  });
+}

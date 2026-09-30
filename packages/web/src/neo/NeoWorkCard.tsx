@@ -12,16 +12,32 @@ const labels: Record<NeoWork['status'], string> = {
   cancelled: 'Stopped',
 };
 
+const interactive =
+  'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
+
+export function sceneOpenSelector(id: string): string {
+  return `[data-scene-open="${id.replace(/["\\]/g, '\\$&')}"]`;
+}
+
+function insideUserSelection(scope: Element): boolean {
+  const selection = document.getSelection?.();
+  if (!selection || selection.isCollapsed) return false;
+  const { anchorNode, focusNode } = selection;
+  return (!!anchorNode && scope.contains(anchorNode)) || (!!focusNode && scope.contains(focusNode));
+}
+
 export function NeoWorkCard({
   work,
   busy,
   disabled,
   onAction,
+  onOpen,
 }: {
   work: NeoWork;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: 'start' | 'cancel') => void;
+  onOpen?: (id: string) => void;
 }) {
   const active = work.status === 'queued';
   const color =
@@ -34,6 +50,16 @@ export function NeoWorkCard({
     <article
       aria-label={work.title}
       class="neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm"
+      onClick={
+        onOpen
+          ? (event) => {
+              const target = event.target as Element | null;
+              if (!target || target.closest?.(interactive)) return;
+              if (insideUserSelection(event.currentTarget as Element)) return;
+              onOpen(work.id);
+            }
+          : undefined
+      }
     >
       <div class="mb-3 flex items-center gap-3">
         <span class={`rounded-xl p-2 ${color}`}>
@@ -47,7 +73,20 @@ export function NeoWorkCard({
           />
         )}
       </div>
-      <h3 class="break-words text-base font-medium">{work.title}</h3>
+      <h3 class="break-words text-base font-medium">
+        {onOpen ? (
+          <button
+            type="button"
+            onClick={() => onOpen(work.id)}
+            data-scene-open={work.id}
+            class="text-left hover:text-accent focus-visible:outline-accent"
+          >
+            {work.title}
+          </button>
+        ) : (
+          work.title
+        )}
+      </h3>
       <details class="mt-3 text-sm text-fg-muted">
         <summary class="cursor-pointer">
           {work.status === 'proposed' ? 'Review the work brief' : 'What was delegated'}
