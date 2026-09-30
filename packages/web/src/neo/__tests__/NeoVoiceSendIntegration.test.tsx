@@ -42,6 +42,7 @@ const hubRequest = vi.fn(
     throw new Error(`No handler for method: ${method}`);
   }
 );
+const defaultHub = hubRequest.getMockImplementation()!;
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHubIfConnected: () => ({ request: hubRequest }),
@@ -110,6 +111,13 @@ function renderComposer(draft = 'typed first') {
 const reportedErrors = (onError: ReturnType<typeof vi.fn>) =>
   onError.mock.calls.map(([message]) => message).filter((message) => message !== '');
 
+const buttonNamed = (name: string | RegExp) =>
+  screen.getByRole('button', { name }) as HTMLButtonElement;
+const stopControl = () => buttonNamed('Stop recording and keep the text as a draft');
+const awaitRecordingComposer = () =>
+  waitFor(() => expect(buttonNamed('Stop recording and send the message')).toBeTruthy());
+const sendControl = () => buttonNamed('Stop recording and send the message');
+
 const asks = () =>
   hubRequest.mock.calls.filter(
     ([method, payload]) =>
@@ -118,23 +126,61 @@ const asks = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hubRequest.mockReset().mockImplementation(defaultHub);
   store.records.clear();
   store.puts.length = 0;
   voice.recording = true;
-  voice.stop.mockResolvedValue({
-    audioBase64: 'aGk=',
-    mimeType: 'audio/wav',
-    peakLevel: 0.5,
-    hitDurationLimit: false,
+  voice.stop.mockImplementation(async () => {
+    voice.recording = false;
+    return {
+      audioBase64: 'aGk=',
+      mimeType: 'audio/wav',
+      peakLevel: 0.5,
+      hitDurationLimit: false,
+    };
   });
 });
 afterEach(cleanup);
 
 describe('NeoComposer and NeoVoice send integration', () => {
+  it('the existing Send control is the only send affordance and is enabled while recording', async () => {
+    renderComposer();
+    await awaitRecordingComposer();
+    expect(sendControl().disabled).toBe(false);
+    expect(screen.getAllByRole('button', { name: /send/i })).toHaveLength(1);
+    expect(stopControl().disabled).toBe(false);
+  });
+
+  it('re-disables Send and Stop once transcription is under way', async () => {
+    let releaseTranscribe: (value: Record<string, unknown>) => void = () => {};
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'voice.transcribe')
+        return new Promise((resolve) => {
+          releaseTranscribe = resolve;
+        });
+      if (method === 'operation.invoke')
+        return { ok: true, requestId: 'rec-1', messageId: 'rec-1', created: true };
+      throw new Error(`No handler for method: ${method}`);
+    });
+    renderComposer();
+
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
+    await waitFor(() =>
+      expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
+    );
+    expect(buttonNamed('Send message').disabled).toBe(true);
+    expect(stopControl().disabled).toBe(true);
+
+    releaseTranscribe({ text: 'spoken second' });
+    await waitFor(() => expect(asks()).toHaveLength(1));
+  });
+
   it('sends the typed draft plus the transcript under the durable record id', async () => {
     const { onSend, onDraft, onError } = renderComposer();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and send the message' }));
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
 
     await waitFor(() => expect(asks()).toHaveLength(1));
     const requestId = asks()[0]?.[1].input.requestId;
@@ -153,7 +199,8 @@ describe('NeoComposer and NeoVoice send integration', () => {
 
   it('persists the send payload before the first attempt so a retry is identical', async () => {
     renderComposer();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and send the message' }));
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
 
     await waitFor(() => expect(asks()).toHaveLength(1));
     const persisted = store.puts.find((entry) => entry.sendText !== undefined);
@@ -170,7 +217,8 @@ describe('NeoComposer and NeoVoice send integration', () => {
     });
     const { onError, onDraft } = renderComposer();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and send the message' }));
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
 
     await waitFor(() =>
       expect(onError).toHaveBeenCalledWith('Open a Neo conversation before sending.')
@@ -187,7 +235,8 @@ describe('NeoComposer and NeoVoice send integration', () => {
     });
     const { onError } = renderComposer();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and send the message' }));
+    await awaitRecordingComposer();
+    fireEvent.click(sendControl());
 
     await waitFor(() => expect(asks()).toHaveLength(1));
     await waitFor(() => expect(reportedErrors(onError)).toHaveLength(1));

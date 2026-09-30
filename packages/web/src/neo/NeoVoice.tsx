@@ -20,20 +20,24 @@ import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { useNeoVoiceSettings } from './useNeoVoiceSettings.ts';
 
+export type VoicePhase = 'idle' | 'recording' | 'working';
+
 export function NeoVoice({
   sessionId,
   connected,
   onTranscript,
   onSendVoice,
+  onSendHandle,
   onError,
-  onBusy,
+  onPhase,
 }: {
   sessionId: string;
   connected: boolean;
   onTranscript: (text: string) => void;
   onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
+  onSendHandle: (send: (() => void) | null) => void;
   onError: (message: string) => void;
-  onBusy: (busy: boolean) => void;
+  onPhase: (phase: VoicePhase) => void;
 }) {
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
@@ -44,13 +48,15 @@ export function NeoVoice({
   latest.current = recorder;
   const active =
     recorder.isRecording || recorder.isStarting || recorder.durationLimitHit || !!transcribing;
+  const phase: VoicePhase = recorder.isRecording ? 'recording' : active ? 'working' : 'idle';
   const records = pendingVoiceAudioRecords.value.filter((entry) => entry.sessionId === sessionId);
+  const submitForSend = useRef<() => void>(() => {});
   useEffect(() => {
     void refreshPendingVoiceAudio();
   }, []);
   useEffect(() => {
-    onBusy(active);
-  }, [active, onBusy]);
+    onPhase(phase);
+  }, [phase, onPhase]);
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -128,6 +134,14 @@ export function NeoVoice({
     if (recorder.durationLimitHit) void transcribe('draft');
   }, [recorder.durationLimitHit]);
 
+  submitForSend.current = () => {
+    void transcribe('send');
+  };
+  useEffect(() => {
+    onSendHandle(() => submitForSend.current());
+    return () => onSendHandle(null);
+  }, [onSendHandle]);
+
   if (!enabled && !active && !records.length) return null;
   return (
     <>
@@ -167,16 +181,6 @@ export function NeoVoice({
             title="Stop — transcribe into an editable draft, never send"
           >
             <NeoIcon name="pause" class="text-cat-teal" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!!transcribing || recorder.isStarting}
-            onClick={() => void transcribe('send')}
-            aria-label="Stop recording and send the message"
-            title="Send — transcribe and send once, no second press"
-          >
-            <NeoIcon name="up" class="text-accent" />
           </Button>
         </div>
       ) : (
