@@ -326,9 +326,11 @@ describe('counts and jump', () => {
         onOpen={() => {}}
       />
     );
-    const list = screen.getByRole('complementary', { name: 'Your concerns' });
+    const list = screen.getByRole('complementary', { name: 'Your concerns and work' });
     expect(within(list).getByText('2 things I’m holding for you')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Work in flight · 2' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Work in flight · 2 · 1 thing needs your call' })
+    ).toBeTruthy();
   });
 
   it('closes the panel on a successful jump without approving the work', () => {
@@ -340,10 +342,25 @@ describe('counts and jump', () => {
     expect(onWorkAction).not.toHaveBeenCalled();
   });
 
-  it('keeps the panel open when the jump found no destination', () => {
+  it('keeps the panel open and says so when the jump found no destination', () => {
     const { trigger } = renderPanel([makeWork()], () => false);
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole('button', { name: 'Draft the agenda' }));
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('status').textContent).toBe(
+      '“Draft the agenda” isn’t shown in this view — its brief is here, above.'
+    );
+  });
+
+  it('clears the unresolved hint once a later jump succeeds', () => {
+    let reachable = false;
+    const { trigger } = renderPanel([makeWork()], () => reachable);
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('button', { name: 'Draft the agenda' }));
+    expect(screen.queryByRole('status')).toBeTruthy();
+    reachable = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Draft the agenda' }));
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });

@@ -72,7 +72,7 @@ describe('NeoConcerns', () => {
       name: 'Your concerns · 2 · 1 thing needs your call',
     });
     fireEvent.click(trigger);
-    const list = screen.getByRole('complementary', { name: 'Your concerns' });
+    const list = screen.getByRole('complementary', { name: 'Your concerns and work' });
     expect(within(list).getByText('1 thing needs your call')).toBeTruthy();
     expect(within(list).getAllByText('Your call').length).toBeGreaterThan(0);
     fireEvent.click(within(list).getByRole('button', { name: /Book club/ }));
@@ -94,7 +94,7 @@ describe('NeoConcerns', () => {
       name: 'Your concerns · 3 · 1 thing needs your call',
     });
     fireEvent.click(trigger);
-    const list = screen.getByRole('complementary', { name: 'Your concerns' });
+    const list = screen.getByRole('complementary', { name: 'Your concerns and work' });
     expect(within(list).getByText('3 things I’m holding for you')).toBeTruthy();
   });
 });

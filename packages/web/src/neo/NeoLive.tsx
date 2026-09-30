@@ -156,11 +156,18 @@ export function NeoLive() {
             workDisabled={!connected || !!neo.busyWork}
             onWorkAction={(id, action) => void neo.act(id, action)}
             onJumpToWork={(id) => {
-              nearBottom.current = false;
               const target = document.getElementById(`inline-work-${id}`);
-              if (!target) return false;
-              target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-              return true;
+              if (target) {
+                nearBottom.current = false;
+                target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                return true;
+              }
+              const owner = works.find((work) => work.id === id)?.concernId;
+              if (owner) {
+                open(owner);
+                return true;
+              }
+              return false;
             }}
           />
           <a

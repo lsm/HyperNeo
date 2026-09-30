@@ -63,6 +63,7 @@ export function NeoConcerns({
   onJumpToWork?: (id: string) => boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [unresolved, setUnresolved] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useClickOutside(ref, () => setExpanded(false), expanded);
@@ -81,11 +82,9 @@ export function NeoConcerns({
         ref={trigger}
         type="button"
         class="neo-concerns-trigger relative rounded-xl border border-accent/20 bg-accent/10 p-2 text-accent hover:bg-accent/20"
-        aria-label={
-          concerns.length
-            ? `Your concerns · ${held}${decisionCount ? ` · ${decisionLabel}` : ''}`
-            : `Work in flight · ${held}`
-        }
+        aria-label={`${concerns.length ? 'Your concerns' : 'Work in flight'} · ${held}${
+          decisionCount ? ` · ${decisionLabel}` : ''
+        }`}
         aria-expanded={expanded}
         aria-controls="neo-concerns-list"
         onClick={() => setExpanded(!expanded)}
@@ -103,7 +102,7 @@ export function NeoConcerns({
       </button>
       <aside
         id="neo-concerns-list"
-        aria-label="Your concerns"
+        aria-label="Your concerns and work"
         class={`neo-concerns-card ${expanded ? 'is-open' : ''}`}
       >
         <div class="mb-3 flex items-center justify-between gap-2">
@@ -139,11 +138,19 @@ export function NeoConcerns({
                   disabled={workDisabled}
                   onAction={onWorkAction}
                   onJump={() => {
-                    if (onJumpToWork(work.id)) setExpanded(false);
+                    if (onJumpToWork(work.id)) {
+                      setUnresolved(null);
+                      setExpanded(false);
+                    } else setUnresolved(work.title);
                   }}
                 />
               ))}
             </div>
+            {unresolved && (
+              <p role="status" class="mt-2 text-[11px] leading-relaxed text-fg-muted">
+                “{unresolved}” isn’t shown in this view — its brief is here, above.
+              </p>
+            )}
           </div>
         )}
         <div class="space-y-2">
