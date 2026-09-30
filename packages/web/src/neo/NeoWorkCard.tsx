@@ -15,6 +15,16 @@ const labels: Record<NeoWork['status'], string> = {
 const interactive =
   'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
 
+export function sceneOpenSelector(id: string): string {
+  return `[data-scene-open="${id.replace(/["\\]/g, '\\$&')}"]`;
+}
+
+function insideUserSelection(scope: Element): boolean {
+  const selection = document.getSelection?.();
+  const anchor = selection?.anchorNode;
+  return !!selection && !selection.isCollapsed && !!anchor && scope.contains(anchor);
+}
+
 export function NeoWorkCard({
   work,
   busy,
@@ -43,7 +53,8 @@ export function NeoWorkCard({
         onOpen
           ? (event) => {
               const target = event.target as Element | null;
-              if (target?.closest?.(interactive)) return;
+              if (!target || target.closest?.(interactive)) return;
+              if (insideUserSelection(event.currentTarget as Element)) return;
               onOpen(work.id);
             }
           : undefined
@@ -66,6 +77,7 @@ export function NeoWorkCard({
           <button
             type="button"
             onClick={() => onOpen(work.id)}
+            data-scene-open={work.id}
             class="text-left hover:text-accent focus-visible:outline-accent"
           >
             {work.title}

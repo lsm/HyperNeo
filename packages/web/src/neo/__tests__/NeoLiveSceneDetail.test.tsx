@@ -2,19 +2,20 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { SessionStore } from '../../lib/session-store.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const seen = vi.hoisted(() => ({ workIds: [] as string[] }));
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
-let calls = { live: 0, selects: 0, destroys: 0 };
-let defer = false;
-let deferred: (() => void)[] = [];
+let calls = { live: 0, started: 0, destroys: 0, peak: 0 };
+let hold = false;
+let pending: (() => void)[] = [];
 
 beforeEach(async () => {
   vi.resetModules();
-  calls = { live: 0, selects: 0, destroys: 0 };
-  defer = false;
-  deferred = [];
+  calls = { live: 0, started: 0, destroys: 0, peak: 0 };
+  hold = false;
+  pending = [];
   vi.doMock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
   vi.doMock('../../lib/state.ts', () => ({
     connectionState: { value: 'connected', subscribe: () => () => {} },
@@ -38,21 +39,29 @@ beforeEach(async () => {
   const stores = await import('../../lib/session-store.ts');
   const select = stores.SessionStore.prototype.select;
   const destroy = stores.SessionStore.prototype.destroy;
-  stores.SessionStore.prototype.select = function (id: string) {
-    calls.selects += 1;
+  vi.spyOn(stores.SessionStore.prototype, 'select').mockImplementation(function (
+    this: SessionStore,
+    id: string | null
+  ) {
+    calls.started += 1;
     calls.live += 1;
-    if (!defer) return select.call(this, id);
-    return new Promise((resolve, reject) => {
-      deferred.push(() => {
-        select.call(this, id).then(resolve, reject);
-      });
+    calls.peak = Math.max(calls.peak, calls.live);
+    const real = select.call(this, id);
+    if (!hold) return real;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-  };
-  stores.SessionStore.prototype.destroy = function () {
+    pending.push(release);
+    return real.then((value) => gate.then(() => value));
+  });
+  vi.spyOn(stores.SessionStore.prototype, 'destroy').mockImplementation(function (
+    this: SessionStore
+  ) {
     calls.destroys += 1;
     calls.live -= 1;
     return destroy.call(this);
-  };
+  });
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
 
@@ -154,9 +163,14 @@ const cards = (name: string) =>
 const openScene = (title: string) =>
   fireEvent.click(screen.getByRole('button', { name: `Title ${title.replace('Title ', '')}` }));
 const detail = () => screen.getByRole('region', { name: 'Selected work' });
+const detailCards = () =>
+  within(detail())
+    .getAllByRole('article')
+    .map((n) => n.getAttribute('aria-label'));
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   seen.workIds = [];
 });
 
@@ -164,11 +178,7 @@ describe('NeoLive work scene detail', () => {
   it('opens attention, running and outcome scenes as one native card with a Back control', () => {
     const { model } = renderLive();
     openScene('a-proposed');
-    expect(
-      within(detail())
-        .getAllByRole('article')
-        .map((n) => n.getAttribute('aria-label'))
-    ).toEqual(['Title a-proposed']);
+    expect(detailCards()).toEqual(['Title a-proposed']);
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     fireEvent.click(within(detail()).getByRole('button', { name: 'Start work' }));
     expect(model.act).toHaveBeenCalledWith('a-proposed', 'start');
@@ -203,29 +213,31 @@ describe('NeoLive work scene detail', () => {
     }).toEqual(before);
   });
 
-  it('does not resurrect a same-ref selection across a root to holder and back', () => {
+  it('keeps the same ref visible in the board yet never shows a stale detail', () => {
     const { state } = renderLive();
     set(state, { selectedId: 'a' });
     openScene('a-proposed');
     expect(detail()).toBeTruthy();
-    set(state, { selectedId: 'b' });
+    set(state, { sessionId: 'holder' });
+    expect(cards('Needs your attention')).toContain('Title a-proposed');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    set(state, { selectedId: 'a' });
+    set(state, { sessionId: 'neo' });
+    expect(cards('Needs your attention')).toContain('Title a-proposed');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
   });
 
-  it('treats a pending or replaced session as unavailable without stale detail', () => {
+  it('makes a pending session unselectable and survives rapid committed scope changes', () => {
     const { state } = renderLive();
+    set(state, { sessionId: null });
+    openScene('a-proposed');
+    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
+    set(state, { sessionId: 'neo', selectedId: 'a' });
     openScene('a-proposed');
     expect(detail()).toBeTruthy();
-    set(state, { sessionId: null });
-    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    set(state, { sessionId: 'replacement' });
+    set(state, { sessionId: 'holder' });
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     set(state, { sessionId: 'neo' });
-    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    set(state, { sessionId: null });
-    openScene('a-proposed');
+    expect(cards('Needs your attention')).toContain('Title a-proposed');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
   });
 
@@ -247,11 +259,7 @@ describe('NeoLive work scene detail', () => {
     openScene('a-reported');
     const newer = snapshot([work('a-newest', 'proposed', 900, 'a'), ...base()]);
     set(state, { snapshot: newer, viewSnapshot: newer });
-    expect(
-      within(detail())
-        .getAllByRole('article')
-        .map((n) => n.getAttribute('aria-label'))
-    ).toEqual(['Title a-reported']);
+    expect(detailCards()).toEqual(['Title a-reported']);
   });
 
   it('preserves the scoped work correlation and the composer draft around detail', () => {
@@ -265,29 +273,50 @@ describe('NeoLive work scene detail', () => {
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('keep me');
   });
 
-  it('keeps at most one live question owner and balances select with destroy', () => {
-    const { state } = renderLive();
-    expect([calls.live, calls.selects, calls.destroys]).toEqual([1, 1, 0]);
+  it('keeps peak ownership at one and balances select with destroy through unmount', () => {
+    const { state, unmount } = renderLive();
+    expect([calls.live, calls.started, calls.destroys]).toEqual([1, 1, 0]);
     openScene('a-queued');
-    expect([calls.live, calls.selects, calls.destroys]).toEqual([1, 2, 1]);
-    expect(within(detail()).getAllByRole('article')).toHaveLength(1);
+    expect([calls.live, calls.started, calls.destroys, calls.peak]).toEqual([1, 2, 1, 1]);
     fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
-    expect([calls.live, calls.selects, calls.destroys]).toEqual([1, 3, 2]);
+    expect([calls.live, calls.started, calls.destroys]).toEqual([1, 3, 2]);
     set(state, { selectedId: 'b' });
     expect([calls.live, calls.destroys]).toEqual([0, 3]);
     set(state, { selectedId: null });
-    expect([calls.live, calls.selects, calls.destroys]).toEqual([1, 4, 3]);
+    expect([calls.live, calls.started, calls.destroys, calls.peak]).toEqual([1, 4, 3, 1]);
+    unmount();
+    expect([calls.live, calls.started, calls.destroys, calls.peak]).toEqual([0, 4, 4, 1]);
   });
 
-  it('ignores a late completion from an owner that already went away', () => {
-    defer = true;
+  it('ignores an already-started real select that resolves after its owner went away', async () => {
+    hold = true;
     const { unmount } = renderLive();
-    expect(calls.live).toBe(1);
-    expect(deferred).toHaveLength(1);
+    expect([calls.live, calls.started, pending.length]).toEqual([1, 1, 1]);
     unmount();
-    expect(calls.live).toBe(0);
-    for (const release of deferred) release();
-    expect(calls.live).toBe(0);
-    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
+    for (const release of pending) release();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect([calls.live, calls.started, calls.destroys]).toEqual([0, 1, 1]);
+    expect(screen.queryByText('A quick choice')).toBeNull();
+  });
+
+  it('moves focus to Back on open and restores the originating title on Back', () => {
+    renderLive();
+    const opener = screen.getByRole('button', { name: 'Title a-proposed' });
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+    fireEvent.click(opener);
+    expect(document.activeElement?.textContent).toContain('Back to scenes');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Title a-proposed' }));
+  });
+
+  it('never steals focus when a committed scope change invalidates the selection', () => {
+    const { state } = renderLive();
+    fireEvent.click(screen.getByRole('button', { name: 'Title a-proposed' }));
+    expect(document.activeElement?.textContent).toContain('Back to scenes');
+    set(state, { sessionId: 'holder' });
+    expect(document.activeElement?.textContent).not.toContain('Back to scenes');
   });
 });

@@ -7,7 +7,7 @@ import { useNeo } from './useNeo.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
-import { NeoWorkCard } from './NeoWorkCard.tsx';
+import { NeoWorkCard, sceneOpenSelector } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
@@ -61,9 +61,21 @@ export function NeoLive() {
   const detail = picked && 'value' in picked ? picked.value : null;
   const detailWork = detail?.receipt.kind === 'work' ? detail.receipt : null;
   const detailLive = detail !== null;
+  const detailPane = useRef<HTMLElement>(null);
+  const focusSceneId = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (sceneSelection && (!sceneScope || !detailLive)) setSceneSelection(null);
   }, [sceneSelection, sceneScope, detailLive]);
+  useLayoutEffect(() => {
+    if (detailWork) detailPane.current?.querySelector('button')?.focus();
+  }, [detailWork?.id, detailWork?.status]);
+  useLayoutEffect(() => {
+    const id = focusSceneId.current;
+    if (!id) return;
+    focusSceneId.current = null;
+    if (!sceneScope) return;
+    document.querySelector<HTMLButtonElement>(sceneOpenSelector(id))?.focus();
+  });
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -149,6 +161,7 @@ export function NeoLive() {
   }
 
   function closeScene() {
+    focusSceneId.current = sceneSelection?.ref.id ?? null;
     setSceneSelection(null);
   }
 
@@ -357,7 +370,7 @@ export function NeoLive() {
             </div>
           )}
           {detailWork ? (
-            <section aria-label="Selected work" class="mt-6 space-y-3">
+            <section ref={detailPane} aria-label="Selected work" class="mt-6 space-y-3">
               <Button
                 variant="ghost"
                 size="sm"

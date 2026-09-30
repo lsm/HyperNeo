@@ -1,7 +1,44 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { signal } from '@preact/signals';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
+
+vi.mock('../../lib/state.ts', () => ({
+  connectionState: { value: 'connected', subscribe: () => () => {} },
+}));
+vi.mock('../../lib/session-store.ts', () => ({
+  SessionStore: class {
+    sessionState = signal({
+      sessionInfo: { id: 'q-session' },
+      agentState: {
+        status: 'waiting_for_input',
+        pendingQuestion: {
+          toolUseId: 'tool-q',
+          askedAt: 1,
+          inputOrigin: { sessionId: 'q-session', messageId: 'q' },
+          questions: [
+            {
+              question: 'Which day?',
+              header: 'Pick',
+              multiSelect: false,
+              options: [{ label: 'Monday' }],
+            },
+          ],
+        },
+      },
+      commandsData: {},
+      error: null,
+      timestamp: 1,
+    });
+    activeSessionId = signal('q-session');
+    isRecovering = signal(false);
+    error = signal(null);
+    async select() {}
+    async refresh() {}
+    async destroy() {}
+  },
+}));
 
 const work = (id: string, status: NeoWork['status'], extra: Partial<NeoWork> = {}): NeoWork => ({
   id,
@@ -104,5 +141,64 @@ describe('NeoWorkCard detail opening', () => {
     expect(card.getAttribute('onclick')).toBeNull();
     fireEvent.click(within(card).getByText('Your call'));
     expect(screen.getByRole('article', { name: 'Title p' })).toBeTruthy();
+  });
+
+  it('keeps rendered Markdown links and checkboxes acting without opening detail', async () => {
+    const open = vi.fn();
+    const { card } = show(
+      work('r', 'reported', {
+        report: 'See [the source](https://example.com/a)\n\n- [ ] verify the date',
+      }),
+      open
+    );
+    fireEvent.click(within(card).getByText(/Read the execution/));
+    const link = await waitFor(() => {
+      const found = card.querySelector('a[href="https://example.com/a"]');
+      expect(found).toBeTruthy();
+      return found as HTMLAnchorElement;
+    });
+    const box = await waitFor(() => {
+      const found = card.querySelector('input[type="checkbox"]');
+      expect(found).toBeTruthy();
+      return found as HTMLInputElement;
+    });
+    fireEvent.click(link as Element);
+    fireEvent.click(box as Element);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('keeps a real question control acting without opening detail', () => {
+    const open = vi.fn();
+    const { card } = show(work('q', 'queued'), open);
+    expect(within(card).getByText('A quick choice')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: 'Monday' }));
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('does not navigate from a non-collapsed selection but still opens on a plain click', () => {
+    const open = vi.fn();
+    const { card } = show(work('p', 'proposed'), open);
+    const outside = document.createElement('p');
+    outside.textContent = 'chosen elsewhere';
+    document.body.append(outside);
+    const label = within(card).getByText('Your call');
+    const range = document.createRange();
+    range.setStart(outside.firstChild as Text, 0);
+    range.setEnd(outside.firstChild as Text, 6);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.click(label);
+    expect(open).toHaveBeenCalledWith('p');
+    open.mockClear();
+    const inner = document.createRange();
+    inner.setStart(label.firstChild as Text, 0);
+    inner.setEnd(label.firstChild as Text, 4);
+    selection?.removeAllRanges();
+    selection?.addRange(inner);
+    fireEvent.click(label);
+    expect(open).not.toHaveBeenCalled();
+    selection?.removeAllRanges();
+    outside.remove();
   });
 });
