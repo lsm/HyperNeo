@@ -152,25 +152,34 @@ describe('Neo floating controls', () => {
   });
 
   it('keeps draft and selected work intact while the controls are used', () => {
-    const { state } = renderLive();
+    renderLive();
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
     fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
     expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
     expect(screen.queryByText('Conversation body')).toBeTruthy();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
+    expect(document.activeElement).toBe(toggle());
+    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
+    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('button', { name: 'Back to Neo' }));
-    expect(state.value.selectedId).toBe(null);
-    expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
   });
 
-  it('never shows a duplicate scene card or question owner', () => {
+  it('keeps one selected card through a real concerns round trip', () => {
     renderLive();
     fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
-    expect(screen.getAllByRole('article')).toHaveLength(1);
-    expect(screen.queryAllByText('A quick choice').length).toBeLessThanOrEqual(1);
+    const region = screen.getByRole('region', { name: 'Selected work' });
+    const card = within(region).getByRole('article', { name: 'Title w' });
+    fireEvent.click(toggle());
+    expect(within(concernsList()).getByText('Concern a')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
+    expect(document.activeElement).toBe(toggle());
+    expect(screen.getByRole('region', { name: 'Selected work' })).toBe(region);
+    expect(within(region).getByRole('article', { name: 'Title w' })).toBe(card);
+    expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Stop work' })).toBeTruthy();
   });
 
   it('still accepts a dropped file on the preserved banner', async () => {

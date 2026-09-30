@@ -123,10 +123,13 @@
   }
 }
 
-.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
+.neo-float-actions > .neo-concerns > .neo-concerns-trigger {
   min-height: 44px;
   min-width: 44px;
   border: 1px solid var(--line);
+}
+
+.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover) {
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
   backdrop-filter: blur(8px);
 }
