@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, describe, test } from 'bun:test';
+import { expect, vi } from 'vitest';
 import type { Session, SessionConfig, SessionMetadata, ThinkingLevel } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
@@ -18,7 +18,7 @@ import {
 } from '../../../../src/lib/agent/model-switch-handler.ts';
 
 const ID = 'fictional-session';
-const CORRUPT = 'corrupt processing state';
+const BAD = 'corrupt processing';
 const REFUSE = { reason: 'session_settings_changed' };
 const BUSY = { reason: 'session_busy' };
 const TURN = { reason: 'session_turn_changed' };
@@ -46,7 +46,12 @@ vi.mock('../../../../src/lib/sdk-session-file-manager.ts', () => ({
   },
 }));
 
-const CONFIG: SessionConfig = { model: 'old-model', provider: 'anthropic', maxTokens: 4096 };
+const CONFIG: SessionConfig = {
+  model: 'old-model',
+  provider: 'anthropic',
+  maxTokens: 4096,
+  temperature: 0.7,
+};
 const DRIFTED = { ...CONFIG, model: 'drifted-model' };
 const METADATA: SessionMetadata = {
   messageCount: 0,
@@ -275,10 +280,8 @@ describe('runtime settings commit admission', () => {
     const live = snapshot();
     const pair = snapshotPair(live);
     expect(pair).toEqual({ model: 'old-model', provider: 'anthropic' });
-    expect(() => snapshotProcessingStatus({ ...live, processingState: '{oops' })).toThrow(CORRUPT);
-    expect(() => snapshotProcessingStatus({ ...live, processingState: '{"s":"x"}' })).toThrow(
-      CORRUPT
-    );
+    expect(() => snapshotProcessingStatus({ ...live, processingState: '{oops' })).toThrow(BAD);
+    expect(() => snapshotProcessingStatus({ ...live, processingState: '{"s":1}' })).toThrow(BAD);
     const cases = [
       [live, pair, ID, CONFIG, true],
       [live, { ...pair, model: 'other' }, ID, CONFIG, false],
@@ -345,22 +348,22 @@ describe('runtime settings commit admission', () => {
 
   test('a post-commit fault that starts a new query keeps it and the commit', async () => {
     const live: Live = { queryObject: null, queryPromise: null, generation: 0 };
-    const parked: Parked = { publishFault: true, live };
-    const { handler, session, ctx, updateSession, restart } = fixture(parked);
+    const { handler, session, ctx, updateSession, restart } = fixture({ publishFault: true, live });
     const result = await handler.switchModel('new-model', 'glm', true, commit('think16k'));
     expect(result.success).toBe(true);
     const applied = { model: 'new-model', provider: 'glm', thinkingLevel: 'think16k' };
     expect(session.config).toMatchObject(applied);
     expect(storedConfig()).toMatchObject(applied);
-    expect(live.queryObject).toBe(NEW_QUERY);
-    expect(ctx.queryObject).toBe(NEW_QUERY);
-    expect(ctx.queryPromise).toBe(LIVE_P);
-    expect(ctx.getQueryGeneration()).toBe(4);
+    expect(Object.is(live.queryObject, NEW_QUERY)).toBe(true);
+    expect(Object.is(ctx.queryObject, NEW_QUERY)).toBe(true);
+    expect(Object.is(ctx.queryPromise, LIVE_P)).toBe(true);
+    expect(ctx.getQueryGeneration?.()).toBe(4);
     expect([restart.mock.calls.length, updateSession.mock.calls.length]).toEqual([0, 0]);
   });
 
   test('AgentSession forwards two, three and four arguments exactly', async () => {
-    const switchModel = vi.fn(async () => ({ success: true, model: 'm' }));
+    const forwarded = { success: true, model: 'm' };
+    const switchModel = vi.fn(async (_m: string, _p: string, _n?: boolean) => forwarded);
     const session = { modelSwitchHandler: { switchModel } } as unknown as AgentSession;
     await AgentSession.prototype.handleModelSwitch.call(session, 'm', 'anthropic');
     await AgentSession.prototype.handleModelSwitch.call(session, 'm', 'anthropic', true);
