@@ -88,9 +88,7 @@ describe('direct human publication prompt', () => {
     (concernId) => {
       const prompt = delivered(concernId);
       expect(prompt).toContain('Give publicationId a fresh UUID');
-      expect(prompt).toContain(
-        'reuse that same publicationId with the same authored payload only to retry an identical publication'
-      );
+      expect(prompt).toContain('same authored payload only to retry an identical publication');
     }
   );
   test.each([null, 'research'])(
@@ -131,6 +129,12 @@ describe('direct human publication prompt', () => {
     );
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
+  });
+  test.each([null, 'research'])('exempts acknowledgement-only turns for %s', (concernId) => {
+    const prompt = delivered(concernId);
+    expect(prompt).toContain('only a brief acknowledgement, or only reports that a consultation');
+    expect(prompt).toContain('work check or other result is still pending, do not publish');
+    expect(prompt).toContain('publish the real answer when it actually arrives');
   });
   test.each([null, 'research'])(
     'treats a rejected publication as a real failure for %s',
