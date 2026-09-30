@@ -23,6 +23,7 @@ const REFUSE = { reason: 'session_settings_changed' };
 const BUSY = { reason: 'session_busy' };
 const TURN = { reason: 'session_turn_changed' };
 const LIVE_P = Promise.resolve();
+const NEW_QUERY = { marker: 'new-query' };
 const CONFIG_WRITE = 'UPDATE sessions SET config = ? WHERE id = ?';
 
 vi.mock('../../../../src/lib/model-service.ts', async (original) => ({
@@ -58,11 +59,7 @@ const METADATA: SessionMetadata = {
   acpSessionCommand: 'fictional-acp --stdio',
 };
 
-interface Live {
-  queryObject: object | null;
-  queryPromise: Promise<void> | null;
-  generation: number;
-}
+type Live = { queryObject: object | null; queryPromise: Promise<void> | null; generation: number };
 
 interface Parked {
   provider?: 'anthropic' | 'acp';
@@ -127,8 +124,8 @@ describe('runtime settings commit admission', () => {
     };
     const publish = parked.publishFault
       ? vi.fn(async () => {
-          if (parked.live)
-            Object.assign(parked.live, { queryObject: {}, queryPromise: LIVE_P, generation: 4 });
+          const l = parked.live;
+          if (l) Object.assign(l, { queryObject: NEW_QUERY, queryPromise: LIVE_P, generation: 4 });
           throw new Error('publish failed');
         })
       : vi.fn(async () => {});
@@ -355,7 +352,8 @@ describe('runtime settings commit admission', () => {
     const applied = { model: 'new-model', provider: 'glm', thinkingLevel: 'think16k' };
     expect(session.config).toMatchObject(applied);
     expect(storedConfig()).toMatchObject(applied);
-    expect(ctx.queryObject).toBe(live.queryObject);
+    expect(live.queryObject).toBe(NEW_QUERY);
+    expect(ctx.queryObject).toBe(NEW_QUERY);
     expect(ctx.queryPromise).toBe(LIVE_P);
     expect(ctx.getQueryGeneration()).toBe(4);
     expect([restart.mock.calls.length, updateSession.mock.calls.length]).toEqual([0, 0]);
