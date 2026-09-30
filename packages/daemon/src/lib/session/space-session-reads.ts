@@ -7,7 +7,7 @@ export type SpaceSessionStatusFilter =
   | 'error'
   | 'archived';
 
-export type SpaceSessionTypeFilter = 'worker' | 'ad-hoc';
+export type SpaceSessionTypeFilter = 'worker' | 'agent';
 
 export interface SpaceSessionRow {
   id: string;
@@ -92,7 +92,7 @@ function normalizeProcessingStatus(row: SpaceSessionRow): SpaceSessionStatusFilt
 
 function sessionKind(row: SpaceSessionRow): SpaceSessionTypeFilter {
   const context = parseJsonValue(row.session_context) as Record<string, unknown> | null;
-  return typeof context?.taskId === 'string' ? 'worker' : 'ad-hoc';
+  return typeof context?.taskId === 'string' ? 'worker' : 'agent';
 }
 
 export function rowToSessionSummary(row: SpaceSessionRow): SpaceSessionSummary {
@@ -156,7 +156,7 @@ export function listSpaceSessionRows(
   }
   if (filters.type === 'worker') {
     clauses.push(`task_id IS NOT NULL`);
-  } else if (filters.type === 'ad-hoc') {
+  } else if (filters.type === 'agent') {
     clauses.push(`task_id IS NULL`);
   }
   params.push(limit, offset);

@@ -253,7 +253,7 @@ describe('session operation catalog', () => {
           id: TARGET,
           title: 'Worker session',
           status: 'idle',
-          type: 'ad-hoc',
+          type: 'agent',
           processing_state: { status: 'idle' },
           created_at: '2026-01-01T00:00:00.000Z',
           last_active_at: '2026-01-02T00:00:00.000Z',
@@ -268,9 +268,8 @@ describe('session operation catalog', () => {
   test('listing filters by status and type', async () => {
     insertSession(h.db, {
       id: 'worker-9',
-      type: 'worker',
-      session_context: '{"spaceId":"space-1","taskId":"task-9"}',
       task_id: 'task-9',
+      session_context: '{"spaceId":"space-1","taskId":"task-9"}',
       processing_state: '{"status":"waiting_for_input"}',
     });
     const byType = await run('session.list', { type: 'worker' }, mcpCaller('long_term_agent'));
