@@ -1,11 +1,12 @@
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CONSULTATION_EXPIRED, CONSULTATION_STOPPED } from './consultation-policy.ts';
+import { planNeoConsultationReturn } from './consultation-return-route.ts';
 
 type Reply = Pick<NeoConsultation, 'id' | 'originMessageId' | 'concernId' | 'status' | 'answer'>;
 
 function selectSettledReply(item: Reply): { value: Reply } | { reason: null } {
-  return item.status === 'reported' || item.status === 'failed'
+  return planNeoConsultationReturn(item, null, null, null) === 'legacy'
     ? { value: item }
     : { reason: null };
 }
