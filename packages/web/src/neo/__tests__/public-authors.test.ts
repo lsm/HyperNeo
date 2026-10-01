@@ -17,6 +17,11 @@ import {
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
 const holder = 'fictional-holder-session';
+const binding = () => ({
+  sessionId: holder,
+  concernId: 'fictional-context',
+  kind: 'concern' as const,
+});
 const concern = (id = 'fictional-context', title = 'Source context'): NeoConcern => ({
   id,
   title,
@@ -64,6 +69,7 @@ const snapshot = (fields: Partial<NeoSnapshot> = {}): NeoSnapshot => ({
   concerns: [concern()],
   work: [],
   consultations: [consultation()],
+  publicAuthorBindings: [binding()],
   ...fields,
 });
 
@@ -94,6 +100,36 @@ describe('public author source admission', () => {
 });
 
 describe('public author label projection', () => {
+  it('keeps the oldest retained producer labelled after newer consultations displace its receipt', () => {
+    const newer = Array.from({ length: 20 }, (_, index) =>
+      consultation({
+        id: `new-${index}`,
+        sessionId: `new-holder-${index}`,
+        concernId: `new-context-${index}`,
+      })
+    );
+    const value = {
+      ...snapshot({ consultations: newer }),
+      publicAuthorBindings: [
+        { sessionId: holder, concernId: concern().id, kind: 'concern' as const },
+      ],
+    };
+    const items = [
+      publication(),
+      ...Array.from({ length: 499 }, (_, index) => ({
+        ...publication(root),
+        sequence: index + 2,
+        publicationId: `20000000-0000-4000-8000-${String(index + 2).padStart(12, '0')}`,
+      })),
+    ];
+    expect(value.consultations?.some((item) => item.sessionId === holder)).toBe(false);
+    expect(items).toHaveLength(500);
+    expect(projectNeoPublicAuthors(value, state(items)).get(holder)).toBe('Source context');
+    expect(projectNeoPublicAuthors(value, { ...state(items), status: 'loading' }).get(holder)).toBe(
+      'Source context'
+    );
+  });
+
   it('labels only actual visible producers without changing authored payloads', () => {
     const items = [publication(holder), publication(root), publication('unknown')];
     const value = snapshot();
@@ -122,7 +158,7 @@ describe('public author label projection', () => {
     expect(projectNeoPublicAuthors(snapshot(), state([])).size).toBe(0);
   });
 
-  it('uses queued holder associations without requiring a completed consultation', () => {
+  it('labels queued holders from durable bindings without a completed consultation', () => {
     const waiter: NeoConsultationWaiter = {
       ...consultation(),
       status: 'queued',
@@ -140,14 +176,18 @@ describe('public author label projection', () => {
     { concerns: [] },
     { concerns: [concern('fictional-context', ' ')] },
     { concerns: [concern(), concern('fictional-context', 'Conflicting title')] },
-    { consultations: [consultation(), consultation({ concernId: 'different-context' })] },
-    { consultations: [] },
+    { publicAuthorBindings: [binding(), { ...binding(), concernId: 'different-context' }] },
+    { publicAuthorBindings: [] },
+    { publicAuthorBindings: undefined },
   ])('leaves absent or conflicting associations unlabelled %#', (fields) => {
     expect(projectNeoPublicAuthors(snapshot(fields), state()).has(holder)).toBe(false);
   });
 
   it('accepts repeated consistent associations but never promotes execution workers to holders', () => {
-    const value = snapshot({ consultations: [consultation(), consultation({ id: 'second' })] });
+    const value = snapshot({
+      consultations: [consultation(), consultation({ id: 'second' })],
+      publicAuthorBindings: [binding(), binding()],
+    });
     expect(projectNeoPublicAuthors(value, state()).get(holder)).toBe('Source context');
     const work: NeoWork = {
       id: 'work',

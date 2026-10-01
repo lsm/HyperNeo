@@ -102,6 +102,15 @@ const Snapshot = z.union([
     ok: z.literal(true),
     sessionId: z.string().nullable(),
     concerns: z.array(Concern),
+    publicAuthorBindings: z
+      .array(
+        z.object({
+          sessionId: z.string(),
+          concernId: z.string(),
+          kind: z.literal('concern'),
+        })
+      )
+      .optional(),
     work: z.array(Work),
     consultations: z.array(Consultation),
     consultationWaiters: z.array(ConsultationWaiter).optional(),
@@ -283,6 +292,8 @@ export function createNeoOperations(service: NeoService) {
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
+      publicAuthorBindings:
+        caller.source === 'rpc' ? service.repo.listConcernBindings(scope ?? undefined) : [],
       concerns: concerns.map((item) => ({
         ...item,
         context: detailed ? item.context : '',

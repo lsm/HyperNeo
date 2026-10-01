@@ -27,10 +27,8 @@ export function presentNeoPublicAuthors({ snapshot, publications }: AuthorSource
     titles.set(concern.id, labels);
   }
   const holders = new Map<string, Set<string>>();
-  for (const association of [
-    ...(snapshot.consultations ?? []),
-    ...(snapshot.consultationWaiters ?? []),
-  ]) {
+  for (const association of snapshot.publicAuthorBindings ?? []) {
+    if (association.kind !== 'concern' || !association.concernId) continue;
     const concerns = holders.get(association.sessionId) ?? new Set<string>();
     concerns.add(association.concernId);
     holders.set(association.sessionId, concerns);

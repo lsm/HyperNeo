@@ -129,6 +129,16 @@ export class NeoRepository {
       .get(concernId) as NeoBinding | null;
   }
 
+  listConcernBindings(concernId?: string): (NeoBinding & { kind: 'concern'; concernId: string })[] {
+    return this.db
+      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'concern'
+        ${concernId === undefined ? '' : 'AND concern_id = ?'} ORDER BY session_id`)
+      .all(...(concernId === undefined ? [] : [concernId])) as (NeoBinding & {
+      kind: 'concern';
+      concernId: string;
+    })[];
+  }
+
   listWork(concernId?: string | null): NeoWork[] {
     const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
     return this.db
