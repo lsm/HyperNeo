@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test';
-import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 
@@ -15,6 +15,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
+  const requests: { path: string; tools: number; active: boolean }[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -48,6 +49,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
     }
     const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional moon garden');
+    requests.push({ path: req.url ?? '', tools: body.tools?.length ?? 0, active });
     if (active) {
       const content = body.messages?.at(-1)?.content;
       if (Array.isArray(content))
@@ -160,6 +162,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
       standalone: false,
       verbose: false,
     });
+    daemon.settingsManager.updateGlobalSettings({ sandbox: { enabled: false } });
     transport = new WebSocketClientTransport({
       url: `ws://127.0.0.1:${daemon.server.port}/ws`,
       autoReconnect: false,
@@ -193,7 +196,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items).toHaveLength(1);
+    expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
     expect(page.items[0]).toMatchObject({
       publicationId,
       shortText,
