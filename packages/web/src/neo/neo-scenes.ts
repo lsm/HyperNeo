@@ -30,6 +30,7 @@ export type NeoSceneGroups = {
 };
 export type NeoSceneSelection = { value: NeoScene } | { reason: 'unknown_scene' };
 export type NeoSceneQuestions = ReadonlyMap<string, PendingUserQuestion>;
+export type NeoSceneUnavailableSessions = ReadonlyMap<string, string>;
 type SceneTruth = { group: NeoSceneGroup; label: string };
 
 const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
@@ -89,6 +90,21 @@ export function promoteNeoQuestionScenes(
   return scenes.map((scene) => promoteNeoQuestionScene(scene, questions.get(scene.ref.id)));
 }
 
+function promoteNeoUnavailableScenes(
+  scenes: NeoScene[],
+  unavailableSessions: NeoSceneUnavailableSessions
+): NeoScene[] {
+  return scenes.map((scene) => {
+    const work = scene.receipt;
+    return work.kind === 'work' &&
+      !!work.sessionId &&
+      unavailableSessions.get(work.id) === work.sessionId &&
+      'value' in requireNeoQuestionWork(work, work.sessionId, true)
+      ? { ...scene, group: 'attention', label: 'Could not check questions' }
+      : scene;
+  });
+}
+
 export function groupNeoScenes(scenes: readonly NeoScene[]): NeoSceneGroups {
   const attention: NeoScene[] = [];
   const running: NeoScene[] = [];
@@ -125,19 +141,22 @@ export function selectNeoScene(
 }
 
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
-  .input(['board', 'questions'])
+  .input(['board', 'questions', 'unavailableSessions'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
   .pipe(classifyNeoScenes, 'scenes', 'classified')
   .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
-  .pipe(groupNeoScenes, 'promoted', 'scenes')
+  .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
+  .pipe(groupNeoScenes, 'observed', 'scenes')
   .end('scenes') as (
   board: NeoConcernBoard | null,
-  questions: NeoSceneQuestions
+  questions: NeoSceneQuestions,
+  unavailableSessions: NeoSceneUnavailableSessions
 ) => NeoSceneGroups | null;
 
 export function projectNeoScenes(
   board: NeoConcernBoard | null,
-  questions: NeoSceneQuestions = new Map()
+  questions: NeoSceneQuestions = new Map(),
+  unavailableSessions: NeoSceneUnavailableSessions = new Map()
 ): NeoSceneGroups | null {
-  return projectScenes(board, questions);
+  return projectScenes(board, questions, unavailableSessions);
 }

@@ -30,10 +30,15 @@ export function useNeoWorkQuestionObserver(work: NeoWork) {
     source
   );
   const retry = () => {
-    setLoadError('');
-    void store.select(work.sessionId).catch(() => {
-      if (currentStore.current === store) setLoadError('Could not check this agent’s questions.');
-    });
+    setLoadError(store.error.value?.message ?? 'Checking this agent’s questions again…');
+    void store
+      .select(work.sessionId)
+      .then(() => {
+        if (currentStore.current === store) setLoadError('');
+      })
+      .catch(() => {
+        if (currentStore.current === store) setLoadError('Could not check this agent’s questions.');
+      });
   };
-  return { store, question, loadError, retry };
+  return { store, question, loadError: source && !source.error ? '' : loadError, retry };
 }
