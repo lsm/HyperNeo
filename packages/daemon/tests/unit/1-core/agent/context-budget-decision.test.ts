@@ -9,12 +9,13 @@ import {
   gateNoWindow,
   gatePercentDisabled,
   scaledAutoCompactWindow,
-  type ContextBudgetCtx,
+  type ContextBudgetGateResult,
+  type ContextBudgetInput,
 } from '../../../../src/lib/agent/context-budget-decision';
 
 const WINDOW = 256_000;
 
-function baseInput(overrides: Partial<Omit<ContextBudgetCtx, 'decision'>> = {}) {
+function baseInput(overrides: Partial<ContextBudgetInput> = {}) {
   return {
     totalUsed: 0,
     configuredWindow: WINDOW,
@@ -217,27 +218,25 @@ describe('re-homed handler decision-table rows (from #3058)', () => {
 });
 
 describe('gate pass-through identity', () => {
-  const undecided = baseInput({ totalUsed: 240_000 }) as ContextBudgetCtx;
-  const ctx = { ...undecided, decision: null };
+  const input = baseInput({ totalUsed: 240_000 });
 
-  function expectIdentity(gate: (input: ContextBudgetCtx) => ContextBudgetCtx): void {
-    const returned = gate(ctx);
-    expect(returned).toBe(ctx);
-    expect(ctx.decision).toBeNull();
+  function expectPassThrough(gate: (value: ContextBudgetInput) => ContextBudgetGateResult): void {
+    const result = gate(input);
+    expect(result).toEqual({ value: input });
   }
 
-  test('each pass-through gate returns the identical ctx object', () => {
-    expectIdentity(gateNoWindow);
-    expectIdentity(gatePercentDisabled);
-    expectIdentity(gateCooldown);
-    expectIdentity(gateCompacting);
-    expectIdentity(gateBelowThreshold);
+  test('each pass-through gate hands the identical input object to the next gate', () => {
+    expectPassThrough(gateNoWindow);
+    expectPassThrough(gatePercentDisabled);
+    expectPassThrough(gateCooldown);
+    expectPassThrough(gateCompacting);
+    expectPassThrough(gateBelowThreshold);
   });
 
-  test('the final gate always decides', () => {
-    const decided = gateCompactFinal(ctx);
-    expect(decided.decision).not.toBeNull();
-    expect(decided).not.toBe(ctx);
+  test('the final gate always concludes with a compact decision', () => {
+    expect(gateCompactFinal(input)).toEqual({
+      value: { action: 'compact', reason: 'over_threshold_sdk_unknown' },
+    });
   });
 });
 

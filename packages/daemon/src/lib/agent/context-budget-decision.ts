@@ -1,5 +1,5 @@
 import { AUTO_COMPACT_PERCENT_MAX, resolveAutoCompactPercent } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type Result } from 'superpipe';
 
 export type ContextBudgetNoneReason =
   | 'no_window'
@@ -18,7 +18,7 @@ export type ContextBudgetDecision =
   | { action: 'none'; reason: ContextBudgetNoneReason }
   | { action: 'compact'; reason: ContextBudgetCompactReason };
 
-export interface ContextBudgetCtx {
+export interface ContextBudgetInput {
   totalUsed: number;
   configuredWindow: number | undefined;
   autoCompactPercent: number | undefined;
@@ -26,14 +26,9 @@ export interface ContextBudgetCtx {
   sdkAutoCompactThreshold: number | undefined;
   cooldownActive: boolean;
   compactingActive: boolean;
-  decision: ContextBudgetDecision | null;
 }
 
-export type ContextBudgetInput = Omit<ContextBudgetCtx, 'decision'>;
-
-function decided(ctx: ContextBudgetCtx, decision: ContextBudgetDecision): ContextBudgetCtx {
-  return { ...ctx, decision };
-}
+export type ContextBudgetGateResult = Result<ContextBudgetInput, ContextBudgetDecision>;
 
 function hasValidWindow(configuredWindow: number | undefined): configuredWindow is number {
   return (
@@ -41,6 +36,10 @@ function hasValidWindow(configuredWindow: number | undefined): configuredWindow 
     Number.isFinite(configuredWindow) &&
     configuredWindow > 0
   );
+}
+
+function concluded(reason: ContextBudgetNoneReason): ContextBudgetGateResult {
+  return { reason: { action: 'none', reason } };
 }
 
 export function contextBudgetThreshold(
@@ -64,71 +63,54 @@ export function scaledAutoCompactWindow(
   return contextBudgetThreshold(configuredWindow, rawPercent ?? undefined);
 }
 
-export function gateNoWindow(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  if (!hasValidWindow(ctx.configuredWindow)) {
-    return decided(ctx, { action: 'none', reason: 'no_window' });
+export function gateNoWindow(input: ContextBudgetInput): ContextBudgetGateResult {
+  if (!hasValidWindow(input.configuredWindow)) return concluded('no_window');
+  return { value: input };
+}
+
+export function gatePercentDisabled(input: ContextBudgetInput): ContextBudgetGateResult {
+  if (resolveAutoCompactPercent(input.autoCompactPercent) >= AUTO_COMPACT_PERCENT_MAX) {
+    return concluded('percent_disabled');
   }
-  return ctx;
+  return { value: input };
 }
 
-export function gatePercentDisabled(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  if (resolveAutoCompactPercent(ctx.autoCompactPercent) >= AUTO_COMPACT_PERCENT_MAX) {
-    return decided(ctx, { action: 'none', reason: 'percent_disabled' });
-  }
-  return ctx;
+export function gateCooldown(input: ContextBudgetInput): ContextBudgetGateResult {
+  return input.cooldownActive ? concluded('cooldown_active') : { value: input };
 }
 
-export function gateCooldown(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  return ctx.cooldownActive ? decided(ctx, { action: 'none', reason: 'cooldown_active' }) : ctx;
+export function gateCompacting(input: ContextBudgetInput): ContextBudgetGateResult {
+  return input.compactingActive ? concluded('compaction_in_progress') : { value: input };
 }
 
-export function gateCompacting(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  return ctx.compactingActive
-    ? decided(ctx, { action: 'none', reason: 'compaction_in_progress' })
-    : ctx;
+export function gateBelowThreshold(input: ContextBudgetInput): ContextBudgetGateResult {
+  if (!hasValidWindow(input.configuredWindow)) return { value: input };
+  const threshold = contextBudgetThreshold(input.configuredWindow, input.autoCompactPercent);
+  return input.totalUsed < threshold ? concluded('below_threshold') : { value: input };
 }
 
-export function gateBelowThreshold(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  if (!hasValidWindow(ctx.configuredWindow)) return ctx;
-  const threshold = contextBudgetThreshold(ctx.configuredWindow, ctx.autoCompactPercent);
-  if (ctx.totalUsed < threshold) {
-    return decided(ctx, { action: 'none', reason: 'below_threshold' });
-  }
-  return ctx;
-}
-
-export function gateCompactFinal(ctx: ContextBudgetCtx): ContextBudgetCtx {
+export function gateCompactFinal(input: ContextBudgetInput): { value: ContextBudgetDecision } {
   const reason: ContextBudgetCompactReason =
-    ctx.sdkAutoCompactEnabled === false
+    input.sdkAutoCompactEnabled === false
       ? 'over_threshold_sdk_disabled'
-      : typeof ctx.sdkAutoCompactThreshold === 'number' && ctx.sdkAutoCompactThreshold > 0
-        ? ctx.totalUsed >= ctx.sdkAutoCompactThreshold
+      : typeof input.sdkAutoCompactThreshold === 'number' && input.sdkAutoCompactThreshold > 0
+        ? input.totalUsed >= input.sdkAutoCompactThreshold
           ? 'over_threshold_sdk_missed'
           : 'over_threshold_sdk_later'
         : 'over_threshold_sdk_unknown';
-  return decided(ctx, { action: 'compact', reason });
+  return { value: { action: 'compact', reason } };
 }
 
-const runDecideContextBudgetAction = (
-  superpipe({
-    hasDecided: (ctx: ContextBudgetCtx) => ctx.decision !== null,
-  })('decide-context-budget-action') as PipelineAPI
-)
-  .input(['ctx'])
-  .pipe(gateNoWindow, 'ctx', 'ctx')
-  .pipe('!hasDecided', 'ctx')
-  .pipe(gatePercentDisabled, 'ctx', 'ctx')
-  .pipe('!hasDecided', 'ctx')
-  .pipe(gateCooldown, 'ctx', 'ctx')
-  .pipe('!hasDecided', 'ctx')
-  .pipe(gateCompacting, 'ctx', 'ctx')
-  .pipe('!hasDecided', 'ctx')
-  .pipe(gateBelowThreshold, 'ctx', 'ctx')
-  .pipe('!hasDecided', 'ctx')
-  .pipe(gateCompactFinal, 'ctx', 'ctx')
-  .end('ctx') as (input: ContextBudgetCtx) => ContextBudgetCtx;
+const runDecideContextBudgetAction = (superpipe({})('decide-context-budget-action') as PipelineAPI)
+  .input('input')
+  .pipe(gateNoWindow, 'input', 'result:budget')
+  .pipe(gatePercentDisabled, 'budget', 'result:budget')
+  .pipe(gateCooldown, 'budget', 'result:budget')
+  .pipe(gateCompacting, 'budget', 'result:budget')
+  .pipe(gateBelowThreshold, 'budget', 'result:budget')
+  .pipe(gateCompactFinal, 'budget', 'result:budget')
+  .end('budget') as (input: ContextBudgetInput) => ContextBudgetDecision;
 
 export function decideContextBudgetCompaction(input: ContextBudgetInput): ContextBudgetDecision {
-  const ctx = runDecideContextBudgetAction({ ...input, decision: null });
-  return ctx.decision ?? { action: 'none', reason: 'below_threshold' };
+  return runDecideContextBudgetAction({ ...input });
 }
