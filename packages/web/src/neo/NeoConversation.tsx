@@ -164,7 +164,7 @@ export function NeoConversation({
   return (
     <>
       <section aria-label="Conversation with Neo" class="space-y-6">
-        {store.hasMoreMessages.value && (
+        {!publicConversation && store.hasMoreMessages.value && (
           <p class="text-xs text-fg-muted">
             Showing recent conversation.{' '}
             <a

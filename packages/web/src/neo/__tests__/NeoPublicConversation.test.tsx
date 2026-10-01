@@ -292,6 +292,33 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByText(publication().shortText)).toBeNull();
   });
 
+  it.each([false, true])(
+    'uses only durable history limits in public mode (partial=%s)',
+    (partial) => {
+      const store = {
+        sdkMessages: signal([]),
+        agentState: signal({ status: 'idle' }),
+        hasMoreMessages: signal(true),
+        error: signal(null),
+        refresh: vi.fn(),
+      } as unknown as SessionStore;
+      const value = { ...conversation([], []), hasEarlier: partial, hasMore: partial };
+      const view = render(
+        <NeoConversation store={store} sessionId={root} publicConversation={value} />
+      );
+      expect(screen.queryByText(/Showing recent conversation/)).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Open full history ↗' })).toBeNull();
+      expect(!!screen.queryByText('Showing part of your saved conversation.')).toBe(partial);
+      expect(store.hasMoreMessages.value).toBe(true);
+      view.rerender(<NeoConversation store={store} sessionId={root} />);
+      expect(screen.getByText(/Showing recent conversation/)).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Open full history ↗' }).getAttribute('href')).toBe(
+        `/session/${root}`
+      );
+      expect(screen.queryByText('Showing part of your saved conversation.')).toBeNull();
+    }
+  );
+
   it.each([
     [{ status: 'processing', phase: 'thinking' }, 'Neo is working on a reply…'],
     [{ status: 'rate_limit_cooldown' }, 'Neo is waiting to retry…'],
