@@ -83,7 +83,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/connectors/predicate.test.ts
 78	packages/daemon/tests/unit/5-space/runtime/connectors/presets.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/connectors/production.test.ts
-5	packages/daemon/tests/unit/5-space/runtime/decision-pipeline.test.ts
 4	packages/daemon/tests/unit/5-space/runtime/delivery-mode.test.ts
 9	packages/daemon/tests/unit/5-space/runtime/admission-gates.test.ts
 10	packages/daemon/tests/unit/5-space/runtime/delivery-pipeline.test.ts
