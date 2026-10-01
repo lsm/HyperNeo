@@ -102,12 +102,18 @@ export function NeoConversation({
   works = [],
   snapshot = null,
   publicConversation,
+  publicAuthors,
+  onOpenPublicAuthor,
+  onRetryPublic,
 }: {
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
   snapshot?: NeoSnapshot | null;
   publicConversation?: PublicConversation;
+  publicAuthors?: ReadonlyMap<string, string>;
+  onOpenPublicAuthor?: (sessionId: string) => void;
+  onRetryPublic?: () => void;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -177,7 +183,15 @@ export function NeoConversation({
             </a>
           </p>
         )}
-        {publicConversation && <NeoPublicConversation conversation={publicConversation} />}
+        {publicConversation && (
+          <NeoPublicConversation
+            conversation={publicConversation}
+            authors={publicAuthors}
+            onOpenAuthor={onOpenPublicAuthor}
+            onRetry={onRetryPublic}
+            snapshot={snapshot}
+          />
+        )}
         {(publicConversation ? [] : visible).map((message) => {
           const context = projectNeoReplyContext(message, sessionId, visible, conversationText);
           const requestOrigin = neoRequestOrigin(message, sessionId);
