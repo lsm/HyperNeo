@@ -67,18 +67,23 @@ interface SpawnExecutionFlowCtx extends SpawnExecutionFlowInput {
 }
 
 function gatherSpawnAdmission(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  const freshTask = ctx.deps.getFreshTask(ctx.task.id) ?? ctx.task;
-  return {
-    ...ctx,
-    freshTask,
-    slotResolution: ctx.deps.resolveSlot(ctx.space, ctx.workflow, ctx.execution, freshTask),
-    workflowValid: validateExecutionAgainstWorkflow(ctx.execution, ctx.workflow).valid,
-    isSpawning: ctx.deps.isSpawningExecution(ctx.execution.id),
-    indexedSession: ctx.deps.inspectIndexedSession(ctx.execution.agentSessionId),
-  };
+  try {
+    const freshTask = ctx.deps.getFreshTask(ctx.task.id) ?? ctx.task;
+    return {
+      ...ctx,
+      freshTask,
+      slotResolution: ctx.deps.resolveSlot(ctx.space, ctx.workflow, ctx.execution, freshTask),
+      workflowValid: validateExecutionAgainstWorkflow(ctx.execution, ctx.workflow).valid,
+      isSpawning: ctx.deps.isSpawningExecution(ctx.execution.id),
+      indexedSession: ctx.deps.inspectIndexedSession(ctx.execution.agentSessionId),
+    };
+  } catch (error) {
+    return { ...ctx, terminal: { status: 'error', stage: 'gather-spawn-admission', error } };
+  }
 }
 
 function decideAdmission(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
+  if (ctx.terminal !== null) return ctx;
   const liveSessionId = ctx.indexedSession.alive ? ctx.indexedSession.sessionId : null;
   const admission = decideSpawnExecutionAdmissionViaPipeline({
     hasLiveIndexedSession: liveSessionId !== null,
@@ -250,7 +255,11 @@ function readBoundExecution(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
 
 function releaseTaskSpawnReservation(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
   if (ctx.terminal !== null || ctx.admission!.action !== 'proceed_fresh') return ctx;
-  ctx.deps.releaseTaskSpawn(ctx.task.id);
+  try {
+    ctx.deps.releaseTaskSpawn(ctx.task.id);
+  } catch (error) {
+    return { ...ctx, terminal: { status: 'error', stage: 'release-task-spawn', error } };
+  }
   return ctx;
 }
 
@@ -315,7 +324,11 @@ async function kickoffSessionNow(ctx: SpawnExecutionFlowCtx): Promise<SpawnExecu
 
 function activatePoolAssignment(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
   if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  ctx.deps.activateSpawnedSessionPoolAssignment(ctx.execution.id, ctx.spawnedSessionId);
+  try {
+    ctx.deps.activateSpawnedSessionPoolAssignment(ctx.execution.id, ctx.spawnedSessionId);
+  } catch (error) {
+    return { ...ctx, terminal: { status: 'error', stage: 'activate-pool-assignment', error } };
+  }
   return ctx;
 }
 
@@ -324,21 +337,39 @@ function completeSpawn(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
   return { ...ctx, result: ctx.spawnedSessionId };
 }
 
-const run = (superpipe({})('spawn-execution') as PipelineAPI)
+const run = (
+  superpipe<{
+    proceedingFresh: (ctx: SpawnExecutionFlowCtx) => boolean;
+    hasTerminal: (ctx: SpawnExecutionFlowCtx) => boolean;
+  }>({
+    proceedingFresh: (ctx: SpawnExecutionFlowCtx): boolean =>
+      ctx.terminal === null && ctx.admission?.action === 'proceed_fresh',
+    hasTerminal: (ctx: SpawnExecutionFlowCtx): boolean => ctx.terminal !== null,
+  })('spawn-execution') as PipelineAPI
+)
   .input(['ctx'])
   .pipe(gatherSpawnAdmission, 'ctx', 'ctx')
   .pipe(decideAdmission, 'ctx', 'ctx')
   .pipe(rebindLiveSession, 'ctx', 'ctx')
   .pipe(haltWaitConcurrent, 'ctx', 'ctx')
   .pipe(raiseSpawnRejection, 'ctx', 'ctx')
+  .pipe('proceedingFresh', 'ctx')
   .pipe(reserveTaskSpawn, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(reserveAndSpawnSession, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(bindExecutionSession, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(readBoundExecution, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(releaseTaskSpawnReservation, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(attachNodeAgent, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(kickoffSession, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(activatePoolAssignment, 'ctx', 'ctx')
+  .pipe('!hasTerminal', 'ctx')
   .pipe(completeSpawn, 'ctx', 'ctx')
   .endAsync('ctx') as (input: SpawnExecutionFlowCtx) => Promise<SpawnExecutionFlowCtx>;
 
