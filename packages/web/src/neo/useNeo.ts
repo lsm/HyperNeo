@@ -12,6 +12,7 @@ import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
 import { projectNeoPublicAuthors } from './public-authors.ts';
+import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -147,12 +148,18 @@ export function useNeo() {
     }
   }
 
+  const publicConversation = projectNeoPublicConversation(
+    snapshot?.sessionId ?? null,
+    asks,
+    publications
+  );
   return {
     publicAuthors: projectNeoPublicAuthors(snapshot, publications),
-    publicConversation: projectNeoPublicConversation(
-      snapshot?.sessionId ?? null,
-      asks,
-      publications
+    publicConversation,
+    viewPublicConversation: projectNeoPublicHolderConversation(
+      publicConversation,
+      snapshot,
+      sessionId
     ),
     publications,
     asks,
