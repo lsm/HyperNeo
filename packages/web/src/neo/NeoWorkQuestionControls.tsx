@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
+import type { QuestionFormDraft } from '../components/question-form-draft.ts';
 import type { useNeoWorkQuestionObserver } from './useNeoWorkQuestionObserver.ts';
 
 type QuestionEpoch = Readonly<{ store: SessionStore; workId: string; toolUseId: string }>;
@@ -10,9 +11,11 @@ type ReplyFailure = { epoch: QuestionEpoch; message: string };
 export function NeoWorkQuestionControls({
   work,
   observation,
+  formDraft,
 }: {
   work: NeoWork;
   observation: ReturnType<typeof useNeoWorkQuestionObserver>;
+  formDraft?: { value: QuestionFormDraft; onChange: (draft: QuestionFormDraft) => void };
 }) {
   const { store, question, loadError } = observation;
   const [replyFailure, setReplyFailure] = useState<ReplyFailure | null>(null);
@@ -48,6 +51,7 @@ export function NeoWorkQuestionControls({
           pendingHeading="A quick choice"
           sessionId={work.sessionId!}
           pendingQuestion={question}
+          formDraft={formDraft}
           onResolved={() => {
             if (!isCurrentEpoch(epoch)) return;
             setReplyFailure(null);
