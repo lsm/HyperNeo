@@ -124,6 +124,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
   if (!address || typeof address === 'string') throw new Error('Missing fictional server port');
   const environment = {
     NODE_ENV: 'test',
+    HYPERNEO_USE_DEV_PROXY: '0',
     HYPERNEO_DATA_DIR: join(isolated, 'data'),
     HYPERNEO_WORKSPACE_PATH: isolated,
     CLAUDE_CONFIG_DIR: join(isolated, 'sdk'),
