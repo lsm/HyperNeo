@@ -134,7 +134,6 @@
 8	packages/daemon/tests/unit/5-space/runtime/spawn-admission-gates.test.ts
 23	packages/daemon/tests/unit/5-space/runtime/spawn-flow.test.ts
 8	packages/daemon/tests/unit/5-space/runtime/spawn-slot-resolution.test.ts
-55	packages/daemon/tests/unit/5-space/runtime/staged-run.test.ts
 17	packages/daemon/tests/unit/5-space/runtime/stop-verification-gates.test.ts
 44	packages/daemon/tests/unit/5-space/runtime/task-agent-activity-listener.test.ts
 5	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-activation-routing.test.ts

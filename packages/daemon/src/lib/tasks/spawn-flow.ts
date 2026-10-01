@@ -1,4 +1,4 @@
-import type { StagedRunOutcome } from '../space/runtime/staged-run.ts';
+import type { FlowOutcome } from './flow-outcome.ts';
 import { buildSpawnExecutionPipeline } from './spawn-flow-admission.ts';
 import type { SpawnExecutionFlowDeps, SpawnExecutionFlowInput } from './spawn-flow-contract.ts';
 import { isSpawnFlowSettled } from './spawn-flow-ladder.ts';
@@ -29,7 +29,7 @@ export function isSpawnFlowReusedSession(result: unknown): result is {
 export async function runSpawnExecutionFlow(
   deps: SpawnExecutionFlowDeps,
   input: SpawnExecutionFlowInput
-): Promise<StagedRunOutcome> {
+): Promise<FlowOutcome> {
   const outcome = await buildSpawnExecutionPipeline(deps)(input);
   if (isSpawnFlowSettled(outcome)) return outcome.settled;
   return { status: 'completed', result: outcome.result };

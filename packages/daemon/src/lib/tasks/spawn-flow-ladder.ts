@@ -1,5 +1,5 @@
 import type { NodeExecution, SpaceTask } from '@hyperneo/shared';
-import type { StagedRunOutcome, StagedRunUnwindEntry } from '../space/runtime/staged-run.ts';
+import type { FlowOutcome, FlowUnwindEntry } from './flow-outcome.ts';
 import { validateTaskAllowsSpawn } from '../workflows/node-execution-validation.ts';
 import type {
   IndexedSessionInspection,
@@ -33,15 +33,15 @@ export interface SpawnFlowState {
 }
 
 export interface SpawnFlowSettled {
-  settled: StagedRunOutcome;
+  settled: FlowOutcome;
 }
 
 export type SpawnFlowOutcome = SpawnFlowState | SpawnFlowSettled;
 
 export function unwindCompensations(
   compensations: readonly SpawnCompensation[]
-): StagedRunUnwindEntry[] {
-  const unwind: StagedRunUnwindEntry[] = [];
+): FlowUnwindEntry[] {
+  const unwind: FlowUnwindEntry[] = [];
   for (let index = compensations.length - 1; index >= 0; index -= 1) {
     const entry = compensations[index];
     try {
