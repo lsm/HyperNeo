@@ -227,4 +227,12 @@ describe('NeoActivity', () => {
     );
     expect(css).not.toContain('--color-fg');
   });
+  it('restores tooltip hit-testing on the activity line inside the non-interactive dock', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    const rule = /(?:^|\n)\.neo-activity\s*\{[^}]*pointer-events:\s*auto;/;
+    expect(css).toMatch(rule);
+    expect(css.replace('pointer-events: auto;\n  height: 28px;', 'height: 28px;')).not.toMatch(
+      rule
+    );
+  });
 });
