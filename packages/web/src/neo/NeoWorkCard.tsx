@@ -1,4 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { useMemo } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -33,6 +34,7 @@ export function NeoWorkCard({
   onAction,
   onOpen,
   presentation = 'detail',
+  questionSlot,
 }: {
   work: NeoWork;
   busy: boolean;
@@ -40,7 +42,15 @@ export function NeoWorkCard({
   onAction: (id: string, action: 'start' | 'cancel') => void;
   onOpen?: (id: string) => void;
   presentation?: 'detail' | 'summary';
+  questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
 }) {
+  const attachQuestion = useMemo(() => {
+    let previous: HTMLElement | null = null;
+    return (node: HTMLElement | null) => {
+      questionSlot?.(work.id, node, previous);
+      previous = node;
+    };
+  }, [work.id, questionSlot]);
   if (presentation === 'summary' && onOpen)
     return (
       <button
@@ -119,7 +129,13 @@ export function NeoWorkCard({
           <p class="mt-2 break-all text-xs">Existing chat: {work.targetSessionId}</p>
         )}
       </details>
-      {active && work.sessionId && <NeoWorkQuestion key={work.id} work={work} />}
+      {active &&
+        work.sessionId &&
+        (questionSlot ? (
+          <div ref={attachQuestion} />
+        ) : (
+          <NeoWorkQuestion key={work.id} work={work} />
+        ))}
       {work.status === 'proposed' && (
         <p class="mt-3 text-xs leading-relaxed text-fg-muted">
           {work.targetSessionId

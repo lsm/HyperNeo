@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import type { PendingUserQuestion } from '@hyperneo/shared';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { connectionState } from '../lib/state.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -9,6 +11,7 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard, sceneOpenSelector } from './NeoWorkCard.tsx';
+import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
@@ -35,7 +38,53 @@ export function NeoLive() {
   const view = neo.viewSnapshot;
   const viewWorks = view?.work ?? [];
   const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
-  const scenes = projectNeoScenes(projectNeoConcernBoard(view, neo.selectedId, null));
+  const publicConversation =
+    neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
+      ? neo.viewPublicConversation
+      : undefined;
+  const sceneScope =
+    neo.sessionId === null ? null : JSON.stringify([neo.sessionId, neo.selectedId]);
+  const currentScope = useRef(sceneScope);
+  currentScope.current = sceneScope;
+  const [questions, setQuestions] = useState<{
+    scope: string | null;
+    values: ReadonlyMap<string, PendingUserQuestion>;
+  }>({ scope: null, values: new Map() });
+  const [slots, setSlots] = useState<{
+    scope: string | null;
+    values: ReadonlyMap<string, HTMLElement>;
+  }>({ scope: null, values: new Map() });
+  const recordQuestion = useCallback(
+    (work: NeoWork, question: PendingUserQuestion | null) => {
+      if (currentScope.current !== sceneScope) return;
+      setQuestions((prior) => {
+        const values = new Map(prior.scope === sceneScope ? prior.values : []);
+        if (question === values.get(work.id) || (!question && !values.has(work.id))) return prior;
+        if (question) values.set(work.id, question);
+        else if (values.get(work.id)?.inputOrigin?.sessionId === work.sessionId)
+          values.delete(work.id);
+        return { scope: sceneScope, values };
+      });
+    },
+    [sceneScope]
+  );
+  const attachQuestion = useCallback(
+    (id: string, node: HTMLElement | null, previous: HTMLElement | null) => {
+      if (currentScope.current !== sceneScope) return;
+      setSlots((prior) => {
+        const values = new Map(prior.scope === sceneScope ? prior.values : []);
+        if (node === values.get(id) || (!node && values.get(id) !== previous)) return prior;
+        if (node) values.set(id, node);
+        else values.delete(id);
+        return { scope: sceneScope, values };
+      });
+    },
+    [sceneScope]
+  );
+  const scenes = projectNeoScenes(
+    projectNeoConcernBoard(view, neo.selectedId, null),
+    publicConversation && questions.scope === sceneScope ? questions.values : undefined
+  );
   const sceneGroups = (
     [
       { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
@@ -54,8 +103,6 @@ export function NeoLive() {
     scope: string;
     ref: NeoSceneRef;
   } | null>(null);
-  const sceneScope =
-    neo.sessionId === null ? null : JSON.stringify([neo.sessionId, neo.selectedId]);
   const picked =
     sceneSelection && sceneScope === sceneSelection.scope
       ? selectNeoScene(scenes, sceneSelection.ref)
@@ -63,6 +110,12 @@ export function NeoLive() {
   const detail = picked && 'value' in picked ? picked.value : null;
   const detailWork = detail?.receipt.kind === 'work' ? detail.receipt : null;
   const detailLive = detail !== null;
+  const displayedGroups = sceneGroups.map((group) => ({
+    ...group,
+    scenes: publicConversation
+      ? group.scenes.filter((scene) => scene.ref.id !== detailWork?.id)
+      : group.scenes,
+  }));
   const detailPane = useRef<HTMLElement>(null);
   const focusScene = useRef<{ id: string; scope: string } | null>(null);
   useLayoutEffect(() => {
@@ -89,10 +142,6 @@ export function NeoLive() {
     () => drafts[draftKey] ?? '',
     (text) => setDrafts((items) => ({ ...items, [draftKey]: text }))
   );
-  const publicConversation =
-    neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
-      ? neo.viewPublicConversation
-      : undefined;
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
   const conversationReady =
@@ -191,6 +240,17 @@ export function NeoLive() {
 
   return (
     <div ref={shell} class="neo-shell relative flex flex-col overflow-hidden text-fg">
+      {publicConversation &&
+        relevant
+          .filter((work) => work.status === 'queued' && work.sessionId)
+          .map((work) => (
+            <NeoWorkQuestionResource
+              key={`${sceneScope}:${work.id}:${work.sessionId}`}
+              work={work}
+              target={slots.scope === sceneScope ? (slots.values.get(work.id) ?? null) : null}
+              onQuestion={(_, question) => recordQuestion(work, question)}
+            />
+          ))}
       {dragging && (
         <div
           role="status"
@@ -399,7 +459,7 @@ export function NeoLive() {
                 </p>
               </div>
             )}
-          {detailWork ? (
+          {detailWork && (
             <section ref={detailPane} aria-label="Selected work" class="mt-6 space-y-3">
               <Button
                 variant="ghost"
@@ -416,10 +476,12 @@ export function NeoLive() {
                 busy={neo.busyWork === detailWork.id}
                 disabled={!connected || !!neo.busyWork}
                 onAction={(id, action) => void neo.act(id, action)}
+                questionSlot={publicConversation ? attachQuestion : undefined}
               />
             </section>
-          ) : (
-            sceneGroups.map((group) =>
+          )}
+          {(publicConversation || !detailWork) &&
+            displayedGroups.map((group) =>
               group.scenes.length === 0 ? null : (
                 <section
                   key={group.key}
@@ -438,12 +500,15 @@ export function NeoLive() {
                       disabled={!connected || !!neo.busyWork}
                       onAction={(id, action) => void neo.act(id, action)}
                       onOpen={() => openScene(scene.ref)}
+                      presentation={
+                        publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
+                      }
+                      questionSlot={publicConversation ? attachQuestion : undefined}
                     />
                   ))}
                 </section>
               )
-            )
-          )}
+            )}
         </div>
       </main>
       <footer
