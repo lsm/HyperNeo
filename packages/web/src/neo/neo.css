@@ -90,10 +90,6 @@
   display: none;
 }
 
-.neo-scene-detail {
-  padding-bottom: 0;
-}
-
 .neo-float-dock {
   position: absolute;
   top: 12px;

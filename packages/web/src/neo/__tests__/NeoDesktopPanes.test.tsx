@@ -218,4 +218,14 @@ describe('Neo desktop panes', () => {
     expect(css).toContain('@media (min-width: 1120px) and (prefers-reduced-motion: no-preference)');
     expect(css).not.toContain('pointer: coarse');
   });
+
+  it('retains composer clearance for narrow and legacy detail cards', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    const shared = css.split('@media (min-width: 1120px) {')[0];
+    expect(shared).toMatch(
+      /\.neo-scene-list,\s*\.neo-scene-detail \{[^}]*padding: 0 20px calc\(var\(--neo-composer-height, 190px\) \+ 32px\);/
+    );
+    expect(shared).not.toMatch(/\.neo-scene-detail \{[^}]*padding-bottom: 0;/);
+    expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 16px 32px;');
+  });
 });
