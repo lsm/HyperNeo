@@ -17,6 +17,8 @@ import {
 import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
 import { connectionState } from '../lib/state.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
+import { NeoPublicConversation } from './NeoPublicConversation.tsx';
+import type { NeoPublicConversation as PublicConversation } from './public-conversation.ts';
 
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
 type QuestionFailure = { epoch: QuestionEpoch; message: string };
@@ -99,11 +101,13 @@ export function NeoConversation({
   sessionId,
   works = [],
   snapshot = null,
+  publicConversation,
 }: {
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
   snapshot?: NeoSnapshot | null;
+  publicConversation?: PublicConversation;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -173,7 +177,8 @@ export function NeoConversation({
             </a>
           </p>
         )}
-        {visible.map((message) => {
+        {publicConversation && <NeoPublicConversation conversation={publicConversation} />}
+        {(publicConversation ? [] : visible).map((message) => {
           const context = projectNeoReplyContext(message, sessionId, visible, conversationText);
           const requestOrigin = neoRequestOrigin(message, sessionId);
           const checks =
