@@ -1,6 +1,8 @@
 import type { Database } from '../sqlite-compat.ts';
+import { createNeoPublicationTable } from './m288-neo-publications.ts';
+import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
 
-export function createNeoTables(db: Database): void {
+export function createNeoContextTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_concerns (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -36,4 +38,10 @@ export function createNeoTables(db: Database): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_concern ON neo_work(concern_id, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_session
     ON neo_work(session_id, created_at) WHERE session_id IS NOT NULL`);
+}
+
+export function createNeoTables(db: Database): void {
+  createNeoContextTables(db);
+  createNeoPublicationTable(db);
+  createNeoConsultationPublicationTable(db);
 }

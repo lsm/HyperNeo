@@ -151,6 +151,14 @@ export class NeoConsultationRepository {
     return row?.payloadJson ?? null;
   }
 
+  getPublicationInput(consultationId: string): NeoPublicationInput | null {
+    const payload = this.storedAssociationPayload(consultationId);
+    if (payload === null) return null;
+    const parsed = admitNeoPublication(JSON.parse(payload));
+    if ('reason' in parsed) throw new Error('Invalid stored consultation publication');
+    return parsed.value;
+  }
+
   private insertAssociation(
     input: NeoConsultationPublicationInput,
     payload: string,

@@ -1,6 +1,6 @@
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import type { NeoInputOrigin } from '@hyperneo/shared/types/neo-message';
-import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoConsultationPublication } from '../../storage/repositories/neo-consultation-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { admitNeoPublication } from './publication.ts';
@@ -64,14 +64,28 @@ export function requireConsultationAsk(
     : { reason: 'inconsistent' };
 }
 
+export function requireConsultationPayload(
+  publication: NeoPublication,
+  captured: NeoPublicationInput | null | undefined
+): Gate<NeoPublication> {
+  return captured === undefined ||
+    (captured !== null &&
+      (Object.keys(captured) as (keyof NeoPublicationInput)[]).every(
+        (key) => JSON.stringify(captured[key]) === JSON.stringify(publication[key])
+      ))
+    ? { value: publication }
+    : { reason: 'inconsistent' };
+}
+
 export const planNeoConsultationReturn = (
   superpipe({})('neo-consultation-return-route') as PipelineAPI
 )
-  .input(['item', 'association', 'publication', 'originalAsk'])
+  .input(['item', 'association', 'publication', 'originalAsk', 'captured'])
   .pipe(selectConsultationReturn, ['item', 'association', 'publication'], 'result:route')
   .pipe(requireConsultationReceipt, ['route', 'item'], 'result:route')
   .pipe(requireConsultationPublication, ['route', 'item', 'publication'], 'result:route')
   .pipe(requireConsultationAsk, ['route', 'originalAsk'], 'result:route')
+  .pipe(requireConsultationPayload, ['route', 'captured'], 'result:route')
   .pipe(
     (publication: NeoPublication) => ({ kind: 'published' as const, publication }),
     'route',
@@ -81,5 +95,6 @@ export const planNeoConsultationReturn = (
   item: ReturnItem,
   association: NeoConsultationPublication | null,
   publication: NeoPublication | null,
-  originalAsk: NeoInputOrigin | null
+  originalAsk: NeoInputOrigin | null,
+  captured?: NeoPublicationInput | null
 ) => NeoConsultationReturn;
