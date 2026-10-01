@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
+import { Button } from '../components/ui/Button.tsx';
+import { connectionState } from '../lib/state.ts';
 import type { QuestionFormDraft } from '../components/question-form-draft.ts';
 import type { useNeoWorkQuestionObserver } from './useNeoWorkQuestionObserver.ts';
 
@@ -68,9 +70,19 @@ export function NeoWorkQuestionControls({
         />
       )}
       {errorMessage && (
-        <p role="alert" class="mt-3 text-sm text-danger">
-          {errorMessage}
-        </p>
+        <div role="alert" class="mt-3 text-sm text-danger">
+          <p>{errorMessage}</p>
+          {(loadError || store.loadErrorKind.value) && work.status === 'queued' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={connectionState.value !== 'connected'}
+              onClick={observation.retry}
+            >
+              Check questions again
+            </Button>
+          )}
+        </div>
       )}
     </>
   );
