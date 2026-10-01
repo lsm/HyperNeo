@@ -3,10 +3,9 @@ import { rmSync } from 'node:fs';
 import { cpus, tmpdir } from 'node:os';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type Result } from 'superpipe';
 import { Database } from '../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../src/storage/schema/index.ts';
-import { decisionRun } from '../../src/lib/space/runtime/decision-pipeline.ts';
 import {
   decideMessageAdmission,
   normalizeMessageAdmissionInput,
@@ -38,7 +37,8 @@ type RouterContext = {
 };
 
 type RouterInput = Omit<RouterContext, 'decision'>;
-type Variant = 'decisionRun' | 'if-cascade' | 'save-pipeline' | 'save-direct' | 'sqlite-insert';
+type RouterGateResult = Result<RouterInput, RouterDecision>;
+type Variant = 'direct-gates' | 'if-cascade' | 'save-pipeline' | 'save-direct' | 'sqlite-insert';
 
 type Measurement = { nsPerOp: number; checksum: number };
 
@@ -178,16 +178,43 @@ const decide = (ctx: RouterContext, decision: RouterDecision): RouterContext => 
   decision,
 });
 
-const gates: ReadonlyArray<(ctx: RouterContext) => RouterContext> = [
-  (ctx) => (ctx.isPaused ? decide(ctx, 'defer') : ctx),
-  (ctx) => (ctx.runState === 'done' ? decide(ctx, 'reject') : ctx),
-  (ctx) => (ctx.senderId === ctx.targetId && !ctx.allowSelf ? decide(ctx, 'deny-self') : ctx),
-  (ctx) => (!ctx.capacityAvailable ? decide(ctx, 'queue') : ctx),
-  (ctx) => (ctx.isDirect && ctx.tags.includes('urgent') ? decide(ctx, 'prioritize') : ctx),
-  (ctx) => (ctx.channel.length > 0 && ctx.message.length > 0 ? decide(ctx, 'route') : ctx),
-];
+function gatePaused(input: RouterInput): RouterGateResult {
+  return input.isPaused ? { reason: 'defer' } : { value: input };
+}
 
-const runDecisionPipeline = decisionRun<RouterContext>('router-benchmark', gates);
+function gateRunDone(input: RouterInput): RouterGateResult {
+  return input.runState === 'done' ? { reason: 'reject' } : { value: input };
+}
+
+function gateSelfSend(input: RouterInput): RouterGateResult {
+  return input.senderId === input.targetId && !input.allowSelf
+    ? { reason: 'deny-self' }
+    : { value: input };
+}
+
+function gateCapacity(input: RouterInput): RouterGateResult {
+  return input.capacityAvailable ? { value: input } : { reason: 'queue' };
+}
+
+function gateUrgent(input: RouterInput): RouterGateResult {
+  return input.isDirect && input.tags.includes('urgent')
+    ? { reason: 'prioritize' }
+    : { value: input };
+}
+
+function gateRoutable(input: RouterInput): { value: RouterDecision | null } {
+  return { value: input.channel.length > 0 && input.message.length > 0 ? 'route' : null };
+}
+
+const runDecisionPipeline = (superpipe({})('router-benchmark') as PipelineAPI)
+  .input('input')
+  .pipe(gatePaused, 'input', 'result:verdict')
+  .pipe(gateRunDone, 'verdict', 'result:verdict')
+  .pipe(gateSelfSend, 'verdict', 'result:verdict')
+  .pipe(gateCapacity, 'verdict', 'result:verdict')
+  .pipe(gateUrgent, 'verdict', 'result:verdict')
+  .pipe(gateRoutable, 'verdict', 'result:verdict')
+  .end('verdict') as (input: RouterInput) => RouterDecision | null;
 
 function runIfCascade(input: RouterInput): RouterContext {
   const ctx: RouterContext = { ...input, decision: null };
@@ -332,7 +359,7 @@ function buildInsertRows(count: number, timestampBase: number): readonly InsertR
 
 function verifyEquivalentDecisions(): void {
   for (const input of inputs) {
-    const pipelineDecision = runDecisionPipeline(input).decision;
+    const pipelineDecision = runDecisionPipeline(input);
     const cascadeDecision = runIfCascade(input).decision;
     if (pipelineDecision !== cascadeDecision) {
       throw new Error(
@@ -356,10 +383,10 @@ function runIterations<T>(
 }
 
 function collectSample(variant: Variant): Sample {
-  if (variant === 'decisionRun' || variant === 'if-cascade') {
+  if (variant === 'direct-gates' || variant === 'if-cascade') {
     const run =
-      variant === 'decisionRun'
-        ? (input: RouterInput) => runDecisionPipeline(input).decision?.charCodeAt(0) ?? 0
+      variant === 'direct-gates'
+        ? (input: RouterInput) => runDecisionPipeline(input)?.charCodeAt(0) ?? 0
         : (input: RouterInput) => runIfCascade(input).decision?.charCodeAt(0) ?? 0;
     const cold = runIterations(inputs, run, ITERATIONS);
     runIterations(inputs, run, WARMUP_ITERATIONS);
@@ -433,7 +460,7 @@ const variantIndex = process.argv.indexOf('--variant');
 const variant = variantIndex === -1 ? undefined : (process.argv[variantIndex + 1] as Variant);
 
 if (
-  variant === 'decisionRun' ||
+  variant === 'direct-gates' ||
   variant === 'if-cascade' ||
   variant === 'save-pipeline' ||
   variant === 'save-direct' ||
@@ -443,7 +470,7 @@ if (
 } else if (variant !== undefined) {
   throw new Error(`Unknown variant: ${variant}`);
 } else {
-  const decisionSamples = Array.from({ length: SAMPLES }, () => runChild('decisionRun'));
+  const decisionSamples = Array.from({ length: SAMPLES }, () => runChild('direct-gates'));
   const cascadeSamples = Array.from({ length: SAMPLES }, () => runChild('if-cascade'));
   const savePipelineSamples = Array.from({ length: SAMPLES }, () => runChild('save-pipeline'));
   const saveDirectSamples = Array.from({ length: SAMPLES }, () => runChild('save-direct'));
@@ -475,7 +502,7 @@ if (
     `${INSERT_ITERATIONS.toLocaleString()} insert iterations; ${INSERT_WARMUP_ITERATIONS.toLocaleString()} insert warmup\n`
   );
   log('variant           cold ns/op: median [samples]   warm ns/op: median [samples]');
-  summarize('decisionRun', decisionSamples);
+  summarize('direct-gates', decisionSamples);
   summarize('if-cascade', cascadeSamples);
   summarize('save-pipeline', savePipelineSamples);
   summarize('save-direct', saveDirectSamples);
