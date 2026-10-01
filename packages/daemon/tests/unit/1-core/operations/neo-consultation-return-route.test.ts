@@ -257,7 +257,13 @@ describe('planNeoConsultationReturn', () => {
       ).toBe('inconsistent');
       expect(rows()).toEqual(before);
       expect(sql.prepare('SELECT * FROM sdk_messages').all()).toEqual([]);
-      expect(db.getJobQueueRepo().listActiveByPayload('mailbox', {})).toEqual([]);
+      const deliveries = () => sql.prepare("SELECT * FROM job_queue WHERE queue = 'mailbox'").all();
+      expect(deliveries()).toEqual([]);
+      const probe = db.getJobQueueRepo().enqueue({
+        queue: 'mailbox',
+        payload: { sessionId: item.sessionId, messageId: 'delivery-probe' },
+      });
+      expect(deliveries().map((row) => (row as { id: string }).id)).toEqual([probe.id]);
     } finally {
       db.close();
     }
