@@ -16,6 +16,7 @@ export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
   concerns: NeoConcern[];
+  publicAuthorBindings?: { sessionId: string; concernId: string; kind: 'concern' }[];
   work: NeoWork[];
   consultations?: NeoConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
