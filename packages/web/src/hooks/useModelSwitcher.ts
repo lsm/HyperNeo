@@ -40,6 +40,7 @@ export const PROVIDER_ORDER: Record<string, number> = {
   kimi: 5,
   minimax: 6,
   deepseek: 7,
+  opencode: 8,
 };
 
 export const FAMILY_ORDER: Record<string, number> = {

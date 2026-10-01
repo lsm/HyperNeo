@@ -121,6 +121,9 @@ export async function registerBuiltInProvider(
     case 'deepseek':
       registry.register(new DeepSeekProvider());
       break;
+    case 'opencode':
+      registry.register(new OpencodeProvider());
+      break;
     case 'openrouter':
       registry.register(new OpenRouterProvider());
       break;
