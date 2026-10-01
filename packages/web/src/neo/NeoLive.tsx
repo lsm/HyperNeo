@@ -52,6 +52,10 @@ export function NeoLive() {
     scope: string | null;
     values: ReadonlyMap<string, PendingUserQuestion>;
   }>({ scope: null, values: new Map() });
+  const [unavailableSessions, setUnavailableSessions] = useState<{
+    scope: string | null;
+    values: ReadonlyMap<string, string>;
+  }>({ scope: null, values: new Map() });
   const [slots, setSlots] = useState<{
     scope: string | null;
     values: ReadonlyMap<string, HTMLElement>;
@@ -83,9 +87,29 @@ export function NeoLive() {
     },
     [sceneScope]
   );
+  const recordUnavailable = useCallback(
+    (work: NeoWork, unavailable: boolean) => {
+      if (currentScope.current !== sceneScope || !work.sessionId) return;
+      setUnavailableSessions((prior) => {
+        const values = new Map(prior.scope === sceneScope ? prior.values : []);
+        if (unavailable) {
+          if (values.get(work.id) === work.sessionId) return prior;
+          values.set(work.id, work.sessionId!);
+        } else {
+          if (values.get(work.id) !== work.sessionId) return prior;
+          values.delete(work.id);
+        }
+        return { scope: sceneScope, values };
+      });
+    },
+    [sceneScope]
+  );
   const scenes = projectNeoScenes(
     projectNeoConcernBoard(view, neo.selectedId, null),
-    publicConversation && questions.scope === sceneScope ? questions.values : undefined
+    publicConversation && questions.scope === sceneScope ? questions.values : undefined,
+    publicConversation && unavailableSessions.scope === sceneScope
+      ? unavailableSessions.values
+      : undefined
   );
   const sceneGroups = (
     [
@@ -287,6 +311,7 @@ export function NeoLive() {
               work={work}
               target={slots.scope === sceneScope ? (slots.values.get(work.id) ?? null) : null}
               onQuestion={(_, question) => recordQuestion(work, question)}
+              onUnavailable={(_, unavailable) => recordUnavailable(work, unavailable)}
             />
           ))}
       {dragging && (

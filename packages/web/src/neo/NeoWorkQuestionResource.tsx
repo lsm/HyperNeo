@@ -13,14 +13,20 @@ export function NeoWorkQuestionResource({
   work,
   target,
   onQuestion,
+  onUnavailable,
 }: {
   work: NeoWork;
   target?: HTMLElement | null;
   onQuestion?: (workId: string, question: PendingUserQuestion | null) => void;
+  onUnavailable?: (workId: string, unavailable: boolean) => void;
 }) {
   const observation = useNeoWorkQuestionObserver(work);
   const questionListener = useRef(onQuestion);
   questionListener.current = onQuestion;
+  const unavailableListener = useRef(onUnavailable);
+  unavailableListener.current = onUnavailable;
+  const unavailable =
+    !!onUnavailable && (!!observation.loadError || !!observation.store.loadErrorKind.value);
   const { question } = observation;
   const initialDraft = useMemo(
     () =>
@@ -38,6 +44,10 @@ export function NeoWorkQuestionResource({
     onQuestion?.(work.id, question);
   }, [work.id, question, onQuestion]);
   useEffect(() => () => questionListener.current?.(work.id, null), [work.id]);
+  useEffect(() => {
+    onUnavailable?.(work.id, unavailable);
+  }, [work.id, unavailable, onUnavailable]);
+  useEffect(() => () => unavailableListener.current?.(work.id, false), [work.id]);
   const controls = (
     <NeoWorkQuestionControls
       work={work}
