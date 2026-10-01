@@ -24,25 +24,51 @@ export interface VerifiedStopFlowDeps {
   warn(message: string, err?: unknown): void;
 }
 
-interface VerifiedStopCtx {
-  deps: VerifiedStopFlowDeps;
+export interface VerifiedStopLivenessDeps {
+  readProcessingStatus(session: AgentSession): AgentProcessingState['status'];
+  isInterruptInProgress(session: AgentSession): boolean;
+  awaitProcessExitSettle(session: AgentSession): Promise<void>;
+  readLivePids(session: AgentSession): readonly number[];
+}
+
+export interface VerifiedStopRequest {
+  sessionId: string;
+}
+
+export interface VerifiedStopState {
   sessionId: string;
   session: AgentSession | null;
   notes: string[];
-  retryReason: string | null;
-  escalateReason: string | null;
-  liveness: SessionLivenessSnapshot;
+  liveness: SessionLivenessSnapshot | null;
   decision: StopVerificationDecision | null;
-  outcome: VerifiedSessionStop | null;
-  failure: { stage: string; error: unknown } | null;
+}
+
+export interface VerifiedStopSettled {
+  settled: StagedRunOutcome;
+}
+
+export type VerifiedStopOutcome = VerifiedStopState | VerifiedStopSettled;
+
+export function isVerifiedStopSettled(
+  outcome: VerifiedStopOutcome
+): outcome is VerifiedStopSettled {
+  return 'settled' in outcome;
 }
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function retryReasonOf(decision: StopVerificationDecision | null): string {
+  return decision?.action === 'retry_interrupt' ? decision.reason : 'still alive';
+}
+
+function escalateReasonOf(decision: StopVerificationDecision | null): string {
+  return decision?.action === 'escalate_terminate' ? decision.reason : 'still alive';
+}
+
 async function gatherSessionLiveness(
-  deps: VerifiedStopFlowDeps,
+  deps: VerifiedStopLivenessDeps,
   session: AgentSession
 ): Promise<SessionLivenessSnapshot> {
   const processingStatus = deps.readProcessingStatus(session);
@@ -57,211 +83,277 @@ async function gatherSessionLiveness(
   return { processingStatus, interruptInProgress, livePids: deps.readLivePids(session) };
 }
 
-function claimSession(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  return { ...ctx, session: ctx.deps.claimSession(ctx.sessionId) };
+export type VerifiedStopVerifyStage = (
+  readProcessingStatus: VerifiedStopLivenessDeps['readProcessingStatus'],
+  isInterruptInProgress: VerifiedStopLivenessDeps['isInterruptInProgress'],
+  awaitProcessExitSettle: VerifiedStopLivenessDeps['awaitProcessExitSettle'],
+  readLivePids: VerifiedStopLivenessDeps['readLivePids'],
+  stop: VerifiedStopState
+) => Promise<{ value: VerifiedStopState } | { reason: VerifiedStopSettled }>;
+
+export function makeVerifyStage(stage: string): VerifiedStopVerifyStage {
+  return (
+    readProcessingStatus,
+    isInterruptInProgress,
+    awaitProcessExitSettle,
+    readLivePids,
+    stop
+  ) =>
+    verifySessionLiveness(
+      { readProcessingStatus, isInterruptInProgress, awaitProcessExitSettle, readLivePids },
+      stage,
+      stop
+    );
 }
 
-async function interruptSession(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.session === null) return ctx;
-  try {
-    await ctx.deps.stopSessionStrict(ctx.sessionId, ctx.session);
-  } catch (err) {
-    return { ...ctx, notes: [...ctx.notes, `interrupt failed: ${describeError(err)}`] };
-  }
-  return ctx;
-}
+export const verifyAfterInterrupt = makeVerifyStage('verify-after-interrupt');
+export const verifyAfterRetry = makeVerifyStage('verify-after-retry');
+export const verifyAfterEscalation = makeVerifyStage('verify-after-escalation');
 
-async function verifyLiveness(ctx: VerifiedStopCtx, stage: string): Promise<VerifiedStopCtx> {
-  if (ctx.session === null || ctx.failure !== null) return ctx;
+export async function verifySessionLiveness(
+  deps: VerifiedStopLivenessDeps,
+  stage: string,
+  state: VerifiedStopState
+): Promise<{ value: VerifiedStopState } | { reason: VerifiedStopSettled }> {
   try {
-    return { ...ctx, liveness: await gatherSessionLiveness(ctx.deps, ctx.session) };
+    const liveness = await gatherSessionLiveness(deps, state.session!);
+    return { value: { ...state, liveness } };
   } catch (error) {
-    return { ...ctx, failure: { stage, error } };
+    return { reason: { settled: { status: 'error', stage, error, unwind: [] } } };
   }
 }
 
-function verifyAfterFirstInterrupt(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  return verifyLiveness(ctx, 'verify-after-interrupt');
-}
-
-function verifyAfterRetry(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.retryReason === null) return Promise.resolve(ctx);
-  return verifyLiveness(ctx, 'verify-after-retry');
-}
-
-function verifyAfterEscalation(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.escalateReason === null) return Promise.resolve(ctx);
-  return verifyLiveness(ctx, 'verify-after-escalation');
-}
-
-function decideAfterFirstInterrupt(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.session === null || ctx.failure !== null) return ctx;
-  const decision = decideStopVerification({
-    sessionPresent: true,
-    processingStatus: ctx.liveness.processingStatus,
-    interruptInProgress: ctx.liveness.interruptInProgress,
-    livePids: ctx.liveness.livePids,
-    interruptAttemptsSoFar: 1,
-    escalationDone: false,
-  });
+export function claimVerifiedStopSession(
+  claimSession: VerifiedStopFlowDeps['claimSession'],
+  request: VerifiedStopRequest
+): {
+  stop: VerifiedStopState;
+  missingSessionArm: typeof unregisterMissingSessionStage | undefined;
+} {
+  const session = claimSession(request.sessionId);
   return {
-    ...ctx,
-    decision,
-    retryReason: decision.action === 'retry_interrupt' ? decision.reason : null,
+    stop: { sessionId: request.sessionId, session, notes: [], liveness: null, decision: null },
+    missingSessionArm: session === null ? unregisterMissingSessionStage : undefined,
   };
 }
 
-async function retryInterrupt(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.failure !== null || ctx.session === null || ctx.retryReason === null) return ctx;
-  ctx.deps.warn(
-    `TaskAgentManager.stopSessionsVerified: session ${ctx.sessionId} still alive after interrupt (${ctx.retryReason}); retrying once`
-  );
+export async function unregisterMissingSessionStage(
+  unregisterSession: VerifiedStopFlowDeps['unregisterSession'],
+  warn: VerifiedStopFlowDeps['warn'],
+  stop: VerifiedStopState
+): Promise<{ reason: VerifiedStopSettled }> {
   try {
-    await ctx.deps.stopSessionStrict(ctx.sessionId, ctx.session);
+    await unregisterSession(stop.sessionId);
   } catch (err) {
-    return { ...ctx, notes: [...ctx.notes, `retry interrupt failed: ${describeError(err)}`] };
-  }
-  return ctx;
-}
-
-function decideAfterRetry(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.failure !== null || ctx.retryReason === null) return ctx;
-  const decision = decideStopVerification({
-    sessionPresent: true,
-    processingStatus: ctx.liveness.processingStatus,
-    interruptInProgress: ctx.liveness.interruptInProgress,
-    livePids: ctx.liveness.livePids,
-    interruptAttemptsSoFar: 2,
-    escalationDone: false,
-  });
-  return {
-    ...ctx,
-    decision,
-    notes:
-      decision.action === 'down'
-        ? [...ctx.notes, 'first interrupt did not land; stopped on retry']
-        : ctx.notes,
-    escalateReason: decision.action === 'escalate_terminate' ? decision.reason : null,
-  };
-}
-
-function terminateTrackedProcesses(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.failure !== null || ctx.escalateReason === null) return ctx;
-  ctx.deps.warn(
-    `TaskAgentManager.stopSessionsVerified: session ${ctx.sessionId} survived interrupt retry (${ctx.escalateReason}); escalating to tracked process termination`
-  );
-  const notes = [...ctx.notes, `escalated after verification failure (${ctx.escalateReason})`];
-  try {
-    ctx.deps.terminateTrackedProcesses(ctx.session!);
-  } catch (err) {
-    return { ...ctx, notes: [...notes, `escalation failed: ${describeError(err)}`] };
-  }
-  return { ...ctx, notes };
-}
-
-function decideFinalVerdict(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.failure !== null || ctx.escalateReason === null) return ctx;
-  return {
-    ...ctx,
-    decision: decideStopVerification({
-      sessionPresent: true,
-      processingStatus: ctx.liveness.processingStatus,
-      interruptInProgress: ctx.liveness.interruptInProgress,
-      livePids: ctx.liveness.livePids,
-      interruptAttemptsSoFar: 2,
-      escalationDone: true,
-    }),
-  };
-}
-
-async function detachAndUnregister(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.failure !== null || ctx.session === null) return ctx;
-  ctx.deps.detachSessionBookkeeping(ctx.sessionId);
-  try {
-    await ctx.deps.unregisterSession(ctx.sessionId);
-  } catch (err) {
-    return { ...ctx, notes: [...ctx.notes, `unregister failed: ${describeError(err)}`] };
-  }
-  return ctx;
-}
-
-async function unregisterMissingSession(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.session !== null) return ctx;
-  try {
-    await ctx.deps.unregisterSession(ctx.sessionId);
-  } catch (err) {
-    ctx.deps.warn(
-      `TaskAgentManager.stopSessionsVerified: failed to unregister missing session ${ctx.sessionId}:`,
+    warn(
+      `TaskAgentManager.stopSessionsVerified: failed to unregister missing session ${stop.sessionId}:`,
       err
     );
   }
   return {
-    ...ctx,
-    outcome: {
-      sessionId: ctx.sessionId,
-      stopped: true,
-      detail: 'no in-memory session; unregistered',
+    reason: {
+      settled: {
+        status: 'completed',
+        result: {
+          sessionId: stop.sessionId,
+          stopped: true,
+          detail: 'no in-memory session; unregistered',
+        },
+      },
     },
   };
 }
 
-function assembleVerdict(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.failure !== null || ctx.session === null) return ctx;
+export async function interruptSession(
+  stopSessionStrict: VerifiedStopFlowDeps['stopSessionStrict'],
+  stop: VerifiedStopState
+): Promise<{ stop: VerifiedStopState }> {
+  try {
+    await stopSessionStrict(stop.sessionId, stop.session!);
+  } catch (err) {
+    return { stop: { ...stop, notes: [...stop.notes, `interrupt failed: ${describeError(err)}`] } };
+  }
+  return { stop };
+}
+
+export function decideAfterFirstInterrupt(stop: VerifiedStopState): {
+  stop: VerifiedStopState;
+  retryArm: typeof retryInterrupt | undefined;
+  retryVerifyArm: VerifiedStopVerifyStage | undefined;
+  retryDecideArm: typeof decideAfterRetry | undefined;
+} {
+  const decision = decideStopVerification({
+    sessionPresent: true,
+    ...stop.liveness!,
+    interruptAttemptsSoFar: 1,
+    escalationDone: false,
+  });
+  const retrying = decision.action === 'retry_interrupt';
   return {
-    ...ctx,
-    outcome: assembleVerifiedStopResult({
-      sessionId: ctx.sessionId,
-      notes: ctx.notes,
-      decision: ctx.decision!,
-    }),
+    stop: { ...stop, decision },
+    retryArm: retrying ? retryInterrupt : undefined,
+    retryVerifyArm: retrying ? verifyAfterRetry : undefined,
+    retryDecideArm: retrying ? decideAfterRetry : undefined,
   };
 }
 
-const run = (superpipe({})('verified-stop-flow') as PipelineAPI)
-  .input(['ctx'])
-  .pipe(claimSession, 'ctx', 'ctx')
-  .pipe(interruptSession, 'ctx', 'ctx')
-  .pipe(verifyAfterFirstInterrupt, 'ctx', 'ctx')
-  .pipe(decideAfterFirstInterrupt, 'ctx', 'ctx')
-  .pipe(retryInterrupt, 'ctx', 'ctx')
-  .pipe(verifyAfterRetry, 'ctx', 'ctx')
-  .pipe(decideAfterRetry, 'ctx', 'ctx')
-  .pipe(terminateTrackedProcesses, 'ctx', 'ctx')
-  .pipe(verifyAfterEscalation, 'ctx', 'ctx')
-  .pipe(decideFinalVerdict, 'ctx', 'ctx')
-  .pipe(detachAndUnregister, 'ctx', 'ctx')
-  .pipe(unregisterMissingSession, 'ctx', 'ctx')
-  .pipe(assembleVerdict, 'ctx', 'ctx')
-  .endAsync('ctx') as (input: VerifiedStopCtx) => Promise<VerifiedStopCtx>;
+export async function retryInterrupt(
+  stopSessionStrict: VerifiedStopFlowDeps['stopSessionStrict'],
+  warn: VerifiedStopFlowDeps['warn'],
+  stop: VerifiedStopState
+): Promise<{ stop: VerifiedStopState }> {
+  warn(
+    `TaskAgentManager.stopSessionsVerified: session ${stop.sessionId} still alive after interrupt (${retryReasonOf(stop.decision)}); retrying once`
+  );
+  try {
+    await stopSessionStrict(stop.sessionId, stop.session!);
+  } catch (err) {
+    return {
+      stop: { ...stop, notes: [...stop.notes, `retry interrupt failed: ${describeError(err)}`] },
+    };
+  }
+  return { stop };
+}
 
-export async function runVerifiedStopFlow(
+export function decideAfterRetry(stop: VerifiedStopState): {
+  stop: VerifiedStopState;
+  escalateArm: typeof escalateToTermination | undefined;
+  escalateVerifyArm: VerifiedStopVerifyStage | undefined;
+  escalateDecideArm: typeof decideFinalVerdict | undefined;
+} {
+  const decision = decideStopVerification({
+    sessionPresent: true,
+    ...stop.liveness!,
+    interruptAttemptsSoFar: 2,
+    escalationDone: false,
+  });
+  const escalating = decision.action === 'escalate_terminate';
+  return {
+    stop: {
+      ...stop,
+      decision,
+      notes:
+        decision.action === 'down'
+          ? [...stop.notes, 'first interrupt did not land; stopped on retry']
+          : stop.notes,
+    },
+    escalateArm: escalating ? escalateToTermination : undefined,
+    escalateVerifyArm: escalating ? verifyAfterEscalation : undefined,
+    escalateDecideArm: escalating ? decideFinalVerdict : undefined,
+  };
+}
+
+export function escalateToTermination(
+  terminateTrackedProcesses: VerifiedStopFlowDeps['terminateTrackedProcesses'],
+  warn: VerifiedStopFlowDeps['warn'],
+  stop: VerifiedStopState
+): { stop: VerifiedStopState } {
+  warn(
+    `TaskAgentManager.stopSessionsVerified: session ${stop.sessionId} survived interrupt retry (${escalateReasonOf(stop.decision)}); escalating to tracked process termination`
+  );
+  const notes = [
+    ...stop.notes,
+    `escalated after verification failure (${escalateReasonOf(stop.decision)})`,
+  ];
+  try {
+    terminateTrackedProcesses(stop.session!);
+  } catch (err) {
+    return { stop: { ...stop, notes: [...notes, `escalation failed: ${describeError(err)}`] } };
+  }
+  return { stop: { ...stop, notes } };
+}
+
+export function decideFinalVerdict(stop: VerifiedStopState): { stop: VerifiedStopState } {
+  return {
+    stop: {
+      ...stop,
+      decision: decideStopVerification({
+        sessionPresent: true,
+        ...stop.liveness!,
+        interruptAttemptsSoFar: 2,
+        escalationDone: true,
+      }),
+    },
+  };
+}
+
+export async function finalizeVerifiedStop(
+  detachSessionBookkeeping: VerifiedStopFlowDeps['detachSessionBookkeeping'],
+  unregisterSession: VerifiedStopFlowDeps['unregisterSession'],
+  warn: VerifiedStopFlowDeps['warn'],
+  stop: VerifiedStopState
+): Promise<{ reason: VerifiedStopSettled }> {
+  detachSessionBookkeeping(stop.sessionId);
+  let notes = stop.notes;
+  try {
+    await unregisterSession(stop.sessionId);
+  } catch (err) {
+    notes = [...notes, `unregister failed: ${describeError(err)}`];
+  }
+  const result: VerifiedSessionStop = assembleVerifiedStopResult({
+    sessionId: stop.sessionId,
+    notes,
+    decision: stop.decision!,
+  });
+  return { reason: { settled: { status: 'completed', result } } };
+}
+
+const LIVENESS_INPUTS = [
+  'readProcessingStatus',
+  'isInterruptInProgress',
+  'awaitProcessExitSettle',
+  'readLivePids',
+] as const;
+
+export function runVerifiedStopFlow(
   deps: VerifiedStopFlowDeps,
   sessionId: string
 ): Promise<StagedRunOutcome> {
-  const ctx: VerifiedStopCtx = {
-    deps,
-    sessionId,
-    session: null,
-    notes: [],
-    retryReason: null,
-    escalateReason: null,
-    liveness: { processingStatus: 'processing', interruptInProgress: false, livePids: [] },
-    decision: null,
-    outcome: null,
-    failure: null,
-  };
-  try {
-    const final = await run(ctx);
-    if (final.failure !== null) {
-      return {
-        status: 'error',
-        stage: final.failure.stage,
-        error: final.failure.error,
-        unwind: [],
-      };
-    }
-    return { status: 'completed', result: final.outcome };
-  } catch (error) {
-    return { status: 'error', stage: undefined, error, unwind: [] };
-  }
+  const run = (
+    superpipe({
+      claimSession: deps.claimSession,
+      stopSessionStrict: deps.stopSessionStrict,
+      readProcessingStatus: deps.readProcessingStatus,
+      isInterruptInProgress: deps.isInterruptInProgress,
+      awaitProcessExitSettle: deps.awaitProcessExitSettle,
+      readLivePids: deps.readLivePids,
+      terminateTrackedProcesses: deps.terminateTrackedProcesses,
+      unregisterSession: deps.unregisterSession,
+      detachSessionBookkeeping: deps.detachSessionBookkeeping,
+      warn: deps.warn,
+    })('verified-stop') as PipelineAPI
+  )
+    .input('request')
+    .pipe(claimVerifiedStopSession, ['claimSession', 'request'], ['stop', 'missingSessionArm'])
+    .pipe('?missingSessionArm', ['unregisterSession', 'warn', 'stop'], 'result:stop')
+    .pipe(interruptSession, ['stopSessionStrict', 'stop'], ['stop'])
+    .pipe(verifyAfterInterrupt, [...LIVENESS_INPUTS, 'stop'], 'result:stop')
+    .pipe(decideAfterFirstInterrupt, 'stop', [
+      'stop',
+      'retryArm',
+      'retryVerifyArm',
+      'retryDecideArm',
+    ])
+    .pipe('?retryArm', ['stopSessionStrict', 'warn', 'stop'], ['stop'])
+    .pipe('?retryVerifyArm', [...LIVENESS_INPUTS, 'stop'], 'result:stop')
+    .pipe('?retryDecideArm', 'stop', [
+      'stop',
+      'escalateArm',
+      'escalateVerifyArm',
+      'escalateDecideArm',
+    ])
+    .pipe('?escalateArm', ['terminateTrackedProcesses', 'warn', 'stop'], ['stop'])
+    .pipe('?escalateVerifyArm', [...LIVENESS_INPUTS, 'stop'], 'result:stop')
+    .pipe('?escalateDecideArm', 'stop', ['stop'])
+    .pipe(
+      finalizeVerifiedStop,
+      ['detachSessionBookkeeping', 'unregisterSession', 'warn', 'stop'],
+      'result:stop'
+    )
+    .endAsync('stop') as (request: VerifiedStopRequest) => Promise<VerifiedStopOutcome>;
+
+  return run({ sessionId }).then(
+    (outcome) => (isVerifiedStopSettled(outcome) ? outcome.settled : { status: 'completed' }),
+    (error: unknown) => ({ status: 'error', stage: undefined, error, unwind: [] })
+  );
 }
