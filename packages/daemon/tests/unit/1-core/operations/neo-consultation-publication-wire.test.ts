@@ -4,6 +4,8 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { reusePublicationReceipt } from '../../../../src/lib/neo/publication-operation.ts';
+import { CONSULTATION_TIMEOUT_MS } from '../../../../src/lib/neo/consultation-policy.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -109,6 +111,7 @@ describe('runtime consultation publication commit', () => {
     service.dispose();
     db.close();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   test('the real registered operation commits the authored tuple jointly without execution or resummary', async () => {
@@ -242,5 +245,68 @@ describe('runtime consultation publication commit', () => {
       rows().publications?.[0] ?? null
     );
     expect(service.publications.get(crypto.randomUUID(), draft.publicationId)).toBeNull();
+  });
+
+  test('a genuinely timed-out holder turn can replay only its original committed authored tuple', () => {
+    vi.useFakeTimers();
+    const who = caller();
+    const first = service.publish(draft, who);
+    if (!first.accepted) throw new Error('Expected committed receipt');
+    const committed = rows();
+    vi.advanceTimersByTime(CONSULTATION_TIMEOUT_MS + 1);
+    expect(who.neoTurn?.isLive()).toBe(false);
+    restart();
+    const sdk = db.getDatabase();
+    sdk.prepare('DELETE FROM sdk_messages').run();
+    const retry = service.publish(draft, who);
+    if (!retry.accepted) throw new Error('Expected durable replay');
+    expect(retry).toEqual({ ...first, created: false });
+    expect(rows()).toEqual(committed);
+    for (const changed of [
+      { publicationId: crypto.randomUUID() },
+      { shortText: 'Different' },
+      { fullText: 'Different' },
+      { links: [] },
+    ]) {
+      expect(service.publish({ ...draft, ...changed }, who)).toEqual({
+        accepted: false,
+        reason: 'publication_conflict',
+      });
+      expect(rows()).toEqual(committed);
+    }
+    expect(event).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(['rpc', 'binding', 'message', 'consultation', 'root'])(
+    'a committed receipt does not bypass %s ownership',
+    (kind) => {
+      const who = caller();
+      expect(service.publish(draft, who).accepted).toBe(true);
+      const before = rows();
+      let impostor: OperationCaller = { ...who, neoTurn: { ...who.neoTurn!, isLive: () => false } };
+      if (kind === 'rpc') impostor = { ...impostor, source: 'rpc' };
+      if (kind === 'message')
+        impostor = { ...impostor, neoTurn: { ...impostor.neoTurn!, messageId: 'other' } };
+      if (kind === 'consultation')
+        impostor = { ...impostor, neoTurn: { ...impostor.neoTurn!, consultationId: 'other' } };
+      if (kind === 'binding')
+        db.getDatabase()
+          .prepare('DELETE FROM neo_session_bindings WHERE session_id = ?')
+          .run(holder);
+      if (kind === 'root')
+        db.getDatabase().prepare('DELETE FROM neo_session_bindings WHERE session_id = ?').run(root);
+      expect(service.publish(draft, impostor).accepted).toBe(false);
+      expect(rows()).toEqual(before);
+      expect(event).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('the pure replay gate stops for either receipt arm and continues only without a receipt', () => {
+    expect(reusePublicationReceipt(draft, null)).toEqual({ value: draft });
+    const refused = { accepted: false as const, reason: 'publication_conflict' };
+    expect(reusePublicationReceipt(draft, refused)).toEqual({ reason: refused });
+    const who = caller();
+    const first = service.publish(draft, who);
+    expect(reusePublicationReceipt(draft, first)).toEqual({ reason: first });
   });
 });

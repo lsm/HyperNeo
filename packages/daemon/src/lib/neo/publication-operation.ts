@@ -41,7 +41,15 @@ export interface NeoPublicationRuntime {
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput, consultationId?: string): Receipt;
+  replay?(input: Draft, caller: OperationCaller): Receipt | null;
   notify(): void;
+}
+
+export function reusePublicationReceipt(
+  draft: Draft,
+  receipt: Receipt | null
+): { value: Draft } | { reason: Receipt } {
+  return receipt ? { reason: receipt } : { value: draft };
 }
 
 export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
@@ -157,6 +165,12 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe((draft: Draft) => draft, 'publication', 'draft')
+    .pipe(
+      (draft: Draft, caller: OperationCaller) => runtime.replay?.(draft, caller) ?? null,
+      ['draft', 'caller'],
+      'receipt'
+    )
+    .pipe(reusePublicationReceipt, ['draft', 'receipt'], 'result:publication')
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
       'caller',
