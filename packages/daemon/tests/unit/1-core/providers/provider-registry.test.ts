@@ -420,7 +420,7 @@ describe('ProviderRegistry', () => {
   });
 
   describe('initializeProviders — all built-in providers registered', () => {
-    it('should register exactly eleven built-in providers', async () => {
+    it('should register exactly twelve built-in providers', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
 
@@ -440,6 +440,7 @@ describe('ProviderRegistry', () => {
           'minimax',
           'ollama',
           'ollama-cloud',
+          'opencode',
           'openrouter',
         ].sort()
       );
@@ -503,14 +504,14 @@ describe('ProviderRegistry', () => {
       await waitForOptionalProviderRegistration();
       const reg2 = initializeProviders();
       expect(reg1).toBe(reg2);
-      expect(reg2.size).toBe(11);
+      expect(reg2.size).toBe(12);
     });
 
     it('should use the global registry singleton', async () => {
       initializeProviders();
       await waitForOptionalProviderRegistration();
       const globalReg = getProviderRegistry();
-      expect(globalReg.size).toBe(11);
+      expect(globalReg.size).toBe(12);
     });
 
     it('should restore all providers after the registry is reset without factory reset', async () => {
@@ -538,6 +539,7 @@ describe('ProviderRegistry', () => {
           'minimax',
           'ollama',
           'ollama-cloud',
+          'opencode',
           'openrouter',
         ].sort()
       );

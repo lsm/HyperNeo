@@ -12,6 +12,7 @@ export interface AnthropicCompatProbeOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   thinking?: { type: 'enabled'; budget_tokens: number };
+  headers?: Record<string, string>;
 }
 
 export async function probeAnthropicCompatCredentials(
@@ -25,6 +26,7 @@ export async function probeAnthropicCompatCredentials(
     fetchImpl = fetch,
     timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
     thinking,
+    headers,
   } = options;
 
   const url = `${normalizeBaseUrlForProbe(baseUrl)}/v1/messages`;
@@ -47,6 +49,7 @@ export async function probeAnthropicCompatCredentials(
         'x-api-key': apiKey,
         authorization: `Bearer ${apiKey}`,
         'anthropic-version': '2023-06-01',
+        ...headers,
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs),

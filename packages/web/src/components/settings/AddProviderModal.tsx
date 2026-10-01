@@ -77,6 +77,12 @@ const MORE_PROVIDERS: BuiltInProviderPreset[] = [
     description: 'MiniMax models',
   },
   {
+    providerId: 'opencode',
+    displayName: 'OpenCode Go',
+    authType: 'api_key',
+    description: 'Open coding models routed by OpenCode Go',
+  },
+  {
     providerId: 'deepseek',
     displayName: 'DeepSeek',
     authType: 'api_key',

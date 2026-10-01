@@ -149,6 +149,12 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
   { providerId: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', authType: 'api_key' },
   {
+    providerId: 'opencode',
+    displayName: 'OpenCode Go',
+    envVar: 'OPENCODE_API_KEY',
+    authType: 'api_key',
+  },
+  {
     providerId: 'deepseek',
     displayName: 'DeepSeek',
     envVar: 'DEEPSEEK_API_KEY',

@@ -177,6 +177,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   glm: 'Z.ai',
   kimi: 'Kimi',
   minimax: 'MiniMax',
+  opencode: 'OpenCode Go',
   deepseek: 'DeepSeek',
   openrouter: 'OpenRouter',
   'anthropic-copilot': 'Copilot',

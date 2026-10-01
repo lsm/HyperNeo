@@ -17,6 +17,7 @@ import { initializeProviders, waitForOptionalProviderRegistration } from './prov
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
 import { MinimaxProvider } from './providers/minimax-provider.js';
+import { OpencodeProvider } from './providers/opencode-provider.js';
 import {
   classifyProviderFailure,
   clearProviderFailure,
@@ -97,6 +98,7 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...KimiProvider.MODELS,
   ...DeepSeekProvider.MODELS,
   ...MinimaxProvider.MODELS,
+  ...OpencodeProvider.MODELS,
   ...COPILOT_ANTHROPIC_MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();

@@ -4,6 +4,7 @@ import { KimiProvider } from './kimi-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { DeepSeekProvider } from './deepseek-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
+import { OpencodeProvider } from './opencode-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AcpProvider } from './acp-provider.js';
@@ -69,6 +70,10 @@ export function initializeProviders(): ProviderRegistry {
 
   if (!disabledBuiltInProviderIds.has('openrouter')) {
     registerIfMissing(registry, new OpenRouterProvider());
+  }
+
+  if (!disabledBuiltInProviderIds.has('opencode')) {
+    registerIfMissing(registry, new OpencodeProvider());
   }
 
   if (!disabledBuiltInProviderIds.has('ollama')) {

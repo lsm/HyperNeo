@@ -132,6 +132,7 @@ export type Provider =
   | 'anthropic'
   | 'glm'
   | 'minimax'
+  | 'opencode'
   | 'deepseek'
   | 'kimi'
   | 'openrouter'
@@ -178,6 +179,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   glm: 'granular',
   kimi: 'on',
   minimax: 'off',
+  opencode: 'off',
   deepseek: 'granular',
   openrouter: 'granular',
   ollama: 'off',

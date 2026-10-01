@@ -43,6 +43,7 @@ export interface ProviderEnvVars {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
   CLAUDE_CODE_AUTO_COMPACT_WINDOW?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
+  ANTHROPIC_CUSTOM_HEADERS?: string;
   [key: string]: string | undefined;
 }
 
@@ -60,6 +61,7 @@ export interface OriginalEnvVars {
   ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
   ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
   CLAUDE_CODE_OAUTH_TOKEN?: string;
+  ANTHROPIC_CUSTOM_HEADERS?: string;
   CLAUDE_AGENT_SDK_CLIENT_APP?: string;
   PORT?: string;
   HYPERNEO_PORT?: string;
@@ -148,6 +150,9 @@ export class ProviderService {
     }
     if (providerId === 'minimax') {
       return process.env.MINIMAX_API_KEY;
+    }
+    if (providerId === 'opencode') {
+      return process.env.OPENCODE_API_KEY || process.env.OPENCODE_GO_API_KEY;
     }
     if (providerId === 'deepseek') {
       return process.env.DEEPSEEK_API_KEY;
@@ -580,6 +585,14 @@ export class ProviderService {
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
+    if (envVars.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
+      original.ANTHROPIC_CUSTOM_HEADERS = process.env.ANTHROPIC_CUSTOM_HEADERS;
+      if (envVars.ANTHROPIC_CUSTOM_HEADERS === '') {
+        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+      } else {
+        process.env.ANTHROPIC_CUSTOM_HEADERS = envVars.ANTHROPIC_CUSTOM_HEADERS;
+      }
+    }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
@@ -700,6 +713,18 @@ export class ProviderService {
       }
     }
 
+    if (process.env.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
+      original.ANTHROPIC_CUSTOM_HEADERS = process.env.ANTHROPIC_CUSTOM_HEADERS;
+      changed = true;
+      if (
+        !options.preserveUserSettings ||
+        userConfiguredCustomHeaders === undefined ||
+        process.env.ANTHROPIC_CUSTOM_HEADERS !== userConfiguredCustomHeaders
+      ) {
+        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+      }
+    }
+
     if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
       original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       changed = true;
@@ -779,6 +804,13 @@ export class ProviderService {
         process.env.CLAUDE_CODE_OAUTH_TOKEN = original.CLAUDE_CODE_OAUTH_TOKEN;
       } else {
         delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      }
+    }
+    if (Object.hasOwn(original, 'ANTHROPIC_CUSTOM_HEADERS')) {
+      if (original.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
+        process.env.ANTHROPIC_CUSTOM_HEADERS = original.ANTHROPIC_CUSTOM_HEADERS;
+      } else {
+        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
       }
     }
     if (Object.hasOwn(original, 'ANTHROPIC_BASE_URL')) {
@@ -922,6 +954,7 @@ const userConfiguredToolSearch = process.env.ENABLE_TOOL_SEARCH;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+const userConfiguredCustomHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
 
 export function getUserConfiguredAnthropicEnv(): Record<string, string> {
   const snapshot: Record<string, string> = {};
@@ -934,6 +967,7 @@ export function getUserConfiguredAnthropicEnv(): Record<string, string> {
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
     ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
+    ['ANTHROPIC_CUSTOM_HEADERS', userConfiguredCustomHeaders],
     ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
     ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
   ];
