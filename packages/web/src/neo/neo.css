@@ -350,3 +350,48 @@
     transition: none !important;
   }
 }
+.neo-activity {
+  height: 28px;
+  margin: 0 8px 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 4px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.neo-activity[hidden] {
+  display: flex;
+  visibility: hidden;
+}
+.neo-activity-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.neo-activity-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @supports (background-clip: text) {
+    .neo-activity-text {
+      background: linear-gradient(100deg, var(--fg-muted) 43%, var(--fg) 50%, var(--fg-muted) 57%);
+      background-size: 250% 100%;
+      background-clip: text;
+      color: transparent;
+      animation: neo-activity-sweep 4.5s ease-in-out infinite;
+    }
+  }
+}
+@keyframes neo-activity-sweep {
+  0%,
+  12% {
+    background-position: 100% 0;
+  }
+  78%,
+  100% {
+    background-position: 0% 0;
+  }
+}

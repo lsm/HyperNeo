@@ -7,6 +7,7 @@ import { useNeo } from './useNeo.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
+import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard, sceneOpenSelector } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -450,6 +451,12 @@ export function NeoLive() {
         class="neo-composer-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-3 pt-6"
       >
         <div class="neo-composer-rail px-3 sm:px-8">
+          <NeoActivity
+            key={sceneScope}
+            scenes={scenes?.running ?? []}
+            concerns={concerns}
+            enabled={connected && conversationReady}
+          />
           {ready && neo.sessionId && (
             <NeoComposer
               key={neo.sessionId}
