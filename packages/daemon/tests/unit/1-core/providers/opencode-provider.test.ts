@@ -226,6 +226,52 @@ describe('OpencodeProvider', () => {
       ).toBe('http://127.0.0.1:41235');
     });
 
+    it('awaits an in-flight bridge instead of returning early', async () => {
+      let release: (() => void) | undefined;
+      const configs: unknown[] = [];
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: (async (config: unknown) => {
+          configs.push(config);
+          await gate;
+          return { port: 41234, stop: () => {} };
+        }) as never,
+      });
+
+      const first = provider.ensureBridgeStarted('glm-5.3', { sessionId: 'session-one' });
+      const second = provider.ensureBridgeStarted('glm-5.3', { sessionId: 'session-two' });
+      release?.();
+      await Promise.all([first, second]);
+
+      expect(configs).toHaveLength(1);
+      expect(
+        provider.buildSdkConfig('glm-5.3', { sessionId: 'session-two' }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41234');
+    });
+
+    it('clears a failed bridge attempt so the next warmup retries', async () => {
+      let attempts = 0;
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: (async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('bridge refused');
+          return { port: 41234, stop: () => {} };
+        }) as never,
+      });
+
+      await expect(
+        provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID })
+      ).rejects.toThrow('bridge refused');
+      await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+
+      expect(attempts).toBe(2);
+      expect(
+        provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41234');
+    });
+
     it('reuses one bridge for repeated warmups of the same model', async () => {
       const configs: unknown[] = [];
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
@@ -295,6 +341,42 @@ describe('OpencodeProvider', () => {
       const models = await provider.getModels();
       expect(models.length).toBeGreaterThan(0);
       expect(models.every((model) => model.provider === 'opencode')).toBe(true);
+    });
+  });
+
+  describe('credentials', () => {
+    it('drops warmed bridges so a rotated key reaches the next one', async () => {
+      const stopped: number[] = [];
+      const keys: Array<string | undefined> = [];
+      let port = 41234;
+      const provider = makeProvider({}, unreachableFetch(), {
+        bridgeFactory: ((config: { apiKey?: string }) => {
+          const assigned = port++;
+          keys.push(config.apiKey);
+          return { port: assigned, stop: () => stopped.push(assigned) };
+        }) as never,
+      });
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+      await provider.ensureBridgeStarted('glm-5.3');
+
+      provider.setCredentials({ type: 'api_key', apiKey: 'second-key' });
+
+      expect(stopped).toEqual([41234]);
+      await provider.ensureBridgeStarted('glm-5.3');
+      expect(keys).toEqual(['first-key', 'second-key']);
+      expect(
+        provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41235');
+    });
+
+    it('keeps bridges when the same credentials are set again', async () => {
+      const configs: unknown[] = [];
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: fakeBridgeFactory([41234], configs),
+      });
+      await provider.ensureBridgeStarted('glm-5.3');
+      provider.setCredentials({ type: 'api_key', apiKey: 'go-key' });
+      expect(configs).toHaveLength(1);
     });
   });
 

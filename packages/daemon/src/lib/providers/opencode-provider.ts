@@ -118,6 +118,7 @@ export class OpencodeProvider implements Provider {
   }));
 
   private credentials: ProviderCredentials | null = null;
+  private credentialSignature: string | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly discoveryCache = new ProviderDiscoveryCache();
   private readonly bridges = new Map<string, OpenAIChatBridgeServer>();
@@ -133,9 +134,14 @@ export class OpencodeProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.stopBridges();
+      this.probeCache.clear();
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.probeCache.clear();
-    this.clearModelCache();
   }
 
   clearModelCache(): void {
@@ -315,10 +321,15 @@ export class OpencodeProvider implements Provider {
 
   async ensureBridgeStarted(modelId: string): Promise<void> {
     if (this.usesAnthropicMessages(modelId)) return;
-    if (this.bridges.has(modelId) || this.bridgePromises.has(modelId)) return;
+    if (this.bridges.has(modelId)) return;
+    const inFlight = this.bridgePromises.get(modelId);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
     const apiKey = this.getApiKey();
     const factory = this.options.bridgeFactory ?? createOpenAIChatBridgeServer;
-    const created = Promise.resolve(
+    const ready = Promise.resolve(
       factory({
         baseUrl: OpencodeProvider.CHAT_BASE_URL,
         ...(apiKey ? { apiKey } : {}),
@@ -329,17 +340,23 @@ export class OpencodeProvider implements Provider {
         thinkingSupported: false,
         modelContextWindow: this.contextWindowFor(modelId),
       })
-    ).then((bridge) => {
-      this.bridgePromises.delete(modelId);
-      if (this.shutdownStarted) {
-        bridge.stop();
+    ).then(
+      (bridge) => {
+        this.bridgePromises.delete(modelId);
+        if (this.shutdownStarted) {
+          bridge.stop();
+          return bridge;
+        }
+        this.bridges.set(modelId, bridge);
         return bridge;
+      },
+      (error: unknown) => {
+        this.bridgePromises.delete(modelId);
+        throw error;
       }
-      this.bridges.set(modelId, bridge);
-      return bridge;
-    });
-    this.bridgePromises.set(modelId, created);
-    await created;
+    );
+    this.bridgePromises.set(modelId, ready);
+    await ready;
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
@@ -394,10 +411,14 @@ export class OpencodeProvider implements Provider {
     return 'default';
   }
 
-  async shutdown(): Promise<void> {
-    this.shutdownStarted = true;
+  private stopBridges(): void {
     this.bridgePromises.clear();
     for (const bridge of this.bridges.values()) bridge.stop();
     this.bridges.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
+    this.stopBridges();
   }
 }
