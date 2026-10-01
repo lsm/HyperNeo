@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { StagedRunOutcome } from '../../../../src/lib/space/runtime/staged-run';
+import type { FlowOutcome } from '../../../../src/lib/tasks/flow-outcome';
 import type { VerifiedStopFlowDeps } from '../../../../src/lib/tasks/verified-stop-flow';
 import { runVerifiedStopFlow } from '../../../../src/lib/tasks/verified-stop-flow';
 
@@ -35,7 +35,7 @@ interface FlowFixture {
   events: string[];
   setStatus(status: string): void;
   clearPids(): void;
-  run(): Promise<StagedRunOutcome>;
+  run(): Promise<FlowOutcome>;
 }
 
 function makeFlowFixture(options: FakeSessionOptions = {}): FlowFixture {

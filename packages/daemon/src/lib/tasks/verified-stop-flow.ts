@@ -1,7 +1,7 @@
 import type { AgentProcessingState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentSession } from '../agent/agent-session.ts';
-import type { StagedRunOutcome } from '../space/runtime/staged-run.ts';
+import type { FlowOutcome } from './flow-outcome.ts';
 import type { VerifiedSessionStop } from '../space/runtime/task-agent-manager.ts';
 import {
   assembleVerifiedStopResult,
@@ -44,7 +44,7 @@ export interface VerifiedStopState {
 }
 
 export interface VerifiedStopSettled {
-  settled: StagedRunOutcome;
+  settled: FlowOutcome;
 }
 
 export type VerifiedStopOutcome = VerifiedStopState | VerifiedStopSettled;
@@ -308,7 +308,7 @@ const LIVENESS_INPUTS = [
 export function runVerifiedStopFlow(
   deps: VerifiedStopFlowDeps,
   sessionId: string
-): Promise<StagedRunOutcome> {
+): Promise<FlowOutcome> {
   const run = (
     superpipe({
       claimSession: deps.claimSession,
