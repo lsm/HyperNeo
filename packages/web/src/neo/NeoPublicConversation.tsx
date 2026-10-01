@@ -31,12 +31,14 @@ function PublicEntry({
   authors,
   onOpenAuthor,
   onOpenScene,
+  canOpenScene,
   snapshot,
 }: {
   entry: NeoPublicEntry;
   authors?: ReadonlyMap<string, string>;
   onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
+  canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   snapshot?: NeoSnapshot | null;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -162,7 +164,7 @@ function PublicEntry({
               >
                 {publication.links.map((link) => (
                   <li key={JSON.stringify([link.kind, link.id])}>
-                    {onOpenScene ? (
+                    {onOpenScene && (canOpenScene?.(link) ?? true) ? (
                       <button
                         type="button"
                         class="text-left hover:underline"
@@ -216,6 +218,7 @@ export function NeoPublicConversation({
   authors,
   onOpenAuthor,
   onOpenScene,
+  canOpenScene,
   snapshot,
   onRetry,
 }: {
@@ -223,6 +226,7 @@ export function NeoPublicConversation({
   authors?: ReadonlyMap<string, string>;
   onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
+  canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   snapshot?: NeoSnapshot | null;
   onRetry?: () => void;
 }) {
@@ -252,6 +256,7 @@ export function NeoPublicConversation({
           authors={authors}
           onOpenAuthor={onOpenAuthor}
           onOpenScene={onOpenScene}
+          canOpenScene={canOpenScene}
           snapshot={snapshot}
         />
       ))}

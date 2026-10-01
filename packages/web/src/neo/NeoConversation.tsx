@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { projectNeoWorkReply } from './work-reply.ts';
 import { neoMessageImageSources } from './neo-message-images.ts';
@@ -22,6 +23,18 @@ import type { NeoPublicConversation as PublicConversation } from './public-conve
 
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
 type QuestionFailure = { epoch: QuestionEpoch; message: string };
+
+export function publicConcernSession(
+  ref: Pick<NeoPublicationLink, 'kind' | 'id'>,
+  snapshot: NeoSnapshot | null,
+  authors?: ReadonlyMap<string, string>
+): string | null {
+  if (ref.kind !== 'concern' || !snapshot?.concerns.some((item) => item.id === ref.id)) return null;
+  const binding = snapshot.publicAuthorBindings?.find(
+    (item) => item.kind === 'concern' && item.concernId === ref.id
+  );
+  return binding && authors?.has(binding.sessionId) ? binding.sessionId : null;
+}
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -188,6 +201,13 @@ export function NeoConversation({
             conversation={publicConversation}
             authors={publicAuthors}
             onOpenAuthor={onOpenPublicAuthor}
+            canOpenScene={(ref) =>
+              !!onOpenPublicAuthor && !!publicConcernSession(ref, snapshot, publicAuthors)
+            }
+            onOpenScene={(ref) => {
+              const target = publicConcernSession(ref, snapshot, publicAuthors);
+              if (target) onOpenPublicAuthor?.(target);
+            }}
             onRetry={onRetryPublic}
             snapshot={snapshot}
           />
