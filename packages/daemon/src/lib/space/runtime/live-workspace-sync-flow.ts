@@ -33,7 +33,7 @@ export interface LiveWorkspaceSyncFlowDeps {
 
 export interface LiveWorkspaceSyncMigration extends LiveWorkspaceSyncMcpContext {
   kind: 'migrate';
-  previousWorkspacePath: string | null;
+  previousWorkspacePath: string | null | undefined;
 }
 
 export type LiveWorkspaceSyncSkip = { kind: 'skip'; message: string };
@@ -109,7 +109,7 @@ export function decideLiveWorkspaceSync(
       workflowRunId: request.execution.workflowRunId,
       workspacePath: target.workspacePath,
       workflowNodeId: request.execution.workflowNodeId,
-      previousWorkspacePath: live.getSessionData().workspacePath ?? null,
+      previousWorkspacePath: live.getSessionData().workspacePath,
     },
   };
 }
@@ -125,7 +125,7 @@ export async function migrateLiveWorkspaceSession(
   try {
     await reinjectNodeAgentMcpServer(live, migration);
   } catch (error) {
-    if (migration.previousWorkspacePath !== null) {
+    if (migration.previousWorkspacePath !== undefined) {
       live.updateMetadata({ workspacePath: migration.previousWorkspacePath });
     }
     throw error;

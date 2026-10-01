@@ -37,7 +37,7 @@ export interface SelfHealWorkspaceFlowDeps {
 export interface SelfHealWorkspacePlan {
   task: SpaceTask;
   workspacePath: string | null;
-  previousWorkspacePath: string | null;
+  previousWorkspacePath: string | null | undefined;
   mcpContext: SelfHealWorkspaceMcpContext;
 }
 
@@ -64,7 +64,7 @@ export function resolveSelfHealWorkspaceTarget(
   return {
     task,
     workspacePath,
-    previousWorkspacePath: request.agentSession.getSessionData().workspacePath ?? null,
+    previousWorkspacePath: request.agentSession.getSessionData().workspacePath,
     mcpContext: {
       taskId: task.id,
       subSessionId: request.sessionId,
@@ -89,7 +89,7 @@ export async function healWorkspaceSession(
     try {
       await reinjectNodeAgentMcpServer(session, plan.mcpContext);
     } catch (error) {
-      if (plan.previousWorkspacePath !== null) {
+      if (plan.previousWorkspacePath !== undefined) {
         session.updateMetadata({ workspacePath: plan.previousWorkspacePath });
       }
       throw error;

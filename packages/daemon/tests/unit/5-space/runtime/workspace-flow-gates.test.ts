@@ -258,6 +258,30 @@ describe('migrateLiveWorkspaceSession', () => {
     expect(injected).toEqual(['/tmp/space']);
   });
 
+  test('restores a null workspace when the reinject fails', async () => {
+    const fake = makeFakeSession(null);
+    await expect(
+      migrateLiveWorkspaceSession(
+        () => fake.session,
+        async () => {
+          throw new Error('restart boom');
+        },
+        {
+          kind: 'migrate',
+          taskId: TASK_ID,
+          subSessionId: SESSION_ID,
+          agentName: 'coder',
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+          workspacePath: '/tmp/space',
+          workflowNodeId: 'node-1',
+          previousWorkspacePath: null,
+        }
+      )
+    ).rejects.toThrow('restart boom');
+    expect(fake.data.workspacePath).toBeNull();
+  });
+
   test('restores the previous workspace when the reinject fails', async () => {
     const fake = makeFakeSession('/tmp/one');
     await expect(
@@ -698,6 +722,23 @@ describe('healWorkspaceSession', () => {
       )
     ).rejects.toThrow('restart boom');
     expect(fake.data.workspacePath).toBe('/tmp/other');
+  });
+
+  test('restores a null workspace when the reinject fails', async () => {
+    const fake = makeFakeSession(null);
+    const request = selfHealRequest({ agentSession: fake.session });
+    const plan = resolveSelfHealWorkspaceTarget(noTaskReload, () => '/tmp/worktree', request);
+    await expect(
+      healWorkspaceSession(
+        async () => {
+          throw new Error('restart boom');
+        },
+        async () => undefined,
+        request,
+        plan
+      )
+    ).rejects.toThrow('restart boom');
+    expect(fake.data.workspacePath).toBeNull();
   });
 
   test('verifies the attachment even when the workspace already matches', async () => {
