@@ -105,4 +105,16 @@ export class NeoPublicationRepository {
   list(conversationId: string, after = 0, limit = 50): NeoPublication[] | null {
     return readPage({ conversationId, after, limit }, this.db);
   }
+
+  findByProducer(sessionId: string, messageId: string): NeoPublication | null {
+    const rows = this.db
+      .prepare(
+        `SELECT ${columns} FROM neo_publications
+        WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
+          AND json_extract(payload_json, '$.producerInput.messageId') = ? LIMIT 2`
+      )
+      .all(sessionId, messageId) as Row[];
+    if (rows.length > 1) throw new Error('Ambiguous consultation publications');
+    return rows[0] ? decode(rows[0]) : null;
+  }
 }

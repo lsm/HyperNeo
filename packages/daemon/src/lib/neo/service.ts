@@ -22,6 +22,7 @@ import { createNeoWorkReporter } from './work-report.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
+import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { mkdirSync } from 'node:fs';
@@ -407,9 +408,26 @@ export class NeoService {
       }
     }
     if (!item) return;
-    const content = neoConsultationReplyContent(item);
-    if (content === null) return;
-    await this.deliver(item.originSessionId, `neo-consult:${id}:reply`, content, item.sessionId);
+    const association = this.consultations.getPublication(id);
+    const captured = this.consultations.getPublicationInput(id);
+    const publication = association
+      ? this.publications.get(association.conversationId, association.publicationId)
+      : this.publications.findByProducer(item.sessionId, requestId);
+    const route = planNeoConsultationReturn(
+      item,
+      association,
+      publication,
+      captured?.askOrigin ?? null,
+      captured
+    );
+    if (route === 'inconsistent')
+      throw new Error('Consultation publication return is inconsistent');
+    if (route === 'pending') return;
+    if (route === 'legacy') {
+      const content = neoConsultationReplyContent(item);
+      if (content === null) return;
+      await this.deliver(item.originSessionId, `neo-consult:${id}:reply`, content, item.sessionId);
+    }
     this.consultations.returned(id);
     await this.dispatchConsultationWaiter(item.concernId);
     for (const work of this.repo.listWork(item.concernId)) {
