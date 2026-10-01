@@ -34,6 +34,7 @@ interface VerifiedStopCtx {
   liveness: SessionLivenessSnapshot;
   decision: StopVerificationDecision | null;
   outcome: VerifiedSessionStop | null;
+  failure: { stage: string; error: unknown } | null;
 }
 
 function describeError(err: unknown): string {
@@ -71,12 +72,11 @@ async function interruptSession(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> 
 }
 
 async function verifyLiveness(ctx: VerifiedStopCtx, stage: string): Promise<VerifiedStopCtx> {
-  if (ctx.session === null) return ctx;
+  if (ctx.session === null || ctx.failure !== null) return ctx;
   try {
     return { ...ctx, liveness: await gatherSessionLiveness(ctx.deps, ctx.session) };
-  } catch (failure) {
-    if (failure instanceof Error) Object.assign(failure, { stage });
-    throw failure;
+  } catch (error) {
+    return { ...ctx, failure: { stage, error } };
   }
 }
 
@@ -95,7 +95,7 @@ function verifyAfterEscalation(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
 }
 
 function decideAfterFirstInterrupt(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.session === null) return ctx;
+  if (ctx.session === null || ctx.failure !== null) return ctx;
   const decision = decideStopVerification({
     sessionPresent: true,
     processingStatus: ctx.liveness.processingStatus,
@@ -112,7 +112,7 @@ function decideAfterFirstInterrupt(ctx: VerifiedStopCtx): VerifiedStopCtx {
 }
 
 async function retryInterrupt(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.session === null || ctx.retryReason === null) return ctx;
+  if (ctx.failure !== null || ctx.session === null || ctx.retryReason === null) return ctx;
   ctx.deps.warn(
     `TaskAgentManager.stopSessionsVerified: session ${ctx.sessionId} still alive after interrupt (${ctx.retryReason}); retrying once`
   );
@@ -125,7 +125,7 @@ async function retryInterrupt(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
 }
 
 function decideAfterRetry(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.retryReason === null) return ctx;
+  if (ctx.failure !== null || ctx.retryReason === null) return ctx;
   const decision = decideStopVerification({
     sessionPresent: true,
     processingStatus: ctx.liveness.processingStatus,
@@ -146,7 +146,7 @@ function decideAfterRetry(ctx: VerifiedStopCtx): VerifiedStopCtx {
 }
 
 function terminateTrackedProcesses(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.escalateReason === null) return ctx;
+  if (ctx.failure !== null || ctx.escalateReason === null) return ctx;
   ctx.deps.warn(
     `TaskAgentManager.stopSessionsVerified: session ${ctx.sessionId} survived interrupt retry (${ctx.escalateReason}); escalating to tracked process termination`
   );
@@ -160,7 +160,7 @@ function terminateTrackedProcesses(ctx: VerifiedStopCtx): VerifiedStopCtx {
 }
 
 function decideFinalVerdict(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.escalateReason === null) return ctx;
+  if (ctx.failure !== null || ctx.escalateReason === null) return ctx;
   return {
     ...ctx,
     decision: decideStopVerification({
@@ -175,7 +175,7 @@ function decideFinalVerdict(ctx: VerifiedStopCtx): VerifiedStopCtx {
 }
 
 async function detachAndUnregister(ctx: VerifiedStopCtx): Promise<VerifiedStopCtx> {
-  if (ctx.session === null) return ctx;
+  if (ctx.failure !== null || ctx.session === null) return ctx;
   ctx.deps.detachSessionBookkeeping(ctx.sessionId);
   try {
     await ctx.deps.unregisterSession(ctx.sessionId);
@@ -206,7 +206,7 @@ async function unregisterMissingSession(ctx: VerifiedStopCtx): Promise<VerifiedS
 }
 
 function assembleVerdict(ctx: VerifiedStopCtx): VerifiedStopCtx {
-  if (ctx.session === null) return ctx;
+  if (ctx.failure !== null || ctx.session === null) return ctx;
   return {
     ...ctx,
     outcome: assembleVerifiedStopResult({
@@ -248,16 +248,20 @@ export async function runVerifiedStopFlow(
     liveness: { processingStatus: 'processing', interruptInProgress: false, livePids: [] },
     decision: null,
     outcome: null,
+    failure: null,
   };
   try {
     const final = await run(ctx);
+    if (final.failure !== null) {
+      return {
+        status: 'error',
+        stage: final.failure.stage,
+        error: final.failure.error,
+        unwind: [],
+      };
+    }
     return { status: 'completed', result: final.outcome };
   } catch (error) {
-    return {
-      status: 'error',
-      stage: (error as { stage?: string } | null)?.stage,
-      error,
-      unwind: [],
-    };
+    return { status: 'error', stage: undefined, error, unwind: [] };
   }
 }
