@@ -79,6 +79,11 @@
   padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
 }
 
+.neo-chat-rail:has(~ .neo-scene-detail),
+.neo-chat-rail:has(~ .neo-scene-list [data-scene-group]) {
+  padding-bottom: 0;
+}
+
 .neo-scene-list,
 .neo-scene-detail {
   max-width: 48rem;
@@ -426,6 +431,13 @@
   }
   .neo-public-layout .neo-concerns-card:not(.is-open) {
     display: none;
+  }
+  .neo-public-layout .neo-concerns-card.is-open {
+    top: 64px;
+    right: 8px;
+    width: min(300px, calc(100vw - 40px));
+    background: var(--surface-raised);
+    box-shadow: 0 12px 36px color-mix(in srgb, var(--bg) 35%, transparent);
   }
   .neo-public-layout .neo-chat-rail,
   .neo-public-layout .neo-composer-rail {

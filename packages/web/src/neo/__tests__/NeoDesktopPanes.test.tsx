@@ -244,6 +244,28 @@ describe('Neo desktop panes', () => {
     expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 16px 32px;');
   });
 
+  it('removes intermediate chat clearance only when real scene cards follow', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    const shared = css.split('@media (min-width: 1120px) {')[0];
+    expect(shared).toMatch(
+      /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
+    );
+    expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/);
+    expect(shared).toMatch(/\.neo-scene-detail \{[^}]*padding: 0 20px calc\(/);
+    expect(css.split('@media (min-width: 1120px) {')[1]).toMatch(
+      /\.neo-chat-rail \{[^}]*padding: 68px 24px calc\(/
+    );
+  });
+
+  it('restores public popover surface and offsets independently of the wide legacy sidebar', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    const desktop = css.split('@media (min-width: 1120px) {')[1];
+    expect(desktop).toMatch(
+      /\.neo-public-layout \.neo-concerns-card\.is-open \{\s*top: 64px;\s*right: 8px;\s*width: min\(300px, calc\(100vw - 40px\)\);\s*background: var\(--surface-raised\);\s*box-shadow: 0 12px 36px color-mix\(in srgb, var\(--bg\) 35%, transparent\);\s*\}/
+    );
+    expect(css.split('@media (min-width: 1180px) {')[1]).toContain('box-shadow: none;');
+  });
+
   it('transfers a reader’s normalized position across viewport and scene-count owner changes', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
