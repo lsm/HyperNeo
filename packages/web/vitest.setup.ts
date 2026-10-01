@@ -19,6 +19,18 @@
 }
 
 import { beforeEach, afterEach, vi } from 'vitest';
+import { act, createEvent, fireEvent } from '@testing-library/preact';
+
+const compatibilityChange = fireEvent.change;
+fireEvent.change = (element, init) => {
+  if (!(element instanceof HTMLInputElement) || element.type !== 'file')
+    return compatibilityChange(element, init);
+  let dispatched = false;
+  act(() => {
+    dispatched = fireEvent(element, createEvent.change(element, init));
+  });
+  return dispatched;
+};
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class {
