@@ -11,6 +11,7 @@ import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
+import { projectNeoPublicAuthors } from './public-authors.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -147,6 +148,7 @@ export function useNeo() {
   }
 
   return {
+    publicAuthors: projectNeoPublicAuthors(snapshot, publications),
     publicConversation: projectNeoPublicConversation(
       snapshot?.sessionId ?? null,
       asks,
