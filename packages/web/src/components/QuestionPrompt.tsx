@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'preact/hooks';
+import { useState, useCallback, useEffect, useMemo } from 'preact/hooks';
 import type {
   PendingUserQuestion,
   QuestionCancelReason,
@@ -8,6 +8,7 @@ import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
 import { toast } from '../lib/toast.ts';
+import { createQuestionFormDraft, type QuestionFormDraft } from './question-form-draft.ts';
 
 const questionColors = {
   active: {
@@ -44,6 +45,7 @@ interface QuestionPromptProps {
   cancelReason?: QuestionCancelReason;
   onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
   onError?: (cause: unknown) => void;
+  formDraft?: { value: QuestionFormDraft; onChange: (draft: QuestionFormDraft) => void };
 }
 
 export function QuestionPrompt({
@@ -55,47 +57,27 @@ export function QuestionPrompt({
   cancelReason,
   onResolved,
   onError,
+  formDraft,
 }: QuestionPromptProps) {
   const { questions, toolUseId, draftResponses } = pendingQuestion;
   const { callIfConnected } = useMessageHub();
   const isResolved = resolvedState !== null;
 
-  const [selections, setSelections] = useState<Map<number, Set<string>>>(() => {
-    const source = finalResponses || draftResponses;
-    const map = new Map<number, Set<string>>();
-    if (source) {
-      for (const response of source) {
-        map.set(response.questionIndex, new Set(response.selectedLabels));
-      }
-    }
-    return map;
-  });
-
-  const [customInputs, setCustomInputs] = useState<Map<number, string>>(() => {
-    const source = finalResponses || draftResponses;
-    const map = new Map<number, string>();
-    if (source) {
-      for (const response of source) {
-        if (response.customText) {
-          map.set(response.questionIndex, response.customText);
-        }
-      }
-    }
-    return map;
-  });
-
-  const [showOther, setShowOther] = useState<Set<number>>(() => {
-    const source = finalResponses || draftResponses;
-    const set = new Set<number>();
-    if (source) {
-      for (const response of source) {
-        if (response.customText) {
-          set.add(response.questionIndex);
-        }
-      }
-    }
-    return set;
-  });
+  const initialDraft = useMemo(
+    () => createQuestionFormDraft(sessionId, toolUseId, finalResponses || draftResponses),
+    [sessionId, toolUseId, finalResponses, draftResponses]
+  );
+  const [localDraft, setLocalDraft] = useState(initialDraft);
+  const draft = formDraft
+    ? formDraft.value.sessionId === sessionId && formDraft.value.toolUseId === toolUseId
+      ? formDraft.value
+      : initialDraft
+    : localDraft;
+  const { selections, customInputs, showOther } = draft;
+  const updateDraft = (next: QuestionFormDraft) => {
+    if (formDraft) formDraft.onChange(next);
+    else setLocalDraft(next);
+  };
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -146,38 +128,34 @@ export function QuestionPrompt({
       current.add(label);
     }
 
-    setSelections(new Map(selections.set(questionIndex, current)));
-
+    const nextOther = new Set(showOther);
+    const nextInputs = new Map(customInputs);
     if (!question.multiSelect) {
-      setShowOther((prev) => {
-        const next = new Set(prev);
-        next.delete(questionIndex);
-        return next;
-      });
-      setCustomInputs((prev) => {
-        const next = new Map(prev);
-        next.delete(questionIndex);
-        return next;
-      });
+      nextOther.delete(questionIndex);
+      nextInputs.delete(questionIndex);
     }
+    updateDraft({
+      ...draft,
+      selections: new Map(selections).set(questionIndex, current),
+      showOther: nextOther,
+      customInputs: nextInputs,
+    });
   };
 
   const handleOtherClick = (questionIndex: number) => {
     const question = questions[questionIndex];
 
-    setShowOther((prev) => new Set([...prev, questionIndex]));
-
-    if (!question.multiSelect) {
-      setSelections((prev) => {
-        const next = new Map(prev);
-        next.get(questionIndex)?.clear();
-        return next;
-      });
-    }
+    const nextSelections = new Map(selections);
+    if (!question.multiSelect) nextSelections.set(questionIndex, new Set());
+    updateDraft({
+      ...draft,
+      selections: nextSelections,
+      showOther: new Set([...showOther, questionIndex]),
+    });
   };
 
   const handleCustomInput = (questionIndex: number, text: string) => {
-    setCustomInputs((prev) => new Map(prev.set(questionIndex, text)));
+    updateDraft({ ...draft, customInputs: new Map(customInputs).set(questionIndex, text) });
   };
 
   const handleSubmit = async () => {
