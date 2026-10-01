@@ -105,6 +105,27 @@ afterEach(async () => {
 });
 
 describe('NeoWorkQuestionResource', () => {
+  it('replaces the listener without announcing removal and cleans up through the latest listener', async () => {
+    const first = vi.fn();
+    const next = vi.fn();
+    const select = vi.spyOn(SessionStore.prototype, 'select');
+    const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
+    const view = render(<NeoWorkQuestionResource work={work} onQuestion={first} />);
+    await screen.findByText('question-A');
+    await waitFor(() => expect(first).toHaveBeenLastCalledWith(work.id, question()));
+    first.mockClear();
+    view.rerender(<NeoWorkQuestionResource work={work} onQuestion={next} />);
+    await waitFor(() => expect(next).toHaveBeenLastCalledWith(work.id, question()));
+    expect(first).not.toHaveBeenCalled();
+    expect(next.mock.calls.some(([, value]) => value === null)).toBe(false);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(destroy).not.toHaveBeenCalled();
+    view.unmount();
+    await waitFor(() => expect(next).toHaveBeenLastCalledWith(work.id, null));
+    expect(next.mock.calls.filter(([, value]) => value === null)).toHaveLength(1);
+    await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-A'));
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
   it('does not re-arm untouched draft autosave when the daemon echoes a new response array', async () => {
     const originalRequest = request.getMockImplementation() as (
       method: string,

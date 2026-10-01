@@ -1,5 +1,5 @@
 import { createPortal } from 'preact/compat';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
@@ -19,6 +19,8 @@ export function NeoWorkQuestionResource({
   onQuestion?: (workId: string, question: PendingUserQuestion | null) => void;
 }) {
   const observation = useNeoWorkQuestionObserver(work);
+  const questionListener = useRef(onQuestion);
+  questionListener.current = onQuestion;
   const { question } = observation;
   const initialDraft = useMemo(
     () =>
@@ -35,7 +37,7 @@ export function NeoWorkQuestionResource({
   useEffect(() => {
     onQuestion?.(work.id, question);
   }, [work.id, question, onQuestion]);
-  useEffect(() => () => onQuestion?.(work.id, null), [work.id, onQuestion]);
+  useEffect(() => () => questionListener.current?.(work.id, null), [work.id]);
   const controls = (
     <NeoWorkQuestionControls
       work={work}
