@@ -10,7 +10,11 @@ import type { SpawnExecutionFlowDeps } from '../../../../src/lib/tasks/spawn-flo
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
+  reuseLiveSessionStage,
   runSpawnExecutionFlow,
+  selectSpawnFlowArm,
+  waitConcurrentStage,
+  type SpawnFlowState,
 } from '../../../../src/lib/tasks/spawn-flow';
 import { resolveWorkflowNodeSlot } from '../../../../src/lib/tasks/spawn-slot-resolution';
 
@@ -622,5 +626,71 @@ describe('spawn flow microtask profile', () => {
     queueMicrotask(() => order.push('observer'));
     await promise;
     expect(order).toEqual(['workspace', 'observer', 'bind']);
+  });
+});
+
+describe('spawn flow routing arms (ADR 0004 gate shape)', () => {
+  const baseState = (overrides: Partial<SpawnFlowState> = {}): SpawnFlowState => ({
+    freshTask: makeTask('in_progress'),
+    slotResolution: {} as SpawnFlowState['slotResolution'],
+    workflowValid: true,
+    isSpawning: false,
+    indexedSession: { sessionId: null, alive: false },
+    liveSessionId: null,
+    spawnedSessionId: null,
+    workspacePath: null,
+    spawnTask: null,
+    boundExecution: null,
+    compensations: [],
+    result: undefined,
+    ...overrides,
+  });
+
+  test('binds only the reuse arm for a live indexed session', () => {
+    const routed = selectSpawnFlowArm(
+      baseState({ indexedSession: { sessionId: 'live-1', alive: true } })
+    );
+    expect(routed.reuseLiveArm).toBe(reuseLiveSessionStage);
+    expect(routed.waitConcurrentArm).toBeUndefined();
+    expect(routed.rejectArm).toBeUndefined();
+    expect(routed.spawn.liveSessionId).toBe('live-1');
+  });
+
+  test('binds only the wait arm while the execution is already spawning', () => {
+    const routed = selectSpawnFlowArm(baseState({ isSpawning: true }));
+    expect(routed.waitConcurrentArm).toBe(waitConcurrentStage);
+    expect(routed.reuseLiveArm).toBeUndefined();
+    expect(routed.rejectArm).toBeUndefined();
+  });
+
+  test('binds only the rejection arm for a cancelled task', () => {
+    const routed = selectSpawnFlowArm(baseState({ freshTask: makeTask('cancelled') }));
+    expect(routed.rejectArm).toBeDefined();
+    expect(routed.reuseLiveArm).toBeUndefined();
+    expect(routed.waitConcurrentArm).toBeUndefined();
+  });
+
+  test('binds only the rejection arm for an invalid workflow', () => {
+    const routed = selectSpawnFlowArm(baseState({ workflowValid: false }));
+    expect(routed.rejectArm).toBeDefined();
+  });
+
+  test('binds no arm when the fresh spawn may proceed', () => {
+    const routed = selectSpawnFlowArm(baseState());
+    expect(routed.reuseLiveArm).toBeUndefined();
+    expect(routed.waitConcurrentArm).toBeUndefined();
+    expect(routed.rejectArm).toBeUndefined();
+    expect(routed.spawn).toEqual(baseState());
+  });
+
+  test('a live session outranks a rejected task status', () => {
+    const routed = selectSpawnFlowArm(
+      baseState({
+        freshTask: makeTask('cancelled'),
+        indexedSession: { sessionId: 'live-1', alive: true },
+      })
+    );
+    expect(routed.reuseLiveArm).toBe(reuseLiveSessionStage);
+    expect(routed.rejectArm).toBeUndefined();
   });
 });

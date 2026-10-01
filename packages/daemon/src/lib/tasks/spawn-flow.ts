@@ -1,7 +1,11 @@
-import type { SpaceTask } from '@hyperneo/shared';
-import type { NodeExecution } from '@hyperneo/shared';
+import type { NodeExecution, Space, SpaceTask } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { StagedRunOutcome, StagedRunUnwindEntry } from '../space/runtime/staged-run.ts';
+import {
+  validateExecutionAgainstWorkflow,
+  validateTaskAllowsSpawn,
+} from '../workflows/node-execution-validation.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
-import type { SpawnExecutionAdmissionDecision } from './spawn-admission-gates.ts';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type {
   IndexedSessionInspection,
@@ -9,12 +13,6 @@ import type {
   SpawnExecutionFlowInput,
 } from './spawn-flow-contract.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
-import { type StagedRunOutcome, type StagedRunUnwindEntry } from '../space/runtime/staged-run.ts';
-import {
-  validateExecutionAgainstWorkflow,
-  validateTaskAllowsSpawn,
-} from '../workflows/node-execution-validation.ts';
-import superpipe, { type PipelineAPI } from 'superpipe';
 
 export type { SpawnExecutionFlowDeps } from './spawn-flow-contract.ts';
 
@@ -39,349 +37,39 @@ export function isSpawnFlowReusedSession(result: unknown): result is {
   );
 }
 
-interface SpawnCompensation {
+export function isSpawnFlowSettled(outcome: SpawnFlowOutcome): outcome is SpawnFlowSettled {
+  return 'settled' in outcome;
+}
+
+export interface SpawnCompensation {
   stage: string;
   undo: () => void;
 }
 
-type SpawnTerminal =
-  | { status: 'error'; stage: string; error: unknown }
-  | { status: 'superseded'; stage: string };
-
-interface SpawnExecutionFlowCtx extends SpawnExecutionFlowInput {
-  deps: SpawnExecutionFlowDeps;
-  freshTask: SpaceTask | null;
+export interface SpawnFlowState {
+  freshTask: SpaceTask;
   slotResolution: WorkflowNodeSlotResolution | null;
   workflowValid: boolean;
   isSpawning: boolean;
   indexedSession: IndexedSessionInspection;
-  admission: SpawnExecutionAdmissionDecision | null;
   liveSessionId: string | null;
   spawnedSessionId: string | null;
   workspacePath: string | null;
   spawnTask: SpaceTask | null;
   boundExecution: NodeExecution | null;
   compensations: SpawnCompensation[];
-  terminal: SpawnTerminal | null;
   result: unknown;
 }
 
-function gatherSpawnAdmission(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  try {
-    const freshTask = ctx.deps.getFreshTask(ctx.task.id) ?? ctx.task;
-    return {
-      ...ctx,
-      freshTask,
-      slotResolution: ctx.deps.resolveSlot(ctx.space, ctx.workflow, ctx.execution, freshTask),
-      workflowValid: validateExecutionAgainstWorkflow(ctx.execution, ctx.workflow).valid,
-      isSpawning: ctx.deps.isSpawningExecution(ctx.execution.id),
-      indexedSession: ctx.deps.inspectIndexedSession(ctx.execution.agentSessionId),
-    };
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'gather-spawn-admission', error } };
-  }
+export interface SpawnFlowSettled {
+  settled: StagedRunOutcome;
 }
 
-function decideAdmission(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null) return ctx;
-  const liveSessionId = ctx.indexedSession.alive ? ctx.indexedSession.sessionId : null;
-  const admission = decideSpawnExecutionAdmissionViaPipeline({
-    hasLiveIndexedSession: liveSessionId !== null,
-    isSpawningExecution: ctx.isSpawning,
-    taskStatus: ctx.freshTask!.status,
-    executionWorkflowValid: ctx.workflowValid,
-    slotResolvable: ctx.slotResolution !== null,
-  });
-  return { ...ctx, admission, liveSessionId };
-}
+export type SpawnFlowOutcome = SpawnFlowState | SpawnFlowSettled;
 
-function rebindLiveSession(
-  ctx: SpawnExecutionFlowCtx
-): SpawnExecutionFlowCtx | Promise<SpawnExecutionFlowCtx> {
-  if (ctx.terminal !== null || ctx.admission!.action !== 'reuse_live') return ctx;
-  return rebindLiveSessionNow(ctx);
-}
-
-async function rebindLiveSessionNow(ctx: SpawnExecutionFlowCtx): Promise<SpawnExecutionFlowCtx> {
-  const sessionId = ctx.liveSessionId!;
-  try {
-    if (ctx.freshTask!.workflowRunId !== ctx.execution.workflowRunId) {
-      throw new Error(
-        `Task ${ctx.freshTask!.id} is no longer attached to workflow run ${ctx.execution.workflowRunId}; refusing to reuse its live session`
-      );
-    }
-    const rebind = ctx.deps.rebindLiveExecution(ctx.execution, sessionId);
-    if (rebind === 'superseded') {
-      return { ...ctx, terminal: { status: 'superseded', stage: 'rebind-live-session' } };
-    }
-    try {
-      await ctx.deps.syncReuseLiveWorkspace?.(ctx.freshTask!, ctx.space, ctx.execution, sessionId);
-      const recoveryNote = readRestartRecoveryNote(ctx.execution);
-      if (recoveryNote) {
-        await ctx.deps.injectKickoffMessage(sessionId, recoveryNote, ctx.execution.id);
-      }
-    } catch (err) {
-      ctx.deps.revertLiveExecutionRebind?.(ctx.execution, sessionId);
-      throw err;
-    }
-    return { ...ctx, result: { kind: 'reused_session', sessionId } };
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'rebind-live-session', error } };
-  }
-}
-
-function haltWaitConcurrent(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.admission!.action !== 'wait_concurrent') return ctx;
-  return { ...ctx, result: { kind: 'wait_concurrent' } };
-}
-
-function raiseSpawnRejection(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  const action = ctx.admission!.action;
-  if (ctx.terminal !== null || (action !== 'reject_permanent' && action !== 'reject_transient')) {
-    return ctx;
-  }
-  try {
-    ctx.deps.raiseSpawnRejection(ctx.freshTask!, ctx.execution, ctx.workflow);
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'raise-spawn-rejection', error } };
-  }
-  return ctx;
-}
-
-function reserveTaskSpawn(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.admission!.action !== 'proceed_fresh') return ctx;
-  try {
-    if (ctx.deps.reserveTaskSpawn(ctx.task.id) === 'superseded') {
-      return {
-        ...ctx,
-        terminal: { status: 'superseded', stage: 'reserve-task-spawn' },
-        compensations: [...ctx.compensations, { stage: 'reserve-task-spawn', undo: () => {} }],
-      };
-    }
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'reserve-task-spawn', error } };
-  }
-  return {
-    ...ctx,
-    compensations: [
-      ...ctx.compensations,
-      {
-        stage: 'reserve-task-spawn',
-        undo: () => ctx.deps.releaseTaskSpawn(ctx.task.id),
-      },
-    ],
-  };
-}
-
-function reserveAndSpawnSession(
-  ctx: SpawnExecutionFlowCtx
-): SpawnExecutionFlowCtx | Promise<SpawnExecutionFlowCtx> {
-  if (ctx.terminal !== null || ctx.admission!.action !== 'proceed_fresh') return ctx;
-  return reserveAndSpawnSessionNow(ctx);
-}
-
-async function reserveAndSpawnSessionNow(
-  ctx: SpawnExecutionFlowCtx
-): Promise<SpawnExecutionFlowCtx> {
-  let sessionId: string | null = null;
-  ctx.deps.reserveExecution(ctx.execution.id);
-  const compensations = [
-    ...ctx.compensations,
-    {
-      stage: 'reserve-and-spawn-session',
-      undo: () => {
-        if (sessionId !== null) ctx.deps.cancelSpawnedSession(sessionId);
-        ctx.deps.releaseExecution(ctx.execution.id);
-      },
-    },
-  ];
-  try {
-    const spawnTask = ctx.freshTask ?? ctx.task;
-    if (spawnTask.workflowRunId !== ctx.workflowRun.id) {
-      throw new Error(
-        `Task ${spawnTask.id} was reassigned to workflow run ${spawnTask.workflowRunId} during spawn`
-      );
-    }
-    const resolvedSessionId = ctx.deps.resolveSpawnSessionId(ctx.space, spawnTask, ctx.execution);
-    const workspacePath = await ctx.deps.resolveWorkspacePath(spawnTask, ctx.space);
-    validateTaskAllowsSpawn(ctx.deps.getFreshTask(ctx.task.id) ?? spawnTask);
-    sessionId = await ctx.deps.createSpawnedSession({
-      task: spawnTask,
-      space: ctx.space,
-      workflow: ctx.workflow,
-      workflowRun: ctx.workflowRun,
-      execution: ctx.execution,
-      node: ctx.slotResolution!.node,
-      slot: ctx.slotResolution!.slot,
-      sessionId: resolvedSessionId,
-      workspacePath,
-      kickoff: ctx.kickoff,
-    });
-    return { ...ctx, compensations, spawnedSessionId: sessionId, workspacePath, spawnTask };
-  } catch (error) {
-    return {
-      ...ctx,
-      compensations,
-      terminal: { status: 'error', stage: 'reserve-and-spawn-session', error },
-    };
-  }
-}
-
-function bindExecutionSession(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  try {
-    const result = ctx.deps.bindExecutionToSession(ctx.execution, ctx.spawnedSessionId);
-    if (result === 'superseded') {
-      return { ...ctx, terminal: { status: 'superseded', stage: 'bind-execution-session' } };
-    }
-    return ctx;
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'bind-execution-session', error } };
-  }
-}
-
-function readBoundExecution(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  let bound: NodeExecution | null;
-  try {
-    bound = ctx.deps.getNodeExecution(ctx.execution.id);
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'read-bound-execution', error } };
-  }
-  if (!bound) {
-    return {
-      ...ctx,
-      terminal: {
-        status: 'error',
-        stage: 'read-bound-execution',
-        error: new Error(`Spawn flow cannot re-read execution ${ctx.execution.id} after binding`),
-      },
-    };
-  }
-  return { ...ctx, boundExecution: bound };
-}
-
-function releaseTaskSpawnReservation(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.admission!.action !== 'proceed_fresh') return ctx;
-  try {
-    ctx.deps.releaseTaskSpawn(ctx.task.id);
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'release-task-spawn', error } };
-  }
-  return ctx;
-}
-
-function attachNodeAgent(
-  ctx: SpawnExecutionFlowCtx
-): SpawnExecutionFlowCtx | Promise<SpawnExecutionFlowCtx> {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  return attachNodeAgentNow(ctx);
-}
-
-async function attachNodeAgentNow(ctx: SpawnExecutionFlowCtx): Promise<SpawnExecutionFlowCtx> {
-  const sessionId = ctx.spawnedSessionId!;
-  const execution = ctx.boundExecution ?? ctx.execution;
-  try {
-    await ctx.deps.attachNodeAgent({
-      task: ctx.spawnTask!,
-      space: ctx.space,
-      workflowRun: ctx.workflowRun,
-      execution,
-      sessionId,
-      workspacePath: ctx.workspacePath!,
-    });
-    ctx.deps.registerSpawnCompletionCallback(
-      ctx.spawnTask!.id,
-      execution.workflowNodeId,
-      sessionId
-    );
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'attach-node-agent', error } };
-  }
-  return ctx;
-}
-
-function kickoffSession(
-  ctx: SpawnExecutionFlowCtx
-): SpawnExecutionFlowCtx | Promise<SpawnExecutionFlowCtx> {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null || !ctx.kickoff) return ctx;
-  return kickoffSessionNow(ctx);
-}
-
-async function kickoffSessionNow(ctx: SpawnExecutionFlowCtx): Promise<SpawnExecutionFlowCtx> {
-  const sessionId = ctx.spawnedSessionId!;
-  const slotResolution = ctx.slotResolution!;
-  try {
-    const message = await ctx.deps.buildKickoffMessage({
-      task: ctx.spawnTask!,
-      space: ctx.space,
-      workflow: ctx.workflow,
-      workflowRun: ctx.workflowRun,
-      execution: ctx.boundExecution ?? ctx.execution,
-      node: slotResolution.node,
-      slot: slotResolution.slot,
-      sessionId,
-      workspacePath: ctx.workspacePath!,
-    });
-    await ctx.deps.injectKickoffMessage(sessionId, message, ctx.execution.id);
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'kickoff-session', error } };
-  }
-  return ctx;
-}
-
-function activatePoolAssignment(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  try {
-    ctx.deps.activateSpawnedSessionPoolAssignment(ctx.execution.id, ctx.spawnedSessionId);
-  } catch (error) {
-    return { ...ctx, terminal: { status: 'error', stage: 'activate-pool-assignment', error } };
-  }
-  return ctx;
-}
-
-function completeSpawn(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
-  if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  return { ...ctx, result: ctx.spawnedSessionId };
-}
-
-const run = (
-  superpipe<{
-    proceedingFresh: (ctx: SpawnExecutionFlowCtx) => boolean;
-    hasTerminal: (ctx: SpawnExecutionFlowCtx) => boolean;
-  }>({
-    proceedingFresh: (ctx: SpawnExecutionFlowCtx): boolean =>
-      ctx.terminal === null && ctx.admission?.action === 'proceed_fresh',
-    hasTerminal: (ctx: SpawnExecutionFlowCtx): boolean => ctx.terminal !== null,
-  })('spawn-execution') as PipelineAPI
-)
-  .input(['ctx'])
-  .pipe(gatherSpawnAdmission, 'ctx', 'ctx')
-  .pipe(decideAdmission, 'ctx', 'ctx')
-  .pipe(rebindLiveSession, 'ctx', 'ctx')
-  .pipe(haltWaitConcurrent, 'ctx', 'ctx')
-  .pipe(raiseSpawnRejection, 'ctx', 'ctx')
-  .pipe('proceedingFresh', 'ctx')
-  .pipe(reserveTaskSpawn, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(reserveAndSpawnSession, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(bindExecutionSession, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(readBoundExecution, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(releaseTaskSpawnReservation, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(attachNodeAgent, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(kickoffSession, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(activatePoolAssignment, 'ctx', 'ctx')
-  .pipe('!hasTerminal', 'ctx')
-  .pipe(completeSpawn, 'ctx', 'ctx')
-  .endAsync('ctx') as (input: SpawnExecutionFlowCtx) => Promise<SpawnExecutionFlowCtx>;
-
-function unwindCompensations(compensations: readonly SpawnCompensation[]): StagedRunUnwindEntry[] {
+export function unwindCompensations(
+  compensations: readonly SpawnCompensation[]
+): StagedRunUnwindEntry[] {
   const unwind: StagedRunUnwindEntry[] = [];
   for (let index = compensations.length - 1; index >= 0; index -= 1) {
     const entry = compensations[index];
@@ -395,32 +83,485 @@ function unwindCompensations(compensations: readonly SpawnCompensation[]): Stage
   return unwind;
 }
 
-export function runSpawnExecutionFlow(
+function settledFailure(
+  state: SpawnFlowState,
+  status: 'error' | 'superseded',
+  stage: string,
+  error?: unknown
+): SpawnFlowSettled {
+  return { settled: { status, stage, error, unwind: unwindCompensations(state.compensations) } };
+}
+
+function settledCompletion(result: unknown): SpawnFlowSettled {
+  return { settled: { status: 'completed', result } };
+}
+
+export function gatherSpawnFlowFacts(
+  getFreshTask: SpawnExecutionFlowDeps['getFreshTask'],
+  resolveSlot: SpawnExecutionFlowDeps['resolveSlot'],
+  isSpawningExecution: SpawnExecutionFlowDeps['isSpawningExecution'],
+  inspectIndexedSession: SpawnExecutionFlowDeps['inspectIndexedSession'],
+  request: SpawnExecutionFlowInput
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  try {
+    const freshTask = getFreshTask(request.task.id) ?? request.task;
+    const workflowCheck = validateExecutionAgainstWorkflow(request.execution, request.workflow);
+    return {
+      value: {
+        freshTask,
+        slotResolution: resolveSlot(request.space, request.workflow, request.execution, freshTask),
+        workflowValid: workflowCheck.valid,
+        isSpawning: isSpawningExecution(request.execution.id),
+        indexedSession: inspectIndexedSession(request.execution.agentSessionId),
+        liveSessionId: null,
+        spawnedSessionId: null,
+        workspacePath: null,
+        spawnTask: null,
+        boundExecution: null,
+        compensations: [],
+        result: undefined,
+      },
+    };
+  } catch (error) {
+    return {
+      reason: {
+        settled: { status: 'error', stage: 'gather-spawn-admission', error, unwind: [] },
+      },
+    };
+  }
+}
+
+export function selectSpawnFlowArm(state: SpawnFlowState): {
+  spawn: SpawnFlowState;
+  reuseLiveArm: typeof reuseLiveSessionStage | undefined;
+  waitConcurrentArm: typeof waitConcurrentStage | undefined;
+  rejectArm: typeof raiseSpawnRejectionStage | undefined;
+} {
+  const liveSessionId = state.indexedSession.alive ? state.indexedSession.sessionId : null;
+  const admission = decideSpawnExecutionAdmissionViaPipeline({
+    hasLiveIndexedSession: liveSessionId !== null,
+    isSpawningExecution: state.isSpawning,
+    taskStatus: state.freshTask.status,
+    executionWorkflowValid: state.workflowValid,
+    slotResolvable: state.slotResolution !== null,
+  });
+  const spawn = { ...state, liveSessionId };
+  if (admission.action === 'reuse_live') {
+    return {
+      spawn,
+      reuseLiveArm: reuseLiveSessionStage,
+      waitConcurrentArm: undefined,
+      rejectArm: undefined,
+    };
+  }
+  if (admission.action === 'wait_concurrent') {
+    return {
+      spawn,
+      reuseLiveArm: undefined,
+      waitConcurrentArm: waitConcurrentStage,
+      rejectArm: undefined,
+    };
+  }
+  if (admission.action === 'reject_permanent' || admission.action === 'reject_transient') {
+    return {
+      spawn,
+      reuseLiveArm: undefined,
+      waitConcurrentArm: undefined,
+      rejectArm: raiseSpawnRejectionStage,
+    };
+  }
+  return { spawn, reuseLiveArm: undefined, waitConcurrentArm: undefined, rejectArm: undefined };
+}
+
+export interface ReuseLiveSessionDeps {
+  rebindLiveExecution: SpawnExecutionFlowDeps['rebindLiveExecution'];
+  syncReuseLiveWorkspace(
+    task: SpaceTask,
+    space: Space,
+    execution: NodeExecution,
+    sessionId: string
+  ): void | Promise<void>;
+  revertLiveExecutionRebind(execution: NodeExecution, sessionId: string): void;
+  injectKickoffMessage: SpawnExecutionFlowDeps['injectKickoffMessage'];
+}
+
+export async function reuseLiveSessionStage(
+  rebindLiveExecution: ReuseLiveSessionDeps['rebindLiveExecution'],
+  syncReuseLiveWorkspace: ReuseLiveSessionDeps['syncReuseLiveWorkspace'],
+  revertLiveExecutionRebind: ReuseLiveSessionDeps['revertLiveExecutionRebind'],
+  injectKickoffMessage: ReuseLiveSessionDeps['injectKickoffMessage'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): Promise<{ reason: SpawnFlowSettled }> {
+  const sessionId = state.liveSessionId!;
+  try {
+    if (state.freshTask.workflowRunId !== request.execution.workflowRunId) {
+      throw new Error(
+        `Task ${state.freshTask.id} is no longer attached to workflow run ${request.execution.workflowRunId}; refusing to reuse its live session`
+      );
+    }
+    if (rebindLiveExecution(request.execution, sessionId) === 'superseded') {
+      return { reason: settledFailure(state, 'superseded', 'rebind-live-session') };
+    }
+    try {
+      await syncReuseLiveWorkspace(state.freshTask, request.space, request.execution, sessionId);
+      const recoveryNote = readRestartRecoveryNote(request.execution);
+      if (recoveryNote) {
+        await injectKickoffMessage(sessionId, recoveryNote, request.execution.id);
+      }
+    } catch (error) {
+      revertLiveExecutionRebind(request.execution, sessionId);
+      throw error;
+    }
+    return { reason: settledCompletion({ kind: 'reused_session', sessionId }) };
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'rebind-live-session', error) };
+  }
+}
+
+export function waitConcurrentStage(_state: SpawnFlowState): { reason: SpawnFlowSettled } {
+  return { reason: settledCompletion({ kind: 'wait_concurrent' }) };
+}
+
+export function raiseSpawnRejectionStage(
+  raiseSpawnRejection: SpawnExecutionFlowDeps['raiseSpawnRejection'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { reason: SpawnFlowSettled } {
+  try {
+    raiseSpawnRejection(state.freshTask, request.execution, request.workflow);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'raise-spawn-rejection', error) };
+  }
+  return { reason: settledCompletion(undefined) };
+}
+
+export function reserveTaskSpawn(
+  reserveTaskSpawnDep: SpawnExecutionFlowDeps['reserveTaskSpawn'],
+  releaseTaskSpawn: SpawnExecutionFlowDeps['releaseTaskSpawn'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  try {
+    if (reserveTaskSpawnDep(request.task.id) === 'superseded') {
+      return {
+        reason: settledFailure(
+          {
+            ...state,
+            compensations: [
+              ...state.compensations,
+              { stage: 'reserve-task-spawn', undo: () => {} },
+            ],
+          },
+          'superseded',
+          'reserve-task-spawn'
+        ),
+      };
+    }
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'reserve-task-spawn', error) };
+  }
+  return {
+    value: {
+      ...state,
+      compensations: [
+        ...state.compensations,
+        { stage: 'reserve-task-spawn', undo: () => releaseTaskSpawn(request.task.id) },
+      ],
+    },
+  };
+}
+
+export async function reserveAndSpawnSession(
+  reserveExecution: SpawnExecutionFlowDeps['reserveExecution'],
+  releaseExecution: SpawnExecutionFlowDeps['releaseExecution'],
+  cancelSpawnedSession: SpawnExecutionFlowDeps['cancelSpawnedSession'],
+  resolveSpawnSessionId: SpawnExecutionFlowDeps['resolveSpawnSessionId'],
+  resolveWorkspacePath: SpawnExecutionFlowDeps['resolveWorkspacePath'],
+  getFreshTask: SpawnExecutionFlowDeps['getFreshTask'],
+  createSpawnedSession: SpawnExecutionFlowDeps['createSpawnedSession'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): Promise<{ value: SpawnFlowState } | { reason: SpawnFlowSettled }> {
+  let sessionId: string | null = null;
+  let compensations = state.compensations;
+  try {
+    reserveExecution(request.execution.id);
+    compensations = [
+      ...compensations,
+      {
+        stage: 'reserve-and-spawn-session',
+        undo: () => {
+          if (sessionId !== null) cancelSpawnedSession(sessionId);
+          releaseExecution(request.execution.id);
+        },
+      },
+    ];
+    const spawnTask = state.freshTask ?? request.task;
+    if (spawnTask.workflowRunId !== request.workflowRun.id) {
+      throw new Error(
+        `Task ${spawnTask.id} was reassigned to workflow run ${spawnTask.workflowRunId} during spawn`
+      );
+    }
+    const resolvedSessionId = resolveSpawnSessionId(request.space, spawnTask, request.execution);
+    const workspacePath = await resolveWorkspacePath(spawnTask, request.space);
+    validateTaskAllowsSpawn(getFreshTask(request.task.id) ?? spawnTask);
+    sessionId = await createSpawnedSession({
+      task: spawnTask,
+      space: request.space,
+      workflow: request.workflow,
+      workflowRun: request.workflowRun,
+      execution: request.execution,
+      node: state.slotResolution!.node,
+      slot: state.slotResolution!.slot,
+      sessionId: resolvedSessionId,
+      workspacePath,
+      kickoff: request.kickoff,
+    });
+    return {
+      value: { ...state, compensations, spawnedSessionId: sessionId, workspacePath, spawnTask },
+    };
+  } catch (error) {
+    return {
+      reason: settledFailure(
+        { ...state, compensations },
+        'error',
+        'reserve-and-spawn-session',
+        error
+      ),
+    };
+  }
+}
+
+export function bindExecutionSession(
+  bindExecutionToSession: SpawnExecutionFlowDeps['bindExecutionToSession'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  if (state.spawnedSessionId === null) return { value: state };
+  try {
+    if (bindExecutionToSession(request.execution, state.spawnedSessionId) === 'superseded') {
+      return { reason: settledFailure(state, 'superseded', 'bind-execution-session') };
+    }
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'bind-execution-session', error) };
+  }
+  return { value: state };
+}
+
+export function readBoundExecution(
+  getNodeExecution: SpawnExecutionFlowDeps['getNodeExecution'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  if (state.spawnedSessionId === null) return { value: state };
+  let bound: NodeExecution | null;
+  try {
+    bound = getNodeExecution(request.execution.id);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'read-bound-execution', error) };
+  }
+  if (!bound) {
+    return {
+      reason: settledFailure(
+        state,
+        'error',
+        'read-bound-execution',
+        new Error(`Spawn flow cannot re-read execution ${request.execution.id} after binding`)
+      ),
+    };
+  }
+  return { value: { ...state, boundExecution: bound } };
+}
+
+export function releaseTaskSpawnReservation(
+  releaseTaskSpawn: SpawnExecutionFlowDeps['releaseTaskSpawn'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  try {
+    releaseTaskSpawn(request.task.id);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'release-task-spawn', error) };
+  }
+  return { value: state };
+}
+
+export async function attachNodeAgent(
+  attachNodeAgentDep: SpawnExecutionFlowDeps['attachNodeAgent'],
+  registerSpawnCompletionCallback: SpawnExecutionFlowDeps['registerSpawnCompletionCallback'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): Promise<{ value: SpawnFlowState } | { reason: SpawnFlowSettled }> {
+  if (state.spawnedSessionId === null) return { value: state };
+  const sessionId = state.spawnedSessionId;
+  const execution = state.boundExecution ?? request.execution;
+  try {
+    await attachNodeAgentDep({
+      task: state.spawnTask!,
+      space: request.space,
+      workflowRun: request.workflowRun,
+      execution,
+      sessionId,
+      workspacePath: state.workspacePath!,
+    });
+    registerSpawnCompletionCallback(state.spawnTask!.id, execution.workflowNodeId, sessionId);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'attach-node-agent', error) };
+  }
+  return { value: state };
+}
+
+export async function kickoffSession(
+  buildKickoffMessage: SpawnExecutionFlowDeps['buildKickoffMessage'],
+  injectKickoffMessage: SpawnExecutionFlowDeps['injectKickoffMessage'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): Promise<{ value: SpawnFlowState } | { reason: SpawnFlowSettled }> {
+  if (state.spawnedSessionId === null || !request.kickoff) return { value: state };
+  const sessionId = state.spawnedSessionId;
+  const slotResolution = state.slotResolution!;
+  try {
+    const message = await buildKickoffMessage({
+      task: state.spawnTask!,
+      space: request.space,
+      workflow: request.workflow,
+      workflowRun: request.workflowRun,
+      execution: state.boundExecution ?? request.execution,
+      node: slotResolution.node,
+      slot: slotResolution.slot,
+      sessionId,
+      workspacePath: state.workspacePath!,
+    });
+    await injectKickoffMessage(sessionId, message, request.execution.id);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'kickoff-session', error) };
+  }
+  return { value: state };
+}
+
+export function activatePoolAssignment(
+  activateSpawnedSessionPoolAssignment: SpawnExecutionFlowDeps['activateSpawnedSessionPoolAssignment'],
+  request: SpawnExecutionFlowInput,
+  state: SpawnFlowState
+): { value: SpawnFlowState } | { reason: SpawnFlowSettled } {
+  if (state.spawnedSessionId === null) return { value: state };
+  try {
+    activateSpawnedSessionPoolAssignment(request.execution.id, state.spawnedSessionId);
+  } catch (error) {
+    return { reason: settledFailure(state, 'error', 'activate-pool-assignment', error) };
+  }
+  return { value: state };
+}
+
+export function completeSpawn(state: SpawnFlowState): { value: SpawnFlowState } {
+  return { value: { ...state, result: state.spawnedSessionId } };
+}
+
+function buildSpawnExecutionPipeline(
+  deps: SpawnExecutionFlowDeps
+): (request: SpawnExecutionFlowInput) => Promise<SpawnFlowOutcome> {
+  return (
+    superpipe({
+      getFreshTask: deps.getFreshTask,
+      getNodeExecution: deps.getNodeExecution,
+      isSpawningExecution: deps.isSpawningExecution,
+      inspectIndexedSession: deps.inspectIndexedSession,
+      resolveSlot: deps.resolveSlot,
+      reserveExecution: deps.reserveExecution,
+      releaseExecution: deps.releaseExecution,
+      reserveTaskSpawn: deps.reserveTaskSpawn,
+      releaseTaskSpawn: deps.releaseTaskSpawn,
+      cancelSpawnedSession: deps.cancelSpawnedSession,
+      rebindLiveExecution: deps.rebindLiveExecution,
+      syncReuseLiveWorkspace: (
+        task: SpaceTask,
+        space: Space,
+        execution: NodeExecution,
+        sessionId: string
+      ) => deps.syncReuseLiveWorkspace?.(task, space, execution, sessionId),
+      revertLiveExecutionRebind: (execution: NodeExecution, sessionId: string) =>
+        deps.revertLiveExecutionRebind?.(execution, sessionId),
+      raiseSpawnRejection: deps.raiseSpawnRejection,
+      resolveSpawnSessionId: deps.resolveSpawnSessionId,
+      resolveWorkspacePath: deps.resolveWorkspacePath,
+      createSpawnedSession: deps.createSpawnedSession,
+      bindExecutionToSession: deps.bindExecutionToSession,
+      attachNodeAgent: deps.attachNodeAgent,
+      registerSpawnCompletionCallback: deps.registerSpawnCompletionCallback,
+      buildKickoffMessage: deps.buildKickoffMessage,
+      injectKickoffMessage: deps.injectKickoffMessage,
+      activateSpawnedSessionPoolAssignment: deps.activateSpawnedSessionPoolAssignment,
+    })('spawn-execution') as PipelineAPI
+  )
+    .input('request')
+    .pipe(
+      gatherSpawnFlowFacts,
+      ['getFreshTask', 'resolveSlot', 'isSpawningExecution', 'inspectIndexedSession', 'request'],
+      'result:spawn'
+    )
+    .pipe(selectSpawnFlowArm, 'spawn', ['spawn', 'reuseLiveArm', 'waitConcurrentArm', 'rejectArm'])
+    .pipe(
+      '?reuseLiveArm',
+      [
+        'rebindLiveExecution',
+        'syncReuseLiveWorkspace',
+        'revertLiveExecutionRebind',
+        'injectKickoffMessage',
+        'request',
+        'spawn',
+      ],
+      'result:spawn'
+    )
+    .pipe('?waitConcurrentArm', 'spawn', 'result:spawn')
+    .pipe('?rejectArm', ['raiseSpawnRejection', 'request', 'spawn'], 'result:spawn')
+    .pipe(
+      reserveTaskSpawn,
+      ['reserveTaskSpawn', 'releaseTaskSpawn', 'request', 'spawn'],
+      'result:spawn'
+    )
+    .pipe(
+      reserveAndSpawnSession,
+      [
+        'reserveExecution',
+        'releaseExecution',
+        'cancelSpawnedSession',
+        'resolveSpawnSessionId',
+        'resolveWorkspacePath',
+        'getFreshTask',
+        'createSpawnedSession',
+        'request',
+        'spawn',
+      ],
+      'result:spawn'
+    )
+    .pipe(bindExecutionSession, ['bindExecutionToSession', 'request', 'spawn'], 'result:spawn')
+    .pipe(readBoundExecution, ['getNodeExecution', 'request', 'spawn'], 'result:spawn')
+    .pipe(releaseTaskSpawnReservation, ['releaseTaskSpawn', 'request', 'spawn'], 'result:spawn')
+    .pipe(
+      attachNodeAgent,
+      ['attachNodeAgent', 'registerSpawnCompletionCallback', 'request', 'spawn'],
+      'result:spawn'
+    )
+    .pipe(
+      kickoffSession,
+      ['buildKickoffMessage', 'injectKickoffMessage', 'request', 'spawn'],
+      'result:spawn'
+    )
+    .pipe(
+      activatePoolAssignment,
+      ['activateSpawnedSessionPoolAssignment', 'request', 'spawn'],
+      'result:spawn'
+    )
+    .pipe(completeSpawn, 'spawn', 'result:spawn')
+    .endAsync('spawn') as (request: SpawnExecutionFlowInput) => Promise<SpawnFlowOutcome>;
+}
+
+export async function runSpawnExecutionFlow(
   deps: SpawnExecutionFlowDeps,
   input: SpawnExecutionFlowInput
 ): Promise<StagedRunOutcome> {
-  const ctx: SpawnExecutionFlowCtx = {
-    deps,
-    ...input,
-    freshTask: null,
-    slotResolution: null,
-    workflowValid: false,
-    isSpawning: false,
-    indexedSession: { sessionId: null, alive: false },
-    admission: null,
-    liveSessionId: null,
-    spawnedSessionId: null,
-    workspacePath: null,
-    spawnTask: null,
-    boundExecution: null,
-    compensations: [],
-    terminal: null,
-    result: undefined,
-  };
-  return run(ctx).then((final) => {
-    if (final.terminal === null) {
-      return { status: 'completed', result: final.result };
-    }
-    return { ...final.terminal, unwind: unwindCompensations(final.compensations) };
-  });
+  const outcome = await buildSpawnExecutionPipeline(deps)(input);
+  if (isSpawnFlowSettled(outcome)) return outcome.settled;
+  return { status: 'completed', result: outcome.result };
 }
