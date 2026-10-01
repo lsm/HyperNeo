@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   McpServerConfig,
   MessageContent,
@@ -157,7 +158,6 @@ import {
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
 } from '../../tasks/spawn-slot-resolution.ts';
-import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from '../../tasks/verified-stop-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
@@ -2612,108 +2612,99 @@ export class TaskAgentManager {
     execution: NodeExecution,
     sessionId: string
   ): Promise<void> {
-    interface SyncLiveWorkspaceState {
-      sessionId: string;
+    interface SyncLiveWorkspaceCtx {
       currentTask: SpaceTask;
       workspacePath: string | null;
+      skipReason: string | null;
+      rejectMessage: string | null;
     }
     await this.withSessionInjectLock(sessionId, async () => {
-      const outcome = await stagedRun<SyncLiveWorkspaceState>(
-        'sync-live-session-workspace',
-        (s) => [
-          s.snapshot({
-            name: 'load-current-task',
-            provides: ['currentTask', 'workspacePath'],
-            run: () => {
-              const currentTask = this.config.taskRepo.getTask(task.id) ?? task;
-              const workspacePath = resolveSpawnWorkspace({
-                cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
-                hasWorktreeManager: false,
-                spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
-              }).workspacePath;
-              return { currentTask, workspacePath };
-            },
-          }),
-          s.decide({
-            name: 'sync-gates',
-            reads: ['currentTask', 'workspacePath'],
-            branches: ['skip', 'perform', 'reject'],
-            run: (view) => {
-              const currentTask = view.currentTask;
-              const workspacePath = view.workspacePath!;
-              const terminalStatus = execution.workflowRunId
-                ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
-                : null;
-              const live = this.getSubSession(sessionId);
-              let skipReason: string | null = null;
-              let rejectMessage: string | null = null;
-              if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
-              else if (!live) skipReason = 'session is no longer live';
-              else if (currentTask.spaceId !== space.id) {
-                rejectMessage = `Task ${currentTask.id} moved to space ${currentTask.spaceId}; refusing to sync live session ${sessionId} for space ${space.id}`;
-              } else if (currentTask.workflowRunId !== execution.workflowRunId) {
-                rejectMessage = `Task ${currentTask.id} is no longer attached to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to reuse its live session ${sessionId}`;
-              } else if (!workspacePath) skipReason = 'no workspace resolved';
-              else if (live.getSessionData().workspacePath === workspacePath) {
-                skipReason = 'workspace already matches';
-              }
-              const decision = { skipReason, rejectMessage };
-              if (rejectMessage) return { decision, reject: true };
-              return skipReason ? { decision, skip: true } : { decision, perform: true };
-            },
-          }),
-          s.halt({
-            name: 'skip-sync',
-            when: 'skip',
-            reads: ['decision'],
-            run: (view) => {
-              log.info(
-                `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — ${(view.decision as { skipReason: string }).skipReason}`
-              );
-              return { skipped: true };
-            },
-          }),
-          s.halt({
-            name: 'reject-sync',
-            when: 'reject',
-            reads: ['decision'],
-            run: (view) => {
-              throw new Error((view.decision as { rejectMessage: string }).rejectMessage);
-            },
-          }),
-          s.effect({
-            name: 'migrate-workspace',
-            when: 'perform',
-            reads: ['currentTask', 'workspacePath'],
-            writes: [],
-            run: async (view) => {
-              const live = this.getSubSession(sessionId);
-              if (!live) return;
-              const workspacePath = view.workspacePath!;
-              const previousWorkspacePath = live.getSessionData().workspacePath;
-              live.updateMetadata({ workspacePath });
-              try {
-                await this.reinjectNodeAgentMcpServer(live, {
-                  taskId: view.currentTask.id,
-                  subSessionId: sessionId,
-                  agentName: execution.agentName,
-                  spaceId: space.id,
-                  workflowRunId: execution.workflowRunId,
-                  workspacePath,
-                  workflowNodeId: execution.workflowNodeId,
-                });
-              } catch (err) {
-                if (previousWorkspacePath !== undefined) {
-                  live.updateMetadata({ workspacePath: previousWorkspacePath });
-                }
-                throw err;
-              }
-            },
-          }),
-        ],
-        { input: ['sessionId', 'workspacePath'] }
-      )({ sessionId, workspacePath: null });
-      if (outcome.status === 'error') throw outcome.error;
+      const loadCurrentTask = (ctx: SyncLiveWorkspaceCtx): SyncLiveWorkspaceCtx => {
+        const currentTask = this.config.taskRepo.getTask(task.id) ?? task;
+        const workspacePath = resolveSpawnWorkspace({
+          cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
+          hasWorktreeManager: false,
+          spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
+        }).workspacePath;
+        return { ...ctx, currentTask, workspacePath };
+      };
+
+      const decideSync = (ctx: SyncLiveWorkspaceCtx): SyncLiveWorkspaceCtx => {
+        const currentTask = ctx.currentTask;
+        const workspacePath = ctx.workspacePath!;
+        const terminalStatus = execution.workflowRunId
+          ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
+          : null;
+        const live = this.getSubSession(sessionId);
+        let skipReason: string | null = null;
+        let rejectMessage: string | null = null;
+        if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
+        else if (!live) skipReason = 'session is no longer live';
+        else if (currentTask.spaceId !== space.id) {
+          rejectMessage = `Task ${currentTask.id} moved to space ${currentTask.spaceId}; refusing to sync live session ${sessionId} for space ${space.id}`;
+        } else if (currentTask.workflowRunId !== execution.workflowRunId) {
+          rejectMessage = `Task ${currentTask.id} is no longer attached to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to reuse its live session ${sessionId}`;
+        } else if (!workspacePath) skipReason = 'no workspace resolved';
+        else if (live.getSessionData().workspacePath === workspacePath) {
+          skipReason = 'workspace already matches';
+        }
+        return { ...ctx, skipReason, rejectMessage };
+      };
+
+      const skipSync = (ctx: SyncLiveWorkspaceCtx): SyncLiveWorkspaceCtx => {
+        if (ctx.rejectMessage !== null || ctx.skipReason === null) return ctx;
+        log.info(
+          `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — ${ctx.skipReason}`
+        );
+        return ctx;
+      };
+
+      const rejectSync = (ctx: SyncLiveWorkspaceCtx): SyncLiveWorkspaceCtx => {
+        if (ctx.rejectMessage === null) return ctx;
+        throw new Error(ctx.rejectMessage);
+      };
+
+      const migrateWorkspace = async (ctx: SyncLiveWorkspaceCtx): Promise<SyncLiveWorkspaceCtx> => {
+        if (ctx.rejectMessage !== null || ctx.skipReason !== null) return ctx;
+        const live = this.getSubSession(sessionId);
+        if (!live) return ctx;
+        const workspacePath = ctx.workspacePath!;
+        const previousWorkspacePath = live.getSessionData().workspacePath;
+        live.updateMetadata({ workspacePath });
+        try {
+          await this.reinjectNodeAgentMcpServer(live, {
+            taskId: ctx.currentTask.id,
+            subSessionId: sessionId,
+            agentName: execution.agentName,
+            spaceId: space.id,
+            workflowRunId: execution.workflowRunId,
+            workspacePath,
+            workflowNodeId: execution.workflowNodeId,
+          });
+        } catch (err) {
+          if (previousWorkspacePath !== undefined) {
+            live.updateMetadata({ workspacePath: previousWorkspacePath });
+          }
+          throw err;
+        }
+        return ctx;
+      };
+
+      const runSyncLiveWorkspace = (superpipe({})('sync-live-session-workspace') as PipelineAPI)
+        .input(['ctx'])
+        .pipe(loadCurrentTask, 'ctx', 'ctx')
+        .pipe(decideSync, 'ctx', 'ctx')
+        .pipe(skipSync, 'ctx', 'ctx')
+        .pipe(rejectSync, 'ctx', 'ctx')
+        .pipe(migrateWorkspace, 'ctx', 'ctx')
+        .endAsync('ctx') as (input: SyncLiveWorkspaceCtx) => Promise<SyncLiveWorkspaceCtx>;
+
+      await runSyncLiveWorkspace({
+        currentTask: task,
+        workspacePath: null,
+        skipReason: null,
+        rejectMessage: null,
+      });
     });
   }
 
@@ -3568,113 +3559,100 @@ export class TaskAgentManager {
       onReplaySettled?: (succeeded: boolean) => void;
     } = {}
   ): Promise<void> {
-    interface WorkflowProvisioningState {
-      sessionId: string;
-      taskId: string;
-      task: SpaceTask | null;
-      workflowRun: SpaceWorkflowRun | null;
-      space: Space | null;
-    }
-
     const sessionId = session.getSessionData().id;
     const taskId = taskIdFromSubSessionIdentity(sessionId);
     if (!taskId) return;
 
-    const outcome = await stagedRun<WorkflowProvisioningState>(
-      'provision-workflow-session',
-      (s) => [
-        s.snapshot({
-          name: 'resolve-workflow-owner',
-          provides: ['task', 'workflowRun', 'space'],
-          run: async () => {
-            const task = this.config.taskRepo.getTask(taskId) ?? null;
-            const workflowRun = task?.workflowRunId
-              ? (this.config.workflowRunRepo.getRun(task.workflowRunId) ?? null)
-              : null;
-            const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
-            return { task, workflowRun, space };
-          },
-        }),
-        s.decide({
-          name: 'admit-workflow-provisioning',
-          reads: ['task', 'workflowRun', 'space'],
-          branches: ['skip', 'postApproval', 'rehydrate'],
-          run: (view) => {
-            const task = view.task;
-            const workflowRun = view.workflowRun;
-            const space = view.space;
-            const isPostApproval = sessionId.includes(':post-approval:');
-            if (session.getSessionData().status === 'archived') {
-              return { decision: 'archived-session', skip: true };
-            }
-            if (
-              !task?.workflowRunId ||
-              !workflowRun ||
-              workflowRun.status === 'cancelled' ||
-              !space ||
-              space.stopped ||
-              space.paused ||
-              space.status === 'archived'
-            ) {
-              return { decision: 'ineligible', skip: true };
-            }
-            if (isPostApproval) {
-              if (task.status !== 'approved') {
-                return { decision: 'post-approval-not-active', skip: true };
-              }
-              return { decision: 'restore-post-approval', postApproval: true };
-            }
-            if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
-              return { decision: 'ineligible', skip: true };
-            }
-            const execution = this.resolveNodeExecutionForSubSession(sessionId);
-            if (!execution) return { decision: 'missing-execution', skip: true };
-            if (
-              execution.status !== 'in_progress' &&
-              execution.status !== 'blocked' &&
-              !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
-            ) {
-              return { decision: 'non-resumable-execution', skip: true };
-            }
-            return { decision: 'rehydrate-execution', rehydrate: true };
-          },
-        }),
-        s.halt({
-          name: 'skip-workflow-provisioning',
-          when: 'skip',
-          run: () => undefined,
-        }),
-        s.effect({
-          name: 'restore-post-approval-worker',
-          when: 'postApproval',
-          writes: [],
-          run: async () => {
-            const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
-              ? { ...options, startQuery: false }
-              : options;
-            await this.restorePostApprovalWorkerSession(taskId, sessionId, session, restoreOptions);
-          },
-        }),
-        s.halt({
-          name: 'return-restored-post-approval-worker',
-          when: 'postApproval',
-          run: () => undefined,
-        }),
-        s.effect({
-          name: 'rehydrate-workflow-execution',
-          when: 'rehydrate',
-          writes: [],
-          run: async () => {
-            const rehydrateOptions = this.readPersistedRateLimitCooldown(sessionId)
-              ? { ...options, startQuery: false }
-              : options;
-            await this.rehydrateSubSession(sessionId, session, rehydrateOptions);
-          },
-        }),
-      ],
-      { input: ['sessionId', 'taskId'] }
-    )({ sessionId, taskId });
-    if (outcome.status === 'error') throw outcome.error;
+    interface ProvisionCtx {
+      task: SpaceTask | null;
+      workflowRun: SpaceWorkflowRun | null;
+      space: Space | null;
+      branch: 'skip' | 'postApproval' | 'rehydrate' | null;
+    }
+
+    const resolveWorkflowOwner = async (ctx: ProvisionCtx): Promise<ProvisionCtx> => {
+      const task = this.config.taskRepo.getTask(taskId) ?? null;
+      const workflowRun = task?.workflowRunId
+        ? (this.config.workflowRunRepo.getRun(task.workflowRunId) ?? null)
+        : null;
+      const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
+      return { ...ctx, task, workflowRun, space };
+    };
+
+    const admitProvisioning = (ctx: ProvisionCtx): ProvisionCtx => {
+      const task = ctx.task;
+      const workflowRun = ctx.workflowRun;
+      const space = ctx.space;
+      const isPostApproval = sessionId.includes(':post-approval:');
+      if (session.getSessionData().status === 'archived') {
+        return { ...ctx, branch: 'skip' };
+      }
+      if (
+        !task?.workflowRunId ||
+        !workflowRun ||
+        workflowRun.status === 'cancelled' ||
+        !space ||
+        space.stopped ||
+        space.paused ||
+        space.status === 'archived'
+      ) {
+        return { ...ctx, branch: 'skip' };
+      }
+      if (isPostApproval) {
+        if (task.status !== 'approved') {
+          return { ...ctx, branch: 'skip' };
+        }
+        return { ...ctx, branch: 'postApproval' };
+      }
+      if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
+        return { ...ctx, branch: 'skip' };
+      }
+      const execution = this.resolveNodeExecutionForSubSession(sessionId);
+      if (!execution) {
+        return { ...ctx, branch: 'skip' };
+      }
+      if (
+        execution.status !== 'in_progress' &&
+        execution.status !== 'blocked' &&
+        !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
+      ) {
+        return { ...ctx, branch: 'skip' };
+      }
+      return { ...ctx, branch: 'rehydrate' };
+    };
+
+    const restorePostApprovalWorker = async (ctx: ProvisionCtx): Promise<ProvisionCtx> => {
+      if (ctx.branch !== 'postApproval') return ctx;
+      const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
+        ? { ...options, startQuery: false }
+        : options;
+      await this.restorePostApprovalWorkerSession(taskId, sessionId, session, restoreOptions);
+      return ctx;
+    };
+
+    const rehydrateWorkflowExecution = async (ctx: ProvisionCtx): Promise<ProvisionCtx> => {
+      if (ctx.branch !== 'rehydrate') return ctx;
+      const rehydrateOptions = this.readPersistedRateLimitCooldown(sessionId)
+        ? { ...options, startQuery: false }
+        : options;
+      await this.rehydrateSubSession(sessionId, session, rehydrateOptions);
+      return ctx;
+    };
+
+    const runProvisionWorkflowSession = (superpipe({})('provision-workflow-session') as PipelineAPI)
+      .input(['ctx'])
+      .pipe(resolveWorkflowOwner, 'ctx', 'ctx')
+      .pipe(admitProvisioning, 'ctx', 'ctx')
+      .pipe(restorePostApprovalWorker, 'ctx', 'ctx')
+      .pipe(rehydrateWorkflowExecution, 'ctx', 'ctx')
+      .endAsync('ctx') as (input: ProvisionCtx) => Promise<ProvisionCtx>;
+
+    await runProvisionWorkflowSession({
+      task: null,
+      workflowRun: null,
+      space: null,
+      branch: null,
+    });
   }
 
   private hasQueuedRetryableHookAction(workflowRunId: string, execution: NodeExecution): boolean {
@@ -4734,76 +4712,70 @@ export class TaskAgentManager {
     }
 
     await this.withSessionInjectLock(sessionId, async () => {
-      interface SelfHealWorkspaceState {
-        sessionId: string;
+      interface SelfHealCtx {
         currentTask: SpaceTask;
         healWorkspacePath: string | null;
       }
-      const outcome = await stagedRun<SelfHealWorkspaceState>(
-        'self-heal-workspace',
-        (s) => [
-          s.snapshot({
-            name: 'resolve-heal-workspace',
-            provides: ['currentTask', 'healWorkspacePath'],
-            run: () => {
-              const currentTask = this.config.taskRepo.getTask(parentTask.id) ?? parentTask;
-              if (currentTask.workflowRunId !== execution.workflowRunId) {
-                throw new Error(
-                  `Task ${currentTask.id} no longer belongs to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to self-heal session ${sessionId}`
-                );
-              }
-              const healWorkspacePath = resolveSpawnWorkspace({
-                cachedTaskWorktreePath:
-                  this.getTaskWorktreePath(currentTask.id) ??
-                  explicitTaskWorkspace(currentTask) ??
-                  agentSession.getSessionData().workspacePath ??
-                  undefined,
-                hasWorktreeManager: false,
-                spaceWorkspacePath: space.workspacePath,
-              }).workspacePath;
-              return { currentTask, healWorkspacePath };
-            },
-          }),
-          s.effect({
-            name: 'heal-workspace',
-            reads: ['currentTask', 'healWorkspacePath'],
-            writes: [],
-            run: async (view) => {
-              const healWorkspacePath = view.healWorkspacePath!;
-              const healCtx = {
-                taskId: view.currentTask.id,
-                subSessionId: sessionId,
-                agentName: execution.agentName,
-                spaceId: view.currentTask.spaceId,
-                workflowRunId: execution.workflowRunId,
-                workspacePath: healWorkspacePath,
-                workflowNodeId: execution.workflowNodeId,
-              };
-              if (
-                healWorkspacePath &&
-                agentSession.getSessionData().workspacePath !== healWorkspacePath
-              ) {
-                const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
-                agentSession.updateMetadata({ workspacePath: healWorkspacePath });
-                try {
-                  await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
-                } catch (err) {
-                  if (previousHealWorkspacePath !== undefined) {
-                    agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
-                  }
-                  throw err;
-                }
-              }
-              await this.ensureRequiredMcpServersAttached(agentSession, {
-                ...healCtx,
-                phase: 'rehydrate',
-              });
-            },
-          }),
-        ],
-        { input: ['sessionId'] }
-      )({ sessionId });
-      if (outcome.status === 'error') throw outcome.error;
+
+      const resolveHealWorkspace = (ctx: SelfHealCtx): SelfHealCtx => {
+        const currentTask = this.config.taskRepo.getTask(parentTask.id) ?? parentTask;
+        if (currentTask.workflowRunId !== execution.workflowRunId) {
+          throw new Error(
+            `Task ${currentTask.id} no longer belongs to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to self-heal session ${sessionId}`
+          );
+        }
+        const healWorkspacePath = resolveSpawnWorkspace({
+          cachedTaskWorktreePath:
+            this.getTaskWorktreePath(currentTask.id) ??
+            explicitTaskWorkspace(currentTask) ??
+            agentSession.getSessionData().workspacePath ??
+            undefined,
+          hasWorktreeManager: false,
+          spaceWorkspacePath: space.workspacePath,
+        }).workspacePath;
+        return { ...ctx, currentTask, healWorkspacePath };
+      };
+
+      const healWorkspace = async (ctx: SelfHealCtx): Promise<SelfHealCtx> => {
+        const healWorkspacePath = ctx.healWorkspacePath;
+        const healCtx = {
+          taskId: ctx.currentTask.id,
+          subSessionId: sessionId,
+          agentName: execution.agentName,
+          spaceId: ctx.currentTask.spaceId,
+          workflowRunId: execution.workflowRunId,
+          workspacePath: healWorkspacePath ?? '',
+          workflowNodeId: execution.workflowNodeId,
+        };
+        if (
+          healWorkspacePath &&
+          agentSession.getSessionData().workspacePath !== healWorkspacePath
+        ) {
+          const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
+          agentSession.updateMetadata({ workspacePath: healWorkspacePath });
+          try {
+            await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+          } catch (err) {
+            if (previousHealWorkspacePath !== undefined) {
+              agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
+            }
+            throw err;
+          }
+        }
+        await this.ensureRequiredMcpServersAttached(agentSession, {
+          ...healCtx,
+          phase: 'rehydrate',
+        });
+        return ctx;
+      };
+
+      const runSelfHealWorkspace = (superpipe({})('self-heal-workspace') as PipelineAPI)
+        .input(['ctx'])
+        .pipe(resolveHealWorkspace, 'ctx', 'ctx')
+        .pipe(healWorkspace, 'ctx', 'ctx')
+        .endAsync('ctx') as (input: SelfHealCtx) => Promise<SelfHealCtx>;
+
+      await runSelfHealWorkspace({ currentTask: parentTask, healWorkspacePath: null });
     });
   }
 
