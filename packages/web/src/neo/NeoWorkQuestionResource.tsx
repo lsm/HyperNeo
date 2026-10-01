@@ -25,7 +25,7 @@ export function NeoWorkQuestionResource({
       question
         ? createQuestionFormDraft(work.sessionId!, question.toolUseId, question.draftResponses)
         : null,
-    [work.sessionId, question?.toolUseId, question?.draftResponses]
+    [work.sessionId, question?.toolUseId]
   );
   const [draft, setDraft] = useState<QuestionFormDraft | null>(null);
   const currentDraft =

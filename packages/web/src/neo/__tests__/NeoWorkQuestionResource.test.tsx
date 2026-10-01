@@ -105,6 +105,53 @@ afterEach(async () => {
 });
 
 describe('NeoWorkQuestionResource', () => {
+  it('does not re-arm untouched draft autosave when the daemon echoes a new response array', async () => {
+    const originalRequest = request.getMockImplementation() as (
+      method: string,
+      input: { subscriptionId?: string }
+    ) => Promise<unknown>;
+    request.mockImplementation(
+      async (
+        method: string,
+        input: { subscriptionId?: string; draftResponses?: PendingUserQuestion['draftResponses'] }
+      ) => {
+        if (method === 'question.saveDraft') {
+          expect(Array.isArray(input.draftResponses)).toBe(true);
+          const pending = state.agentState;
+          expect(pending.status).toBe('waiting_for_input');
+          if (pending.status === 'waiting_for_input')
+            push({
+              ...state,
+              revision: (state.revision ?? 0) + 1,
+              agentState: {
+                ...pending,
+                pendingQuestion: {
+                  ...pending.pendingQuestion,
+                  draftResponses: structuredClone(input.draftResponses),
+                },
+              },
+            } as SessionState);
+          return { success: true };
+        }
+        return originalRequest(method, input);
+      }
+    );
+    render(<NeoWorkQuestionResource work={work} />);
+    await screen.findByText('question-A');
+    const saves = () => request.mock.calls.filter(([method]) => method === 'question.saveDraft');
+    await waitFor(() => expect(saves()).toHaveLength(1));
+    expect(state.revision).toBe(2);
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 1100)));
+    expect(saves()).toHaveLength(1);
+    expect(state.revision).toBe(2);
+    fireEvent.click(screen.getByRole('button', { name: /^Plan A/ }));
+    await waitFor(() => expect(saves()).toHaveLength(2));
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 1100)));
+    expect(saves()).toHaveLength(2);
+    expect(
+      screen.getByRole('button', { name: 'Submit Response' }).getAttribute('disabled')
+    ).toBeNull();
+  });
   it('retains selection while a visible slot is absent, without another observer', async () => {
     const select = vi.spyOn(SessionStore.prototype, 'select');
     const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
