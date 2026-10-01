@@ -1,5 +1,6 @@
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
+import { useState } from 'preact/hooks';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -33,6 +34,7 @@ function PublicEntry({
   onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const text = ask ? publicAskText(ask.content) : publication!.shortText;
@@ -128,17 +130,22 @@ function PublicEntry({
         )}
         {publication && (
           <>
-            <details class="mt-4 border-t border-line pt-3">
+            <details
+              class="mt-4 border-t border-line pt-3"
+              onToggle={(event) => setExpanded(event.currentTarget.open)}
+            >
               <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
                 Read full response
               </summary>
-              <div class="mt-3 rounded-xl border border-line bg-surface p-4">
-                <MarkdownRenderer
-                  content={publication.fullText}
-                  class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
-                />
-                <CopyButton text={publication.fullText} label="Copy full response" />
-              </div>
+              {expanded && (
+                <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+                  <MarkdownRenderer
+                    content={publication.fullText}
+                    class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+                  />
+                  <CopyButton text={publication.fullText} label="Copy full response" />
+                </div>
+              )}
             </details>
             {publication.links.length > 0 && (
               <ul
@@ -193,7 +200,9 @@ export function NeoPublicConversation({
         <p role="status" class="text-sm text-fg-muted">
           {conversation.status === 'loading'
             ? 'Loading saved conversation…'
-            : 'Saved conversation is unavailable. Showing retained messages.'}
+            : conversation.entries.length > 0
+              ? 'Saved conversation is unavailable. Showing retained messages.'
+              : 'Saved conversation is unavailable.'}
         </p>
       )}
       {(conversation.hasEarlier || conversation.hasMore) && (

@@ -73,6 +73,11 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
+function toggleDetail(detail: HTMLDetailsElement, open: boolean) {
+  detail.open = open;
+  fireEvent(detail, new Event('toggle'));
+}
+
 afterEach(() => {
   cleanup();
   connectionState.value = initialConnectionState;
@@ -91,6 +96,7 @@ describe('durable public conversation presentation', () => {
       ],
     });
     const { container } = render(<NeoPublicConversation conversation={conversation([value])} />);
+    toggleDetail(container.querySelector('details')!, true);
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     const article = document.getElementById(neoMessageAnchor(root, 'original'))!;
     expect(within(article).getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
@@ -113,10 +119,11 @@ describe('durable public conversation presentation', () => {
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
     );
-    await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     const details = container.querySelector('details')!;
     expect(details.open).toBe(false);
-    expect(screen.getByText(value.shortText)).toBeTruthy();
+    expect(await screen.findByText(value.shortText)).toBeTruthy();
+    toggleDetail(details, true);
+    await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     expect(details.querySelector('table')).toBeTruthy();
     expect(details.querySelector('blockquote')?.textContent).toContain('not verified completion');
     expect(details.querySelector('pre code')?.textContent).toContain('Fictional detail');
@@ -214,7 +221,7 @@ describe('durable public conversation presentation', () => {
     const { container, rerender } = render(<NeoPublicConversation conversation={first} />);
     const entries = Array.from(container.querySelectorAll('article'));
     const detail = container.querySelector('details')!;
-    detail.open = true;
+    toggleDetail(detail, true);
     rerender(<NeoPublicConversation conversation={conversation([ask()], [publication()])} />);
     expect(container.querySelectorAll('article')[0]).toBe(entries[0]);
     expect(container.querySelectorAll('article')[1]).toBe(entries[1]);
@@ -225,6 +232,84 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('details')?.open).toBe(true);
     expect(screen.getByText('Original request is outside this view.')).toBeTruthy();
   });
+
+  it('mounts full Markdown only for opened disclosures in a 500-publication window', async () => {
+    const items = Array.from({ length: 500 }, (_, index) =>
+      publication({
+        publicationId: `publication-${index}`,
+        sequence: index + 1,
+        fullText: `## Full evidence\n\n${'Fictional retained detail. '.repeat(600)}`,
+      })
+    );
+    const { container, rerender } = render(
+      <NeoPublicConversation conversation={conversation([], items)} />
+    );
+    const details = container.querySelectorAll('details');
+    expect(details).toHaveLength(500);
+    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: 'Copy full response' })).toHaveLength(0);
+    toggleDetail(details[249], true);
+    await waitFor(() => expect(within(details[249]).getByText('Full evidence')).toBeTruthy());
+    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Copy full response' })).toHaveLength(1);
+    const markdown = details[249].querySelector('.neo-markdown');
+    rerender(<NeoPublicConversation conversation={conversation([], [...items])} />);
+    expect(container.querySelectorAll('details')[249]).toBe(details[249]);
+    expect(details[249].open).toBe(true);
+    expect(details[249].querySelector('.neo-markdown')).toBe(markdown);
+    toggleDetail(details[249], false);
+    await waitFor(() =>
+      expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(0)
+    );
+    expect(screen.queryByRole('button', { name: 'Copy full response' })).toBeNull();
+    toggleDetail(details[249], true);
+    await waitFor(() => expect(within(details[249]).getByText('Full evidence')).toBeTruthy());
+    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(1);
+    expect(details[249].querySelector('.neo-markdown')).not.toBe(markdown);
+  });
+
+  it.each(['foreign-root', 'duplicate-publication'])(
+    'does not claim retained messages after the %s projection gate rejects',
+    (reason) => {
+      const value =
+        reason === 'foreign-root'
+          ? projectNeoPublicConversation(
+              'native-execution-session',
+              {
+                conversationId,
+                status: 'ready',
+                items: [],
+                nextAfter: 0,
+                hasMore: false,
+                hasEarlier: false,
+              },
+              {
+                conversationId,
+                status: 'ready',
+                items: [],
+                nextAfter: 0,
+                hasMore: false,
+                hasEarlier: false,
+              }
+            )
+          : conversation([], [publication(), publication()]);
+      expect(value.status).toBe('unavailable');
+      expect(value.entries).toEqual([]);
+      const store = {
+        sdkMessages: signal([]),
+        agentState: signal({ status: 'idle' }),
+        hasMoreMessages: signal(false),
+        error: signal(null),
+        refresh: vi.fn(),
+      } as unknown as SessionStore;
+      const { container } = render(
+        <NeoConversation store={store} sessionId={root} publicConversation={value} />
+      );
+      expect(screen.getByRole('status').textContent).toBe('Saved conversation is unavailable.');
+      expect(container.querySelectorAll('[data-public-entry]')).toHaveLength(0);
+      expect(screen.queryByText(/Showing retained messages/)).toBeNull();
+    }
+  );
 
   it.each(['loading', 'unavailable'] as const)(
     'shows %s state while preserving retained rows and honest window limits',
@@ -237,6 +322,8 @@ describe('durable public conversation presentation', () => {
       );
       expect(screen.getByText('Showing part of your saved conversation.')).toBeTruthy();
       expect(await screen.findByText(publication().shortText)).toBeTruthy();
+      if (status === 'unavailable')
+        expect(screen.getByRole('status').textContent).toContain('Showing retained messages.');
       expect(screen.queryByText('Work complete')).toBeNull();
     }
   );
