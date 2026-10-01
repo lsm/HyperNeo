@@ -228,4 +228,37 @@ describe('Neo desktop panes', () => {
     expect(shared).not.toMatch(/\.neo-scene-detail \{[^}]*padding-bottom: 0;/);
     expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 16px 32px;');
   });
+
+  it('transfers a reader’s normalized position across viewport and scene-count owner changes', () => {
+    const { container, model } = mount();
+    const main = container.querySelector('main')!;
+    const chat = container.querySelector('.neo-chat-rail')!;
+    Object.defineProperties(chat, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
+    Object.defineProperties(main, { scrollHeight: { value: 2000 }, clientHeight: { value: 500 } });
+    const view = model.value.viewSnapshot;
+    act(() => {
+      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
+    });
+    main.scrollTop = 375;
+    fireEvent.scroll(main);
+    main.scrollTop = 0;
+    act(() => {
+      model.value = { ...model.value, viewSnapshot: view };
+    });
+    expect(chat.scrollTop).toBe(200);
+    vi.stubGlobal('innerWidth', 1119);
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(main.scrollTop).toBe(375);
+    vi.stubGlobal('innerWidth', 1120);
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(chat.scrollTop).toBe(200);
+    act(() => {
+      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
+    });
+    expect(main.scrollTop).toBe(375);
+  });
 });

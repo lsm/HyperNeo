@@ -33,6 +33,7 @@ export function NeoLive() {
   const rail = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
+  const scrollProgress = useRef(1);
   const concerns = neo.snapshot?.concerns ?? [];
   const selected = concerns.find((item) => item.id === neo.selectedId);
   const works = neo.snapshot?.work ?? [];
@@ -151,12 +152,17 @@ export function NeoLive() {
 
   useLayoutEffect(() => {
     const selectScroll = () => {
+      const previous = scroll.current;
       scroll.current =
         publicConversation && workCount > 0 && window.innerWidth >= 1120
           ? rail.current
           : mainScroll.current;
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
+      else if (scroll.current && scroll.current !== previous)
+        scroll.current.scrollTop =
+          scrollProgress.current *
+          Math.max(0, scroll.current.scrollHeight - scroll.current.clientHeight);
       lastScrollTop.current = scroll.current?.scrollTop ?? 0;
     };
     selectScroll();
@@ -169,6 +175,8 @@ export function NeoLive() {
     const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 160;
     if (element.scrollTop < lastScrollTop.current - 1 || atBottom) nearBottom.current = atBottom;
     lastScrollTop.current = element.scrollTop;
+    scrollProgress.current =
+      element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight);
   }
 
   useLayoutEffect(() => {
@@ -228,6 +236,10 @@ export function NeoLive() {
   useEffect(() => {
     if (nearBottom.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
+    if (scroll.current)
+      scrollProgress.current =
+        scroll.current.scrollTop /
+        Math.max(1, scroll.current.scrollHeight - scroll.current.clientHeight);
   }, [messageCount, lastPublicEntry, neo.sessionId, workCount]);
 
   function open(id: string | null) {
