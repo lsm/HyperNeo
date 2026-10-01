@@ -105,6 +105,7 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
     });
+    const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
     this.publish = createNeoPublisher({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
@@ -112,9 +113,22 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
-      append: (input) => this.publications.append(input),
+      append: (input, consultationId) => {
+        if (!consultationId) return this.publications.append(input);
+        const receipt = publicationSettlements.settleWithPublication({
+          consultationId,
+          answer: input.fullText,
+          publication: input,
+        });
+        if (!receipt.accepted) return receipt;
+        const publication = this.publications.get(input.conversationId, input.publicationId);
+        if (!publication) throw new Error('Committed consultation publication is missing');
+        return { accepted: true, created: receipt.created, publication };
+      },
       notify: () => {
-        void hub.event('neo.changed', {});
+        try {
+          void hub.event('neo.changed', {});
+        } catch {}
       },
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({

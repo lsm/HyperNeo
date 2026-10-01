@@ -93,6 +93,15 @@ export class NeoPublicationRepository {
     return result === 'invalid_publication' ? { accepted: false, reason: result } : result;
   }
 
+  get(conversationId: string, publicationId: string): NeoPublication | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${columns} FROM neo_publications WHERE conversation_id = ? AND publication_id = ?`
+      )
+      .get(conversationId, publicationId) as Row | null;
+    return row ? decode(row) : null;
+  }
+
   list(conversationId: string, after = 0, limit = 50): NeoPublication[] | null {
     return readPage({ conversationId, after, limit }, this.db);
   }

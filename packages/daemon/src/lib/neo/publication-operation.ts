@@ -18,6 +18,7 @@ const Draft = NeoPublicationSchema.omit({
 });
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string };
+type Receipt = NeoPublicationAppendResult | Rejection;
 type Producer = {
   binding: NeoBinding;
   root: NeoBinding;
@@ -39,7 +40,7 @@ export interface NeoPublicationRuntime {
   getWork(id: string): NeoWork | null;
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  append(input: NeoPublicationInput): NeoPublicationAppendResult;
+  append(input: NeoPublicationInput, consultationId?: string): Receipt;
   notify(): void;
 }
 
@@ -185,18 +186,20 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
-      (draft: Draft, proof: Proof) =>
-        runtime.append({
+      (draft: Draft, proof: Proof) => {
+        const input = {
           ...draft,
           conversationId: proof.root.sessionId.slice(4),
           askOrigin: proof.ask,
           producerInput: proof.input,
-        }),
+        };
+        return runtime.append(input, proof.turn.consultationId);
+      },
       ['draft', 'publication'],
       'publication'
     )
     .pipe(
-      (receipt: NeoPublicationAppendResult) => {
+      (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
         return receipt;
       },
