@@ -23,7 +23,10 @@ import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
-import { neoConsultationRequestContent } from './consultation-request-content.ts';
+import {
+  neoConsultationRequestContent,
+  type NeoConsultationReplyFormat,
+} from './consultation-request-content.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,7 +78,8 @@ export class NeoService {
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
-    events: InternalEventBus<DaemonInternalEventMap>
+    events: InternalEventBus<DaemonInternalEventMap>,
+    private readonly replyFormat: NeoConsultationReplyFormat = 'legacy'
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
@@ -238,7 +242,7 @@ export class NeoService {
         title: concern ? `Neo · ${concern.title}` : 'Neo',
         workspacePath: null,
         config: {
-          systemPrompt: neoPrompt(concernId),
+          systemPrompt: neoPrompt(concernId, this.replyFormat),
           sdkToolsPreset: nativeTools,
           permissionMode: 'dontAsk',
           allowedTools: [...nativeTools, 'mcp__hyperneo-operations__invoke'],
@@ -402,7 +406,7 @@ export class NeoService {
         );
       } else {
         await this.open(item.concernId);
-        const content = neoConsultationRequestContent(item);
+        const content = neoConsultationRequestContent(item, this.replyFormat);
         await this.deliver(item.sessionId, requestId, content, item.originSessionId);
         return;
       }
