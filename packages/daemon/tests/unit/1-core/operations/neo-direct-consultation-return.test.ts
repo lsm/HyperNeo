@@ -15,6 +15,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
@@ -144,6 +145,18 @@ describe('NeoService direct consultation return', () => {
     vi.restoreAllMocks();
   });
 
+  test('the current schema entry point creates publication tables idempotently for legacy initialization', async () => {
+    db.getDatabase().exec('DROP TABLE neo_consultation_publications; DROP TABLE neo_publications');
+    createNeoTables(db.getDatabase());
+    createNeoTables(db.getDatabase());
+    await publish();
+    await service.syncConsultation('check');
+    expect(returned()).toEqual({ returned: 1 });
+    expect(mailbox()).toEqual([]);
+    expect(service.publications.get(conversationId, draft.publicationId)?.shortText).toBe(
+      draft.shortText
+    );
+  });
   test('uses the registered joint commit and returns the original authored tuple without a root job', async () => {
     prompt(root, 'newer-unrelated-ask', 'human');
     const publication = await publish();
