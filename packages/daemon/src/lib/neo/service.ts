@@ -105,6 +105,12 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
     });
+    const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
+    const notifyPublication = () => {
+      try {
+        void hub.event('neo.changed', {});
+      } catch {}
+    };
     this.publish = createNeoPublisher({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
@@ -112,10 +118,54 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getConsultation: (id) => this.consultations.get(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
-      append: (input) => this.publications.append(input),
-      notify: () => {
-        void hub.event('neo.changed', {});
+      replay: (input, caller) => {
+        const turn = caller.neoTurn;
+        const item = turn?.consultationId ? this.consultations.get(turn.consultationId) : null;
+        const binding = caller.sessionId ? this.repo.getBindingBySession(caller.sessionId) : null;
+        if (
+          caller.source !== 'mcp' ||
+          !item ||
+          binding?.kind !== 'concern' ||
+          binding.sessionId !== item.sessionId ||
+          binding.concernId !== item.concernId ||
+          turn?.messageId !== `neo-consult:${item.id}:request`
+        )
+          return null;
+        const association = this.consultations.getPublication(item.id);
+        if (!association) return null;
+        const root = this.repo.getBindingForConcern(null);
+        if (root?.kind !== 'neo' || root.sessionId !== `neo:${association.conversationId}`)
+          return { accepted: false, reason: 'publication_superseded' };
+        const publication = this.publications.get(
+          association.conversationId,
+          association.publicationId
+        );
+        if (!publication) throw new Error('Committed consultation publication is missing');
+        if (
+          publication.producerInput.sessionId !== caller.sessionId ||
+          publication.producerInput.messageId !== turn.messageId ||
+          publication.publicationId !== input.publicationId ||
+          publication.shortText !== input.shortText ||
+          publication.fullText !== input.fullText ||
+          JSON.stringify(publication.links) !== JSON.stringify(input.links)
+        )
+          return { accepted: false, reason: 'publication_conflict' };
+        notifyPublication();
+        return { accepted: true, created: false, publication };
       },
+      append: (input, consultationId) => {
+        if (!consultationId) return this.publications.append(input);
+        const receipt = publicationSettlements.settleWithPublication({
+          consultationId,
+          answer: input.fullText,
+          publication: input,
+        });
+        if (!receipt.accepted) return receipt;
+        const publication = this.publications.get(input.conversationId, input.publicationId);
+        if (!publication) throw new Error('Committed consultation publication is missing');
+        return { accepted: true, created: receipt.created, publication };
+      },
+      notify: notifyPublication,
     });
     this.resolveWorkTarget = createNeoWorkTargetResolver({
       readTarget: (id) => {

@@ -10,6 +10,7 @@ import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
+import { projectNeoPublicConversation } from './public-conversation.ts';
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
@@ -146,6 +147,11 @@ export function useNeo() {
   }
 
   return {
+    publicConversation: projectNeoPublicConversation(
+      snapshot?.sessionId ?? null,
+      asks,
+      publications
+    ),
     publications,
     asks,
     readPublications: readNeoPublications,
