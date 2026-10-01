@@ -32,13 +32,36 @@ export function NeoWorkCard({
   disabled,
   onAction,
   onOpen,
+  presentation = 'detail',
 }: {
   work: NeoWork;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: 'start' | 'cancel') => void;
   onOpen?: (id: string) => void;
+  presentation?: 'detail' | 'summary';
 }) {
+  if (presentation === 'summary' && onOpen)
+    return (
+      <button
+        type="button"
+        data-scene-open={work.id}
+        onClick={() => onOpen(work.id)}
+        class="flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left hover:border-accent/40 focus-visible:outline-accent"
+        aria-label={`View details for ${work.title}`}
+      >
+        <span aria-hidden="true" class="shrink-0 text-fg-muted">
+          <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block break-words text-sm font-medium">{work.title}</span>
+          <span class="mt-1 block text-xs text-fg-muted">{labels[work.status]}</span>
+        </span>
+        <span aria-hidden="true" class="shrink-0 text-fg-faint">
+          <NeoIcon name="arrow" />
+        </span>
+      </button>
+    );
   const active = work.status === 'queued';
   const color =
     work.status === 'reported'
