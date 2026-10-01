@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoConcernBoard } from './neo-concern-board.ts';
+import { requireNeoQuestionOrigin, requireNeoQuestionWork } from './work-question.ts';
 
 type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
 type NeoWorkReceipt = Extract<NeoBoardReceipt, { kind: 'work' }>;
@@ -27,6 +29,7 @@ export type NeoSceneGroups = {
   readonly counts: NeoSceneCounts;
 };
 export type NeoSceneSelection = { value: NeoScene } | { reason: 'unknown_scene' };
+export type NeoSceneQuestions = ReadonlyMap<string, PendingUserQuestion>;
 type SceneTruth = { group: NeoSceneGroup; label: string };
 
 const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
@@ -67,6 +70,25 @@ export function classifyNeoScenes(receipts: readonly NeoBoardReceipt[]): NeoScen
   return receipts.map(classifyNeoScene);
 }
 
+export function promoteNeoQuestionScene(
+  scene: NeoScene,
+  question: PendingUserQuestion | undefined
+): NeoScene {
+  const work = scene.receipt;
+  if (work.kind !== 'work' || !question) return scene;
+  return 'value' in requireNeoQuestionWork(work, work.sessionId ?? null, true) &&
+    'value' in requireNeoQuestionOrigin(question, work)
+    ? { ...scene, group: 'attention', label: 'A quick choice' }
+    : scene;
+}
+
+export function promoteNeoQuestionScenes(
+  scenes: readonly NeoScene[],
+  questions: NeoSceneQuestions
+): NeoScene[] {
+  return scenes.map((scene) => promoteNeoQuestionScene(scene, questions.get(scene.ref.id)));
+}
+
 export function groupNeoScenes(scenes: readonly NeoScene[]): NeoSceneGroups {
   const attention: NeoScene[] = [];
   const running: NeoScene[] = [];
@@ -102,9 +124,20 @@ export function selectNeoScene(
   return { reason: 'unknown_scene' };
 }
 
-export const projectNeoScenes = (superpipe({})('neo-scenes') as PipelineAPI)
-  .input(['board'])
+const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
+  .input(['board', 'questions'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
   .pipe(classifyNeoScenes, 'scenes', 'classified')
-  .pipe(groupNeoScenes, 'classified', 'scenes')
-  .end('scenes') as (board: NeoConcernBoard | null) => NeoSceneGroups | null;
+  .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
+  .pipe(groupNeoScenes, 'promoted', 'scenes')
+  .end('scenes') as (
+  board: NeoConcernBoard | null,
+  questions: NeoSceneQuestions
+) => NeoSceneGroups | null;
+
+export function projectNeoScenes(
+  board: NeoConcernBoard | null,
+  questions: NeoSceneQuestions = new Map()
+): NeoSceneGroups | null {
+  return projectScenes(board, questions);
+}
