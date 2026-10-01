@@ -18,6 +18,7 @@ const Draft = NeoPublicationSchema.omit({
 });
 type Draft = z.infer<typeof Draft>;
 type Rejection = { accepted: false; reason: string };
+type Receipt = NeoPublicationAppendResult | Rejection;
 type Producer = {
   binding: NeoBinding;
   root: NeoBinding;
@@ -39,8 +40,16 @@ export interface NeoPublicationRuntime {
   getWork(id: string): NeoWork | null;
   getConsultation(id: string): NeoConsultation | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  append(input: NeoPublicationInput): NeoPublicationAppendResult;
+  append(input: NeoPublicationInput, consultationId?: string): Receipt;
+  replay?(input: Draft, caller: OperationCaller): Receipt | null;
   notify(): void;
+}
+
+export function reusePublicationReceipt(
+  draft: Draft,
+  receipt: Receipt | null
+): { value: Draft } | { reason: Receipt } {
+  return receipt ? { reason: receipt } : { value: draft };
 }
 
 export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
@@ -157,6 +166,12 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe((draft: Draft) => draft, 'publication', 'draft')
     .pipe(
+      (draft: Draft, caller: OperationCaller) => runtime.replay?.(draft, caller) ?? null,
+      ['draft', 'caller'],
+      'receipt'
+    )
+    .pipe(reusePublicationReceipt, ['draft', 'receipt'], 'result:publication')
+    .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
       'caller',
       'binding'
@@ -185,18 +200,20 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
-      (draft: Draft, proof: Proof) =>
-        runtime.append({
+      (draft: Draft, proof: Proof) => {
+        const input = {
           ...draft,
           conversationId: proof.root.sessionId.slice(4),
           askOrigin: proof.ask,
           producerInput: proof.input,
-        }),
+        };
+        return runtime.append(input, proof.turn.consultationId);
+      },
       ['draft', 'publication'],
       'publication'
     )
     .pipe(
-      (receipt: NeoPublicationAppendResult) => {
+      (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
         return receipt;
       },
