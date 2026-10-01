@@ -28,7 +28,13 @@ import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
-import { admitNeoWorkOrigin, requireLiveNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
+import {
+  admitNeoWorkOrigin,
+  hasNeoHumanWorkInput,
+  requireNeoHumanWorkOrigin,
+  requireLiveNeoWorkOrigin,
+  type NeoWorkOrigin,
+} from './work-origin.ts';
 import {
   admitNeoConsultationOrigin,
   requireLiveNeoConsultationOrigin,
@@ -248,7 +254,21 @@ export function admitNeoCaller(
         reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
       },
     };
-  if (['neo.open', 'neo.work.start', 'neo.work.cancel', 'neo.concern.cancel'].includes(name))
+  if (name === 'neo.work.start') {
+    const turn = caller.neoTurn;
+    if (
+      !turn?.human ||
+      turn.consultationId ||
+      !turn.isLive() ||
+      service.db.getSession(caller.sessionId!)?.status !== 'active' ||
+      !hasNeoHumanWorkInput(
+        caller,
+        service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId!, turn.messageId)
+      )
+    )
+      return { reason: { ok: false, reason: 'This action needs the user.' } };
+  }
+  if (['neo.open', 'neo.work.cancel', 'neo.concern.cancel'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -615,10 +635,13 @@ export function createNeoOperations(service: NeoService) {
   const start = path(
     'neo.work.start',
     (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }) => {
-      if (!service.repo.getWork(id)) return { ok: false as const, reason: 'Work not found.' };
+    async ({ id }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return { ok: false as const, reason: 'Work not found.' };
       const target = service.resolveWorkTarget(id);
       if (!target.accepted) return { ok: false as const, reason: target.reason };
+      const origin = requireNeoHumanWorkOrigin(work, caller);
+      if ('reason' in origin) return origin.reason;
       await service.start(id);
       return { ok: true as const, work: service.repo.getWork(id)! };
     }

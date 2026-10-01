@@ -3,6 +3,28 @@ import type { OperationCaller } from '../operations/registry.ts';
 export type NeoWorkOrigin = { originSessionId: string; originMessageId: string | null };
 type Admission = { value: NeoWorkOrigin } | { reason: { ok: false; reason: string } };
 
+export function hasNeoHumanWorkInput(
+  caller: OperationCaller,
+  prompts: readonly { type: string; inputKind?: unknown }[]
+): boolean {
+  return (
+    caller.source === 'mcp' &&
+    !!caller.neoTurn?.human &&
+    !caller.neoTurn.consultationId &&
+    prompts.some((message) => message.type === 'user' && message.inputKind === 'human')
+  );
+}
+
+export function requireNeoHumanWorkOrigin(
+  origin: NeoWorkOrigin,
+  caller: OperationCaller
+): Admission {
+  if (caller.source === 'rpc' && caller.principal === 'local') return { value: origin };
+  return caller.neoTurn?.human && !caller.neoTurn.consultationId
+    ? requireLiveNeoWorkOrigin(origin, caller)
+    : { reason: { ok: false, reason: 'This action needs the user.' } };
+}
+
 export function requireLiveNeoWorkOrigin(
   origin: NeoWorkOrigin,
   caller: OperationCaller
