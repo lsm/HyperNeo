@@ -1,16 +1,19 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import type { ChatMessage } from '@hyperneo/shared';
+import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import type { SessionStore } from '../../lib/session-store.ts';
+import { connectionState } from '../../lib/state.ts';
 import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { neoMessageAnchor } from '../reply-context.ts';
+import { projectNeoProcessingActivity } from '../processing-activity.ts';
 
 const clipboard = vi.hoisted(() => vi.fn(async () => true));
+const initialConnectionState = connectionState.value;
 vi.mock('../../lib/utils.ts', async (original) => ({
   ...(await original<typeof import('../../lib/utils.ts')>()),
   copyToClipboard: clipboard,
@@ -72,6 +75,7 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
 
 afterEach(() => {
   cleanup();
+  connectionState.value = initialConnectionState;
   vi.clearAllMocks();
 });
 
@@ -287,6 +291,64 @@ describe('durable public conversation presentation', () => {
     expect(await screen.findByText('Private execution transcript')).toBeTruthy();
     expect(screen.queryByText(publication().shortText)).toBeNull();
   });
+
+  it.each([
+    [{ status: 'processing', phase: 'thinking' }, 'Neo is working on a reply…'],
+    [{ status: 'rate_limit_cooldown' }, 'Neo is waiting to retry…'],
+    [{ status: 'queued' }, 'Neo is getting ready…'],
+  ] as const)(
+    'preserves anchored public activity for %j without a legacy duplicate',
+    async (state, label) => {
+      connectionState.value = 'connected';
+      const messages = [
+        {
+          type: 'user',
+          uuid: original.messageId,
+          session_id: root,
+          parent_tool_use_id: null,
+          inputKind: 'human',
+          message: { role: 'user', content: 'Private SDK ask text' },
+        },
+      ] as unknown as ChatMessage[];
+      const agentState = { ...state, messageId: original.messageId } as AgentProcessingState;
+      const native = signal<SessionState | null>({
+        sessionInfo: { id: root },
+        agentState,
+        error: null,
+        timestamp: 1,
+        commandsData: { availableCommands: [] },
+      } as unknown as SessionState);
+      const store = {
+        sdkMessages: signal(messages),
+        sessionState: native,
+        agentState: signal(agentState),
+        activeSessionId: signal(root),
+        isRecovering: signal(false),
+        hasMoreMessages: signal(false),
+        error: signal(null),
+        refresh: vi.fn(),
+      } as unknown as SessionStore;
+      expect(
+        projectNeoProcessingActivity(root, root, native.value, agentState, true, false, messages)
+      ).toEqual({ messageId: original.messageId, label });
+      const view = render(
+        <NeoConversation store={store} sessionId={root} publicConversation={conversation()} />
+      );
+      expect(screen.getAllByRole('status')).toHaveLength(1);
+      expect(screen.getByRole('status').textContent).toContain(label);
+      expect(screen.queryByText('Private SDK ask text')).toBeNull();
+      expect(document.getElementById(neoMessageAnchor(root, original.messageId))).toBeTruthy();
+      view.rerender(
+        <NeoConversation store={store} sessionId={root} publicConversation={conversation([], [])} />
+      );
+      expect(screen.getAllByRole('status')).toHaveLength(1);
+      expect(screen.getByRole('status').textContent).toContain(label);
+      await act(() => {
+        native.value = { ...native.value!, agentState: { status: 'idle' } };
+      });
+      expect(screen.queryByRole('status')).toBeNull();
+    }
+  );
 
   it('keeps the same native question owner and local selection when the public view reloads', () => {
     const pendingQuestion = {

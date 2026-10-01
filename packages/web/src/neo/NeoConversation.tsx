@@ -226,7 +226,9 @@ export function NeoConversation({
             </NeoMessage>
           );
         })}
-        {progress !== 'inactive' && !progress.messageId && renderProgress(progress.label)}
+        {progress !== 'inactive' &&
+          (publicConversation || !progress.messageId) &&
+          renderProgress(progress.label)}
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"
