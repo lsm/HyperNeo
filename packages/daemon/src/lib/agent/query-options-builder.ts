@@ -72,6 +72,7 @@ import {
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { neoCoordinatorBinding, restrictNeoQuery } from '../neo/session-policy.ts';
+import type { NeoConsultationReplyFormat } from '../neo/consultation-request-content.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -287,7 +288,10 @@ export class QueryOptionsBuilder {
   private readonly warnedReservedMcpNames = new Set<string>();
   private exaWebToolsActivation?: ExaWebToolsActivation;
 
-  constructor(private ctx: QueryOptionsBuilderContext) {}
+  constructor(
+    private ctx: QueryOptionsBuilderContext,
+    private readonly neoReplyFormat: NeoConsultationReplyFormat = 'legacy'
+  ) {}
 
   setAskUserQuestionHook(hook: HookCallback): void {
     this.askUserQuestionHook = hook;
@@ -562,7 +566,13 @@ export class QueryOptionsBuilder {
     }
 
     const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
-    if (neoBinding) restrictNeoQuery(queryOptions, neoBinding.concernId, this.ctx.session.id);
+    if (neoBinding)
+      restrictNeoQuery(
+        queryOptions,
+        neoBinding.concernId,
+        this.ctx.session.id,
+        this.neoReplyFormat
+      );
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
