@@ -266,10 +266,10 @@ model for a given session kind, so there is no baseline to refactor against.
 The ladder in CLAUDE.md, one PR per rung:
 
 1. **Pin** — characterization tests recording what reaches the model today for
-   each session kind (agent card, ad-hoc member, workflow worker, direct task
-   worker, non-Space session), split into the attached servers (#4779) and the
-   injected text (#4787). The two have different failure modes; the text is
-   where #4772 went wrong.
+   each session kind (agent card, unowned Space session, workflow worker,
+   direct task worker, non-Space session), split into the attached servers
+   (#4779) and the injected text (#4787). The two have different failure modes;
+   the text is where #4772 went wrong.
 2. **Build** — the contribution type and ordered assembler (#4780), then the
    budget (#4788), reachable but not yet wired.
 3. **Wire — operations** — the authored `.md` briefing (#4781), then the
@@ -279,6 +279,19 @@ The ladder in CLAUDE.md, one PR per rung:
    instructions (#4790), which come from the agent record rather than the
    session policy and replace the `buildCustomAgentTaskMessage` injection for
    session context.
+
+   **Amended.** The standing-instructions half turned out to be unnecessary and
+   #4790 was closed. A session with a bound agent already receives its
+   instructions from the session config at construction:
+   `buildAgentSessionConfig` writes `input.agent.instructions` into
+   `systemPrompt.append`
+   (`packages/daemon/src/lib/session-resolution/agent-session-config.ts`), and
+   `buildCustomAgentTaskMessage` never carried agent instructions at all — only
+   `space.instructions` and `workflow.instructions`
+   (`packages/daemon/src/lib/agents/task-message.ts`). Emitting them as a scope
+   contribution would add a second copy of the same text to the same prompt,
+   through a path rung 6 could not remove because the text was never in the
+   task message.
 5. **Wire — remaining servers** — `agent-memory` and `db-query` (#4783), then
    the contract test (#4792). What a third-party server contributes is settled
    by decision 6 and no longer a step here; #4791 records the investigation.
