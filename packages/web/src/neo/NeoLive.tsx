@@ -9,6 +9,7 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoWorkCard, sceneOpenSelector } from './NeoWorkCard.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
+import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
@@ -87,7 +88,14 @@ export function NeoLive() {
     () => drafts[draftKey] ?? '',
     (text) => setDrafts((items) => ({ ...items, [draftKey]: text }))
   );
-  const messageCount = neo.store.sdkMessages.value.length;
+  const publicConversation =
+    neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
+      ? neo.viewPublicConversation
+      : undefined;
+  const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
+  const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
+  const conversationReady =
+    ready || (!!publicConversation && neo.store.activeSessionId.value === neo.sessionId);
   const connected = connectionState.value === 'connected';
 
   useLayoutEffect(() => {
@@ -147,12 +155,26 @@ export function NeoLive() {
   useEffect(() => {
     if (nearBottom.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [messageCount, neo.sessionId, workCount]);
+  }, [messageCount, lastPublicEntry, neo.sessionId, workCount]);
 
   function open(id: string | null) {
     nearBottom.current = true;
     lastScrollTop.current = 0;
     void neo.open(id);
+  }
+
+  function openPublicAuthor(sessionId: string) {
+    if (sessionId === neo.snapshot?.sessionId) return open(null);
+    const binding = neo.snapshot?.publicAuthorBindings?.find(
+      (item) => item.kind === 'concern' && item.sessionId === sessionId
+    );
+    if (binding?.concernId && neo.publicAuthors.has(sessionId)) return open(binding.concernId);
+    neo.setError('This context holder is not available in Neo.');
+  }
+
+  function retryPublicConversation() {
+    neo.asks.retry();
+    neo.publications.refresh();
   }
 
   function openScene(ref: NeoSceneRef) {
@@ -295,18 +317,26 @@ export function NeoLive() {
           )}
           {neo.store.loadErrorKind.value && (
             <div role="alert" class="mb-4 text-sm text-danger">
-              <p>Conversation could not be loaded.</p>
+              <p>
+                {publicConversation
+                  ? 'Native session controls could not be loaded.'
+                  : 'Conversation could not be loaded.'}
+              </p>
               <Button variant="ghost" size="sm" onClick={() => void neo.open(neo.selectedId)}>
                 Try again
               </Button>
             </div>
           )}
-          {ready && neo.sessionId ? (
+          {conversationReady && neo.sessionId ? (
             <NeoConversation
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
               snapshot={view}
+              publicConversation={publicConversation}
+              publicAuthors={neo.publicAuthors}
+              onOpenPublicAuthor={openPublicAuthor}
+              onRetryPublic={retryPublicConversation}
             />
           ) : (
             !neo.error && (
@@ -347,24 +377,27 @@ export function NeoLive() {
                 </button>
               </p>
             ))}
-          {ready && messageCount === 0 && !neo.store.isWorking.value && (
-            <div class="rounded-2xl border border-dashed border-accent/25 bg-accent/5 p-5 text-sm leading-relaxed text-fg-muted">
-              <span class="mb-3 inline-flex text-accent">
-                <NeoIcon name="spark" />
-              </span>
-              <p>
-                {selected
-                  ? 'The context is already here. Pick up where you left off, or tell me what changed.'
-                  : 'No setup, no folders to choose. Ask a quick question or tell me about something ongoing.'}
-              </p>
-              <p class="mt-2 text-xs">
-                {selected
-                  ? 'This conversation stays focused on this part of your world.'
-                  : 'Only things worth keeping become a 分身.'}{' '}
-                Work starts when you approve its card.
-              </p>
-            </div>
-          )}
+          {ready &&
+            (!publicConversation || publicConversation.status === 'ready') &&
+            messageCount === 0 &&
+            !neo.store.isWorking.value && (
+              <div class="rounded-2xl border border-dashed border-accent/25 bg-accent/5 p-5 text-sm leading-relaxed text-fg-muted">
+                <span class="mb-3 inline-flex text-accent">
+                  <NeoIcon name="spark" />
+                </span>
+                <p>
+                  {selected
+                    ? 'The context is already here. Pick up where you left off, or tell me what changed.'
+                    : 'No setup, no folders to choose. Ask a quick question or tell me about something ongoing.'}
+                </p>
+                <p class="mt-2 text-xs">
+                  {selected
+                    ? 'This conversation stays focused on this part of your world.'
+                    : 'Only things worth keeping become a 分身.'}{' '}
+                  Work starts when you approve its card.
+                </p>
+              </div>
+            )}
           {detailWork ? (
             <section ref={detailPane} aria-label="Selected work" class="mt-6 space-y-3">
               <Button
