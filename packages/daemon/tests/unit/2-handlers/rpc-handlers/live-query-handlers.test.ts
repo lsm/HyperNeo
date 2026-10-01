@@ -361,6 +361,36 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(row.taskTitle).toBe('Ship UI review');
     });
 
+    test('keeps a direct-task worker out of the feed and leaves its messages unlabelled', () => {
+      const taskId = insertSpaceTask();
+      const workerSessionId = 'space:direct:1';
+      insertSession(workerSessionId, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(workerSessionId, taskId);
+      insertSdkMessage('sdk-direct-1', workerSessionId);
+      db.exec(
+        `INSERT INTO direct_task_session_provenance (session_id) VALUES ('${workerSessionId}')`
+      );
+
+      expect(queryAndMap(taskId)).toEqual([]);
+
+      const [message] = queryMessages(taskId);
+      expect(message.kind).toBe('node_agent');
+      expect(message.label).toBe('');
+      expect(message.role).toBe('');
+    });
+
+    test('still recovers an execution-less task agent after the pointer is cleared', () => {
+      const taskId = insertSpaceTask();
+      const agentSessionId = 'space:task:recovered';
+      insertSession(agentSessionId, 'worker', '{"status":"idle"}');
+      sessionTaskIds.set(agentSessionId, taskId);
+      insertSdkMessage('sdk-agent-1', agentSessionId);
+
+      const [row] = queryAndMap(taskId);
+      expect(row.kind).toBe('task_agent');
+      expect(row.label).toBe('Task Agent');
+    });
+
     test('surfaces rate-limit cooldown details from processing_state', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       const retryAt = now + 60_000;

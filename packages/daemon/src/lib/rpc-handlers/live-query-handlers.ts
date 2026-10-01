@@ -2001,12 +2001,19 @@ contributing_sessions AS (
   FROM target_task tt
   JOIN sessions s ON s.id = tt.task_agent_session_id
   WHERE tt.task_agent_session_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s.id
+    )
   UNION
   -- Task Agent after pause/cancel: stopActiveWorkflowTaskAgents clears
   -- task_agent_session_id (severing the pointer arm above), and the worker
   -- arms below only admit sessions.type = 'worker'. Recover it from durable
   -- task_id-stamped messages so the orchestrator's history stays in the feed.
   -- Redundant while the pointer is live; UNION dedupes by session_id.
+  --
+  -- Direct-task workers also stamp their messages with the task id, but they
+  -- are not participants in this feed. The provenance table records every
+  -- session a direct attempt ever used, so exclude them.
   SELECT DISTINCT
     sm.session_id AS session_id,
     tt.id AS task_id,
@@ -2015,6 +2022,9 @@ contributing_sessions AS (
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
   JOIN sessions s ON s.id = sm.session_id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s.id
+  )
   UNION
   SELECT
     ne.agent_session_id AS session_id,
@@ -2107,16 +2117,21 @@ all_sessions AS (
     -- Keying on the execution row (not the transient task_agent_session_id
     -- pointer) keeps historical rows correctly attributed when the pointer is
     -- rotated or cleared (rehydrate self-heal, session replacement).
+    -- A direct-task worker has neither, so the provenance table is what
+    -- separates it from the task-level agent: it is never the Task Agent.
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     cs.task_id,
@@ -2358,16 +2373,22 @@ sdk_rows_raw AS (
     -- node agent; the task-level agent has neither. Keying on that rather than
     -- the task's current task_agent_session_id pointer keeps historical rows
     -- attributed when the pointer is rotated or cleared.
+    -- A direct-task worker is also execution-less and provenance-less, but it
+    -- is not the task's agent: its messages stay unlabelled rather than
+    -- borrowing the Task Agent identity.
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
@@ -2743,15 +2764,18 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
     sm.id AS id,
     sm.session_id AS sessionId,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task_agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'task-agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL THEN 'Task Agent'
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
