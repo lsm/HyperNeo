@@ -39,6 +39,8 @@ export type OpenAIChatBridgeConfig = {
   baseUrl: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  sessionTokenPrefix?: string;
+  sessionHeaders?: (sessionId: string) => Record<string, string>;
   fetchImpl?: typeof fetch;
   toolUseSupported?: boolean;
   visionSupported?: boolean;
@@ -666,6 +668,7 @@ export async function createOpenAIChatBridgeServer(
   const modelContextWindow = config.modelContextWindow;
 
   const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
+  const sessionTokenPrefix = `Bearer ${config.sessionTokenPrefix ?? 'custom-endpoint'}:`;
 
   const server = await createHttpWsServer({
     hostname: '127.0.0.1',
@@ -674,8 +677,8 @@ export async function createOpenAIChatBridgeServer(
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const authHeader = req.headers.get('Authorization') ?? '';
-      const sessionId = authHeader.startsWith('Bearer custom-endpoint:')
-        ? authHeader.slice('Bearer custom-endpoint:'.length)
+      const sessionId = authHeader.startsWith(sessionTokenPrefix)
+        ? authHeader.slice(sessionTokenPrefix.length)
         : 'default';
 
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
@@ -757,6 +760,7 @@ export async function createOpenAIChatBridgeServer(
             'Content-Type': 'application/json',
             ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
             ...config.headers,
+            ...config.sessionHeaders?.(sessionId),
           },
           body: JSON.stringify(chatRequest),
           signal: upstreamAbort.signal,

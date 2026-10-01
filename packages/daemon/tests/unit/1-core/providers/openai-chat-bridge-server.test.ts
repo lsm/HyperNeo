@@ -19,6 +19,56 @@ describe('OpenAI Chat Completions bridge server', () => {
   });
 
   it.skipIf(!isBun)(
+    'derives the session id from a configured auth-token prefix and forwards its headers',
+    async () => {
+      const captured: Array<Record<string, string>> = [];
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        captured.push((init?.headers as Record<string, string>) ?? {});
+        return new Response(
+          sseBody([
+            { choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' } }] },
+            { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+        );
+      });
+
+      const server = await createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test/v1',
+        apiKey: 'go-key',
+        sessionTokenPrefix: 'opencode',
+        sessionHeaders: (sessionId) => ({
+          'User-Agent': 'hyperneo/1.0',
+          'x-opencode-session': sessionId,
+        }),
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const call = async (authorization: string) =>
+        fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: authorization },
+          body: JSON.stringify({
+            model: 'glm-5.3',
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 16,
+          }),
+        });
+
+      await (await call('Bearer opencode:session-one')).text();
+      await (await call('Bearer opencode:session-two')).text();
+      await (await call('Bearer custom-endpoint:ignored')).text();
+
+      expect(captured[0]?.['x-opencode-session']).toBe('session-one');
+      expect(captured[1]?.['x-opencode-session']).toBe('session-two');
+      expect(captured[0]?.['User-Agent']).toBe('hyperneo/1.0');
+      expect(captured[0]?.Authorization).toBe('Bearer go-key');
+      expect(captured[2]?.['x-opencode-session']).toBe('default');
+    }
+  );
+
+  it.skipIf(!isBun)(
     'translates Anthropic messages to OpenAI Chat Completions and streams Anthropic SSE',
     async () => {
       let capturedRequest: unknown;

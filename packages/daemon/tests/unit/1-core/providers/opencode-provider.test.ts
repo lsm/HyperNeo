@@ -171,39 +171,62 @@ describe('OpencodeProvider', () => {
       );
     });
 
-    it('routes chat models through the bridge with the session header', async () => {
-      const configs: Array<{ baseUrl: string; headers?: Record<string, string> }> = [];
+    it('routes chat models through the bridge and names the session in the auth token', async () => {
+      const configs: Array<{ baseUrl: string }> = [];
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
         bridgeFactory: fakeBridgeFactory([41234], configs),
       });
       await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
       const config = provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID });
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:41234');
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe(`opencode:${SESSION_ID}`);
       expect(config.envVars.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
       expect(configs[0]?.baseUrl).toBe('https://opencode.ai/zen/go/v1');
-      expect(configs[0]?.headers).toEqual({
+    });
+
+    it('hands the bridge a per-session header resolver instead of per-session servers', async () => {
+      const configs: Array<{
+        sessionTokenPrefix?: string;
+        sessionHeaders?: (sessionId: string) => Record<string, string>;
+      }> = [];
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: fakeBridgeFactory([41234], configs),
+      });
+      await provider.ensureBridgeStarted('glm-5.3');
+      expect(configs[0]?.sessionTokenPrefix).toBe('opencode');
+      expect(configs[0]?.sessionHeaders?.('session-nine')).toEqual({
         'User-Agent': 'hyperneo/1.0',
-        'x-opencode-session': SESSION_ID,
+        'x-opencode-session': 'session-nine',
       });
     });
 
-    it('gives each session its own bridge so the session header stays unique', async () => {
-      const configs: Array<{ headers?: Record<string, string> }> = [];
+    it('shares one bridge across sessions of the same model', async () => {
+      const configs: unknown[] = [];
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
         bridgeFactory: fakeBridgeFactory([41234, 41235], configs),
       });
       await provider.ensureBridgeStarted('glm-5.3', { sessionId: 'session-one' });
       await provider.ensureBridgeStarted('glm-5.3', { sessionId: 'session-two' });
-      expect(configs.map((entry) => entry.headers?.['x-opencode-session'])).toEqual([
-        'session-one',
-        'session-two',
-      ]);
+      expect(configs).toHaveLength(1);
       expect(
         provider.buildSdkConfig('glm-5.3', { sessionId: 'session-two' }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41234');
+    });
+
+    it('starts a separate bridge per model', async () => {
+      const configs: unknown[] = [];
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: fakeBridgeFactory([41234, 41235], configs),
+      });
+      await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+      await provider.ensureBridgeStarted('kimi-k3', { sessionId: SESSION_ID });
+      expect(configs).toHaveLength(2);
+      expect(
+        provider.buildSdkConfig('kimi-k3', { sessionId: SESSION_ID }).envVars.ANTHROPIC_BASE_URL
       ).toBe('http://127.0.0.1:41235');
     });
 
-    it('reuses one bridge for repeated warmups of the same session', async () => {
+    it('reuses one bridge for repeated warmups of the same model', async () => {
       const configs: unknown[] = [];
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
         bridgeFactory: fakeBridgeFactory([41234], configs),
@@ -279,11 +302,15 @@ describe('OpencodeProvider', () => {
     it('stops the bridges it started', async () => {
       const stopped: number[] = [];
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
-        bridgeFactory: (() => ({ port: 41234, stop: () => stopped.push(41234) })) as never,
+        bridgeFactory: ((config: { modelContextWindow?: number }) => {
+          const port = config.modelContextWindow === 200_000 ? 41234 : 41235;
+          return { port, stop: () => stopped.push(port) };
+        }) as never,
       });
       await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+      await provider.ensureBridgeStarted('kimi-k3', { sessionId: SESSION_ID });
       await provider.shutdown();
-      expect(stopped).toEqual([41234]);
+      expect(stopped.sort()).toEqual([41234, 41235]);
     });
   });
 });

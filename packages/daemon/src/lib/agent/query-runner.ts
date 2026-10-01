@@ -140,6 +140,7 @@ export const PROVIDER_MANAGED_ENV_VARS = new Set([
   'API_TIMEOUT_MS',
   'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_CUSTOM_HEADERS',
 ]);
 
 function isRealAnthropicAuthToken(token: string | undefined): boolean {

@@ -101,6 +101,7 @@ export class OpencodeProvider implements Provider {
   static readonly CHAT_BASE_URL = 'https://opencode.ai/zen/go/v1';
   static readonly MODEL_LIST_URL = 'https://opencode.ai/zen/go/v1/models';
   static readonly CLIENT_USER_AGENT = 'hyperneo/1.0';
+  static readonly SESSION_TOKEN_PREFIX = 'opencode';
   static readonly DISCOVERY_SESSION_ID = 'hyperneo-daemon';
 
   static readonly MODELS: ModelInfo[] = CATALOG.map(([id, name]) => ({
@@ -306,36 +307,38 @@ export class OpencodeProvider implements Provider {
     return 'glm-5.3-flash';
   }
 
-  private bridgeKey(modelId: string, sessionConfig?: ProviderSessionConfig): string {
-    return `${modelId}::${sessionConfig?.sessionId ?? OpencodeProvider.DISCOVERY_SESSION_ID}`;
+  static sessionAuthToken(sessionId?: string): string {
+    return `${OpencodeProvider.SESSION_TOKEN_PREFIX}:${
+      sessionId?.trim() || OpencodeProvider.DISCOVERY_SESSION_ID
+    }`;
   }
 
-  async ensureBridgeStarted(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void> {
+  async ensureBridgeStarted(modelId: string): Promise<void> {
     if (this.usesAnthropicMessages(modelId)) return;
-    const key = this.bridgeKey(modelId, sessionConfig);
-    if (this.bridges.has(key) || this.bridgePromises.has(key)) return;
-    const apiKey = sessionConfig?.apiKey || this.getApiKey();
+    if (this.bridges.has(modelId) || this.bridgePromises.has(modelId)) return;
+    const apiKey = this.getApiKey();
     const factory = this.options.bridgeFactory ?? createOpenAIChatBridgeServer;
     const created = Promise.resolve(
       factory({
         baseUrl: OpencodeProvider.CHAT_BASE_URL,
         ...(apiKey ? { apiKey } : {}),
-        headers: OpencodeProvider.clientHeaders(sessionConfig?.sessionId),
+        sessionTokenPrefix: OpencodeProvider.SESSION_TOKEN_PREFIX,
+        sessionHeaders: (sessionId) => OpencodeProvider.clientHeaders(sessionId),
         toolUseSupported: true,
         visionSupported: true,
         thinkingSupported: false,
         modelContextWindow: this.contextWindowFor(modelId),
       })
     ).then((bridge) => {
-      this.bridgePromises.delete(key);
+      this.bridgePromises.delete(modelId);
       if (this.shutdownStarted) {
         bridge.stop();
         return bridge;
       }
-      this.bridges.set(key, bridge);
+      this.bridges.set(modelId, bridge);
       return bridge;
     });
-    this.bridgePromises.set(key, created);
+    this.bridgePromises.set(modelId, created);
     await created;
   }
 
@@ -368,7 +371,7 @@ export class OpencodeProvider implements Provider {
       };
     }
 
-    const bridge = this.bridges.get(this.bridgeKey(modelId, sessionConfig));
+    const bridge = this.bridges.get(modelId);
     if (!bridge) {
       throw new Error(
         `opencode: bridge not started for model '${modelId}'. ` +
@@ -378,7 +381,7 @@ export class OpencodeProvider implements Provider {
     return {
       envVars: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
-        ANTHROPIC_AUTH_TOKEN: apiKey,
+        ANTHROPIC_AUTH_TOKEN: OpencodeProvider.sessionAuthToken(sessionConfig?.sessionId),
         ANTHROPIC_API_KEY: '',
         ...routingEnvVars,
       },
