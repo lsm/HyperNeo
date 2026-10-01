@@ -1,36 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { SessionStore } from '../lib/session-store.ts';
-import { connectionState } from '../lib/state.ts';
+import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
-import { projectNeoWorkQuestion } from './work-question.ts';
+import { useNeoWorkQuestionObserver } from './useNeoWorkQuestionObserver.ts';
 
 type QuestionEpoch = Readonly<{ store: SessionStore; workId: string; toolUseId: string }>;
 type ReplyFailure = { epoch: QuestionEpoch; message: string };
 
 export function NeoWorkQuestion({ work }: { work: NeoWork }) {
-  const store = useMemo(() => new SessionStore(), [work.sessionId]);
-  const [loadError, setLoadError] = useState('');
+  const { store, question, loadError } = useNeoWorkQuestionObserver(work);
   const [replyFailure, setReplyFailure] = useState<ReplyFailure | null>(null);
-  const connected = connectionState.value === 'connected';
-  useEffect(() => {
-    let alive = true;
-    setLoadError('');
-    void store.select(work.sessionId).catch(() => {
-      if (alive) setLoadError('Could not check this agent’s questions.');
-    });
-    return () => {
-      alive = false;
-      void store.destroy();
-    };
-  }, [store, work.sessionId]);
-  const source = store.sessionState?.value ?? null;
-  const question = projectNeoWorkQuestion(
-    work,
-    store.activeSessionId.value,
-    !!source && connected && !store.isRecovering.value && !store.error.value,
-    source
-  );
   const epoch = useMemo(
     () =>
       question ? Object.freeze({ store, workId: work.id, toolUseId: question.toolUseId }) : null,
