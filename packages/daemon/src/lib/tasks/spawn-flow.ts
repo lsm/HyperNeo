@@ -150,13 +150,16 @@ function raiseSpawnRejection(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx 
 
 function reserveTaskSpawn(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
   if (ctx.terminal !== null || ctx.admission!.action !== 'proceed_fresh') return ctx;
-  const result = ctx.deps.reserveTaskSpawn(ctx.task.id);
-  if (result === 'superseded') {
-    return {
-      ...ctx,
-      terminal: { status: 'superseded', stage: 'reserve-task-spawn' },
-      compensations: [...ctx.compensations, { stage: 'reserve-task-spawn', undo: () => {} }],
-    };
+  try {
+    if (ctx.deps.reserveTaskSpawn(ctx.task.id) === 'superseded') {
+      return {
+        ...ctx,
+        terminal: { status: 'superseded', stage: 'reserve-task-spawn' },
+        compensations: [...ctx.compensations, { stage: 'reserve-task-spawn', undo: () => {} }],
+      };
+    }
+  } catch (error) {
+    return { ...ctx, terminal: { status: 'error', stage: 'reserve-task-spawn', error } };
   }
   return {
     ...ctx,
@@ -239,7 +242,12 @@ function bindExecutionSession(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx
 
 function readBoundExecution(ctx: SpawnExecutionFlowCtx): SpawnExecutionFlowCtx {
   if (ctx.terminal !== null || ctx.spawnedSessionId === null) return ctx;
-  const bound = ctx.deps.getNodeExecution(ctx.execution.id);
+  let bound: NodeExecution | null;
+  try {
+    bound = ctx.deps.getNodeExecution(ctx.execution.id);
+  } catch (error) {
+    return { ...ctx, terminal: { status: 'error', stage: 'read-bound-execution', error } };
+  }
   if (!bound) {
     return {
       ...ctx,

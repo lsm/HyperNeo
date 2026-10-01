@@ -400,6 +400,40 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
     );
   });
 
+  test('a read failure on the bound execution cancels the spawned session and releases both reservations', async () => {
+    const h = makeFlowFixture();
+    const outcome = await h.run({
+      getNodeExecution: () => {
+        throw new Error('read boom');
+      },
+    });
+    expect(outcome.status).toBe('error');
+    if (outcome.status === 'error') {
+      expect(outcome.stage).toBe('read-bound-execution');
+      expect((outcome.error as Error).message).toBe('read boom');
+    }
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
+  });
+
+  test('a task-spawn reservation failure releases nothing because no compensation was recorded', async () => {
+    const h = makeFlowFixture();
+    const outcome = await h.run({
+      reserveTaskSpawn: () => {
+        throw new Error('reserve boom');
+      },
+    });
+    expect(outcome.status).toBe('error');
+    if (outcome.status === 'error') {
+      expect(outcome.stage).toBe('reserve-task-spawn');
+      expect((outcome.error as Error).message).toBe('reserve boom');
+    }
+    expect(h.cancels).toEqual([]);
+    expect(h.releases).toEqual([]);
+    expect(h.taskReservationReleases).toEqual([]);
+  });
+
   test('a create failure before the session exists releases both reservations without cancelling', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
