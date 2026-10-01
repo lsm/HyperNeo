@@ -33,6 +33,9 @@ beforeEach(() => {
     }
   );
   vi.stubGlobal('innerWidth', 1120);
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)' && window.innerWidth >= 1120,
+  }));
 });
 afterEach(() => {
   cleanup();
@@ -188,6 +191,17 @@ describe('Neo desktop panes', () => {
     expect(container.querySelector('.neo-has-scenes')).toBeNull();
   });
 
+  it('uses the CSS media match when scrollbars disagree with innerWidth', () => {
+    vi.stubGlobal('innerWidth', 1128);
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { container } = mount();
+    const main = container.querySelector('main')!;
+    Object.defineProperty(main, 'scrollHeight', { value: 1600 });
+    act(() => void window.dispatchEvent(new Event('resize')));
+    expect(main.scrollTop).toBe(1600);
+    expect(container.querySelector('.neo-chat-rail')!.scrollTop).toBe(0);
+  });
+
   it('keeps the list pane meaningful when its only scene is open in detail', () => {
     const { model } = mount();
     act(() => {
@@ -208,6 +222,7 @@ describe('Neo desktop panes', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const desktop = css.split('@media (min-width: 1120px) {')[1]?.split('@media')[0];
     expect(desktop).toBeTruthy();
+    expect(desktop).toContain('grid-template-rows: minmax(0, 1fr);');
     for (const selector of ['.neo-chat-rail', '.neo-scene-list', '.neo-scene-detail'])
       expect(desktop).toContain(`.neo-public-layout.neo-has-scenes ${selector}`);
     expect(desktop).toMatch(/\.neo-chat-rail \{[^}]*overflow-y: auto;/);

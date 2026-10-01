@@ -434,6 +434,7 @@
   }
   .neo-public-layout.neo-has-scenes .neo-scroll {
     display: grid;
+    grid-template-rows: minmax(0, 1fr);
     grid-template-columns: minmax(0, var(--neo-chat-width)) minmax(0, 1fr) minmax(
         0,
         var(--neo-detail-width, 0px)

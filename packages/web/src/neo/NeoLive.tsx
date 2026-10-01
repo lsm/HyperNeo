@@ -178,7 +178,7 @@ export function NeoLive() {
     const selectScroll = () => {
       const previous = scroll.current;
       scroll.current =
-        publicConversation && workCount > 0 && window.innerWidth >= 1120
+        publicConversation && workCount > 0 && window.matchMedia('(min-width: 1120px)').matches
           ? rail.current
           : mainScroll.current;
       if (nearBottom.current && scroll.current)
