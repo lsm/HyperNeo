@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoConcernBoard } from './neo-concern-board.ts';
+import { requireNeoQuestionOrigin, requireNeoQuestionWork } from './work-question.ts';
 
 type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
 type NeoWorkReceipt = Extract<NeoBoardReceipt, { kind: 'work' }>;
@@ -74,14 +75,9 @@ export function promoteNeoQuestionScene(
   question: PendingUserQuestion | undefined
 ): NeoScene {
   const work = scene.receipt;
-  return work.kind === 'work' &&
-    work.status === 'queued' &&
-    !!work.id.trim() &&
-    !!work.sessionId?.trim() &&
-    (!work.targetSessionId || work.targetSessionId === work.sessionId) &&
-    question?.inputOrigin?.sessionId === work.sessionId &&
-    question.inputOrigin.messageId === work.id &&
-    !!question.toolUseId.trim()
+  if (work.kind !== 'work' || !question) return scene;
+  return 'value' in requireNeoQuestionWork(work, work.sessionId ?? null, true) &&
+    'value' in requireNeoQuestionOrigin(question, work)
     ? { ...scene, group: 'attention', label: 'A quick choice' }
     : scene;
 }
