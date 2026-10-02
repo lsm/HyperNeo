@@ -122,16 +122,24 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
-      'Never publish internal compaction, tool chatter, other system deliveries, returned legacy results or acknowledgements as answers'
+      'Never publish internal compaction, tool chatter, other system deliveries, returned legacy results or pending-status lines as answers'
     );
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
   });
-  test.each([null, 'research'])('exempts acknowledgement-only turns for %s', (c) => {
+  test.each([null, 'research'])('exempts only pending-status turns for %s', (c) => {
     const prompt = delivered(c);
-    expect(prompt).toContain('only a brief acknowledgement, or only reports that a consultation');
-    expect(prompt).toContain('work check or other result is still pending, do not publish');
-    expect(prompt).toContain('say the short line in ordinary text and end the turn');
+    expect(prompt).toContain('only when this turn just reports that a consultation');
+    expect(prompt).toContain('work check or other result is still pending');
+    expect(prompt).toContain('say that short line in ordinary text and end the turn');
+    expect(prompt).not.toContain('only a brief acknowledgement');
+    expect(prompt).not.toContain('acknowledgements as answers');
+  });
+  test.each([null, 'research'])('publishes every other short reply for %s', (c) => {
+    const prompt = delivered(c);
+    expect(prompt).toContain('Every other reply to the human must be published, however short');
+    expect(prompt).toContain('greetings, small talk, thanks and one-line answers included');
+    expect(prompt).toContain('the human sees only published replies');
     for (const absent of ['publish the real answer', 'when it actually arrives'])
       expect(prompt).not.toContain(absent);
   });

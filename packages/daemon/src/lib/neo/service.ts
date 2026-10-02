@@ -25,6 +25,11 @@ import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { createNeoPublisher } from './publication-operation.ts';
+import {
+  type NeoDirectReplyRuntime,
+  publishNeoDirectReplyFallback,
+} from './direct-reply-fallback.ts';
+import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -179,6 +184,17 @@ export class NeoService {
       readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
     });
+    const directReplies: NeoDirectReplyRuntime = {
+      getBinding: (id) => this.repo.getBindingBySession(id),
+      getRootBinding: () => this.repo.getBindingForConcern(null),
+      recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
+      isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
+      startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
+      turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
+      append: (input) => this.publications.append(input),
+      notify: notifyPublication,
+      newId: () => crypto.randomUUID(),
+    };
     this.unsubscribe = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
@@ -191,6 +207,13 @@ export class NeoService {
           );
         }
         const binding = this.repo.getBindingBySession(sessionId);
+        if (binding && binding.kind !== 'worker') {
+          try {
+            publishNeoDirectReplyFallback(sessionId, directReplies);
+          } catch (error) {
+            this.log.warn('Direct reply fallback failed', error);
+          }
+        }
         if (binding?.kind === 'concern' && binding.concernId)
           await this.dispatchConsultationWaiter(binding.concernId).catch((error) =>
             this.log.warn('Consultation admission pending', error)
