@@ -15,6 +15,11 @@ import {
   type SessionRuntimeSettingsSnapshot,
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
+import {
+  planSessionInputDraftWrite,
+  sessionInputDraftSnapshotFromRow,
+  type SessionInputDraftSnapshot,
+} from './session-input-draft-write.ts';
 
 function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
@@ -325,6 +330,27 @@ export class SessionRepository {
         this.updateMessageSearchSessionTitle(id, updates.title);
       }
     }
+  }
+
+  captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.metadata, i.incarnation FROM sessions s
+         LEFT JOIN session_incarnations i ON i.session_id = s.id
+         WHERE s.id = ? AND s.status NOT IN ('archived', 'ended') AND s.archived_at IS NULL`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? sessionInputDraftSnapshotFromRow(row) : null;
+  }
+
+  casSessionInputDraft(
+    snapshot: SessionInputDraftSnapshot,
+    text: string | null
+  ): 'won' | 'superseded' | 'invalid' {
+    const write = planSessionInputDraftWrite(snapshot, text);
+    if ('kind' in write) return 'invalid';
+    const result = this.db.prepare(write.sql).run(...write.values);
+    return result.changes > 0 ? 'won' : 'superseded';
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
