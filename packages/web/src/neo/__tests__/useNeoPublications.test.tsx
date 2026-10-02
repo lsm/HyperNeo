@@ -133,7 +133,7 @@ describe('Neo authored publication state', () => {
     await waitFor(() => expect(stateText()).toBe(`ready/${id}/1/false/false`));
     expect(io.request).toHaveBeenCalledExactlyOnceWith('operation.invoke', {
       name: 'neo.publication.read',
-      input: { conversationId: id, after: 0, limit: 50 },
+      input: { conversationId: id, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
     });
     expect(io.changed.size).toBe(1);
     expect(io.connection.size).toBe(1);
@@ -152,10 +152,10 @@ describe('Neo authored publication state', () => {
       page(input.after, input.after === 0 ? 50 : 2)
     );
     render(<Probe />);
-    await waitFor(() => expect(stateText()).toBe(`ready/${id}/50/true/false`));
+    await waitFor(() => expect(stateText()).toBe(`ready/${id}/50/false/true`));
     expect(requests()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button'));
-    await waitFor(() => expect(stateText()).toBe(`ready/${id}/52/false/false`));
+    await waitFor(() => expect(stateText()).toBe(`ready/${id}/52/false/true`));
     expect(requests()[1][1].input).toEqual({ conversationId: id, after: 50, limit: 50 });
     expect(screen.getByTestId('items').textContent?.split(',')).toHaveLength(52);
   });
@@ -309,7 +309,7 @@ describe('Neo authored publication state', () => {
   it('retains at most 500 items and honestly marks omitted earlier history', async () => {
     io.request.mockImplementation(async (_method: string, { input }) => page(input.after, 50));
     render(<Probe />);
-    await waitFor(() => expect(stateText()).toBe(`ready/${id}/50/true/false`));
+    await waitFor(() => expect(stateText()).toBe(`ready/${id}/50/false/true`));
     for (let index = 2; index <= 11; index++) {
       fireEvent.click(screen.getByRole('button'));
       await waitFor(() => expect(stateText()).toContain(`/${index * 50}/true/`));

@@ -3,8 +3,13 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
-export type PublicationPage = { conversationId: string; after: number; limit?: number };
-type Cursor = Required<PublicationPage>;
+export type PublicationPage = {
+  conversationId: string;
+  after: number;
+  limit?: number;
+  before?: number;
+};
+type Cursor = Required<Omit<PublicationPage, 'before'>> & { before?: number };
 type Unavailable = { state: 'unavailable' };
 type Stale = { state: 'stale' };
 export type PublicationRead =
@@ -26,7 +31,8 @@ export function admitPublicationCursor(page: Cursor): { value: Cursor } | { reas
     counter(page.after) &&
     counter(page.limit) &&
     page.limit >= 1 &&
-    page.limit <= 100
+    page.limit <= 100 &&
+    (page.before === undefined || (counter(page.before) && page.before >= 1 && page.after === 0))
     ? { value: page }
     : { reason: { state: 'unavailable' } };
 }
@@ -112,6 +118,7 @@ export function presentPublicationPage(
     if (
       !item ||
       item.sequence <= (items.at(-1)?.sequence ?? page.after) ||
+      item.sequence >= (page.before ?? Number.POSITIVE_INFINITY) ||
       ids.has(item.publicationId)
     )
       return denied;

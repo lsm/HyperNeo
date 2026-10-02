@@ -59,6 +59,45 @@ export function appendPublicationWindow(
   };
 }
 
+export function placePublicationTail(
+  state: NeoPublicationState,
+  page: Extract<PublicationRead, { state: 'ready' }>
+): NeoPublicationState {
+  return {
+    ...state,
+    status: 'ready',
+    items: page.items,
+    nextAfter: page.nextAfter,
+    hasMore: false,
+    hasEarlier: page.items.length === 50,
+  };
+}
+
+export function prependPublicationWindow(
+  state: NeoPublicationState,
+  page: Extract<PublicationRead, { state: 'ready' }>
+): NeoPublicationState {
+  const all = [...page.items, ...state.items];
+  const kept = all.slice(0, 500);
+  return {
+    ...state,
+    status: 'ready',
+    items: kept,
+    nextAfter: all.length > 500 ? (kept.at(-1)?.sequence ?? 0) : state.nextAfter,
+    hasMore: state.hasMore || all.length > 500,
+    hasEarlier: page.items.length === 50,
+  };
+}
+
+const placePublications = (name: string, place: typeof appendPublicationWindow) =>
+  (superpipe({})(name) as PipelineAPI)
+    .input(['state', 'response'])
+    .pipe(admitPublicationUpdate, ['state', 'response'], 'result:page')
+    .pipe(place, ['state', 'page'], 'page')
+    .end('page') as (state: NeoPublicationState, response: PublicationRead) => NeoPublicationState;
+const applyTail = placePublications('neo-publication-tail', placePublicationTail);
+const applyEarlier = placePublications('neo-publication-earlier', prependPublicationWindow);
+
 const applyPage = (superpipe({})('neo-publication-state') as PipelineAPI)
   .input(['state', 'response'])
   .pipe(admitPublicationUpdate, ['state', 'response'], 'result:page')
@@ -70,6 +109,7 @@ export function useNeoPublications(rootSessionId: string | null) {
   const root = useRef(conversationId);
   root.current = conversationId;
   const refresh = useRef(() => {});
+  const earlier = useRef(() => {});
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<NeoPublicationState>(() => empty(conversationId));
 
@@ -108,16 +148,36 @@ export function useNeoPublications(rootSessionId: string | null) {
           inFlight = true;
           pending = false;
           const before = value;
+          const tail = before.items.length === 0 && before.nextAfter === 0;
           publish({ ...value, status: 'loading' });
           const result = await readNeoPublications(
-            { conversationId, after: before.nextAfter, limit: 50 },
+            tail
+              ? { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 }
+              : { conversationId, after: before.nextAfter, limit: 50 },
             async () => hub,
             current
           );
           if (!current()) return;
-          publish(applyPage(before, result));
+          publish((tail ? applyTail : applyPage)(before, result));
           inFlight = false;
           if (pending && value.status === 'ready') void update();
+        };
+        earlier.current = () => {
+          const oldest = value.items[0]?.sequence;
+          if (!current() || inFlight || !value.hasEarlier || !oldest) return;
+          inFlight = true;
+          const before = value;
+          publish({ ...value, status: 'loading' });
+          void readNeoPublications(
+            { conversationId, after: 0, before: oldest, limit: 50 },
+            async () => hub,
+            current
+          ).then((result) => {
+            if (!current()) return;
+            publish(applyEarlier(before, result));
+            inFlight = false;
+            if (pending && value.status === 'ready') void update();
+          });
         };
         refresh.current = () => {
           void update();
@@ -133,6 +193,7 @@ export function useNeoPublications(rootSessionId: string | null) {
       });
     return () => {
       disposed = true;
+      earlier.current = () => {};
       unsubscribe();
       reconnect();
     };
@@ -141,5 +202,6 @@ export function useNeoPublications(rootSessionId: string | null) {
   return {
     ...(state.conversationId === conversationId ? state : empty(conversationId)),
     refresh: () => refresh.current(),
+    loadEarlier: () => earlier.current(),
   };
 }
