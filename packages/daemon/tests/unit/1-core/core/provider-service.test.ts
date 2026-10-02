@@ -14,6 +14,7 @@ import {
   resetProviderFactory,
 } from '../../../../src/lib/providers/factory';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
+import { OpencodeProvider } from '../../../../src/lib/providers/opencode-provider';
 import {
   ProviderRegistry,
   getProviderRegistry,
@@ -349,6 +350,8 @@ describe('ProviderService', () => {
       ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
       ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
       ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+      ANTHROPIC_CUSTOM_HEADERS: process.env.ANTHROPIC_CUSTOM_HEADERS,
+      OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
       PORT: process.env.PORT,
       HYPERNEO_PORT: process.env.HYPERNEO_PORT,
     };
@@ -371,6 +374,8 @@ describe('ProviderService', () => {
     delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
     delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
     delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+    delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+    delete process.env.OPENCODE_API_KEY;
     delete process.env.PORT;
     delete process.env.HYPERNEO_PORT;
 
@@ -1976,6 +1981,30 @@ describe('ProviderService', () => {
       expect(process.env.API_TIMEOUT_MS).toBeUndefined();
       expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('user-oauth-token');
+    });
+
+    it('should apply OpenCode Go client headers and clear them on restore', async () => {
+      registry.register(new OpencodeProvider({ OPENCODE_API_KEY: 'go-key' }));
+
+      const original = await service.applyEnvVarsToProcess('minimax-m3', 'opencode');
+
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://opencode.ai/zen/go');
+      expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
+        'User-Agent: hyperneo/1.0\nx-opencode-session: hyperneo-daemon'
+      );
+
+      service.restoreEnvVars(original);
+
+      expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should clear leaked OpenCode Go client headers for an anthropic model', async () => {
+      process.env.ANTHROPIC_CUSTOM_HEADERS = 'x-opencode-session: leaked';
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(original.ANTHROPIC_CUSTOM_HEADERS).toBe('x-opencode-session: leaked');
+      expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
     });
 
     it('should apply GLM env vars and return original values', async () => {

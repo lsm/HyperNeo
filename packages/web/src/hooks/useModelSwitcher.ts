@@ -40,6 +40,7 @@ export const PROVIDER_ORDER: Record<string, number> = {
   kimi: 5,
   minimax: 6,
   deepseek: 7,
+  opencode: 8,
 };
 
 export const FAMILY_ORDER: Record<string, number> = {
@@ -177,6 +178,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   glm: 'Z.ai',
   kimi: 'Kimi',
   minimax: 'MiniMax',
+  opencode: 'OpenCode Go',
   deepseek: 'DeepSeek',
   openrouter: 'OpenRouter',
   'anthropic-copilot': 'Copilot',

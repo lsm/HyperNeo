@@ -874,6 +874,7 @@ CRITICAL RULES:
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    providerEnvVars.add('ANTHROPIC_CUSTOM_HEADERS');
     const processProviderEnvVars = new Set(providerEnvVars);
     processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
     processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
