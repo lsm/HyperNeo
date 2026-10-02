@@ -23,6 +23,7 @@ const page = z.object({
   conversationId: z.uuid(),
   after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   limit: z.number().int().min(1).max(100),
+  before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 function decode(row: Row): NeoConversationAsk {
@@ -75,9 +76,14 @@ const read = (superpipe({})('neo-conversation-ask-page') as PipelineAPI)
     (db: Database, input: z.infer<typeof page>) =>
       (
         db
-          .prepare(`SELECT ${columns} FROM neo_conversation_asks
-      WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`)
-          .all(input.conversationId, input.after, input.limit) as Row[]
+          .prepare(
+            input.before === undefined
+              ? `SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`
+              : `SELECT * FROM (SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?) ORDER BY sequence`
+          )
+          .all(input.conversationId, input.before ?? input.after, input.limit) as Row[]
       ).map(decode),
     ['db', 'asks'],
     'asks'
@@ -165,8 +171,13 @@ export class NeoConversationAskRepository {
     return result === 'invalid_ask' ? { accepted: false, reason: result } : result;
   }
 
-  list(conversationId: string, after = 0, limit = 50): NeoConversationAsk[] | null {
-    return read({ conversationId, after, limit }, this.db);
+  list(
+    conversationId: string,
+    after = 0,
+    limit = 50,
+    before?: number
+  ): NeoConversationAsk[] | null {
+    return read({ conversationId, after, limit, before }, this.db);
   }
 
   acceptPrompt(

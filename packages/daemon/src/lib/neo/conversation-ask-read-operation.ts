@@ -15,8 +15,10 @@ const Input = z
     conversationId: z.uuid(),
     after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
     limit: z.number().int().min(1).max(100).default(50),
+    before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   })
-  .strict();
+  .strict()
+  .refine((page) => page.before === undefined || page.after === 0);
 type Page = z.infer<typeof Input>;
 type Result =
   | { ok: false; reason: 'human_only' | 'conversation_not_found' }
@@ -38,7 +40,10 @@ const StoredAsk = z
   .transform(({ sequence, createdAt, ask }) => ({ ...ask, sequence, createdAt }));
 
 function readAskPage(page: Page, ledger: NeoConversationAskRepository): Result {
-  const items = ledger.list(page.conversationId, page.after, page.limit);
+  const items =
+    page.before === undefined
+      ? ledger.list(page.conversationId, page.after, page.limit)
+      : ledger.list(page.conversationId, 0, page.limit, page.before);
   if (!items) throw new Error('Invalid admitted Neo ask page');
   return {
     ok: true,
@@ -68,7 +73,7 @@ export function createNeoConversationAskReadOperation(
   return defineOperation({
     name: 'neo.conversation.asks.read',
     description:
-      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages.',
+      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence.',
     policy: { safetyClass: 'human_only' },
     inputSchema: Input,
     resultSchema: z.union([

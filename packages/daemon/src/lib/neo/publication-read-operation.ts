@@ -12,8 +12,10 @@ const Input = z
     conversationId: z.uuid(),
     after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
     limit: z.number().int().min(1).max(100).default(50),
+    before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   })
-  .strict();
+  .strict()
+  .refine((page) => page.before === undefined || page.after === 0);
 type Page = z.infer<typeof Input>;
 type Failure = { ok: false; reason: 'human_only' | 'conversation_not_found' };
 type Gate = { value: Page } | { reason: Failure };
@@ -36,7 +38,10 @@ export function requirePublicationConversation(page: Page, root: NeoBinding | nu
 }
 
 function readPublicationPage(page: Page, ledger: NeoPublicationRepository): Result {
-  const items = ledger.list(page.conversationId, page.after, page.limit);
+  const items =
+    page.before === undefined
+      ? ledger.list(page.conversationId, page.after, page.limit)
+      : ledger.list(page.conversationId, 0, page.limit, page.before);
   if (!items) throw new Error('Invalid admitted Neo publication page');
   return {
     ok: true,
@@ -66,7 +71,7 @@ export function createNeoPublicationReadOperation(
   return defineOperation({
     name: 'neo.publication.read',
     description:
-      'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates; this never reads SDK transcripts or starts a query.',
+      'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence; this never reads SDK transcripts or starts a query.',
     policy: { safetyClass: 'human_only' },
     inputSchema: Input,
     resultSchema: z.union([
