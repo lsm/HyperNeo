@@ -256,6 +256,17 @@ export function useInputDraft(
       if (!flushContent && !wasCleared) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
+      if (flushOnUnmount && wasCleared) {
+        const prior = lastNonEmptyContentRef.current;
+        if (prior.sessionId === prevSessionId && prior.content.trim())
+          void hub
+            .request('session.clearInputDraftIf', {
+              sessionId: prevSessionId,
+              expected: prior.content.trim(),
+            })
+            .catch(() => {});
+        return;
+      }
       hub
         .request('session.update', {
           sessionId: prevSessionId,

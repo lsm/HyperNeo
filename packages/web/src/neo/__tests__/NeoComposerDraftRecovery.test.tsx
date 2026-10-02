@@ -389,7 +389,7 @@ describe('Neo real composer draft recovery', () => {
   it.each(['mismatch', 'fault'])(
     'preserves concurrent durable text on a mounted clear %s',
     async (outcome) => {
-      mount();
+      const view = mount();
       type('Fictional original text');
       await waitFor(() => expect(persisted.get(root)).toBe('Fictional original text'));
       persisted.set(root, 'Concurrent durable text');
@@ -405,6 +405,23 @@ describe('Neo real composer draft recovery', () => {
       await waitFor(() => expect(value()).toBe(''));
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(persisted.get(root)).toBe('Concurrent durable text');
+      act(() => {
+        view.store.activeSessionId.value = holder;
+        view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
+      });
+      await act(async () => {});
+      expect(persisted.get(root)).toBe('Concurrent durable text');
+      expect(
+        seams.request.mock.calls.filter(
+          ([method, input]) =>
+            method === 'session.update' &&
+            input.sessionId === root &&
+            input.metadata?.inputDraft === null
+        )
+      ).toHaveLength(0);
+      view.unmount();
+      mount();
+      await waitFor(() => expect(value()).toBe('Concurrent durable text'));
     }
   );
 
