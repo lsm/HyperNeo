@@ -189,6 +189,15 @@ export class NeoConversationAskRepository {
     return row ? decode(row) : null;
   }
 
+  recentFrom(conversationId: string, sessionId: string, limit: number): NeoConversationAsk[] {
+    const rows = this.db
+      .prepare(`SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
+      ORDER BY sequence DESC LIMIT ?`)
+      .all(conversationId, sessionId, limit) as Row[];
+    return rows.map(decode).reverse();
+  }
+
   acceptPrompt(
     conversationId: string,
     message: IntakePrompt,

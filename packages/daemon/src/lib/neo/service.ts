@@ -29,6 +29,7 @@ import {
   type NeoDirectReplyRuntime,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
+import { readNeoTurnReply } from './turn-reply.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -183,11 +184,10 @@ export class NeoService {
       readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
     });
-    const messages = db.getSDKMessageRepo();
     const directReplies: NeoDirectReplyRuntime = {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
-      newestAsk: (conversationId, id) => this.asks.newestFrom(conversationId, id),
+      recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
       startedWork: (id, messageId) =>
         this.consultations
@@ -196,23 +196,7 @@ export class NeoService {
         this.repo
           .listWork()
           .some((work) => work.originSessionId === id && work.originMessageId === messageId),
-      turnEnded: (id, messageId) =>
-        messages.getErrorTerminalResultSubtypeAfter(id, messageId)
-          ? 'failed'
-          : messages.hasTerminalResultAfter(id, messageId)
-            ? 'ended'
-            : 'open',
-      finalText: (id, messageId) => {
-        const askRow = messages.findMessageIdByUuid(id, messageId);
-        if (!askRow) return null;
-        return (
-          messages
-            .getAssistantMessagesSince(id, askRow)
-            .map((item) => item.text)
-            .filter(Boolean)
-            .at(-1) ?? null
-        );
-      },
+      turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       append: (input) => this.publications.append(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),

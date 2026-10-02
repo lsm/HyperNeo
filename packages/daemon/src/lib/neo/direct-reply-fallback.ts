@@ -3,21 +3,22 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
+export type NeoTurnReply = { status: 'open' | 'failed' | 'ended'; text: string | null };
 export type NeoDirectReplyRuntime = {
   getBinding: (sessionId: string) => NeoBinding | null;
   getRootBinding: () => NeoBinding | null;
-  newestAsk: (conversationId: string, sessionId: string) => NeoConversationAsk | null;
+  recentAsks: (conversationId: string, sessionId: string) => NeoConversationAsk[];
   isPublished: (sessionId: string, messageId: string) => boolean;
   startedWork: (sessionId: string, messageId: string) => boolean;
-  turnEnded: (sessionId: string, messageId: string) => 'open' | 'failed' | 'ended';
-  finalText: (sessionId: string, messageId: string) => string | null;
+  turnReply: (sessionId: string, messageId: string) => NeoTurnReply;
   append: (input: NeoPublicationInput) => { accepted: boolean };
   notify: () => void;
   newId: () => string;
 };
 type Skip = { skipped: true };
 type Gate<T> = { value: T } | { reason: Skip };
-type Turn = { sessionId: string; conversationId: string; ask: NeoConversationAsk };
+type Scope = { sessionId: string; conversationId: string };
+type Turn = Scope & { ask: NeoConversationAsk };
 type Reply = Turn & { text: string };
 
 const skip: { reason: Skip } = { reason: { skipped: true } };
@@ -25,14 +26,12 @@ const skip: { reason: Skip } = { reason: { skipped: true } };
 export function requireNeoReplySession(
   sessionId: string,
   runtime: NeoDirectReplyRuntime
-): Gate<Turn> {
+): Scope | null {
   const binding = runtime.getBinding(sessionId);
   const root = runtime.getRootBinding();
-  if (!binding || binding.kind === 'worker' || root?.kind !== 'neo') return skip;
-  if (!root.sessionId.startsWith('neo:')) return skip;
-  const conversationId = root.sessionId.slice(4);
-  const ask = runtime.newestAsk(conversationId, sessionId);
-  return ask ? { value: { sessionId, conversationId, ask } } : skip;
+  if (!binding || binding.kind === 'worker' || root?.kind !== 'neo') return null;
+  if (!root.sessionId.startsWith('neo:')) return null;
+  return { sessionId, conversationId: root.sessionId.slice(4) };
 }
 
 export function requireUnpublishedDirectAnswer(
@@ -40,11 +39,11 @@ export function requireUnpublishedDirectAnswer(
   runtime: NeoDirectReplyRuntime
 ): Gate<Reply> {
   const messageId = turn.ask.requestId;
-  if (runtime.turnEnded(turn.sessionId, messageId) !== 'ended') return skip;
   if (runtime.isPublished(turn.sessionId, messageId)) return skip;
   if (runtime.startedWork(turn.sessionId, messageId)) return skip;
-  const text = runtime.finalText(turn.sessionId, messageId)?.trim();
-  return text ? { value: { ...turn, text } } : skip;
+  const reply = runtime.turnReply(turn.sessionId, messageId);
+  const text = reply.text?.trim();
+  return reply.status === 'ended' && text ? { value: { ...turn, text } } : skip;
 }
 
 function publishDirectReply(
@@ -65,14 +64,20 @@ function publishDirectReply(
   return input;
 }
 
-export const publishNeoDirectReplyFallback = (
-  superpipe({})('neo-direct-reply-fallback') as PipelineAPI
-)
-  .input(['sessionId', 'runtime'])
-  .pipe(requireNeoReplySession, ['sessionId', 'runtime'], 'result:reply')
-  .pipe(requireUnpublishedDirectAnswer, ['reply', 'runtime'], 'result:reply')
+const publishTurn = (superpipe({})('neo-direct-reply-fallback') as PipelineAPI)
+  .input(['turn', 'runtime'])
+  .pipe(requireUnpublishedDirectAnswer, ['turn', 'runtime'], 'result:reply')
   .pipe(publishDirectReply, ['reply', 'runtime'], 'reply')
-  .end('reply') as (
+  .end('reply') as (turn: Turn, runtime: NeoDirectReplyRuntime) => Skip | NeoPublicationInput;
+
+export function publishNeoDirectReplyFallback(
   sessionId: string,
   runtime: NeoDirectReplyRuntime
-) => Skip | NeoPublicationInput;
+): NeoPublicationInput[] {
+  const scope = requireNeoReplySession(sessionId, runtime);
+  if (!scope) return [];
+  return runtime
+    .recentAsks(scope.conversationId, sessionId)
+    .map((ask) => publishTurn({ ...scope, ask }, runtime))
+    .filter((result): result is NeoPublicationInput => !('skipped' in result));
+}
