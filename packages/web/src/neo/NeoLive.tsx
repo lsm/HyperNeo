@@ -515,7 +515,8 @@ export function NeoLive() {
                   {selected
                     ? 'This conversation stays focused on this part of your world.'
                     : 'Only things worth keeping become a 分身.'}{' '}
-                  Work starts when you approve its card.
+                  A clear work request can start work. Proposal-only requests wait for the card’s
+                  Start work button.
                 </p>
               </div>
             )}
