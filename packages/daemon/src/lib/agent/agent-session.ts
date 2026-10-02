@@ -1587,6 +1587,10 @@ export class AgentSession
     };
   }
 
+  applyCommittedInputDraft(text: string | null): void {
+    this.sessionConfigHandler.applyCommittedInputDraft(text);
+  }
+
   updateMetadata(updates: Partial<Session>): void {
     this.sessionConfigHandler.updateMetadata(updates);
   }

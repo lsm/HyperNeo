@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
+import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -21,6 +22,10 @@ import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-fi
 import type { WorktreeManager } from '../worktree-manager.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
+import {
+  commitSessionInputDraft,
+  type SessionInputDraftCommitOutcome,
+} from './session-input-draft-commit.ts';
 import type { ToolsConfigManager } from './tools-config.ts';
 
 export function buildTitleGenerationPrompt(messageText: string): string {
@@ -521,6 +526,31 @@ export class SessionLifecycle {
           `session.updated publication failed after commit for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
         );
       });
+  }
+
+  async updateInputDraftIf(
+    snapshot: SessionInputDraftSnapshot,
+    text: string | null
+  ): Promise<SessionInputDraftCommitOutcome> {
+    const outcome = await commitSessionInputDraft(
+      snapshot,
+      text,
+      this.db,
+      this.sessionCache,
+      async (sessionId) => {
+        const current = this.db.getSession(sessionId);
+        if (!current) throw new Error(`Session ${sessionId} missing after draft commit`);
+        await this.internalEventBus.publish('session.updated', {
+          sessionId,
+          source: 'input-draft-commit',
+          session: { metadata: current.metadata },
+        });
+      }
+    );
+    if (outcome.kind === 'won' && !outcome.notified) {
+      this.logger.warn(`session.updated publication failed after draft commit for ${snapshot.id}`);
+    }
+    return outcome;
   }
 
   async archiveResources(sessionId: string, trigger: ArchiveResourcesTrigger): Promise<void> {
