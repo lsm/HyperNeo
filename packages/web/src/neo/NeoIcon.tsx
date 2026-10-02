@@ -13,7 +13,7 @@ const paths = {
   work: 'M8 7V4h8v3M4 7h16v13H4V7Zm0 5c5 3 11 3 16 0M10 12h4',
   check: 'm5 12 4 4L19 6',
   received: 'm2 12 4 4L16 6m-4 10L22 6',
-  pause: 'M9 5v14M15 5v14',
+  stop: 'M7 7h10v10H7z',
   back: 'm12 5-7 7 7 7M5 12h14',
 };
 
@@ -28,7 +28,7 @@ export function NeoIcon({
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
-      fill="none"
+      fill={name === 'stop' ? 'currentColor' : 'none'}
       stroke="currentColor"
       strokeWidth="1.6"
       strokeLinecap="round"

@@ -176,13 +176,13 @@ export function NeoVoice({
           </div>
           <Button
             size="sm"
-            variant="ghost"
+            variant="danger"
             disabled={!!transcribing || recorder.isStarting}
             onClick={() => void transcribe('draft')}
             aria-label="Stop recording and keep the text as a draft"
             title="Stop — transcribe into an editable draft, never send"
           >
-            <NeoIcon name="pause" class="text-cat-teal" />
+            <NeoIcon name="stop" class="h-4 w-4" />
           </Button>
         </div>
       ) : (

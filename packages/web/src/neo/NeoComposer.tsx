@@ -68,6 +68,7 @@ export function NeoComposer({
     []
   );
   const working = store.isWorking.value;
+  const stopsNeo = working && !recordingVoice && !draft.trim() && !attachments.files.length;
   const connected = connectionState.value === 'connected';
   async function send() {
     if (recordingVoice) {
@@ -255,39 +256,42 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
-          {working && (
+          {stopsNeo ? (
             <Button
-              variant="ghost"
+              type="button"
+              variant="danger"
               size="sm"
               disabled={!connected || interrupting}
               onClick={() => void handleInterrupt()}
               aria-label="Stop Neo"
+              title="Stop Neo"
             >
-              <NeoIcon name="pause" />
+              <NeoIcon name="stop" class="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="sm"
+              disabled={
+                !connected ||
+                sending ||
+                attachments.reading > 0 ||
+                (voiceBusy && !recordingVoice) ||
+                (!draft.trim() && !attachments.files.length && !recordingVoice) ||
+                (recordingVoice && attachments.files.length > 0)
+              }
+              aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
+              title={
+                recordingVoice && attachments.files.length > 0
+                  ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
+                  : recordingVoice
+                    ? 'Stop recording and send it now'
+                    : undefined
+              }
+            >
+              <NeoIcon name="up" />
             </Button>
           )}
-          <Button
-            type="submit"
-            size="sm"
-            disabled={
-              !connected ||
-              sending ||
-              attachments.reading > 0 ||
-              (voiceBusy && !recordingVoice) ||
-              (!draft.trim() && !attachments.files.length && !recordingVoice) ||
-              (recordingVoice && attachments.files.length > 0)
-            }
-            aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
-            title={
-              recordingVoice && attachments.files.length > 0
-                ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
-                : recordingVoice
-                  ? 'Stop recording and send it now'
-                  : undefined
-            }
-          >
-            <NeoIcon name="up" />
-          </Button>
         </div>
       </div>
     </form>
