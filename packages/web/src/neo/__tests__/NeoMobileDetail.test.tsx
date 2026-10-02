@@ -40,7 +40,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function mount() {
+function mount(publicMode = true) {
   const sessionId = 'neo:550e8400-e29b-41d4-a716-446655440000';
   const makeWork = (id: string): NeoWork => ({
     id,
@@ -69,13 +69,15 @@ function mount() {
     selectedId: null as string | null,
     snapshot,
     viewSnapshot: snapshot,
-    viewPublicConversation: {
-      conversationId: sessionId.slice(4),
-      status: 'ready',
-      entries: [],
-      hasEarlier: false,
-      hasMore: false,
-    },
+    viewPublicConversation: publicMode
+      ? {
+          conversationId: sessionId.slice(4),
+          status: 'ready',
+          entries: [] as { key: string }[],
+          hasEarlier: false,
+          hasMore: false,
+        }
+      : undefined,
     store: {
       sessionInfo: signal({ metadata: {} }),
       sdkMessages: signal([]),
@@ -105,6 +107,44 @@ function mount() {
 }
 
 describe('Neo mobile work detail', () => {
+  it.each([
+    [1120, true],
+    [390, false],
+  ])(
+    'retains conversation auto-follow when detail opens at width %i in public mode %s',
+    (width, publicMode) => {
+      vi.stubGlobal('innerWidth', width);
+      const { container, model } = mount(publicMode);
+      const reader = container.querySelector<HTMLElement>(publicMode ? '.neo-chat-rail' : 'main')!;
+      Object.defineProperty(reader, 'scrollHeight', { configurable: true, value: 2200 });
+      Object.defineProperty(reader, 'clientHeight', { configurable: true, value: 800 });
+      fireEvent.click(screen.getByRole('button', { name: 'Fictional one' }));
+      const append = (key: string) =>
+        act(() => {
+          const current = model.value;
+          if (current.viewPublicConversation)
+            model.value = {
+              ...current,
+              viewPublicConversation: {
+                ...current.viewPublicConversation,
+                entries: [...current.viewPublicConversation.entries, { key }],
+              },
+            };
+          else
+            current.store.sdkMessages.value = [
+              ...current.store.sdkMessages.value,
+              { uuid: key },
+            ] as never[];
+        });
+      append('first-reply');
+      expect(reader.scrollTop).toBe(2200);
+      fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+      Object.defineProperty(reader, 'scrollHeight', { configurable: true, value: 2500 });
+      append('second-reply');
+      expect(reader.scrollTop).toBe(2500);
+    }
+  );
+
   it('pushes only the visible detail while retaining the conversation, reader, draft and native actions', () => {
     const { container, model } = mount();
     const chat = container.querySelector('.neo-chat-rail')!;

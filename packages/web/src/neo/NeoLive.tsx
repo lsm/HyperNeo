@@ -306,9 +306,10 @@ export function NeoLive() {
 
   function openScene(ref: NeoSceneRef) {
     if (!sceneScope) return;
-    if (publicConversation && narrow)
+    if (publicConversation && narrow) {
       mobileReader.current = { scope: sceneScope, top: mainScroll.current?.scrollTop ?? 0 };
-    nearBottom.current = false;
+      nearBottom.current = false;
+    }
     setSceneSelection({ scope: sceneScope, ref });
   }
 
