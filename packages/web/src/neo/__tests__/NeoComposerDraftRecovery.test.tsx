@@ -123,6 +123,56 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it('does not flush the prior session while a new scope is loading', async () => {
+    const view = mount();
+    type('Fictional prior scope draft');
+    await waitFor(() => expect(persisted.get(root)).toBe('Fictional prior scope draft'));
+    act(() => {
+      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+    });
+    view.unmount();
+    await act(async () => {});
+    expect(persisted.get(root)).toBe('Fictional prior scope draft');
+  });
+
+  it('flushes the latest edit on unmount before the debounce expires', async () => {
+    const first = mount();
+    await act(async () => {});
+    type('Fictional early navigation draft');
+    await act(async () => {});
+    expect(persisted.get(root)).not.toBe('Fictional early navigation draft');
+    type('Latest fictional navigation draft');
+    first.unmount();
+    await waitFor(() => expect(persisted.get(root)).toBe('Latest fictional navigation draft'));
+    mount();
+    await waitFor(() => expect(value()).toBe('Latest fictional navigation draft'));
+  });
+
+  it('does not clear a concurrently newer persisted draft during unmount', async () => {
+    const view = mount();
+    type('Original fictional draft');
+    await waitFor(() => expect(persisted.get(root)).toBe('Original fictional draft'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(value()).toBe(''));
+    persisted.set(root, 'Concurrent fictional draft');
+    view.unmount();
+    await act(async () => {});
+    expect(persisted.get(root)).toBe('Concurrent fictional draft');
+  });
+
+  it('does not resurrect a cleared draft when the live surface unmounts', async () => {
+    const view = mount();
+    type('Fictional accepted draft');
+    await waitFor(() => expect(persisted.get(root)).toBe('Fictional accepted draft'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(value()).toBe(''));
+    view.unmount();
+    await waitFor(() => expect(persisted.get(root)).toBe(''));
+    mount();
+    await act(async () => {});
+    expect(value()).toBe('');
+  });
+
   it('persists typed text and restores it after the real live surface remounts', async () => {
     const first = mount();
     type('Fictional reload draft');

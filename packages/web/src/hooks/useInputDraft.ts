@@ -10,8 +10,14 @@ export interface UseInputDraftResult {
   holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
-export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraftResult {
+export function useInputDraft(
+  sessionId: string,
+  debounceMs = 250,
+  flushOnUnmount = false
+): UseInputDraftResult {
   const contentSignal = useSignal('');
+  const flushSessionIdRef = useRef(sessionId);
+  flushSessionIdRef.current = sessionId;
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef(sessionId);
@@ -330,6 +336,40 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
     };
   }, [sessionId, contentSignal.value, contentSignal]);
+
+  useEffect(
+    () => () => {
+      if (!flushOnUnmount) return;
+      const last = lastSeenContentRef.current;
+      const content = contentSignal.peek();
+      if (
+        !last.sessionId ||
+        last.sessionId !== currentSessionIdRef.current ||
+        last.sessionId !== flushSessionIdRef.current
+      )
+        return;
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      if (!content.trim()) {
+        const prior = lastNonEmptyContentRef.current;
+        if (prior.sessionId !== last.sessionId || !prior.content.trim()) return;
+        void hub
+          .request('session.clearInputDraftIf', {
+            sessionId: last.sessionId,
+            expected: prior.content.trim(),
+          })
+          .catch(() => {});
+        return;
+      }
+      void hub
+        .request('session.update', {
+          sessionId: last.sessionId,
+          metadata: { inputDraft: content.trim() },
+        })
+        .catch(() => {});
+    },
+    [contentSignal, flushOnUnmount]
+  );
 
   const setContent = useCallback(
     (newContent: string) => {

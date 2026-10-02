@@ -28,7 +28,7 @@ export function NeoLive() {
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const inputDraft = useInputDraft(neo.sessionId ?? '');
+  const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
   const footer = useRef<HTMLElement>(null);
