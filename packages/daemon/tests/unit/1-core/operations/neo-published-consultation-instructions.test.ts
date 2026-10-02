@@ -21,7 +21,6 @@ describe('published consultation request instructions', () => {
         originMessageId,
         question: item.question,
       })}`;
-      expect(neoConsultationRequestContent(request)).toBe(expected);
       expect(neoConsultationRequestContent(request, 'legacy')).toBe(expected);
     }
   );
@@ -93,10 +92,10 @@ describe('published consultation request instructions', () => {
 
 describe('published consultation coordinator prompt', () => {
   test.each([null, 'fictional'])(
-    'keeps explicit legacy identical to default for %j',
+    'keeps explicit published identical to default for %j',
     (concernId) => {
-      expect(neoPrompt(concernId, 'legacy')).toBe(neoPrompt(concernId));
-      expect(neoPrompt(concernId, 'published')).not.toBe(neoPrompt(concernId));
+      expect(neoPrompt(concernId, 'published')).toBe(neoPrompt(concernId));
+      expect(neoPrompt(concernId, 'legacy')).not.toBe(neoPrompt(concernId));
     }
   );
   test('distinguishes published and queued legacy holder requests without contradictory defaults', () => {

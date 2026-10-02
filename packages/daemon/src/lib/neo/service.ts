@@ -79,7 +79,7 @@ export class NeoService {
     readonly sessions: SessionManager,
     hub: MessageHub,
     events: InternalEventBus<DaemonInternalEventMap>,
-    private readonly replyFormat: NeoConsultationReplyFormat = 'legacy'
+    private readonly replyFormat: NeoConsultationReplyFormat = 'published'
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});

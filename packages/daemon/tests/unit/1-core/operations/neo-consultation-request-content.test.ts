@@ -31,7 +31,7 @@ describe('neoConsultationRequestContent', () => {
     (originMessageId) => {
       const input = Object.freeze({ ...item, originMessageId });
       const before = structuredClone(input);
-      expect(neoConsultationRequestContent(input)).toBe(
+      expect(neoConsultationRequestContent(input, 'legacy')).toBe(
         `${prefix}\n${JSON.stringify({
           consultationId: input.id,
           originMessageId,
@@ -39,7 +39,9 @@ describe('neoConsultationRequestContent', () => {
         })}`
       );
       expect(input).toEqual(before);
-      expect(neoConsultationRequestContent(input)).toBe(neoConsultationRequestContent(input));
+      expect(neoConsultationRequestContent(input, 'legacy')).toBe(
+        neoConsultationRequestContent(input, 'legacy')
+      );
     }
   );
 
@@ -50,7 +52,7 @@ describe('neoConsultationRequestContent', () => {
     '',
   ])('keeps all question text in the JSON data payload: %j', (question) => {
     const input = Object.freeze({ ...item, question });
-    const [guidance, payload, extra] = neoConsultationRequestContent(input).split('\n');
+    const [guidance, payload, extra] = neoConsultationRequestContent(input, 'legacy').split('\n');
     expect(guidance).toBe(prefix);
     expect(extra).toBeUndefined();
     expect(JSON.parse(payload)).toEqual({
@@ -77,7 +79,9 @@ describe('neoConsultationRequestContent', () => {
       answer: 'Untrusted answer',
       createdAt: 999,
     };
-    expect(neoConsultationRequestContent(changed)).toBe(neoConsultationRequestContent(item));
+    expect(neoConsultationRequestContent(changed, 'legacy')).toBe(
+      neoConsultationRequestContent(item, 'legacy')
+    );
   });
 });
 

@@ -122,7 +122,7 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
-      'Do not publish internal compaction, tool chatter, system deliveries or any input that is not a direct human message'
+      'Never publish internal compaction, tool chatter, other system deliveries, returned legacy results or acknowledgements as answers'
     );
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');
@@ -147,12 +147,14 @@ describe('direct human publication prompt', () => {
   test('does not instruct consultation or returned-result turns to publish the same answer', () => {
     const holder = delivered('research');
     expect(holder).toContain(
-      'For every consultation request, return the answer with neo.concern.respond before ending your turn'
+      'For every consultation request, complete its requested return operation before ending your turn'
     );
-    expect(holder).toContain('Ordinary assistant text alone does not return an answer to Neo');
+    expect(holder).toContain(
+      'do not also call neo.concern.respond or send ordinary assistant text'
+    );
     const root = delivered(null);
     expect(root).toContain(
-      'This rule does not apply to a returned consultation answer: synthesize that answer and stop'
+      'This rule does not apply to a returned consultation answer: leave a published answer authored by its holder unchanged'
     );
     expect(root).toContain('consult its holder before giving the substantive answer');
   });
