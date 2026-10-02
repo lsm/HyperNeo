@@ -36,3 +36,17 @@ export function readNeoTurnReply(db: Database, sessionId: string, messageId: str
   const subtype = (JSON.parse(result.message) as { subtype?: unknown }).subtype;
   return { status: subtype === 'success' ? 'ended' : 'failed', text };
 }
+
+export function neoAskStartedWork(db: Database, sessionId: string, messageId: string): boolean {
+  return !!db
+    .getDatabase()
+    .prepare(
+      `SELECT 1 FROM neo_consultations WHERE origin_session_id = ? AND origin_message_id = ?
+       UNION ALL
+       SELECT 1 FROM neo_consultation_waiters WHERE origin_session_id = ? AND origin_message_id = ?
+       UNION ALL
+       SELECT 1 FROM neo_work WHERE origin_session_id = ? AND origin_message_id = ?
+       LIMIT 1`
+    )
+    .get(sessionId, messageId, sessionId, messageId, sessionId, messageId);
+}

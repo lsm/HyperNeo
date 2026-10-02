@@ -256,6 +256,31 @@ describe('NeoService direct reply fallback wiring', () => {
     expect(published()).toEqual([]);
   });
 
+  test('finds the ask behind more than twenty newer consultations and waiters', async () => {
+    service.consultationWaiters.enqueue({
+      id: 'old-waiter',
+      requestKey: 'old-check',
+      concernId: 'garden',
+      originSessionId: root,
+      originMessageId: askA,
+      sessionId: holder,
+      question: 'Older check',
+    });
+    db.getDatabase().prepare("UPDATE neo_consultation_waiters SET status = 'cancelled'").run();
+    for (let index = 0; index < 25; index++)
+      service.consultationWaiters.enqueue({
+        id: `newer-${index}`,
+        requestKey: `newer-${index}`,
+        concernId: 'garden',
+        originSessionId: root,
+        originMessageId: `other-${index}`,
+        sessionId: holder,
+        question: 'Unrelated check',
+      });
+    await idle();
+    expect(published()).toEqual([]);
+  });
+
   test('publishes the finished reply once nothing is pending for its ask', async () => {
     await idle();
     expect(published().map((item) => [item.producerInput.messageId, item.fullText])).toEqual([

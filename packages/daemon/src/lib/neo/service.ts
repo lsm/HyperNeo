@@ -29,7 +29,7 @@ import {
   type NeoDirectReplyRuntime,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
-import { readNeoTurnReply } from './turn-reply.ts';
+import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -189,16 +189,7 @@ export class NeoService {
       getRootBinding: () => this.repo.getBindingForConcern(null),
       recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
-      startedWork: (id, messageId) =>
-        this.consultations
-          .list()
-          .some((item) => item.originSessionId === id && item.originMessageId === messageId) ||
-        this.repo
-          .listWork()
-          .some((work) => work.originSessionId === id && work.originMessageId === messageId) ||
-        this.consultationWaiters
-          .queued()
-          .some((item) => item.originSessionId === id && item.originMessageId === messageId),
+      startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       append: (input) => this.publications.append(input),
       notify: notifyPublication,
