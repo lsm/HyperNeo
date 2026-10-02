@@ -55,6 +55,13 @@ export class SessionConfigHandler {
     });
   }
 
+  applyCommittedInputDraft(text: string | null): void {
+    const metadata = { ...this.ctx.session.metadata };
+    if (text === null) delete metadata.inputDraft;
+    else metadata.inputDraft = text;
+    this.ctx.session.metadata = metadata;
+  }
+
   updateMetadata(updates: Partial<Session>): void {
     const { session, db } = this.ctx;
 

@@ -15,6 +15,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
+import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -36,6 +37,7 @@ import { WorktreeManager } from '../worktree-manager.ts';
 import { MessagePersistence } from './message-persistence.ts';
 import { ReferenceResolver } from './reference-resolver.ts';
 import { SessionCache } from './session-cache.ts';
+import type { SessionInputDraftCommitOutcome } from './session-input-draft-commit.ts';
 import {
   type ArchiveResourcesTrigger,
   type CreateSessionParams,
@@ -769,6 +771,17 @@ export class SessionManager {
 
   async updateSession(sessionId: string, updates: Partial<Session>): Promise<void> {
     return this.sessionLifecycle.update(sessionId, updates);
+  }
+
+  captureInputDraft(sessionId: string): SessionInputDraftSnapshot | null {
+    return this.db.captureSessionInputDraft(sessionId);
+  }
+
+  updateInputDraftIf(
+    snapshot: SessionInputDraftSnapshot,
+    text: string | null
+  ): Promise<SessionInputDraftCommitOutcome> {
+    return this.sessionLifecycle.updateInputDraftIf(snapshot, text);
   }
 
   getSessionFromDB(sessionId: string): Session | null {
