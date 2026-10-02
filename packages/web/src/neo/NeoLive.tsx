@@ -16,6 +16,7 @@ import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
+import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
@@ -213,6 +214,7 @@ export function NeoLive() {
     writeDraft,
     false
   );
+  useNeoDraftReloadRecovery(neo.sessionId, reloadBuffer, () => drafts[draftKey] ?? '', writeDraft);
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
   const conversationReady =
