@@ -7,6 +7,7 @@ export interface UseInputDraftResult {
   content: string;
   setContent: (content: string) => void;
   clear: () => void;
+  clearSubmitted: (targetSessionId: string, expected: string) => void;
   holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
@@ -345,16 +346,18 @@ export function useInputDraft(
     const flush = () => {
       if (!flushOnUnmount) return;
       const last = lastSeenContentRef.current;
-      const content = contentSignal.peek();
+      const renderedSession = flushSessionIdRef.current;
+      const content = renderedSession ? contentSignal.peek() : last.content;
       if (
         !last.sessionId ||
         last.sessionId !== currentSessionIdRef.current ||
-        last.sessionId !== flushSessionIdRef.current
+        (renderedSession && last.sessionId !== renderedSession)
       )
         return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
       if (!content.trim()) {
+        if (!renderedSession) return;
         const prior = lastNonEmptyContentRef.current;
         if (prior.sessionId !== last.sessionId || !prior.content.trim()) return;
         void hub
@@ -389,6 +392,26 @@ export function useInputDraft(
     contentSignal.value = '';
   }, [contentSignal]);
 
+  const clearSubmitted = useCallback(
+    (targetSessionId: string, expected: string) => {
+      if (!targetSessionId || !expected.trim()) return;
+      const last = lastSeenContentRef.current;
+      if (last.sessionId === targetSessionId && last.content === expected) {
+        lastSeenContentRef.current = { sessionId: targetSessionId, content: '', cleared: true };
+        if (currentSessionIdRef.current === targetSessionId) contentSignal.value = '';
+      }
+      const hub = connectionManager.getHubIfConnected();
+      if (hub)
+        void hub
+          .request('session.clearInputDraftIf', {
+            sessionId: targetSessionId,
+            expected: expected.trim(),
+          })
+          .catch(() => {});
+    },
+    [contentSignal]
+  );
+
   return useMemo(
     () => ({
       get content() {
@@ -396,8 +419,9 @@ export function useInputDraft(
       },
       setContent,
       clear,
+      clearSubmitted,
       holdDraftAdoption,
     }),
-    [contentSignal, setContent, clear, holdDraftAdoption]
+    [contentSignal, setContent, clear, clearSubmitted, holdDraftAdoption]
   );
 }

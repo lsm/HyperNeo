@@ -147,6 +147,79 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each([true, false])('settles pending Send after interrupted loading: %s', async (accepted) => {
+    let release!: (value: unknown) => void;
+    const view = mount();
+    await act(async () => {});
+    view.model.value.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    type('Fictional pending loading submission');
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    act(() => {
+      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+    });
+    await act(async () => {});
+    view.unmount();
+    await act(async () => {
+      release(accepted ? { ok: true, messageId: 'fictional-send' } : { ok: false });
+    });
+    await waitFor(() =>
+      expect(persisted.get(root) ?? '').toBe(accepted ? '' : 'Fictional pending loading submission')
+    );
+    mount();
+    await waitFor(() =>
+      expect(value()).toBe(accepted ? '' : 'Fictional pending loading submission')
+    );
+  });
+
+  it.each(['root', 'holder'])(
+    'flushes an unsaved %s draft during interrupted scope loading',
+    async (scope) => {
+      const view = mount();
+      await act(async () => {});
+      if (scope === 'holder') {
+        act(() => {
+          view.store.activeSessionId.value = holder;
+          view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
+        });
+        await act(async () => {});
+      }
+      const owner = scope === 'root' ? root : holder;
+      type('Fictional interrupted loading draft');
+      await act(async () => {});
+      expect(persisted.get(owner) ?? '').toBe('');
+      act(() => {
+        view.model.value = { ...view.model.value, sessionId: '', selectedId: 'next-garden' };
+      });
+      await act(async () => {});
+      view.unmount();
+      await waitFor(() => expect(persisted.get(owner)).toBe('Fictional interrupted loading draft'));
+      expect(persisted.get(owner === root ? holder : root) ?? '').toBe('');
+    }
+  );
+
+  it('does not destructively clear a prior saved draft while scope loading is interrupted', async () => {
+    const view = mount();
+    type('Fictional submitted draft');
+    await waitFor(() => expect(persisted.get(root)).toBe('Fictional submitted draft'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(value()).toBe(''));
+    persisted.set(root, 'Concurrent fictional draft');
+    act(() => {
+      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+    });
+    await act(async () => {});
+    view.unmount();
+    await act(async () => {});
+    expect(persisted.get(root)).toBe('Concurrent fictional draft');
+  });
+
   it.each([
     { accepted: true, saved: false },
     { accepted: false, saved: false },

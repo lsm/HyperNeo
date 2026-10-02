@@ -714,12 +714,12 @@ export function NeoLive() {
                 const submitted = drafts[draftKey] ?? '';
                 return inputDraft.holdDraftAdoption(async () => {
                   const receipt = await neo.send(input);
-                  if (
-                    receipt.ok &&
-                    currentScope.current === sceneScope &&
-                    inputDraft.content === submitted
-                  )
-                    inputDraft.clear();
+                  if (receipt.ok) {
+                    setDrafts((items) =>
+                      items[draftKey] === submitted ? { ...items, [draftKey]: '' } : items
+                    );
+                    inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
+                  }
                   return receipt;
                 });
               }}
