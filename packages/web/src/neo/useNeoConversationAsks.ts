@@ -50,6 +50,45 @@ export function appendAskWindow(
   };
 }
 
+export function placeAskTail(
+  state: NeoAskState,
+  page: Extract<ConversationAskRead, { state: 'ready' }>
+): NeoAskState {
+  return {
+    ...state,
+    status: 'ready',
+    items: page.items,
+    nextAfter: page.nextAfter,
+    hasMore: false,
+    hasEarlier: page.items.length === LIMIT,
+  };
+}
+
+export function prependAskWindow(
+  state: NeoAskState,
+  page: Extract<ConversationAskRead, { state: 'ready' }>
+): NeoAskState {
+  const all = [...page.items, ...state.items];
+  const kept = all.slice(0, WINDOW);
+  return {
+    ...state,
+    status: 'ready',
+    items: kept,
+    nextAfter: all.length > WINDOW ? (kept.at(-1)?.sequence ?? 0) : state.nextAfter,
+    hasMore: state.hasMore || all.length > WINDOW,
+    hasEarlier: page.items.length === LIMIT,
+  };
+}
+
+const placeAsks = (name: string, place: typeof appendAskWindow) =>
+  (superpipe({})(name) as PipelineAPI)
+    .input(['state', 'response'])
+    .pipe(admitAskPage, ['state', 'response'], 'result:page')
+    .pipe(place, ['state', 'page'], 'page')
+    .end('page') as (state: NeoAskState, response: ConversationAskRead) => NeoAskState;
+const applyAskTail = placeAsks('neo-conversation-ask-tail', placeAskTail);
+const applyEarlierAsks = placeAsks('neo-conversation-ask-earlier', prependAskWindow);
+
 const applyAskPage = (superpipe({})('neo-conversation-ask-state') as PipelineAPI)
   .input(['state', 'response'])
   .pipe(admitAskPage, ['state', 'response'], 'result:page')
@@ -62,6 +101,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
   root.current = conversationId;
   const held = useRef<NeoAskState | null>(null);
   const advance = useRef<() => void>(() => {});
+  const earlier = useRef<() => void>(() => {});
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<NeoAskState>(() => empty(conversationId));
 
@@ -98,18 +138,38 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           inFlight = true;
           pending = false;
           const before = value;
+          const tail = before.items.length === 0 && before.nextAfter === 0;
           publish({ ...before, status: 'loading' });
           const response = await readNeoConversationAsks(
-            { conversationId, after: before.nextAfter, limit: LIMIT },
+            tail
+              ? { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: LIMIT }
+              : { conversationId, after: before.nextAfter, limit: LIMIT },
             async () => hub,
             current
           );
           if (!current()) return;
-          publish(applyAskPage(before, response));
+          publish((tail ? applyAskTail : applyAskPage)(before, response));
+          inFlight = false;
+          if (pending && value.status === 'ready') void update();
+        };
+        const loadEarlier = async () => {
+          const oldest = value.items[0]?.sequence;
+          if (!current() || inFlight || !value.hasEarlier || !oldest) return;
+          inFlight = true;
+          const before = value;
+          publish({ ...before, status: 'loading' });
+          const response = await readNeoConversationAsks(
+            { conversationId, after: 0, before: oldest, limit: LIMIT },
+            async () => hub,
+            current
+          );
+          if (!current()) return;
+          publish(applyEarlierAsks(before, response));
           inFlight = false;
           if (pending && value.status === 'ready') void update();
         };
         advance.current = () => void update();
+        earlier.current = () => void loadEarlier();
         unsubscribe = hub.onEvent('neo.changed', () => void update());
         reconnect = hub.onConnection((connection) => {
           if (connection === 'connected') void update();
@@ -122,6 +182,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
     return () => {
       disposed = true;
       advance.current = () => {};
+      earlier.current = () => {};
       unsubscribe();
       reconnect();
     };
@@ -130,6 +191,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
   return {
     ...(state.conversationId === conversationId ? state : empty(conversationId)),
     nextPage: () => advance.current(),
+    loadEarlier: () => earlier.current(),
     retry: () => setAttempt((number) => number + 1),
   };
 }

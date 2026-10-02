@@ -239,6 +239,24 @@ export function NeoLive() {
     return () => window.removeEventListener('resize', selectScroll);
   }, [!!publicConversation, workCount > 0]);
 
+  const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
+  const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
+    [...element.querySelectorAll('[data-public-entry]')].find(test);
+  useLayoutEffect(() => {
+    const element = scroll.current;
+    const anchor = earlierAnchor.current;
+    if (!anchor || !element) return;
+    const entry = publicEntryAt(
+      element,
+      (item) => item.getAttribute('data-public-entry') === anchor.key
+    );
+    if (entry) element.scrollTop += entry.getBoundingClientRect().top - anchor.top;
+    lastScrollTop.current = element.scrollTop;
+    if (publicConversation?.status === 'loading') return;
+    earlierAnchor.current = null;
+    element.style.overflowAnchor = '';
+  }, [publicConversation?.entries.length, publicConversation?.status]);
+
   function recordScroll(element: HTMLElement) {
     if (mobileDetail) return;
     if (element !== scroll.current) return;
@@ -520,6 +538,22 @@ export function NeoLive() {
               }
               onOpenPublicConsultation={(id) => openScene({ kind: 'consultation', id })}
               onRetryPublic={retryPublicConversation}
+              onLoadEarlierPublic={() => {
+                const element = scroll.current;
+                const top = element?.getBoundingClientRect().top ?? 0;
+                const entry =
+                  element &&
+                  publicEntryAt(element, (item) => item.getBoundingClientRect().bottom > top);
+                if (element && entry) {
+                  earlierAnchor.current = {
+                    key: entry.getAttribute('data-public-entry') ?? '',
+                    top: entry.getBoundingClientRect().top,
+                  };
+                  element.style.overflowAnchor = 'none';
+                }
+                neo.asks.loadEarlier();
+                neo.publications.loadEarlier();
+              }}
             />
           ) : (
             !neo.error && (

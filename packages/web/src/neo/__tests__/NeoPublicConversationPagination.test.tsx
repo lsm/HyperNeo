@@ -24,8 +24,8 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
 const id = (number: number) => `20000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
-function page(name: string, after: number) {
-  const items = Array.from({ length: after === 0 ? 50 : 1 }, (_, index) => {
+function page(name: string, after: number, count = after === 0 ? 50 : 1) {
+  const items = Array.from({ length: count }, (_, index) => {
     const sequence = after + index + 1;
     const common = {
       conversationId,
@@ -50,6 +50,16 @@ function page(name: string, after: number) {
   });
   return { ok: true, conversationId, items, nextAfter: after + items.length };
 }
+function saved(name: string, input: { after: number; before?: number; limit: number }) {
+  const total = 51;
+  const last =
+    input.before === undefined
+      ? Math.min(total, input.after + input.limit)
+      : Math.min(total, input.before - 1);
+  const first = input.before === undefined ? input.after + 1 : Math.max(1, last - input.limit + 1);
+  const full = page(name, first - 1, Math.max(0, last - first + 1));
+  return { ...full, nextAfter: full.items.at(-1)?.sequence ?? input.after };
+}
 function Probe() {
   const asks = useNeoConversationAsks(root);
   const publications = useNeoPublications(root);
@@ -59,6 +69,10 @@ function Probe() {
       onRetry={() => {
         asks.retry();
         publications.refresh();
+      }}
+      onLoadEarlier={() => {
+        asks.loadEarlier();
+        publications.loadEarlier();
       }}
     />
   );
@@ -80,53 +94,101 @@ afterEach(() => {
 });
 
 describe('NeoPublicConversation saved pagination', () => {
-  it('loads the 51st ask and reply through the existing real paged readers', async () => {
+  it('opens on the newest page and loads the first ask and reply on request', async () => {
+    io.request.mockImplementation(async (_method, args) => saved(args.name, args.input));
     const { container } = render(<Probe />);
-    await screen.findByText('Fictional reply 50');
-    const control = await screen.findByRole('button', { name: 'Load more saved conversation' });
-    const detail = container.querySelector('details')!;
+    await screen.findByText('Fictional reply 51');
+    expect(screen.queryByText('Fictional reply 1')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load more saved conversation' })).toBeNull();
+    const control = await screen.findByRole('button', { name: 'Load earlier saved conversation' });
+    const second = () =>
+      container.querySelector(
+        `[data-public-entry='${JSON.stringify([conversationId, 'publication', id(2)])}'] details`
+      ) as HTMLDetailsElement | null;
+    const detail = second()!;
     detail.open = true;
     fireEvent(detail, new Event('toggle'));
-    await screen.findByRole('heading', { name: 'Full reply 1' });
+    await screen.findByRole('heading', { name: 'Full reply 2' });
     fireEvent.click(control);
-    await screen.findByText('Fictional reply 51');
-    expect(await screen.findByText('Fictional request 51')).toBeTruthy();
-    expect(container.querySelectorAll('[data-public-entry]')).toHaveLength(102);
+    await screen.findByText('Fictional reply 1');
+    expect(await screen.findByText('Fictional request 1')).toBeTruthy();
     const keys = [...container.querySelectorAll('[data-public-entry]')].map((item) =>
       item.getAttribute('data-public-entry')
     );
+    expect(keys).toHaveLength(102);
     expect(new Set(keys).size).toBe(102);
-    expect(container.querySelector('details')).toBe(detail);
+    expect(second()).toBe(detail);
     expect(detail.open).toBe(true);
-    expect(screen.getByRole('heading', { name: 'Full reply 1' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Load more saved conversation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load earlier saved conversation' })).toBeNull();
     expect(screen.queryByText('Showing part of your saved conversation.')).toBeNull();
     expect(
-      io.request.mock.calls.map((call) => [call[1].name, call[1].input.after, call[1].input.limit])
+      io.request.mock.calls.map((call) => [
+        call[1].name,
+        call[1].input.after,
+        call[1].input.before,
+        call[1].input.limit,
+      ])
     ).toEqual([
-      ['neo.conversation.asks.read', 0, 50],
-      ['neo.publication.read', 0, 50],
-      ['neo.publication.read', 50, 50],
-      ['neo.conversation.asks.read', 50, 50],
+      ['neo.conversation.asks.read', 0, Number.MAX_SAFE_INTEGER, 50],
+      ['neo.publication.read', 0, Number.MAX_SAFE_INTEGER, 50],
+      ['neo.conversation.asks.read', 0, 2, 50],
+      ['neo.publication.read', 0, 2, 50],
     ]);
   });
 
-  it('retains entries and exposes the existing retry after a failed continuation', async () => {
+  it('retains entries after a failed earlier page and loads it once ready again', async () => {
+    io.request.mockImplementation(async (_method, args) => saved(args.name, args.input));
     const { container } = render(<Probe />);
-    await screen.findByText('Fictional reply 50');
-    io.request.mockImplementation(async (_method, args) => {
-      if (args.input.after === 50) throw new Error('Fictional unavailable page');
-      return page(args.name, args.input.after);
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more saved conversation' }));
-    await screen.findByRole('button', { name: 'Retry saved conversation' });
-    expect(screen.getByText('Fictional request 1')).toBeTruthy();
-    expect(container.querySelectorAll('[data-public-entry]')).toHaveLength(100);
-    io.request.mockImplementation(async (_method, args) => page(args.name, args.input.after));
-    fireEvent.click(screen.getByRole('button', { name: 'Retry saved conversation' }));
     await screen.findByText('Fictional reply 51');
-    await screen.findByText('Fictional request 51');
+    io.request.mockImplementation(async (_method, args) => {
+      if (args.input.before === 2) throw new Error('Fictional unavailable page');
+      return saved(args.name, args.input);
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Load earlier saved conversation' }));
+    await screen.findByRole('button', { name: 'Retry saved conversation' });
+    expect(screen.getByText('Fictional request 51')).toBeTruthy();
+    expect(container.querySelectorAll('[data-public-entry]')).toHaveLength(100);
+    io.request.mockImplementation(async (_method, args) => saved(args.name, args.input));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry saved conversation' }));
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: 'Load earlier saved conversation',
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier saved conversation' }));
+    await screen.findByText('Fictional reply 1');
+    await screen.findByText('Fictional request 1');
     expect(container.querySelectorAll('[data-public-entry]')).toHaveLength(102);
+  });
+
+  it('shows earlier history only when the owner can load it', () => {
+    const { rerender } = render(
+      <NeoPublicConversation conversation={{ ...empty, hasEarlier: true }} onRetry={vi.fn()} />
+    );
+    expect(screen.queryByRole('button', { name: 'Load earlier saved conversation' })).toBeNull();
+    const earlier = vi.fn();
+    rerender(
+      <NeoPublicConversation
+        conversation={{ ...empty, hasEarlier: true }}
+        onLoadEarlier={earlier}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier saved conversation' }));
+    expect(earlier).toHaveBeenCalledTimes(1);
+    rerender(
+      <NeoPublicConversation
+        conversation={{ ...empty, status: 'loading', hasEarlier: true }}
+        onLoadEarlier={earlier}
+      />
+    );
+    expect(
+      (screen.getByRole('button', { name: 'Load earlier saved conversation' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
   });
 
   it.each(['loading', 'unavailable'] as const)('does not permit load-more while %s', (status) => {

@@ -4,8 +4,13 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 import { admitPublicationCursor, admitPublicationLifetime } from './publication-client.ts';
 
-export type ConversationAskPage = { conversationId: string; after: number; limit?: number };
-type Cursor = Required<ConversationAskPage>;
+export type ConversationAskPage = {
+  conversationId: string;
+  after: number;
+  limit?: number;
+  before?: number;
+};
+type Cursor = Required<Omit<ConversationAskPage, 'before'>> & { before?: number };
 type Unavailable = { state: 'unavailable' };
 type Stale = { state: 'stale' };
 export type ConversationAskRead =
@@ -115,7 +120,12 @@ export function presentConversationAskPage(
   const ids = new Set<string>();
   for (const value of result.items) {
     const item = ask(value, page);
-    if (!item || item.sequence <= (items.at(-1)?.sequence ?? page.after) || ids.has(item.requestId))
+    if (
+      !item ||
+      item.sequence <= (items.at(-1)?.sequence ?? page.after) ||
+      item.sequence >= (page.before ?? Number.POSITIVE_INFINITY) ||
+      ids.has(item.requestId)
+    )
       return denied;
     ids.add(item.requestId);
     items.push(item);

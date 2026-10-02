@@ -121,6 +121,7 @@ export function NeoConversation({
   publicConsultationIds,
   onOpenPublicConsultation,
   onRetryPublic,
+  onLoadEarlierPublic,
 }: {
   store: SessionStore;
   sessionId: string;
@@ -133,6 +134,7 @@ export function NeoConversation({
   publicConsultationIds?: ReadonlySet<string>;
   onOpenPublicConsultation?: (consultationId: string) => void;
   onRetryPublic?: () => void;
+  onLoadEarlierPublic?: () => void;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -227,6 +229,7 @@ export function NeoConversation({
               if (target) onOpenPublicAuthor?.(target);
             }}
             onRetry={onRetryPublic}
+            onLoadEarlier={onLoadEarlierPublic}
             snapshot={snapshot}
           />
         )}

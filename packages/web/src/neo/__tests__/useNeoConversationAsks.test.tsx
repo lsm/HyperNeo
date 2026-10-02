@@ -209,7 +209,9 @@ describe('useNeoConversationAsks resource shell', () => {
     online();
     render(<Probe sessionId={root} />);
     await waitFor(() => expect(texts().status).toBe('Status: ready'));
-    expect(readInput()).toEqual([{ conversationId, after: 0, limit: 50 }]);
+    expect(readInput()).toEqual([
+      { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+    ]);
     expect(texts().rows).toContain(ask(1).requestId);
     expect(texts().cursor).toBe('Cursor: 1');
     expect(texts().more).toBe('More: false');
@@ -238,7 +240,12 @@ describe('useNeoConversationAsks resource shell', () => {
     await waitFor(() => expect(texts().cursor).toBe('Cursor: 5'));
     expect(texts().rows).toContain(ask(5, otherId).requestId);
     expect(texts().rows).not.toContain(ask(1).requestId);
-    expect(readInput()[1]).toEqual({ conversationId: otherId, after: 0, limit: 50 });
+    expect(readInput()[1]).toEqual({
+      conversationId: otherId,
+      after: 0,
+      before: Number.MAX_SAFE_INTEGER,
+      limit: 50,
+    });
   });
 
   it('coalesces a changed burst into one follow-up and never overlaps in-flight pages', async () => {
@@ -315,7 +322,9 @@ describe('useNeoConversationAsks resource shell', () => {
     online();
     await click('Retry');
     await waitFor(() => expect(texts().status).toBe('Status: ready'));
-    expect(readInput()).toEqual([{ conversationId, after: 0, limit: 50 }]);
+    expect(readInput()).toEqual([
+      { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+    ]);
     expect(fake.live).toBe(2);
     cleanup();
     expect(fake.live).toBe(0);
@@ -390,7 +399,9 @@ describe('useNeo global ask consumer', () => {
     render(<NeoProbe />);
     await waitFor(() => expect(screen.getByText('Ask status: ready')).toBeTruthy());
     expect(screen.getByText(`Ask rows: ${ask(1).requestId}`)).toBeTruthy();
-    expect(readInput()).toEqual([{ conversationId, after: 0, limit: 50 }]);
+    expect(readInput()).toEqual([
+      { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
+    ]);
     await click('Open holder');
     await waitFor(() => expect(screen.getByText('View: neo:research')).toBeTruthy());
     expect(screen.getByText(`Ask rows: ${ask(1).requestId}`)).toBeTruthy();

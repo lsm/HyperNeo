@@ -221,6 +221,7 @@ export function NeoPublicConversation({
   canOpenScene,
   snapshot,
   onRetry,
+  onLoadEarlier,
 }: {
   conversation: Conversation;
   authors?: ReadonlyMap<string, string>;
@@ -229,6 +230,7 @@ export function NeoPublicConversation({
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   snapshot?: NeoSnapshot | null;
   onRetry?: () => void;
+  onLoadEarlier?: () => void;
 }) {
   return (
     <div class="space-y-6" aria-label="Public conversation">
@@ -248,6 +250,16 @@ export function NeoPublicConversation({
       )}
       {(conversation.hasEarlier || conversation.hasMore) && (
         <p class="text-xs text-fg-muted">Showing part of your saved conversation.</p>
+      )}
+      {conversation.hasEarlier && onLoadEarlier && (
+        <button
+          type="button"
+          class="text-sm text-accent hover:underline"
+          disabled={conversation.status !== 'ready'}
+          onClick={onLoadEarlier}
+        >
+          Load earlier saved conversation
+        </button>
       )}
       {conversation.entries.map((entry) => (
         <PublicEntry
