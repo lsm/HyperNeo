@@ -42,9 +42,9 @@ describe('published consultation runtime activation', () => {
     return session;
   });
   const sessions = { createSession, getSessionAsync: vi.fn() } as unknown as SessionManager;
-  const startService = (format: 'legacy' | 'published' = 'published') => {
+  const startService = () => {
     service?.dispose();
-    service = new NeoService(db, sessions, hub, events, format);
+    service = new NeoService(db, sessions, hub, events);
   };
   const savePrompt = (sessionId: string, messageId: string, content: string, human = false) =>
     db.getSDKMessageRepo().saveSDKMessage(sessionId, {
@@ -99,7 +99,7 @@ describe('published consultation runtime activation', () => {
         inputKind: 'system',
         message: {
           role: 'user',
-          content: neoConsultationRequestContent(item, 'published'),
+          content: neoConsultationRequestContent(item),
         },
       },
     });
@@ -111,29 +111,6 @@ describe('published consultation runtime activation', () => {
     expect(db.getDatabase().prepare('SELECT * FROM sdk_messages').all()).toEqual(sdkBefore);
     expect(db.getDatabase().prepare('SELECT * FROM neo_publications').all()).toEqual([]);
     expect(createSession).not.toHaveBeenCalled();
-  });
-
-  test('preserves a legacy queued request verbatim across activation and recovery', async () => {
-    startService('legacy');
-    const item = reserve();
-    await service.syncConsultation(item.id);
-    const queued = mailbox(holder);
-    expect(queued[0].payload).toMatchObject({
-      message: {
-        message: {
-          content: neoConsultationRequestContent(item, 'legacy'),
-        },
-      },
-    });
-    startService();
-    await service.recoverConsultations();
-    expect(mailbox(holder)).toEqual(queued);
-    expect(service.consultations.get(item.id)).toEqual(item);
-    service.consultations.finish(item.id, 'reported', 'Older legacy answer.');
-    await service.syncConsultation(item.id);
-    expect(mailbox(root)).toHaveLength(1);
-    expect(JSON.stringify(mailbox(root)[0].payload)).toContain('Older legacy answer.');
-    expect(db.getDatabase().prepare('SELECT * FROM neo_publications').all()).toEqual([]);
   });
 
   test('keeps an already consumed legacy request on its original return path', async () => {
@@ -159,7 +136,7 @@ describe('published consultation runtime activation', () => {
   test('commits the same authored tuple and original ask without another root query', async () => {
     const item = reserve();
     await service.syncConsultation(item.id);
-    savePrompt(holder, requestId, neoConsultationRequestContent(item, 'published'));
+    savePrompt(holder, requestId, neoConsultationRequestContent(item));
     savePrompt(root, 'unrelated-newer-ask', 'An unrelated fictional question.', true);
     const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
     turns.push(turn);
@@ -207,7 +184,7 @@ describe('published consultation runtime activation', () => {
         .run(concernId ? holder : root);
       const sessionId = await service.open(concernId);
       expect(createSession).toHaveBeenCalledTimes(1);
-      expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(concernId, 'published'));
+      expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(concernId));
       expect(db.getSession(sessionId)?.config.allowedTools).toEqual([
         ...(concernId ? ['AskUserQuestion'] : []),
         'mcp__hyperneo-operations__invoke',
@@ -272,7 +249,7 @@ describe('published consultation runtime activation', () => {
       } else {
         expect(options.systemPrompt).toEqual({
           type: 'custom',
-          prompt: neoPrompt(concernId, 'published'),
+          prompt: neoPrompt(concernId),
           snapshot: false,
         });
         expect(options.permissionMode).toBe('dontAsk');
@@ -284,8 +261,8 @@ describe('published consultation runtime activation', () => {
           ...(concernId ? ['AskUserQuestion'] : []),
           'mcp__hyperneo-operations__invoke',
         ]);
-        const legacy = await new QueryOptionsBuilder(agent).build();
-        expect(legacy.systemPrompt).toEqual({
+        const rebuilt = await new QueryOptionsBuilder(agent).build();
+        expect(rebuilt.systemPrompt).toEqual({
           type: 'custom',
           prompt: neoPrompt(concernId),
           snapshot: false,

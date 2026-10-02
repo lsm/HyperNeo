@@ -3,7 +3,6 @@ import type { Database } from '../../storage/database.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { neoPrompt } from './prompt.ts';
-import type { NeoConsultationReplyFormat } from './consultation-request-content.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,8 +32,7 @@ export function neoCoordinatorNativeTools(concernId: string | null): 'AskUserQue
 export function restrictNeoQuery(
   options: Options,
   concernId: string | null = null,
-  sessionId?: string,
-  replyFormat: NeoConsultationReplyFormat = 'published'
+  sessionId?: string
 ): void {
   if (sessionId) {
     options.cwd = neoCoordinatorRuntimePath(sessionId);
@@ -42,7 +40,7 @@ export function restrictNeoQuery(
   }
   options.systemPrompt = {
     type: 'custom',
-    prompt: neoPrompt(concernId, replyFormat),
+    prompt: neoPrompt(concernId),
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
