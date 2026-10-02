@@ -591,7 +591,10 @@ export function NeoLive() {
                 {detailConsultation && (
                   <NeoConsultationCard
                     consultation={detailConsultation}
-                    label="Context check"
+                    label={`Context check for ${
+                      concerns.find((item) => item.id === detailConsultation.concernId)?.title ??
+                      'Your context holder'
+                    }`}
                     holderName={
                       concerns.find((item) => item.id === detailConsultation.concernId)?.title ??
                       'Your context holder'
@@ -642,7 +645,10 @@ export function NeoLive() {
                       <NeoConsultationCard
                         key={JSON.stringify(scene.ref)}
                         consultation={scene.receipt}
-                        label="Context check"
+                        label={`Context check for ${
+                          concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
+                          'Your context holder'
+                        }`}
                         holderName={
                           concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
                           'Your context holder'

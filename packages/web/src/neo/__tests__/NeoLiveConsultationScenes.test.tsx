@@ -153,6 +153,34 @@ const openCheck = (container: Element, id: string) => {
 };
 
 describe('Neo public mixed consultation scenes', () => {
+  it('names concurrent summary and attention checks by their holder', () => {
+    const { container, model } = mount();
+    const running = screen.getByRole('region', { name: 'In progress' });
+    for (const holder of ['a', 'b']) {
+      const name = new RegExp(`^View details for Context check for Fictional holder ${holder}$`);
+      expect(within(running).getByRole('button', { name })).toBeTruthy();
+    }
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewSnapshot: {
+          ...model.value.viewSnapshot,
+          consultations: [
+            ...model.value.viewSnapshot.consultations,
+            { ...consultation('failed-b', 'failed'), concernId: 'b' },
+          ],
+        },
+      };
+    });
+    const attention = screen.getByRole('region', { name: 'Needs your attention' });
+    for (const holder of ['a', 'b']) {
+      const name = new RegExp(`^Context check for Fictional holder ${holder}$`);
+      expect(within(attention).getByRole('article', { name })).toBeTruthy();
+    }
+    const name = 'Context check for Fictional holder a';
+    expect(within(openCheck(container, 'pending')).getByRole('article', { name })).toBeTruthy();
+  });
+
   it('keeps the empty-scene notice visible when the only receipt is in full detail', () => {
     const { container, model } = mount();
     act(() => {
