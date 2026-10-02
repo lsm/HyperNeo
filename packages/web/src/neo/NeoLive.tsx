@@ -15,6 +15,7 @@ import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
+import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { type NeoScene, type NeoSceneRef, projectNeoScenes, selectNeoScene } from './neo-scenes.ts';
@@ -27,6 +28,7 @@ export function NeoLive() {
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const inputDraft = useInputDraft(neo.sessionId ?? '');
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
   const footer = useRef<HTMLElement>(null);
@@ -178,11 +180,15 @@ export function NeoLive() {
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
   const draftKey = neo.selectedId === null ? 'root' : `concern:${neo.selectedId}`;
+  function writeDraft(text: string) {
+    setDrafts((items) => ({ ...items, [draftKey]: text }));
+    inputDraft.setContent(text);
+  }
   useNeoVoiceRecovery(
     neo.sessionId,
     drafts[draftKey] ?? '',
     () => drafts[draftKey] ?? '',
-    (text) => setDrafts((items) => ({ ...items, [draftKey]: text }))
+    writeDraft
   );
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
@@ -630,15 +636,12 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               draft={drafts[draftKey] ?? ''}
-              onDraft={(value) => setDrafts((items) => ({ ...items, [draftKey]: value }))}
+              onDraft={writeDraft}
               onTranscript={(text) =>
-                setDrafts((items) => ({
-                  ...items,
-                  [draftKey]: [items[draftKey], text].filter(Boolean).join('\n'),
-                }))
+                writeDraft([drafts[draftKey], text].filter(Boolean).join('\n'))
               }
               onError={neo.setError}
-              onSend={neo.send}
+              onSend={(input) => inputDraft.holdDraftAdoption(() => neo.send(input))}
             />
           )}
           <p class="mt-2 text-center text-[10px] text-fg-faint">

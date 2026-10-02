@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
-import { useSignal, useSignalEffect } from '@preact/signals';
+import { useSignal } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 
@@ -225,7 +225,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
   }, [sessionId, issueAdoptionRefresh]);
 
-  useSignalEffect(() => {
+  useEffect(() => {
     const content = contentSignal.value;
 
     if (!sessionId) return;
@@ -329,7 +329,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         draftSaveTimeoutRef.current = null;
       }
     };
-  });
+  }, [sessionId, contentSignal.value, contentSignal]);
 
   const setContent = useCallback(
     (newContent: string) => {
