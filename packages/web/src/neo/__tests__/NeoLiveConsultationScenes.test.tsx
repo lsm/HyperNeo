@@ -201,13 +201,22 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.act).not.toHaveBeenCalled();
   });
 
-  it.each(['pending', 'queued'])(
-    'opens full %s detail without invoking an action and closes only its exact wait',
-    (id) => {
+  it.each([
+    ['pending', false],
+    ['queued', false],
+    ['pending', true],
+    ['queued', true],
+  ] as const)(
+    'opens full %s detail in narrow=%s without invoking an action and closes only its exact wait',
+    (id, narrow) => {
+      vi.stubGlobal('matchMedia', () => ({ matches: !narrow }));
       const { container, model } = mount();
+      const reader = container.querySelector('main')!;
+      reader.scrollTop = 143;
       const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
       fireEvent.input(draft, { target: { value: 'Fictional draft survives context detail' } });
       const detail = openCheck(container, id);
+      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(narrow);
       expect(detail.querySelector('button')).toBe(document.activeElement);
       expect(detail.querySelector('details p')?.textContent).toBe(
         id === 'queued' ? waiting().question : consultation(id, 'pending').question
@@ -221,6 +230,7 @@ describe('Neo public mixed consultation scenes', () => {
       expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
       expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
       expect(draft.value).toBe('Fictional draft survives context detail');
+      if (narrow) expect(reader.scrollTop).toBe(143);
       expect(document.activeElement).toBe(
         container.querySelector(`[data-consultation-open="${id}"]`)
       );
