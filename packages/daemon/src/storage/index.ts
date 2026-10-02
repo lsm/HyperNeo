@@ -16,6 +16,7 @@ import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observabili
 import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
 import { SessionRepository } from './repositories/session-repository.ts';
+import type { SessionInputDraftSnapshot } from './repositories/session-input-draft-write.ts';
 import type {
   RuntimeSettingsPatch,
   SessionRuntimeSettingsSnapshot,
@@ -230,6 +231,16 @@ export class Database {
 
   updateSession(id: string, updates: Partial<Session>): void {
     this.sessionRepo.updateSession(id, updates);
+  }
+
+  captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
+    return this.sessionRepo.captureSessionInputDraft(id);
+  }
+  casSessionInputDraft(
+    snapshot: SessionInputDraftSnapshot,
+    text: string | null
+  ): 'won' | 'superseded' | 'invalid' {
+    return this.sessionRepo.casSessionInputDraft(snapshot, text);
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
