@@ -12,7 +12,7 @@ interface FetchCall {
 }
 
 function recordingFetch(payload: unknown, calls: FetchCall[] = []): typeof fetch {
-  const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const impl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     calls.push({
       url: String(input),
       headers: (init?.headers ?? {}) as Record<string, string>,
@@ -344,7 +344,58 @@ describe('OpencodeProvider', () => {
     });
   });
 
+  describe('session-scoped keys', () => {
+    it('starts the bridge with the session key and keeps it separate from the provider key', async () => {
+      const keys: Array<string | undefined> = [];
+      const provider = makeProvider({ OPENCODE_API_KEY: 'provider-key' }, unreachableFetch(), {
+        bridgeFactory: ((config: { apiKey?: string }) => {
+          keys.push(config.apiKey);
+          return { port: 41234 + keys.length, stop: () => {} };
+        }) as never,
+      });
+
+      await provider.ensureBridgeStarted('glm-5.3', {
+        sessionId: SESSION_ID,
+        apiKey: 'session-key',
+      });
+      await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+
+      expect(keys).toEqual(['session-key', 'provider-key']);
+      expect(
+        provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID, apiKey: 'session-key' }).envVars
+          .ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41235');
+      expect(
+        provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41236');
+    });
+  });
+
   describe('credentials', () => {
+    it('does not cache a bridge whose credentials changed mid-build', async () => {
+      let release: (() => void) | undefined;
+      const stopped: number[] = [];
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: (async () => {
+          await gate;
+          return { port: 41234, stop: () => stopped.push(41234) };
+        }) as never,
+      });
+
+      const warming = provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+      provider.setCredentials({ type: 'api_key', apiKey: 'rotated-key' });
+      release?.();
+
+      await expect(warming).rejects.toThrow('credentials changed');
+      expect(stopped).toEqual([41234]);
+      expect(() => provider.buildSdkConfig('glm-5.3', { sessionId: SESSION_ID })).toThrow(
+        'bridge not started'
+      );
+    });
+
     it('drops warmed bridges so a rotated key reaches the next one', async () => {
       const stopped: number[] = [];
       const keys: Array<string | undefined> = [];

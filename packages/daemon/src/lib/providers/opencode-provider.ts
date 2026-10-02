@@ -119,6 +119,7 @@ export class OpencodeProvider implements Provider {
 
   private credentials: ProviderCredentials | null = null;
   private credentialSignature: string | undefined;
+  private credentialEpoch = 0;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly discoveryCache = new ProviderDiscoveryCache();
   private readonly bridges = new Map<string, OpenAIChatBridgeServer>();
@@ -136,6 +137,7 @@ export class OpencodeProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     const signature = JSON.stringify(credentials);
     if (signature !== this.credentialSignature) {
+      this.credentialEpoch += 1;
       this.stopBridges();
       this.probeCache.clear();
       this.clearModelCache();
@@ -319,15 +321,25 @@ export class OpencodeProvider implements Provider {
     }`;
   }
 
-  async ensureBridgeStarted(modelId: string): Promise<void> {
+  private bridgeKey(modelId: string, apiKey: string | undefined): string {
+    return `${modelId}::${apiKey ?? ''}`;
+  }
+
+  private bridgeApiKeyFor(sessionConfig?: ProviderSessionConfig): string | undefined {
+    return sessionConfig?.apiKey || this.getApiKey();
+  }
+
+  async ensureBridgeStarted(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void> {
     if (this.usesAnthropicMessages(modelId)) return;
-    if (this.bridges.has(modelId)) return;
-    const inFlight = this.bridgePromises.get(modelId);
+    const apiKey = this.bridgeApiKeyFor(sessionConfig);
+    const key = this.bridgeKey(modelId, apiKey);
+    if (this.bridges.has(key)) return;
+    const inFlight = this.bridgePromises.get(key);
     if (inFlight) {
       await inFlight;
       return;
     }
-    const apiKey = this.getApiKey();
+    const epoch = this.credentialEpoch;
     const factory = this.options.bridgeFactory ?? createOpenAIChatBridgeServer;
     const ready = Promise.resolve(
       factory({
@@ -342,20 +354,20 @@ export class OpencodeProvider implements Provider {
       })
     ).then(
       (bridge) => {
-        this.bridgePromises.delete(modelId);
-        if (this.shutdownStarted) {
+        this.bridgePromises.delete(key);
+        if (this.shutdownStarted || this.credentialEpoch !== epoch) {
           bridge.stop();
-          return bridge;
+          throw new Error('OpenCode Go credentials changed while the bridge was starting');
         }
-        this.bridges.set(modelId, bridge);
+        this.bridges.set(key, bridge);
         return bridge;
       },
       (error: unknown) => {
-        this.bridgePromises.delete(modelId);
+        this.bridgePromises.delete(key);
         throw error;
       }
     );
-    this.bridgePromises.set(modelId, ready);
+    this.bridgePromises.set(key, ready);
     await ready;
   }
 
@@ -388,7 +400,7 @@ export class OpencodeProvider implements Provider {
       };
     }
 
-    const bridge = this.bridges.get(modelId);
+    const bridge = this.bridges.get(this.bridgeKey(modelId, this.bridgeApiKeyFor(sessionConfig)));
     if (!bridge) {
       throw new Error(
         `opencode: bridge not started for model '${modelId}'. ` +

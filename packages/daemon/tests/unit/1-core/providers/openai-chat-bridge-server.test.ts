@@ -41,7 +41,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           'User-Agent': 'hyperneo/1.0',
           'x-opencode-session': sessionId,
         }),
-        fetchImpl: fetchMock as typeof fetch,
+        fetchImpl: fetchMock as unknown as typeof fetch,
       });
       servers.push(server);
 
