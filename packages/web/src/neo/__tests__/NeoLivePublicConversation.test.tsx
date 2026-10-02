@@ -235,14 +235,14 @@ const toggle = (detail: HTMLDetailsElement) => {
 };
 
 describe('NeoLive durable conversation activation', () => {
-  it('keeps the default legacy path only for roots without a durable conversation identity', async () => {
+  it('never shows the SDK transcript for a root without a durable conversation identity', async () => {
     source.value = { ...source.value, sessionId: 'neo:legacy' };
     sessionId.value = 'neo:legacy';
     store.activeSessionId.value = 'neo:legacy';
     store.sessionState.value = nativeState('neo:legacy');
     render(<NeoLive />);
     expect(screen.queryByLabelText('Public conversation')).toBeNull();
-    expect(await screen.findByText('PRIVATE SDK EXECUTION')).toBeTruthy();
+    expect(screen.queryByText('PRIVATE SDK EXECUTION')).toBeNull();
     await act(async () => {
       source.value = snapshot();
       sessionId.value = root;
