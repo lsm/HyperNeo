@@ -26,6 +26,17 @@ describe('getThinkingOptionsForProvider', () => {
     expect(options).toEqual([]);
   });
 
+  test('returns granular options for opencode by default', () => {
+    const options = getThinkingOptionsForProvider('opencode');
+    expect(options).toEqual([
+      { value: 'off', label: 'Off' },
+      { value: 'think8k', label: 'Think 8k' },
+      { value: 'think16k', label: 'Think 16k' },
+      { value: 'think24k', label: 'Think 24k' },
+      { value: 'think32k', label: 'Think 32k' },
+    ]);
+  });
+
   test('defaults to granular for unknown providers', () => {
     const options = getThinkingOptionsForProvider('unknown-provider');
     expect(options).toEqual([

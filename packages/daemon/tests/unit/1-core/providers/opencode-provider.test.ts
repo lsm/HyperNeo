@@ -25,6 +25,28 @@ function recordingFetch(payload: unknown, calls: FetchCall[] = []): typeof fetch
   return impl;
 }
 
+function routingFetch(routes: {
+  catalog?: () => Promise<Response> | Response;
+  models?: () => Promise<Response> | Response;
+}): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    if (url.includes('api.json')) {
+      if (!routes.catalog) throw new Error('unexpected catalog call');
+      return await routes.catalog();
+    }
+    if (url.endsWith('/models')) {
+      if (!routes.models) throw new Error('unexpected model list call');
+      return await routes.models();
+    }
+    return new Response(JSON.stringify({}), { status: 200 });
+  }) as unknown as typeof fetch;
+}
+
+function hangingForever(): Promise<Response> {
+  return new Promise<Response>(() => {});
+}
+
 function unreachableFetch(): typeof fetch {
   return (async () => {
     throw new Error('unexpected network call');
@@ -54,6 +76,22 @@ describe('OpencodeProvider', () => {
     const provider = makeProvider();
     expect(provider.id).toBe('opencode');
     expect(provider.displayName).toBe('OpenCode Go');
+  });
+
+  it('offers granular thinking, since every Go model reasons', () => {
+    const provider = makeProvider();
+    expect(provider.capabilities.extendedThinking).toBe(true);
+    expect(provider.capabilities.thinkingModes).toBe('granular');
+    expect(OpencodeProvider.MODELS.every((model) => model.thinkingModes === 'granular')).toBe(true);
+  });
+
+  it('asks the bridge to forward reasoning effort', async () => {
+    const configs: Array<{ thinkingSupported?: boolean }> = [];
+    const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+      bridgeFactory: fakeBridgeFactory([41234], configs),
+    });
+    await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+    expect(configs[0]?.thinkingSupported).toBe(true);
   });
 
   it('reads the key from OPENCODE_API_KEY', () => {
@@ -298,6 +336,119 @@ describe('OpencodeProvider', () => {
     });
   });
 
+  describe('context windows', () => {
+    it('carries the window the gateway catalog publishes', () => {
+      const provider = makeProvider();
+      const byId = new Map(OpencodeProvider.MODELS.map((model) => [model.id, model]));
+      expect(byId.get('deepseek-v4-pro')?.contextWindow).toBe(1_000_000);
+      expect(byId.get('deepseek-v4-flash')?.contextWindow).toBe(1_000_000);
+      expect(byId.get('glm-5.3')?.contextWindow).toBe(1_000_000);
+      expect(byId.get('kimi-k3')?.contextWindow).toBe(1_048_576);
+      expect(byId.get('minimax-m3')?.contextWindow).toBe(1_000_000);
+      expect(byId.get('minimax-m2.7')?.contextWindow).toBe(204_800);
+      expect(byId.get('hy3')?.contextWindow).toBe(256_000);
+      expect(byId.get('space-bunny-free')?.contextWindow).toBe(1_048_576);
+      expect(provider.contextWindowFor('deepseek-v4-pro')).toBe(1_000_000);
+    });
+
+    it('falls back to the baked catalogue when the catalog is unreachable', async () => {
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch());
+      const metadata = await provider.modelMetadata('kimi-k3');
+      expect(metadata.contextWindow).toBe(1_048_576);
+      expect(metadata.wire).toBe('openai-chat');
+    });
+
+    it('reads windows and wire from the live catalog when it is reachable', async () => {
+      const catalog = {
+        'opencode-go': {
+          models: {
+            'glm-5.3': { name: 'GLM-5.3', limit: { context: 999 }, release_date: '2026-01-01' },
+            'brand-new': {
+              name: 'Brand New',
+              limit: { context: 424_242 },
+              provider: { npm: '@ai-sdk/anthropic' },
+            },
+            'brand-new-responses': {
+              name: 'Brand New Responses',
+              limit: { context: 111 },
+              provider: { npm: '@ai-sdk/openai' },
+            },
+          },
+        },
+      };
+      const provider = makeProvider(
+        {
+          OPENCODE_API_KEY: 'go-key',
+          OPENCODE_MODELS_URL: 'https://catalog.test/api.json',
+        },
+        recordingFetch(catalog)
+      );
+
+      const metadata = await provider.modelMetadata('glm-5.3');
+      expect(metadata.contextWindow).toBe(999);
+      expect(provider.usesAnthropicMessages('brand-new')).toBe(true);
+      expect(provider.contextWindowFor('brand-new')).toBe(424_242);
+      expect(provider.supportsModelId('brand-new-responses')).toBe(false);
+
+      const models = await provider.getModels();
+      expect(models.find((model) => model.id === 'glm-5.3')?.contextWindow).toBe(999);
+    });
+  });
+
+  describe('catalog fetch does not gate discovery', () => {
+    it('never blocks getModels on a catalog that hangs', async () => {
+      const provider = makeProvider(
+        { OPENCODE_API_KEY: 'go-key' },
+        routingFetch({
+          catalog: hangingForever,
+          models: () =>
+            new Response(JSON.stringify({ data: [{ id: 'glm-5.3', name: 'GLM-5.3' }] }), {
+              status: 200,
+            }),
+        })
+      );
+
+      const started = Date.now();
+      const models = await provider.getModels();
+
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(models.find((model) => model.id === 'glm-5.3')?.contextWindow).toBe(1_000_000);
+    });
+
+    it('keeps the catalog across clearModelCache and refetches only after the TTL', async () => {
+      let fetches = 0;
+      const provider = makeProvider(
+        {
+          OPENCODE_API_KEY: 'go-key',
+          OPENCODE_MODELS_URL: 'https://catalog.test/api.json',
+        },
+        routingFetch({
+          catalog: () => {
+            fetches += 1;
+            return new Response(
+              JSON.stringify({
+                'opencode-go': { models: { 'glm-5.3': { limit: { context: 777 } } } },
+              }),
+              { status: 200 }
+            );
+          },
+        })
+      );
+
+      expect((await provider.modelMetadata('glm-5.3')).contextWindow).toBe(777);
+      provider.clearModelCache();
+      expect((await provider.modelMetadata('glm-5.3')).contextWindow).toBe(777);
+      expect(fetches).toBe(1);
+    });
+
+    it('declares a max context window that covers every catalogued model', () => {
+      const provider = makeProvider();
+      const largest = Math.max(...OpencodeProvider.MODELS.map((model) => model.contextWindow));
+      expect(provider.capabilities.maxContextWindow).toBe(largest);
+      expect(provider.capabilities.maxContextWindow).toBeGreaterThanOrEqual(1_048_576);
+    });
+  });
+
   describe('discovery', () => {
     it('returns nothing without a key', async () => {
       expect(await makeProvider().getModels()).toEqual([]);
@@ -460,10 +611,11 @@ describe('OpencodeProvider', () => {
   describe('shutdown', () => {
     it('stops the bridges it started', async () => {
       const stopped: number[] = [];
+      let port = 41234;
       const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
-        bridgeFactory: ((config: { modelContextWindow?: number }) => {
-          const port = config.modelContextWindow === 200_000 ? 41234 : 41235;
-          return { port, stop: () => stopped.push(port) };
+        bridgeFactory: (() => {
+          const assigned = port++;
+          return { port: assigned, stop: () => stopped.push(assigned) };
         }) as never,
       });
       await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
