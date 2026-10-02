@@ -166,7 +166,8 @@ describe('Neo public mixed consultation scenes', () => {
       };
     });
     openCheck(container, 'reported');
-    const list = screen.getByRole('region', { name: 'Work scenes' });
+    const list = screen.getByRole('region', { name: 'Neo scenes' });
+    expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
     expect(list.querySelector('[data-scene-group]')).toBeNull();
     expect(list.textContent).toBe('No other scenes right now.');
     const css = readFileSync('src/neo/neo.css', 'utf8');
@@ -240,7 +241,7 @@ describe('Neo public mixed consultation scenes', () => {
   it('keeps a colliding work ID visible when selecting its context-check counterpart', () => {
     const { container, model } = mount();
     openCheck(container, 'pending');
-    const list = screen.getByRole('region', { name: 'Work scenes' });
+    const list = screen.getByRole('region', { name: 'Neo scenes' });
     expect(
       within(list).getByRole('article', { name: 'Fictional execution proposal' })
     ).toBeTruthy();
@@ -296,6 +297,7 @@ describe('Neo public mixed consultation scenes', () => {
 
   it('preserves the single pending banner and work-only scene groups in legacy mode', () => {
     const { container, model } = mount(false);
+    expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
     expect(container.textContent?.match(/Checking with/g)).toHaveLength(1);
     expect(container.querySelectorAll('[data-consultation-open]')).toHaveLength(0);
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();

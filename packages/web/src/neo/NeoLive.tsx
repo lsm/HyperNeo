@@ -126,6 +126,11 @@ export function NeoLive() {
       : group.scenes.filter((scene) => scene.receipt.kind === 'work'),
   }));
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+  const sceneListLabel = sceneGroups.some((group) =>
+    group.scenes.some((scene) => scene.ref.kind === 'consultation')
+  )
+    ? 'Neo scenes'
+    : 'Work scenes';
   const [sceneSelection, setSceneSelection] = useState<{
     scope: string;
     ref: NeoSceneRef;
@@ -601,7 +606,7 @@ export function NeoLive() {
             )}
           </section>
         )}
-        <div class="neo-scene-list" role="region" aria-label="Work scenes" inert={mobileDetail}>
+        <div class="neo-scene-list" role="region" aria-label={sceneListLabel} inert={mobileDetail}>
           {publicConversation &&
             detail &&
             displayedGroups.every((group) => !group.scenes.length) && (
