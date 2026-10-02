@@ -1389,8 +1389,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.sessionManager,
     deps.messageHub,
-    deps.internalEventBus,
-    'published'
+    deps.internalEventBus
   );
   const familyOperations = [
     ...collectFamilyOperations(familyContext),

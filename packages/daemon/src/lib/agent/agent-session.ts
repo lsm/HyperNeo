@@ -538,7 +538,7 @@ export class AgentSession
 
     this.askUserQuestionHandler = new AskUserQuestionHandler(this);
 
-    this.optionsBuilder = new QueryOptionsBuilder(this, 'published');
+    this.optionsBuilder = new QueryOptionsBuilder(this);
 
     this.queryRunner =
       session.config.provider === 'acp' ? new AcpQueryRunner(this) : new QueryRunner(this);
