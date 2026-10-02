@@ -118,6 +118,8 @@ export function NeoConversation({
   publicAuthors,
   onOpenPublicAuthor,
   onOpenPublicWork,
+  publicConsultationIds,
+  onOpenPublicConsultation,
   onRetryPublic,
 }: {
   store: SessionStore;
@@ -128,6 +130,8 @@ export function NeoConversation({
   publicAuthors?: ReadonlyMap<string, string>;
   onOpenPublicAuthor?: (sessionId: string) => void;
   onOpenPublicWork?: (workId: string) => void;
+  publicConsultationIds?: ReadonlySet<string>;
+  onOpenPublicConsultation?: (consultationId: string) => void;
   onRetryPublic?: () => void;
 }) {
   const messages = store.sdkMessages.value;
@@ -206,11 +210,17 @@ export function NeoConversation({
             canOpenScene={(ref) =>
               ref.kind === 'work'
                 ? !!onOpenPublicWork && works.some((work) => work.id === ref.id)
-                : !!onOpenPublicAuthor && !!publicConcernSession(ref, snapshot, publicAuthors)
+                : ref.kind === 'consultation'
+                  ? !!onOpenPublicConsultation && !!publicConsultationIds?.has(ref.id)
+                  : !!onOpenPublicAuthor && !!publicConcernSession(ref, snapshot, publicAuthors)
             }
             onOpenScene={(ref) => {
               if (ref.kind === 'work') {
                 if (works.some((work) => work.id === ref.id)) onOpenPublicWork?.(ref.id);
+                return;
+              }
+              if (ref.kind === 'consultation') {
+                if (publicConsultationIds?.has(ref.id)) onOpenPublicConsultation?.(ref.id);
                 return;
               }
               const target = publicConcernSession(ref, snapshot, publicAuthors);
