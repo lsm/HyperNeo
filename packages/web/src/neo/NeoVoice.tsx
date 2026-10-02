@@ -182,7 +182,7 @@ export function NeoVoice({
             aria-label="Stop recording and keep the text as a draft"
             title="Stop — transcribe into an editable draft, never send"
           >
-            <NeoIcon name="stop" class="h-4 w-4" />
+            <NeoIcon name="stop" class="!h-4 !w-4" />
           </Button>
         </div>
       ) : (
