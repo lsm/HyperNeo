@@ -7,6 +7,7 @@ export interface UseInputDraftResult {
   content: string;
   setContent: (content: string) => void;
   isSavedDraft: (targetSessionId: string, content: string) => boolean;
+  readSavedDraft: (targetSessionId: string) => string | undefined;
   clear: () => void;
   clearSubmitted: (targetSessionId: string, expected: string) => Promise<void>;
   holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -504,6 +505,7 @@ export function useInputDraft(
         return contentSignal.value;
       },
       setContent,
+      readSavedDraft: (targetSessionId) => lastSavedDraftsRef.current.get(targetSessionId),
       isSavedDraft: (targetSessionId, content) =>
         lastSavedDraftsRef.current.get(targetSessionId) === content.trim() &&
         !pendingDraftSavesRef.current.has(targetSessionId),
