@@ -27,6 +27,7 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
+import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
@@ -660,6 +661,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationOperation(service.publish),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
+    createNeoDraftRecoveryOperation(service),
     defineOperation({
       name: 'neo.concern.cancel',
       description:

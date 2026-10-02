@@ -180,6 +180,15 @@ export class NeoConversationAskRepository {
     return read({ conversationId, after, limit, before }, this.db);
   }
 
+  newestFrom(conversationId: string, sessionId: string): NeoConversationAsk | null {
+    const row = this.db
+      .prepare(`SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
+      ORDER BY sequence DESC LIMIT 1`)
+      .get(conversationId, sessionId) as Row | null;
+    return row ? decode(row) : null;
+  }
+
   acceptPrompt(
     conversationId: string,
     message: IntakePrompt,
