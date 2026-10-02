@@ -25,6 +25,10 @@ import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { createNeoPublisher } from './publication-operation.ts';
+import {
+  type NeoDirectReplyRuntime,
+  publishNeoDirectReplyFallback,
+} from './direct-reply-fallback.ts';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -179,6 +183,40 @@ export class NeoService {
       readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
     });
+    const messages = db.getSDKMessageRepo();
+    const directReplies: NeoDirectReplyRuntime = {
+      getBinding: (id) => this.repo.getBindingBySession(id),
+      getRootBinding: () => this.repo.getBindingForConcern(null),
+      newestAsk: (conversationId, id) => this.asks.newestFrom(conversationId, id),
+      isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
+      startedWork: (id, messageId) =>
+        this.consultations
+          .list()
+          .some((item) => item.originSessionId === id && item.originMessageId === messageId) ||
+        this.repo
+          .listWork()
+          .some((work) => work.originSessionId === id && work.originMessageId === messageId),
+      turnEnded: (id, messageId) =>
+        messages.getErrorTerminalResultSubtypeAfter(id, messageId)
+          ? 'failed'
+          : messages.hasTerminalResultAfter(id, messageId)
+            ? 'ended'
+            : 'open',
+      finalText: (id, messageId) => {
+        const askRow = messages.findMessageIdByUuid(id, messageId);
+        if (!askRow) return null;
+        return (
+          messages
+            .getAssistantMessagesSince(id, askRow)
+            .map((item) => item.text)
+            .filter(Boolean)
+            .at(-1) ?? null
+        );
+      },
+      append: (input) => this.publications.append(input),
+      notify: notifyPublication,
+      newId: () => crypto.randomUUID(),
+    };
     this.unsubscribe = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
@@ -191,6 +229,13 @@ export class NeoService {
           );
         }
         const binding = this.repo.getBindingBySession(sessionId);
+        if (binding && binding.kind !== 'worker') {
+          try {
+            publishNeoDirectReplyFallback(sessionId, directReplies);
+          } catch (error) {
+            this.log.warn('Direct reply fallback failed', error);
+          }
+        }
         if (binding?.kind === 'concern' && binding.concernId)
           await this.dispatchConsultationWaiter(binding.concernId).catch((error) =>
             this.log.warn('Consultation admission pending', error)
