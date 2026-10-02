@@ -371,6 +371,32 @@ describe('OpencodeProvider', () => {
     });
   });
 
+  describe('session-scoped base URLs', () => {
+    it('starts the bridge at the session base URL and keeps it separate', async () => {
+      const baseUrls: string[] = [];
+      const provider = makeProvider({ OPENCODE_API_KEY: 'go-key' }, unreachableFetch(), {
+        bridgeFactory: ((config: { baseUrl: string }) => {
+          baseUrls.push(config.baseUrl);
+          return { port: 41234 + baseUrls.length, stop: () => {} };
+        }) as never,
+      });
+
+      await provider.ensureBridgeStarted('glm-5.3', {
+        sessionId: SESSION_ID,
+        baseUrl: 'http://127.0.0.1:9080/go/v1',
+      });
+      await provider.ensureBridgeStarted('glm-5.3', { sessionId: SESSION_ID });
+
+      expect(baseUrls).toEqual(['http://127.0.0.1:9080/go/v1', 'https://opencode.ai/zen/go/v1']);
+      expect(
+        provider.buildSdkConfig('glm-5.3', {
+          sessionId: SESSION_ID,
+          baseUrl: 'http://127.0.0.1:9080/go/v1',
+        }).envVars.ANTHROPIC_BASE_URL
+      ).toBe('http://127.0.0.1:41235');
+    });
+  });
+
   describe('credentials', () => {
     it('does not cache a bridge whose credentials changed mid-build', async () => {
       let release: (() => void) | undefined;

@@ -321,18 +321,23 @@ export class OpencodeProvider implements Provider {
     }`;
   }
 
-  private bridgeKey(modelId: string, apiKey: string | undefined): string {
-    return `${modelId}::${apiKey ?? ''}`;
+  private bridgeKey(modelId: string, apiKey: string | undefined, baseUrl: string): string {
+    return `${modelId}::${apiKey ?? ''}::${baseUrl}`;
   }
 
   private bridgeApiKeyFor(sessionConfig?: ProviderSessionConfig): string | undefined {
     return sessionConfig?.apiKey || this.getApiKey();
   }
 
+  private bridgeBaseUrlFor(sessionConfig?: ProviderSessionConfig): string {
+    return sessionConfig?.baseUrl || OpencodeProvider.CHAT_BASE_URL;
+  }
+
   async ensureBridgeStarted(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void> {
     if (this.usesAnthropicMessages(modelId)) return;
     const apiKey = this.bridgeApiKeyFor(sessionConfig);
-    const key = this.bridgeKey(modelId, apiKey);
+    const baseUrl = this.bridgeBaseUrlFor(sessionConfig);
+    const key = this.bridgeKey(modelId, apiKey, baseUrl);
     if (this.bridges.has(key)) return;
     const inFlight = this.bridgePromises.get(key);
     if (inFlight) {
@@ -343,7 +348,7 @@ export class OpencodeProvider implements Provider {
     const factory = this.options.bridgeFactory ?? createOpenAIChatBridgeServer;
     const ready = Promise.resolve(
       factory({
-        baseUrl: OpencodeProvider.CHAT_BASE_URL,
+        baseUrl: this.bridgeBaseUrlFor(sessionConfig),
         ...(apiKey ? { apiKey } : {}),
         sessionTokenPrefix: OpencodeProvider.SESSION_TOKEN_PREFIX,
         sessionHeaders: (sessionId) => OpencodeProvider.clientHeaders(sessionId),
@@ -400,7 +405,13 @@ export class OpencodeProvider implements Provider {
       };
     }
 
-    const bridge = this.bridges.get(this.bridgeKey(modelId, this.bridgeApiKeyFor(sessionConfig)));
+    const bridge = this.bridges.get(
+      this.bridgeKey(
+        modelId,
+        this.bridgeApiKeyFor(sessionConfig),
+        this.bridgeBaseUrlFor(sessionConfig)
+      )
+    );
     if (!bridge) {
       throw new Error(
         `opencode: bridge not started for model '${modelId}'. ` +
