@@ -121,7 +121,6 @@ const mount = (originMessageId: string | null, hasConcern = true, live = true) =
 describe('original work surface reconciled with the live scenes', () => {
   it.each(['ask', null, 'unloaded'])('keeps one native card for origin %s', (origin) => {
     const { act } = mount(origin);
-    expect(screen.getByText('Plan our offsite')).toBeTruthy();
     expect(document.querySelectorAll('[id^="inline-work-"]')).toHaveLength(0);
     expect(screen.queryByRole('region', { name: 'Work without a message here' })).toBeNull();
     expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);

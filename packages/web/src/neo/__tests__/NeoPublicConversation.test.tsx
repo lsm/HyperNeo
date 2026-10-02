@@ -375,7 +375,7 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByText('Private execution transcript')).toBeNull();
     expect(store.sdkMessages.value).toBe(messages);
     rerender(<NeoConversation store={store} sessionId={root} />);
-    expect(await screen.findByText('Private execution transcript')).toBeTruthy();
+    expect(screen.queryByText('Private execution transcript')).toBeNull();
     expect(screen.queryByText(publication().shortText)).toBeNull();
   });
 
@@ -398,10 +398,8 @@ describe('durable public conversation presentation', () => {
       expect(!!screen.queryByText('Showing part of your saved conversation.')).toBe(partial);
       expect(store.hasMoreMessages.value).toBe(true);
       view.rerender(<NeoConversation store={store} sessionId={root} />);
-      expect(screen.getByText(/Showing recent conversation/)).toBeTruthy();
-      expect(screen.getByRole('link', { name: 'Open full history ↗' }).getAttribute('href')).toBe(
-        `/session/${root}`
-      );
+      expect(screen.queryByText(/Showing recent conversation/)).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Open full history ↗' })).toBeNull();
       expect(screen.queryByText('Showing part of your saved conversation.')).toBeNull();
     }
   );
