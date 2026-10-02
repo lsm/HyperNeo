@@ -34,6 +34,7 @@ export function useInputDraft(
   const lastLoadedDraftRef = useRef<string>('');
   const deferredVoiceAdoptRef = useRef<string | null>(null);
   const submissionHoldsRef = useRef(0);
+  const pendingUnmountFlushRef = useRef<(() => void) | null>(null);
   const loadRequestSeqRef = useRef(0);
 
   const loadDraft = useCallback(
@@ -145,6 +146,9 @@ export function useInputDraft(
       } finally {
         submissionHoldsRef.current -= 1;
         if (submissionHoldsRef.current === 0) {
+          const flush = pendingUnmountFlushRef.current;
+          pendingUnmountFlushRef.current = null;
+          flush?.();
           const live = currentSessionIdRef.current;
           if (live && deferredVoiceAdoptRef.current === live && contentSignal.peek() === '') {
             deferredVoiceAdoptRef.current = null;
@@ -295,10 +299,10 @@ export function useInputDraft(
                 settleCleared();
                 return;
               }
-              clearTyping();
+              if (!flushOnUnmount) clearTyping();
             })
             .catch(() => {
-              clearTyping();
+              if (!flushOnUnmount) clearTyping();
             });
         } else {
           clearTyping();
@@ -335,10 +339,10 @@ export function useInputDraft(
         draftSaveTimeoutRef.current = null;
       }
     };
-  }, [sessionId, contentSignal.value, contentSignal]);
+  }, [sessionId, contentSignal.value, contentSignal, flushOnUnmount]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const flush = () => {
       if (!flushOnUnmount) return;
       const last = lastSeenContentRef.current;
       const content = contentSignal.peek();
@@ -367,9 +371,12 @@ export function useInputDraft(
           metadata: { inputDraft: content.trim() },
         })
         .catch(() => {});
-    },
-    [contentSignal, flushOnUnmount]
-  );
+    };
+    return () => {
+      if (submissionHoldsRef.current > 0) pendingUnmountFlushRef.current = flush;
+      else flush();
+    };
+  }, [contentSignal, flushOnUnmount]);
 
   const setContent = useCallback(
     (newContent: string) => {

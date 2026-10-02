@@ -147,6 +147,91 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each([
+    { accepted: true, saved: false },
+    { accepted: false, saved: false },
+    { accepted: true, saved: true },
+    { accepted: false, saved: true },
+  ])(
+    'settles a Send after unmount without resurrecting accepted text: $accepted/$saved',
+    async ({ accepted, saved }) => {
+      let release!: (value: unknown) => void;
+      const view = mount();
+      await act(async () => {});
+      view.model.value.send.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          })
+      );
+      type('Fictional pending submission');
+      await act(async () => {});
+      if (saved)
+        await waitFor(() => expect(persisted.get(root)).toBe('Fictional pending submission'));
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      view.unmount();
+      expect(persisted.get(root) ?? '').toBe(saved ? 'Fictional pending submission' : '');
+      await act(async () => {
+        release(
+          accepted
+            ? { ok: true, created: true, messageId: 'late-send' }
+            : { ok: false, reason: 'Fictional refusal' }
+        );
+      });
+      await waitFor(() =>
+        expect(persisted.get(root) ?? '').toBe(accepted ? '' : 'Fictional pending submission')
+      );
+      mount();
+      await waitFor(() => expect(value()).toBe(accepted ? '' : 'Fictional pending submission'));
+    }
+  );
+
+  it('preserves a newer edit while a submission settles after unmount', async () => {
+    let release!: (value: unknown) => void;
+    const view = mount();
+    await act(async () => {});
+    view.model.value.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    type('Fictional submitted text');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    type('Newer fictional edit');
+    view.unmount();
+    await act(async () => {
+      release({ ok: true, created: true, messageId: 'late-send' });
+    });
+    await waitFor(() => expect(persisted.get(root)).toBe('Newer fictional edit'));
+    mount();
+    await waitFor(() => expect(value()).toBe('Newer fictional edit'));
+  });
+
+  it.each(['mismatch', 'fault'])(
+    'preserves concurrent durable text on a mounted clear %s',
+    async (outcome) => {
+      mount();
+      type('Fictional original text');
+      await waitFor(() => expect(persisted.get(root)).toBe('Fictional original text'));
+      persisted.set(root, 'Concurrent durable text');
+      const original = seams.request.getMockImplementation()!;
+      seams.request.mockImplementation(async (method, input) => {
+        if (method === 'session.clearInputDraftIf') {
+          if (outcome === 'fault') throw new Error('Fictional clear fault');
+          return { cleared: false };
+        }
+        return original(method, input);
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(value()).toBe(''));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(persisted.get(root)).toBe('Concurrent durable text');
+    }
+  );
+
   it('does not mirror a late root transcript into the current holder draft', async () => {
     let release!: (result: unknown) => void;
     voice.recording = true;
@@ -194,6 +279,10 @@ describe('Neo real composer draft recovery', () => {
       view.store.activeSessionId.value = root;
       view.model.value = { ...view.model.value, sessionId: root, selectedId: null };
     });
+    await waitFor(() => expect(value()).toBe('Late fictional root transcript'));
+    await waitFor(() => expect(persisted.get(root)).toBe('Late fictional root transcript'));
+    view.unmount();
+    mount();
     await waitFor(() => expect(value()).toBe('Late fictional root transcript'));
   });
 

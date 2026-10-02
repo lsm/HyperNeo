@@ -197,6 +197,10 @@ export function NeoLive() {
     setDrafts((items) => ({ ...items, [draftKey]: text }));
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
   }
+  useEffect(() => {
+    const cached = drafts[draftKey];
+    if (sceneScope && cached !== undefined) inputDraft.setContent(cached);
+  }, [sceneScope]);
   useNeoVoiceRecovery(
     neo.sessionId,
     drafts[draftKey] ?? '',
@@ -696,7 +700,19 @@ export function NeoLive() {
                 writeDraft([drafts[draftKey], text].filter(Boolean).join('\n'))
               }
               onError={neo.setError}
-              onSend={(input) => inputDraft.holdDraftAdoption(() => neo.send(input))}
+              onSend={(input) => {
+                const submitted = drafts[draftKey] ?? '';
+                return inputDraft.holdDraftAdoption(async () => {
+                  const receipt = await neo.send(input);
+                  if (
+                    receipt.ok &&
+                    currentScope.current === sceneScope &&
+                    inputDraft.content === submitted
+                  )
+                    inputDraft.clear();
+                  return receipt;
+                });
+              }}
             />
           )}
           <p class="mt-2 text-center text-[10px] text-fg-faint">
