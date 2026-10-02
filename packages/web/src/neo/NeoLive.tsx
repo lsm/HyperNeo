@@ -17,6 +17,7 @@ import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
+import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { type NeoSceneRef, projectNeoScenes, selectNeoScene } from './neo-scenes.ts';
@@ -30,6 +31,7 @@ export function NeoLive() {
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
+  const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
   const footer = useRef<HTMLElement>(null);
@@ -709,17 +711,32 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               draft={drafts[draftKey] ?? ''}
-              onDraft={writeDraft}
+              onDraft={(text) => {
+                if (
+                  !reloadBuffer.remember(
+                    neo.sessionId ?? '',
+                    text,
+                    inputDraft.readSavedDraft(neo.sessionId ?? '')
+                  )
+                )
+                  neo.setError(
+                    'This edit could not be backed up for reload. Keep this page open until it is saved.'
+                  );
+                writeDraft(text);
+              }}
               onTranscript={(text) =>
                 writeDraft([drafts[draftKey], text].filter(Boolean).join('\n'))
               }
               onError={neo.setError}
               onSend={(input) => {
                 const submitted = drafts[draftKey] ?? '';
+                const captured = reloadBuffer.read(neo.sessionId ?? '');
                 return inputDraft.holdDraftAdoption(async () => {
                   const receipt = await neo.send(input);
                   if (receipt.ok) {
                     await inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
+                    if (captured?.text === submitted)
+                      reloadBuffer.forget(neo.sessionId ?? '', captured.id);
                     setDrafts((items) =>
                       items[draftKey] === submitted ? { ...items, [draftKey]: '' } : items
                     );
