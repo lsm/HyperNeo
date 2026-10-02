@@ -260,6 +260,16 @@ export function NeoPublicConversation({
           snapshot={snapshot}
         />
       ))}
+      {conversation.hasMore && onRetry && (
+        <button
+          type="button"
+          class="text-sm text-accent hover:underline"
+          disabled={conversation.status !== 'ready'}
+          onClick={onRetry}
+        >
+          Load more saved conversation
+        </button>
+      )}
     </div>
   );
 }
