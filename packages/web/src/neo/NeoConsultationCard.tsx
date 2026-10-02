@@ -28,13 +28,14 @@ export function NeoConsultationCard({
   disabled?: boolean;
 }) {
   const truth = classifyNeoScene(consultation);
-  if (presentation === 'summary' && onOpen)
+  if (presentation === 'summary')
     return (
       <button
         type="button"
         data-consultation-open={consultation.id}
         aria-label={`View details for ${label}`}
-        onClick={() => onOpen(consultation.id)}
+        disabled={!onOpen}
+        onClick={() => onOpen?.(consultation.id)}
         class="flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left hover:border-accent/40 focus-visible:outline-accent"
       >
         <span aria-hidden="true" class="shrink-0 text-fg-muted">

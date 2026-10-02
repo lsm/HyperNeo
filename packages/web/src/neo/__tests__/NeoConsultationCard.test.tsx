@@ -117,12 +117,25 @@ describe('Neo consultation card presentation', () => {
         consultation={receipt('pending')}
         label="Fictional context check"
         holderName="Fictional garden"
-        presentation="summary"
       />
     );
     expect(screen.getByRole('article', { name: 'Fictional context check' })).toBeTruthy();
     expect(screen.getByText('Context held by Fictional garden')).toBeTruthy();
     expect(screen.queryAllByRole('button')).toEqual([]);
+  });
+
+  it('keeps a summary non-owning when its opener disappears but action callbacks remain', () => {
+    const bindings = props('queued');
+    const view = render(
+      <NeoConsultationCard {...bindings} onOpen={undefined} presentation="summary" />
+    );
+    const opener = screen.getByRole('button', { name: 'View details for Fictional context check' });
+    expect(opener.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(opener);
+    expect(view.container.querySelector('article, details, textarea, input, a')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    expect(bindings.onStopWaiting).not.toHaveBeenCalled();
+    expect(bindings.onOpenHolder).not.toHaveBeenCalled();
   });
 
   it('rebinds closure to the current receipt and removes it on a reported transition', () => {
