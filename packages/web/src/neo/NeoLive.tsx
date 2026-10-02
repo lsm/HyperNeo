@@ -456,6 +456,7 @@ export function NeoLive() {
               publicConversation={publicConversation}
               publicAuthors={neo.publicAuthors}
               onOpenPublicAuthor={openPublicAuthor}
+              onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
             />
           ) : (
