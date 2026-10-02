@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   NeoConsultation,
@@ -151,6 +152,35 @@ const openCheck = (container: Element, id: string) => {
 };
 
 describe('Neo public mixed consultation scenes', () => {
+  it('keeps the empty-scene notice visible when the only receipt is in full detail', () => {
+    const { container, model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewSnapshot: {
+          ...model.value.viewSnapshot,
+          work: [],
+          consultations: [consultation('reported', 'reported')],
+          consultationWaiters: [],
+        },
+      };
+    });
+    openCheck(container, 'reported');
+    const list = screen.getByRole('region', { name: 'Work scenes' });
+    expect(list.querySelector('[data-scene-group]')).toBeNull();
+    expect(list.textContent).toBe('No other scenes right now.');
+    const css = readFileSync('src/neo/neo.css', 'utf8');
+    const rule = css.match(/\.neo-scene-list:empty\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0];
+    expect(rule).toBeTruthy();
+    const style = document.createElement('style');
+    style.textContent = rule!;
+    document.head.append(style);
+    expect(getComputedStyle(list).display).not.toBe('none');
+    list.replaceChildren();
+    expect(getComputedStyle(list).display).toBe('none');
+    style.remove();
+  });
+
   it('shows all four context-check statuses with truthful counts and non-actionable running/outcome summaries', () => {
     const { container, model } = mount();
     for (const [name, count] of [
