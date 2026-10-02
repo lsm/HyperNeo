@@ -503,6 +503,16 @@ export function NeoLive() {
               publicAuthors={neo.publicAuthors}
               onOpenPublicAuthor={openPublicAuthor}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
+              publicConsultationIds={
+                new Set(
+                  sceneGroups.flatMap((group) =>
+                    group.scenes.flatMap((scene) =>
+                      scene.ref.kind === 'consultation' ? [scene.ref.id] : []
+                    )
+                  )
+                )
+              }
+              onOpenPublicConsultation={(id) => openScene({ kind: 'consultation', id })}
               onRetryPublic={retryPublicConversation}
             />
           ) : (
