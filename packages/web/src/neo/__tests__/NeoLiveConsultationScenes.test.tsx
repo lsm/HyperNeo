@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { readFileSync } from 'node:fs';
+import { URL as NodeURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   NeoConsultation,
@@ -170,7 +171,7 @@ describe('Neo public mixed consultation scenes', () => {
     expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
     expect(list.querySelector('[data-scene-group]')).toBeNull();
     expect(list.textContent).toBe('No other scenes right now.');
-    const css = readFileSync('src/neo/neo.css', 'utf8');
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const rule = css.match(/\.neo-scene-list:empty\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0];
     expect(rule).toBeTruthy();
     const style = document.createElement('style');
