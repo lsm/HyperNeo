@@ -428,7 +428,7 @@ export function useInputDraft(
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
       if (!content.trim()) {
-        if (!renderedSession) return;
+        if (!renderedSession || !last.cleared) return;
         const prior = lastNonEmptyContentRef.current;
         if (prior.sessionId !== last.sessionId || !prior.content.trim()) return;
         void hub

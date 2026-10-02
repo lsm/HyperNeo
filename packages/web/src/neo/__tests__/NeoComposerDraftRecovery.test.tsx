@@ -148,6 +148,80 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each(
+    [root, holder].flatMap((owner) =>
+      [false, true].flatMap((adopted) =>
+        [false, true].map((concurrent) => ({ owner, adopted, concurrent }))
+      )
+    )
+  )(
+    'keeps the durable draft when unmounted during scope-return loading: $owner/$adopted/$concurrent',
+    async ({ owner, adopted, concurrent }) => {
+      const text = 'Saved scope-return draft';
+      if (adopted) persisted.set(owner, text);
+      const view = mount();
+      const select = (sessionId: string) =>
+        act(() => {
+          view.store.activeSessionId.value = sessionId;
+          view.model.value = {
+            ...view.model.value,
+            sessionId,
+            selectedId: sessionId === root ? null : 'garden',
+          };
+        });
+      await act(async () => {});
+      if (owner === holder) select(holder);
+      await act(async () => {});
+      if (!adopted) type(text);
+      await waitFor(() => expect(value()).toBe(text));
+      await waitFor(() => expect(persisted.get(owner)).toBe(text));
+      select(owner === root ? holder : root);
+      await act(async () => {});
+      const expected = concurrent ? 'Concurrent scope-return draft' : text;
+      persisted.set(owner, expected);
+      let release!: (value: unknown) => void;
+      slowLoad = new Promise((resolve) => {
+        release = resolve;
+      });
+      const before = seams.request.mock.calls.length;
+      select(owner);
+      await waitFor(() =>
+        expect(
+          seams.request.mock.calls
+            .slice(before)
+            .some(([method, input]) => method === 'session.get' && input.sessionId === owner)
+        ).toBe(true)
+      );
+      expect(value()).toBe('');
+      view.unmount();
+      await act(async () => {});
+      expect(persisted.get(owner)).toBe(expected);
+      expect(
+        seams.request.mock.calls
+          .slice(before)
+          .filter(
+            ([method, input]) => method === 'session.clearInputDraftIf' && input.sessionId === owner
+          )
+      ).toHaveLength(0);
+      await act(async () => {
+        release({ session: { metadata: { inputDraft: expected } } });
+      });
+      slowLoad = null;
+      expect(persisted.get(owner)).toBe(expected);
+      const remounted = mount();
+      if (owner === holder)
+        act(() => {
+          remounted.store.activeSessionId.value = holder;
+          remounted.model.value = {
+            ...remounted.model.value,
+            sessionId: holder,
+            selectedId: 'garden',
+          };
+        });
+      await waitFor(() => expect(value()).toBe(expected));
+    }
+  );
+
   it.each([false, true])(
     'clears an edited saved draft without clearing concurrent text: %s',
     async (concurrent) => {
