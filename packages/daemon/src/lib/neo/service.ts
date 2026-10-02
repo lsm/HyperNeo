@@ -195,7 +195,10 @@ export class NeoService {
           .some((item) => item.originSessionId === id && item.originMessageId === messageId) ||
         this.repo
           .listWork()
-          .some((work) => work.originSessionId === id && work.originMessageId === messageId),
+          .some((work) => work.originSessionId === id && work.originMessageId === messageId) ||
+        this.consultationWaiters
+          .queued()
+          .some((item) => item.originSessionId === id && item.originMessageId === messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       append: (input) => this.publications.append(input),
       notify: notifyPublication,

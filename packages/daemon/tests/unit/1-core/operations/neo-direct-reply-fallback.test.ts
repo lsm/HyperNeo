@@ -10,6 +10,13 @@ import {
   requireUnpublishedDirectAnswer,
 } from '../../../../src/lib/neo/direct-reply-fallback.ts';
 import { readNeoTurnReply } from '../../../../src/lib/neo/turn-reply.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
+import {
+  InternalEventBus,
+  type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus.ts';
+import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import type { MessageHub } from '@hyperneo/shared';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -190,5 +197,71 @@ describe('readNeoTurnReply', () => {
     save(result('a-done', 'error_during_execution'), askA);
     expect(readNeoTurnReply(db, root, askA)).toEqual({ status: 'failed', text: 'Partial answer' });
     expect(readNeoTurnReply(db, root, 'missing')).toEqual({ status: 'open', text: null });
+  });
+});
+
+describe('NeoService direct reply fallback wiring', () => {
+  let db: Database;
+  let events: InternalEventBus<DaemonInternalEventMap>;
+  let service: NeoService;
+  beforeEach(async () => {
+    db = await createTestDb();
+    events = new InternalEventBus<DaemonInternalEventMap>();
+    service = new NeoService(
+      db,
+      { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
+      { event: vi.fn() } as unknown as MessageHub,
+      events
+    );
+    for (const id of [root, holder]) db.createSession(createTestSession(id));
+    service.repo.saveConcern({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
+    service.repo.reserveBinding({ sessionId: root, concernId: null, kind: 'neo' });
+    service.repo.reserveBinding({ sessionId: holder, concernId: 'garden', kind: 'concern' });
+    const { sequence: _sequence, createdAt: _createdAt, ...input } = ask(askA);
+    expect(service.asks.append(input).accepted).toBe(true);
+    for (const message of [
+      {
+        type: 'assistant',
+        uuid: 'reply',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: 'Let me check with Garden.' },
+      },
+      { type: 'result', uuid: 'done', subtype: 'success' },
+    ])
+      db.getSDKMessageRepo().saveSDKMessage(root, {
+        session_id: root,
+        ...message,
+        neoInputOrigin: { sessionId: root, messageId: askA },
+      } as unknown as SDKMessage);
+  });
+  afterEach(() => {
+    service.dispose();
+    db.close();
+  });
+  const idle = () =>
+    events.publish('session.updated', { sessionId: root, processingState: { status: 'idle' } });
+  const published = () => service.publications.list(conversationId, 0, 50) ?? [];
+
+  test('keeps a pending line unpublished while its consultation is still queued', async () => {
+    service.consultationWaiters.enqueue({
+      id: 'waiter',
+      requestKey: 'check-garden',
+      concernId: 'garden',
+      originSessionId: root,
+      originMessageId: askA,
+      sessionId: holder,
+      question: 'What is planted?',
+    });
+    await idle();
+    expect(published()).toEqual([]);
+  });
+
+  test('publishes the finished reply once nothing is pending for its ask', async () => {
+    await idle();
+    expect(published().map((item) => [item.producerInput.messageId, item.fullText])).toEqual([
+      [askA, 'Let me check with Garden.'],
+    ]);
+    await idle();
+    expect(published()).toHaveLength(1);
   });
 });
