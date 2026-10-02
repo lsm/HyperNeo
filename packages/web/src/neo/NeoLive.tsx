@@ -208,7 +208,8 @@ export function NeoLive() {
     neo.sessionId,
     drafts[draftKey] ?? '',
     () => drafts[draftKey] ?? '',
-    writeDraft
+    writeDraft,
+    false
   );
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;

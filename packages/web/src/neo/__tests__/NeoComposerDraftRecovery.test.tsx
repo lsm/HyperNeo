@@ -148,6 +148,98 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each([false, true])(
+    'clears an edited saved draft without clearing concurrent text: %s',
+    async (concurrent) => {
+      const view = mount();
+      await act(async () => {});
+      type('Earlier manually saved draft');
+      await waitFor(() => expect(persisted.get(root)).toBe('Earlier manually saved draft'));
+      type('Latest unsaved manual edit');
+      await act(async () => {});
+      if (concurrent) persisted.set(root, 'Concurrent manual-clear draft');
+      type('');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(value()).toBe('');
+      expect(persisted.get(root)).toBe(concurrent ? 'Concurrent manual-clear draft' : '');
+      expect(
+        seams.request.mock.calls.some(
+          ([method, input]) => method === 'session.update' && input.metadata?.inputDraft === null
+        )
+      ).toBe(false);
+      view.unmount();
+      mount();
+      await waitFor(() => expect(value()).toBe(concurrent ? 'Concurrent manual-clear draft' : ''));
+    }
+  );
+
+  it.each([
+    { reverse: false, concurrent: false },
+    { reverse: true, concurrent: false },
+    { reverse: false, concurrent: true },
+    { reverse: true, concurrent: true },
+  ])(
+    'drains both overlapping saves before accepted clear: $reverse/$concurrent',
+    async ({ reverse, concurrent }) => {
+      const view = mount();
+      await act(async () => {});
+      const earlier = 'Earlier overlapping save';
+      const latest = 'Latest overlapping save';
+      const releases = new Map<string, () => void>();
+      const original = seams.request.getMockImplementation()!;
+      let completed = 0;
+      seams.request.mockImplementation(async (method, input) => {
+        const text = input.metadata?.inputDraft;
+        if (method === 'session.update' && (text === earlier || text === latest)) {
+          await new Promise<void>((resolve) => releases.set(text, resolve));
+          const result = await original(method, input);
+          completed += 1;
+          if (completed === 2 && concurrent) persisted.set(root, 'Concurrent overlapping draft');
+          return result;
+        }
+        return original(method, input);
+      });
+      type(earlier);
+      await waitFor(() => expect(releases.has(earlier)).toBe(true));
+      type(latest);
+      await waitFor(() => expect(releases.has(latest)).toBe(true));
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      const order = reverse ? [latest, earlier] : [earlier, latest];
+      await act(async () => {
+        releases.get(order[0])!();
+      });
+      await act(async () => {
+        releases.get(order[1])!();
+      });
+      await waitFor(() => expect(value()).toBe(''));
+      expect(persisted.get(root)).toBe(concurrent ? 'Concurrent overlapping draft' : '');
+      view.unmount();
+      mount();
+      await waitFor(() => expect(value()).toBe(concurrent ? 'Concurrent overlapping draft' : ''));
+    }
+  );
+
+  it('does not write an initial recovered snapshot over newer durable text', async () => {
+    persisted.set(root, 'Initial recovered snapshot');
+    const original = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.get') {
+        const response = { session: { metadata: { inputDraft: 'Initial recovered snapshot' } } };
+        persisted.set(root, 'Concurrent initial recovery draft');
+        return response;
+      }
+      return original(method, input);
+    });
+    mount();
+    await waitFor(() => expect(value()).toBe('Initial recovered snapshot'));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(persisted.get(root)).toBe('Concurrent initial recovery draft');
+    expect(seams.request.mock.calls.filter(([method]) => method === 'session.update')).toHaveLength(
+      0
+    );
+  });
+
   it.each([
     { owner: root, replacement: 'Reload-restored draft' },
     { owner: holder, replacement: 'Reload-restored draft' },

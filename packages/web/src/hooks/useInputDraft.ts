@@ -285,11 +285,16 @@ export function useInputDraft(
         .then(() => {
           if (flushOnUnmount) lastSavedDraftsRef.current.set(prevSessionId, flushContent);
         });
-      if (flushOnUnmount) pendingDraftSavesRef.current.set(prevSessionId, save);
-      void save
+      const priorSave = pendingDraftSavesRef.current.get(prevSessionId);
+      const pending =
+        flushOnUnmount && priorSave
+          ? Promise.all([priorSave.catch(() => {}), save.catch(() => {})]).then(() => {})
+          : save;
+      if (flushOnUnmount) pendingDraftSavesRef.current.set(prevSessionId, pending);
+      void pending
         .catch(() => {})
         .finally(() => {
-          if (pendingDraftSavesRef.current.get(prevSessionId) === save)
+          if (pendingDraftSavesRef.current.get(prevSessionId) === pending)
             pendingDraftSavesRef.current.delete(prevSessionId);
         });
       return;
@@ -321,11 +326,26 @@ export function useInputDraft(
         };
         const prior = lastNonEmptyContentRef.current;
         if (prior && prior.sessionId === sessionId && prior.content.trim() !== '') {
-          hub
-            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+          const clearLatest = async () => {
+            if (flushOnUnmount) await pendingDraftSavesRef.current.get(sessionId)?.catch(() => {});
+            const result = await hub.request<{ cleared?: boolean }>('session.clearInputDraftIf', {
               sessionId,
               expected: prior.content,
-            })
+            });
+            const saved = lastSavedDraftsRef.current.get(sessionId);
+            if (
+              flushOnUnmount &&
+              result?.cleared === false &&
+              saved &&
+              saved !== prior.content.trim()
+            )
+              return hub.request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId,
+                expected: saved,
+              });
+            return result;
+          };
+          void clearLatest()
             .then((res) => {
               if (res?.cleared) {
                 settleCleared();
@@ -371,12 +391,16 @@ export function useInputDraft(
         .then(() => {
           lastSavedDraftsRef.current.set(sessionId, trimmedContent);
         });
-      pendingDraftSavesRef.current.set(sessionId, save);
+      const priorSave = pendingDraftSavesRef.current.get(sessionId);
+      const pending = priorSave
+        ? Promise.all([priorSave.catch(() => {}), save.catch(() => {})]).then(() => {})
+        : save;
+      pendingDraftSavesRef.current.set(sessionId, pending);
       try {
-        await save;
+        await pending;
       } catch {
       } finally {
-        if (pendingDraftSavesRef.current.get(sessionId) === save)
+        if (pendingDraftSavesRef.current.get(sessionId) === pending)
           pendingDraftSavesRef.current.delete(sessionId);
       }
     }, debounceMs);

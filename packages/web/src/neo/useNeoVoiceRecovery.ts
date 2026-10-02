@@ -6,7 +6,8 @@ export function useNeoVoiceRecovery(
   sessionId: string | null,
   draftValue: string,
   readDraft: () => string,
-  writeDraft: (text: string) => void
+  writeDraft: (text: string) => void,
+  persistRecoveredDraft = true
 ): void {
   const readRef = useRef(readDraft);
   readRef.current = readDraft;
@@ -64,6 +65,7 @@ export function useNeoVoiceRecovery(
         if (readRef.current().trim() !== '') return;
         adoptedRef.current = { sessionId, draft: composed };
         writeRef.current(composed);
+        if (!persistRecoveredDraft) return;
         await hub.request('session.update', {
           sessionId,
           metadata: { inputDraft: composed },
@@ -103,5 +105,5 @@ export function useNeoVoiceRecovery(
       unsubscribeConnection();
       if (unsubEvent) unsubEvent();
     };
-  }, [sessionId]);
+  }, [sessionId, persistRecoveredDraft]);
 }
