@@ -153,7 +153,7 @@ describe('Neo world briefing delivery', () => {
     expect(root).toContain('consult its holder before giving the substantive answer');
     expect(holder).toContain('context holder (分身) for concern "saas"');
     expect(holder).toContain('Use the consultationId from that request, not a work id');
-    expect(holder).toContain('Ordinary assistant text alone does not return an answer to Neo');
+    expect(holder).toContain('complete its requested return operation before ending your turn');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
   });
 

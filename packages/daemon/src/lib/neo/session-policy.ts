@@ -34,7 +34,7 @@ export function restrictNeoQuery(
   options: Options,
   concernId: string | null = null,
   sessionId?: string,
-  replyFormat: NeoConsultationReplyFormat = 'legacy'
+  replyFormat: NeoConsultationReplyFormat = 'published'
 ): void {
   if (sessionId) {
     options.cwd = neoCoordinatorRuntimePath(sessionId);

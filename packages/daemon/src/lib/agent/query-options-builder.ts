@@ -290,7 +290,7 @@ export class QueryOptionsBuilder {
 
   constructor(
     private ctx: QueryOptionsBuilderContext,
-    private readonly neoReplyFormat: NeoConsultationReplyFormat = 'legacy'
+    private readonly neoReplyFormat: NeoConsultationReplyFormat = 'published'
   ) {}
 
   setAskUserQuestionHook(hook: HookCallback): void {

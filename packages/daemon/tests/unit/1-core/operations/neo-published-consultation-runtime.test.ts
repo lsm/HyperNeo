@@ -121,7 +121,7 @@ describe('published consultation runtime activation', () => {
     expect(queued[0].payload).toMatchObject({
       message: {
         message: {
-          content: neoConsultationRequestContent(item),
+          content: neoConsultationRequestContent(item, 'legacy'),
         },
       },
     });
