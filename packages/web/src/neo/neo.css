@@ -416,6 +416,9 @@
 }
 
 @media (min-width: 1120px) {
+  .neo-mobile-detail:not(.neo-scene-detail) {
+    display: none;
+  }
   .neo-public-layout {
     --neo-chat-width: 100%;
   }
@@ -503,5 +506,53 @@
   }
   .neo-public-layout.neo-has-scenes .neo-composer-dock {
     transition: width 360ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  }
+}
+
+@media (max-width: 1119px) {
+  .neo-public-layout .neo-mobile-detail {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 24px 20px 32px;
+    overflow-y: auto;
+    background: var(--neo-background);
+    transform: translateX(100%);
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .neo-public-layout.neo-detail-open .neo-mobile-detail {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .neo-public-layout.neo-detail-open .neo-scroll {
+    overflow: hidden;
+  }
+  .neo-public-layout.neo-detail-open .neo-chat-rail,
+  .neo-public-layout.neo-detail-open .neo-scene-list,
+  .neo-public-layout.neo-detail-open .neo-composer-dock {
+    transform: translateX(-100%);
+  }
+}
+
+@media (max-width: 1119px) and (prefers-reduced-motion: no-preference) {
+  .neo-public-layout .neo-chat-rail,
+  .neo-public-layout .neo-scene-list,
+  .neo-public-layout .neo-composer-dock {
+    transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  }
+  .neo-public-layout .neo-mobile-detail {
+    transition:
+      transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      visibility 0s 300ms;
+  }
+  .neo-public-layout.neo-detail-open .neo-mobile-detail {
+    transition:
+      transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      visibility 0s;
   }
 }
