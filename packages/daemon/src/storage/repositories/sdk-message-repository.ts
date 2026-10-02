@@ -150,13 +150,22 @@ export const HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL = `SELECT 1
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
           LIMIT 1`;
 
-export const GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL = `SELECT r.message_subtype AS subtype
+export const GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL = `SELECT CASE
+            WHEN r.message_subtype = 'success' THEN 'error'
+            ELSE r.message_subtype END AS subtype
            FROM sdk_messages r
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
             AND r.message_subtype IS NOT NULL
-            AND r.message_subtype != 'success'
+            AND (r.message_subtype != 'success' OR (
+              json_extract(r.sdk_message, '$.is_error') = 1
+              AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
+              AND NOT (
+                COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+                AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+              )
+            ))
             AND r.parent_tool_use_id IS NULL
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
