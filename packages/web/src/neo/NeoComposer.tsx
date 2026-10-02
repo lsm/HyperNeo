@@ -266,7 +266,7 @@ export function NeoComposer({
               aria-label="Stop Neo"
               title="Stop Neo"
             >
-              <NeoIcon name="stop" class="!h-4 !w-4" />
+              <NeoIcon name="stop" />
             </Button>
           ) : (
             <Button
