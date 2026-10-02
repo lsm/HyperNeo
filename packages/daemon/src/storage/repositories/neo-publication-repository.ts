@@ -14,6 +14,7 @@ const page = z.object({
   conversationId: z.string().uuid(),
   after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   limit: z.number().int().min(1).max(100),
+  before: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 function decode(row: Row): NeoPublication {
@@ -76,9 +77,14 @@ const readPage = (superpipe({})('neo-publication-page') as PipelineAPI)
     (db: Database, input: z.infer<typeof page>) =>
       (
         db
-          .prepare(`SELECT ${columns} FROM neo_publications
-        WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`)
-          .all(input.conversationId, input.after, input.limit) as Row[]
+          .prepare(
+            input.before === undefined
+              ? `SELECT ${columns} FROM neo_publications
+        WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`
+              : `SELECT * FROM (SELECT ${columns} FROM neo_publications
+        WHERE conversation_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?) ORDER BY sequence`
+          )
+          .all(input.conversationId, input.before ?? input.after, input.limit) as Row[]
       ).map(decode),
     ['db', 'publications'],
     'publications'
@@ -102,8 +108,8 @@ export class NeoPublicationRepository {
     return row ? decode(row) : null;
   }
 
-  list(conversationId: string, after = 0, limit = 50): NeoPublication[] | null {
-    return readPage({ conversationId, after, limit }, this.db);
+  list(conversationId: string, after = 0, limit = 50, before?: number): NeoPublication[] | null {
+    return readPage({ conversationId, after, limit, before }, this.db);
   }
 
   findByProducer(sessionId: string, messageId: string): NeoPublication | null {
