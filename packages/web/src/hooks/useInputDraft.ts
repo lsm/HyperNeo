@@ -1,17 +1,25 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
-import { useSignal, useSignalEffect } from '@preact/signals';
+import { useSignal } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 
 export interface UseInputDraftResult {
   content: string;
   setContent: (content: string) => void;
+  isSavedDraft: (targetSessionId: string, content: string) => boolean;
   clear: () => void;
+  clearSubmitted: (targetSessionId: string, expected: string) => Promise<void>;
   holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
-export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraftResult {
+export function useInputDraft(
+  sessionId: string,
+  debounceMs = 250,
+  flushOnUnmount = false
+): UseInputDraftResult {
   const contentSignal = useSignal('');
+  const flushSessionIdRef = useRef(sessionId);
+  flushSessionIdRef.current = sessionId;
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef(sessionId);
@@ -26,8 +34,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     content: '',
   });
   const lastLoadedDraftRef = useRef<string>('');
+  const lastSavedDraftsRef = useRef(new Map<string, string>());
+  const pendingDraftSavesRef = useRef(new Map<string, Promise<void>>());
   const deferredVoiceAdoptRef = useRef<string | null>(null);
   const submissionHoldsRef = useRef(0);
+  const pendingUnmountFlushRef = useRef<(() => void) | null>(null);
   const loadRequestSeqRef = useRef(0);
 
   const loadDraft = useCallback(
@@ -57,6 +68,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           if (applied) {
             contentSignal.value = draft;
             lastLoadedDraftRef.current = draft;
+            lastSavedDraftsRef.current.set(targetSessionId, draft);
             if (draft.trim() !== '') {
               lastNonEmptyContentRef.current = { sessionId: targetSessionId, content: draft };
             }
@@ -111,6 +123,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             clearTimeout(draftSaveTimeoutRef.current);
             draftSaveTimeoutRef.current = null;
           }
+          if (flushOnUnmount) return;
           const hubNow = connectionManager.getHubIfConnected();
           if (!hubNow) {
             deferredVoiceAdoptRef.current = targetSessionId;
@@ -128,7 +141,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         adoptable
       );
     },
-    [contentSignal, loadDraft]
+    [contentSignal, loadDraft, flushOnUnmount]
   );
 
   const holdDraftAdoption = useCallback(
@@ -139,6 +152,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       } finally {
         submissionHoldsRef.current -= 1;
         if (submissionHoldsRef.current === 0) {
+          const flush = pendingUnmountFlushRef.current;
+          pendingUnmountFlushRef.current = null;
+          flush?.();
           const live = currentSessionIdRef.current;
           if (live && deferredVoiceAdoptRef.current === live && contentSignal.peek() === '') {
             deferredVoiceAdoptRef.current = null;
@@ -225,7 +241,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
   }, [sessionId, issueAdoptionRefresh]);
 
-  useSignalEffect(() => {
+  useEffect(() => {
     const content = contentSignal.value;
 
     if (!sessionId) return;
@@ -242,14 +258,45 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!flushContent && !wasCleared) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
-      hub
+      if (flushOnUnmount && wasCleared) {
+        const prior = lastNonEmptyContentRef.current;
+        if (prior.sessionId === prevSessionId && prior.content.trim())
+          void hub
+            .request('session.clearInputDraftIf', {
+              sessionId: prevSessionId,
+              expected: prior.content.trim(),
+            })
+            .catch(() => {});
+        return;
+      }
+      if (
+        flushOnUnmount &&
+        lastSavedDraftsRef.current.get(prevSessionId) === flushContent &&
+        !pendingDraftSavesRef.current.has(prevSessionId)
+      )
+        return;
+      const save = hub
         .request('session.update', {
           sessionId: prevSessionId,
           metadata: {
             inputDraft: flushContent || null,
           },
         })
-        .catch(() => {});
+        .then(() => {
+          if (flushOnUnmount) lastSavedDraftsRef.current.set(prevSessionId, flushContent);
+        });
+      const priorSave = pendingDraftSavesRef.current.get(prevSessionId);
+      const pending =
+        flushOnUnmount && priorSave
+          ? Promise.all([priorSave.catch(() => {}), save.catch(() => {})]).then(() => {})
+          : save;
+      if (flushOnUnmount) pendingDraftSavesRef.current.set(prevSessionId, pending);
+      void pending
+        .catch(() => {})
+        .finally(() => {
+          if (pendingDraftSavesRef.current.get(prevSessionId) === pending)
+            pendingDraftSavesRef.current.delete(prevSessionId);
+        });
       return;
     }
     prevSessionIdRef.current = sessionId;
@@ -279,20 +326,35 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         };
         const prior = lastNonEmptyContentRef.current;
         if (prior && prior.sessionId === sessionId && prior.content.trim() !== '') {
-          hub
-            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+          const clearLatest = async () => {
+            if (flushOnUnmount) await pendingDraftSavesRef.current.get(sessionId)?.catch(() => {});
+            const result = await hub.request<{ cleared?: boolean }>('session.clearInputDraftIf', {
               sessionId,
               expected: prior.content,
-            })
+            });
+            const saved = lastSavedDraftsRef.current.get(sessionId);
+            if (
+              flushOnUnmount &&
+              result?.cleared === false &&
+              saved &&
+              saved !== prior.content.trim()
+            )
+              return hub.request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId,
+                expected: saved,
+              });
+            return result;
+          };
+          void clearLatest()
             .then((res) => {
               if (res?.cleared) {
                 settleCleared();
                 return;
               }
-              clearTyping();
+              if (!flushOnUnmount) clearTyping();
             })
             .catch(() => {
-              clearTyping();
+              if (!flushOnUnmount) clearTyping();
             });
         } else {
           clearTyping();
@@ -308,19 +370,39 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     initialLoadSettledRef.current = sessionId;
     lastSeenContentRef.current = { sessionId, content };
     lastNonEmptyContentRef.current = { sessionId, content };
+    if (
+      flushOnUnmount &&
+      lastSavedDraftsRef.current.get(sessionId) === trimmedContent &&
+      !pendingDraftSavesRef.current.has(sessionId)
+    )
+      return;
     draftSaveTimeoutRef.current = setTimeout(async () => {
       if (contentSignal.peek() !== content) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
-      try {
-        await hub.request('session.update', {
+      const save = hub
+        .request('session.update', {
           sessionId,
           metadata: {
             inputDraft: trimmedContent,
           },
+        })
+        .then(() => {
+          lastSavedDraftsRef.current.set(sessionId, trimmedContent);
         });
-      } catch {}
+      const priorSave = pendingDraftSavesRef.current.get(sessionId);
+      const pending = priorSave
+        ? Promise.all([priorSave.catch(() => {}), save.catch(() => {})]).then(() => {})
+        : save;
+      pendingDraftSavesRef.current.set(sessionId, pending);
+      try {
+        await pending;
+      } catch {
+      } finally {
+        if (pendingDraftSavesRef.current.get(sessionId) === pending)
+          pendingDraftSavesRef.current.delete(sessionId);
+      }
     }, debounceMs);
 
     return () => {
@@ -329,7 +411,51 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         draftSaveTimeoutRef.current = null;
       }
     };
-  });
+  }, [sessionId, contentSignal.value, contentSignal, flushOnUnmount]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (!flushOnUnmount) return;
+      const last = lastSeenContentRef.current;
+      const renderedSession = flushSessionIdRef.current;
+      const content = renderedSession ? contentSignal.peek() : last.content;
+      if (
+        !last.sessionId ||
+        last.sessionId !== currentSessionIdRef.current ||
+        (renderedSession && last.sessionId !== renderedSession)
+      )
+        return;
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      if (!content.trim()) {
+        if (!renderedSession || !last.cleared) return;
+        const prior = lastNonEmptyContentRef.current;
+        if (prior.sessionId !== last.sessionId || !prior.content.trim()) return;
+        void hub
+          .request('session.clearInputDraftIf', {
+            sessionId: last.sessionId,
+            expected: prior.content.trim(),
+          })
+          .catch(() => {});
+        return;
+      }
+      if (
+        lastSavedDraftsRef.current.get(last.sessionId) === content.trim() &&
+        !pendingDraftSavesRef.current.has(last.sessionId)
+      )
+        return;
+      void hub
+        .request('session.update', {
+          sessionId: last.sessionId,
+          metadata: { inputDraft: content.trim() },
+        })
+        .catch(() => {});
+    };
+    return () => {
+      if (submissionHoldsRef.current > 0) pendingUnmountFlushRef.current = flush;
+      else flush();
+    };
+  }, [contentSignal, flushOnUnmount]);
 
   const setContent = useCallback(
     (newContent: string) => {
@@ -342,15 +468,49 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     contentSignal.value = '';
   }, [contentSignal]);
 
+  const clearSubmitted = useCallback(
+    async (targetSessionId: string, expected: string) => {
+      if (!targetSessionId || !expected.trim()) return;
+      const last = lastSeenContentRef.current;
+      const ownsSubmitted = last.sessionId === targetSessionId && last.content === expected;
+      if (ownsSubmitted) {
+        lastSeenContentRef.current = { sessionId: targetSessionId, content: '', cleared: true };
+        if (currentSessionIdRef.current === targetSessionId) contentSignal.value = '';
+      }
+      const hub = connectionManager.getHubIfConnected();
+      if (hub) {
+        const clearSavedDraft = async () => {
+          await pendingDraftSavesRef.current.get(targetSessionId)?.catch(() => {});
+          const saved = lastSavedDraftsRef.current.get(targetSessionId);
+          const result = await hub.request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+            sessionId: targetSessionId,
+            expected: expected.trim(),
+          });
+          if (!result?.cleared && ownsSubmitted && saved && saved !== expected.trim())
+            await hub.request('session.clearInputDraftIf', {
+              sessionId: targetSessionId,
+              expected: saved,
+            });
+        };
+        await clearSavedDraft().catch(() => {});
+      }
+    },
+    [contentSignal]
+  );
+
   return useMemo(
     () => ({
       get content() {
         return contentSignal.value;
       },
       setContent,
+      isSavedDraft: (targetSessionId, content) =>
+        lastSavedDraftsRef.current.get(targetSessionId) === content.trim() &&
+        !pendingDraftSavesRef.current.has(targetSessionId),
       clear,
+      clearSubmitted,
       holdDraftAdoption,
     }),
-    [contentSignal, setContent, clear, holdDraftAdoption]
+    [contentSignal, setContent, clear, clearSubmitted, holdDraftAdoption]
   );
 }

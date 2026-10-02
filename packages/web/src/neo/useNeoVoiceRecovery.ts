@@ -6,17 +6,24 @@ export function useNeoVoiceRecovery(
   sessionId: string | null,
   draftValue: string,
   readDraft: () => string,
-  writeDraft: (text: string) => void
+  writeDraft: (text: string) => void,
+  persistRecoveredDraft = true
 ): void {
   const readRef = useRef(readDraft);
   readRef.current = readDraft;
   const writeRef = useRef(writeDraft);
   writeRef.current = writeDraft;
   const adoptedRef = useRef<{ sessionId: string; draft: string } | null>(null);
+  const ownerRef = useRef(sessionId);
+  if (ownerRef.current !== sessionId) {
+    ownerRef.current = sessionId;
+    adoptedRef.current = null;
+  }
 
   const clearDaemonDraft = (): Promise<void> => {
     const adopted = adoptedRef.current;
     if (!sessionId || !adopted || adopted.sessionId !== sessionId) return Promise.resolve();
+    if (readRef.current().trim() !== '') return Promise.resolve();
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return Promise.resolve();
     return hub
@@ -25,7 +32,7 @@ export function useNeoVoiceRecovery(
         expected: adopted.draft,
       })
       .then((result) => {
-        if (result?.cleared !== false) adoptedRef.current = null;
+        if (result?.cleared !== false && adoptedRef.current === adopted) adoptedRef.current = null;
       })
       .catch(() => {});
   };
@@ -58,6 +65,7 @@ export function useNeoVoiceRecovery(
         if (readRef.current().trim() !== '') return;
         adoptedRef.current = { sessionId, draft: composed };
         writeRef.current(composed);
+        if (!persistRecoveredDraft) return;
         await hub.request('session.update', {
           sessionId,
           metadata: { inputDraft: composed },
@@ -97,5 +105,5 @@ export function useNeoVoiceRecovery(
       unsubscribeConnection();
       if (unsubEvent) unsubEvent();
     };
-  }, [sessionId]);
+  }, [sessionId, persistRecoveredDraft]);
 }
