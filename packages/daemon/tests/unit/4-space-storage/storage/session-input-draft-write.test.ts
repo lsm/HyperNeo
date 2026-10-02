@@ -138,6 +138,72 @@ describe('session input draft conditional repository write', () => {
     expect(repo.captureSessionInputDraft('missing')).toBeNull();
   });
 
+  test.each(['paused', 'pending_worktree_choice'] as const)(
+    'captures and preserves a live %s owner during a guarded write',
+    (status) => {
+      repo.updateSession(ID, { status });
+      const snapshot = repo.captureSessionInputDraft(ID);
+      expect(snapshot).not.toBeNull();
+      if (!snapshot) throw new Error('Expected live owner snapshot');
+      const before = row();
+      expect(repo.casSessionInputDraft(snapshot, 'recovered edit')).toBe('won');
+      expect(metadata()).toEqual({
+        ...METADATA,
+        inputDraft: 'recovered edit',
+        inputDraftVoicePending: 'staged voice',
+      });
+      expect({ ...row(), metadata: before.metadata } as Record<string, unknown>).toEqual(before);
+    }
+  );
+
+  test.each(['paused', 'pending_worktree_choice'] as const)(
+    'allows a live transition to %s between capture and write',
+    (status) => {
+      const snapshot = capture();
+      repo.updateSession(ID, { status });
+      expect(repo.casSessionInputDraft(snapshot, 'recovered edit')).toBe('won');
+      expect(row().status).toBe(status);
+      expect(metadata().inputDraft).toBe('recovered edit');
+      expect(metadata().inputDraftVoicePending).toBe('staged voice');
+    }
+  );
+
+  test.each(['paused', 'pending_worktree_choice'] as const)(
+    'still refuses changed raw draft and voice values for %s',
+    (status) => {
+      for (const key of ['inputDraft', 'inputDraftVoicePending']) {
+        repo.updateSession(ID, { status });
+        const snapshot = capture();
+        expect(snapshot).not.toBeNull();
+        repo.updateSession(ID, { metadata: { ...METADATA, [key]: 'newer durable text' } });
+        const before = row();
+        expect(repo.casSessionInputDraft(snapshot, 'recovered edit')).toBe('superseded');
+        expect(row()).toEqual(before);
+      }
+    }
+  );
+
+  test.each(['ended', 'archived'] as const)('refuses terminal status %s', (status) => {
+    const snapshot = capture();
+    repo.updateSession(ID, { status });
+    const before = row();
+    expect(repo.captureSessionInputDraft(ID)).toBeNull();
+    expect(repo.casSessionInputDraft(snapshot, 'recovered edit')).toBe('superseded');
+    expect(row()).toEqual(before);
+  });
+
+  test('refuses archived_at even when the status remains live', () => {
+    const snapshot = capture();
+    db.prepare('UPDATE sessions SET archived_at = ? WHERE id = ?').run(
+      '2026-10-02T00:00:00.000Z',
+      ID
+    );
+    const before = row();
+    expect(repo.captureSessionInputDraft(ID)).toBeNull();
+    expect(repo.casSessionInputDraft(snapshot, 'recovered edit')).toBe('superseded');
+    expect(row()).toEqual(before);
+  });
+
   test.each(['exact  \n**Markdown**', '', null])(
     'changes only the original owner inputDraft to %s',
     (text) => {

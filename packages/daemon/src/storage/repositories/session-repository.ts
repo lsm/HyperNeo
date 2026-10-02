@@ -337,7 +337,7 @@ export class SessionRepository {
       .prepare(
         `SELECT s.id, s.metadata, i.incarnation FROM sessions s
          LEFT JOIN session_incarnations i ON i.session_id = s.id
-         WHERE s.id = ? AND s.status = 'active' AND s.archived_at IS NULL`
+         WHERE s.id = ? AND s.status NOT IN ('archived', 'ended') AND s.archived_at IS NULL`
       )
       .get(id) as Record<string, unknown> | undefined;
     return row ? sessionInputDraftSnapshotFromRow(row) : null;

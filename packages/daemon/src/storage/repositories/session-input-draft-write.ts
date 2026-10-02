@@ -65,7 +65,7 @@ function buildSessionInputDraftSql({ snapshot, text }: DraftWrite): SqlWrite {
       : "json_set(metadata, '$.inputDraft', ?)";
   return {
     sql: `UPDATE sessions SET metadata = ${update}
-          WHERE id = ? AND status = 'active' AND archived_at IS NULL AND json_valid(metadata)
+          WHERE id = ? AND status NOT IN ('archived', 'ended') AND archived_at IS NULL AND json_valid(metadata)
             AND json_type(${safeMetadata}) = 'object'
             AND COALESCE(json_type(${safeMetadata}, '$.inputDraft'), 'null') IN ('null', 'text')
             AND COALESCE(json_type(${safeMetadata}, '$.inputDraftVoicePending'), 'null') IN ('null', 'text')
