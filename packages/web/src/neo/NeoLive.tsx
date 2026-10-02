@@ -182,7 +182,7 @@ export function NeoLive() {
   const draftKey = neo.selectedId === null ? 'root' : `concern:${neo.selectedId}`;
   function writeDraft(text: string) {
     setDrafts((items) => ({ ...items, [draftKey]: text }));
-    inputDraft.setContent(text);
+    if (currentScope.current === sceneScope) inputDraft.setContent(text);
   }
   useNeoVoiceRecovery(
     neo.sessionId,

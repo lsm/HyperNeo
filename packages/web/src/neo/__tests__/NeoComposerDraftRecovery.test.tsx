@@ -6,6 +6,29 @@ import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn() }));
+const voice = vi.hoisted(() => ({ recording: false, submit: vi.fn() }));
+vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.recording }));
+vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
+  isVoiceRecordingSupported: () => true,
+  useVoiceRecorder: () => ({
+    isRecording: voice.recording,
+    isStarting: false,
+    durationLimitHit: false,
+    start: vi.fn(),
+    stop: vi.fn(),
+    cancel: vi.fn(),
+    getLevel: () => 0,
+    recordingStartedAt: null,
+  }),
+}));
+vi.mock('../../lib/voice/voice-submit-pipeline.ts', () => ({
+  runVoiceSubmit: voice.submit,
+  VOICE_SUBMIT_SILENCE_PEAK_LEVEL: 0.001,
+}));
+vi.mock('../../lib/voice/voice-audio-store.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/voice/voice-audio-store.ts')>()),
+  deleteVoiceRecord: vi.fn(),
+}));
 vi.mock('../useNeo.ts', () => ({ useNeo: seams.useNeo }));
 vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
@@ -24,6 +47,7 @@ let slowLoad: Promise<unknown> | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  voice.recording = false;
   persisted.clear();
   slowLoad = null;
   connectionState.value = 'connected';
@@ -123,6 +147,75 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it('does not mirror a late root transcript into the current holder draft', async () => {
+    let release!: (result: unknown) => void;
+    voice.recording = true;
+    voice.submit.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    persisted.set(holder, 'Fictional holder draft');
+    const view = mount();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
+    await waitFor(() => expect(voice.submit).toHaveBeenCalledOnce());
+    voice.recording = false;
+    act(() => {
+      view.store.activeSessionId.value = holder;
+      view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
+    });
+    await waitFor(() => expect(value()).toBe('Fictional holder draft'));
+    await act(async () => {
+      release({
+        kind: 'routed',
+        recordId: 'fictional-recording',
+        outcome: {
+          kind: 'deliver-unmounted',
+          transcript: 'Late fictional root transcript',
+          autoSend: false,
+        },
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(value()).toBe('Fictional holder draft');
+    expect(persisted.get(holder)).toBe('Fictional holder draft');
+    expect(
+      seams.request.mock.calls.filter(
+        ([method, input]) =>
+          method === 'session.update' &&
+          input.sessionId === holder &&
+          input.metadata?.inputDraft?.includes('Late fictional root transcript')
+      )
+    ).toHaveLength(0);
+    act(() => {
+      view.store.activeSessionId.value = root;
+      view.model.value = { ...view.model.value, sessionId: root, selectedId: null };
+    });
+    await waitFor(() => expect(value()).toBe('Late fictional root transcript'));
+  });
+
+  it('persists a voice transcript delivered within its original current scope', async () => {
+    voice.recording = true;
+    voice.submit.mockResolvedValueOnce({
+      kind: 'routed',
+      recordId: 'fictional-recording',
+      outcome: {
+        kind: 'insert',
+        transcript: 'Current fictional transcript',
+        autoSend: false,
+      },
+    });
+    mount();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
+    await waitFor(() => expect(value()).toBe('Current fictional transcript'));
+    await waitFor(() => expect(persisted.get(root)).toBe('Current fictional transcript'));
+  });
+
   it('does not flush the prior session while a new scope is loading', async () => {
     const view = mount();
     type('Fictional prior scope draft');
