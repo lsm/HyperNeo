@@ -267,6 +267,12 @@ export function useInputDraft(
             .catch(() => {});
         return;
       }
+      if (
+        flushOnUnmount &&
+        lastSavedDraftsRef.current.get(prevSessionId) === flushContent &&
+        !pendingDraftSavesRef.current.has(prevSessionId)
+      )
+        return;
       hub
         .request('session.update', {
           sessionId: prevSessionId,
@@ -392,6 +398,11 @@ export function useInputDraft(
           .catch(() => {});
         return;
       }
+      if (
+        lastSavedDraftsRef.current.get(last.sessionId) === content.trim() &&
+        !pendingDraftSavesRef.current.has(last.sessionId)
+      )
+        return;
       void hub
         .request('session.update', {
           sessionId: last.sessionId,

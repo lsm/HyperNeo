@@ -148,6 +148,50 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it.each([
+    { mode: 'unmount', edited: false },
+    { mode: 'navigation', edited: false },
+    { mode: 'loading', edited: false },
+    { mode: 'unmount', edited: true },
+    { mode: 'navigation', edited: true },
+    { mode: 'loading', edited: true },
+  ])('flushes only unsaved edits on $mode: $edited', async ({ mode, edited }) => {
+    const view = mount();
+    type('Confirmed fictional draft');
+    await waitFor(() => expect(persisted.get(root)).toBe('Confirmed fictional draft'));
+    persisted.set(root, 'Newer draft from another surface');
+    const rootWrites = () =>
+      seams.request.mock.calls.filter(
+        ([method, input]) => method === 'session.update' && input.sessionId === root
+      ).length;
+    const before = rootWrites();
+    if (edited) {
+      type('Unsaved fictional edit');
+      await act(async () => {});
+    }
+    if (mode !== 'unmount') {
+      act(() => {
+        view.store.activeSessionId.value = mode === 'loading' ? null : holder;
+        view.model.value = {
+          ...view.model.value,
+          sessionId: mode === 'loading' ? '' : holder,
+          selectedId: 'garden',
+        };
+      });
+      await act(async () => {});
+    }
+    view.unmount();
+    await act(async () => {});
+    expect(persisted.get(root)).toBe(
+      edited ? 'Unsaved fictional edit' : 'Newer draft from another surface'
+    );
+    if (!edited) expect(rootWrites()).toBe(before);
+    mount();
+    await waitFor(() =>
+      expect(value()).toBe(edited ? 'Unsaved fictional edit' : 'Newer draft from another surface')
+    );
+  });
+
   it('does not re-adopt an earlier saved edit when voice recovery waits for Send', async () => {
     let release!: (value: unknown) => void;
     const view = mount();
