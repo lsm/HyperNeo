@@ -123,6 +123,7 @@ export function useInputDraft(
             clearTimeout(draftSaveTimeoutRef.current);
             draftSaveTimeoutRef.current = null;
           }
+          if (flushOnUnmount) return;
           const hubNow = connectionManager.getHubIfConnected();
           if (!hubNow) {
             deferredVoiceAdoptRef.current = targetSessionId;
@@ -140,7 +141,7 @@ export function useInputDraft(
         adoptable
       );
     },
-    [contentSignal, loadDraft]
+    [contentSignal, loadDraft, flushOnUnmount]
   );
 
   const holdDraftAdoption = useCallback(
@@ -274,14 +275,23 @@ export function useInputDraft(
         !pendingDraftSavesRef.current.has(prevSessionId)
       )
         return;
-      hub
+      const save = hub
         .request('session.update', {
           sessionId: prevSessionId,
           metadata: {
             inputDraft: flushContent || null,
           },
         })
-        .catch(() => {});
+        .then(() => {
+          if (flushOnUnmount) lastSavedDraftsRef.current.set(prevSessionId, flushContent);
+        });
+      if (flushOnUnmount) pendingDraftSavesRef.current.set(prevSessionId, save);
+      void save
+        .catch(() => {})
+        .finally(() => {
+          if (pendingDraftSavesRef.current.get(prevSessionId) === save)
+            pendingDraftSavesRef.current.delete(prevSessionId);
+        });
       return;
     }
     prevSessionIdRef.current = sessionId;
@@ -340,6 +350,12 @@ export function useInputDraft(
     initialLoadSettledRef.current = sessionId;
     lastSeenContentRef.current = { sessionId, content };
     lastNonEmptyContentRef.current = { sessionId, content };
+    if (
+      flushOnUnmount &&
+      lastSavedDraftsRef.current.get(sessionId) === trimmedContent &&
+      !pendingDraftSavesRef.current.has(sessionId)
+    )
+      return;
     draftSaveTimeoutRef.current = setTimeout(async () => {
       if (contentSignal.peek() !== content) return;
       const hub = connectionManager.getHubIfConnected();

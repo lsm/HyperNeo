@@ -149,6 +149,82 @@ function value() {
 
 describe('Neo real composer draft recovery', () => {
   it.each([
+    { owner: root, replacement: 'Newer quick-navigation draft' },
+    { owner: holder, replacement: 'Newer quick-navigation draft' },
+    { owner: root, replacement: '' },
+    { owner: holder, replacement: '' },
+  ])(
+    'loads current text after a navigation flush: $owner/$replacement',
+    async ({ owner, replacement }) => {
+      const view = mount();
+      const select = (sessionId: string) =>
+        act(() => {
+          view.store.activeSessionId.value = sessionId;
+          view.model.value = {
+            ...view.model.value,
+            sessionId,
+            selectedId: sessionId === root ? null : 'garden',
+          };
+        });
+      await act(async () => {});
+      if (owner === holder) {
+        select(holder);
+        await act(async () => {});
+      }
+      type('Quickly navigated draft');
+      await act(async () => {});
+      expect(persisted.get(owner) ?? '').toBe('');
+      select(owner === root ? holder : root);
+      await waitFor(() => expect(persisted.get(owner)).toBe('Quickly navigated draft'));
+      persisted.set(owner, replacement);
+      const writes = () =>
+        seams.request.mock.calls.filter(
+          ([method, input]) =>
+            method === 'session.update' &&
+            input.sessionId === owner &&
+            input.metadata?.inputDraft === 'Quickly navigated draft'
+        ).length;
+      const before = writes();
+      select(owner);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(value()).toBe(replacement);
+      expect(persisted.get(owner)).toBe(replacement);
+      expect(writes()).toBe(before);
+    }
+  );
+
+  it('does not re-save an adopted snapshot over a subsequent concurrent update', async () => {
+    persisted.set(root, 'Confirmed adoption draft');
+    const view = mount();
+    await waitFor(() => expect(value()).toBe('Confirmed adoption draft'));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const original = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.get' && input.sessionId === root) {
+        const draft = persisted.get(root);
+        persisted.set(root, 'Concurrent text after the snapshot');
+        return { session: { metadata: { inputDraft: draft } } };
+      }
+      return original(method, input);
+    });
+    const before = seams.request.mock.calls.filter(
+      ([method]) => method === 'session.update'
+    ).length;
+    const listener = seams.event.mock.calls.find(([name]) => name === 'session.voiceLanded')![1];
+    await act(async () => {
+      listener({ sessionId: root }, { channel: `session:${root}` });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(persisted.get(root)).toBe('Concurrent text after the snapshot');
+    expect(seams.request.mock.calls.filter(([method]) => method === 'session.update')).toHaveLength(
+      before
+    );
+    view.unmount();
+    mount();
+    await waitFor(() => expect(value()).toBe('Concurrent text after the snapshot'));
+  });
+
+  it.each([
     { owner: root, replacement: 'Newer concurrent draft' },
     { owner: holder, replacement: 'Newer concurrent draft' },
     { owner: root, replacement: '' },
