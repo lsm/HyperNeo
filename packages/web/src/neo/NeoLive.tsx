@@ -199,7 +199,10 @@ export function NeoLive() {
   }
   useEffect(() => {
     const cached = drafts[draftKey];
-    if (sceneScope && cached !== undefined) inputDraft.setContent(cached);
+    if (!sceneScope || cached === undefined) return;
+    if (inputDraft.isSavedDraft(neo.sessionId ?? '', cached))
+      setDrafts((items) => ({ ...items, [draftKey]: '' }));
+    else inputDraft.setContent(cached);
   }, [sceneScope]);
   useNeoVoiceRecovery(
     neo.sessionId,

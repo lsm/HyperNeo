@@ -149,6 +149,52 @@ function value() {
 
 describe('Neo real composer draft recovery', () => {
   it.each([
+    { owner: root, replacement: 'Newer concurrent draft' },
+    { owner: holder, replacement: 'Newer concurrent draft' },
+    { owner: root, replacement: '' },
+    { owner: holder, replacement: '' },
+  ])(
+    'loads current durable text on same-mount return: $owner/$replacement',
+    async ({ owner, replacement }) => {
+      const view = mount();
+      const select = (sessionId: string) =>
+        act(() => {
+          view.store.activeSessionId.value = sessionId;
+          view.model.value = {
+            ...view.model.value,
+            sessionId,
+            selectedId: sessionId === root ? null : 'garden',
+          };
+        });
+      await act(async () => {});
+      if (owner === holder) {
+        select(holder);
+        await act(async () => {});
+      }
+      type('Confirmed cached draft');
+      await waitFor(() => expect(persisted.get(owner)).toBe('Confirmed cached draft'));
+      select(owner === root ? holder : root);
+      await act(async () => {});
+      persisted.set(owner, replacement);
+      const before = seams.request.mock.calls.filter(
+        ([method, input]) => method === 'session.update' && input.sessionId === owner
+      ).length;
+      select(owner);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(value()).toBe(replacement);
+      expect(persisted.get(owner)).toBe(replacement);
+      expect(
+        seams.request.mock.calls.filter(
+          ([method, input]) =>
+            method === 'session.update' &&
+            input.sessionId === owner &&
+            input.metadata?.inputDraft === 'Confirmed cached draft'
+        )
+      ).toHaveLength(before);
+    }
+  );
+
+  it.each([
     { mode: 'unmount', edited: false },
     { mode: 'navigation', edited: false },
     { mode: 'loading', edited: false },

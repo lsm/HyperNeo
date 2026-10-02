@@ -6,6 +6,7 @@ import { connectionState } from '../lib/state';
 export interface UseInputDraftResult {
   content: string;
   setContent: (content: string) => void;
+  isSavedDraft: (targetSessionId: string, content: string) => boolean;
   clear: () => void;
   clearSubmitted: (targetSessionId: string, expected: string) => Promise<void>;
   holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -463,6 +464,9 @@ export function useInputDraft(
         return contentSignal.value;
       },
       setContent,
+      isSavedDraft: (targetSessionId, content) =>
+        lastSavedDraftsRef.current.get(targetSessionId) === content.trim() &&
+        !pendingDraftSavesRef.current.has(targetSessionId),
       clear,
       clearSubmitted,
       holdDraftAdoption,
