@@ -204,6 +204,33 @@ describe('session input draft conditional repository write', () => {
     expect(row()).toEqual(before);
   });
 
+  test.each(['123', 'true', 'false', 'null', '[]', '{"a":1}', '"quoted"', 'line\n\\path\t雪'])(
+    'persists JSON-looking or escaped text literally: %s',
+    (text) => {
+      const before = row();
+      expect(repo.casSessionInputDraft(capture(), text)).toBe('won');
+      expect(metadata()).toEqual({
+        ...METADATA,
+        inputDraft: text,
+        inputDraftVoicePending: 'staged voice',
+      });
+      expect(
+        db
+          .prepare("SELECT json_type(metadata, '$.inputDraft') AS type FROM sessions WHERE id = ?")
+          .get(ID)
+      ).toEqual({ type: 'text' });
+      expect({ ...row(), metadata: before.metadata } as Record<string, unknown>).toEqual(before);
+      const snapshot = capture();
+      expect(snapshot.draft).toBe(text);
+      expect(snapshot.voicePending).toBe('staged voice');
+      expect(repo.casSessionInputDraft(snapshot, `${text} edited`)).toBe('won');
+      expect(metadata().inputDraft).toBe(`${text} edited`);
+      expect(metadata().inputDraftVoicePending).toBe('staged voice');
+      expect(capture().draft).toBe(`${text} edited`);
+      expect({ ...row(), metadata: before.metadata } as Record<string, unknown>).toEqual(before);
+    }
+  );
+
   test.each(['exact  \n**Markdown**', '', null])(
     'changes only the original owner inputDraft to %s',
     (text) => {
