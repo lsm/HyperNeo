@@ -91,7 +91,7 @@
   padding: 0 20px calc(var(--neo-composer-height, 190px) + 32px);
 }
 
-.neo-scene-list:not(:has([data-scene-group])) {
+.neo-scene-list:empty {
   display: none;
 }
 

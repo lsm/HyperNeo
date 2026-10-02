@@ -11,13 +11,14 @@ import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard, sceneOpenSelector } from './NeoWorkCard.tsx';
+import { NeoConsultationCard } from './NeoConsultationCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { type NeoScene, type NeoSceneRef, projectNeoScenes, selectNeoScene } from './neo-scenes.ts';
+import { type NeoSceneRef, projectNeoScenes, selectNeoScene } from './neo-scenes.ts';
 import './neo.css';
 
 export function NeoLive() {
@@ -120,12 +121,16 @@ export function NeoLive() {
     ] as const
   ).map((group) => ({
     ...group,
-    scenes: group.scenes.filter(
-      (scene): scene is NeoScene & { receipt: Extract<NeoScene['receipt'], { kind: 'work' }> } =>
-        scene.receipt.kind === 'work'
-    ),
+    scenes: publicConversation
+      ? group.scenes
+      : group.scenes.filter((scene) => scene.receipt.kind === 'work'),
   }));
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+  const sceneListLabel = sceneGroups.some((group) =>
+    group.scenes.some((scene) => scene.ref.kind === 'consultation')
+  )
+    ? 'Neo scenes'
+    : 'Work scenes';
   const [sceneSelection, setSceneSelection] = useState<{
     scope: string;
     ref: NeoSceneRef;
@@ -134,22 +139,28 @@ export function NeoLive() {
     sceneSelection && sceneScope === sceneSelection.scope
       ? selectNeoScene(scenes, sceneSelection.ref)
       : null;
-  const detail = picked && 'value' in picked ? picked.value : null;
+  const detail =
+    picked && 'value' in picked && (publicConversation || picked.value.receipt.kind === 'work')
+      ? picked.value
+      : null;
   const detailWork = detail?.receipt.kind === 'work' ? detail.receipt : null;
+  const detailConsultation = detail?.receipt.kind === 'consultation' ? detail.receipt : null;
   const detailLive = detail !== null;
-  const mobileDetail = !!publicConversation && narrow && !!detailWork;
+  const mobileDetail = !!publicConversation && narrow && !!detail;
   const displayedGroups = sceneGroups.map((group) => ({
     ...group,
     scenes: publicConversation
-      ? group.scenes.filter((scene) => scene.ref.id !== detailWork?.id)
+      ? group.scenes.filter(
+          (scene) => scene.ref.kind !== detail?.ref.kind || scene.ref.id !== detail?.ref.id
+        )
       : group.scenes,
   }));
   const detailPane = useRef<HTMLElement>(null);
   const mobileReader = useRef<{ scope: string; top: number } | null>(null);
-  const focusScene = useRef<{ id: string; scope: string } | null>(null);
+  const focusScene = useRef<{ ref: NeoSceneRef; scope: string } | null>(null);
   useLayoutEffect(() => {
     const saved = mobileReader.current;
-    if (detailWork || !saved) return;
+    if (detail || !saved) return;
     mobileReader.current = null;
     if (!narrow || saved.scope !== sceneScope || !mainScroll.current) return;
     mainScroll.current.scrollTop = saved.top;
@@ -157,21 +168,23 @@ export function NeoLive() {
     scrollProgress.current =
       mainScroll.current.scrollTop /
       Math.max(1, mainScroll.current.scrollHeight - mainScroll.current.clientHeight);
-  }, [detailWork, narrow, sceneScope]);
+  }, [detail, narrow, sceneScope]);
   useLayoutEffect(() => {
     if (sceneSelection && (!sceneScope || !detailLive)) setSceneSelection(null);
   }, [sceneSelection, sceneScope, detailLive]);
   useLayoutEffect(() => {
-    if (detailWork) detailPane.current?.querySelector('button')?.focus({ preventScroll: true });
-  }, [detailWork?.id]);
+    if (detail) detailPane.current?.querySelector('button')?.focus({ preventScroll: true });
+  }, [detail?.ref.kind, detail?.ref.id]);
   useLayoutEffect(() => {
     const target = focusScene.current;
     if (!target) return;
     focusScene.current = null;
     if (!sceneScope || target.scope !== sceneScope) return;
-    document
-      .querySelector<HTMLButtonElement>(sceneOpenSelector(target.id))
-      ?.focus({ preventScroll: true });
+    const selector =
+      target.ref.kind === 'work'
+        ? sceneOpenSelector(target.ref.id)
+        : `[data-consultation-open="${target.ref.id.replace(/["\\]/g, '\\$&')}"]`;
+    document.querySelector<HTMLButtonElement>(selector)?.focus({ preventScroll: true });
   });
   const ready =
     !!neo.sessionId &&
@@ -315,14 +328,14 @@ export function NeoLive() {
 
   function closeScene() {
     focusScene.current =
-      sceneSelection && sceneScope ? { id: sceneSelection.ref.id, scope: sceneScope } : null;
+      sceneSelection && sceneScope ? { ref: sceneSelection.ref, scope: sceneScope } : null;
     setSceneSelection(null);
   }
 
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-hidden text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${detailWork ? ' neo-detail-open' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-hidden text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${detail ? ' neo-detail-open' : ''}`}
     >
       {publicConversation &&
         relevant
@@ -489,38 +502,40 @@ export function NeoLive() {
               </p>
             )
           )}
-          {view?.consultations
-            ?.filter(
-              (item) =>
-                item.status === 'pending' && (!neo.selectedId || item.concernId === neo.selectedId)
-            )
-            .map((item) => (
-              <p
-                key={item.id}
-                role="status"
-                class="my-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-fg-muted"
-              >
-                Checking with{' '}
-                <button
-                  type="button"
-                  class="text-accent hover:underline"
-                  onClick={() => open(item.concernId)}
+          {!publicConversation &&
+            view?.consultations
+              ?.filter(
+                (item) =>
+                  item.status === 'pending' &&
+                  (!neo.selectedId || item.concernId === neo.selectedId)
+              )
+              .map((item) => (
+                <p
+                  key={item.id}
+                  role="status"
+                  class="my-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-fg-muted"
                 >
-                  {concerns.find((concern) => concern.id === item.concernId)?.title ??
-                    'your context holder'}
-                </button>
-                …
-                <button
-                  type="button"
-                  class="ml-3 text-xs text-fg-muted underline disabled:opacity-50"
-                  title="Close this request without interrupting the holder or undoing saved context."
-                  disabled={!connected || !!neo.busyWork}
-                  onClick={() => void neo.act(item.id, 'stop-waiting')}
-                >
-                  {neo.busyWork === item.id ? 'Closing…' : 'Stop waiting'}
-                </button>
-              </p>
-            ))}
+                  Checking with{' '}
+                  <button
+                    type="button"
+                    class="text-accent hover:underline"
+                    onClick={() => open(item.concernId)}
+                  >
+                    {concerns.find((concern) => concern.id === item.concernId)?.title ??
+                      'your context holder'}
+                  </button>
+                  …
+                  <button
+                    type="button"
+                    class="ml-3 text-xs text-fg-muted underline disabled:opacity-50"
+                    title="Close this request without interrupting the holder or undoing saved context."
+                    disabled={!connected || !!neo.busyWork}
+                    onClick={() => void neo.act(item.id, 'stop-waiting')}
+                  >
+                    {neo.busyWork === item.id ? 'Closing…' : 'Stop waiting'}
+                  </button>
+                </p>
+              ))}
           {ready &&
             (!publicConversation || publicConversation.status === 'ready') &&
             messageCount === 0 &&
@@ -544,15 +559,15 @@ export function NeoLive() {
               </div>
             )}
         </div>
-        {(publicConversation || detailWork) && (
+        {(publicConversation || detail) && (
           <section
             ref={detailPane}
-            aria-label="Selected work"
-            aria-hidden={!detailWork || undefined}
-            inert={!detailWork}
-            class={`neo-mobile-detail${detailWork ? ' neo-scene-detail mt-6 space-y-3' : ''}`}
+            aria-label={detailWork ? 'Selected work' : 'Selected context check'}
+            aria-hidden={!detail || undefined}
+            inert={!detail}
+            class={`neo-mobile-detail${detail ? ' neo-scene-detail mt-6 space-y-3' : ''}`}
           >
-            {detailWork && (
+            {detail && (
               <>
                 <Button
                   variant="ghost"
@@ -563,25 +578,44 @@ export function NeoLive() {
                 >
                   Back to scenes
                 </Button>
-                <NeoWorkCard
-                  key={sceneSelection?.ref.id}
-                  work={detailWork}
-                  busy={neo.busyWork === detailWork.id}
-                  disabled={!connected || !!neo.busyWork}
-                  onAction={(id, action) => void neo.act(id, action)}
-                  questionSlot={publicConversation ? attachQuestion : undefined}
-                />
+                {detailWork && (
+                  <NeoWorkCard
+                    key={sceneSelection?.ref.id}
+                    work={detailWork}
+                    busy={neo.busyWork === detailWork.id}
+                    disabled={!connected || !!neo.busyWork}
+                    onAction={(id, action) => void neo.act(id, action)}
+                    questionSlot={publicConversation ? attachQuestion : undefined}
+                  />
+                )}
+                {detailConsultation && (
+                  <NeoConsultationCard
+                    consultation={detailConsultation}
+                    label={`Context check for ${
+                      concerns.find((item) => item.id === detailConsultation.concernId)?.title ??
+                      'Your context holder'
+                    }`}
+                    holderName={
+                      concerns.find((item) => item.id === detailConsultation.concernId)?.title ??
+                      'Your context holder'
+                    }
+                    busy={neo.busyWork === detailConsultation.id}
+                    disabled={!connected || !!neo.busyWork}
+                    onOpenHolder={open}
+                    onStopWaiting={(id) => void neo.act(id, 'stop-waiting')}
+                  />
+                )}
               </>
             )}
           </section>
         )}
-        <div class="neo-scene-list" role="region" aria-label="Work scenes" inert={mobileDetail}>
+        <div class="neo-scene-list" role="region" aria-label={sceneListLabel} inert={mobileDetail}>
           {publicConversation &&
-            detailWork &&
+            detail &&
             displayedGroups.every((group) => !group.scenes.length) && (
               <p class="text-sm text-fg-muted">No other scenes right now.</p>
             )}
-          {(publicConversation || !detailWork) &&
+          {(publicConversation || !detail) &&
             displayedGroups.map((group) =>
               group.scenes.length === 0 ? null : (
                 <section
@@ -593,20 +627,41 @@ export function NeoLive() {
                   <h2 class="text-xs font-medium text-fg-muted">
                     {group.label} · {group.scenes.length}
                   </h2>
-                  {group.scenes.map((scene) => (
-                    <NeoWorkCard
-                      key={scene.ref.id}
-                      work={scene.receipt}
-                      busy={neo.busyWork === scene.ref.id}
-                      disabled={!connected || !!neo.busyWork}
-                      onAction={(id, action) => void neo.act(id, action)}
-                      onOpen={() => openScene(scene.ref)}
-                      presentation={
-                        publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
-                      }
-                      questionSlot={publicConversation ? attachQuestion : undefined}
-                    />
-                  ))}
+                  {group.scenes.map((scene) =>
+                    scene.receipt.kind === 'work' ? (
+                      <NeoWorkCard
+                        key={JSON.stringify(scene.ref)}
+                        work={scene.receipt}
+                        busy={neo.busyWork === scene.ref.id}
+                        disabled={!connected || !!neo.busyWork}
+                        onAction={(id, action) => void neo.act(id, action)}
+                        onOpen={() => openScene(scene.ref)}
+                        presentation={
+                          publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
+                        }
+                        questionSlot={publicConversation ? attachQuestion : undefined}
+                      />
+                    ) : (
+                      <NeoConsultationCard
+                        key={JSON.stringify(scene.ref)}
+                        consultation={scene.receipt}
+                        label={`Context check for ${
+                          concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
+                          'Your context holder'
+                        }`}
+                        holderName={
+                          concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
+                          'Your context holder'
+                        }
+                        busy={neo.busyWork === scene.ref.id}
+                        disabled={!connected || !!neo.busyWork}
+                        onOpen={() => openScene(scene.ref)}
+                        onOpenHolder={open}
+                        onStopWaiting={(id) => void neo.act(id, 'stop-waiting')}
+                        presentation={group.key === 'attention' ? 'detail' : 'summary'}
+                      />
+                    )
+                  )}
                 </section>
               )
             )}
