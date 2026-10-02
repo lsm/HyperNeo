@@ -66,13 +66,15 @@ export function requireUnsubmitted(captured: Captured, service: Recovers): Gate<
 }
 
 async function commitRecoveredDraft(captured: Captured, service: Recovers): Promise<Result> {
-  const outcome = await service.sessions.updateInputDraftIf(
-    captured.snapshot,
-    captured.recovery.text.trim() || null
-  );
-  return outcome.kind === 'won'
-    ? { ok: true, notified: outcome.notified }
-    : { ok: false, reason: outcome.kind };
+  const text = captured.recovery.text.trim() || null;
+  const outcome = await service.sessions.updateInputDraftIf(captured.snapshot, text);
+  if (outcome.kind !== 'won') return { ok: false, reason: outcome.kind };
+  if (!('reason' in requireUnsubmitted(captured, service)))
+    return { ok: true, notified: outcome.notified };
+  const after = service.sessions.captureInputDraft(captured.recovery.sessionId);
+  if (after && (after.draft || null) === text)
+    await service.sessions.updateInputDraftIf(after, null);
+  return { ok: false, reason: 'submitted' };
 }
 
 const recover = (superpipe({})('neo-draft-recover') as PipelineAPI)

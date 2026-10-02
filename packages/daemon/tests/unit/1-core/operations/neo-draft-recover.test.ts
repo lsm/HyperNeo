@@ -288,6 +288,46 @@ describe('neo.draft.recover', () => {
     expect(draft().inputDraft).toBe('raced');
   });
 
+  test('a send that lands between the check and the write is cleared again', async () => {
+    sessions.updateSession(ROOT, { metadata: { inputDraft: null } as unknown as SessionMetadata });
+    const commit = service.sessions.updateInputDraftIf;
+    let raced = false;
+    service.sessions.updateInputDraftIf = (snapshot, text) => {
+      if (!raced) {
+        raced = true;
+        send('racing send');
+      }
+      return commit(snapshot, text);
+    };
+    expect(await recover({ sessionId: ROOT, text: 'racing send', base: null })).toEqual({
+      kind: 'completed',
+      value: { ok: false, reason: 'submitted' },
+    });
+    expect(Object.hasOwn(draft(), 'inputDraft')).toBe(false);
+    expect(unconditional).not.toHaveBeenCalled();
+  });
+
+  test('a newer edit after the racing send is never cleared', async () => {
+    sessions.updateSession(ROOT, { metadata: { inputDraft: null } as unknown as SessionMetadata });
+    const commit = service.sessions.updateInputDraftIf;
+    let calls = 0;
+    service.sessions.updateInputDraftIf = async (snapshot, text) => {
+      calls += 1;
+      if (calls === 1) send('racing send');
+      const outcome = await commit(snapshot, text);
+      if (calls === 1)
+        sessions.updateSession(ROOT, {
+          metadata: { inputDraft: 'typed after' } as SessionMetadata,
+        });
+      return outcome;
+    };
+    expect(await recover({ sessionId: ROOT, text: 'racing send', base: null })).toMatchObject({
+      value: { ok: false, reason: 'submitted' },
+    });
+    expect(draft().inputDraft).toBe('typed after');
+    expect(calls).toBe(1);
+  });
+
   test('pure gates compose in order', () => {
     const recovery = { sessionId: ROOT, text: 'edit', base: 'saved root' };
     expect(requireDraftRecoveryHuman(recovery, human)).toEqual({ value: recovery });
