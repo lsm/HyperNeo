@@ -47,7 +47,7 @@ export class OpencodeProvider implements Provider {
     streaming: true,
     extendedThinking: true,
     thinkingModes: 'granular',
-    maxContextWindow: 256_000,
+    maxContextWindow: Math.max(...MODEL_CATALOGUE.map((entry) => entry.context)),
     functionCalling: true,
     vision: true,
   };
@@ -57,6 +57,7 @@ export class OpencodeProvider implements Provider {
   static readonly MODEL_LIST_URL = 'https://opencode.ai/zen/go/v1/models';
   static readonly CATALOG_URL = 'https://models.opencode.ai/api.json';
   static readonly CATALOG_CACHE_TTL_MS = 60 * 60 * 1000;
+  static readonly CATALOG_FETCH_TIMEOUT_MS = 5_000;
   static readonly CLIENT_USER_AGENT = 'hyperneo/1.0';
   static readonly SESSION_TOKEN_PREFIX = 'opencode';
   static readonly DISCOVERY_SESSION_ID = 'hyperneo-daemon';
@@ -100,6 +101,7 @@ export class OpencodeProvider implements Provider {
   private readonly bridgePromises = new Map<string, Promise<OpenAIChatBridgeServer>>();
   private discoveredModelIds = new Set<string>();
   private catalog: { at: number; models: Map<string, OpencodeModelMetadata> } | null = null;
+  private catalogLoad: Promise<void> | null = null;
   private shutdownStarted = false;
   private static readonly PROBE_TTL_MS = 30_000;
 
@@ -124,7 +126,6 @@ export class OpencodeProvider implements Provider {
   clearModelCache(): void {
     this.discoveryCache.clear();
     this.discoveredModelIds = new Set<string>();
-    this.catalog = null;
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -171,21 +172,41 @@ export class OpencodeProvider implements Provider {
     return this.env.OPENCODE_MODELS_URL || OpencodeProvider.CATALOG_URL;
   }
 
-  private async loadCatalog(): Promise<Map<string, OpencodeModelMetadata>> {
+  private catalogFresh(): boolean {
     const cached = this.catalog;
-    if (cached && Date.now() - cached.at < OpencodeProvider.CATALOG_CACHE_TTL_MS) {
-      return cached.models;
+    return !!cached && Date.now() - cached.at < OpencodeProvider.CATALOG_CACHE_TTL_MS;
+  }
+
+  private catalogView(): Map<string, OpencodeModelMetadata> {
+    return this.catalog?.models ?? fallbackCatalog();
+  }
+
+  private ensureCatalogLoading(): void {
+    if (this.catalogFresh() || this.catalogLoad) return;
+    this.catalogLoad = this.fetchCatalog().then(
+      (models) => {
+        this.catalog = { at: Date.now(), models };
+        this.catalogLoad = null;
+      },
+      () => {
+        this.catalogLoad = null;
+      }
+    );
+  }
+
+  private async loadCatalog(): Promise<Map<string, OpencodeModelMetadata>> {
+    if (!this.catalogFresh()) {
+      const models = await this.fetchCatalog();
+      this.catalog = { at: Date.now(), models };
     }
-    const models = await this.fetchCatalog();
-    this.catalog = { at: Date.now(), models };
-    return models;
+    return this.catalogView();
   }
 
   private async fetchCatalog(): Promise<Map<string, OpencodeModelMetadata>> {
     try {
       const response = await this.fetchImpl(this.catalogUrl(), {
         headers: { 'User-Agent': OpencodeProvider.CLIENT_USER_AGENT },
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(OpencodeProvider.CATALOG_FETCH_TIMEOUT_MS),
       });
       if (!response.ok) return fallbackCatalog();
       const provider = extractOpencodeGoCatalog(await response.json());
@@ -209,19 +230,19 @@ export class OpencodeProvider implements Provider {
   usesAnthropicMessages(modelId: string): boolean {
     const normalized = modelId.trim();
     if (FALLBACK_ANTHROPIC_WIRE_IDS.has(normalized)) return true;
-    return this.catalog?.models.get(normalized)?.wire === 'anthropic-messages';
+    return this.catalogView().get(normalized)?.wire === 'anthropic-messages';
   }
 
   supportsModelId(modelId: string): boolean {
     const normalized = modelId.trim();
     if (FALLBACK_RESPONSES_WIRE_IDS.has(normalized)) return false;
-    const catalogued = this.catalog?.models.get(normalized);
+    const catalogued = this.catalogView().get(normalized);
     return catalogued ? catalogued.wire !== 'openai-responses' : true;
   }
 
   contextWindowFor(modelId: string): number {
     const normalized = modelId.trim();
-    const catalogued = this.catalog?.models.get(normalized);
+    const catalogued = this.catalogView().get(normalized);
     if (catalogued?.contextWindow) return catalogued.contextWindow;
     const baked = MODEL_CATALOGUE.find((entry) => entry.id === normalized);
     return baked?.context ?? DEFAULT_CONTEXT_WINDOW;
@@ -252,8 +273,8 @@ export class OpencodeProvider implements Provider {
   }
 
   private catalogueModels(): ModelInfo[] {
-    const catalogued = this.catalog?.models;
-    if (!catalogued || catalogued.size === 0) return OpencodeProvider.MODELS;
+    const catalogued = this.catalogView();
+    if (catalogued.size === 0) return OpencodeProvider.MODELS;
     const ids = new Set([...MODEL_CATALOGUE.map((entry) => entry.id), ...catalogued.keys()]);
     const models: ModelInfo[] = [];
     for (const id of ids) {
@@ -267,7 +288,7 @@ export class OpencodeProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
-    await this.loadCatalog();
+    this.ensureCatalogLoading();
     try {
       await this.verifyCredentials(OpencodeProvider.BASE_URL, apiKey);
     } catch {
@@ -296,7 +317,7 @@ export class OpencodeProvider implements Provider {
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('OpenCode Go API key not configured');
-    await this.loadCatalog();
+    this.ensureCatalogLoading();
     const fingerprint = this.discoveryFingerprint();
     if (!options.force) {
       const cached = this.discoveryCache.get(fingerprint);
@@ -319,7 +340,7 @@ export class OpencodeProvider implements Provider {
   }
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
-    const catalogued = this.catalog?.models.get(model.id);
+    const catalogued = this.catalogView().get(model.id);
     return OpencodeProvider.modelInfoFor({
       id: model.id,
       name: model.name ?? catalogued?.name ?? model.id,

@@ -25,6 +25,28 @@ function recordingFetch(payload: unknown, calls: FetchCall[] = []): typeof fetch
   return impl;
 }
 
+function routingFetch(routes: {
+  catalog?: () => Promise<Response> | Response;
+  models?: () => Promise<Response> | Response;
+}): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    if (url.includes('api.json')) {
+      if (!routes.catalog) throw new Error('unexpected catalog call');
+      return await routes.catalog();
+    }
+    if (url.endsWith('/models')) {
+      if (!routes.models) throw new Error('unexpected model list call');
+      return await routes.models();
+    }
+    return new Response(JSON.stringify({}), { status: 200 });
+  }) as unknown as typeof fetch;
+}
+
+function hangingForever(): Promise<Response> {
+  return new Promise<Response>(() => {});
+}
+
 function unreachableFetch(): typeof fetch {
   return (async () => {
     throw new Error('unexpected network call');
@@ -370,6 +392,60 @@ describe('OpencodeProvider', () => {
 
       const models = await provider.getModels();
       expect(models.find((model) => model.id === 'glm-5.3')?.contextWindow).toBe(999);
+    });
+  });
+
+  describe('catalog fetch does not gate discovery', () => {
+    it('never blocks getModels on a catalog that hangs', async () => {
+      const provider = makeProvider(
+        { OPENCODE_API_KEY: 'go-key' },
+        routingFetch({
+          catalog: hangingForever,
+          models: () =>
+            new Response(JSON.stringify({ data: [{ id: 'glm-5.3', name: 'GLM-5.3' }] }), {
+              status: 200,
+            }),
+        })
+      );
+
+      const started = Date.now();
+      const models = await provider.getModels();
+
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(models.find((model) => model.id === 'glm-5.3')?.contextWindow).toBe(1_000_000);
+    });
+
+    it('keeps the catalog across clearModelCache and refetches only after the TTL', async () => {
+      let fetches = 0;
+      const provider = makeProvider(
+        {
+          OPENCODE_API_KEY: 'go-key',
+          OPENCODE_MODELS_URL: 'https://catalog.test/api.json',
+        },
+        routingFetch({
+          catalog: () => {
+            fetches += 1;
+            return new Response(
+              JSON.stringify({
+                'opencode-go': { models: { 'glm-5.3': { limit: { context: 777 } } } },
+              }),
+              { status: 200 }
+            );
+          },
+        })
+      );
+
+      expect((await provider.modelMetadata('glm-5.3')).contextWindow).toBe(777);
+      provider.clearModelCache();
+      expect((await provider.modelMetadata('glm-5.3')).contextWindow).toBe(777);
+      expect(fetches).toBe(1);
+    });
+
+    it('declares a max context window that covers every catalogued model', () => {
+      const provider = makeProvider();
+      const largest = Math.max(...OpencodeProvider.MODELS.map((model) => model.contextWindow));
+      expect(provider.capabilities.maxContextWindow).toBe(largest);
+      expect(provider.capabilities.maxContextWindow).toBeGreaterThanOrEqual(1_048_576);
     });
   });
 
