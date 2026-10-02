@@ -5,7 +5,7 @@ import { connectionState } from '../../lib/state.ts';
 import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 
-const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn() }));
+const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
 const voice = vi.hoisted(() => ({ recording: false, submit: vi.fn() }));
 vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.recording }));
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
@@ -34,7 +34,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHubIfConnected: () => ({
       request: seams.request,
-      onEvent: () => () => {},
+      onEvent: seams.event,
     }),
     getHub: async () => ({ request: seams.request, onEvent: () => () => {} }),
   },
@@ -50,6 +50,7 @@ beforeEach(() => {
   voice.recording = false;
   persisted.clear();
   slowLoad = null;
+  seams.event.mockImplementation(() => () => {});
   connectionState.value = 'connected';
   vi.stubGlobal('matchMedia', (query: string) => ({
     matches: query.includes('min-width'),
@@ -147,6 +148,108 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
+  it('does not re-adopt an earlier saved edit when voice recovery waits for Send', async () => {
+    let release!: (value: unknown) => void;
+    const view = mount();
+    type('Earlier fictional saved text');
+    await waitFor(() => expect(persisted.get(root)).toBe('Earlier fictional saved text'));
+    view.model.value.send.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    type('Edited fictional accepted text');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    const listener = seams.event.mock.calls.find(([name]) => name === 'session.voiceLanded')![1];
+    await act(async () => {
+      listener({ sessionId: root }, { channel: `session:${root}` });
+    });
+    await act(async () => {
+      release({ ok: true });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(value()).toBe('');
+    expect(persisted.get(root)).toBe('');
+  });
+
+  it('waits for an earlier in-flight draft save before clearing an accepted edit', async () => {
+    let release!: () => void;
+    const view = mount();
+    await act(async () => {});
+    const original = seams.request.getMockImplementation()!;
+    seams.request.mockImplementation(async (method, input) => {
+      if (method === 'session.update' && input.metadata?.inputDraft === 'Earlier pending save')
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return original(method, input);
+    });
+    type('Earlier pending save');
+    await waitFor(() => expect(release).toBeDefined());
+    type('Edited accepted submission');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+    expect(value()).toBe('Edited accepted submission');
+    await act(async () => {
+      release();
+    });
+    await waitFor(() =>
+      expect(seams.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+        sessionId: root,
+        expected: 'Earlier pending save',
+      })
+    );
+    expect(persisted.get(root)).toBe('');
+    await waitFor(() => expect(value()).toBe(''));
+    view.unmount();
+    mount();
+    await waitFor(() => expect(value()).toBe(''));
+  });
+
+  it.each([
+    { accepted: true, concurrent: false, unmounted: false },
+    { accepted: true, concurrent: false, unmounted: true },
+    { accepted: false, concurrent: false, unmounted: true },
+    { accepted: true, concurrent: true, unmounted: false },
+    { accepted: true, concurrent: true, unmounted: true },
+  ])(
+    'settles an edited saved draft without reviving old text: $accepted/$concurrent/$unmounted',
+    async ({ accepted, concurrent, unmounted }) => {
+      let release!: (value: unknown) => void;
+      const view = mount();
+      await act(async () => {});
+      type('Earlier fictional saved draft');
+      await waitFor(() => expect(persisted.get(root)).toBe('Earlier fictional saved draft'));
+      view.model.value.send.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          })
+      );
+      type('Edited fictional submission');
+      await act(async () => {});
+      expect(persisted.get(root)).toBe('Earlier fictional saved draft');
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
+      if (concurrent) persisted.set(root, 'Concurrent fictional saved text');
+      if (unmounted) view.unmount();
+      await act(async () => {
+        release(accepted ? { ok: true } : { ok: false });
+      });
+      const expected = concurrent
+        ? 'Concurrent fictional saved text'
+        : accepted
+          ? ''
+          : 'Edited fictional submission';
+      await waitFor(() => expect(persisted.get(root)).toBe(expected));
+      if (!unmounted) view.unmount();
+      mount();
+      await waitFor(() => expect(value()).toBe(expected));
+    }
+  );
+
   it.each([true, false])('settles pending Send after interrupted loading: %s', async (accepted) => {
     let release!: (value: unknown) => void;
     const view = mount();

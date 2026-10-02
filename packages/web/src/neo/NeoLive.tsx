@@ -715,10 +715,10 @@ export function NeoLive() {
                 return inputDraft.holdDraftAdoption(async () => {
                   const receipt = await neo.send(input);
                   if (receipt.ok) {
+                    await inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
                     setDrafts((items) =>
                       items[draftKey] === submitted ? { ...items, [draftKey]: '' } : items
                     );
-                    inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
                   }
                   return receipt;
                 });
