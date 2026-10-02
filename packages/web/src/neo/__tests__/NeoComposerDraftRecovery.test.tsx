@@ -149,6 +149,77 @@ function value() {
 
 describe('Neo real composer draft recovery', () => {
   it.each([
+    { owner: root, replacement: 'Reload-restored draft' },
+    { owner: holder, replacement: 'Reload-restored draft' },
+    { owner: root, replacement: 'Newer restored draft' },
+    { owner: holder, replacement: 'Newer restored draft' },
+    { owner: root, replacement: '' },
+    { owner: holder, replacement: '' },
+  ])(
+    'preserves adopted text through scope return: $owner/$replacement',
+    async ({ owner, replacement }) => {
+      persisted.set(owner, 'Reload-restored draft');
+      const view = mount();
+      const select = (sessionId: string) =>
+        act(() => {
+          view.store.activeSessionId.value = sessionId;
+          view.model.value = {
+            ...view.model.value,
+            sessionId,
+            selectedId: sessionId === root ? null : 'garden',
+          };
+        });
+      if (owner === holder) select(holder);
+      await waitFor(() => expect(value()).toBe('Reload-restored draft'));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      select(owner === root ? holder : root);
+      await act(async () => {});
+      persisted.set(owner, replacement);
+      const clears = () =>
+        seams.request.mock.calls.filter(
+          ([method, input]) => method === 'session.clearInputDraftIf' && input.sessionId === owner
+        ).length;
+      const before = clears();
+      select(owner);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(value()).toBe(replacement);
+      expect(persisted.get(owner)).toBe(replacement);
+      expect(clears()).toBe(before);
+      view.unmount();
+      const remounted = mount();
+      if (owner === holder) {
+        act(() => {
+          remounted.store.activeSessionId.value = holder;
+          remounted.model.value = {
+            ...remounted.model.value,
+            sessionId: holder,
+            selectedId: 'garden',
+          };
+        });
+      }
+      await waitFor(() => expect(value()).toBe(replacement));
+    }
+  );
+
+  it('keeps an unconsumed adopted draft through reconnect', async () => {
+    persisted.set(root, 'Reload-restored reconnect draft');
+    mount();
+    await waitFor(() => expect(value()).toBe('Reload-restored reconnect draft'));
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(value()).toBe('Reload-restored reconnect draft');
+    expect(persisted.get(root)).toBe('Reload-restored reconnect draft');
+    expect(
+      seams.request.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
+    ).toHaveLength(0);
+  });
+
+  it.each([
     { owner: root, replacement: 'Newer quick-navigation draft' },
     { owner: holder, replacement: 'Newer quick-navigation draft' },
     { owner: root, replacement: '' },
