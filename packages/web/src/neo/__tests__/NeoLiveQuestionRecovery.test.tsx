@@ -158,8 +158,8 @@ function mount() {
   });
   useNeoMock.mockImplementation(() => model.value);
   const view = render(<NeoLive />);
-  const toggle = view.container.querySelector('[data-scene-toggle]');
-  if (toggle) fireEvent.click(toggle);
+  const sheet = screen.queryByRole('button', { name: /^Your work/ });
+  if (sheet) fireEvent.click(sheet);
   return { ...view, model };
 }
 const attention = () => screen.getByRole('region', { name: 'Needs your attention' });

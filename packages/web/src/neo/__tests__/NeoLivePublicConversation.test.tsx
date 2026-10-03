@@ -293,62 +293,14 @@ describe('NeoLive durable conversation activation', () => {
     expect(screen.queryByLabelText('Draft')).toBeNull();
   });
 
-  it('opens verified holders in Neo, keeps original asks in scope, and restores per-view drafts', async () => {
+  it('labels holder replies as Neo without author navigation', async () => {
     render(<NeoLive />);
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'Root unsent draft' } });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith('a'));
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Fictional research' })).toBeTruthy()
-    );
-    expect(
-      await within(askArticle('root-ask')).findByText('root-ask', { selector: 'strong' })
-    ).toBeTruthy();
-    expect(
-      await within(askArticle('holder-ask')).findByText('holder-ask', { selector: 'strong' })
-    ).toBeTruthy();
-    expect(publicView().textContent).not.toContain('other-ask');
-    expect(publicView().textContent).not.toContain('b-reply');
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('');
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'Holder unsent draft' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Back to Neo' })[0]);
-    await waitFor(() =>
-      expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe(
-        'Root unsent draft'
-      )
-    );
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe(
-        'Holder unsent draft'
-      )
-    );
-  });
-
-  it('does not turn unknown producers or conflicting bindings into execution navigation', async () => {
-    publications.value = { ...publications.value, items: [publication('unknown', 'worker')] };
-    source.value = {
-      ...source.value,
-      publicAuthorBindings: [
-        ...source.value.publicAuthorBindings!,
-        { kind: 'concern', concernId: 'b', sessionId: holder },
-      ],
-    };
-    render(<NeoLive />);
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Context holder' }));
-    expect(await screen.findByText('This context holder is not available in Neo.')).toBeTruthy();
+    expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
+    for (const name of ['Fictional research', 'Context holder', 'Neo'])
+      expect(within(publicView()).queryByRole('button', { name, exact: true })).toBeNull();
+    expect(within(publicView()).getAllByText('Neo', { exact: true }).length).toBeGreaterThan(0);
+    expect(within(publicView()).queryByText('Source context')).toBeNull();
     expect(open).not.toHaveBeenCalled();
-    await act(async () => {
-      publications.value = { ...publications.value, items: [publication('conflict', holder)] };
-    });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Context holder' }));
-    expect(open).not.toHaveBeenCalled();
-    expect(document.querySelector('a[href^="/session/"]')).toBeNull();
-    await act(async () => {
-      publications.value = { ...publications.value, items: [publication('root-reply', root)] };
-    });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Neo' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith(null));
   });
 
   it('retains public rows on source failure and retries both owners without SDK fallback', async () => {

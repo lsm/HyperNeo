@@ -180,8 +180,7 @@ describe('groupNeoScenes', () => {
         classifyNeoScenes(
           board.receipts.filter(
             (receipt) =>
-              receipt.id !== 'c-failed' &&
-              receipt.id !== 'c-reported' &&
+              receipt.kind !== 'consultation' &&
               !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId)
           )
         )
@@ -222,15 +221,16 @@ describe('projectNeoScenes', () => {
 
 describe('selectNeoScene', () => {
   it('keeps a work and a consultation with the same id distinct', () => {
-    const scenes = projectNeoScenes(
-      boardFor({
-        ...fullSnapshot,
-        work: [work('same', 'queued', 10)],
-        consultations: [check('same', 'pending', 20)],
-        consultationWaiters: [],
-      })
+    const scenes = groupNeoScenes(
+      classifyNeoScenes(
+        boardFor({
+          ...fullSnapshot,
+          work: [work('same', 'queued', 10)],
+          consultations: [check('same', 'pending', 20)],
+          consultationWaiters: [],
+        }).receipts
+      )
     );
-    if (!scenes) throw new Error('Expected a projection');
     const a = selectNeoScene(scenes, { kind: 'work', id: 'same' });
     const b = selectNeoScene(scenes, { kind: 'consultation', id: 'same' });
     if (!('value' in a) || !('value' in b)) throw new Error('Expected both identities');

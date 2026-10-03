@@ -102,8 +102,6 @@ const renderLive = () => {
 };
 
 const banner = () => screen.getByRole('banner');
-const toggle = () => screen.getByRole('button', { name: /Your concerns/ });
-const concernsList = () => screen.getByRole('complementary', { name: 'Your concerns' });
 
 afterEach(() => {
   cleanup();
@@ -119,6 +117,7 @@ describe('Neo floating controls', () => {
     expect(screen.queryByText('MVP')).toBeNull();
     expect(banner().querySelector('h1')).toBeNull();
     expect(screen.getByText('Conversation body')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Your concerns/ })).toBeNull();
   });
 
   it('keeps the root logo actionable as the actual Back to Neo control', () => {
@@ -128,29 +127,6 @@ describe('Neo floating controls', () => {
     expect(open).toHaveBeenCalledWith(null);
   });
 
-  it('drives the real concerns toggle, selection, dismissal and focus return', () => {
-    const { open } = renderLive();
-    expect(concernsList().className).not.toContain('is-open');
-    const trigger = toggle();
-    fireEvent.click(trigger);
-    const list = concernsList();
-    expect(list.className).toContain('is-open');
-    expect(within(list).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: /Concern a/ }));
-    expect(open).toHaveBeenCalledWith('a');
-    fireEvent.click(toggle());
-    fireEvent.click(within(concernsList()).getByRole('button', { name: 'Close concerns' }));
-    expect(concernsList().className).not.toContain('is-open');
-    expect(document.activeElement).toBe(toggle());
-  });
-
-  it('keeps the Open HyperNeo native link attributes', () => {
-    renderLive();
-    const link = screen.getByRole('link', { name: 'Open HyperNeo' });
-    expect([link.getAttribute('href'), link.getAttribute('target')]).toEqual(['/', '_blank']);
-    expect(link.getAttribute('rel')).toBe('noreferrer');
-  });
-
   it('keeps draft and the work card intact while the controls are used', () => {
     renderLive();
     const opened = vi.spyOn(window, 'open').mockReturnValue(null);
@@ -158,25 +134,10 @@ describe('Neo floating controls', () => {
     const card = screen.getByRole('article', { name: 'Title w' });
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
     expect(opened).toHaveBeenCalledExactlyOnceWith('/session/w-session', '_blank', 'noopener');
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
     expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
     opened.mockRestore();
-  });
-
-  it('keeps one work card through a real concerns round trip', () => {
-    renderLive();
-    const card = screen.getByRole('article', { name: 'Title w' });
-    fireEvent.click(toggle());
-    expect(within(concernsList()).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
-    expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
-    expect(card.getAttribute('data-scene-open')).toBe('w-queued');
   });
 
   it('still accepts a dropped file on the preserved banner', async () => {

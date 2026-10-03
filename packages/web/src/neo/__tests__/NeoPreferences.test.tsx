@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoPreferences } from '../NeoPreferences.tsx';
-import { NeoConcerns } from '../NeoConcerns.tsx';
 
 const api = vi.hoisted(() => ({
   request: vi.fn(),
@@ -104,33 +103,6 @@ describe('Neo preferences', () => {
     view.rerender(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={onError} />);
     expect(screen.queryByRole('button', { name: 'Think 16k', exact: true })).toBeNull();
     expect(screen.getByText('Not available for this model')).toBeTruthy();
-  });
-  it('opens a parked concerns card and routes into its existing context', () => {
-    const onOpen = vi.fn();
-    render(
-      <NeoConcerns
-        concerns={[
-          {
-            id: 'club',
-            title: 'Book club',
-            summary: 'Eight people',
-            context: '',
-            revision: 1,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ]}
-        selectedId={null}
-        onOpen={onOpen}
-      />
-    );
-    const trigger = screen.getByRole('button', { name: 'Your concerns · 1' });
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(trigger);
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'Book club Eight people' }));
-    expect(onOpen).toHaveBeenCalledWith('club');
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
   it('filters models, shows no matches, supports arrow keys and restores focus on Escape', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);

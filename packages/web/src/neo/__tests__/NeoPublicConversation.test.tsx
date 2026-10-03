@@ -123,15 +123,14 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelector('script')).toBeNull();
   });
 
-  it('opens labelled scene references only through the owning callback, never as native actions', () => {
+  it('opens only work references through the owning callback, never as native actions', () => {
     const open = vi.fn();
     render(<NeoPublicConversation conversation={conversation()} onOpenScene={open} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
-    for (const ref of publication().links) {
-      fireEvent.click(within(refs).getByRole('button', { name: ref.label }));
-      expect(open).toHaveBeenLastCalledWith({ kind: ref.kind, id: ref.id });
-    }
-    expect(open).toHaveBeenCalledTimes(3);
+    fireEvent.click(within(refs).getByRole('button', { name: 'Read work detail' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith({ kind: 'work', id: 'fictional-work' });
+    expect(within(refs).queryByText('Source context')).toBeNull();
+    expect(within(refs).queryByText('Read comparison')).toBeNull();
     for (const name of ['Start', 'Stop', 'Decline'])
       expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
     expect(refs.querySelector('a')).toBeNull();
@@ -140,12 +139,11 @@ describe('durable public conversation presentation', () => {
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {
     render(<NeoPublicConversation conversation={conversation()} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
-    expect(within(refs).getByText('Read comparison')).toBeTruthy();
+    expect(within(refs).getByText('Read work detail')).toBeTruthy();
     expect(within(refs).queryAllByRole('button')).toEqual([]);
   });
 
-  it('attributes actual producers and opens their Neo conversation without printing private session ids', () => {
-    const open = vi.fn();
+  it('labels every producer as Neo without holder names or private session ids', () => {
     const reply = publication({
       publicationId: '20000000-0000-4000-8000-000000000002',
       producerInput: { sessionId: root, messageId: original.messageId },
@@ -154,28 +152,14 @@ describe('durable public conversation presentation', () => {
     const { container } = render(
       <NeoPublicConversation
         conversation={conversation([], [publication(), reply])}
-        authors={new Map([[holder, 'Source context']])}
-        onOpenAuthor={open}
+        authors={new Map([[holder, 'Fictional holder name']])}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Source context', exact: true }));
-    expect(open).toHaveBeenLastCalledWith(holder);
-    fireEvent.click(screen.getByRole('button', { name: 'Neo', exact: true }));
-    expect(open).toHaveBeenLastCalledWith(root);
-    expect(open).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText('Neo', { exact: true })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Neo', exact: true })).toBeNull();
+    expect(screen.queryByText('Fictional holder name')).toBeNull();
+    expect(screen.queryByText('Context holder')).toBeNull();
     expect(container.textContent).not.toContain(holder);
-  });
-
-  it('does not mislabel an unknown holder as root or infer its name from unrelated scene labels', () => {
-    render(
-      <NeoPublicConversation
-        conversation={conversation()}
-        authors={new Map([['unrelated-session', 'Wrong author']])}
-      />
-    );
-    expect(screen.getByText('Context holder', { exact: true })).toBeTruthy();
-    expect(screen.queryByText('Neo', { exact: true })).toBeNull();
-    expect(screen.queryByText('Wrong author')).toBeNull();
   });
 
   it('does not quote the original ask inside a reply', () => {

@@ -123,10 +123,9 @@ afterEach(() => {
 
 describe('public work reference navigation', () => {
   it.each(['proposed', 'queued', 'reported', 'failed', 'cancelled'] as const)(
-    'opens a current %s work id without confusing matching concern or consultation ids',
+    'opens a current %s work id and drops matching concern or consultation links',
     (status) => {
       const openWork = vi.fn();
-      const openAuthor = vi.fn();
       render(
         <NeoConversation
           store={store()}
@@ -134,21 +133,15 @@ describe('public work reference navigation', () => {
           works={[work(status)]}
           snapshot={snapshot([work(status)])}
           publicConversation={conversation}
-          publicAuthors={new Map([['holder', 'Fictional garden']])}
           onOpenPublicWork={openWork}
-          onOpenPublicAuthor={openAuthor}
         />
       );
       const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
       fireEvent.click(within(refs).getByRole('button', { name: 'Flower work' }));
       expect(openWork).toHaveBeenCalledExactlyOnceWith('garden');
-      expect(openAuthor).not.toHaveBeenCalled();
-      fireEvent.click(within(refs).getByRole('button', { name: 'Garden context' }));
-      expect(openAuthor).toHaveBeenCalledExactlyOnceWith('holder');
-      expect(openWork).toHaveBeenCalledTimes(1);
-      expect(within(refs).queryByRole('button', { name: 'Context return' })).toBeNull();
+      expect(within(refs).queryByText('Garden context')).toBeNull();
+      expect(within(refs).queryByText('Context return')).toBeNull();
       expect(within(refs).queryByRole('button', { name: 'Unavailable work' })).toBeNull();
-      expect(within(refs).getByText('Context return')).toBeTruthy();
       expect(within(refs).getByText('Unavailable work')).toBeTruthy();
       expect(refs.querySelector('a')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
@@ -210,7 +203,6 @@ describe('public work reference navigation', () => {
         snapshot: current,
         viewSnapshot: current,
         viewPublicConversation: conversation,
-        publicAuthors: new Map([['holder', 'Fictional garden']]),
         store: store(),
         error: null,
         setError: vi.fn(),

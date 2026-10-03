@@ -141,97 +141,23 @@ function mount(publicMode = true) {
   });
   useNeoMock.mockImplementation(() => model.value);
   const view = render(<NeoLive />);
-  const toggle = view.container.querySelector('[data-scene-toggle]');
-  if (toggle) fireEvent.click(toggle);
+  const sheet = screen.queryByRole('button', { name: /^Your work/ });
+  if (sheet) fireEvent.click(sheet);
   return { ...view, model };
 }
 
-const openCheck = (container: Element, id: string) => {
-  const opener = container.querySelector<HTMLButtonElement>(`[data-consultation-open="${id}"]`)!;
-  expect(opener).toBeTruthy();
-  fireEvent.click(opener);
-};
-
 describe('Neo public mixed consultation scenes', () => {
-  it('names concurrent summary checks by their holder and never shows failed checks', () => {
+  it('lists no context check in any scene group, whatever its status', () => {
     const { container, model } = mount();
-    const running = screen.getByRole('region', { name: 'In progress' });
-    for (const holder of ['a', 'b']) {
-      const name = new RegExp(`^View details for Context check for Fictional holder ${holder}$`);
-      expect(within(running).getByRole('button', { name })).toBeTruthy();
-    }
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewSnapshot: {
-          ...model.value.viewSnapshot,
-          consultations: [
-            ...model.value.viewSnapshot.consultations,
-            { ...consultation('failed-b', 'failed'), concernId: 'b' },
-          ],
-        },
-      };
-    });
-    expect(container.querySelector('[data-consultation-open="failed"]')).toBeNull();
-    expect(container.querySelector('[data-consultation-open="failed-b"]')).toBeNull();
-    expect(
-      screen.queryByRole('region', { name: 'Needs your attention' })?.textContent ?? ''
-    ).not.toContain('Context check');
-    openCheck(container, 'pending');
-    expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
-  });
-
-  it('hides failed and answered context checks and shows the other statuses with truthful counts and non-actionable running/outcome summaries', () => {
-    const { container, model } = mount();
-    for (const [name, count] of [
-      ['Needs your attention', 1],
-      ['In progress', 2],
-    ] as const)
-      expect(screen.getByRole('region', { name }).textContent).toContain(`${name} · ${count}`);
-    const running = screen.getByRole('region', { name: 'In progress' });
-    expect(running.textContent).toContain('Checking context');
-    expect(running.textContent).toContain('Waiting for context');
+    expect(container.querySelector('[data-consultation-open]')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Needs your attention' }).textContent).toContain(
+      'Needs your attention · 1'
+    );
+    expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
-    expect(running.querySelector('article, details, input, textarea, a')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    expect(container.textContent).not.toContain('Context check');
     expect(container.textContent).not.toContain('Checking with');
     expect(model.value.act).not.toHaveBeenCalled();
-  });
-
-  it.each([false, true])(
-    'opens the holder context for a pending check in narrow=%s without an action or draft loss',
-    (narrow) => {
-      vi.stubGlobal('matchMedia', () => ({ matches: !narrow }));
-      const { container, model } = mount();
-      const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
-      fireEvent.input(draft, { target: { value: 'Fictional draft survives context detail' } });
-      openCheck(container, 'pending');
-      expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
-      expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
-      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(false);
-      expect(model.value.act).not.toHaveBeenCalled();
-      expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
-      expect(draft.value).toBe('Fictional draft survives context detail');
-    }
-  );
-
-  it('keeps a colliding work ID distinct from its context-check counterpart', () => {
-    const { container, model } = mount();
-    openCheck(container, 'pending');
-    expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
-    const list = screen.getByRole('region', { name: 'Neo scenes' });
-    expect(
-      within(list).getByRole('article', { name: 'Fictional execution proposal' })
-    ).toBeTruthy();
-    expect(list.querySelector('[data-consultation-open="pending"]')).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
-    expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'start');
-    expect(model.value.open).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not list an answered context check', () => {
-    const { container } = mount();
-    expect(container.querySelector('[data-consultation-open="reported"]')).toBeNull();
   });
 
   it('preserves the single pending banner and work-only scene groups in legacy mode', () => {
@@ -242,16 +168,5 @@ describe('Neo public mixed consultation scenes', () => {
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'stop-waiting');
-  });
-
-  it('drops context-check scenes if the durable public presentation is no longer supplied', () => {
-    const { container, model } = mount();
-    expect(container.querySelector('[data-consultation-open]')).toBeTruthy();
-    act(() => {
-      model.value = { ...model.value, viewPublicConversation: undefined };
-    });
-    expect(screen.getAllByRole('button', { name: 'Stop waiting' })).toHaveLength(1);
-    expect(container.querySelector('[data-consultation-open]')).toBeNull();
-    expect(model.value.act).not.toHaveBeenCalled();
   });
 });
