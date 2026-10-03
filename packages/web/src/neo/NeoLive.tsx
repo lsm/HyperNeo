@@ -31,6 +31,30 @@ export function NeoLive() {
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
+  const [dismissedWork, setDismissedWork] = useState<ReadonlySet<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('neo.dismissedWork') ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const dismissWork = (id: string) =>
+    setDismissedWork((prior) => {
+      const next = new Set(prior).add(id);
+      try {
+        localStorage.setItem('neo.dismissedWork', JSON.stringify([...next].slice(-200)));
+      } catch {}
+      return next;
+    });
+  const retryWork = (work: NeoWork) => {
+    if (!neo.sessionId) return;
+    void neo
+      .send({ sessionId: neo.sessionId, text: `Please try this again: ${work.title}` })
+      .then((receipt) => {
+        if (receipt.ok) dismissWork(work.id);
+        else neo.setError(receipt.reason);
+      });
+  };
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
@@ -118,7 +142,8 @@ export function NeoLive() {
     publicConversation && questions.scope === sceneScope ? questions.values : undefined,
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
-      : undefined
+      : undefined,
+    dismissedWork
   );
   const sceneGroups = (
     [
@@ -651,6 +676,8 @@ export function NeoLive() {
                     disabled={!connected || !!neo.busyWork}
                     onAction={(id, action) => void neo.act(id, action)}
                     questionSlot={publicConversation ? attachQuestion : undefined}
+                    onRetry={retryWork}
+                    onDismiss={dismissWork}
                   />
                 )}
                 {detailConsultation && (
@@ -723,6 +750,8 @@ export function NeoLive() {
                           publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
                         }
                         questionSlot={publicConversation ? attachQuestion : undefined}
+                        onRetry={retryWork}
+                        onDismiss={dismissWork}
                       />
                     ) : (
                       <NeoConsultationCard

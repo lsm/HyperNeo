@@ -35,6 +35,8 @@ export function NeoWorkCard({
   onOpen,
   presentation = 'detail',
   questionSlot,
+  onRetry,
+  onDismiss,
 }: {
   work: NeoWork;
   busy: boolean;
@@ -43,6 +45,8 @@ export function NeoWorkCard({
   onOpen?: (id: string) => void;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
+  onRetry?: (work: NeoWork) => void;
+  onDismiss?: (id: string) => void;
 }) {
   const attachQuestion = useMemo(() => {
     let previous: HTMLElement | null = null;
@@ -159,6 +163,16 @@ export function NeoWorkCard({
             icon={<NeoIcon name="arrow" />}
           >
             {busy ? 'Starting…' : 'Start work'}
+          </Button>
+        )}
+        {work.status === 'failed' && onRetry && (
+          <Button disabled={disabled || busy} onClick={() => onRetry(work)}>
+            Try again
+          </Button>
+        )}
+        {work.status === 'failed' && onDismiss && (
+          <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
+            Dismiss
           </Button>
         )}
         {(work.status === 'proposed' || active) && (

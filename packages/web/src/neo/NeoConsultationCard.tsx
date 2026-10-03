@@ -114,11 +114,6 @@ export function NeoConsultationCard({
           {busy ? 'Closing…' : 'Stop waiting'}
         </Button>
       )}
-      <p class="mt-3 text-xs leading-relaxed text-fg-muted">
-        {waiting
-          ? 'This is a context check, not an execution worker. Stopping the wait does not interrupt the holder or undo saved context.'
-          : 'A recorded response is not verified completion. The context holder does not execute work.'}
-      </p>
     </article>
   );
 }

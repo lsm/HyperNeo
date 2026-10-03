@@ -140,9 +140,21 @@ export function selectNeoScene(
   return { reason: 'unknown_scene' };
 }
 
+export function hideNeoInternalReceipts(
+  receipts: readonly NeoBoardReceipt[],
+  dismissed: ReadonlySet<string>
+): NeoBoardReceipt[] {
+  return receipts.filter(
+    (receipt) =>
+      !(receipt.kind === 'consultation' && receipt.status === 'failed') &&
+      !(receipt.kind === 'work' && receipt.status === 'failed' && dismissed.has(receipt.id))
+  );
+}
+
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
-  .input(['board', 'questions', 'unavailableSessions'])
-  .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
+  .input(['board', 'questions', 'unavailableSessions', 'dismissed'])
+  .pipe(admitNeoSceneReceipts, 'board', 'result:receipts')
+  .pipe(hideNeoInternalReceipts, ['receipts', 'dismissed'], 'scenes')
   .pipe(classifyNeoScenes, 'scenes', 'classified')
   .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
@@ -150,13 +162,15 @@ const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   .end('scenes') as (
   board: NeoConcernBoard | null,
   questions: NeoSceneQuestions,
-  unavailableSessions: NeoSceneUnavailableSessions
+  unavailableSessions: NeoSceneUnavailableSessions,
+  dismissed: ReadonlySet<string>
 ) => NeoSceneGroups | null;
 
 export function projectNeoScenes(
   board: NeoConcernBoard | null,
   questions: NeoSceneQuestions = new Map(),
-  unavailableSessions: NeoSceneUnavailableSessions = new Map()
+  unavailableSessions: NeoSceneUnavailableSessions = new Map(),
+  dismissed: ReadonlySet<string> = new Set()
 ): NeoSceneGroups | null {
-  return projectScenes(board, questions, unavailableSessions);
+  return projectScenes(board, questions, unavailableSessions, dismissed);
 }
