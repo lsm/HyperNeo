@@ -27,6 +27,7 @@ import {
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
+import { raceWithTimeout } from './providers/discovery-refresh-pipeline.js';
 import { mergeDiscoveredModels } from './providers/shared/discovery-cache.js';
 import {
   classifyProviderLoadOutcomes,
@@ -857,6 +858,22 @@ function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[
   return missing.length === 0 ? models : [...models, ...missing];
 }
 
+const PROVIDER_MODEL_LOAD_TIMEOUT_MS = 10_000;
+
+async function loadProviderModelsBounded(
+  provider: Provider,
+  options?: { forceRemote?: boolean }
+): Promise<ProviderModelLoadResult> {
+  try {
+    return await raceWithTimeout(
+      loadProviderModels(provider, options),
+      PROVIDER_MODEL_LOAD_TIMEOUT_MS
+    );
+  } catch (error) {
+    return { status: 'failed', models: fallbackModelsFor(provider), error };
+  }
+}
+
 async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
@@ -895,15 +912,21 @@ async function loadModelsFromProviders(options?: {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
     initializeProviders();
-    await waitForOptionalProviderRegistration();
+    await raceWithTimeout(
+      waitForOptionalProviderRegistration(),
+      PROVIDER_MODEL_LOAD_TIMEOUT_MS
+    ).catch(() => {});
   } else if (shouldWaitForOptionalProviders(registry)) {
-    await waitForOptionalProviderRegistration(registry);
+    await raceWithTimeout(
+      waitForOptionalProviderRegistration(registry),
+      PROVIDER_MODEL_LOAD_TIMEOUT_MS
+    ).catch(() => {});
   }
   const providers = getAvailableProviders();
   const loadSeq = ++modelLoadSequence;
 
   const results = await Promise.allSettled(
-    providers.map((provider) => loadProviderModels(provider, options))
+    providers.map((provider) => loadProviderModelsBounded(provider, options))
   );
 
   const cachedModels = modelsCache.get('global') ?? [];
