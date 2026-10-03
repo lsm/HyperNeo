@@ -161,7 +161,11 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
-    expect(sdkEvent!.scope).toEqual({ sessionId: 's-task', taskId: 'task-1' });
+    expect(sdkEvent!.scope).toEqual({
+      sessionId: 's-task',
+      taskId: 'task-1',
+      messageSubtype: null,
+    });
   });
 
   test('sdk_messages change scope omits taskId for non-task sessions', () => {
@@ -172,7 +176,7 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     reactiveDb.db.saveSDKMessage('s-plain', assistantMessage('one'));
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
-    expect(sdkEvent!.scope).toEqual({ sessionId: 's-plain' });
+    expect(sdkEvent!.scope).toEqual({ sessionId: 's-plain', messageSubtype: null });
   });
 
   test('session update touching context invalidates the cached taskId', () => {
