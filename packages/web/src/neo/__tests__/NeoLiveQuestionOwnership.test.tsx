@@ -151,9 +151,7 @@ const renderLive = () => {
   };
   const model = signal({
     sessionId: root,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     viewPublicConversation: {
       conversationId: root.slice(4),
       status: 'ready',
@@ -238,17 +236,5 @@ describe('NeoLive public question ownership', () => {
     expect(screen.getByRole('button', { name: 'Open chat for Title c' })).toBeTruthy();
     expect(select).toHaveBeenCalledTimes(3);
     expect(destroy).not.toHaveBeenCalled();
-  });
-  it('releases observers outside the selected scope', async () => {
-    const { model } = renderLive();
-    await waitingCard('a');
-    act(() => {
-      model.value = { ...model.value, selectedId: 'b' };
-    });
-    await waitFor(() => expect(screen.queryByRole('article', { name: 'Title a' })).toBeNull());
-    await waitingCard('b');
-    await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-a'));
-    expect(leave).toHaveBeenCalledWith('session:worker-c');
-    expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
   });
 });

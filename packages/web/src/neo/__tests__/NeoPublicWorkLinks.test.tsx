@@ -198,9 +198,7 @@ describe('public work reference navigation', () => {
       const current = snapshot([{ ...work(status), sessionId: 'flower-session' }]);
       const model = signal({
         sessionId: root,
-        selectedId: null as string | null,
         snapshot: current,
-        viewSnapshot: current,
         viewPublicConversation: conversation,
         store: store(),
         error: null,
@@ -231,11 +229,6 @@ describe('public work reference navigation', () => {
       expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
         'Keep this fictional draft'
       );
-      act(() => {
-        model.value = { ...model.value, selectedId: 'garden' };
-      });
-      expect(screen.queryByRole('button', { name: 'Flower work' })).toBeNull();
-      expect(screen.getByText('Flower work')).toBeTruthy();
       opened.mockRestore();
     }
   );

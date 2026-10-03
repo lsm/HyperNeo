@@ -122,9 +122,7 @@ function mount() {
   const snapshot = { ok: true, sessionId: root, concerns: [], work: [work], consultations: [] };
   const model = signal({
     sessionId: root,
-    selectedId: null,
     snapshot,
-    viewSnapshot: snapshot,
     viewPublicConversation: {
       conversationId: root.slice(4),
       status: 'ready',
@@ -227,7 +225,7 @@ describe('NeoLive native question failure attention', () => {
     await waitFor(() => expect(select).toHaveBeenCalledTimes(2));
     act(() => {
       const snapshot = { ...model.value.snapshot, work: [{ ...work, sessionId: 'worker-B' }] };
-      model.value = { ...model.value, snapshot, viewSnapshot: snapshot };
+      model.value = { ...model.value, snapshot };
     });
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await act(async () => {

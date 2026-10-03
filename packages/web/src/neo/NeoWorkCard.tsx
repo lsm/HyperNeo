@@ -8,7 +8,7 @@ const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
   queued: 'Handed to HyperNeo',
   reported: 'Response ready',
-  failed: 'Needs attention',
+  failed: 'Failed',
   cancelled: 'Stopped',
 };
 
@@ -34,8 +34,6 @@ export function NeoWorkCard({
   onOpen,
   presentation = 'detail',
   questionSlot,
-  onRetry,
-  onDismiss,
   waiting = false,
 }: {
   work: NeoWork;
@@ -45,8 +43,6 @@ export function NeoWorkCard({
   onOpen?: (id: string) => void;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
-  onRetry?: (work: NeoWork) => void;
-  onDismiss?: (id: string) => void;
   waiting?: boolean;
 }) {
   const attachQuestion = useMemo(() => {
@@ -90,7 +86,7 @@ export function NeoWorkCard({
         ? 'text-warning bg-warning/10'
         : 'text-accent bg-accent/10';
   const answering = active && waiting && !!work.sessionId && !!onOpen;
-  const hasActions = work.status === 'proposed' || work.status === 'failed' || answering;
+  const hasActions = work.status === 'proposed' || answering;
   const openable = !!onOpen && !!work.sessionId && !hasActions;
   return (
     <article
@@ -165,16 +161,6 @@ export function NeoWorkCard({
         ))}
       {hasActions && (
         <div class="mt-4 flex flex-wrap items-center justify-end gap-4">
-          {work.status === 'failed' && onDismiss && (
-            <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
-              Dismiss
-            </Button>
-          )}
-          {work.status === 'failed' && onRetry && (
-            <Button disabled={disabled || busy} onClick={() => onRetry(work)}>
-              Try again
-            </Button>
-          )}
           {work.status === 'proposed' && (
             <Button
               variant="ghost"

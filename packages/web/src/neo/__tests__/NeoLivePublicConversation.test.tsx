@@ -95,7 +95,6 @@ let source: Signal<NeoSnapshot>;
 let asks: Signal<NeoAskState>;
 let publications: Signal<NeoPublicationState>;
 let sessionId: Signal<string | null>;
-let selectedId: Signal<string | null>;
 let error: Signal<string | null>;
 let events: Map<string, Set<Handler>>;
 let connections: Set<(state: string) => void>;
@@ -162,28 +161,16 @@ beforeEach(async () => {
     hasMore: false,
   });
   sessionId = signal<string | null>(root);
-  selectedId = signal<string | null>(null);
   error = signal<string | null>(null);
   retryAsks = vi.fn();
   refreshPublications = vi.fn();
-  open = vi.fn(async (id: string | null) => {
-    const target = id === 'a' ? holder : id === 'b' ? otherHolder : root;
-    await store.select(target);
+  open = vi.fn(async () => {
+    await store.select(root);
     store.messagesLoaded.value = true;
-    selectedId.value = id;
-    sessionId.value = target;
+    sessionId.value = root;
   });
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
-    const concernId = selectedId.value;
-    const view = concernId
-      ? {
-          ...rootSnapshot,
-          sessionId: sessionId.value,
-          concerns: rootSnapshot.concerns.filter((item) => item.id === concernId),
-          consultations: rootSnapshot.consultations?.filter((item) => item.concernId === concernId),
-        }
-      : rootSnapshot;
     const conversation = projectNeoPublicConversation(
       rootSnapshot.sessionId,
       asks.value,
@@ -192,9 +179,7 @@ beforeEach(async () => {
     return {
       store,
       sessionId: sessionId.value,
-      selectedId: concernId,
       snapshot: rootSnapshot,
-      viewSnapshot: view,
       viewPublicConversation: projectNeoPublicHolderConversation(
         conversation,
         rootSnapshot,

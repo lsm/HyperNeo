@@ -103,9 +103,7 @@ function mount(publicMode = true) {
   };
   const model = signal({
     sessionId: root,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     viewPublicConversation: publicMode
       ? {
           conversationId: root.slice(4),

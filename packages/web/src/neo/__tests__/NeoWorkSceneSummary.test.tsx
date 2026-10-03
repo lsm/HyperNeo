@@ -61,7 +61,7 @@ describe('NeoWorkCard summary presentation', () => {
     ['proposed', 'Your call'],
     ['queued', 'Handed to HyperNeo'],
     ['reported', 'Response ready'],
-    ['failed', 'Needs attention'],
+    ['failed', 'Failed'],
     ['cancelled', 'Stopped'],
   ] as const)(
     'renders recorded %s truth without native action or question ownership',

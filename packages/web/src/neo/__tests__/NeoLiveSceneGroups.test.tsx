@@ -57,7 +57,6 @@ const work = (
 
 const live = () => ({
   sessionId: 'neo',
-  selectedId: null as string | null,
   error: null,
   setError: vi.fn(),
   open: vi.fn(),
@@ -115,7 +114,7 @@ const snapshot = () => ({
 const renderLive = (over: Record<string, unknown> = {}) => {
   const model = live();
   const view = snapshot();
-  const state = signal({ ...model, snapshot: view, viewSnapshot: view, ...over });
+  const state = signal({ ...model, snapshot: view, ...over });
   useNeoMock.mockImplementation(() => state.value);
   const result = render(<NeoLive />);
   return { ...result, state, model };
@@ -141,9 +140,13 @@ afterEach(() => {
 describe('NeoLive work scene groups', () => {
   it('places every work status under a truthful heading and counts the rows it renders', () => {
     renderLive();
-    expect(cards('Needs your attention')).toEqual(['Title a-failed', 'Title a-proposed']);
+    expect(cards('Needs your attention')).toEqual(['Title a-proposed']);
     expect(cards('In progress')).toEqual(['Title b-queued', 'Title a-queued']);
-    expect(cards('Recent outcomes')).toEqual(['Title a-cancelled', 'Title a-reported']);
+    expect(cards('Recent outcomes')).toEqual([
+      'Title a-cancelled',
+      'Title a-failed',
+      'Title a-reported',
+    ]);
     for (const name of ['Needs your attention', 'In progress', 'Recent outcomes'])
       expect(group(name).textContent).toContain(`${name} · ${cards(name).length}`);
     expect(screen.queryByRole('region', { name: 'Delegated work' })).toBeNull();
@@ -186,7 +189,7 @@ describe('NeoLive work scene groups', () => {
   it('opens the shared work chat from its card without any stop control', () => {
     const shared = snapshot();
     shared.work = [work('shared', 'queued', 80, 'a', { targetSessionId: 'project-chat' })];
-    const { state, model } = renderLive({ snapshot: shared, viewSnapshot: shared });
+    const { state, model } = renderLive({ snapshot: shared });
     const card = within(group('In progress')).getByRole('article', { name: 'Title shared' });
     expect(within(card).queryAllByRole('button')).toHaveLength(0);
     const opened = vi.spyOn(window, 'open').mockReturnValue(null);
@@ -195,16 +198,13 @@ describe('NeoLive work scene groups', () => {
     expect(model.act).not.toHaveBeenCalled();
     opened.mockRestore();
     const cleared = { ...shared, work: [] };
-    set(state, { snapshot: cleared, viewSnapshot: cleared });
+    set(state, { snapshot: cleared });
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
   });
 
-  it('isolates the selected concern and stays honest when the scoped view is null', () => {
+  it('stays honest when the snapshot is null', () => {
     const { state } = renderLive();
-    set(state, { selectedId: 'b' });
-    expect(cards('In progress')).toEqual(['Title b-queued']);
-    expect(screen.queryByRole('article', { name: 'Title a-queued' })).toBeNull();
-    set(state, { viewSnapshot: null });
+    set(state, { snapshot: null });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
@@ -213,7 +213,7 @@ describe('NeoLive work scene groups', () => {
   it('keeps a pending context check out of the page and the work groups', () => {
     const view = snapshot();
     view.work = [work('a-queued', 'queued', 30, 'a')];
-    const { container } = renderLive({ snapshot: view, viewSnapshot: view });
+    const { container } = renderLive({ snapshot: view });
     expect(container.textContent).not.toContain('Checking with');
     expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(within(group('In progress')).queryByText('Waiting for context')).toBeNull();
@@ -223,7 +223,7 @@ describe('NeoLive work scene groups', () => {
     const many = snapshot();
     many.work = Array.from({ length: 12 }, (_, i) => work(`w-${i}`, 'proposed', 200 - i, 'a'));
     const loading = { ...live().store, messagesLoaded: signal(false) };
-    const { state } = renderLive({ snapshot: many, viewSnapshot: many, store: loading });
+    const { state } = renderLive({ snapshot: many, store: loading });
     expect(screen.getByText('Opening your conversation…')).toBeTruthy();
     expect(cards('Needs your attention')).toEqual(
       Array.from({ length: 12 }, (_, i) => `Title w-${i}`)
@@ -233,20 +233,9 @@ describe('NeoLive work scene groups', () => {
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
   });
 
-  it('still hands the scoped work input to the conversation for reply correlation', () => {
-    const { state } = renderLive();
+  it('hands every work input to the conversation for reply correlation', () => {
+    renderLive();
     expect(seen.workIds).toContain('a-proposed');
-    set(state, { selectedId: 'b' });
-    expect(seen.workIds).toEqual(['b-queued']);
-  });
-
-  it('keeps each draft across a selection change that regroups the scenes', () => {
-    const { state } = renderLive();
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'root note' } });
-    set(state, { selectedId: 'a' });
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('');
-    expect(cards('Needs your attention')).toEqual(['Title a-failed', 'Title a-proposed']);
-    set(state, { selectedId: null });
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('root note');
+    expect(seen.workIds).toContain('b-queued');
   });
 });

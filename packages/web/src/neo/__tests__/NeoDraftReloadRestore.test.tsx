@@ -100,9 +100,7 @@ function mount() {
   const snapshot = { ok: true, sessionId: root, concerns: [], work: [], consultations: [] };
   const model = signal({
     sessionId: root,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     store,
     viewPublicConversation: {
       conversationId: root.slice(4),

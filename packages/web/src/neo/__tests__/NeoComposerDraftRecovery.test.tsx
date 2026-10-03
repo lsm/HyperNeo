@@ -41,7 +41,6 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 }));
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
-const holder = 'neo:550e8400-e29b-41d4-a716-446655440001';
 const persisted = new Map<string, string>();
 let slowLoad: Promise<unknown> | null = null;
 
@@ -113,9 +112,7 @@ function mount() {
   };
   const model = signal({
     sessionId: root,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     store,
     viewPublicConversation: {
       conversationId: root.slice(4),
@@ -147,80 +144,6 @@ function value() {
 }
 
 describe('Neo real composer draft recovery', () => {
-  it.each(
-    [root, holder].flatMap((owner) =>
-      [false, true].flatMap((adopted) =>
-        [false, true].map((concurrent) => ({ owner, adopted, concurrent }))
-      )
-    )
-  )(
-    'keeps the durable draft when unmounted during scope-return loading: $owner/$adopted/$concurrent',
-    async ({ owner, adopted, concurrent }) => {
-      const text = 'Saved scope-return draft';
-      if (adopted) persisted.set(owner, text);
-      const view = mount();
-      const select = (sessionId: string) =>
-        act(() => {
-          view.store.activeSessionId.value = sessionId;
-          view.model.value = {
-            ...view.model.value,
-            sessionId,
-            selectedId: sessionId === root ? null : 'garden',
-          };
-        });
-      await act(async () => {});
-      if (owner === holder) select(holder);
-      await act(async () => {});
-      if (!adopted) type(text);
-      await waitFor(() => expect(value()).toBe(text));
-      await waitFor(() => expect(persisted.get(owner)).toBe(text));
-      select(owner === root ? holder : root);
-      await act(async () => {});
-      const expected = concurrent ? 'Concurrent scope-return draft' : text;
-      persisted.set(owner, expected);
-      let release!: (value: unknown) => void;
-      slowLoad = new Promise((resolve) => {
-        release = resolve;
-      });
-      const before = seams.request.mock.calls.length;
-      select(owner);
-      await waitFor(() =>
-        expect(
-          seams.request.mock.calls
-            .slice(before)
-            .some(([method, input]) => method === 'session.get' && input.sessionId === owner)
-        ).toBe(true)
-      );
-      expect(value()).toBe('');
-      view.unmount();
-      await act(async () => {});
-      expect(persisted.get(owner)).toBe(expected);
-      expect(
-        seams.request.mock.calls
-          .slice(before)
-          .filter(
-            ([method, input]) => method === 'session.clearInputDraftIf' && input.sessionId === owner
-          )
-      ).toHaveLength(0);
-      await act(async () => {
-        release({ session: { metadata: { inputDraft: expected } } });
-      });
-      slowLoad = null;
-      expect(persisted.get(owner)).toBe(expected);
-      const remounted = mount();
-      if (owner === holder)
-        act(() => {
-          remounted.store.activeSessionId.value = holder;
-          remounted.model.value = {
-            ...remounted.model.value,
-            sessionId: holder,
-            selectedId: 'garden',
-          };
-        });
-      await waitFor(() => expect(value()).toBe(expected));
-    }
-  );
-
   it.each([false, true])(
     'clears an edited saved draft without clearing concurrent text: %s',
     async (concurrent) => {
@@ -313,59 +236,6 @@ describe('Neo real composer draft recovery', () => {
     );
   });
 
-  it.each([
-    { owner: root, replacement: 'Reload-restored draft' },
-    { owner: holder, replacement: 'Reload-restored draft' },
-    { owner: root, replacement: 'Newer restored draft' },
-    { owner: holder, replacement: 'Newer restored draft' },
-    { owner: root, replacement: '' },
-    { owner: holder, replacement: '' },
-  ])(
-    'preserves adopted text through scope return: $owner/$replacement',
-    async ({ owner, replacement }) => {
-      persisted.set(owner, 'Reload-restored draft');
-      const view = mount();
-      const select = (sessionId: string) =>
-        act(() => {
-          view.store.activeSessionId.value = sessionId;
-          view.model.value = {
-            ...view.model.value,
-            sessionId,
-            selectedId: sessionId === root ? null : 'garden',
-          };
-        });
-      if (owner === holder) select(holder);
-      await waitFor(() => expect(value()).toBe('Reload-restored draft'));
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      select(owner === root ? holder : root);
-      await act(async () => {});
-      persisted.set(owner, replacement);
-      const clears = () =>
-        seams.request.mock.calls.filter(
-          ([method, input]) => method === 'session.clearInputDraftIf' && input.sessionId === owner
-        ).length;
-      const before = clears();
-      select(owner);
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      expect(value()).toBe(replacement);
-      expect(persisted.get(owner)).toBe(replacement);
-      expect(clears()).toBe(before);
-      view.unmount();
-      const remounted = mount();
-      if (owner === holder) {
-        act(() => {
-          remounted.store.activeSessionId.value = holder;
-          remounted.model.value = {
-            ...remounted.model.value,
-            sessionId: holder,
-            selectedId: 'garden',
-          };
-        });
-      }
-      await waitFor(() => expect(value()).toBe(replacement));
-    }
-  );
-
   it('keeps an unconsumed adopted draft through reconnect', async () => {
     persisted.set(root, 'Reload-restored reconnect draft');
     mount();
@@ -383,51 +253,6 @@ describe('Neo real composer draft recovery', () => {
       seams.request.mock.calls.filter(([method]) => method === 'session.clearInputDraftIf')
     ).toHaveLength(0);
   });
-
-  it.each([
-    { owner: root, replacement: 'Newer quick-navigation draft' },
-    { owner: holder, replacement: 'Newer quick-navigation draft' },
-    { owner: root, replacement: '' },
-    { owner: holder, replacement: '' },
-  ])(
-    'loads current text after a navigation flush: $owner/$replacement',
-    async ({ owner, replacement }) => {
-      const view = mount();
-      const select = (sessionId: string) =>
-        act(() => {
-          view.store.activeSessionId.value = sessionId;
-          view.model.value = {
-            ...view.model.value,
-            sessionId,
-            selectedId: sessionId === root ? null : 'garden',
-          };
-        });
-      await act(async () => {});
-      if (owner === holder) {
-        select(holder);
-        await act(async () => {});
-      }
-      type('Quickly navigated draft');
-      await act(async () => {});
-      expect(persisted.get(owner) ?? '').toBe('');
-      select(owner === root ? holder : root);
-      await waitFor(() => expect(persisted.get(owner)).toBe('Quickly navigated draft'));
-      persisted.set(owner, replacement);
-      const writes = () =>
-        seams.request.mock.calls.filter(
-          ([method, input]) =>
-            method === 'session.update' &&
-            input.sessionId === owner &&
-            input.metadata?.inputDraft === 'Quickly navigated draft'
-        ).length;
-      const before = writes();
-      select(owner);
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      expect(value()).toBe(replacement);
-      expect(persisted.get(owner)).toBe(replacement);
-      expect(writes()).toBe(before);
-    }
-  );
 
   it('does not re-save an adopted snapshot over a subsequent concurrent update', async () => {
     persisted.set(root, 'Confirmed adoption draft');
@@ -461,57 +286,9 @@ describe('Neo real composer draft recovery', () => {
   });
 
   it.each([
-    { owner: root, replacement: 'Newer concurrent draft' },
-    { owner: holder, replacement: 'Newer concurrent draft' },
-    { owner: root, replacement: '' },
-    { owner: holder, replacement: '' },
-  ])(
-    'loads current durable text on same-mount return: $owner/$replacement',
-    async ({ owner, replacement }) => {
-      const view = mount();
-      const select = (sessionId: string) =>
-        act(() => {
-          view.store.activeSessionId.value = sessionId;
-          view.model.value = {
-            ...view.model.value,
-            sessionId,
-            selectedId: sessionId === root ? null : 'garden',
-          };
-        });
-      await act(async () => {});
-      if (owner === holder) {
-        select(holder);
-        await act(async () => {});
-      }
-      type('Confirmed cached draft');
-      await waitFor(() => expect(persisted.get(owner)).toBe('Confirmed cached draft'));
-      select(owner === root ? holder : root);
-      await act(async () => {});
-      persisted.set(owner, replacement);
-      const before = seams.request.mock.calls.filter(
-        ([method, input]) => method === 'session.update' && input.sessionId === owner
-      ).length;
-      select(owner);
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      expect(value()).toBe(replacement);
-      expect(persisted.get(owner)).toBe(replacement);
-      expect(
-        seams.request.mock.calls.filter(
-          ([method, input]) =>
-            method === 'session.update' &&
-            input.sessionId === owner &&
-            input.metadata?.inputDraft === 'Confirmed cached draft'
-        )
-      ).toHaveLength(before);
-    }
-  );
-
-  it.each([
     { mode: 'unmount', edited: false },
-    { mode: 'navigation', edited: false },
     { mode: 'loading', edited: false },
     { mode: 'unmount', edited: true },
-    { mode: 'navigation', edited: true },
     { mode: 'loading', edited: true },
   ])('flushes only unsaved edits on $mode: $edited', async ({ mode, edited }) => {
     const view = mount();
@@ -529,12 +306,8 @@ describe('Neo real composer draft recovery', () => {
     }
     if (mode !== 'unmount') {
       act(() => {
-        view.store.activeSessionId.value = mode === 'loading' ? null : holder;
-        view.model.value = {
-          ...view.model.value,
-          sessionId: mode === 'loading' ? '' : holder,
-          selectedId: 'garden',
-        };
+        view.store.activeSessionId.value = null;
+        view.model.value = { ...view.model.value, sessionId: '' };
       });
       await act(async () => {});
     }
@@ -667,7 +440,7 @@ describe('Neo real composer draft recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
     act(() => {
-      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+      view.model.value = { ...view.model.value, sessionId: '' };
     });
     await act(async () => {});
     view.unmount();
@@ -683,31 +456,19 @@ describe('Neo real composer draft recovery', () => {
     );
   });
 
-  it.each(['root', 'holder'])(
-    'flushes an unsaved %s draft during interrupted scope loading',
-    async (scope) => {
-      const view = mount();
-      await act(async () => {});
-      if (scope === 'holder') {
-        act(() => {
-          view.store.activeSessionId.value = holder;
-          view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
-        });
-        await act(async () => {});
-      }
-      const owner = scope === 'root' ? root : holder;
-      type('Fictional interrupted loading draft');
-      await act(async () => {});
-      expect(persisted.get(owner) ?? '').toBe('');
-      act(() => {
-        view.model.value = { ...view.model.value, sessionId: '', selectedId: 'next-garden' };
-      });
-      await act(async () => {});
-      view.unmount();
-      await waitFor(() => expect(persisted.get(owner)).toBe('Fictional interrupted loading draft'));
-      expect(persisted.get(owner === root ? holder : root) ?? '').toBe('');
-    }
-  );
+  it('flushes an unsaved draft during interrupted reopen loading', async () => {
+    const view = mount();
+    await act(async () => {});
+    type('Fictional interrupted loading draft');
+    await act(async () => {});
+    expect(persisted.get(root) ?? '').toBe('');
+    act(() => {
+      view.model.value = { ...view.model.value, sessionId: '' };
+    });
+    await act(async () => {});
+    view.unmount();
+    await waitFor(() => expect(persisted.get(root)).toBe('Fictional interrupted loading draft'));
+  });
 
   it('does not destructively clear a prior saved draft while scope loading is interrupted', async () => {
     const view = mount();
@@ -717,7 +478,7 @@ describe('Neo real composer draft recovery', () => {
     await waitFor(() => expect(value()).toBe(''));
     persisted.set(root, 'Concurrent fictional draft');
     act(() => {
-      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+      view.model.value = { ...view.model.value, sessionId: '' };
     });
     await act(async () => {});
     view.unmount();
@@ -808,8 +569,8 @@ describe('Neo real composer draft recovery', () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       expect(persisted.get(root)).toBe('Concurrent durable text');
       act(() => {
-        view.store.activeSessionId.value = holder;
-        view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
+        view.store.activeSessionId.value = null;
+        view.model.value = { ...view.model.value, sessionId: '' };
       });
       await act(async () => {});
       expect(persisted.get(root)).toBe('Concurrent durable text');
@@ -826,60 +587,6 @@ describe('Neo real composer draft recovery', () => {
       await waitFor(() => expect(value()).toBe('Concurrent durable text'));
     }
   );
-
-  it('does not mirror a late root transcript into the current holder draft', async () => {
-    let release!: (result: unknown) => void;
-    voice.recording = true;
-    voice.submit.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        })
-    );
-    persisted.set(holder, 'Fictional holder draft');
-    const view = mount();
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
-    );
-    await waitFor(() => expect(voice.submit).toHaveBeenCalledOnce());
-    voice.recording = false;
-    act(() => {
-      view.store.activeSessionId.value = holder;
-      view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
-    });
-    await waitFor(() => expect(value()).toBe('Fictional holder draft'));
-    await act(async () => {
-      release({
-        kind: 'routed',
-        recordId: 'fictional-recording',
-        outcome: {
-          kind: 'deliver-unmounted',
-          transcript: 'Late fictional root transcript',
-          autoSend: false,
-        },
-      });
-    });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(value()).toBe('Fictional holder draft');
-    expect(persisted.get(holder)).toBe('Fictional holder draft');
-    expect(
-      seams.request.mock.calls.filter(
-        ([method, input]) =>
-          method === 'session.update' &&
-          input.sessionId === holder &&
-          input.metadata?.inputDraft?.includes('Late fictional root transcript')
-      )
-    ).toHaveLength(0);
-    act(() => {
-      view.store.activeSessionId.value = root;
-      view.model.value = { ...view.model.value, sessionId: root, selectedId: null };
-    });
-    await waitFor(() => expect(value()).toBe('Late fictional root transcript'));
-    await waitFor(() => expect(persisted.get(root)).toBe('Late fictional root transcript'));
-    view.unmount();
-    mount();
-    await waitFor(() => expect(value()).toBe('Late fictional root transcript'));
-  });
 
   it('persists a voice transcript delivered within its original current scope', async () => {
     voice.recording = true;
@@ -905,7 +612,7 @@ describe('Neo real composer draft recovery', () => {
     type('Fictional prior scope draft');
     await waitFor(() => expect(persisted.get(root)).toBe('Fictional prior scope draft'));
     act(() => {
-      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
+      view.model.value = { ...view.model.value, sessionId: '' };
     });
     view.unmount();
     await act(async () => {});
@@ -960,29 +667,6 @@ describe('Neo real composer draft recovery', () => {
     expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(
       false
     );
-  });
-
-  it('keeps root and holder drafts isolated through scope loading and return', async () => {
-    persisted.set(holder, 'Fictional holder draft');
-    const view = mount();
-    type('Fictional root draft');
-    await waitFor(() => expect(persisted.get(root)).toBe('Fictional root draft'));
-    act(() => {
-      view.model.value = { ...view.model.value, sessionId: '', selectedId: 'garden' };
-    });
-    act(() => {
-      view.store.activeSessionId.value = holder;
-      view.model.value = { ...view.model.value, sessionId: holder };
-    });
-    await waitFor(() => expect(value()).toBe('Fictional holder draft'));
-    type('Edited fictional holder draft');
-    await waitFor(() => expect(persisted.get(holder)).toBe('Edited fictional holder draft'));
-    act(() => {
-      view.store.activeSessionId.value = root;
-      view.model.value = { ...view.model.value, sessionId: root, selectedId: null };
-    });
-    await waitFor(() => expect(value()).toBe('Fictional root draft'));
-    expect(persisted.get(holder)).toBe('Edited fictional holder draft');
   });
 
   it('does not replace fresh typing with a delayed saved draft', async () => {

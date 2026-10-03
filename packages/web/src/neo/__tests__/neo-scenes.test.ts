@@ -78,7 +78,7 @@ const cRow = (status: CheckStatus, group: Group, label: string, at: number): Sce
 
 const rows: SceneRow[] = [
   wRow('proposed', 'attention', 'Your call', 10),
-  wRow('failed', 'attention', 'Needs attention', 40),
+  wRow('failed', 'outcomes', 'Failed', 40),
   wRow('queued', 'running', 'Handed to HyperNeo', 20),
   wRow('reported', 'outcomes', 'Response ready', 30),
   wRow('cancelled', 'outcomes', 'Stopped', 50),
@@ -169,11 +169,11 @@ describe('groupNeoScenes', () => {
       projectNeoScenes(board),
     ]).toEqual([
       [
-        ['c-failed', 'w-failed', 'w-proposed'],
+        ['c-failed', 'w-proposed'],
         ['c-queued', 'c-pending', 'w-queued'],
-        ['c-reported', 'w-cancelled', 'w-reported'],
+        ['c-reported', 'w-cancelled', 'w-failed', 'w-reported'],
       ],
-      { attention: 3, running: 3, outcomes: 3, total: 9 },
+      { attention: 2, running: 3, outcomes: 4, total: 9 },
       [9, 9],
       before,
       groupNeoScenes(
@@ -211,7 +211,7 @@ describe('projectNeoScenes', () => {
   it('projects only the receipts of the selected concern', () => {
     const scoped: NeoSnapshot = {
       ...fullSnapshot,
-      work: [work('a-work', 'queued', 10, 'a'), work('b-work', 'failed', 20, 'b')],
+      work: [work('a-work', 'queued', 10, 'a'), work('b-work', 'proposed', 20, 'b')],
     };
     const scenes = projectNeoScenes(boardFor(scoped, 'b'));
     if (!scenes) throw new Error('Expected a projection');

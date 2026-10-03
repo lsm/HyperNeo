@@ -51,9 +51,7 @@ describe('Neo empty-conversation admission guidance', () => {
       const act = vi.fn();
       useNeoMock.mockReturnValue({
         sessionId,
-        selectedId: null,
         snapshot,
-        viewSnapshot: snapshot,
         viewPublicConversation: publicMode
           ? {
               conversationId: sessionId.slice(4),

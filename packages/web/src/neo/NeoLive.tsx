@@ -29,32 +29,8 @@ export function NeoLive() {
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
-  const [dismissedWork, setDismissedWork] = useState<ReadonlySet<string>>(() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem('neo.dismissedWork') ?? '[]') as string[]);
-    } catch {
-      return new Set();
-    }
-  });
-  const dismissWork = (id: string) =>
-    setDismissedWork((prior) => {
-      const next = new Set(prior).add(id);
-      try {
-        localStorage.setItem('neo.dismissedWork', JSON.stringify([...next].slice(-200)));
-      } catch {}
-      return next;
-    });
-  const retryWork = (work: NeoWork) => {
-    if (!neo.sessionId) return;
-    void neo
-      .send({ sessionId: neo.sessionId, text: `Please try this again: ${work.title}` })
-      .then((receipt) => {
-        if (receipt.ok) dismissWork(work.id);
-        else neo.setError(receipt.reason);
-      });
-  };
   const dragDepth = useRef(0);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<string | undefined>(undefined);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
   const scroll = useRef<HTMLElement>(null);
@@ -66,15 +42,13 @@ export function NeoLive() {
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
   const concerns = neo.snapshot?.concerns ?? [];
-  const view = neo.viewSnapshot;
-  const viewWorks = view?.work ?? [];
-  const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
+  const view = neo.snapshot;
+  const relevant = view?.work ?? [];
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
       : undefined;
-  const sceneScope =
-    neo.sessionId === null ? null : JSON.stringify([neo.sessionId, neo.selectedId]);
+  const sceneScope = neo.sessionId;
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
   const [questions, setQuestions] = useState<{
@@ -134,12 +108,11 @@ export function NeoLive() {
     [sceneScope]
   );
   const scenes = projectNeoScenes(
-    projectNeoConcernBoard(view, neo.selectedId, null),
+    projectNeoConcernBoard(view, null, null),
     publicConversation && questions.scope === sceneScope ? questions.values : undefined,
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
-      : undefined,
-    dismissedWork
+      : undefined
   );
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
@@ -153,26 +126,17 @@ export function NeoLive() {
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
-  const draftKey = neo.selectedId === null ? 'root' : `concern:${neo.selectedId}`;
   function writeDraft(text: string) {
-    setDrafts((items) => ({ ...items, [draftKey]: text }));
+    setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
   }
   useEffect(() => {
-    const cached = drafts[draftKey];
-    if (!sceneScope || cached === undefined) return;
-    if (inputDraft.isSavedDraft(neo.sessionId ?? '', cached))
-      setDrafts((items) => ({ ...items, [draftKey]: '' }));
-    else inputDraft.setContent(cached);
+    if (sceneScope === null || draft === undefined) return;
+    if (inputDraft.isSavedDraft(neo.sessionId ?? '', draft)) setDraft('');
+    else inputDraft.setContent(draft);
   }, [sceneScope]);
-  useNeoVoiceRecovery(
-    neo.sessionId,
-    drafts[draftKey] ?? '',
-    () => drafts[draftKey] ?? '',
-    writeDraft,
-    false
-  );
-  useNeoDraftReloadRecovery(neo.sessionId, reloadBuffer, () => drafts[draftKey] ?? '', writeDraft);
+  useNeoVoiceRecovery(neo.sessionId, draft ?? '', () => draft ?? '', writeDraft, false);
+  useNeoDraftReloadRecovery(neo.sessionId, reloadBuffer, () => draft ?? '', writeDraft);
   const messageCount = publicConversation?.entries.length ?? neo.store.sdkMessages.value.length;
   const lastPublicEntry = publicConversation?.entries.at(-1)?.key;
   const conversationReady =
@@ -289,10 +253,10 @@ export function NeoLive() {
         Math.max(1, scroll.current.scrollHeight - scroll.current.clientHeight);
   }, [messageCount, lastPublicEntry, neo.sessionId, workCount]);
 
-  function open(id: string | null) {
+  function open() {
     nearBottom.current = true;
     lastScrollTop.current = 0;
-    void neo.open(id);
+    void neo.open();
   }
 
   function retryPublicConversation() {
@@ -301,7 +265,7 @@ export function NeoLive() {
   }
 
   function openScene(ref: NeoSceneRef) {
-    const sessionId = viewWorks.find((item) => item.id === ref.id)?.sessionId;
+    const sessionId = relevant.find((item) => item.id === ref.id)?.sessionId;
     if (sessionId) window.open(`/session/${encodeURIComponent(sessionId)}`, '_blank', 'noopener');
   }
 
@@ -339,7 +303,7 @@ export function NeoLive() {
       <header class="neo-float-dock">
         <button
           type="button"
-          onClick={() => open(null)}
+          onClick={() => open()}
           aria-label="Back to Neo"
           class="neo-float-logo"
         >
@@ -413,7 +377,7 @@ export function NeoLive() {
                   ? 'Native session controls could not be loaded.'
                   : 'Conversation could not be loaded.'}
               </p>
-              <Button variant="ghost" size="sm" onClick={() => void neo.open(neo.selectedId)}>
+              <Button variant="ghost" size="sm" onClick={() => void neo.open()}>
                 Try again
               </Button>
             </div>
@@ -515,8 +479,6 @@ export function NeoLive() {
                       }
                       questionSlot={publicConversation ? attachQuestion : undefined}
                       waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
-                      onRetry={retryWork}
-                      onDismiss={dismissWork}
                     />
                   ) : null
                 )}
@@ -542,7 +504,7 @@ export function NeoLive() {
               key={neo.sessionId}
               store={neo.store}
               sessionId={neo.sessionId}
-              draft={drafts[draftKey] ?? ''}
+              draft={draft ?? ''}
               onDraft={(text) => {
                 if (
                   !reloadBuffer.remember(
@@ -557,11 +519,11 @@ export function NeoLive() {
                 writeDraft(text);
               }}
               onTranscript={(text) =>
-                writeDraft([drafts[draftKey], text].filter(Boolean).join('\n'))
+                writeDraft([draft, text].filter(Boolean).join('\n'))
               }
               onError={neo.setError}
               onSend={(input) => {
-                const submitted = drafts[draftKey] ?? '';
+                const submitted = draft ?? '';
                 const captured = reloadBuffer.read(neo.sessionId ?? '');
                 return inputDraft.holdDraftAdoption(async () => {
                   const receipt = await neo.send(input);
@@ -569,9 +531,7 @@ export function NeoLive() {
                     await inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
                     if (captured?.text === submitted)
                       reloadBuffer.forget(neo.sessionId ?? '', captured.id);
-                    setDrafts((items) =>
-                      items[draftKey] === submitted ? { ...items, [draftKey]: '' } : items
-                    );
+                    setDraft((current) => (current === submitted ? '' : current));
                   }
                   return receipt;
                 });

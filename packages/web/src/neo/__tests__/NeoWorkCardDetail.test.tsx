@@ -91,24 +91,12 @@ describe('NeoWorkCard detail opening', () => {
     }
   );
 
-  it.each([
-    ['proposed', ['Decline', 'Start work']],
-    ['failed', ['Dismiss', 'Try again']],
-  ] as const)('gives an actionable %s card ordered actions and no card click', (status, names) => {
+  it('gives an actionable proposed card ordered actions and no card click', () => {
     const open = vi.fn();
     const action = vi.fn();
-    const item = work('w', status, { sessionId: 'w-session', report: 'Report w' });
-    render(
-      <NeoWorkCard
-        work={item}
-        busy={false}
-        disabled={false}
-        onAction={action}
-        onOpen={open}
-        onRetry={vi.fn()}
-        onDismiss={vi.fn()}
-      />
-    );
+    const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
+    const names = ['Decline', 'Start work'];
+    render(<NeoWorkCard work={item} busy={false} disabled={false} onAction={action} onOpen={open} />);
     const card = screen.getByRole('article', { name: item.title });
     expect(card.getAttribute('data-scene-open')).toBeNull();
     expect(card.getAttribute('tabindex')).toBeNull();
@@ -123,6 +111,15 @@ describe('NeoWorkCard detail opening', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Open chat' }));
     expect(open).toHaveBeenCalledExactlyOnceWith('w');
     expect(action).not.toHaveBeenCalled();
+  });
+
+  it('makes a failed card an action-free opener', () => {
+    const open = vi.fn();
+    const { card } = show(work('f', 'failed', { sessionId: 'f-session' }), open);
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    expect(within(card).getByText('Failed')).toBeTruthy();
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(open).toHaveBeenCalledExactlyOnceWith('f');
   });
 
   it('offers no Open chat before the work has a chat', () => {

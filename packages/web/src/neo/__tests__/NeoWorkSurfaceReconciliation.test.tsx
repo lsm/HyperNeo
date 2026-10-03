@@ -104,9 +104,7 @@ const mount = (originMessageId: string | null, hasConcern = true, live = true) =
   const act = vi.fn();
   useNeoMock.mockReturnValue({
     sessionId: 'root',
-    selectedId: null,
     snapshot,
-    viewSnapshot: snapshot,
     store,
     error: null,
     setError: vi.fn(),

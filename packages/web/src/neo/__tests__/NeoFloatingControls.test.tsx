@@ -85,9 +85,7 @@ const renderLive = () => {
   };
   const model = {
     sessionId: 'neo' as string | null,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     error: null,
     setError: vi.fn(),
     open,
@@ -124,7 +122,7 @@ describe('Neo floating controls', () => {
     const { open } = renderLive();
     const logo = within(banner()).getByRole('button', { name: 'Back to Neo' });
     fireEvent.click(logo);
-    expect(open).toHaveBeenCalledWith(null);
+    expect(open).toHaveBeenCalledWith();
   });
 
   it('keeps draft and the work card intact while the controls are used', () => {

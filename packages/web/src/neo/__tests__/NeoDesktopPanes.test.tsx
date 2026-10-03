@@ -75,9 +75,7 @@ function mount(publicMode = true) {
   };
   const model = signal({
     sessionId: root,
-    selectedId: null,
     snapshot,
-    viewSnapshot: snapshot,
     viewPublicConversation: publicMode ? publicView : undefined,
     store: {
       sessionInfo: signal({ metadata: {} }),
@@ -112,11 +110,10 @@ describe('Neo desktop panes', () => {
     act(() => {
       model.value = {
         ...model.value,
-        viewSnapshot: {
-          ...model.value.viewSnapshot,
+        snapshot: {
+          ...model.value.snapshot,
           work: [
             work('proposal', 'proposed'),
-            work('failure', 'failed'),
             { ...work('result', 'reported'), sessionId: 'result-session' },
           ],
         },
@@ -137,7 +134,6 @@ describe('Neo desktop panes', () => {
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Keep my fictional draft');
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
-    expect(within(list).getByRole('article', { name: 'Fictional failure' })).toBeTruthy();
     fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('proposal', 'start');
     opened.mockRestore();
@@ -247,15 +243,15 @@ describe('Neo desktop panes', () => {
     const chat = container.querySelector('.neo-chat-rail')!;
     Object.defineProperties(chat, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
     Object.defineProperties(main, { scrollHeight: { value: 2000 }, clientHeight: { value: 500 } });
-    const view = model.value.viewSnapshot;
+    const view = model.value.snapshot;
     act(() => {
-      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
+      model.value = { ...model.value, snapshot: { ...view, work: [] } };
     });
     main.scrollTop = 375;
     fireEvent.scroll(main);
     main.scrollTop = 0;
     act(() => {
-      model.value = { ...model.value, viewSnapshot: view };
+      model.value = { ...model.value, snapshot: view };
     });
     expect(chat.scrollTop).toBe(200);
     vi.stubGlobal('innerWidth', 1119);
@@ -269,7 +265,7 @@ describe('Neo desktop panes', () => {
     });
     expect(chat.scrollTop).toBe(200);
     act(() => {
-      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
+      model.value = { ...model.value, snapshot: { ...view, work: [] } };
     });
     expect(main.scrollTop).toBe(375);
   });
