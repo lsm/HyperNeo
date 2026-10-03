@@ -192,6 +192,25 @@ describe('readNeoTurnReply', () => {
     expect(readNeoTurnReply(db, root, askB)).toEqual({ status: 'open', text: 'Reply to B.' });
   });
 
+  test('ignores narration written before a tool call', () => {
+    save(assistant('a-1', [{ type: 'text', text: 'Let me inspect the second chat.' }]), askA);
+    save(assistant('a-2', [{ type: 'tool_use', id: 't-1', name: 'invoke', input: {} }]), askA);
+    save(result('a-done', 'success'), askA);
+    expect(readNeoTurnReply(db, root, askA)).toEqual({ status: 'ended', text: null });
+  });
+
+  test('keeps only the text written after the last tool call', () => {
+    save(assistant('a-1', [{ type: 'text', text: 'Checking both chats.' }]), askA);
+    save(assistant('a-2', [{ type: 'tool_use', id: 't-1', name: 'invoke', input: {} }]), askA);
+    save(assistant('a-3', [{ type: 'text', text: 'Both are done.' }]), askA);
+    save(assistant('a-4', [{ type: 'text', text: 'The guide is ready.' }]), askA);
+    save(result('a-done', 'success'), askA);
+    expect(readNeoTurnReply(db, root, askA)).toEqual({
+      status: 'ended',
+      text: 'Both are done.\n\nThe guide is ready.',
+    });
+  });
+
   test('reports a failed turn and an empty turn', () => {
     save(assistant('a-1', 'Partial answer'), askA);
     save(result('a-done', 'error_during_execution'), askA);
