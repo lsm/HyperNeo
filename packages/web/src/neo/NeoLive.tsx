@@ -504,7 +504,7 @@ export function NeoLive() {
             key={chat.sessionId}
             sessionId={chat.sessionId}
             title={chat.title}
-            overlay={narrow}
+            overlay={narrow || !publicConversation}
             onClose={closeChat}
           />
         )}

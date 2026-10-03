@@ -32,6 +32,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.stopPropagation();
         closeDropdown();
       }
     };
