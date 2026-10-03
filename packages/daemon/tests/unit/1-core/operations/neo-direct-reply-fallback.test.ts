@@ -172,6 +172,24 @@ describe('Neo direct reply fallback', () => {
     expect(io.nudge).not.toHaveBeenCalled();
   });
 
+  test('still resolves an older message that was already nudged', () => {
+    const io = runtime({
+      recentAsks: (_conversation, id) => [ask(askA, id), ask(askB, id)],
+      hasNudge: (_id, nudgeId) => nudgeId === neoNudgeMessageId(askA),
+      turnReply: (_id, messageId) =>
+        messageId === askA
+          ? ended(null)
+          : messageId === askB
+            ? ended('Answer to B.')
+            : ended('Late answer to A.'),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([
+      { shortText: 'Late answer to A.' },
+      { shortText: 'Answer to B.' },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
+  });
+
   test('waits while the nudge has not started', () => {
     const io = runtime({
       hasNudge: () => true,

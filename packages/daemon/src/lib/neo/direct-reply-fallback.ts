@@ -57,8 +57,8 @@ export function requireUnpublishedDirectAnswer(
   if (reply.status === 'missing') return skip;
   const text = reply.text?.trim();
   if (reply.status === 'ended' && text) return { value: { ...turn, text } };
-  if (!turn.latest) return skip;
-  if (!runtime.hasNudge(turn.sessionId, nudgeId)) return { reason: { skipped: true, nudgeId } };
+  if (!runtime.hasNudge(turn.sessionId, nudgeId))
+    return turn.latest ? { reason: { skipped: true, nudgeId } } : skip;
   const nudged = runtime.turnReply(turn.sessionId, nudgeId);
   if (nudged.status === 'missing') return skip;
   const nudgedText = nudged.status === 'ended' ? nudged.text?.trim() : null;
