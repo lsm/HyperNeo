@@ -49,7 +49,7 @@ Each surface allows only the mark colors listed; the first is the default. The m
 | Surface | Mark colors |
 | --- | --- |
 | Night `#07110C` | Jade (11.9:1), Mint (14.5:1), Paper (17.3:1) |
-| Forest `#102019` | Jade (10.5:1), Paper (15.3:1), Slate (5.3:1) |
+| Forest `#102019` | Jade (10.5:1), Mint (12.7:1), Paper (15.3:1), Slate (5.3:1) |
 | Jade `#53E59A` | Night (11.9:1), Forest (10.5:1) |
 | Mint `#9AF2C0` | Night (14.5:1), Forest (12.7:1) |
 | Paper `#F2F4EF` | Ink (17.3:1), Forest (15.3:1) — not Slate (2.9:1) |
