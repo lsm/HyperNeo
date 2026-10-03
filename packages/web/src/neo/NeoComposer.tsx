@@ -3,7 +3,6 @@ import { useCoarsePointer } from './useCoarsePointer.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
-import { useInterrupt } from '../hooks/useInterrupt.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoPreferences } from './NeoPreferences.tsx';
@@ -55,20 +54,18 @@ export function NeoComposer({
   const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
+  const sendingText = useRef<string | null>(null);
   const alive = useRef(true);
   const currentSession = useRef(sessionId);
   currentSession.current = sessionId;
   const currentDraft = useRef(draft);
   currentDraft.current = draft;
-  const { handleInterrupt, interrupting } = useInterrupt({ sessionId });
   useLayoutEffect(
     () => () => {
       alive.current = false;
     },
     []
   );
-  const working = store.isWorking.value;
-  const stopsNeo = working && !recordingVoice && !draft.trim() && !attachments.files.length;
   const connected = connectionState.value === 'connected';
   async function send() {
     if (recordingVoice) {
@@ -77,15 +74,18 @@ export function NeoComposer({
     }
     const submitted = draft;
     const files = attachments.files;
-    if (
-      (!submitted.trim() && !files.length) ||
-      inFlight.current ||
-      sending ||
-      !connected ||
-      voiceBusy ||
-      attachments.reading
-    )
+    if (!submitted.trim() && !files.length) return;
+    if (voiceBusy) return;
+    if (!connected) {
+      onError('Reconnecting… your message is still here. Send again once connected.');
       return;
+    }
+    if (attachments.reading) {
+      onError('Still reading your attachment. Send again in a moment.');
+      return;
+    }
+    if (sendingText.current === submitted) return;
+    sendingText.current = submitted;
     inFlight.current = true;
     setSending(true);
     onError('');
@@ -102,8 +102,11 @@ export function NeoComposer({
       if (current())
         onError('Could not confirm this message. Your draft is still here; please try again.');
     } finally {
-      inFlight.current = false;
-      if (current()) setSending(false);
+      if (sendingText.current === submitted) {
+        sendingText.current = null;
+        inFlight.current = false;
+        if (current()) setSending(false);
+      }
     }
   }
   async function sendVoice(
@@ -192,7 +195,11 @@ export function NeoComposer({
         }}
         rows={2}
         maxLength={16000}
-        placeholder="Start anywhere. You don’t need to organize it first."
+        placeholder={
+          coarsePointer
+            ? 'Return adds a line · Tap the arrow to send'
+            : 'Enter to send · Shift + Enter for a new line'
+        }
         class="w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -210,23 +217,12 @@ export function NeoComposer({
         </div>
         <span
           role="status"
-          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${
-            working ||
-            recordingVoice ||
-            !connected ||
-            store.agentState.value.status === 'waiting_for_input'
-              ? 'order-last flex w-full sm:order-none sm:w-auto'
-              : coarsePointer
-                ? 'flex'
-                : 'hidden'
+          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
+            recordingVoice || !connected || store.agentState.value.status === 'waiting_for_input'
+              ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
+              : 'hidden'
           }`}
         >
-          {working && (
-            <span
-              aria-hidden="true"
-              class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
-            />
-          )}
           {!connected
             ? 'Reconnecting… your draft stays here.'
             : recordingVoice
@@ -235,11 +231,7 @@ export function NeoComposer({
                 : 'Recording · Click the arrow to stop and send'
               : store.agentState.value.status === 'waiting_for_input'
                 ? 'A quick question for you above.'
-                : working
-                  ? 'Neo is thinking…'
-                  : coarsePointer
-                    ? 'Return adds a line · Tap the arrow to send'
-                    : 'Enter to send · Shift + Enter for a new line'}
+                : null}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice
@@ -256,42 +248,20 @@ export function NeoComposer({
             onError={onError}
             onPhase={setVoicePhase}
           />
-          {stopsNeo ? (
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              disabled={!connected || interrupting}
-              onClick={() => void handleInterrupt()}
-              aria-label="Stop Neo"
-              title="Stop Neo"
-            >
-              <NeoIcon name="stop" />
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              size="sm"
-              disabled={
-                !connected ||
-                sending ||
-                attachments.reading > 0 ||
-                (voiceBusy && !recordingVoice) ||
-                (!draft.trim() && !attachments.files.length && !recordingVoice) ||
-                (recordingVoice && attachments.files.length > 0)
-              }
-              aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
-              title={
-                recordingVoice && attachments.files.length > 0
-                  ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
-                  : recordingVoice
-                    ? 'Stop recording and send it now'
-                    : undefined
-              }
-            >
-              <NeoIcon name="up" />
-            </Button>
-          )}
+          <Button
+            type="submit"
+            size="sm"
+            aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
+            title={
+              recordingVoice && attachments.files.length > 0
+                ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
+                : recordingVoice
+                  ? 'Stop recording and send it now'
+                  : undefined
+            }
+          >
+            <NeoIcon name="up" />
+          </Button>
         </div>
       </div>
     </form>

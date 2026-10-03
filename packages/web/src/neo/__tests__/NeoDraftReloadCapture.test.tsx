@@ -29,7 +29,6 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 }));
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
-const holder = 'neo:550e8400-e29b-41d4-a716-446655440001';
 const persisted = new Map<string, string>();
 const key = (id: string) => `hyperneo_neo_draft_reload_v1.${encodeURIComponent(id)}`;
 const read = (id = root) => JSON.parse(sessionStorage.getItem(key(id)) ?? 'null');
@@ -92,9 +91,7 @@ function mount() {
   const snapshot = { ok: true, sessionId: root, concerns: [], work: [], consultations: [] };
   const model = signal({
     sessionId: root,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     store,
     viewPublicConversation: {
       conversationId: root.slice(4),
@@ -105,7 +102,6 @@ function mount() {
     },
     busyWork: null,
     error: null,
-    publicAuthors: new Map(),
     setError: vi.fn(),
     open: vi.fn(),
     act: vi.fn(),
@@ -139,19 +135,6 @@ describe('NeoLive ordinary edit reload capture', () => {
     mount();
     await waitFor(() => expect(value()).toBe('Recovered server draft'));
     expect(read()).toBeNull();
-  });
-
-  it('keeps root and holder edit ownership separate', async () => {
-    const view = mount();
-    type('Root edit');
-    await act(async () => {
-      view.store.activeSessionId.value = holder;
-      view.model.value = { ...view.model.value, sessionId: holder, selectedId: 'garden' };
-    });
-    await waitFor(() => expect(value()).toBe(''));
-    type('Holder edit');
-    expect(read(root)).toMatchObject({ sessionId: root, text: 'Root edit' });
-    expect(read(holder)).toMatchObject({ sessionId: holder, text: 'Holder edit' });
   });
 
   it('retires the captured version only after accepted Send', async () => {

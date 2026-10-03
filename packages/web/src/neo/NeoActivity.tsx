@@ -34,12 +34,17 @@ export function NeoActivity({
   scenes,
   concerns,
   enabled,
+  reply,
 }: {
   scenes: readonly NeoScene[];
   concerns: readonly Concern[];
   enabled: boolean;
+  reply?: string | null;
 }) {
-  const items = enabled ? projectActivity(scenes, concerns) : [];
+  const items = [
+    ...(reply ? [{ key: 'neo-reply', text: reply }] : []),
+    ...(enabled ? projectActivity(scenes, concerns) : []),
+  ];
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const fingerprint = JSON.stringify(items);
   const current = items.find((item) => item.key === activeKey) ?? items[0];

@@ -6,7 +6,13 @@ import { URL as NodeURL } from 'node:url';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoActivity, neoActivityItems } from '../NeoActivity.tsx';
-import { classifyNeoScene, projectNeoScenes, type NeoScene } from '../neo-scenes.ts';
+import {
+  classifyNeoScene,
+  classifyNeoScenes,
+  groupNeoScenes,
+  projectNeoScenes,
+  type NeoScene,
+} from '../neo-scenes.ts';
 import { projectNeoConcernBoard } from '../neo-concern-board.ts';
 
 const concerns = [{ id: 'sources', title: 'Fictional sources' }];
@@ -63,7 +69,7 @@ describe('neoActivityItems', () => {
       expect(neoActivityItems([workScene('one', status)], concerns)).toEqual([]);
     }
   );
-  it('uses real projected receipt truth for work, context checks and queued checks', () => {
+  it('uses real receipt truth for work, context checks and queued checks', () => {
     const snapshot: NeoSnapshot = {
       ok: true,
       sessionId: 'root',
@@ -72,8 +78,14 @@ describe('neoActivityItems', () => {
       consultations: [check('same-id')],
       consultationWaiters: [{ ...check('waiting'), originMessageId: 'original', status: 'queued' }],
     };
-    const groups = projectNeoScenes(projectNeoConcernBoard(snapshot, null, null))!;
-    const items = neoActivityItems(groups.running, concerns);
+    const board = projectNeoConcernBoard(snapshot, null, null)!;
+    expect(
+      neoActivityItems(projectNeoScenes(board)!.running, concerns).map((item) => item.text)
+    ).toEqual(['Handed to HyperNeo · Compare same-id']);
+    const items = neoActivityItems(
+      groupNeoScenes(classifyNeoScenes(board.receipts)).running,
+      concerns
+    );
     expect(items).toHaveLength(3);
     expect(new Set(items.map((item) => item.key)).size).toBe(3);
     expect(items.map((item) => item.text)).toEqual(
@@ -112,6 +124,29 @@ describe('NeoActivity', () => {
     );
     expect(result.container.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it('leads with Neo reply progress and keeps it while scenes are disabled', () => {
+    const view = render(
+      <NeoActivity
+        scenes={[workScene('one')]}
+        concerns={concerns}
+        enabled={false}
+        reply="Neo is working on a reply…"
+      />
+    );
+    const line = screen.getByRole('note', { name: 'Neo activity' });
+    expect(line.hidden).toBe(false);
+    expect(line.textContent).toContain('Neo is working on a reply…');
+    view.rerender(
+      <NeoActivity
+        scenes={[workScene('one')]}
+        concerns={concerns}
+        enabled
+        reply="Neo is working on a reply…"
+      />
+    );
+    expect(line.textContent).toContain('Neo is working on a reply…');
+    expect(line.textContent).toContain('1/2');
   });
   it('rotates stable scene identities without taking focus from a draft', () => {
     const result = render(

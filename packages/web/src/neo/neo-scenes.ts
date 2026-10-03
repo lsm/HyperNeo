@@ -37,7 +37,7 @@ const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
   proposed: { group: 'attention', label: 'Your call' },
   queued: { group: 'running', label: 'Handed to HyperNeo' },
   reported: { group: 'outcomes', label: 'Response ready' },
-  failed: { group: 'attention', label: 'Needs attention' },
+  failed: { group: 'outcomes', label: 'Failed' },
   cancelled: { group: 'outcomes', label: 'Stopped' },
 };
 
@@ -140,10 +140,19 @@ export function selectNeoScene(
   return { reason: 'unknown_scene' };
 }
 
+export function hideNeoInternalReceipts(receipts: readonly NeoBoardReceipt[]): NeoBoardReceipt[] {
+  return receipts.filter(
+    (receipt) =>
+      receipt.kind !== 'consultation' &&
+      !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId)
+  );
+}
+
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   .input(['board', 'questions', 'unavailableSessions'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
-  .pipe(classifyNeoScenes, 'scenes', 'classified')
+  .pipe(hideNeoInternalReceipts, 'scenes', 'visible')
+  .pipe(classifyNeoScenes, 'visible', 'classified')
   .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
   .pipe(groupNeoScenes, 'observed', 'scenes')

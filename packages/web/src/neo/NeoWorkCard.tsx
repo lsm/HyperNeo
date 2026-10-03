@@ -1,7 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useMemo } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
-import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 
@@ -9,7 +8,7 @@ const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
   queued: 'Handed to HyperNeo',
   reported: 'Response ready',
-  failed: 'Needs attention',
+  failed: 'Failed',
   cancelled: 'Stopped',
 };
 
@@ -35,6 +34,7 @@ export function NeoWorkCard({
   onOpen,
   presentation = 'detail',
   questionSlot,
+  waiting = false,
 }: {
   work: NeoWork;
   busy: boolean;
@@ -43,6 +43,7 @@ export function NeoWorkCard({
   onOpen?: (id: string) => void;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
+  waiting?: boolean;
 }) {
   const attachQuestion = useMemo(() => {
     let previous: HTMLElement | null = null;
@@ -53,24 +54,29 @@ export function NeoWorkCard({
   }, [work.id, questionSlot]);
   if (presentation === 'summary' && onOpen)
     return (
-      <button
-        type="button"
-        data-scene-open={work.id}
-        onClick={() => onOpen(work.id)}
-        class="flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left hover:border-accent/40 focus-visible:outline-accent"
-        aria-label={`View details for ${work.title}`}
-      >
-        <span aria-hidden="true" class="shrink-0 text-fg-muted">
-          <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
-        </span>
-        <span class="min-w-0 flex-1">
-          <span class="block break-words text-sm font-medium">{work.title}</span>
-          <span class="mt-1 block text-xs text-fg-muted">{labels[work.status]}</span>
-        </span>
-        <span aria-hidden="true" class="shrink-0 text-fg-faint">
-          <NeoIcon name="arrow" />
-        </span>
-      </button>
+      <div class="flex min-h-11 w-full items-center gap-2 rounded-xl border border-line bg-surface pr-2 hover:border-accent/40">
+        <button
+          type="button"
+          data-scene-open={work.id}
+          disabled={!work.sessionId}
+          onClick={() => onOpen(work.id)}
+          class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left focus-visible:outline-accent disabled:cursor-default"
+          aria-label={work.sessionId ? `Open chat for ${work.title}` : work.title}
+        >
+          <span aria-hidden="true" class="shrink-0 text-fg-muted">
+            <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block break-words text-sm font-medium">{work.title}</span>
+            <span class="mt-1 block text-xs text-fg-muted">{labels[work.status]}</span>
+          </span>
+          {work.sessionId && (
+            <span aria-hidden="true" class="shrink-0 text-fg-faint">
+              <NeoIcon name="external" />
+            </span>
+          )}
+        </button>
+      </div>
     );
   const active = work.status === 'queued';
   const color =
@@ -79,17 +85,31 @@ export function NeoWorkCard({
       : work.status === 'failed'
         ? 'text-warning bg-warning/10'
         : 'text-accent bg-accent/10';
+  const answering = active && waiting && !!work.sessionId && !!onOpen;
+  const hasActions = work.status === 'proposed' || answering;
+  const openable = !!onOpen && !!work.sessionId && !hasActions;
   return (
     <article
       aria-label={work.title}
-      class="neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm"
+      data-scene-open={openable ? work.id : undefined}
+      tabIndex={openable ? 0 : undefined}
+      class={`neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm${
+        openable ? ' cursor-pointer transition-colors hover:border-accent/40' : ''
+      }`}
       onClick={
-        onOpen
+        openable
           ? (event) => {
               const target = event.target as Element | null;
               if (!target || target.closest?.(interactive)) return;
               if (insideUserSelection(event.currentTarget as Element)) return;
-              onOpen(work.id);
+              onOpen!(work.id);
+            }
+          : undefined
+      }
+      onKeyDown={
+        openable
+          ? (event) => {
+              if (event.key === 'Enter' && event.target === event.currentTarget) onOpen!(work.id);
             }
           : undefined
       }
@@ -98,37 +118,40 @@ export function NeoWorkCard({
         <span class={`rounded-xl p-2 ${color}`}>
           <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
         </span>
-        <span class="text-xs font-medium text-fg-muted">{labels[work.status]}</span>
+        <span class="text-xs font-medium text-fg-muted">
+          {answering ? 'Waiting for your answer' : labels[work.status]}
+        </span>
         {active && (
           <span
             aria-hidden="true"
             class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
           />
         )}
-      </div>
-      <h3 class="break-words text-base font-medium">
-        {onOpen ? (
+        {openable && (
+          <span aria-hidden="true" class="ml-auto text-fg-faint">
+            <NeoIcon name="external" />
+          </span>
+        )}
+        {!openable && !answering && onOpen && work.sessionId && (
           <button
             type="button"
             onClick={() => onOpen(work.id)}
-            data-scene-open={work.id}
-            class="text-left hover:text-accent focus-visible:outline-accent"
+            class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
           >
-            {work.title}
+            Open chat
+            <NeoIcon name="external" class="!h-3.5 !w-3.5" />
           </button>
-        ) : (
-          work.title
         )}
-      </h3>
-      <details class="mt-3 text-sm text-fg-muted">
-        <summary class="cursor-pointer">
-          {work.status === 'proposed' ? 'Review the work brief' : 'What was delegated'}
-        </summary>
-        <p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">{work.instruction}</p>
-        {work.targetSessionId && (
-          <p class="mt-2 break-all text-xs">Existing chat: {work.targetSessionId}</p>
-        )}
-      </details>
+      </div>
+      <h3 class="break-words text-base font-medium">{work.title}</h3>
+      {work.status === 'proposed' && (
+        <p class="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-fg-muted">
+          {work.instruction}
+        </p>
+      )}
+      {work.status === 'failed' && work.report && (
+        <p class="mt-2 line-clamp-2 break-words text-sm text-fg-muted">{work.report}</p>
+      )}
       {active &&
         work.sessionId &&
         (questionSlot ? (
@@ -136,63 +159,33 @@ export function NeoWorkCard({
         ) : (
           <NeoWorkQuestion key={work.id} work={work} />
         ))}
-      {work.status === 'proposed' && (
-        <p class="mt-3 text-xs leading-relaxed text-fg-muted">
-          {work.targetSessionId
-            ? 'Continues in the selected existing HyperNeo chat, keeping its workspace, tools and permissions.'
-            : 'Starts a real HyperNeo session with its existing tools and permissions, in a temporary scratch workspace — no folder of yours is selected.'}
-        </p>
-      )}
-      {work.report && (
-        <details class="mt-3 text-sm">
-          <summary class="cursor-pointer text-fg-muted">Read the execution’s response</summary>
-          <div class="mt-3 min-w-0 break-words">
-            <MarkdownRenderer content={work.report} />
-          </div>
-        </details>
-      )}
-      <div class="mt-4 flex flex-wrap items-center gap-2">
-        {work.status === 'proposed' && (
-          <Button
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'start')}
-            icon={<NeoIcon name="arrow" />}
-          >
-            {busy ? 'Starting…' : 'Start work'}
-          </Button>
-        )}
-        {(work.status === 'proposed' || active) && (
-          <Button
-            variant="ghost"
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'cancel')}
-          >
-            {busy
-              ? 'Updating…'
-              : active
-                ? work.targetSessionId
-                  ? 'Stop waiting'
-                  : 'Stop work'
-                : 'Not now'}
-          </Button>
-        )}
-        {work.sessionId && (
-          <a
-            class="ml-auto text-xs text-accent hover:underline"
-            href={`/session/${encodeURIComponent(work.sessionId)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Inspect execution ↗
-          </a>
-        )}
-      </div>
-      {work.status === 'cancelled' && (
-        <p class="mt-2 text-xs text-fg-muted">
-          {work.targetSessionId
-            ? 'Stopped waiting for this result. The existing chat and its other work continue; changes are not undone.'
-            : 'Stopping does not undo changes already made.'}
-        </p>
+      {hasActions && (
+        <div class="mt-4 flex flex-wrap items-center justify-end gap-4">
+          {work.status === 'proposed' && (
+            <Button
+              variant="ghost"
+              disabled={disabled || busy}
+              class="hover:!bg-danger/10 hover:!text-danger"
+              onClick={() => onAction(work.id, 'cancel')}
+            >
+              {busy ? 'Declining…' : 'Decline'}
+            </Button>
+          )}
+          {answering && (
+            <Button icon={<NeoIcon name="external" />} onClick={() => onOpen!(work.id)}>
+              Answer in chat
+            </Button>
+          )}
+          {work.status === 'proposed' && (
+            <Button
+              disabled={disabled || busy}
+              onClick={() => onAction(work.id, 'start')}
+              icon={<NeoIcon name="arrow" />}
+            >
+              {busy ? 'Starting…' : 'Start work'}
+            </Button>
+          )}
+        </div>
       )}
     </article>
   );

@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { signal } from '@preact/signals';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -85,9 +85,7 @@ const renderLive = () => {
   };
   const model = {
     sessionId: 'neo' as string | null,
-    selectedId: null as string | null,
     snapshot,
-    viewSnapshot: snapshot,
     error: null,
     setError: vi.fn(),
     open,
@@ -102,8 +100,6 @@ const renderLive = () => {
 };
 
 const banner = () => screen.getByRole('banner');
-const toggle = () => screen.getByRole('button', { name: /Your concerns/ });
-const concernsList = () => screen.getByRole('complementary', { name: 'Your concerns' });
 
 afterEach(() => {
   cleanup();
@@ -119,67 +115,27 @@ describe('Neo floating controls', () => {
     expect(screen.queryByText('MVP')).toBeNull();
     expect(banner().querySelector('h1')).toBeNull();
     expect(screen.getByText('Conversation body')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Your concerns/ })).toBeNull();
   });
 
   it('keeps the root logo actionable as the actual Back to Neo control', () => {
     const { open } = renderLive();
     const logo = within(banner()).getByRole('button', { name: 'Back to Neo' });
     fireEvent.click(logo);
-    expect(open).toHaveBeenCalledWith(null);
+    expect(open).toHaveBeenCalledWith();
   });
 
-  it('drives the real concerns toggle, selection, dismissal and focus return', () => {
-    const { open } = renderLive();
-    expect(concernsList().className).not.toContain('is-open');
-    const trigger = toggle();
-    fireEvent.click(trigger);
-    const list = concernsList();
-    expect(list.className).toContain('is-open');
-    expect(within(list).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: /Concern a/ }));
-    expect(open).toHaveBeenCalledWith('a');
-    fireEvent.click(toggle());
-    fireEvent.click(within(concernsList()).getByRole('button', { name: 'Close concerns' }));
-    expect(concernsList().className).not.toContain('is-open');
-    expect(document.activeElement).toBe(toggle());
-  });
-
-  it('keeps the Open HyperNeo native link attributes', () => {
+  it('keeps draft and the work card intact while the controls are used', () => {
     renderLive();
-    const link = screen.getByRole('link', { name: 'Open HyperNeo' });
-    expect([link.getAttribute('href'), link.getAttribute('target')]).toEqual(['/', '_blank']);
-    expect(link.getAttribute('rel')).toBe('noreferrer');
-  });
-
-  it('keeps draft and selected work intact while the controls are used', () => {
-    renderLive();
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
-    expect(screen.queryByText('Conversation body')).toBeTruthy();
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
-    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+    const card = screen.getByRole('article', { name: 'Title w' });
+    fireEvent.click(within(card).getByText('Handed to HyperNeo'));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/w-session', '_blank', 'noopener');
+    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
-  });
-
-  it('keeps one selected card through a real concerns round trip', () => {
-    renderLive();
-    fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
-    const region = screen.getByRole('region', { name: 'Selected work' });
-    const card = within(region).getByRole('article', { name: 'Title w' });
-    fireEvent.click(toggle());
-    expect(within(concernsList()).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBe(region);
-    expect(within(region).getByRole('article', { name: 'Title w' })).toBe(card);
-    expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Stop work' })).toBeTruthy();
+    opened.mockRestore();
   });
 
   it('still accepts a dropped file on the preserved banner', async () => {
@@ -198,16 +154,7 @@ describe('Neo floating controls', () => {
     expect(css).toContain('backdrop-filter: blur(8px)');
     expect(css).toContain('@supports not (backdrop-filter: blur(1px))');
     expect(css).toContain('outline: 2px solid var(--focus-ring)');
-    expect(css).toMatch(
-      /\.neo-float-actions > \.neo-concerns > \.neo-concerns-trigger\s*\{\s*min-height: 44px;\s*min-width: 44px;/
-    );
-    expect(css).toMatch(/\.neo-concerns-card\s*\{[^}]*top: 64px;[^}]*right: 8px;/);
-    const wideCss = css.slice(css.indexOf('@media (min-width: 1180px)'));
-    expect(wideCss).toMatch(
-      /\.neo-concerns-card\s*\{[^}]*top: 88px;[^}]*right: calc\(max\(24px, calc\(\(100vw - 1160px\) \/ 2\)\) - 12px\);/
-    );
+    expect(css).toMatch(/\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/);
     expect(css).toContain('padding-top: 68px');
-    expect(css).toContain('.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover)');
-    expect(css).not.toMatch(/\.neo-concerns-card[^{]*\{[^}]*backdrop-filter/);
   });
 });

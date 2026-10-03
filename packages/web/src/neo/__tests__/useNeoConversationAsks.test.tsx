@@ -382,19 +382,16 @@ function NeoProbe() {
     <>
       <p>Ask status: {neo.asks.status}</p>
       <p>Ask rows: {neo.asks.items.map((item) => item.requestId).join('|') || 'none'}</p>
-      <p>View: {neo.viewSnapshot?.sessionId ?? 'root'}</p>
-      <button onClick={() => void neo.open('research')}>Open holder</button>
+      <button onClick={() => void neo.open()}>Reopen Neo</button>
     </>
   );
 }
 describe('useNeo global ask consumer', () => {
-  it('feeds the global root asks and never scopes or resets them for a holder', async () => {
+  it('feeds the global root asks and keeps them through a reopen', async () => {
     online();
-    fake.respond = (name, input) => {
+    fake.respond = (name) => {
       if (name === 'neo.conversation.asks.read') return pageOf([ask(1)]);
-      if (name === 'neo.snapshot')
-        return (input as { concernId?: string }).concernId ? snapshot('neo:research') : snapshot();
-      return name === 'neo.open' ? snapshot('neo:research') : {};
+      return name === 'neo.open' || name === 'neo.snapshot' ? snapshot() : {};
     };
     render(<NeoProbe />);
     await waitFor(() => expect(screen.getByText('Ask status: ready')).toBeTruthy());
@@ -402,8 +399,7 @@ describe('useNeo global ask consumer', () => {
     expect(readInput()).toEqual([
       { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: 50 },
     ]);
-    await click('Open holder');
-    await waitFor(() => expect(screen.getByText('View: neo:research')).toBeTruthy());
+    await click('Reopen Neo');
     expect(screen.getByText(`Ask rows: ${ask(1).requestId}`)).toBeTruthy();
     expect(screen.getByText('Ask status: ready')).toBeTruthy();
     expect(readCount()).toBe(1);

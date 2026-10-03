@@ -27,14 +27,9 @@ afterEach(() => {
 });
 
 describe('Neo empty-conversation admission guidance', () => {
-  it.each([
-    [false, false],
-    [false, true],
-    [true, false],
-    [true, true],
-  ])(
-    'distinguishes clear instructions from proposals in holder=%s public=%s',
-    (holder, publicMode) => {
+  it.each([false, true])(
+    'distinguishes clear instructions from proposals in public=%s',
+    (publicMode) => {
       const sessionId = 'neo:10000000-0000-4000-8000-000000000001';
       const snapshot = {
         ok: true,
@@ -56,9 +51,7 @@ describe('Neo empty-conversation admission guidance', () => {
       const act = vi.fn();
       useNeoMock.mockReturnValue({
         sessionId,
-        selectedId: holder ? 'garden' : null,
         snapshot,
-        viewSnapshot: snapshot,
         viewPublicConversation: publicMode
           ? {
               conversationId: sessionId.slice(4),
@@ -68,7 +61,6 @@ describe('Neo empty-conversation admission guidance', () => {
               hasMore: false,
             }
           : undefined,
-        publicAuthors: new Map(),
         error: null,
         setError: vi.fn(),
         open: vi.fn(),
@@ -95,11 +87,7 @@ describe('Neo empty-conversation admission guidance', () => {
       expect(screen.queryByText(/Work starts when you approve its card/)).toBeNull();
       expect(screen.queryByRole('button', { name: 'Start work', exact: true })).toBeNull();
       expect(act).not.toHaveBeenCalled();
-      expect(
-        screen.getByRole('heading', {
-          name: holder ? 'Fictional garden' : 'A little less on your mind.',
-        })
-      ).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'A little less on your mind.' })).toBeTruthy();
     }
   );
 });

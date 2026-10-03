@@ -1281,7 +1281,12 @@ export default function ChatContainer({
         readonly={readonly}
         onBack={onBack}
         onReturnToParent={
-          session?.parentSessionId && !returnPending ? handleReturnToParent : undefined
+          session?.parentSessionId &&
+          !session.id.startsWith('neo:') &&
+          !session.metadata.movedUnderParent &&
+          !returnPending
+            ? handleReturnToParent
+            : undefined
         }
         titleOverride={titleOverride}
       />

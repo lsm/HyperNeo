@@ -1,10 +1,10 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { NeoWorkQuestionResource } from '../NeoWorkQuestionResource.tsx';
 
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -47,6 +47,8 @@ const waiting = (sessionId: string): SessionState =>
     daemonEpoch: 'fictional',
     revision: 1,
   }) as SessionState;
+let changed: ReturnType<typeof vi.fn<(id: string, question: PendingUserQuestion | null) => void>>;
+const lastQuestion = () => changed.mock.calls.at(-1)?.[1] as PendingUserQuestion | null | undefined;
 let failures: boolean;
 let request: ReturnType<typeof vi.fn>;
 let listeners: Set<unknown>;
@@ -55,6 +57,7 @@ let join: ReturnType<typeof vi.fn>;
 let leave: ReturnType<typeof vi.fn>;
 let delayed: Promise<SessionState> | null;
 beforeEach(() => {
+  changed = vi.fn();
   connectionState.value = 'connected';
   failures = true;
   delayed = null;
@@ -93,40 +96,28 @@ afterEach(async () => {
   expect(listeners.size).toBe(0);
   vi.restoreAllMocks();
 });
-describe('NeoWorkQuestion native load recovery', () => {
-  it('retries the actual failed store and binds the recovered answer without starting work', async () => {
+describe('NeoWorkQuestionResource native load recovery', () => {
+  it('retries the actual failed store and reports the recovered question without starting work', async () => {
     const select = vi.spyOn(SessionStore.prototype, 'select');
     const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
-    const view = render(<NeoWorkQuestion work={work} />);
+    const view = render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
     expect((await screen.findByRole('alert')).textContent).toContain('taking longer than expected');
-    expect(screen.queryByText('Choose worker-A')).toBeNull();
+    expect(lastQuestion() ?? null).toBeNull();
     failures = false;
     fireEvent.click(screen.getByRole('button', { name: 'Check questions again' }));
-    await screen.findByText('Choose worker-A');
+    await waitFor(() => expect(lastQuestion()?.toolUseId).toBe('question-worker-A'));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(select).toHaveBeenCalledTimes(2);
     expect(select.mock.contexts[0]).toBe(select.mock.contexts[1]);
     expect(destroy).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /^Plan A/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit Response' }));
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        'question.respond',
-        {
-          sessionId: 'worker-A',
-          toolUseId: 'question-worker-A',
-          responses: [{ questionIndex: 0, selectedLabels: ['Plan A'], customText: undefined }],
-        },
-        { timeout: 30000 }
-      )
-    );
+    expect(screen.queryByRole('button', { name: /Submit Response|Send answer/ })).toBeNull();
     expect(request.mock.calls.some(([method]) => method === 'operation.invoke')).toBe(false);
     view.unmount();
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-A'));
     expect(destroy).toHaveBeenCalledTimes(1);
   });
   it('does not retry automatically and disables its explicit retry while disconnected', async () => {
-    render(<NeoWorkQuestion work={work} />);
+    render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
     await screen.findByRole('alert');
     expect(request.mock.calls.filter(([method]) => method === 'state.session')).toHaveLength(1);
     await act(async () => {
@@ -139,7 +130,7 @@ describe('NeoWorkQuestion native load recovery', () => {
     expect(request.mock.calls.filter(([method]) => method === 'state.session')).toHaveLength(1);
   });
   it('cannot revive an old question from a delayed retry after the work session changes', async () => {
-    const view = render(<NeoWorkQuestion work={work} />);
+    const view = render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
     await screen.findByRole('alert');
     failures = false;
     let release!: (state: SessionState) => void;
@@ -150,13 +141,17 @@ describe('NeoWorkQuestion native load recovery', () => {
     await waitFor(() =>
       expect(request.mock.calls.filter(([method]) => method === 'state.session')).toHaveLength(2)
     );
-    view.rerender(<NeoWorkQuestion work={{ ...work, sessionId: 'worker-B' }} />);
-    await screen.findByText('Choose worker-B');
+    view.rerender(
+      <NeoWorkQuestionResource work={{ ...work, sessionId: 'worker-B' }} onQuestion={changed} />
+    );
+    await waitFor(() => expect(lastQuestion()?.toolUseId).toBe('question-worker-B'));
     await act(async () => {
       release(waiting('worker-A'));
     });
-    expect(screen.queryByText('Choose worker-A')).toBeNull();
-    expect(screen.getAllByText('Choose worker-B')).toHaveLength(1);
+    expect(lastQuestion()?.toolUseId).toBe('question-worker-B');
+    expect(changed.mock.calls.some(([, value]) => value?.toolUseId === 'question-worker-A')).toBe(
+      false
+    );
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-A'));
   });
 });

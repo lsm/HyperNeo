@@ -1,7 +1,7 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const seen = vi.hoisted(() => ({ workIds: [] as string[] }));
@@ -57,7 +57,6 @@ const work = (
 
 const live = () => ({
   sessionId: 'neo',
-  selectedId: null as string | null,
   error: null,
   setError: vi.fn(),
   open: vi.fn(),
@@ -115,7 +114,7 @@ const snapshot = () => ({
 const renderLive = (over: Record<string, unknown> = {}) => {
   const model = live();
   const view = snapshot();
-  const state = signal({ ...model, snapshot: view, viewSnapshot: view, ...over });
+  const state = signal({ ...model, snapshot: view, ...over });
   useNeoMock.mockImplementation(() => state.value);
   const result = render(<NeoLive />);
   return { ...result, state, model };
@@ -141,9 +140,13 @@ afterEach(() => {
 describe('NeoLive work scene groups', () => {
   it('places every work status under a truthful heading and counts the rows it renders', () => {
     renderLive();
-    expect(cards('Needs your attention')).toEqual(['Title a-failed', 'Title a-proposed']);
+    expect(cards('Needs your attention')).toEqual(['Title a-proposed']);
     expect(cards('In progress')).toEqual(['Title b-queued', 'Title a-queued']);
-    expect(cards('Recent outcomes')).toEqual(['Title a-cancelled', 'Title a-reported']);
+    expect(cards('Recent outcomes')).toEqual([
+      'Title a-cancelled',
+      'Title a-failed',
+      'Title a-reported',
+    ]);
     for (const name of ['Needs your attention', 'In progress', 'Recent outcomes'])
       expect(group(name).textContent).toContain(`${name} · ${cards(name).length}`);
     expect(screen.queryByRole('region', { name: 'Delegated work' })).toBeNull();
@@ -158,7 +161,7 @@ describe('NeoLive work scene groups', () => {
       name: 'Title a-reported',
     });
     expect(within(reported).getByText('Response ready')).toBeTruthy();
-    expect(within(reported).getByText(/Read the execution/)).toBeTruthy();
+    expect(within(reported).queryByText('Report a-reported')).toBeNull();
     expect(within(reported).queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(reported.textContent).not.toMatch(/verified|accepted/i);
   });
@@ -169,7 +172,7 @@ describe('NeoLive work scene groups', () => {
       name: 'Title a-proposed',
     });
     const start = within(card).getByRole('button', { name: 'Start work' });
-    const later = within(card).getByRole('button', { name: 'Not now' });
+    const later = within(card).getByRole('button', { name: 'Decline' });
     fireEvent.click(start);
     expect(model.act).toHaveBeenCalledWith('a-proposed', 'start');
     fireEvent.click(later);
@@ -183,47 +186,36 @@ describe('NeoLive work scene groups', () => {
     expect(model.act).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the execution link and the shared-chat stop semantics intact', () => {
+  it('opens the shared work chat from its card without any stop control', () => {
     const shared = snapshot();
     shared.work = [work('shared', 'queued', 80, 'a', { targetSessionId: 'project-chat' })];
-    const { state, model } = renderLive({ snapshot: shared, viewSnapshot: shared });
+    const { state, model } = renderLive({ snapshot: shared });
     const card = within(group('In progress')).getByRole('article', { name: 'Title shared' });
-    expect(within(card).queryByRole('button', { name: 'Stop work' })).toBeNull();
-    const stop = within(card).getByRole('button', { name: 'Stop waiting' });
-    fireEvent.click(stop);
-    expect(model.act).toHaveBeenCalledWith('shared', 'cancel');
-    expect(
-      within(card)
-        .getByRole('link', { name: /Inspect execution/ })
-        .getAttribute('href')
-    ).toBe('/session/shared-session');
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    fireEvent.click(within(card).getByText('Handed to HyperNeo'));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/shared-session', '_blank', 'noopener');
+    expect(model.act).not.toHaveBeenCalled();
+    opened.mockRestore();
     const cleared = { ...shared, work: [] };
-    set(state, { snapshot: cleared, viewSnapshot: cleared });
+    set(state, { snapshot: cleared });
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
   });
 
-  it('isolates the selected concern and stays honest when the scoped view is null', () => {
+  it('stays honest when the snapshot is null', () => {
     const { state } = renderLive();
-    set(state, { selectedId: 'b' });
-    expect(cards('In progress')).toEqual(['Title b-queued']);
-    expect(screen.queryByRole('article', { name: 'Title a-queued' })).toBeNull();
-    set(state, { viewSnapshot: null });
+    set(state, { snapshot: null });
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
   });
 
-  it('keeps the consultation banner exactly once and out of the work groups', () => {
+  it('keeps a pending context check out of the page and the work groups', () => {
     const view = snapshot();
     view.work = [work('a-queued', 'queued', 30, 'a')];
-    renderLive({ snapshot: view, viewSnapshot: view });
-    const banners = screen
-      .getAllByRole('status')
-      .filter((node) => node.textContent?.includes('Checking with'));
-    expect(banners).toHaveLength(1);
-    expect(banners[0].textContent).toContain('Checking with Concern A');
-    expect(group('In progress').textContent).not.toContain('Checking with');
-    expect(within(banners[0]).getByRole('button', { name: 'Stop waiting' })).toBeTruthy();
+    const { container } = renderLive({ snapshot: view });
+    expect(container.textContent).not.toContain('Checking with');
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(within(group('In progress')).queryByText('Waiting for context')).toBeNull();
   });
 
@@ -231,7 +223,7 @@ describe('NeoLive work scene groups', () => {
     const many = snapshot();
     many.work = Array.from({ length: 12 }, (_, i) => work(`w-${i}`, 'proposed', 200 - i, 'a'));
     const loading = { ...live().store, messagesLoaded: signal(false) };
-    const { state } = renderLive({ snapshot: many, viewSnapshot: many, store: loading });
+    const { state } = renderLive({ snapshot: many, store: loading });
     expect(screen.getByText('Opening your conversation…')).toBeTruthy();
     expect(cards('Needs your attention')).toEqual(
       Array.from({ length: 12 }, (_, i) => `Title w-${i}`)
@@ -241,20 +233,9 @@ describe('NeoLive work scene groups', () => {
     expect(screen.queryByText('Opening your conversation…')).toBeNull();
   });
 
-  it('still hands the scoped work input to the conversation for reply correlation', () => {
-    const { state } = renderLive();
+  it('hands every work input to the conversation for reply correlation', () => {
+    renderLive();
     expect(seen.workIds).toContain('a-proposed');
-    set(state, { selectedId: 'b' });
-    expect(seen.workIds).toEqual(['b-queued']);
-  });
-
-  it('keeps each draft across a selection change that regroups the scenes', () => {
-    const { state } = renderLive();
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'root note' } });
-    set(state, { selectedId: 'a' });
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('');
-    expect(cards('Needs your attention')).toEqual(['Title a-failed', 'Title a-proposed']);
-    set(state, { selectedId: null });
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('root note');
+    expect(seen.workIds).toContain('b-queued');
   });
 });

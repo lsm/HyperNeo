@@ -11,7 +11,6 @@ import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
-import { projectNeoPublicAuthors } from './public-authors.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
 
 export function useNeo() {
@@ -20,55 +19,36 @@ export function useNeo() {
   const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
-  const [scopedSnapshot, setScopedSnapshot] = useState<NeoSnapshot | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busyWork, setBusyWork] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   const refreshGeneration = useRef(0);
-  const selectedIdRef = useRef<string | null>(null);
   const alive = useRef(true);
 
   async function refresh() {
     const ticket = ++refreshGeneration.current;
-    const concernId = selectedIdRef.current;
-    const current = () =>
-      alive.current && ticket === refreshGeneration.current && selectedIdRef.current === concernId;
+    const current = () => alive.current && ticket === refreshGeneration.current;
     try {
       const hub = await connectionManager.getHub();
-      const [result, scoped] = await Promise.all([
-        invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {}),
-        concernId
-          ? invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', { concernId })
-          : Promise.resolve(null),
-      ]);
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {});
       if (!current()) return;
       if (!result.ok) throw new Error(result.reason);
-      if (scoped && !scoped.ok) throw new Error(scoped.reason);
       setSnapshot(result);
-      setScopedSnapshot(scoped);
     } catch (cause) {
       if (current()) throw cause;
     }
   }
 
-  async function open(id: string | null) {
+  async function open() {
     const ticket = ++generation.current;
     ++refreshGeneration.current;
-    selectedIdRef.current = id;
-    setSelectedId(id);
     setSessionId(null);
-    setScopedSnapshot(null);
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<NeoSnapshot>>(
-        hub,
-        'neo.open',
-        id ? { concernId: id } : {}
-      );
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {});
       if (!result.ok) throw new Error(result.reason);
       if (!alive.current || ticket !== generation.current) return;
       await store.select(result.sessionId);
@@ -99,7 +79,7 @@ export function useNeo() {
         reconnect = hub.onConnection((state) => {
           if (state === 'connected') update();
         });
-        void open(null);
+        void open();
       })
       .catch((cause) => {
         if (!disposed)
@@ -121,7 +101,7 @@ export function useNeo() {
     [store]
   );
 
-  async function act(id: string, action: 'start' | 'cancel' | 'stop-waiting') {
+  async function act(id: string, action: 'start' | 'cancel') {
     if (busyWork) return;
     setBusyWork(id);
     setError('');
@@ -129,13 +109,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(
         hub,
-        (
-          {
-            start: 'neo.work.start',
-            cancel: 'neo.work.cancel',
-            'stop-waiting': 'neo.concern.cancel',
-          } as const
-        )[action],
+        ({ start: 'neo.work.start', cancel: 'neo.work.cancel' } as const)[action],
         { id }
       );
       if (!result.ok) throw new Error(result.reason);
@@ -154,7 +128,6 @@ export function useNeo() {
     publications
   );
   return {
-    publicAuthors: projectNeoPublicAuthors(snapshot, publications),
     publicConversation,
     viewPublicConversation: projectNeoPublicHolderConversation(
       publicConversation,
@@ -167,10 +140,8 @@ export function useNeo() {
     readAsks: readNeoConversationAsks,
     store,
     snapshot,
-    viewSnapshot: selectedId ? scopedSnapshot : snapshot,
     projectBoard: (inventory: DaemonSnapshot | null) =>
-      projectNeoConcernBoard(selectedId ? scopedSnapshot : snapshot, selectedId, inventory),
-    selectedId,
+      projectNeoConcernBoard(snapshot, null, inventory),
     sessionId,
     error,
     setError,

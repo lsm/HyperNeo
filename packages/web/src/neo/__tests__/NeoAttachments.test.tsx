@@ -73,7 +73,6 @@ describe('Neo attachments', () => {
     const id = crypto.randomUUID();
     useNeoMock.mockReturnValue({
       sessionId: id,
-      selectedId: null,
       snapshot: { concerns: [], work: [] },
       error: null,
       setError: vi.fn(),
@@ -204,7 +203,7 @@ describe('Neo attachments', () => {
     expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull();
     expect(
       (screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
-    ).toBe(true);
+    ).toBe(false);
   });
   it('does not clear a new attachment added while sending or submit twice', async () => {
     let accept: () => void = () => {};

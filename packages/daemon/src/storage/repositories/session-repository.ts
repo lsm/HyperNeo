@@ -531,6 +531,10 @@ export class SessionRepository {
     this.db.prepare(`UPDATE sessions SET parent_id = NULL WHERE id = ?`).run(id);
   }
 
+  setParent(id: string, parentId: string | null): void {
+    this.db.prepare(`UPDATE sessions SET parent_id = ? WHERE id = ?`).run(parentId, id);
+  }
+
   archiveSession(id: string): void {
     this.updateSession(id, { status: 'archived' });
   }

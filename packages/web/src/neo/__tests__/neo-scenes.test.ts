@@ -78,7 +78,7 @@ const cRow = (status: CheckStatus, group: Group, label: string, at: number): Sce
 
 const rows: SceneRow[] = [
   wRow('proposed', 'attention', 'Your call', 10),
-  wRow('failed', 'attention', 'Needs attention', 40),
+  wRow('failed', 'outcomes', 'Failed', 40),
   wRow('queued', 'running', 'Handed to HyperNeo', 20),
   wRow('reported', 'outcomes', 'Response ready', 30),
   wRow('cancelled', 'outcomes', 'Stopped', 50),
@@ -169,14 +169,22 @@ describe('groupNeoScenes', () => {
       projectNeoScenes(board),
     ]).toEqual([
       [
-        ['c-failed', 'w-failed', 'w-proposed'],
+        ['c-failed', 'w-proposed'],
         ['c-queued', 'c-pending', 'w-queued'],
-        ['c-reported', 'w-cancelled', 'w-reported'],
+        ['c-reported', 'w-cancelled', 'w-failed', 'w-reported'],
       ],
-      { attention: 3, running: 3, outcomes: 3, total: 9 },
+      { attention: 2, running: 3, outcomes: 4, total: 9 },
       [9, 9],
       before,
-      scenes,
+      groupNeoScenes(
+        classifyNeoScenes(
+          board.receipts.filter(
+            (receipt) =>
+              receipt.kind !== 'consultation' &&
+              !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId)
+          )
+        )
+      ),
     ]);
   });
 });
@@ -203,7 +211,7 @@ describe('projectNeoScenes', () => {
   it('projects only the receipts of the selected concern', () => {
     const scoped: NeoSnapshot = {
       ...fullSnapshot,
-      work: [work('a-work', 'queued', 10, 'a'), work('b-work', 'failed', 20, 'b')],
+      work: [work('a-work', 'queued', 10, 'a'), work('b-work', 'proposed', 20, 'b')],
     };
     const scenes = projectNeoScenes(boardFor(scoped, 'b'));
     if (!scenes) throw new Error('Expected a projection');
@@ -213,15 +221,16 @@ describe('projectNeoScenes', () => {
 
 describe('selectNeoScene', () => {
   it('keeps a work and a consultation with the same id distinct', () => {
-    const scenes = projectNeoScenes(
-      boardFor({
-        ...fullSnapshot,
-        work: [work('same', 'queued', 10)],
-        consultations: [check('same', 'pending', 20)],
-        consultationWaiters: [],
-      })
+    const scenes = groupNeoScenes(
+      classifyNeoScenes(
+        boardFor({
+          ...fullSnapshot,
+          work: [work('same', 'queued', 10)],
+          consultations: [check('same', 'pending', 20)],
+          consultationWaiters: [],
+        }).receipts
+      )
     );
-    if (!scenes) throw new Error('Expected a projection');
     const a = selectNeoScene(scenes, { kind: 'work', id: 'same' });
     const b = selectNeoScene(scenes, { kind: 'consultation', id: 'same' });
     if (!('value' in a) || !('value' in b)) throw new Error('Expected both identities');

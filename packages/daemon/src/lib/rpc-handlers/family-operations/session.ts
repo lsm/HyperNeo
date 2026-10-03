@@ -4,6 +4,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
 import { createReturnSessionCloneOperation } from '../../session/clone-return-operation.ts';
 import { createSessionOperations } from '../../session/operations.ts';
+import { createSetSessionParentOperation } from '../../session/parent-operation.ts';
 import { createSessionRuntimeSettingsOperations } from '../../session/runtime-settings-operations.ts';
 import { resolveSpaceMcpSessionPolicy } from '../../space/runtime/space-mcp-session-policy.ts';
 import { resolveSessionSpaceId } from '../../space/runtime/space-caller-scope.ts';
@@ -54,9 +55,25 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     getSdkMessageRepo: () => context.deps.db.getSDKMessageRepo(),
     jobQueue: context.deps.jobQueue,
   });
+  const moveSession = createSetSessionParentOperation({
+    getSession: scopeDeps.getSession,
+    listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
+    sessionSpaceId: (session) =>
+      resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
+    setParent: (sessionId, parentId) => {
+      const current = context.deps.db.getSession(sessionId);
+      if (current)
+        context.deps.db.updateSession(sessionId, {
+          metadata: { ...current.metadata, movedUnderParent: parentId !== null },
+        });
+      context.deps.db.setSessionParent(sessionId, parentId);
+      context.deps.db.notifyChange('sessions', { sessionId });
+    },
+  });
   return [
     spawn,
     returnToParent,
+    moveSession,
     ...createSessionRuntimeSettingsOperations({
       getLiveSession: (sessionId) =>
         context.taskAgentManager?.getCachedAgentSessionById(sessionId) ??

@@ -1,12 +1,8 @@
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { useState } from 'preact/hooks';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
-import { neoRequestConsultationProgress, projectNeoRequestSnapshot } from './request-board.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
@@ -28,36 +24,21 @@ export function publicAskText(content: NeoConversationAsk['content']): string {
 
 function PublicEntry({
   entry,
-  authors,
-  onOpenAuthor,
   onOpenScene,
   canOpenScene,
-  snapshot,
 }: {
   entry: NeoPublicEntry;
-  authors?: ReadonlyMap<string, string>;
-  onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  snapshot?: NeoSnapshot | null;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const publication = entry.kind === 'publication' ? entry.publication : null;
-  const text = ask ? publicAskText(ask.content) : publication!.shortText;
+  const text = ask ? publicAskText(ask.content) : publication!.fullText;
   const images =
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
-  const producer = publication?.producerInput.sessionId;
-  const author = !producer
-    ? 'You'
-    : producer === `neo:${publication!.conversationId}`
-      ? 'Neo'
-      : authors?.get(producer) || 'Context holder';
-  const replyTo = entry.kind === 'publication' ? entry.replyTo : null;
-  const checks = ask
-    ? neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot ?? null, ask.askOrigin))
-    : [];
+  const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
+  const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   return (
     <article
       id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
@@ -67,17 +48,7 @@ function PublicEntry({
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
-        {producer && onOpenAuthor ? (
-          <button
-            type="button"
-            class="neo-message-name font-medium hover:text-accent"
-            onClick={() => onOpenAuthor(producer)}
-          >
-            {author}
-          </button>
-        ) : (
-          <span class="neo-message-name font-medium">{author}</span>
-        )}
+        <span class="neo-message-name font-medium">{author}</span>
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
@@ -97,27 +68,6 @@ function PublicEntry({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
       >
-        {publication && replyTo && (
-          <button
-            type="button"
-            class="mb-2 block max-w-full truncate text-left text-xs text-fg-muted hover:text-accent"
-            aria-label="Return to your request"
-            onClick={() =>
-              document
-                .getElementById(
-                  neoMessageAnchor(replyTo.askOrigin.sessionId, replyTo.askOrigin.messageId)
-                )
-                ?.scrollIntoView?.({ block: 'nearest' })
-            }
-          >
-            ↩{' '}
-            {publicAskText(replyTo.content).replace(/\s+/g, ' ').trim().slice(0, 120) ||
-              'Attached photos'}
-          </button>
-        )}
-        {publication && !replyTo && (
-          <p class="mb-2 text-xs text-fg-muted">Original request is outside this view.</p>
-        )}
         {images.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
             {images.map((src, index) => (
@@ -140,29 +90,12 @@ function PublicEntry({
         )}
         {publication && (
           <>
-            <details
-              class="mt-4 border-t border-line pt-3"
-              onToggle={(event) => setExpanded(event.currentTarget.open)}
-            >
-              <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
-                Read full response
-              </summary>
-              {expanded && (
-                <div class="mt-3 rounded-xl border border-line bg-surface p-4">
-                  <MarkdownRenderer
-                    content={publication.fullText}
-                    class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
-                  />
-                  <CopyButton text={publication.fullText} label="Copy full response" />
-                </div>
-              )}
-            </details>
-            {publication.links.length > 0 && (
+            {links.length > 0 && (
               <ul
                 aria-label="Related Neo scenes"
                 class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
               >
-                {publication.links.map((link) => (
+                {links.map((link) => (
                   <li key={JSON.stringify([link.kind, link.id])}>
                     {onOpenScene && (canOpenScene?.(link) ?? true) ? (
                       <button
@@ -189,46 +122,20 @@ function PublicEntry({
           disabled={!text.trim()}
         />
       </div>
-      {checks.map((check) => (
-        <p
-          key={check.id}
-          role="status"
-          aria-live="polite"
-          class="mt-2 flex items-center justify-end gap-2 text-xs text-fg-muted"
-        >
-          {check.status === 'pending' && (
-            <span class="neo-progress-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          )}
-          {check.label}
-        </p>
-      ))}
-      {ask && snapshot && (
-        <NeoConcernBoardPanel snapshot={snapshot} concernId={null} requestOrigin={ask.askOrigin} />
-      )}
     </article>
   );
 }
 
 export function NeoPublicConversation({
   conversation,
-  authors,
-  onOpenAuthor,
   onOpenScene,
   canOpenScene,
-  snapshot,
   onRetry,
   onLoadEarlier,
 }: {
   conversation: Conversation;
-  authors?: ReadonlyMap<string, string>;
-  onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  snapshot?: NeoSnapshot | null;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
@@ -265,11 +172,8 @@ export function NeoPublicConversation({
         <PublicEntry
           key={entry.key}
           entry={entry}
-          authors={authors}
-          onOpenAuthor={onOpenAuthor}
           onOpenScene={onOpenScene}
           canOpenScene={canOpenScene}
-          snapshot={snapshot}
         />
       ))}
       {conversation.hasMore && onRetry && (

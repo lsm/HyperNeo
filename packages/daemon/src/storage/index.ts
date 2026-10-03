@@ -265,6 +265,10 @@ export class Database {
     this.sessionRepo.detachFromParent(id);
   }
 
+  setSessionParent(id: string, parentId: string | null): void {
+    this.sessionRepo.setParent(id, parentId);
+  }
+
   saveSDKMessage(
     sessionId: string,
     message: SDKMessage,

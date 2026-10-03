@@ -1,16 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
-import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
+import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
+import { projectNeoProcessingActivity } from '../processing-activity.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { neoMessageAnchor } from '../reply-context.ts';
-import { projectNeoProcessingActivity } from '../processing-activity.ts';
 
 const clipboard = vi.hoisted(() => vi.fn(async () => true));
 const initialConnectionState = connectionState.value;
@@ -73,11 +73,6 @@ const conversation = (asks = [ask()], publications = [publication()]) =>
     }
   );
 
-function toggleDetail(detail: HTMLDetailsElement, open: boolean) {
-  detail.open = open;
-  fireEvent(detail, new Event('toggle'));
-}
-
 afterEach(() => {
   cleanup();
   connectionState.value = initialConnectionState;
@@ -96,7 +91,6 @@ describe('durable public conversation presentation', () => {
       ],
     });
     const { container } = render(<NeoPublicConversation conversation={conversation([value])} />);
-    toggleDetail(container.querySelector('details')!, true);
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     const article = document.getElementById(neoMessageAnchor(root, 'original'))!;
     expect(within(article).getByRole('img', { name: 'Attached photo 1' }).getAttribute('src')).toBe(
@@ -114,36 +108,30 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelectorAll('article')).toHaveLength(2);
   });
 
-  it('keeps short and full authored content separate and copies each without adding scene labels', async () => {
+  it('shows the full reply inline and copies it without adding scene labels', async () => {
     const value = publication();
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
     );
-    const details = container.querySelector('details')!;
-    expect(details.open).toBe(false);
-    expect(await screen.findByText(value.shortText)).toBeTruthy();
-    toggleDetail(details, true);
+    expect(container.querySelector('details')).toBeNull();
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
-    expect(details.querySelector('table')).toBeTruthy();
-    expect(details.querySelector('blockquote')?.textContent).toContain('not verified completion');
-    expect(details.querySelector('pre code')?.textContent).toContain('Fictional detail');
+    expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
+    expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
+    expect(screen.queryByText(value.shortText)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
-    await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.shortText));
-    fireEvent.click(screen.getByRole('button', { name: 'Copy full response' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();
   });
 
-  it('opens labelled scene references only through the owning callback, never as native actions', () => {
+  it('opens only work references through the owning callback, never as native actions', () => {
     const open = vi.fn();
     render(<NeoPublicConversation conversation={conversation()} onOpenScene={open} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
-    for (const ref of publication().links) {
-      fireEvent.click(within(refs).getByRole('button', { name: ref.label }));
-      expect(open).toHaveBeenLastCalledWith({ kind: ref.kind, id: ref.id });
-    }
-    expect(open).toHaveBeenCalledTimes(3);
-    for (const name of ['Start', 'Stop', 'Not now'])
+    fireEvent.click(within(refs).getByRole('button', { name: 'Read work detail' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith({ kind: 'work', id: 'fictional-work' });
+    expect(within(refs).queryByText('Source context')).toBeNull();
+    expect(within(refs).queryByText('Read comparison')).toBeNull();
+    for (const name of ['Start', 'Stop', 'Decline'])
       expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
     expect(refs.querySelector('a')).toBeNull();
   });
@@ -151,121 +139,41 @@ describe('durable public conversation presentation', () => {
   it('leaves references as text when the scene owner is absent instead of creating inert controls', () => {
     render(<NeoPublicConversation conversation={conversation()} />);
     const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
-    expect(within(refs).getByText('Read comparison')).toBeTruthy();
+    expect(within(refs).getByText('Read work detail')).toBeTruthy();
     expect(within(refs).queryAllByRole('button')).toEqual([]);
   });
 
-  it('attributes actual producers and opens their Neo conversation without printing private session ids', () => {
-    const open = vi.fn();
+  it('labels every producer as Neo without holder names or private session ids', () => {
     const reply = publication({
       publicationId: '20000000-0000-4000-8000-000000000002',
       producerInput: { sessionId: root, messageId: original.messageId },
       sequence: 2,
     });
     const { container } = render(
-      <NeoPublicConversation
-        conversation={conversation([], [publication(), reply])}
-        authors={new Map([[holder, 'Source context']])}
-        onOpenAuthor={open}
-      />
+      <NeoPublicConversation conversation={conversation([], [publication(), reply])} />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Source context', exact: true }));
-    expect(open).toHaveBeenLastCalledWith(holder);
-    fireEvent.click(screen.getByRole('button', { name: 'Neo', exact: true }));
-    expect(open).toHaveBeenLastCalledWith(root);
-    expect(open).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText('Neo', { exact: true })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Neo', exact: true })).toBeNull();
+    expect(screen.queryByText('Fictional holder name')).toBeNull();
+    expect(screen.queryByText('Context holder')).toBeNull();
     expect(container.textContent).not.toContain(holder);
   });
 
-  it('does not mislabel an unknown holder as root or infer its name from unrelated scene labels', () => {
-    render(
-      <NeoPublicConversation
-        conversation={conversation()}
-        authors={new Map([['unrelated-session', 'Wrong author']])}
-      />
-    );
-    expect(screen.getByText('Context holder', { exact: true })).toBeTruthy();
-    expect(screen.queryByText('Neo', { exact: true })).toBeNull();
-    expect(screen.queryByText('Wrong author')).toBeNull();
-  });
-
-  it('returns to the original session/message pair rather than a newer ask', () => {
-    const newer = ask({
-      requestId: 'newer',
-      askOrigin: { sessionId: root, messageId: 'newer' },
-      content: 'Unrelated newer request',
-      sequence: 2,
-      createdAt: '2026-09-30T12:00:00.500Z',
-    });
-    render(<NeoPublicConversation conversation={conversation([ask(), newer])} />);
-    const originalArticle = document.getElementById(neoMessageAnchor(root, 'original'))!;
-    const latestArticle = document.getElementById(neoMessageAnchor(root, 'newer'))!;
-    const originalScroll = vi.fn();
-    const latestScroll = vi.fn();
-    originalArticle.scrollIntoView = originalScroll;
-    latestArticle.scrollIntoView = latestScroll;
-    fireEvent.click(screen.getByRole('button', { name: 'Return to your request' }));
-    expect(originalScroll).toHaveBeenCalledWith({ block: 'nearest' });
-    expect(latestScroll).not.toHaveBeenCalled();
-  });
-
-  it('marks an unavailable original honestly instead of jumping to a matching message in another session', () => {
-    const other = ask({ askOrigin: { sessionId: holder, messageId: original.messageId } });
-    render(<NeoPublicConversation conversation={conversation([other])} />);
-    expect(screen.getByText('Original request is outside this view.')).toBeTruthy();
+  it('does not quote the original ask inside a reply', () => {
+    render(<NeoPublicConversation conversation={conversation()} />);
     expect(screen.queryByRole('button', { name: 'Return to your request' })).toBeNull();
+    expect(screen.queryByText('Original request is outside this view.')).toBeNull();
   });
 
-  it('retains stable entry nodes and expanded detail across reloads with the same durable ids', () => {
+  it('retains stable entry nodes across reloads with the same durable ids', () => {
     const first = conversation();
     const { container, rerender } = render(<NeoPublicConversation conversation={first} />);
     const entries = Array.from(container.querySelectorAll('article'));
-    const detail = container.querySelector('details')!;
-    toggleDetail(detail, true);
     rerender(<NeoPublicConversation conversation={conversation([ask()], [publication()])} />);
     expect(container.querySelectorAll('article')[0]).toBe(entries[0]);
     expect(container.querySelectorAll('article')[1]).toBe(entries[1]);
-    expect(container.querySelector('details')).toBe(detail);
-    expect(detail.open).toBe(true);
     rerender(<NeoPublicConversation conversation={conversation([], [publication()])} />);
     expect(container.querySelector('article')).toBe(entries[1]);
-    expect(container.querySelector('details')?.open).toBe(true);
-    expect(screen.getByText('Original request is outside this view.')).toBeTruthy();
-  });
-
-  it('mounts full Markdown only for opened disclosures in a 500-publication window', async () => {
-    const items = Array.from({ length: 500 }, (_, index) =>
-      publication({
-        publicationId: `publication-${index}`,
-        sequence: index + 1,
-        fullText: `## Full evidence\n\n${'Fictional retained detail. '.repeat(600)}`,
-      })
-    );
-    const { container, rerender } = render(
-      <NeoPublicConversation conversation={conversation([], items)} />
-    );
-    const details = container.querySelectorAll('details');
-    expect(details).toHaveLength(500);
-    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(0);
-    expect(screen.queryAllByRole('button', { name: 'Copy full response' })).toHaveLength(0);
-    toggleDetail(details[249], true);
-    await waitFor(() => expect(within(details[249]).getByText('Full evidence')).toBeTruthy());
-    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'Copy full response' })).toHaveLength(1);
-    const markdown = details[249].querySelector('.neo-markdown');
-    rerender(<NeoPublicConversation conversation={conversation([], [...items])} />);
-    expect(container.querySelectorAll('details')[249]).toBe(details[249]);
-    expect(details[249].open).toBe(true);
-    expect(details[249].querySelector('.neo-markdown')).toBe(markdown);
-    toggleDetail(details[249], false);
-    await waitFor(() =>
-      expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(0)
-    );
-    expect(screen.queryByRole('button', { name: 'Copy full response' })).toBeNull();
-    toggleDetail(details[249], true);
-    await waitFor(() => expect(within(details[249]).getByText('Full evidence')).toBeTruthy());
-    expect(container.querySelectorAll('details .neo-markdown')).toHaveLength(1);
-    expect(details[249].querySelector('.neo-markdown')).not.toBe(markdown);
   });
 
   it.each(['foreign-root', 'duplicate-publication'])(
@@ -321,7 +229,7 @@ describe('durable public conversation presentation', () => {
         status === 'loading' ? 'Loading saved' : 'unavailable'
       );
       expect(screen.getByText('Showing part of your saved conversation.')).toBeTruthy();
-      expect(await screen.findByText(publication().shortText)).toBeTruthy();
+      expect(await screen.findByText('Fictional detail')).toBeTruthy();
       if (status === 'unavailable')
         expect(screen.getByRole('status').textContent).toContain('Showing retained messages.');
       expect(screen.queryByText('Work complete')).toBeNull();
@@ -371,12 +279,12 @@ describe('durable public conversation presentation', () => {
     const { rerender } = render(
       <NeoConversation store={store} sessionId={root} publicConversation={conversation()} />
     );
-    expect(await screen.findByText(publication().shortText)).toBeTruthy();
+    expect(await screen.findByText('Fictional detail')).toBeTruthy();
     expect(screen.queryByText('Private execution transcript')).toBeNull();
     expect(store.sdkMessages.value).toBe(messages);
     rerender(<NeoConversation store={store} sessionId={root} />);
     expect(screen.queryByText('Private execution transcript')).toBeNull();
-    expect(screen.queryByText(publication().shortText)).toBeNull();
+    expect(screen.queryByText('Fictional detail')).toBeNull();
   });
 
   it.each([false, true])(
@@ -486,7 +394,7 @@ describe('durable public conversation presentation', () => {
       <NeoConversation store={store} sessionId={root} publicConversation={conversation()} />
     );
     const option = screen.getByRole('button', { name: /Keep draft/ });
-    const submit = screen.getByRole('button', { name: 'Submit Response' });
+    const submit = screen.getByRole('button', { name: 'Send answer' });
     expect(submit.hasAttribute('disabled')).toBe(true);
     fireEvent.click(option);
     expect(submit.hasAttribute('disabled')).toBe(false);
@@ -499,7 +407,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(screen.getAllByRole('button', { name: /Keep draft/ })).toHaveLength(1);
     expect(screen.getByRole('button', { name: /Keep draft/ })).toBe(option);
-    expect(screen.getByRole('button', { name: 'Submit Response' })).toBe(submit);
+    expect(screen.getByRole('button', { name: 'Send answer' })).toBe(submit);
     expect(submit.hasAttribute('disabled')).toBe(false);
   });
 

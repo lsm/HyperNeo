@@ -327,7 +327,7 @@ function NeoProbe() {
   const neo = useNeo();
   return (
     <>
-      <button onClick={() => void neo.open('research')}>Open holder</button>
+      <button onClick={() => void neo.open()}>Reopen Neo</button>
       <p>
         {neo.publications.status}/{neo.publications.conversationId}/{neo.publications.items.length}
       </p>
@@ -335,12 +335,12 @@ function NeoProbe() {
   );
 }
 it('wires the consumer to the global root without querying SDK transcripts for publications', async () => {
-  io.request.mockImplementation(async (_method: string, { name, input }) =>
+  io.request.mockImplementation(async (_method: string, { name }) =>
     name === 'neo.publication.read'
       ? page()
       : {
           ok: true,
-          sessionId: input?.concernId ? 'holder:research' : `neo:${id}`,
+          sessionId: `neo:${id}`,
           concerns: [],
           work: [],
         }
@@ -349,12 +349,14 @@ it('wires the consumer to the global root without querying SDK transcripts for p
   await waitFor(() => expect(screen.getByText(`ready/${id}/1`)).toBeTruthy());
   expect(requests()).toHaveLength(1);
   expect(io.request.mock.calls.every((call) => call[0] === 'operation.invoke')).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Open holder' }));
+  const before = io.request.mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Reopen Neo' }));
   await waitFor(() =>
-    expect(io.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'neo.snapshot',
-      input: { concernId: 'research' },
-    })
+    expect(
+      io.request.mock.calls
+        .slice(before)
+        .some(([, call]) => call.name === 'neo.snapshot' && Object.keys(call.input).length === 0)
+    ).toBe(true)
   );
   expect(screen.getByText(`ready/${id}/1`)).toBeTruthy();
   expect(requests()).toHaveLength(1);

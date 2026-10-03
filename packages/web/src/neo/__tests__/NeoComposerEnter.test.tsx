@@ -161,12 +161,16 @@ describe('NeoComposer Enter behavior', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the touch send hint at phone widths, not only on >=640px', () => {
-    setPointerCoarse(true);
+  it.each([
+    [true, 'Return adds a line · Tap the arrow to send'],
+    [false, 'Enter to send · Shift + Enter for a new line'],
+  ])('puts the send hint in the input placeholder (coarse=%s)', (coarse, hint) => {
+    setPointerCoarse(coarse);
     renderComposer();
-    const hint = document.querySelector('[role="status"]') as HTMLElement;
-    expect(hint.className).not.toContain('hidden');
-    expect(hint.textContent).toContain('Return adds a line');
+    expect(document.querySelector('textarea')!.getAttribute('placeholder')).toContain(hint);
+    const status = document.querySelector('[role="status"]') as HTMLElement;
+    expect(status.className).toContain('hidden');
+    expect(status.textContent).toBe('');
   });
 
   it('voice submissions combine with the typed draft instead of overwriting it', () => {

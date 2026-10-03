@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 vi.mock('../../lib/state.ts', () => ({
@@ -73,106 +73,117 @@ const show = (item: NeoWork, onOpen?: (id: string) => void, onAction = vi.fn()) 
 afterEach(cleanup);
 
 describe('NeoWorkCard detail opening', () => {
-  it('gives the title a genuine named keyboard-accessible opener', () => {
-    const open = vi.fn();
-    const { card } = show(work('p', 'proposed'), open);
-    const opener = within(card).getByRole('button', { name: 'Title p' });
-    expect(opener.tagName).toBe('BUTTON');
-    expect(opener.getAttribute('type')).toBe('button');
-    expect(opener.getAttribute('tabindex')).toBeNull();
-    expect(within(card).getByRole('heading').contains(opener)).toBe(true);
-    fireEvent.click(opener);
-    expect(open).toHaveBeenCalledWith('p');
-  });
+  it.each(['queued', 'reported', 'cancelled'] as const)(
+    'makes an action-free %s card one keyboard-reachable opener',
+    (status) => {
+      const open = vi.fn();
+      const { card } = show(work('r', status), open);
+      expect(card.getAttribute('data-scene-open')).toBe('r');
+      expect(card.getAttribute('tabindex')).toBe('0');
+      expect(within(card).getByRole('heading').textContent).toBe('Title r');
+      expect(card.querySelector('details, a')).toBeNull();
+      expect(within(card).queryAllByRole('button')).toHaveLength(0);
+      expect(within(card).queryByText('Report r')).toBeNull();
+      fireEvent.keyDown(card, { key: 'Enter' });
+      expect(open).toHaveBeenCalledExactlyOnceWith('r');
+      fireEvent.click(within(card).getByRole('heading'));
+      expect(open).toHaveBeenCalledTimes(2);
+    }
+  );
 
-  it('opens from a non-interactive part of the card body', () => {
-    const open = vi.fn();
-    const { card } = show(work('p', 'proposed'), open);
-    fireEvent.click(within(card).getByText('Your call'));
-    expect(open).toHaveBeenCalledWith('p');
-  });
-
-  it('keeps Start and Not now acting without opening detail', () => {
+  it('gives an actionable proposed card ordered actions and no card click', () => {
     const open = vi.fn();
     const action = vi.fn();
-    const { card } = show(work('p', 'proposed'), open, action);
+    const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
+    const names = ['Decline', 'Start work'];
+    render(
+      <NeoWorkCard work={item} busy={false} disabled={false} onAction={action} onOpen={open} />
+    );
+    const card = screen.getByRole('article', { name: item.title });
+    expect(card.getAttribute('data-scene-open')).toBeNull();
+    expect(card.getAttribute('tabindex')).toBeNull();
+    const buttons = within(card)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(buttons.filter((name) => name !== 'Open chat')).toEqual(names);
+    expect(buttons.filter((name) => name === 'Open chat')).toHaveLength(1);
+    fireEvent.click(within(card).getByRole('heading'));
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(open).not.toHaveBeenCalled();
+    fireEvent.click(within(card).getByRole('button', { name: 'Open chat' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('w');
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it('makes a failed card an action-free opener', () => {
+    const open = vi.fn();
+    const { card } = show(work('f', 'failed', { sessionId: 'f-session' }), open);
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    expect(within(card).getByText('Failed')).toBeTruthy();
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(open).toHaveBeenCalledExactlyOnceWith('f');
+  });
+
+  it('offers no Open chat before the work has a chat', () => {
+    const { card } = show(work('p', 'proposed'), vi.fn());
+    expect(within(card).queryByRole('button', { name: 'Open chat' })).toBeNull();
+    expect(within(card).getByRole('button', { name: 'Start work' })).toBeTruthy();
+  });
+
+  it('keeps Start and Decline acting without opening the chat', () => {
+    const open = vi.fn();
+    const action = vi.fn();
+    const { card } = show(work('p', 'proposed', { sessionId: 'p-session' }), open, action);
     fireEvent.click(within(card).getByRole('button', { name: 'Start work' }));
-    fireEvent.click(within(card).getByRole('button', { name: 'Not now' }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Decline' }));
     expect(action).toHaveBeenNthCalledWith(1, 'p', 'start');
     expect(action).toHaveBeenNthCalledWith(2, 'p', 'cancel');
     expect(open).not.toHaveBeenCalled();
   });
 
-  it('keeps a nested SVG target inside an action from opening detail', () => {
-    const open = vi.fn();
-    const action = vi.fn();
-    const { card } = show(work('p', 'proposed'), open, action);
-    const icon = within(card).getByRole('button', { name: 'Start work' }).querySelector('svg');
-    expect(icon).toBeTruthy();
-    fireEvent.click(icon as Element);
-    expect(action).toHaveBeenCalledWith('p', 'start');
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it('keeps Stop work acting without opening detail', () => {
-    const open = vi.fn();
-    const action = vi.fn();
-    const { card } = show(work('q', 'queued', { sessionId: null }), open, action);
-    fireEvent.click(within(card).getByRole('button', { name: 'Stop work' }));
-    expect(action).toHaveBeenCalledWith('q', 'cancel');
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it('keeps the execution link and both disclosures from opening detail', () => {
-    const open = vi.fn();
-    const { card } = show(work('r', 'reported'), open);
-    fireEvent.click(within(card).getByRole('link', { name: 'Inspect execution ↗' }));
-    const summaries = within(card).getAllByText(/What was delegated|Read the execution/);
-    expect(summaries).toHaveLength(2);
-    for (const summary of summaries) fireEvent.click(summary);
-    expect(open).not.toHaveBeenCalled();
-    expect(within(card).getByText('Response ready')).toBeTruthy();
+  it('shows the brief inline for proposed work and the reason inline for failed work', () => {
+    show(work('p', 'proposed'));
+    expect(screen.getByText('Instruction p')).toBeTruthy();
+    cleanup();
+    const { card } = show(work('f', 'failed', { report: 'Report f' }));
+    expect(within(card).getByText('Report f')).toBeTruthy();
+    expect(within(card).queryByText('Instruction f')).toBeNull();
   });
 
   it('renders no opener and ignores body clicks when no onOpen is given', () => {
-    const { card } = show(work('p', 'proposed'));
-    expect(within(card).queryByRole('button', { name: 'Title p' })).toBeNull();
-    expect(within(card).getByRole('heading').textContent).toBe('Title p');
-    expect(card.getAttribute('onclick')).toBeNull();
-    fireEvent.click(within(card).getByText('Your call'));
-    expect(screen.getByRole('article', { name: 'Title p' })).toBeTruthy();
+    const { card } = show(work('r', 'reported'));
+    expect(card.getAttribute('data-scene-open')).toBeNull();
+    expect(card.getAttribute('tabindex')).toBeNull();
+    fireEvent.click(within(card).getByText('Response ready'));
+    expect(screen.getByRole('article', { name: 'Title r' })).toBeTruthy();
   });
 
-  it('keeps rendered Markdown links and checkboxes acting without opening detail', async () => {
+  it('leads queued work waiting for an answer to its chat as the only action', () => {
     const open = vi.fn();
-    const { card } = show(
-      work('r', 'reported', {
-        report: 'See [the source](https://example.com/a)\n\n- [ ] verify the date',
-      }),
-      open
+    const action = vi.fn();
+    render(
+      <NeoWorkCard
+        work={work('q', 'queued')}
+        busy={false}
+        disabled={false}
+        onAction={action}
+        onOpen={open}
+        waiting
+      />
     );
-    fireEvent.click(within(card).getByText(/Read the execution/));
-    const link = await waitFor(() => {
-      const found = card.querySelector('a[href="https://example.com/a"]');
-      expect(found).toBeTruthy();
-      return found as HTMLAnchorElement;
-    });
-    const box = await waitFor(() => {
-      const found = card.querySelector('input[type="checkbox"]');
-      expect(found).toBeTruthy();
-      return found as HTMLInputElement;
-    });
-    fireEvent.click(link as Element);
-    fireEvent.click(box as Element);
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it('keeps a real question control acting without opening detail', () => {
-    const open = vi.fn();
-    const { card } = show(work('q', 'queued'), open);
-    expect(within(card).getByText('A quick choice')).toBeTruthy();
-    fireEvent.click(within(card).getByRole('button', { name: 'Monday' }));
-    expect(open).not.toHaveBeenCalled();
+    const card = screen.getByRole('article', { name: 'Title q' });
+    expect(within(card).getByText('Waiting for your answer')).toBeTruthy();
+    expect(within(card).queryByText('Handed to HyperNeo')).toBeNull();
+    expect(card.getAttribute('data-scene-open')).toBeNull();
+    expect(
+      within(card)
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+    ).toEqual(['Answer in chat']);
+    expect(within(card).queryByRole('button', { name: 'Monday' })).toBeNull();
+    fireEvent.click(within(card).getByRole('button', { name: 'Answer in chat' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('q');
+    expect(action).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -181,8 +192,8 @@ describe('NeoWorkCard detail opening', () => {
     ['anchor inside and focus outside', 'in', 'out', false],
   ] as const)('honours a selection with %s', (_name, anchorIn, focusIn, opens) => {
     const open = vi.fn();
-    const { card } = show(work('p', 'proposed'), open);
-    const label = within(card).getByText('Your call');
+    const { card } = show(work('r', 'reported'), open);
+    const label = within(card).getByText('Response ready');
     const outside = document.createElement('p');
     outside.textContent = 'chosen elsewhere';
     document.body.append(outside);

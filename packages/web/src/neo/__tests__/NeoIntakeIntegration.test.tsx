@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { ChatMessage } from '@hyperneo/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -106,7 +106,6 @@ afterEach(() => {
 async function open() {
   render(<NeoLive />);
   const input = await screen.findByRole('textbox', { name: 'Message Neo' });
-  await screen.findByRole('button', { name: /Research .*Things to learn\./ });
   await waitFor(() =>
     expect(request.mock.calls.some((call) => call[1]?.name === 'neo.snapshot')).toBe(true)
   );
@@ -244,44 +243,6 @@ describe('Neo live durable intake', () => {
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('A new thought');
     expect(asks()).toHaveLength(1);
   });
-
-  it.each(['accepted', 'failed'])(
-    'does not apply a late %s completion to a reopened draft',
-    async (completion) => {
-      await open();
-      let resolve: (value: unknown) => void = () => {};
-      let reject: (reason: Error) => void = () => {};
-      request.mockImplementationOnce(
-        () =>
-          new Promise((done, fail) => {
-            resolve = done;
-            reject = fail;
-          })
-      );
-      submit('Original root ask');
-      await waitFor(() => expect(asks()).toHaveLength(1));
-      fireEvent.click(screen.getByRole('button', { name: 'Research Things to learn.' }));
-      await screen.findByRole('heading', { name: 'Research' });
-      await screen.findByRole('textbox');
-      submit('Research question');
-      await waitFor(() => expect(asks()).toHaveLength(2));
-      expect(asks()[1][1].input.sessionId).toBe('neo:research');
-      await waitFor(() =>
-        expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('')
-      );
-      fireEvent.click(screen.getAllByRole('button', { name: 'Back to Neo' })[0]);
-      await waitFor(() =>
-        expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Original root ask')
-      );
-      fireEvent.input(screen.getByRole('textbox'), { target: { value: 'New root thought' } });
-      await act(async () => {
-        if (completion === 'accepted') resolve(accepted(asks()[0][1].input));
-        else reject(new Error('Old root failure'));
-      });
-      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('New root thought');
-      expect(screen.queryByRole('alert')).toBeNull();
-    }
-  );
 
   it('keeps a disconnected draft without queuing or submitting it automatically', async () => {
     await open();

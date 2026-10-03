@@ -1,16 +1,15 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal, type Signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { type Signal, signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { projectNeoPublicHolderConversation } from '../public-holder-conversation.ts';
-import { projectNeoPublicAuthors } from '../public-authors.ts';
 import type { NeoAskState } from '../useNeoConversationAsks.ts';
 import type { NeoPublicationState } from '../useNeoPublications.ts';
 
@@ -58,7 +57,7 @@ const publication = (
   askOrigin: origin,
   producerInput: { sessionId: producer, messageId: `internal-${id}` },
   shortText: `Saved reply **${id}**`,
-  fullText: `## Full ${id}\n\n| Evidence | Result |\n| --- | --- |\n| Fictional | Reported |`,
+  fullText: `Saved reply **${id}**\n\n## Full ${id}\n\n| Evidence | Result |\n| --- | --- |\n| Fictional | Reported |`,
   links: [{ kind: 'concern', id: 'a', label: 'Source context' }],
   sequence,
   createdAt: `2026-10-01T01:00:1${sequence}Z`,
@@ -96,7 +95,6 @@ let source: Signal<NeoSnapshot>;
 let asks: Signal<NeoAskState>;
 let publications: Signal<NeoPublicationState>;
 let sessionId: Signal<string | null>;
-let selectedId: Signal<string | null>;
 let error: Signal<string | null>;
 let events: Map<string, Set<Handler>>;
 let connections: Set<(state: string) => void>;
@@ -163,28 +161,16 @@ beforeEach(async () => {
     hasMore: false,
   });
   sessionId = signal<string | null>(root);
-  selectedId = signal<string | null>(null);
   error = signal<string | null>(null);
   retryAsks = vi.fn();
   refreshPublications = vi.fn();
-  open = vi.fn(async (id: string | null) => {
-    const target = id === 'a' ? holder : id === 'b' ? otherHolder : root;
-    await store.select(target);
+  open = vi.fn(async () => {
+    await store.select(root);
     store.messagesLoaded.value = true;
-    selectedId.value = id;
-    sessionId.value = target;
+    sessionId.value = root;
   });
   useNeoMock.mockImplementation(() => {
     const rootSnapshot = source.value;
-    const concernId = selectedId.value;
-    const view = concernId
-      ? {
-          ...rootSnapshot,
-          sessionId: sessionId.value,
-          concerns: rootSnapshot.concerns.filter((item) => item.id === concernId),
-          consultations: rootSnapshot.consultations?.filter((item) => item.concernId === concernId),
-        }
-      : rootSnapshot;
     const conversation = projectNeoPublicConversation(
       rootSnapshot.sessionId,
       asks.value,
@@ -193,15 +179,12 @@ beforeEach(async () => {
     return {
       store,
       sessionId: sessionId.value,
-      selectedId: concernId,
       snapshot: rootSnapshot,
-      viewSnapshot: view,
       viewPublicConversation: projectNeoPublicHolderConversation(
         conversation,
         rootSnapshot,
         sessionId.value
       ),
-      publicAuthors: projectNeoPublicAuthors(rootSnapshot, publications.value),
       asks: { ...asks.value, retry: retryAsks },
       publications: { ...publications.value, refresh: refreshPublications },
       error: error.value,
@@ -229,11 +212,6 @@ const askArticle = (id: string) =>
   [...publicView().querySelectorAll('article')].find((item) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
-const toggle = (detail: HTMLDetailsElement) => {
-  detail.open = true;
-  fireEvent(detail, new Event('toggle'));
-};
-
 describe('NeoLive durable conversation activation', () => {
   it('never shows the SDK transcript for a root without a durable conversation identity', async () => {
     source.value = { ...source.value, sessionId: 'neo:legacy' };
@@ -272,10 +250,7 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.queryByText('PRIVATE SDK EXECUTION')).toBeNull();
     expect(screen.queryByText(/Open full history/)).toBeNull();
-    expect(screen.queryByRole('table')).toBeNull();
-    const reply = screen.getAllByText('Read full response', { selector: 'summary' })[0];
-    toggle(reply.closest('details')!);
-    expect(await screen.findByRole('table')).toBeTruthy();
+    expect((await screen.findAllByRole('table')).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: 'Full a-reply' })).toBeTruthy();
     expect(within(publicView()).getAllByRole('img', { name: 'Message accepted' })).toHaveLength(3);
     expect(screen.getByLabelText('Draft')).toBeTruthy();
@@ -301,62 +276,14 @@ describe('NeoLive durable conversation activation', () => {
     expect(screen.queryByLabelText('Draft')).toBeNull();
   });
 
-  it('opens verified holders in Neo, keeps original asks in scope, and restores per-view drafts', async () => {
+  it('labels holder replies as Neo without author navigation', async () => {
     render(<NeoLive />);
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'Root unsent draft' } });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith('a'));
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Fictional research' })).toBeTruthy()
-    );
-    expect(
-      await within(askArticle('root-ask')).findByText('root-ask', { selector: 'strong' })
-    ).toBeTruthy();
-    expect(
-      await within(askArticle('holder-ask')).findByText('holder-ask', { selector: 'strong' })
-    ).toBeTruthy();
-    expect(publicView().textContent).not.toContain('other-ask');
-    expect(publicView().textContent).not.toContain('b-reply');
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('');
-    fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'Holder unsent draft' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Back to Neo' })[0]);
-    await waitFor(() =>
-      expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe(
-        'Root unsent draft'
-      )
-    );
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() =>
-      expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe(
-        'Holder unsent draft'
-      )
-    );
-  });
-
-  it('does not turn unknown producers or conflicting bindings into execution navigation', async () => {
-    publications.value = { ...publications.value, items: [publication('unknown', 'worker')] };
-    source.value = {
-      ...source.value,
-      publicAuthorBindings: [
-        ...source.value.publicAuthorBindings!,
-        { kind: 'concern', concernId: 'b', sessionId: holder },
-      ],
-    };
-    render(<NeoLive />);
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Context holder' }));
-    expect(await screen.findByText('This context holder is not available in Neo.')).toBeTruthy();
+    expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
+    for (const name of ['Fictional research', 'Context holder', 'Neo'])
+      expect(within(publicView()).queryByRole('button', { name, exact: true })).toBeNull();
+    expect(within(publicView()).getAllByText('Neo', { exact: true }).length).toBeGreaterThan(0);
+    expect(within(publicView()).queryByText('Source context')).toBeNull();
     expect(open).not.toHaveBeenCalled();
-    await act(async () => {
-      publications.value = { ...publications.value, items: [publication('conflict', holder)] };
-    });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Context holder' }));
-    expect(open).not.toHaveBeenCalled();
-    expect(document.querySelector('a[href^="/session/"]')).toBeNull();
-    await act(async () => {
-      publications.value = { ...publications.value, items: [publication('root-reply', root)] };
-    });
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Neo' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith(null));
   });
 
   it('retains public rows on source failure and retries both owners without SDK fallback', async () => {
@@ -402,13 +329,13 @@ describe('NeoLive durable conversation activation', () => {
     render(<NeoLive />);
     const option = await screen.findByRole('button', { name: /Keep draft/ });
     fireEvent.click(option);
-    const submit = screen.getByRole('button', { name: 'Submit Response' });
+    const submit = screen.getByRole('button', { name: 'Send answer' });
     await act(async () => {
       asks.value = { ...asks.value, status: 'loading' };
       publications.value = { ...publications.value, status: 'unavailable' };
     });
     expect(screen.getByRole('button', { name: /Keep draft/ })).toBe(option);
-    expect(screen.getByRole('button', { name: 'Submit Response' })).toBe(submit);
+    expect(screen.getByRole('button', { name: 'Send answer' })).toBe(submit);
     expect(submit.hasAttribute('disabled')).toBe(false);
     fireEvent.click(submit);
     await waitFor(() =>
@@ -425,7 +352,7 @@ describe('NeoLive durable conversation activation', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
-  it('keeps per-request checks and real boards attributed by both original identifiers', async () => {
+  it('keeps context checks and boards out of the ask bubbles', async () => {
     source.value = {
       ...source.value,
       consultations: ['root-ask', 'holder-ask'].map((id) => ({
@@ -454,24 +381,10 @@ describe('NeoLive durable conversation activation', () => {
       ],
     };
     render(<NeoLive />);
-    const original = askArticle('root-ask');
-    expect(within(original).getByRole('status').textContent).toBe(
-      'Checking Fictional research’s context…'
-    );
-    expect(within(askArticle('holder-ask')).queryByRole('status')).toBeNull();
-    toggle(within(original).getByText('How this is being handled').closest('details')!);
-    const board = await within(original).findByRole('region', { name: 'Concern board' });
-    expect(within(board).getByText('Checking root-ask')).toBeTruthy();
-    expect(within(board).queryByText('Checking holder-ask')).toBeNull();
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'daemon.snapshot',
-        input: { limit: 50, includeArchived: false },
-      })
-    );
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() => expect(within(askArticle('holder-ask')).getByRole('status')).toBeTruthy());
-    expect(within(askArticle('root-ask')).queryByRole('status')).toBeNull();
+    for (const id of ['root-ask', 'holder-ask']) {
+      expect(within(askArticle(id)).queryByRole('status')).toBeNull();
+      expect(within(askArticle(id)).queryByText('How this is being handled')).toBeNull();
+    }
   });
 
   it('bases empty-state and scrolling on public entries, retaining manual reading position', async () => {

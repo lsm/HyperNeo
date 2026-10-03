@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, render, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
@@ -53,26 +53,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('Neo composer send and stop slot', () => {
-  it('shows only Send while Neo is idle', () => {
-    mount(false, '');
+describe('Neo composer send slot', () => {
+  it.each([
+    [false, ''],
+    [true, ''],
+    [true, '   '],
+  ])('never offers Stop Neo (working=%s, draft %j)', (working, draft) => {
+    mount(working, draft);
     expect(send()).toBeTruthy();
     expect(stop()).toBeNull();
   });
 
-  it.each(['', '   '])('turns Send into a labelled Stop while Neo works with draft %j', (draft) => {
-    mount(true, draft);
-    expect(send()).toBeNull();
-    const button = stop()!;
-    expect(button.getAttribute('title')).toBe('Stop Neo');
-    expect(button.querySelector('rect, path')).toBeTruthy();
-    fireEvent.click(button);
-    expect(interrupt).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps Send while Neo works and the human has typed a new ask', () => {
+  it('keeps Send enabled while Neo works and the human has typed a new ask', () => {
     mount(true, 'Another fictional ask');
-    expect(stop()).toBeNull();
     expect((send() as HTMLButtonElement).disabled).toBe(false);
+    expect(interrupt).not.toHaveBeenCalled();
   });
 });
