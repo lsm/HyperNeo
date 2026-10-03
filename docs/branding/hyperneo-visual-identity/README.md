@@ -30,11 +30,36 @@ The master `viewBox` is 144 × 377 units. The left bar and each half of the righ
 
 Leave at least 34 source units of clear space around the mark. Use a minimum rendered mark height of 24 CSS pixels; 32 pixels is preferred for avatars and compact product surfaces. Use the favicon tile at 32 × 32 pixels or larger. The standalone mark is preferable to a wordmark below 200 pixels wide. Never connect, rotate, mirror, crop, outline, skew, or add effects that change the silhouette. Do not use jade on paper for small marks or text.
 
+### Small-size mark 06S
+
+Below 48 CSS pixels, use mark 06S ([`assets/logo-mark-06s-white.svg`](assets/logo-mark-06s-white.svg), [`-ink`](assets/logo-mark-06s-ink.svg), [`-jade`](assets/logo-mark-06s-jade.svg)) instead of the master. It keeps the story, solid bar left and split bar right, on sturdier proportions so it holds at 16 to 32 pixels and fills square and circular containers. The `viewBox` is 102 × 176 units: 42-unit bars, an 18-unit vertical opening, an 18-unit horizontal opening and a corner radius of 6. Minimum rendered height is 16 CSS pixels; use the master at 48 pixels and up.
+
+In a square or circular container, set padding optically, not equally: a tall mark takes less room above and below than at the sides. In the 32-unit favicon tile ([`assets/favicon-06s.svg`](assets/favicon-06s.svg)) 06S stands 22 units tall and 12.75 wide, centered.
+
 ## Color management
 
 The hex and RGB values in `brand-tokens.json` are the digital source values in **sRGB IEC61966-2.1**. The listed CMYK numbers are a color-managed conversion using the **CGATS21_CRPC6.icc profile** for the **CGATS21-2-CRPC6 printing condition**, with relative-colorimetric intent. They are a reference starting point, not a guarantee of an exact printed match. Ask the printer for the intended press condition and use its ICC profile; approve a hard proof on the actual stock before production. The [official ICC registry entry](https://registry.color.org/profile-registry/CGATS21_CRPC6) identifies this profile, its provider, and its printing condition.
 
 No Pantone spot color has been approved. Do not guess a Pantone equivalent from a display or conversion chart. If a spot ink is required, choose it from a current physical fan deck, then verify a press proof. Color values and print profile details are also in the JSON token file.
+
+## Color plates
+
+Each surface allows only the mark colors listed; the first is the default. The mark is a graphic, so WCAG 3:1 contrast against the surface is the floor.
+
+| Surface | Mark colors |
+| --- | --- |
+| Night `#07110C` | Jade (11.9:1), Mint (14.5:1), Paper (17.3:1) |
+| Forest `#102019` | Jade (10.5:1), Paper (15.3:1), Slate (5.3:1) |
+| Jade `#53E59A` | Night (11.9:1), Forest (10.5:1) |
+| Mint `#9AF2C0` | Night (14.5:1), Forest (12.7:1) |
+| Paper `#F2F4EF` | Ink (17.3:1), Forest (15.3:1) — not Slate (2.9:1) |
+| Mist `#DCE5DD` | Ink (14.9:1), Forest (13.1:1) |
+
+### The mark in product chrome
+
+Inside product UI, where the mark is a control rather than a signature, use 06S in Paper on dark surfaces and Ink on light surfaces, one flat fill. Never tint it with a product accent or change its color on hover; hover changes the control, not the mark. Jade stays reserved for brand surfaces: splash, app icon, marketing and the favicon tile.
+
+Open question: Neo uses a warm conversation palette while the identity is jade on night. Whether Neo adopts the brand palette or the guide defines Neo as a sub-palette is undecided; until then product chrome stays neutral.
 
 ## Typography and licensing
 
