@@ -13,8 +13,8 @@ import { projectNeoPublicConversation } from '../public-conversation.ts';
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
-vi.mock('../../components/space/AgentOverlayChat.tsx', () => ({
-  AgentOverlayChat: ({ sessionId }: { sessionId: string }) => (
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
     <div data-testid="neo-chat-panel" data-session-id={sessionId} />
   ),
 }));

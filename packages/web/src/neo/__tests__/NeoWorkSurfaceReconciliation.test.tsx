@@ -27,8 +27,8 @@ beforeEach(async () => {
     ),
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
-  vi.doMock('../../components/space/AgentOverlayChat.tsx', () => ({
-    AgentOverlayChat: ({ sessionId }: { sessionId: string }) => (
+  vi.doMock('../NeoSessionPane.tsx', () => ({
+    NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
       <div data-testid="neo-chat-panel" data-session-id={sessionId} />
     ),
   }));

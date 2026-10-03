@@ -21,8 +21,8 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 vi.mock('../NeoComposer.tsx', () => ({ NeoComposer: () => <textarea aria-label="Draft" /> }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => <p>Durable conversation</p> }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
-vi.mock('../../components/space/AgentOverlayChat.tsx', () => ({
-  AgentOverlayChat: ({ sessionId }: { sessionId: string }) => (
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
     <div data-testid="neo-chat-panel" data-session-id={sessionId} />
   ),
 }));

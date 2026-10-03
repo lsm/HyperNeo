@@ -11,7 +11,7 @@ import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { AgentOverlayChat } from '../components/space/AgentOverlayChat.tsx';
+import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
@@ -30,6 +30,7 @@ export function NeoLive() {
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
   const [chat, setChat] = useState<{ sessionId: string; title: string } | null>(null);
+  const closeChat = useCallback(() => setChat(null), []);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -274,7 +275,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
     >
       {publicConversation &&
         relevant
@@ -497,6 +498,14 @@ export function NeoLive() {
             )
           )}
         </div>
+        {chat && (
+          <NeoSessionPane
+            key={chat.sessionId}
+            sessionId={chat.sessionId}
+            title={chat.title}
+            onClose={closeChat}
+          />
+        )}
       </main>
       <footer
         ref={footer}
@@ -549,13 +558,6 @@ export function NeoLive() {
           )}
         </div>
       </footer>
-      {chat && (
-        <AgentOverlayChat
-          sessionId={chat.sessionId}
-          agentName={chat.title}
-          onClose={() => setChat(null)}
-        />
-      )}
       <ToastContainer />
     </div>
   );
