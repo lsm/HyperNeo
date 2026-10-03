@@ -145,6 +145,45 @@ describe('orphaned in_progress task recovery', () => {
     expect(workflowRunRepo.getRun(started.workflowRunId!)?.spaceId).toBe(SPACE_ID);
   });
 
+  test('a live direct attempt protects an orphan through a tick', async () => {
+    const attempted = orphanedTask(ORPHANED_IN_PROGRESS_GRACE_MS + 60_000);
+    const bare = orphanedTask(ORPHANED_IN_PROGRESS_GRACE_MS + 60_000);
+    db.prepare(`INSERT INTO direct_task_execution_selection (task_id) VALUES (?)`).run(
+      attempted.id
+    );
+    db.prepare(
+      `INSERT INTO direct_task_execution_attempts
+         (id, task_id, generation, session_id, phase, created_at, updated_at)
+         VALUES ('attempt-1', ?, 1, 'session-1', 'running', ?, ?)`
+    ).run(attempted.id, Date.now(), Date.now());
+
+    await buildRuntime().executeTick();
+
+    expect(taskRepo.getTask(attempted.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(bare.id)?.status).not.toBe('in_progress');
+  });
+
+  test('each steady-state tick lists spaces once and does not reuse the list', async () => {
+    addWorkflow();
+    orphanedTask(ORPHANED_IN_PROGRESS_GRACE_MS + 60_000);
+    const listSpaces = spaceManager.listSpaces.bind(spaceManager);
+    let calls = 0;
+    spaceManager.listSpaces = (includeArchived?: boolean) => {
+      calls += 1;
+      return listSpaces(includeArchived);
+    };
+    const runtime = buildRuntime();
+    await runtime.executeTick();
+
+    const beforeSecondTick = calls;
+    await runtime.executeTick();
+    const afterSecondTick = calls;
+    await runtime.executeTick();
+
+    expect(afterSecondTick - beforeSecondTick).toBe(1);
+    expect(calls - afterSecondTick).toBe(1);
+  });
+
   test('a task inside the grace window survives a tick untouched', async () => {
     const recent = orphanedTask(1_000);
 
