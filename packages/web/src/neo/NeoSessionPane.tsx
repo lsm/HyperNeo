@@ -24,6 +24,9 @@ export function NeoSessionPane({
     };
   }, []);
   useEffect(() => {
+    pane.current?.focus();
+  }, []);
+  useEffect(() => {
     if (!overlay || !pane.current) return;
     const previous = document.activeElement as HTMLElement | null;
     const release = setupFocusTrap(pane.current);
