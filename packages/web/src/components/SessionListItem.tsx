@@ -27,7 +27,10 @@ export default function SessionListItem({
   nested = false,
 }: SessionListItemProps) {
   const returnedAt = session.metadata?.clone?.returnedAt;
-  const isClone = !!session.parentSessionId && !session.id.startsWith('neo:');
+  const isClone =
+    !!session.parentSessionId &&
+    !session.id.startsWith('neo:') &&
+    !session.metadata.movedUnderParent;
   const liveStatus = allSessionStatuses.value.get(session.id);
   const status = getSessionSidebarStatus({
     status: session.status,

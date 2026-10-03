@@ -58,4 +58,19 @@ describe('Neo holder sessions', () => {
     );
     expect(result).toMatchObject({ reason: { reason: 'not_a_clone' } });
   });
+
+  test('a chat moved under another is not a clone that can return', () => {
+    const moved = {
+      id: 'moved',
+      parentSessionId: 'parent',
+      metadata: { movedUnderParent: true },
+    } as unknown as Session;
+    const result = loadClone(
+      { sessionId: moved.id } as never,
+      {
+        getSession: () => moved,
+      } as unknown as ReturnSessionCloneDependencies
+    );
+    expect(result).toMatchObject({ reason: { reason: 'not_a_clone' } });
+  });
 });

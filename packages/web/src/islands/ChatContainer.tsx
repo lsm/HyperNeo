@@ -1281,7 +1281,10 @@ export default function ChatContainer({
         readonly={readonly}
         onBack={onBack}
         onReturnToParent={
-          session?.parentSessionId && !session.id.startsWith('neo:') && !returnPending
+          session?.parentSessionId &&
+          !session.id.startsWith('neo:') &&
+          !session.metadata.movedUnderParent &&
+          !returnPending
             ? handleReturnToParent
             : undefined
         }

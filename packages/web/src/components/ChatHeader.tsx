@@ -44,7 +44,8 @@ export function ChatHeader({
   onReturnToParent,
 }: ChatHeaderProps) {
   const returnedAt = session?.metadata.clone?.returnedAt;
-  const isClone = !!session?.parentSessionId && !session.id.startsWith('neo:');
+  const isChild = !!session?.parentSessionId && !session.id.startsWith('neo:');
+  const isClone = isChild && !session?.metadata.movedUnderParent;
   const [moving, setMoving] = useState(false);
   const movable = !!session && !readonly && movableSession(session);
   const hasChildren =
@@ -158,9 +159,9 @@ export function ChatHeader({
           onResetClick={onResetClick}
           onArchiveClick={onArchiveClick}
           onDeleteClick={onDeleteClick}
-          onMoveUnderClick={movable && !isClone && !hasChildren ? () => setMoving(true) : undefined}
+          onMoveUnderClick={movable && !isChild && !hasChildren ? () => setMoving(true) : undefined}
           onMoveToTopClick={
-            movable && isClone ? () => void moveSession(session!.id, null) : undefined
+            movable && isChild ? () => void moveSession(session!.id, null) : undefined
           }
         />
         {session && moving && (

@@ -361,6 +361,7 @@ export interface SessionMetadata {
   clone?: {
     returnedAt?: string;
   };
+  movedUnderParent?: boolean;
   recoveryContext?: {
     lastKnownState: string;
     pendingInstruction?: string;

@@ -62,7 +62,7 @@ export function loadClone(
     return { reason: reject('caller_session_required', 'Only a session can return to its parent') };
   }
   const clone = deps.getSession(caller.sessionId);
-  if (!clone?.parentSessionId || clone.id.startsWith('neo:')) {
+  if (!clone?.parentSessionId || clone.id.startsWith('neo:') || clone.metadata?.movedUnderParent) {
     return { reason: reject('not_a_clone', 'This session has no parent to return to') };
   }
   return { value: clone };

@@ -61,6 +61,11 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     sessionSpaceId: (session) =>
       resolveSessionSpaceId(session, scopeDeps) ?? session.context?.spaceId,
     setParent: (sessionId, parentId) => {
+      const current = context.deps.db.getSession(sessionId);
+      if (current)
+        context.deps.db.updateSession(sessionId, {
+          metadata: { ...current.metadata, movedUnderParent: parentId !== null },
+        });
       context.deps.db.setSessionParent(sessionId, parentId);
       context.deps.db.notifyChange('sessions', { sessionId });
     },
