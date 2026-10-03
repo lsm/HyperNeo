@@ -179,6 +179,7 @@ export function NeoWorkCard({
             <Button
               variant="ghost"
               disabled={disabled || busy}
+              class="hover:!bg-danger/10 hover:!text-danger"
               onClick={() => onAction(work.id, 'cancel')}
             >
               {busy ? 'Declining…' : 'Decline'}
