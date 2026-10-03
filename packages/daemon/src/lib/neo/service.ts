@@ -256,8 +256,10 @@ export class NeoService {
     if (!binding) throw new Error('Could not reserve Neo context.');
     if (!this.db.getSession(binding.sessionId)) {
       const nativeTools = neoCoordinatorNativeTools(concernId);
+      const root = concernId ? this.repo.getBindingForConcern(null)?.sessionId : undefined;
       await this.sessions.createSession({
         sessionId: binding.sessionId,
+        parentSessionId: root && this.db.getSession(root) ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
         workspacePath: null,
         config: {
