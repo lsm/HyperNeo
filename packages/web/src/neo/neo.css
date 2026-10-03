@@ -87,7 +87,7 @@
   padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
 }
 
-.neo-scene-sheet {
+.neo-scene-list.neo-scene-sheet {
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -100,18 +100,18 @@
   visibility: hidden;
 }
 
-.neo-scene-sheet.is-open {
+.neo-scene-list.neo-scene-sheet.is-open {
   transform: none;
   visibility: visible;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .neo-scene-sheet {
+  .neo-public-layout .neo-scene-list.neo-scene-sheet {
     transition:
       transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1),
       visibility 0s 300ms;
   }
-  .neo-scene-sheet.is-open {
+  .neo-public-layout .neo-scene-list.neo-scene-sheet.is-open {
     transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
   }
 }
@@ -450,13 +450,5 @@
   }
   .neo-public-layout.neo-has-scenes .neo-composer-dock {
     transition: width 360ms cubic-bezier(0.22, 0.8, 0.25, 1);
-  }
-}
-
-@media (max-width: 1119px) and (prefers-reduced-motion: no-preference) {
-  .neo-public-layout .neo-chat-rail,
-  .neo-public-layout .neo-scene-list,
-  .neo-public-layout .neo-composer-dock {
-    transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
   }
 }
