@@ -1,16 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
-import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
+import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
+import { projectNeoProcessingActivity } from '../processing-activity.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { neoMessageAnchor } from '../reply-context.ts';
-import { projectNeoProcessingActivity } from '../processing-activity.ts';
 
 const clipboard = vi.hoisted(() => vi.fn(async () => true));
 const initialConnectionState = connectionState.value;
@@ -132,7 +132,7 @@ describe('durable public conversation presentation', () => {
       expect(open).toHaveBeenLastCalledWith({ kind: ref.kind, id: ref.id });
     }
     expect(open).toHaveBeenCalledTimes(3);
-    for (const name of ['Start', 'Stop', 'Not now'])
+    for (const name of ['Start', 'Stop', 'Decline'])
       expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
     expect(refs.querySelector('a')).toBeNull();
   });
@@ -413,7 +413,7 @@ describe('durable public conversation presentation', () => {
       <NeoConversation store={store} sessionId={root} publicConversation={conversation()} />
     );
     const option = screen.getByRole('button', { name: /Keep draft/ });
-    const submit = screen.getByRole('button', { name: 'Submit Response' });
+    const submit = screen.getByRole('button', { name: 'Send answer' });
     expect(submit.hasAttribute('disabled')).toBe(true);
     fireEvent.click(option);
     expect(submit.hasAttribute('disabled')).toBe(false);
@@ -426,7 +426,7 @@ describe('durable public conversation presentation', () => {
     );
     expect(screen.getAllByRole('button', { name: /Keep draft/ })).toHaveLength(1);
     expect(screen.getByRole('button', { name: /Keep draft/ })).toBe(option);
-    expect(screen.getByRole('button', { name: 'Submit Response' })).toBe(submit);
+    expect(screen.getByRole('button', { name: 'Send answer' })).toBe(submit);
     expect(submit.hasAttribute('disabled')).toBe(false);
   });
 

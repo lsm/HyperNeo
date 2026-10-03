@@ -1,11 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NeoWorkQuestionControls } from '../NeoWorkQuestionControls.tsx';
-import { useNeoWorkQuestionObserver } from '../useNeoWorkQuestionObserver.ts';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { NeoWorkQuestionControls } from '../NeoWorkQuestionControls.tsx';
+import { useNeoWorkQuestionObserver } from '../useNeoWorkQuestionObserver.ts';
 
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -55,7 +55,6 @@ let state: SessionState;
 let request: ReturnType<typeof vi.fn>;
 let join: ReturnType<typeof vi.fn>;
 let leave: ReturnType<typeof vi.fn>;
-let answer: Promise<unknown> | null;
 let observed: ReturnType<typeof useNeoWorkQuestionObserver>;
 function Owner({ show = true }: { show?: boolean }) {
   observed = useNeoWorkQuestionObserver(work);
@@ -68,23 +67,19 @@ const push = (next: SessionState) => {
 };
 const stateRequests = () =>
   request.mock.calls.filter(([method]) => method === 'state.session').length;
-const submit = () => {
-  fireEvent.click(screen.getByRole('button', { name: /^Plan A/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Submit Response' }));
-};
+const observedQuestion = (id: string) =>
+  waitFor(() => expect(observed.question?.toolUseId).toBe(id));
 beforeEach(() => {
   connectionState.value = 'connected';
   handlers = new Map();
   connections = new Set();
   state = waiting();
-  answer = null;
   join = vi.fn();
   leave = vi.fn();
   request = vi.fn(async (method: string, input: { subscriptionId?: string }) => {
     if (method === 'state.session') return state;
     if (method === 'liveQuery.subscribe') return { subscriptionId: input.subscriptionId };
     if (method === 'message.count') return { count: 0 };
-    if (method === 'question.respond') return answer ?? { success: true };
     return { success: true };
   });
   transport.hub = {
@@ -114,81 +109,50 @@ describe('NeoWorkQuestionControls with an existing observation', () => {
   it('remounts controls without creating, joining or destroying a second observation', async () => {
     const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
     const view = render(<Owner />);
-    await screen.findByText('question-A');
+    await observedQuestion('question-A');
     const original = observed.store;
     expect(join).toHaveBeenCalledTimes(1);
     expect(stateRequests()).toBe(1);
     view.rerender(<Owner show={false} />);
-    expect(screen.queryByText('question-A')).toBeNull();
     expect(observed.store).toBe(original);
     expect(destroy).not.toHaveBeenCalled();
     expect(leave).not.toHaveBeenCalled();
     view.rerender(<Owner />);
-    await screen.findByText('question-A');
+    await observedQuestion('question-A');
     expect(observed.store).toBe(original);
     expect(join).toHaveBeenCalledTimes(1);
     expect(stateRequests()).toBe(1);
-    expect(screen.getAllByText('A quick choice')).toHaveLength(1);
     view.unmount();
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-A'));
     expect(destroy).toHaveBeenCalledTimes(1);
     await Promise.all(destroy.mock.results.map((result) => result.value));
   });
-  it('renders the current native question and binds its reply without a second store', async () => {
+  it('follows the current native question without a second store and renders no inline reply', async () => {
     const select = vi.spyOn(SessionStore.prototype, 'select');
     const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
-    render(<Owner />);
-    await screen.findByText('question-A');
+    const view = render(<Owner />);
+    await observedQuestion('question-A');
     const original = observed.store;
     await act(async () => push(waiting('question-B', 2)));
-    expect(screen.queryByText('question-A')).toBeNull();
-    expect(screen.getAllByText('question-B')).toHaveLength(1);
-    submit();
-    await waitFor(() => expect(stateRequests()).toBe(2));
-    expect(request).toHaveBeenCalledWith(
-      'question.respond',
-      {
-        sessionId: 'worker-A',
-        toolUseId: 'question-B',
-        responses: [{ questionIndex: 0, selectedLabels: ['Plan A'], customText: undefined }],
-      },
-      { timeout: 30000 }
-    );
+    expect(observed.question?.toolUseId).toBe('question-B');
+    expect(view.container.querySelector('button, textarea, fieldset')).toBeNull();
+    await act(async () => push({ ...waiting('question-B', 3), agentState: { status: 'idle' } }));
+    expect(observed.question).toBeNull();
     expect(observed.store).toBe(original);
     expect(select).toHaveBeenCalledTimes(1);
     expect(destroy).not.toHaveBeenCalled();
-    expect(join).toHaveBeenCalledTimes(2);
-    expect(join.mock.calls).toEqual([['session:worker-A'], ['session:worker-A']]);
   });
-  it.each(['success', 'failure'] as const)(
-    'isolates a late %s from unmounted controls after a new question arrives',
-    async (outcome) => {
-      let resolve!: (value: unknown) => void;
-      let reject!: (cause: Error) => void;
-      answer = new Promise((accept, refuse) => {
-        resolve = accept;
-        reject = refuse;
-      });
-      const view = render(<Owner />);
-      await screen.findByText('question-A');
-      const original = observed.store;
-      submit();
-      await waitFor(() =>
-        expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(true)
-      );
-      view.rerender(<Owner show={false} />);
-      await act(async () => push(waiting('question-B', 2)));
-      view.rerender(<Owner />);
-      await screen.findByText('question-B');
-      await act(async () => {
-        if (outcome === 'success') resolve({ success: true });
-        else reject(new Error('Old request failed'));
-      });
-      expect(screen.queryByRole('alert')).toBeNull();
-      expect(screen.getByText('question-B')).toBeTruthy();
-      expect(observed.store).toBe(original);
-      expect(stateRequests()).toBe(1);
-      expect(join).toHaveBeenCalledTimes(1);
-    }
-  );
+  it('shows the native session error', async () => {
+    const view = render(<Owner />);
+    await observedQuestion('question-A');
+    await act(async () =>
+      push({
+        ...waiting('question-A', 2),
+        agentState: { status: 'idle' },
+        error: { message: 'Fictional session failure', occurredAt: 2 },
+      } as SessionState)
+    );
+    expect(screen.getByRole('alert').textContent).toContain('Fictional session failure');
+    view.unmount();
+  });
 });

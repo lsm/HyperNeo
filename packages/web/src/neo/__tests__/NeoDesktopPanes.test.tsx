@@ -1,11 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
 import { readFileSync } from 'node:fs';
 import { URL as NodeURL } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NeoLive } from '../NeoLive.tsx';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
+import { NeoLive } from '../NeoLive.tsx';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -108,8 +108,22 @@ function mount(publicMode = true) {
 }
 
 describe('Neo desktop panes', () => {
-  it('keeps list and full detail beside the same chat and composer through a full open/back cycle', async () => {
+  it('keeps the list beside the same chat and composer when a scene opens its work chat', () => {
     const { container, model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewSnapshot: {
+          ...model.value.viewSnapshot,
+          work: [
+            work('proposal', 'proposed'),
+            work('failure', 'failed'),
+            { ...work('result', 'reported'), sessionId: 'result-session' },
+          ],
+        },
+      };
+    });
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
     const list = screen.getByRole('region', { name: 'Work scenes' });
@@ -117,31 +131,17 @@ describe('Neo desktop panes', () => {
     expect(list.parentElement).toBe(main);
     const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
-    const opener = screen.getByRole('button', { name: 'View details for Fictional result' });
-    fireEvent.click(opener);
-    const detail = screen.getByRole('region', { name: 'Selected work' });
-    expect(detail.parentElement).toBe(main);
-    expect(detail.classList.contains('neo-scene-detail')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat for Fictional result' }));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/result-session', '_blank', 'noopener');
+    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Keep my fictional draft');
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
     expect(within(list).getByRole('article', { name: 'Fictional failure' })).toBeTruthy();
-    expect(
-      within(list).queryByRole('button', { name: 'View details for Fictional result' })
-    ).toBeNull();
-    await waitFor(() =>
-      expect(detail.querySelector('strong')?.textContent).toBe('Fictional report')
-    );
     fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('proposal', 'start');
-    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
-    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    expect(container.querySelector('.neo-chat-rail')).toBe(chat);
-    expect(draft.value).toBe('Keep my fictional draft');
-    expect(document.activeElement).toBe(
-      screen.getByRole('button', { name: 'View details for Fictional result' })
-    );
+    opened.mockRestore();
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
@@ -200,22 +200,6 @@ describe('Neo desktop panes', () => {
     act(() => void window.dispatchEvent(new Event('resize')));
     expect(main.scrollTop).toBe(1600);
     expect(container.querySelector('.neo-chat-rail')!.scrollTop).toBe(0);
-  });
-
-  it('keeps the list pane meaningful when its only scene is open in detail', () => {
-    const { model } = mount();
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewSnapshot: { ...model.value.viewSnapshot, work: [work('result', 'reported')] },
-      };
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'View details for Fictional result' }));
-    expect(
-      within(screen.getByRole('region', { name: 'Work scenes' })).getByText(
-        'No other scenes right now.'
-      )
-    ).toBeTruthy();
   });
 
   it('scopes the three independent scroll panes and joint motion to 1120px desktop public mode', () => {

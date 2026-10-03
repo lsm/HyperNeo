@@ -1,9 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { render as renderRoot } from 'preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { signal } from '@preact/signals';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { render as renderRoot } from 'preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -133,25 +133,20 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(act).toHaveBeenCalledExactlyOnceWith('work', 'start');
   });
 
-  it('opens full detail without firing a native action and preserves the composer on Back', () => {
+  it('opens the work chat without firing a native action and preserves the composer', () => {
     const { act } = mount('ask');
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
       target: { value: 'Keep my draft' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Draft the agenda' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
     expect(act).not.toHaveBeenCalled();
-    const detail = screen.getByRole('region', { name: 'Selected work' });
-    expect(within(detail).getByText('Eight people, Sunday.')).toBeTruthy();
-    const inspect = within(detail).getByRole('link', { name: /Inspect execution/ });
-    expect(inspect.getAttribute('href')).toBe('/session/worker');
-    expect(inspect.getAttribute('target')).toBe('_blank');
-    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker', '_blank', 'noopener');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
     expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
       'Keep my draft'
     );
-    expect(act).not.toHaveBeenCalled();
   });
 
   it('keeps orphan decisions on their actionable scene, not an empty concerns panel', () => {
@@ -160,7 +155,7 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(screen.queryByRole('complementary', { name: 'Your concerns' })).toBeNull();
     const attention = screen.getByRole('region', { name: 'Needs your attention' });
     expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
-    fireEvent.click(within(attention).getByRole('button', { name: 'Not now' }));
+    fireEvent.click(within(attention).getByRole('button', { name: 'Decline' }));
     expect(act).toHaveBeenCalledExactlyOnceWith('work', 'cancel');
   });
 

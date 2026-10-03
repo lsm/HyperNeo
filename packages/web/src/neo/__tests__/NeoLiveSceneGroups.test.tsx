@@ -1,7 +1,7 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const seen = vi.hoisted(() => ({ workIds: [] as string[] }));
@@ -158,7 +158,7 @@ describe('NeoLive work scene groups', () => {
       name: 'Title a-reported',
     });
     expect(within(reported).getByText('Response ready')).toBeTruthy();
-    expect(within(reported).getByText(/Read the execution/)).toBeTruthy();
+    expect(within(reported).queryByText('Report a-reported')).toBeNull();
     expect(within(reported).queryByRole('button', { name: 'Start work' })).toBeNull();
     expect(reported.textContent).not.toMatch(/verified|accepted/i);
   });
@@ -169,7 +169,7 @@ describe('NeoLive work scene groups', () => {
       name: 'Title a-proposed',
     });
     const start = within(card).getByRole('button', { name: 'Start work' });
-    const later = within(card).getByRole('button', { name: 'Not now' });
+    const later = within(card).getByRole('button', { name: 'Decline' });
     fireEvent.click(start);
     expect(model.act).toHaveBeenCalledWith('a-proposed', 'start');
     fireEvent.click(later);
@@ -183,20 +183,17 @@ describe('NeoLive work scene groups', () => {
     expect(model.act).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the execution link and the shared-chat stop semantics intact', () => {
+  it('opens the shared work chat from its card without any stop control', () => {
     const shared = snapshot();
     shared.work = [work('shared', 'queued', 80, 'a', { targetSessionId: 'project-chat' })];
     const { state, model } = renderLive({ snapshot: shared, viewSnapshot: shared });
     const card = within(group('In progress')).getByRole('article', { name: 'Title shared' });
-    expect(within(card).queryByRole('button', { name: 'Stop work' })).toBeNull();
-    const stop = within(card).getByRole('button', { name: 'Stop waiting' });
-    fireEvent.click(stop);
-    expect(model.act).toHaveBeenCalledWith('shared', 'cancel');
-    expect(
-      within(card)
-        .getByRole('link', { name: /Inspect execution/ })
-        .getAttribute('href')
-    ).toBe('/session/shared-session');
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    fireEvent.click(within(card).getByText('Handed to HyperNeo'));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/shared-session', '_blank', 'noopener');
+    expect(model.act).not.toHaveBeenCalled();
+    opened.mockRestore();
     const cleared = { ...shared, work: [] };
     set(state, { snapshot: cleared, viewSnapshot: cleared });
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();

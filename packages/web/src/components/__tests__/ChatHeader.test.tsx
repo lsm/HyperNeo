@@ -1,12 +1,13 @@
 // @ts-nocheck
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Session } from '@hyperneo/shared';
-import { ChatHeader } from '../ChatHeader';
+
+import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sessionStore } from '../../lib/session-store';
 import { contextPanelOpenSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { connectionState } from '../../lib/state';
-import { sessionStore } from '../../lib/session-store';
+import { ChatHeader } from '../ChatHeader';
 
 describe('ChatHeader', () => {
   const mockSession: Session = {
@@ -207,7 +208,7 @@ describe('ChatHeader', () => {
       return container.querySelector('[role="menu"]')!;
     }
 
-    it('lists Tools, Export, Reset, Archive and Delete for a writable session', () => {
+    it('lists Tools, Export, Reset, Move, Archive and Delete for a writable session', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
       const menu = openMenu(container);
 
@@ -218,9 +219,39 @@ describe('ChatHeader', () => {
         'Tools',
         'Export chat',
         'Reset agent',
+        'Move under another chat',
         'Archive chat',
         'Delete chat',
       ]);
+    });
+
+    it('offers Move to top level for a child chat', () => {
+      const child = { ...mockSession, parentSessionId: 'parent-1' };
+      const { container } = render(<ChatHeader {...defaultProps} session={child} />);
+      const menu = openMenu(container);
+
+      const titles = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) =>
+        b.getAttribute('title')
+      );
+      expect(titles).toContain('Move to top level');
+      expect(titles).not.toContain('Move under another chat');
+    });
+
+    it('offers no move action for Neo or Space sessions', () => {
+      for (const session of [
+        { ...mockSession, id: 'neo:root' },
+        { ...mockSession, context: { spaceId: 'space-1' } },
+      ]) {
+        const { container, unmount } = render(<ChatHeader {...defaultProps} session={session} />);
+        const menu = openMenu(container);
+        const titles = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) =>
+          b.getAttribute('title')
+        );
+        expect(titles).toContain('Export chat');
+        expect(titles).not.toContain('Move under another chat');
+        expect(titles).not.toContain('Move to top level');
+        unmount();
+      }
     });
 
     it('hides Tools when readonly and Archive/Delete when features.archive is false', () => {

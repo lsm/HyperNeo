@@ -1,6 +1,6 @@
+import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { toastsSignal } from '../../lib/toast.ts';
@@ -27,7 +27,7 @@ const pending = (toolUseId = 'choice-A'): PendingUserQuestion => ({
       multiSelect: false,
       options: [
         { label: 'Keep draft', description: 'Do not run it' },
-        { label: 'Skip', description: 'Do not change it' },
+        { label: 'Discard', description: 'Do not change it' },
       ],
     },
   ],
@@ -110,9 +110,9 @@ async function mount(id = sessionA) {
 }
 
 const option = () => screen.findByRole('button', { name: /Keep draft/ });
-const submit = () => screen.getByRole('button', { name: 'Submit Response' }) as HTMLButtonElement;
+const submit = () => screen.getByRole('button', { name: 'Send answer' }) as HTMLButtonElement;
 const action = (respond: boolean) =>
-  screen.getByRole('button', { name: respond ? 'Submit Response' : 'Skip Question' });
+  screen.getByRole('button', { name: respond ? 'Send answer' : 'Skip' });
 
 describe('NeoConversation native question feedback', () => {
   it.each([

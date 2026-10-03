@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { signal } from '@preact/signals';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -151,35 +151,32 @@ describe('Neo floating controls', () => {
     expect(link.getAttribute('rel')).toBe('noreferrer');
   });
 
-  it('keeps draft and selected work intact while the controls are used', () => {
+  it('keeps draft and the work card intact while the controls are used', () => {
     renderLive();
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
-    expect(screen.queryByText('Conversation body')).toBeTruthy();
+    const card = screen.getByRole('article', { name: 'Title w' });
+    fireEvent.click(within(card).getByText('Handed to HyperNeo'));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/w-session', '_blank', 'noopener');
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
     expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
-    expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
-    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
+    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
+    opened.mockRestore();
   });
 
-  it('keeps one selected card through a real concerns round trip', () => {
+  it('keeps one work card through a real concerns round trip', () => {
     renderLive();
-    fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
-    const region = screen.getByRole('region', { name: 'Selected work' });
-    const card = within(region).getByRole('article', { name: 'Title w' });
+    const card = screen.getByRole('article', { name: 'Title w' });
     fireEvent.click(toggle());
     expect(within(concernsList()).getByText('Concern a')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
     expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBe(region);
-    expect(within(region).getByRole('article', { name: 'Title w' })).toBe(card);
+    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
     expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Stop work' })).toBeTruthy();
+    expect(card.getAttribute('data-scene-open')).toBe('w-queued');
   });
 
   it('still accepts a dropped file on the preserved banner', async () => {

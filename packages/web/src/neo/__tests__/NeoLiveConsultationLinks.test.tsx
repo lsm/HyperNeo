@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
@@ -147,7 +147,7 @@ const references = () => within(screen.getByRole('list', { name: 'Related Neo sc
 
 describe('Neo live public consultation link wiring', () => {
   it.each([false, true])(
-    'opens full context detail and preserves draft/Markdown with narrow=%s',
+    'opens the holder context and preserves draft/Markdown with narrow=%s',
     async (mobile) => {
       narrow = mobile;
       const view = mount();
@@ -156,13 +156,9 @@ describe('Neo live public consultation link wiring', () => {
         target: { value: 'Fictional navigation draft' },
       });
       fireEvent.click(references().getByRole('button', { name: 'Garden context check' }));
-      const detail = screen.getByRole('region', { name: 'Selected context check' });
-      expect(within(detail).getByText('Full fictional question joint')).toBeTruthy();
-      expect(within(detail).getByRole('button', { name: 'Stop waiting' })).toBeTruthy();
-      expect(view.container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(mobile);
+      expect(view.model.value.open).toHaveBeenCalledExactlyOnceWith('garden');
+      expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
       expect(view.model.value.act).not.toHaveBeenCalled();
-      expect(view.model.value.open).not.toHaveBeenCalled();
-      fireEvent.click(within(detail).getByRole('button', { name: 'Back to scenes' }));
       expect(
         (screen.getByRole('textbox', { name: 'Message Neo' }) as HTMLTextAreaElement).value
       ).toBe('Fictional navigation draft');
@@ -170,24 +166,30 @@ describe('Neo live public consultation link wiring', () => {
         await screen.findByRole('heading', { name: 'Expanded fictional answer' })
       ).toBeTruthy();
       expect(view.container.querySelector('[data-public-entry]')).toBe(entry);
-      expect(view.model.value.act).not.toHaveBeenCalled();
-      expect(view.model.value.open).not.toHaveBeenCalled();
     }
   );
 
   it('does not confuse equal work and context-check IDs', () => {
     const view = mount();
+    const snapshot = view.model.value.viewSnapshot;
+    act(() => {
+      view.model.value = {
+        ...view.model.value,
+        viewSnapshot: {
+          ...snapshot,
+          work: snapshot.work.map((item) => ({ ...item, sessionId: 'joint-session' })),
+        },
+      };
+    });
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.click(references().getByRole('button', { name: 'Garden execution' }));
-    const work = screen.getByRole('region', { name: 'Selected work' });
-    expect(within(work).getByText('Native work brief')).toBeTruthy();
-    expect(within(work).queryByText('Full fictional question joint')).toBeNull();
-    expect(view.model.value.act).not.toHaveBeenCalled();
-    fireEvent.click(within(work).getByRole('button', { name: 'Back to scenes' }));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/joint-session', '_blank', 'noopener');
+    expect(view.model.value.open).not.toHaveBeenCalled();
     fireEvent.click(references().getByRole('button', { name: 'Garden context check' }));
-    const check = screen.getByRole('region', { name: 'Selected context check' });
-    expect(within(check).getByText('Full fictional question joint')).toBeTruthy();
-    expect(within(check).queryByText('Native work brief')).toBeNull();
+    expect(view.model.value.open).toHaveBeenCalledExactlyOnceWith('garden');
+    expect(opened).toHaveBeenCalledTimes(1);
     expect(view.model.value.act).not.toHaveBeenCalled();
+    opened.mockRestore();
   });
 
   it('keeps unknown and out-of-scope authored labels readable but non-actionable', () => {
@@ -222,7 +224,7 @@ describe('Neo live public consultation link wiring', () => {
     expect(view.model.value.act).not.toHaveBeenCalled();
   });
 
-  it('opens queued checks and reported context responses using the same scoped detail path', async () => {
+  it('opens a reported context response through the holder path', () => {
     const view = mount();
     const receipt = view.model.value.viewSnapshot.consultations![0];
     act(() => {
@@ -230,30 +232,6 @@ describe('Neo live public consultation link wiring', () => {
         ...view.model.value,
         viewSnapshot: {
           ...view.model.value.viewSnapshot,
-          consultations: [],
-          consultationWaiters: [
-            {
-              ...receipt,
-              status: 'queued',
-              id: 'joint',
-              originMessageId: 'ask',
-            },
-          ],
-        },
-      };
-    });
-    fireEvent.click(references().getByRole('button', { name: 'Garden context check' }));
-    expect(
-      within(screen.getByRole('region', { name: 'Selected context check' })).getByText(
-        'Waiting for context'
-      )
-    ).toBeTruthy();
-    act(() => {
-      view.model.value = {
-        ...view.model.value,
-        viewSnapshot: {
-          ...view.model.value.viewSnapshot,
-          consultationWaiters: [],
           consultations: [
             {
               ...receipt,
@@ -264,9 +242,8 @@ describe('Neo live public consultation link wiring', () => {
         },
       };
     });
-    const detail = screen.getByRole('region', { name: 'Selected context check' });
-    expect(await within(detail).findByText('Fictional context answer')).toBeTruthy();
-    expect(within(detail).queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    fireEvent.click(references().getByRole('button', { name: 'Garden context check' }));
+    expect(view.model.value.open).toHaveBeenCalledExactlyOnceWith('garden');
     expect(view.model.value.act).not.toHaveBeenCalled();
   });
 });

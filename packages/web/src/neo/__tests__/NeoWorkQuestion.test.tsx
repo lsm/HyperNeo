@@ -1,12 +1,13 @@
+import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionState, PendingUserQuestion } from '@hyperneo/shared';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { QuestionPrompt } from '../../components/QuestionPrompt.tsx';
-import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
-import { NeoWorkCard } from '../NeoWorkCard.tsx';
-import { markAllSessionStoresRecovering, SessionStore } from '../../lib/session-store.ts';
+import { markAllSessionStoresRecovering } from '../../lib/session-store.ts';
 import { toast } from '../../lib/toast.ts';
+import { NeoWorkCard } from '../NeoWorkCard.tsx';
+import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
+import { NeoWorkQuestionResource } from '../NeoWorkQuestionResource.tsx';
 
 const controls = vi.hoisted(() => ({
   hub: null as unknown,
@@ -19,6 +20,7 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 }));
 vi.mock('../../lib/toast.ts', () => ({ toast: { error: vi.fn() } }));
 vi.mock('../../components/chat/MarkdownRenderer.tsx', () => ({ default: () => null }));
+
 import { connectionState } from '../../lib/state.ts';
 
 type Handler = (value: unknown, context: { channel: string }) => void;
@@ -72,7 +74,6 @@ let handlers: Map<string, Set<Handler>>;
 let states: Map<string, SessionState>;
 let failure: unknown;
 let disconnectedResult: boolean;
-let delayedReply: { sessionId: string; promise: Promise<unknown> } | null;
 let connections: Set<(state: string) => void>;
 let initial: Promise<SessionState> | null;
 const push = (sessionId: string, state: SessionState) => {
@@ -87,7 +88,6 @@ beforeEach(() => {
   connections = new Set();
   failure = null;
   disconnectedResult = false;
-  delayedReply = null;
   vi.mocked(toast.error).mockClear();
   initial = null;
   join = vi.fn();
@@ -101,7 +101,6 @@ beforeEach(() => {
       if (method === 'liveQuery.subscribe') return { subscriptionId: data.subscriptionId };
       if (method === 'message.count') return { count: 0 };
       if (method === 'question.respond' || method === 'question.cancel') {
-        if (delayedReply?.sessionId === data.sessionId) return delayedReply.promise;
         if (failure) throw failure;
         if (disconnectedResult) return null;
         const old = states.get(data.sessionId)!;
@@ -137,11 +136,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 const choice = () => screen.findByRole('button', { name: /Keep draft/ });
-const submit = () => screen.getByRole('button', { name: 'Submit Response' }) as HTMLButtonElement;
 const actionButton = (respond: boolean) =>
   screen.getByRole('button', { name: respond ? 'Submit Response' : 'Skip Question' });
-const expectRequest = (method: string, data: unknown) =>
-  waitFor(() => expect(request).toHaveBeenCalledWith(method, data, { timeout: 30000 }));
+const lastQuestion = (listener: ReturnType<typeof vi.fn>, workId = work.id) =>
+  listener.mock.calls.filter(([id]) => id === workId).at(-1)?.[1] as
+    | PendingUserQuestion
+    | null
+    | undefined;
 
 describe('NeoWorkQuestion native controls', () => {
   it('shows the actual SessionStore error instead of generic read fallback text', async () => {
@@ -156,85 +157,25 @@ describe('NeoWorkQuestion native controls', () => {
     );
     expect(screen.queryByText('Could not check this agent’s questions.')).toBeNull();
   });
-  it('answers from the actual work card through the exact native RPC and releases its subscriptions', async () => {
+  it('observes from the actual work card without inline reply controls and releases its subscriptions', async () => {
     const view = render(
-      <NeoWorkCard work={work} busy={false} disabled={false} onAction={vi.fn()} />
+      <NeoWorkCard work={work} busy={false} disabled={false} onAction={vi.fn()} onOpen={vi.fn()} />
     );
-    fireEvent.click(await choice());
-    fireEvent.click(submit());
-    await expectRequest('question.respond', {
-      sessionId: 'manager-A',
-      toolUseId: 'choice-A',
-      responses: [{ questionIndex: 0, selectedLabels: ['Keep draft'], customText: undefined }],
-    });
-    await waitFor(() => expect(screen.queryByText('A quick choice')).toBeNull());
-    expect(screen.getByRole('link', { name: /Inspect execution/ })).toBeTruthy();
+    await waitFor(() => expect(join).toHaveBeenCalledWith('session:manager-A'));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('state.session', { sessionId: 'manager-A' })
+    );
+    expect(
+      screen.queryByRole('button', { name: /Keep draft|Submit Response|Send answer/ })
+    ).toBeNull();
     view.unmount();
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:manager-A'));
     expect([...handlers.values()].every((list) => list.size === 0)).toBe(true);
-  });
-  it('sends a custom answer through the same native question controls', async () => {
-    render(<NeoWorkQuestion work={work} />);
-    await choice();
-    fireEvent.click(screen.getByRole('button', { name: /Other/ }));
-    fireEvent.input(screen.getByPlaceholderText('Enter your response...'), {
-      target: { value: 'Keep the alternate draft' },
-    });
-    fireEvent.click(submit());
-    await expectRequest(
-      'question.respond',
-      expect.objectContaining({
-        toolUseId: 'choice-A',
-        responses: [
-          { questionIndex: 0, selectedLabels: [], customText: 'Keep the alternate draft' },
-        ],
-      })
-    );
-  });
-  it('skips the pending native question without invoking a work operation', async () => {
-    render(<NeoWorkQuestion work={work} />);
-    await choice();
-    fireEvent.click(screen.getByRole('button', { name: 'Skip Question' }));
-    await expectRequest('question.cancel', { sessionId: 'manager-A', toolUseId: 'choice-A' });
-    expect(request.mock.calls.some(([method]) => method === 'operation.invoke')).toBe(false);
-  });
-  it.each(['question.respond', 'question.cancel'])(
-    'keeps failures visible and retryable for %s',
-    async (method) => {
-      failure = new Error('Native answer rejected');
-      render(<NeoWorkQuestion work={work} />);
-      fireEvent.click(await choice());
-      fireEvent.click(actionButton(method === 'question.respond'));
-      expect((await screen.findByRole('alert')).textContent).toContain('Native answer rejected');
-      expect(toast.error).not.toHaveBeenCalled();
-      expect(screen.getByText('A quick choice')).toBeTruthy();
-      failure = null;
-      fireEvent.click(actionButton(method === 'question.respond'));
-      await waitFor(() => expect(screen.queryByText('A quick choice')).toBeNull());
-      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    }
-  );
-  it('does not claim a reply when the native call loses its connection', async () => {
-    disconnectedResult = true;
-    render(<NeoWorkQuestion work={work} />);
-    fireEvent.click(await choice());
-    fireEvent.click(submit());
-    expect((await screen.findByRole('alert')).textContent).toContain('Connection lost');
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(screen.getByText('A quick choice')).toBeTruthy();
-  });
-  it.each([
-    ['answered', { status: 'idle' as const }],
-    ['cancelled', { status: 'interrupted' as const }],
-  ])('hides the failed-reply alert when the question is externally %s', async (outcome, state) => {
-    failure = new Error('Native answer rejected');
-    render(<NeoWorkQuestion work={work} />);
-    fireEvent.click(await choice());
-    fireEvent.click(actionButton(outcome === 'answered'));
-    expect((await screen.findByRole('alert')).textContent).toContain('Native answer rejected');
-    await act(async () => push(sessionId, { ...waiting(), revision: 2, agentState: state }));
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByText('A quick choice')).toBeNull();
+    expect(
+      request.mock.calls.some(
+        ([method]) => method === 'question.respond' || method === 'question.cancel'
+      )
+    ).toBe(false);
   });
   it.each(['respond', 'cancel'] as const)(
     'keeps a legacy native %s retryable after disconnect',
@@ -271,149 +212,85 @@ describe('NeoWorkQuestion native controls', () => {
       expect(request).toHaveBeenCalledTimes(3);
     }
   );
-  it('follows native question changes without retaining a previous selection', async () => {
-    failure = new Error('Old question rejected');
-    render(<NeoWorkQuestion work={work} />);
-    fireEvent.click(await choice());
-    expect(submit().disabled).toBe(false);
-    fireEvent.click(submit());
-    expect((await screen.findByRole('alert')).textContent).toContain('Old question rejected');
-    failure = null;
-    await act(async () => push('manager-A', { ...waiting(pending('choice-next')), revision: 2 }));
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(submit().disabled).toBe(true);
-    fireEvent.click(await choice());
-    fireEvent.click(submit());
-    await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-next' }));
-  });
-  it('shows only the exactly attributed choice when two jobs share the recipient', async () => {
+});
+
+describe('NeoWorkQuestionResource native observation', () => {
+  it('reports only the exactly attributed question when two jobs share the recipient', async () => {
     const other = { ...work, id: 'work-B', title: 'Different job' };
+    const changed = vi.fn();
     const view = render(
       <>
-        <NeoWorkQuestion key="work-A" work={work} />
-        <NeoWorkQuestion key="work-B" work={other} />
+        <NeoWorkQuestionResource key="work-A" work={work} onQuestion={changed} />
+        <NeoWorkQuestionResource key="work-B" work={other} onQuestion={changed} />
       </>
     );
-    await choice();
-    expect(screen.getAllByText('A quick choice')).toHaveLength(1);
+    await waitFor(() => expect(lastQuestion(changed)?.toolUseId).toBe('choice-A'));
+    expect(lastQuestion(changed, 'work-B') ?? null).toBeNull();
     await act(async () =>
       push('manager-A', { ...waiting(pending('choice-B', 'manager-A', 'work-B')), revision: 2 })
     );
     view.rerender(
       <>
-        <NeoWorkQuestion key="work-B" work={other} />
+        <NeoWorkQuestionResource key="work-B" work={other} onQuestion={changed} />
       </>
     );
-    expect(await choice()).toBeTruthy();
+    await waitFor(() => expect(lastQuestion(changed, 'work-B')?.toolUseId).toBe('choice-B'));
     expect(leave).not.toHaveBeenCalled();
-    fireEvent.click(await choice());
-    fireEvent.click(submit());
-    await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-B' }));
     view.unmount();
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:manager-A'));
   });
-  it('cannot act on disconnected or recovering native state', async () => {
-    const view = render(<NeoWorkQuestion work={work} />);
-    await choice();
+  it('withdraws the question on disconnected or recovering native state', async () => {
+    const changed = vi.fn();
+    const view = render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
+    await waitFor(() => expect(lastQuestion(changed)?.toolUseId).toBe('choice-A'));
     await act(async () => {
       connectionState.value = 'disconnected';
     });
-    view.rerender(<NeoWorkQuestion work={work} />);
-    expect(screen.queryByText('A quick choice')).toBeNull();
+    view.rerender(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
+    expect(lastQuestion(changed)).toBeNull();
     await act(async () => {
       connectionState.value = 'connected';
       markAllSessionStoresRecovering();
     });
-    expect(screen.queryByText('A quick choice')).toBeNull();
+    expect(lastQuestion(changed)).toBeNull();
     states.set('manager-A', { ...waiting(), revision: 2 });
     await act(async () => {
       for (const handler of connections) handler('connected');
     });
-    await choice();
-    expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
+    await waitFor(() => expect(lastQuestion(changed)?.toolUseId).toBe('choice-A'));
   });
   it('does not let a delayed old recipient snapshot reappear after a target switch', async () => {
     let release!: (state: SessionState) => void;
     initial = new Promise((resolve) => {
       release = resolve;
     });
-    const view = render(<NeoWorkQuestion work={work} />);
+    const changed = vi.fn();
+    const view = render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith('state.session', { sessionId: 'manager-A' })
     );
-    expect(screen.queryByText('A quick choice')).toBeNull();
+    expect(lastQuestion(changed) ?? null).toBeNull();
     initial = null;
     states.set('manager-B', waiting(pending('choice-B', 'manager-B')));
     view.rerender(
-      <NeoWorkQuestion work={{ ...work, sessionId: 'manager-B', targetSessionId: 'manager-B' }} />
+      <NeoWorkQuestionResource
+        work={{ ...work, sessionId: 'manager-B', targetSessionId: 'manager-B' }}
+        onQuestion={changed}
+      />
     );
-    await choice();
+    await waitFor(() => expect(lastQuestion(changed)?.toolUseId).toBe('choice-B'));
     await act(async () => release(waiting()));
-    fireEvent.click(await choice());
-    fireEvent.click(submit());
-    await expectRequest(
-      'question.respond',
-      expect.objectContaining({ sessionId: 'manager-B', toolUseId: 'choice-B' })
-    );
-    expect(
-      request.mock.calls.some(
-        ([method, data]) => method === 'question.respond' && data.sessionId === 'manager-A'
-      )
-    ).toBe(false);
-  });
-  it.each(['work', 'recipient'] as const)(
-    'ignores a delayed old reply failure after a %s change',
-    async (change) => {
-      let rejectOld!: (cause: unknown) => void;
-      delayedReply = { sessionId, promise: new Promise((_, reject) => (rejectOld = reject)) };
-      const view = render(<NeoWorkQuestion work={work} />);
-      fireEvent.click(await choice());
-      fireEvent.click(submit());
-      await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-A' }));
-      delayedReply = null;
-      const nextWork =
-        change === 'work'
-          ? { ...work, id: 'work-B' }
-          : { ...work, sessionId: 'manager-B', targetSessionId: 'manager-B' };
-      if (change === 'work') {
-        await act(async () =>
-          push(sessionId, { ...waiting(pending('choice-B', sessionId, 'work-B')), revision: 2 })
-        );
-      } else {
-        states.set('manager-B', waiting(pending('choice-B', 'manager-B')));
-      }
-      view.rerender(<NeoWorkQuestion work={nextWork} />);
-      await choice();
-      failure = new Error('Current question failed');
-      fireEvent.click(await choice());
-      fireEvent.click(submit());
-      expect((await screen.findByRole('alert')).textContent).toContain('Current question failed');
-      await act(async () => rejectOld(new Error('Stale question failed')));
-      expect(screen.getByRole('alert').textContent).toContain('Current question failed');
-      expect(screen.getByRole('alert').textContent).not.toContain('Stale question failed');
-    }
-  );
-  it('does not refresh after an unmounted question reply succeeds', async () => {
-    let resolveOld!: (value: unknown) => void;
-    delayedReply = { sessionId, promise: new Promise((resolve) => (resolveOld = resolve)) };
-    const refresh = vi.spyOn(SessionStore.prototype, 'refresh');
-    const view = render(<NeoWorkQuestion work={work} />);
-    fireEvent.click(await choice());
-    refresh.mockClear();
-    fireEvent.click(submit());
-    await expectRequest('question.respond', expect.objectContaining({ toolUseId: 'choice-A' }));
-    view.unmount();
-    await act(async () => resolveOld({ success: true }));
-    expect(refresh).not.toHaveBeenCalled();
+    expect(lastQuestion(changed)?.toolUseId).toBe('choice-B');
+    expect(changed.mock.calls.some(([, value]) => value?.toolUseId === 'choice-A')).toBe(false);
   });
   it.each(['reported', 'failed', 'cancelled'] as const)(
-    'withdraws choice controls for %s work',
+    'withdraws the question for %s work',
     async (status) => {
-      const view = render(<NeoWorkQuestion work={work} />);
-      await choice();
-      view.rerender(<NeoWorkQuestion work={{ ...work, status }} />);
-      expect(screen.queryByText('A quick choice')).toBeNull();
-      expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
+      const changed = vi.fn();
+      const view = render(<NeoWorkQuestionResource work={work} onQuestion={changed} />);
+      await waitFor(() => expect(lastQuestion(changed)?.toolUseId).toBe('choice-A'));
+      view.rerender(<NeoWorkQuestionResource work={{ ...work, status }} onQuestion={changed} />);
+      await waitFor(() => expect(lastQuestion(changed)).toBeNull());
     }
   );
 });

@@ -1,11 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NeoLive } from '../NeoLive.tsx';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { NeoLive } from '../NeoLive.tsx';
 import { projectNeoConcernBoard } from '../neo-concern-board.ts';
 import { projectNeoScenes } from '../neo-scenes.ts';
 
@@ -163,7 +163,7 @@ function mount() {
   return { ...view, model };
 }
 const attention = () => screen.getByRole('region', { name: 'Needs your attention' });
-const compact = () => screen.getByRole('button', { name: 'View details for Fictional work' });
+const compact = () => screen.getByRole('button', { name: 'Open chat for Fictional work' });
 
 describe('NeoLive native question failure attention', () => {
   it('makes a hidden load failure visible and retains its owner and attention until explicit retry completes', async () => {
@@ -180,7 +180,7 @@ describe('NeoLive native question failure attention', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check questions again' }));
     await waitFor(() => expect(select).toHaveBeenCalledTimes(2));
     expect(within(attention()).getByRole('alert')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'View details for Fictional work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open chat for Fictional work' })).toBeNull();
     expect(select.mock.contexts[0]).toBe(select.mock.contexts[1]);
     expect(destroy).not.toHaveBeenCalled();
     await act(async () => {
@@ -189,37 +189,31 @@ describe('NeoLive native question failure attention', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(
       within(await screen.findByRole('region', { name: 'In progress' })).getByRole('button', {
-        name: 'View details for Fictional work',
+        name: 'Open chat for Fictional work',
       })
     ).toBe(compact());
     expect(screen.queryByRole('region', { name: 'Needs your attention' })).toBeNull();
     expect(model.value.act).not.toHaveBeenCalled();
   });
 
-  it('recovers a real current native choice and sends only its exact answer binding', async () => {
-    mount();
+  it('recovers a real current native question and leads it to its chat without answering inline', async () => {
+    const { model } = mount();
     await screen.findByRole('alert');
     fail = false;
     waiting = true;
     fireEvent.click(screen.getByRole('button', { name: 'Check questions again' }));
-    await screen.findByText('Choose worker-A');
-    expect(within(attention()).getByText('Choose worker-A')).toBeTruthy();
+    await waitFor(() =>
+      expect(within(attention()).getByText('Waiting for your answer')).toBeTruthy()
+    );
     expect(screen.queryByRole('alert')).toBeNull();
     expect(select).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole('button', { name: /^Plan A/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit Response' }));
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        'question.respond',
-        {
-          sessionId: 'worker-A',
-          toolUseId: 'question-worker-A',
-          responses: [{ questionIndex: 0, selectedLabels: ['Plan A'], customText: undefined }],
-        },
-        { timeout: 30000 }
-      )
-    );
+    expect(screen.queryByRole('button', { name: /Submit Response|Send answer/ })).toBeNull();
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    fireEvent.click(within(attention()).getByRole('button', { name: 'Answer in chat' }));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker-A', '_blank', 'noopener');
+    expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
     expect(request.mock.calls.some(([method]) => method === 'operation.invoke')).toBe(false);
+    expect(model.value.act).not.toHaveBeenCalled();
   });
 
   it('cannot reintroduce a failed old observer after a work-session replacement', async () => {
@@ -241,7 +235,7 @@ describe('NeoLive native question failure attention', () => {
       release(state('worker-A', true));
     });
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByText('Choose worker-A')).toBeNull();
+    expect(screen.queryByText('Waiting for your answer')).toBeNull();
     expect(compact()).toBeTruthy();
     expect(select).toHaveBeenCalledTimes(3);
     expect(destroy).toHaveBeenCalledTimes(1);

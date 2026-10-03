@@ -1,9 +1,9 @@
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -81,16 +81,17 @@ describe('NeoWorkCard summary presentation', () => {
         />
       );
       await act(async () => {});
-      const button = screen.getByRole('button', { name: `View details for ${item.title}` });
+      const button = screen.getByRole('button', { name: `Open chat for ${item.title}` });
       expect(button.getAttribute('type')).toBe('button');
       expect(button.getAttribute('disabled')).toBeNull();
       expect(button.getAttribute('data-scene-open')).toBe(item.id);
       expect(screen.getByText(label)).toBeTruthy();
       expect(screen.getByText(item.title)).toBeTruthy();
       expect(view.container.querySelector('details, article, textarea, input, a')).toBeNull();
-      expect(screen.queryByText('A quick choice')).toBeNull();
+      expect(screen.queryByText('Waiting for your answer. Open the chat to reply.')).toBeNull();
       expect(select).not.toHaveBeenCalled();
       expect(join).not.toHaveBeenCalled();
+      expect(screen.getAllByRole('button')).toHaveLength(1);
       fireEvent.click(button.querySelector('svg')!);
       expect(open).toHaveBeenCalledExactlyOnceWith(item.id);
       expect(action).not.toHaveBeenCalled();
@@ -110,14 +111,35 @@ describe('NeoWorkCard summary presentation', () => {
     expect(select).not.toHaveBeenCalled();
     view.rerender(<NeoWorkCard {...props} presentation="detail" />);
     await waitFor(() => expect(select).toHaveBeenCalledExactlyOnceWith('fictional-worker'));
-    expect(screen.getByRole('button', { name: 'Stop work' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Inspect execution ↗' })).toBeTruthy();
+    const card = screen.getByRole('article', { name: props.work.title });
+    expect(card.getAttribute('data-scene-open')).toBe('fictional-work');
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(props.onOpen).toHaveBeenCalledExactlyOnceWith('fictional-work');
     view.rerender(<NeoWorkCard {...props} presentation="summary" />);
     await waitFor(() => expect(destroy).toHaveBeenCalledTimes(1));
     await Promise.all(destroy.mock.results.map((result) => result.value));
     expect(leave).toHaveBeenCalledWith('session:fictional-worker');
     expect(select).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'Stop work' })).toBeNull();
+    expect(screen.queryByRole('article')).toBeNull();
+  });
+  it('names a chatless summary row by its title and keeps it inert', () => {
+    const open = vi.fn();
+    render(
+      <NeoWorkCard
+        work={{ ...work('proposed'), sessionId: null }}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={open}
+        presentation="summary"
+      />
+    );
+    const row = screen.getByRole('button', {
+      name: 'A bounded fictional task',
+    }) as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+    fireEvent.click(row);
+    expect(open).not.toHaveBeenCalled();
   });
   it('preserves full native actions when no detail opener is available', () => {
     const action = vi.fn();
@@ -131,7 +153,7 @@ describe('NeoWorkCard summary presentation', () => {
       />
     );
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
     expect(action).toHaveBeenNthCalledWith(1, 'fictional-work', 'start');
     expect(action).toHaveBeenNthCalledWith(2, 'fictional-work', 'cancel');
   });

@@ -1,14 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import type { ChatMessage } from '@hyperneo/shared';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
-import { NeoWorkCard } from '../NeoWorkCard.tsx';
-import { NeoConversation } from '../NeoConversation.tsx';
 import { NeoComposer } from '../NeoComposer.tsx';
-import { neoMessageAnchor } from '../reply-context.ts';
+import { NeoConversation } from '../NeoConversation.tsx';
+import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const interrupt = vi.hoisted(() => vi.fn());
@@ -78,10 +75,10 @@ describe('Neo MVP controls', () => {
     expect(screen.getByText(work.instruction)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
     expect(action).toHaveBeenCalledWith('work', 'start');
-    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
     expect(action).toHaveBeenCalledWith('work', 'cancel');
   });
-  it('disables duplicate work actions and does not call a returned report verified completion', () => {
+  it('disables duplicate work actions and leaves a returned report to the work chat', () => {
     const action = vi.fn();
     const view = render(<NeoWorkCard work={work} busy disabled={false} onAction={action} />);
     expect((screen.getByRole('button', { name: 'Starting…' }) as HTMLButtonElement).disabled).toBe(
@@ -102,12 +99,10 @@ describe('Neo MVP controls', () => {
     );
     expect(screen.getByText('Response ready')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Start work' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Inspect execution ↗' }).getAttribute('href')).toBe(
-      '/session/worker-one'
-    );
-    expect(screen.getByText('A draft, not a booking.')).toBeTruthy();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryByText('A draft, not a booking.')).toBeNull();
   });
-  it('describes existing-chat execution and closes only the wait for its shared result', () => {
+  it('starts existing-chat work and offers no stop control once it is handed off', () => {
     const action = vi.fn();
     const view = render(
       <NeoWorkCard
@@ -117,8 +112,6 @@ describe('Neo MVP controls', () => {
         onAction={action}
       />
     );
-    expect(screen.getByText(/selected existing HyperNeo chat/)).toBeTruthy();
-    expect(screen.queryByText(/temporary scratch workspace/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
     expect(action).toHaveBeenCalledWith(work.id, 'start');
     view.rerender(
@@ -134,9 +127,9 @@ describe('Neo MVP controls', () => {
         onAction={action}
       />
     );
-    expect(screen.queryByRole('button', { name: 'Stop work' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
-    expect(action).toHaveBeenCalledWith(work.id, 'cancel');
+    expect(screen.getByText('Handed to HyperNeo')).toBeTruthy();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(action).toHaveBeenCalledTimes(1);
     view.rerender(
       <NeoWorkCard
         work={{
@@ -150,8 +143,8 @@ describe('Neo MVP controls', () => {
         onAction={action}
       />
     );
-    expect(screen.getByText(/existing chat and its other work continue/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    expect(screen.getByText('Stopped')).toBeTruthy();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
     const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({

@@ -1,16 +1,16 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal, type Signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { type Signal, signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import { projectNeoPublicAuthors } from '../public-authors.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { projectNeoPublicHolderConversation } from '../public-holder-conversation.ts';
-import { projectNeoPublicAuthors } from '../public-authors.ts';
 import type { NeoAskState } from '../useNeoConversationAsks.ts';
 import type { NeoPublicationState } from '../useNeoPublications.ts';
 
@@ -394,13 +394,13 @@ describe('NeoLive durable conversation activation', () => {
     render(<NeoLive />);
     const option = await screen.findByRole('button', { name: /Keep draft/ });
     fireEvent.click(option);
-    const submit = screen.getByRole('button', { name: 'Submit Response' });
+    const submit = screen.getByRole('button', { name: 'Send answer' });
     await act(async () => {
       asks.value = { ...asks.value, status: 'loading' };
       publications.value = { ...publications.value, status: 'unavailable' };
     });
     expect(screen.getByRole('button', { name: /Keep draft/ })).toBe(option);
-    expect(screen.getByRole('button', { name: 'Submit Response' })).toBe(submit);
+    expect(screen.getByRole('button', { name: 'Send answer' })).toBe(submit);
     expect(submit.hasAttribute('disabled')).toBe(false);
     fireEvent.click(submit);
     await waitFor(() =>

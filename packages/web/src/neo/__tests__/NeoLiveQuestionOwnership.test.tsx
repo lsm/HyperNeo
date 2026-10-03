@@ -1,8 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingUserQuestion, SessionState } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
@@ -192,100 +192,64 @@ const renderLive = () => {
   return { ...view, model };
 };
 const card = (id: string) => screen.getByRole('article', { name: `Title ${id}` });
-const detail = () => screen.getByRole('region', { name: 'Selected work' });
+const waitingCard = async (id: string) => {
+  const found = await screen.findByRole('article', { name: `Title ${id}` });
+  await waitFor(() => expect(within(found).getByText('Waiting for your answer')).toBeTruthy());
+  return found;
+};
 
 describe('NeoLive public question ownership', () => {
-  it('keeps every native choice visible beside a selected detail with one retained observer per work', async () => {
+  it('leads each waiting work to its chat with one retained observer per work', async () => {
     const { model } = renderLive();
-    await screen.findByText('Choose a');
-    await screen.findByText('Choose b');
-    expect(within(card('a')).getByText('Choose a')).toBeTruthy();
-    expect(within(card('b')).getByText('Choose b')).toBeTruthy();
+    await waitingCard('a');
+    await waitingCard('b');
     expect(select).toHaveBeenCalledTimes(3);
     expect(join).toHaveBeenCalledTimes(3);
     expect(screen.queryByRole('article', { name: 'Title c' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'View details for Title c' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'View details for Title r' })).toBeTruthy();
-    fireEvent.click(within(card('a')).getByRole('button', { name: /Other/ }));
-    fireEvent.input(within(card('a')).getByRole('textbox'), {
-      target: { value: 'Unsaved choice A' },
-    });
+    expect(screen.getByRole('button', { name: 'Open chat for Title c' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open chat for Title r' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Submit Response|Send answer/ })).toBeNull();
     fireEvent.input(screen.getByRole('textbox', { name: 'Composer draft' }), {
       target: { value: 'Composer stays' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Title a' }));
-    await waitFor(() =>
-      expect(within(detail()).getByRole('textbox').getAttribute('placeholder')).toBeTruthy()
-    );
-    expect((within(detail()).getByRole('textbox') as HTMLTextAreaElement).value).toBe(
-      'Unsaved choice A'
-    );
-    expect(screen.getAllByText('Choose a')).toHaveLength(1);
-    expect(screen.getAllByText('Choose b')).toHaveLength(1);
-    expect(within(card('b')).getByText('Choose b')).toBeTruthy();
-    expect(select).toHaveBeenCalledTimes(3);
-    expect(destroy).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
-    await waitFor(() =>
-      expect((within(card('a')).getByRole('textbox') as HTMLTextAreaElement).value).toBe(
-        'Unsaved choice A'
-      )
-    );
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    fireEvent.click(within(card('a')).getByRole('button', { name: 'Answer in chat' }));
+    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker-a', '_blank', 'noopener');
     expect(
       (screen.getByRole('textbox', { name: 'Composer draft' }) as HTMLTextAreaElement).value
     ).toBe('Composer stays');
-    fireEvent.click(screen.getByRole('button', { name: 'View details for Title r' }));
-    expect(await within(detail()).findByText('Report r')).toBeTruthy();
-    expect(screen.getAllByText('Choose a')).toHaveLength(1);
-    await waitFor(() => expect(screen.getAllByText('Choose b')).toHaveLength(1));
-    fireEvent.click(within(card('b')).getByRole('button', { name: 'Stop work' }));
-    expect(model.value.act).toHaveBeenCalledWith('b', 'cancel');
+    expect(select).toHaveBeenCalledTimes(3);
+    expect(destroy).not.toHaveBeenCalled();
+    expect(model.value.act).not.toHaveBeenCalled();
   });
   it('promotes and demotes questions using both native origin IDs without taking a second owner', async () => {
     renderLive();
-    await screen.findByText('Choose a');
+    await waitingCard('a');
     const wrong = {
       ...pending('c'),
       inputOrigin: { sessionId: 'worker-c', messageId: 'someone-else' },
     };
     push(native('c', wrong, 2));
-    expect(screen.queryByText('Choose c')).toBeNull();
+    expect(screen.queryByRole('article', { name: 'Title c' })).toBeNull();
     push(native('c', pending('c'), 3));
-    await screen.findByText('Choose c');
-    expect(within(card('c')).getByText('Choose c')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'View details for Title c' })).toBeNull();
+    await waitingCard('c');
+    expect(screen.queryByRole('button', { name: 'Open chat for Title c' })).toBeNull();
     push(native('c', null, 4));
-    await waitFor(() => expect(screen.queryByText('Choose c')).toBeNull());
-    expect(screen.getByRole('button', { name: 'View details for Title c' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Title c' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Open chat for Title c' })).toBeTruthy();
     expect(select).toHaveBeenCalledTimes(3);
     expect(destroy).not.toHaveBeenCalled();
   });
-  it('binds native answers to the current tool and releases observers outside the selected scope', async () => {
+  it('releases observers outside the selected scope', async () => {
     const { model } = renderLive();
-    await screen.findByText('Choose a');
-    push(native('a', pending('a', 'question-A2'), 2));
-    await waitFor(() =>
-      expect(within(card('a')).getByRole('button', { name: /^Plan A/ })).toBeTruthy()
-    );
-    fireEvent.click(within(card('a')).getByRole('button', { name: /^Plan A/ }));
-    fireEvent.click(within(card('a')).getByRole('button', { name: 'Submit Response' }));
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        'question.respond',
-        {
-          sessionId: 'worker-a',
-          toolUseId: 'question-A2',
-          responses: [{ questionIndex: 0, selectedLabels: ['Plan A'], customText: undefined }],
-        },
-        { timeout: 30000 }
-      )
-    );
+    await waitingCard('a');
     act(() => {
       model.value = { ...model.value, selectedId: 'b' };
     });
-    await waitFor(() => expect(screen.queryByText('Choose a')).toBeNull());
-    await waitFor(() => expect(screen.getAllByText('Choose b')).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Title a' })).toBeNull());
+    await waitingCard('b');
     await waitFor(() => expect(leave).toHaveBeenCalledWith('session:worker-a'));
     expect(leave).toHaveBeenCalledWith('session:worker-c');
+    expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
   });
 });

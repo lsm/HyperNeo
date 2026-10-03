@@ -1,13 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { readFileSync } from 'node:fs';
-import { URL as NodeURL } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   NeoConsultation,
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 
@@ -152,7 +150,6 @@ const openCheck = (container: Element, id: string) => {
   const opener = container.querySelector<HTMLButtonElement>(`[data-consultation-open="${id}"]`)!;
   expect(opener).toBeTruthy();
   fireEvent.click(opener);
-  return screen.getByRole('region', { name: 'Selected context check' });
 };
 
 describe('Neo public mixed consultation scenes', () => {
@@ -180,38 +177,8 @@ describe('Neo public mixed consultation scenes', () => {
     expect(
       screen.queryByRole('region', { name: 'Needs your attention' })?.textContent ?? ''
     ).not.toContain('Context check');
-    const name = 'Context check for Fictional holder a';
-    expect(within(openCheck(container, 'pending')).getByRole('article', { name })).toBeTruthy();
-  });
-
-  it('keeps the empty-scene notice visible when the only receipt is in full detail', () => {
-    const { container, model } = mount();
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewSnapshot: {
-          ...model.value.viewSnapshot,
-          work: [],
-          consultations: [consultation('reported', 'reported')],
-          consultationWaiters: [],
-        },
-      };
-    });
-    openCheck(container, 'reported');
-    const list = screen.getByRole('region', { name: 'Neo scenes' });
-    expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
-    expect(list.querySelector('[data-scene-group]')).toBeNull();
-    expect(list.textContent).toBe('No other scenes right now.');
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const rule = css.match(/\.neo-scene-list:empty\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0];
-    expect(rule).toBeTruthy();
-    const style = document.createElement('style');
-    style.textContent = rule!;
-    document.head.append(style);
-    expect(getComputedStyle(list).display).not.toBe('none');
-    list.replaceChildren();
-    expect(getComputedStyle(list).display).toBe('none');
-    style.remove();
+    openCheck(container, 'pending');
+    expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
   });
 
   it('hides failed context checks and shows the other statuses with truthful counts and non-actionable running/outcome summaries', () => {
@@ -234,98 +201,43 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.act).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['pending', false],
-    ['queued', false],
-    ['pending', true],
-    ['queued', true],
-  ] as const)(
-    'opens full %s detail in narrow=%s without invoking an action and closes only its exact wait',
-    (id, narrow) => {
+  it.each([false, true])(
+    'opens the holder context for a pending check in narrow=%s without an action or draft loss',
+    (narrow) => {
       vi.stubGlobal('matchMedia', () => ({ matches: !narrow }));
       const { container, model } = mount();
-      const reader = container.querySelector('main')!;
-      reader.scrollTop = 143;
       const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
       fireEvent.input(draft, { target: { value: 'Fictional draft survives context detail' } });
-      const detail = openCheck(container, id);
-      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(narrow);
-      expect(detail.querySelector('button')).toBe(document.activeElement);
-      expect(detail.querySelector('details p')?.textContent).toBe(
-        id === 'queued' ? waiting().question : consultation(id, 'pending').question
-      );
-      expect(within(detail).queryByRole('button', { name: 'Start work' })).toBeNull();
-      expect(within(detail).queryByRole('link', { name: /Inspect/ })).toBeNull();
-      expect(model.value.act).not.toHaveBeenCalled();
-      fireEvent.click(within(detail).getByRole('button', { name: 'Stop waiting' }));
-      expect(model.value.act).toHaveBeenCalledExactlyOnceWith(id, 'stop-waiting');
-      fireEvent.click(within(detail).getByRole('button', { name: 'Back to scenes' }));
+      openCheck(container, 'pending');
+      expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
       expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
+      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(false);
+      expect(model.value.act).not.toHaveBeenCalled();
       expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
       expect(draft.value).toBe('Fictional draft survives context detail');
-      if (narrow) expect(reader.scrollTop).toBe(143);
-      expect(document.activeElement).toBe(
-        container.querySelector(`[data-consultation-open="${id}"]`)
-      );
     }
   );
 
-  it('keeps a colliding work ID visible when selecting its context-check counterpart', () => {
+  it('keeps a colliding work ID distinct from its context-check counterpart', () => {
     const { container, model } = mount();
     openCheck(container, 'pending');
+    expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
     const list = screen.getByRole('region', { name: 'Neo scenes' });
     expect(
       within(list).getByRole('article', { name: 'Fictional execution proposal' })
     ).toBeTruthy();
-    expect(list.querySelector('[data-consultation-open="pending"]')).toBeNull();
+    expect(list.querySelector('[data-consultation-open="pending"]')).toBeTruthy();
     fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'start');
-    fireEvent.click(within(list).getByRole('button', { name: 'Fictional execution proposal' }));
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
-    expect(list.querySelector('[data-consultation-open="pending"]')).toBeTruthy();
+    expect(model.value.open).toHaveBeenCalledTimes(1);
   });
 
-  it('updates full detail to the reported Markdown response and removes closure without claiming verified completion', async () => {
+  it('opens a reported context response through its holder', () => {
     const { container, model } = mount();
-    const detail = openCheck(container, 'pending');
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewSnapshot: {
-          ...model.value.viewSnapshot,
-          consultations: [consultation('pending', 'reported')],
-        },
-      };
-    });
-    expect(screen.getByRole('region', { name: 'Selected context check' })).toBe(detail);
-    expect(within(detail).queryByRole('button', { name: 'Stop waiting' })).toBeNull();
-    await waitFor(() =>
-      expect(detail.querySelector('strong')?.textContent).toBe('Fictional context response')
-    );
-    expect(within(detail).getByRole('button', { name: 'Copy context response' })).toBeTruthy();
-    expect(detail.textContent).not.toContain('not verified completion');
-    expect(model.value.act).not.toHaveBeenCalled();
-    fireEvent.click(within(detail).getByRole('button', { name: 'Fictional holder a' }));
+    openCheck(container, 'reported');
     expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
+    expect(model.value.act).not.toHaveBeenCalled();
   });
-
-  it.each(['removal', 'scope'])(
-    'clears an obsolete context detail on %s without invoking a native action',
-    (change) => {
-      const { container, model } = mount();
-      openCheck(container, 'pending');
-      act(() => {
-        model.value =
-          change === 'scope'
-            ? { ...model.value, selectedId: 'b' }
-            : { ...model.value, viewSnapshot: { ...model.value.viewSnapshot, consultations: [] } };
-      });
-      expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
-      expect(screen.getByRole('textbox', { name: 'Draft' })).toBeTruthy();
-      expect(model.value.act).not.toHaveBeenCalled();
-    }
-  );
 
   it('preserves the single pending banner and work-only scene groups in legacy mode', () => {
     const { container, model } = mount(false);
@@ -337,13 +249,12 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'stop-waiting');
   });
 
-  it('clears context detail if the durable public presentation is no longer supplied', () => {
+  it('drops context-check scenes if the durable public presentation is no longer supplied', () => {
     const { container, model } = mount();
-    openCheck(container, 'pending');
+    expect(container.querySelector('[data-consultation-open]')).toBeTruthy();
     act(() => {
       model.value = { ...model.value, viewPublicConversation: undefined };
     });
-    expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Stop waiting' })).toHaveLength(1);
     expect(container.querySelector('[data-consultation-open]')).toBeNull();
     expect(model.value.act).not.toHaveBeenCalled();

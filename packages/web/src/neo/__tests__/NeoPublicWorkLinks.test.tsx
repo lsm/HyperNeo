@@ -1,9 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import { signal } from '@preact/signals';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
@@ -200,10 +200,10 @@ describe('public work reference navigation', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it.each(['proposed', 'reported'] as const)(
-    'wires the actual %s card detail and Back without an execution action or draft loss',
+  it.each(['queued', 'reported'] as const)(
+    'opens the actual %s work chat without an execution action or draft loss',
     (status) => {
-      const current = snapshot([work(status)]);
+      const current = snapshot([{ ...work(status), sessionId: 'flower-session' }]);
       const model = signal({
         sessionId: root,
         selectedId: null as string | null,
@@ -221,42 +221,31 @@ describe('public work reference navigation', () => {
         publications: { refresh: vi.fn() },
       });
       useNeoMock.mockImplementation(() => model.value);
+      const opened = vi.spyOn(window, 'open').mockReturnValue(null);
       const view = render(<NeoLive />);
       const entry = view.container.querySelector('[data-public-entry]');
       fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
         target: { value: 'Keep this fictional draft' },
       });
       fireEvent.click(screen.getByRole('button', { name: 'Flower work' }));
-      const detail = screen.getByRole('region', { name: 'Selected work' });
-      expect(
-        within(detail).getByRole('article', {
-          name: 'Fictional flower review',
-        })
-      ).toBeTruthy();
-      fireEvent.click(
-        within(detail).getByText(
-          status === 'proposed' ? 'Review the work brief' : 'What was delegated',
-          { exact: true }
-        )
+      expect(opened).toHaveBeenCalledExactlyOnceWith(
+        '/session/flower-session',
+        '_blank',
+        'noopener'
       );
-      expect(within(detail).getByText('The complete fictional brief')).toBeTruthy();
-      expect(within(detail).queryByRole('button', { name: 'Start work' }) !== null).toBe(
-        status === 'proposed'
-      );
+      expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
       expect(model.value.act).not.toHaveBeenCalled();
       expect(model.value.open).not.toHaveBeenCalled();
       expect(view.container.querySelector('[data-public-entry]')).toBe(entry);
-      fireEvent.click(within(detail).getByRole('button', { name: 'Back to scenes' }));
-      expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
       expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
         'Keep this fictional draft'
       );
-      expect(model.value.act).not.toHaveBeenCalled();
       act(() => {
         model.value = { ...model.value, selectedId: 'garden' };
       });
       expect(screen.queryByRole('button', { name: 'Flower work' })).toBeNull();
       expect(screen.getByText('Flower work')).toBeTruthy();
+      opened.mockRestore();
     }
   );
 });
