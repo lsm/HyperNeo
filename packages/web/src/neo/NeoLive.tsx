@@ -372,7 +372,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-hidden text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${detail ? ' neo-detail-open' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${detail ? ' neo-detail-open' : ''}`}
     >
       {publicConversation &&
         relevant
