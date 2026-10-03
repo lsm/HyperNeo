@@ -15,6 +15,7 @@ export function NeoSessionPane({
   onClose: () => void;
 }) {
   const pane = useRef<HTMLElement>(null);
+  const opener = useRef(document.activeElement as HTMLElement | null);
   const store = useRef<SessionStore | null>(null);
   if (store.current === null) store.current = new SessionStore();
   useEffect(() => {
@@ -28,12 +29,11 @@ export function NeoSessionPane({
   }, []);
   useEffect(() => {
     if (!overlay || !pane.current) return;
-    const previous = document.activeElement as HTMLElement | null;
     const release = setupFocusTrap(pane.current);
     if (!pane.current.contains(document.activeElement)) pane.current.focus();
     return () => {
       release();
-      previous?.focus?.();
+      opener.current?.focus?.();
     };
   }, [overlay]);
   return (

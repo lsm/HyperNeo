@@ -195,6 +195,19 @@ export function NeoLive() {
   }
 
   useLayoutEffect(() => {
+    if (chat) {
+      dragDepth.current = 0;
+      setDragging(false);
+      const block = (event: DragEvent) => {
+        if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+      };
+      window.addEventListener('dragover', block);
+      window.addEventListener('drop', block);
+      return () => {
+        window.removeEventListener('dragover', block);
+        window.removeEventListener('drop', block);
+      };
+    }
     const enter = (event: DragEvent) => {
       if (!event.dataTransfer?.types.includes('Files')) return;
       event.preventDefault();
@@ -233,7 +246,7 @@ export function NeoLive() {
       window.removeEventListener('dragleave', leave);
       window.removeEventListener('drop', drop);
     };
-  }, [neo.sessionId, ready]);
+  }, [neo.sessionId, ready, !!chat]);
 
   useLayoutEffect(() => {
     const element = footer.current;
