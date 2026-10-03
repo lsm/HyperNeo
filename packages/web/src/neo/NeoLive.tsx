@@ -363,18 +363,6 @@ export function NeoLive() {
         >
           <HyperNeoMark />
         </button>
-        <div class="neo-float-actions">
-          <a
-            href="/"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Open HyperNeo"
-            title="Open HyperNeo"
-            class="neo-float-link"
-          >
-            <NeoIcon name="external" />
-          </a>
-        </div>
       </header>
       <main
         ref={mainScroll}
