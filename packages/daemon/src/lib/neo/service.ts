@@ -26,6 +26,7 @@ import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import {
+  NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
@@ -191,6 +192,11 @@ export class NeoService {
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
       startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
+      hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
+      nudge: (id, nudgeId) =>
+        void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id).catch((error) =>
+          this.log.warn('Publish nudge failed', error)
+        ),
       append: (input) => this.publications.append(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
@@ -502,6 +508,17 @@ export class NeoService {
     for (const target of targets) {
       if (this.db.getSession(target)) await this.deliver(target, work.id, content, work.sessionId!);
     }
+  }
+
+  private hasDelivery(sessionId: string, messageId: string): boolean {
+    return (
+      this.deliveries.has(`${sessionId}:${messageId}`) ||
+      !!this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
+      this.db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': sessionId, messageUuid: messageId })
+        .length > 0
+    );
   }
 
   private deliver(
