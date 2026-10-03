@@ -124,6 +124,7 @@ export function NeoLive() {
     { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
   ] as const;
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+  const columns = !!publicConversation && (workCount > 0 || !!chat);
   const sheet = !!publicConversation && narrow;
   const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
   const ready =
@@ -152,8 +153,7 @@ export function NeoLive() {
       const desktop = window.matchMedia('(min-width: 1120px)').matches;
       setNarrow(!desktop);
       const previous = scroll.current;
-      scroll.current =
-        publicConversation && workCount > 0 && desktop ? rail.current : mainScroll.current;
+      scroll.current = columns && desktop ? rail.current : mainScroll.current;
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
       else if (scroll.current && scroll.current !== previous)
@@ -165,7 +165,7 @@ export function NeoLive() {
     selectScroll();
     window.addEventListener('resize', selectScroll);
     return () => window.removeEventListener('resize', selectScroll);
-  }, [!!publicConversation, workCount > 0]);
+  }, [columns]);
 
   const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
   const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
@@ -276,7 +276,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && (workCount || chat) ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
     >
       {publicConversation &&
         relevant

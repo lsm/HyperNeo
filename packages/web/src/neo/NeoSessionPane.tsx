@@ -27,13 +27,21 @@ export function NeoSessionPane({
     if (!overlay || !pane.current) return;
     const previous = document.activeElement as HTMLElement | null;
     const release = setupFocusTrap(pane.current);
+    if (!pane.current.contains(document.activeElement)) pane.current.focus();
     return () => {
       release();
       previous?.focus?.();
     };
   }, [overlay]);
   return (
-    <aside ref={pane} class="neo-session-pane flex flex-col" aria-label={`${title} chat`}>
+    <aside
+      ref={pane}
+      tabIndex={-1}
+      role={overlay ? 'dialog' : undefined}
+      aria-modal={overlay ? true : undefined}
+      class="neo-session-pane flex flex-col outline-none"
+      aria-label={`${title} chat`}
+    >
       <ChatContainer key={sessionId} sessionId={sessionId} onBack={onClose} store={store.current} />
     </aside>
   );
