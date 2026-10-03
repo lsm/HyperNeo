@@ -4,7 +4,10 @@ import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoNudgeMessageId } from './ask-origin.ts';
 
-export type NeoTurnReply = { status: 'open' | 'failed' | 'ended'; text: string | null };
+export type NeoTurnReply = {
+  status: 'missing' | 'open' | 'failed' | 'ended';
+  text: string | null;
+};
 export type NeoDirectReplyRuntime = {
   getBinding: (sessionId: string) => NeoBinding | null;
   getRootBinding: () => NeoBinding | null;
@@ -21,7 +24,7 @@ export type NeoDirectReplyRuntime = {
 type Skip = { skipped: true; nudgeId?: string };
 type Gate<T> = { value: T } | { reason: Skip };
 type Scope = { sessionId: string; conversationId: string };
-type Turn = Scope & { ask: NeoConversationAsk };
+type Turn = Scope & { ask: NeoConversationAsk; latest?: boolean };
 type Reply = Turn & { text: string };
 
 const skip: { reason: Skip } = { reason: { skipped: true } };
@@ -51,13 +54,15 @@ export function requireUnpublishedDirectAnswer(
     if (runtime.isPublished(turn.sessionId, id) || runtime.startedWork(turn.sessionId, id))
       return skip;
   const reply = runtime.turnReply(turn.sessionId, messageId);
-  if (reply.status !== 'ended') return skip;
+  if (reply.status === 'missing') return skip;
   const text = reply.text?.trim();
-  if (text) return { value: { ...turn, text } };
+  if (reply.status === 'ended' && text) return { value: { ...turn, text } };
+  if (!turn.latest) return skip;
   if (!runtime.hasNudge(turn.sessionId, nudgeId)) return { reason: { skipped: true, nudgeId } };
   const nudged = runtime.turnReply(turn.sessionId, nudgeId);
-  if (nudged.status === 'open') return skip;
-  return { value: { ...turn, text: nudged.text?.trim() || NEO_UNFINISHED_REPLY } };
+  if (nudged.status === 'missing') return skip;
+  const nudgedText = nudged.status === 'ended' ? nudged.text?.trim() : null;
+  return { value: { ...turn, text: nudgedText || NEO_UNFINISHED_REPLY } };
 }
 
 function publishDirectReply(
@@ -90,9 +95,9 @@ export function publishNeoDirectReplyFallback(
 ): NeoPublicationInput[] {
   const scope = requireNeoReplySession(sessionId, runtime);
   if (!scope) return [];
-  return runtime
-    .recentAsks(scope.conversationId, sessionId)
-    .map((ask) => publishTurn({ ...scope, ask }, runtime))
+  const asks = runtime.recentAsks(scope.conversationId, sessionId);
+  return asks
+    .map((ask, index) => publishTurn({ ...scope, ask, latest: index === asks.length - 1 }, runtime))
     .filter((result): result is NeoPublicationInput => {
       if (!('skipped' in result)) return true;
       if (result.nudgeId) runtime.nudge(sessionId, result.nudgeId);
