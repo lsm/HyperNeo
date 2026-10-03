@@ -117,7 +117,8 @@ export class NeoPublicationRepository {
       .prepare(
         `SELECT ${columns} FROM neo_publications
         WHERE json_extract(payload_json, '$.producerInput.sessionId') = ?
-          AND json_extract(payload_json, '$.producerInput.messageId') = ? LIMIT 2`
+          AND json_extract(payload_json, '$.producerInput.messageId') = ?
+          AND json_extract(payload_json, '$.interim') IS NULL LIMIT 2`
       )
       .all(sessionId, messageId) as Row[];
     if (rows.length > 1) throw new Error('Ambiguous consultation publications');

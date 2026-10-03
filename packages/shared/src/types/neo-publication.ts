@@ -14,6 +14,7 @@ export interface NeoPublicationInput {
   readonly shortText: string;
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];
+  readonly interim?: true;
 }
 
 export interface NeoPublication extends NeoPublicationInput {

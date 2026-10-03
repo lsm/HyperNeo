@@ -27,6 +27,7 @@ export const NeoPublicationSchema = z
           .strict()
       )
       .max(16),
+    interim: z.literal(true).optional(),
   })
   .strict();
 
