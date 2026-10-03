@@ -65,7 +65,6 @@ export function NeoComposer({
     },
     []
   );
-  const working = store.isWorking.value;
   const connected = connectionState.value === 'connected';
   async function send() {
     if (recordingVoice) {
@@ -208,7 +207,6 @@ export function NeoComposer({
         <span
           role="status"
           class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${
-            working ||
             recordingVoice ||
             !connected ||
             store.agentState.value.status === 'waiting_for_input'
@@ -218,12 +216,6 @@ export function NeoComposer({
                 : 'hidden'
           }`}
         >
-          {working && (
-            <span
-              aria-hidden="true"
-              class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
-            />
-          )}
           {!connected
             ? 'Reconnecting… your draft stays here.'
             : recordingVoice
@@ -232,11 +224,9 @@ export function NeoComposer({
                 : 'Recording · Click the arrow to stop and send'
               : store.agentState.value.status === 'waiting_for_input'
                 ? 'A quick question for you above.'
-                : working
-                  ? 'Neo is thinking…'
-                  : coarsePointer
-                    ? 'Return adds a line · Tap the arrow to send'
-                    : 'Enter to send · Shift + Enter for a new line'}
+                : coarsePointer
+                  ? 'Return adds a line · Tap the arrow to send'
+                  : 'Enter to send · Shift + Enter for a new line'}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice
