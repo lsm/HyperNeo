@@ -54,6 +54,7 @@ export function NeoComposer({
   const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
+  const sendingText = useRef<string | null>(null);
   const alive = useRef(true);
   const currentSession = useRef(sessionId);
   currentSession.current = sessionId;
@@ -73,15 +74,17 @@ export function NeoComposer({
     }
     const submitted = draft;
     const files = attachments.files;
-    if (
-      (!submitted.trim() && !files.length) ||
-      inFlight.current ||
-      sending ||
-      !connected ||
-      voiceBusy ||
-      attachments.reading
-    )
+    if (!submitted.trim() && !files.length) return;
+    if (!connected) {
+      onError('Reconnecting… your message is still here. Send again once connected.');
       return;
+    }
+    if (attachments.reading) {
+      onError('Still reading your attachment. Send again in a moment.');
+      return;
+    }
+    if (sendingText.current === submitted) return;
+    sendingText.current = submitted;
     inFlight.current = true;
     setSending(true);
     onError('');
@@ -98,8 +101,11 @@ export function NeoComposer({
       if (current())
         onError('Could not confirm this message. Your draft is still here; please try again.');
     } finally {
-      inFlight.current = false;
-      if (current()) setSending(false);
+      if (sendingText.current === submitted) {
+        sendingText.current = null;
+        inFlight.current = false;
+        if (current()) setSending(false);
+      }
     }
   }
   async function sendVoice(
@@ -246,14 +252,6 @@ export function NeoComposer({
           <Button
             type="submit"
             size="sm"
-            disabled={
-              !connected ||
-              sending ||
-              attachments.reading > 0 ||
-              (voiceBusy && !recordingVoice) ||
-              (!draft.trim() && !attachments.files.length && !recordingVoice) ||
-              (recordingVoice && attachments.files.length > 0)
-            }
             aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
             title={
               recordingVoice && attachments.files.length > 0
