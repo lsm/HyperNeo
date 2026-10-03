@@ -135,6 +135,9 @@ const cards = (name: string) =>
   within(group(name))
     .getAllByRole('article')
     .map((node) => node.getAttribute('aria-label'));
+const sceneCount = (name: string) =>
+  group(name).querySelectorAll('[article][aria-label], [data-scene-open], [data-consultation-open]')
+    .length;
 
 afterEach(() => {
   cleanup();
@@ -148,9 +151,17 @@ describe('NeoLive work scene groups', () => {
     expect(cards('In progress')).toEqual(['Title b-queued', 'Title a-queued']);
     expect(cards('Recent outcomes')).toEqual(['Title a-cancelled', 'Title a-reported']);
     for (const name of ['Needs your attention', 'In progress', 'Recent outcomes'])
-      expect(group(name).textContent).toContain(`${name} · ${cards(name).length}`);
+      expect(group(name).textContent).toContain(`${name} · ${sceneCount(name)}`);
     expect(screen.queryByRole('region', { name: 'Delegated work' })).toBeNull();
     expect(screen.queryByRole('button', { name: /recent work/ })).toBeNull();
+  });
+
+  it('keeps the work-surface sections out of the chat flow', () => {
+    const { container } = renderLive();
+    const chat = container.querySelector('.neo-chat-rail')!;
+    for (const name of ['Needs your attention', 'In progress', 'Recent outcomes'])
+      expect(chat.contains(group(name))).toBe(false);
+    expect(chat.textContent).not.toContain('Needs your attention');
   });
 
   it('labels handed-off work truthfully and keeps reported work unaccepted', () => {
@@ -225,11 +236,13 @@ describe('NeoLive work scene groups', () => {
     const running = group('In progress');
     expect(running.textContent).toContain('Checking context');
     expect(within(running).queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    expect(sceneCount('In progress')).toBe(3);
   });
 
   it('keeps a long group complete and truthful while the conversation is loading', () => {
     const many = snapshot();
     many.work = Array.from({ length: 12 }, (_, i) => work(`w-${i}`, 'proposed', 200 - i, 'a'));
+    many.consultations = [];
     const loading = { ...live().store, messagesLoaded: signal(false) };
     const { state } = renderLive({ snapshot: many, viewSnapshot: many, store: loading });
     expect(screen.getByText('Opening your conversation…')).toBeTruthy();

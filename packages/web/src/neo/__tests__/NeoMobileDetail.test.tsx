@@ -156,7 +156,7 @@ describe('Neo mobile work detail', () => {
     const detail = screen.getByRole('region', { name: 'Selected work' });
     expect(surface.contains(detail)).toBe(true);
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
-    expect(chat.hasAttribute('inert')).toBe(false);
+    expect(chat.hasAttribute('inert')).toBe(true);
     expect(model.value.act).not.toHaveBeenCalled();
     fireEvent.click(within(detail).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('one', 'start');
@@ -170,6 +170,7 @@ describe('Neo mobile work detail', () => {
   it('reveals the work surface by swipe from the right edge and hides it on rightward swipe', () => {
     const { container } = mount();
     const shell = container.querySelector('.neo-shell')!;
+    const chat = container.querySelector('.neo-chat-rail')!;
     const surface = screen.getByRole('complementary', { name: 'Work surface' });
     expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(
       false
@@ -181,15 +182,18 @@ describe('Neo mobile work detail', () => {
       });
       return event;
     };
+    expect(chat.hasAttribute('inert')).toBe(false);
     fireEvent(shell, touch('touchstart', 388, 400));
     fireEvent(shell, touch('touchend', 340, 400));
     expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(true);
     expect(surface.getAttribute('aria-label')).toBe('Work surface');
+    expect(chat.hasAttribute('inert')).toBe(true);
     fireEvent(shell, touch('touchstart', 120, 400));
     fireEvent(shell, touch('touchend', 240, 400));
     expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(
       false
     );
+    expect(chat.hasAttribute('inert')).toBe(false);
   });
 
   it('keeps the top-right trigger with an attention badge at mobile widths', () => {

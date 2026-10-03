@@ -160,6 +160,7 @@ export function NeoLive() {
   const surfaceNarrow = !desktop;
   const surfaceVisible = desktop || surfaceOpen;
   const detailOpen = !!detail && surfaceVisible;
+  const covered = surfaceNarrow && (detailOpen || surfaceOpen);
   const focusScene = useRef<{ ref: NeoSceneRef; scope: string } | null>(null);
   useLayoutEffect(() => {
     if (sceneSelection && (!sceneScope || !detailLive)) setSceneSelection(null);
@@ -413,7 +414,7 @@ export function NeoLive() {
           </div>
         </div>
       )}
-      <header class="neo-float-dock" inert={detailOpen}>
+      <header class="neo-float-dock" inert={covered}>
         <button
           type="button"
           onClick={() => open(null)}
@@ -464,7 +465,7 @@ export function NeoLive() {
         onScroll={(event) => recordScroll(event.currentTarget)}
         class="neo-scroll min-h-0 w-full flex-1 overflow-y-auto"
       >
-        <div ref={rail} inert={detailOpen} class="neo-chat-rail px-5 pt-5 sm:px-8">
+        <div ref={rail} inert={covered} class="neo-chat-rail px-5 pt-5 sm:px-8">
           {selected ? (
             <div class="neo-arrive mb-6">
               <Button
@@ -661,7 +662,7 @@ export function NeoLive() {
       )}
       <footer
         ref={footer}
-        inert={detailOpen}
+        inert={covered}
         class="neo-composer-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-3 pt-6"
       >
         <div class="neo-composer-rail px-3 sm:px-8">
