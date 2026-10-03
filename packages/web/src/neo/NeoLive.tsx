@@ -11,6 +11,7 @@ import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
+import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
@@ -28,6 +29,8 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
+  const [chat, setChat] = useState<{ sessionId: string; title: string } | null>(null);
+  const closeChat = useCallback(() => setChat(null), []);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -49,6 +52,7 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
+  useEffect(() => setChat(null), [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
   const [questions, setQuestions] = useState<{
@@ -120,6 +124,7 @@ export function NeoLive() {
     { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
   ] as const;
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+  const columns = !!publicConversation && (workCount > 0 || !!chat);
   const sheet = !!publicConversation && narrow;
   const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
   const ready =
@@ -148,8 +153,7 @@ export function NeoLive() {
       const desktop = window.matchMedia('(min-width: 1120px)').matches;
       setNarrow(!desktop);
       const previous = scroll.current;
-      scroll.current =
-        publicConversation && workCount > 0 && desktop ? rail.current : mainScroll.current;
+      scroll.current = columns && desktop ? rail.current : mainScroll.current;
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
       else if (scroll.current && scroll.current !== previous)
@@ -161,7 +165,7 @@ export function NeoLive() {
     selectScroll();
     window.addEventListener('resize', selectScroll);
     return () => window.removeEventListener('resize', selectScroll);
-  }, [!!publicConversation, workCount > 0]);
+  }, [columns]);
 
   const earlierAnchor = useRef<{ key: string; top: number } | null>(null);
   const publicEntryAt = (element: HTMLElement, test: (entry: Element) => boolean) =>
@@ -191,6 +195,19 @@ export function NeoLive() {
   }
 
   useLayoutEffect(() => {
+    if (chat) {
+      dragDepth.current = 0;
+      setDragging(false);
+      const block = (event: DragEvent) => {
+        if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+      };
+      window.addEventListener('dragover', block);
+      window.addEventListener('drop', block);
+      return () => {
+        window.removeEventListener('dragover', block);
+        window.removeEventListener('drop', block);
+      };
+    }
     const enter = (event: DragEvent) => {
       if (!event.dataTransfer?.types.includes('Files')) return;
       event.preventDefault();
@@ -229,7 +246,7 @@ export function NeoLive() {
       window.removeEventListener('dragleave', leave);
       window.removeEventListener('drop', drop);
     };
-  }, [neo.sessionId, ready]);
+  }, [neo.sessionId, ready, !!chat]);
 
   useLayoutEffect(() => {
     const element = footer.current;
@@ -265,14 +282,14 @@ export function NeoLive() {
   }
 
   function openScene(ref: NeoSceneRef) {
-    const sessionId = relevant.find((item) => item.id === ref.id)?.sessionId;
-    if (sessionId) window.open(`/session/${encodeURIComponent(sessionId)}`, '_blank', 'noopener');
+    const work = relevant.find((item) => item.id === ref.id);
+    if (work?.sessionId) setChat({ sessionId: work.sessionId, title: work.title });
   }
 
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
     >
       {publicConversation &&
         relevant
@@ -447,8 +464,8 @@ export function NeoLive() {
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role="region"
           aria-label="Work scenes"
-          aria-hidden={sheet && !scenesOpen ? true : undefined}
-          inert={sheet && !scenesOpen}
+          aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
+          inert={(sheet && !scenesOpen) || !!chat}
         >
           {sheet && (
             <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
@@ -495,6 +512,15 @@ export function NeoLive() {
             )
           )}
         </div>
+        {chat && (
+          <NeoSessionPane
+            key={chat.sessionId}
+            sessionId={chat.sessionId}
+            title={chat.title}
+            overlay={narrow || !publicConversation}
+            onClose={closeChat}
+          />
+        )}
       </main>
       <footer
         ref={footer}

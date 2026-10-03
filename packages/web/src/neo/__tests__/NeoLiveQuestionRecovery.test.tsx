@@ -21,6 +21,11 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 vi.mock('../NeoComposer.tsx', () => ({ NeoComposer: () => <textarea aria-label="Draft" /> }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => <p>Durable conversation</p> }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+  ),
+}));
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 const work: NeoWork = {
@@ -205,9 +210,8 @@ describe('NeoLive native question failure attention', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(select).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('button', { name: /Submit Response|Send answer/ })).toBeNull();
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.click(within(attention()).getByRole('button', { name: 'Answer in chat' }));
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker-A', '_blank', 'noopener');
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker-A');
     expect(request.mock.calls.some(([method]) => method === 'question.respond')).toBe(false);
     expect(request.mock.calls.some(([method]) => method === 'operation.invoke')).toBe(false);
     expect(model.value.act).not.toHaveBeenCalled();

@@ -29,6 +29,11 @@ beforeEach(async () => {
     },
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+  vi.doMock('../NeoSessionPane.tsx', () => ({
+    NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
+      <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+    ),
+  }));
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
 
@@ -192,11 +197,9 @@ describe('NeoLive work scene groups', () => {
     const { state, model } = renderLive({ snapshot: shared });
     const card = within(group('In progress')).getByRole('article', { name: 'Title shared' });
     expect(within(card).queryAllByRole('button')).toHaveLength(0);
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/shared-session', '_blank', 'noopener');
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('shared-session');
     expect(model.act).not.toHaveBeenCalled();
-    opened.mockRestore();
     const cleared = { ...shared, work: [] };
     set(state, { snapshot: cleared });
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();

@@ -27,6 +27,11 @@ beforeEach(async () => {
     ),
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+  vi.doMock('../NeoSessionPane.tsx', () => ({
+    NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
+      <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+    ),
+  }));
   vi.doMock('../../lib/connection-manager.ts', () => ({
     connectionManager: { getHubIfConnected: () => null },
   }));
@@ -121,7 +126,9 @@ describe('original work surface reconciled with the live scenes', () => {
     const { act } = mount(origin);
     expect(document.querySelectorAll('[id^="inline-work-"]')).toHaveLength(0);
     expect(screen.queryByRole('region', { name: 'Work without a message here' })).toBeNull();
-    expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
+      1
+    );
     expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
     expect(act).toHaveBeenCalledExactlyOnceWith('work', 'start');
@@ -129,15 +136,16 @@ describe('original work surface reconciled with the live scenes', () => {
 
   it('opens the work chat without firing a native action and preserves the composer', () => {
     const { act } = mount('ask');
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
       target: { value: 'Keep my draft' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
     expect(act).not.toHaveBeenCalled();
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker', '_blank', 'noopener');
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
+      1
+    );
     expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
       'Keep my draft'
     );
