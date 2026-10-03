@@ -756,9 +756,13 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('models.list', async (data) => {
     try {
-      const { getAvailableModels, getModelsCache, refreshModels } = await import(
-        '../model-service.js'
-      );
+      const {
+        getAvailableModels,
+        getModelsCache,
+        getRefreshPreviewModels,
+        refreshModels,
+        waitForRefreshPreview,
+      } = await import('../model-service.js');
 
       const params = data as {
         forceRefresh?: boolean;
@@ -773,14 +777,35 @@ export function setupSessionHandlers(
 
       let availableModels = getAvailableModels('global');
       const cachePopulated = getModelsCache().has('global');
+      let preview = false;
 
       if (!forceRefresh && availableModels.length === 0 && !cachePopulated) {
-        await refreshModels();
+        const refreshing = refreshModels();
+        const first = getRefreshPreviewModels().length
+          ? 'preview'
+          : await Promise.race([
+              refreshing.then(() => 'done' as const),
+              waitForRefreshPreview().then(() => 'preview' as const),
+            ]);
         availableModels = getAvailableModels('global');
+        if (first === 'preview' && !getModelsCache().has('global')) {
+          availableModels = getRefreshPreviewModels();
+          preview = availableModels.length > 0;
+          if (preview)
+            void refreshing
+              .then(() =>
+                internalEventBus.publishAsync('providers.changed', { sessionId: 'global' })
+              )
+              .catch(() => {});
+          else {
+            await refreshing;
+            availableModels = getAvailableModels('global');
+          }
+        }
         didRefresh = true;
       }
 
-      if (!forceRefresh && (availableModels.length > 0 || cachePopulated)) {
+      if (!forceRefresh && !preview && (availableModels.length > 0 || cachePopulated)) {
         const stranded = await detectStrandedProviders(availableModels);
         if (stranded.length > 0) {
           const providersBefore = new Set(
