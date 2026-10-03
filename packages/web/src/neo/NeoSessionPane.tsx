@@ -26,15 +26,16 @@ export function NeoSessionPane({
   }, []);
   useEffect(() => {
     pane.current?.focus();
+    const target = opener.current;
+    return () => {
+      setTimeout(() => target?.focus?.(), 0);
+    };
   }, []);
   useEffect(() => {
     if (!overlay || !pane.current) return;
     const release = setupFocusTrap(pane.current);
     if (!pane.current.contains(document.activeElement)) pane.current.focus();
-    return () => {
-      release();
-      opener.current?.focus?.();
-    };
+    return release;
   }, [overlay]);
   return (
     <aside
