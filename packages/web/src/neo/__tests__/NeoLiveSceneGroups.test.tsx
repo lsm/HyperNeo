@@ -210,17 +210,12 @@ describe('NeoLive work scene groups', () => {
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
   });
 
-  it('keeps the consultation banner exactly once and out of the work groups', () => {
+  it('keeps a pending context check out of the page and the work groups', () => {
     const view = snapshot();
     view.work = [work('a-queued', 'queued', 30, 'a')];
-    renderLive({ snapshot: view, viewSnapshot: view });
-    const banners = screen
-      .getAllByRole('status')
-      .filter((node) => node.textContent?.includes('Checking with'));
-    expect(banners).toHaveLength(1);
-    expect(banners[0].textContent).toContain('Checking with Concern A');
-    expect(group('In progress').textContent).not.toContain('Checking with');
-    expect(within(banners[0]).getByRole('button', { name: 'Stop waiting' })).toBeTruthy();
+    const { container } = renderLive({ snapshot: view, viewSnapshot: view });
+    expect(container.textContent).not.toContain('Checking with');
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(within(group('In progress')).queryByText('Waiting for context')).toBeNull();
   });
 

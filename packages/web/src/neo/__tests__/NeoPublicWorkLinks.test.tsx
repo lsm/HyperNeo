@@ -131,7 +131,6 @@ describe('public work reference navigation', () => {
           store={store()}
           sessionId={root}
           works={[work(status)]}
-          snapshot={snapshot([work(status)])}
           publicConversation={conversation}
           onOpenPublicWork={openWork}
         />

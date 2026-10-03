@@ -130,7 +130,6 @@ function mount(publicMode = true) {
     },
     busyWork: null as string | null,
     error: null,
-    publicAuthors: new Set<string>(),
     setError: vi.fn(),
     open: vi.fn(),
     act: vi.fn(),
@@ -160,13 +159,12 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.act).not.toHaveBeenCalled();
   });
 
-  it('preserves the single pending banner and work-only scene groups in legacy mode', () => {
+  it('shows no pending check banner and only work scene groups in legacy mode', () => {
     const { container, model } = mount(false);
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
-    expect(container.textContent?.match(/Checking with/g)).toHaveLength(1);
-    expect(container.querySelectorAll('[data-consultation-open]')).toHaveLength(0);
+    expect(container.textContent).not.toContain('Checking with');
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
-    expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'stop-waiting');
+    expect(model.value.act).not.toHaveBeenCalled();
   });
 });

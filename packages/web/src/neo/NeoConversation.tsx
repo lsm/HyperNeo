@@ -1,7 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -14,18 +12,6 @@ import type { NeoPublicConversation as PublicConversation } from './public-conve
 
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
 type QuestionFailure = { epoch: QuestionEpoch; message: string };
-
-export function publicConcernSession(
-  ref: Pick<NeoPublicationLink, 'kind' | 'id'>,
-  snapshot: NeoSnapshot | null,
-  authors?: ReadonlyMap<string, string>
-): string | null {
-  if (ref.kind !== 'concern' || !snapshot?.concerns.some((item) => item.id === ref.id)) return null;
-  const binding = snapshot.publicAuthorBindings?.find(
-    (item) => item.kind === 'concern' && item.concernId === ref.id
-  );
-  return binding && authors?.has(binding.sessionId) ? binding.sessionId : null;
-}
 
 export function conversationText(message: ChatMessage): string {
   if (message.type !== 'assistant' && message.type !== 'user') return '';
@@ -67,13 +53,8 @@ export function NeoConversation({
   store,
   sessionId,
   works = [],
-  snapshot = null,
   publicConversation,
-  publicAuthors,
-  onOpenPublicAuthor,
   onOpenPublicWork,
-  publicConsultationIds,
-  onOpenPublicConsultation,
   onRetryPublic,
   onLoadEarlierPublic,
   onProgress,
@@ -81,13 +62,8 @@ export function NeoConversation({
   store: SessionStore;
   sessionId: string;
   works?: NeoWork[];
-  snapshot?: NeoSnapshot | null;
   publicConversation?: PublicConversation;
-  publicAuthors?: ReadonlyMap<string, string>;
-  onOpenPublicAuthor?: (sessionId: string) => void;
   onOpenPublicWork?: (workId: string) => void;
-  publicConsultationIds?: ReadonlySet<string>;
-  onOpenPublicConsultation?: (consultationId: string) => void;
   onRetryPublic?: () => void;
   onLoadEarlierPublic?: () => void;
   onProgress?: (label: string | null) => void;
@@ -155,26 +131,12 @@ export function NeoConversation({
         {publicConversation && (
           <NeoPublicConversation
             conversation={publicConversation}
-            authors={publicAuthors}
-            onOpenAuthor={onOpenPublicAuthor}
             canOpenScene={(ref) =>
-              ref.kind === 'work'
-                ? !!onOpenPublicWork && works.some((work) => work.id === ref.id)
-                : ref.kind === 'consultation'
-                  ? !!onOpenPublicConsultation && !!publicConsultationIds?.has(ref.id)
-                  : !!onOpenPublicAuthor && !!publicConcernSession(ref, snapshot, publicAuthors)
+              ref.kind === 'work' && !!onOpenPublicWork && works.some((work) => work.id === ref.id)
             }
             onOpenScene={(ref) => {
-              if (ref.kind === 'work') {
-                if (works.some((work) => work.id === ref.id)) onOpenPublicWork?.(ref.id);
-                return;
-              }
-              if (ref.kind === 'consultation') {
-                if (publicConsultationIds?.has(ref.id)) onOpenPublicConsultation?.(ref.id);
-                return;
-              }
-              const target = publicConcernSession(ref, snapshot, publicAuthors);
-              if (target) onOpenPublicAuthor?.(target);
+              if (ref.kind === 'work' && works.some((work) => work.id === ref.id))
+                onOpenPublicWork?.(ref.id);
             }}
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}

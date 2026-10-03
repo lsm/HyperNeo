@@ -157,15 +157,8 @@ describe('Neo floating controls', () => {
     expect(css).toContain('@supports not (backdrop-filter: blur(1px))');
     expect(css).toContain('outline: 2px solid var(--focus-ring)');
     expect(css).toMatch(
-      /\.neo-float-actions > \.neo-concerns > \.neo-concerns-trigger\s*\{\s*min-height: 44px;\s*min-width: 44px;/
-    );
-    expect(css).toMatch(/\.neo-concerns-card\s*\{[^}]*top: 64px;[^}]*right: 8px;/);
-    const wideCss = css.slice(css.indexOf('@media (min-width: 1180px)'));
-    expect(wideCss).toMatch(
-      /\.neo-concerns-card\s*\{[^}]*top: 88px;[^}]*right: calc\(max\(24px, calc\(\(100vw - 1160px\) \/ 2\)\) - 12px\);/
+      /\.neo-float-logo,\s*\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/
     );
     expect(css).toContain('padding-top: 68px');
-    expect(css).toContain('.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover)');
-    expect(css).not.toMatch(/\.neo-concerns-card[^{]*\{[^}]*backdrop-filter/);
   });
 });

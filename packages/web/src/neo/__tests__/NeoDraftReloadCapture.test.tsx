@@ -105,7 +105,6 @@ function mount() {
     },
     busyWork: null,
     error: null,
-    publicAuthors: new Map(),
     setError: vi.fn(),
     open: vi.fn(),
     act: vi.fn(),

@@ -150,10 +150,7 @@ describe('durable public conversation presentation', () => {
       sequence: 2,
     });
     const { container } = render(
-      <NeoPublicConversation
-        conversation={conversation([], [publication(), reply])}
-        authors={new Map([[holder, 'Fictional holder name']])}
-      />
+      <NeoPublicConversation conversation={conversation([], [publication(), reply])} />
     );
     expect(screen.getAllByText('Neo', { exact: true })).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Neo', exact: true })).toBeNull();

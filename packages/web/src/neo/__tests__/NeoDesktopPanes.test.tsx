@@ -94,7 +94,6 @@ function mount(publicMode = true) {
     },
     busyWork: null,
     error: null,
-    publicAuthors: new Set<string>(),
     setError: vi.fn(),
     open: vi.fn(),
     act: vi.fn(),
@@ -202,29 +201,28 @@ describe('Neo desktop panes', () => {
     expect(container.querySelector('.neo-chat-rail')!.scrollTop).toBe(0);
   });
 
-  it('scopes the three independent scroll panes and joint motion to 1120px desktop public mode', () => {
+  it('scopes the independent scroll panes and joint motion to 1120px desktop public mode', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const desktop = css.split('@media (min-width: 1120px) {')[1]?.split('@media')[0];
     expect(desktop).toBeTruthy();
     expect(desktop).toContain('grid-template-rows: minmax(0, 1fr);');
-    for (const selector of ['.neo-chat-rail', '.neo-scene-list', '.neo-scene-detail'])
+    for (const selector of ['.neo-chat-rail', '.neo-scene-list'])
       expect(desktop).toContain(`.neo-public-layout.neo-has-scenes ${selector}`);
     expect(desktop).toMatch(/\.neo-chat-rail \{[^}]*overflow-y: auto;/);
-    expect(desktop).toMatch(/\.neo-scene-detail \{[^}]*overflow-y: auto;/);
+    expect(desktop).toMatch(/\.neo-scene-list \{[^}]*overflow-y: auto;/);
     expect(desktop).toMatch(/\.neo-scene-list \{[^}]*grid-column: 2;/);
-    expect(desktop).toMatch(/\.neo-scene-detail \{[^}]*grid-column: 3;/);
     expect(desktop).toMatch(/\.neo-composer-dock \{[^}]*width: var\(--neo-chat-width\);/);
     expect(css).toContain('@media (min-width: 1120px) and (prefers-reduced-motion: no-preference)');
     expect(css).not.toContain('pointer: coarse');
   });
 
-  it('retains composer clearance for narrow and legacy detail cards', () => {
+  it('retains composer clearance for the narrow scene list', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const shared = css.split('@media (min-width: 1120px) {')[0];
     expect(shared).toMatch(
-      /\.neo-scene-list,\s*\.neo-scene-detail \{[^}]*padding: 0 20px calc\(var\(--neo-composer-height, 190px\) \+ 32px\);/
+      /\.neo-scene-list \{[^}]*padding: 0 20px calc\(var\(--neo-composer-height, 190px\) \+ 32px\);/
     );
-    expect(shared).not.toMatch(/\.neo-scene-detail \{[^}]*padding-bottom: 0;/);
+    expect(shared).not.toMatch(/\.neo-scene-list \{[^}]*padding-bottom: 0;/);
     expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 16px 32px;');
   });
 
@@ -232,25 +230,15 @@ describe('Neo desktop panes', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const shared = css.split('@media (min-width: 1120px) {')[0];
     expect(shared).toMatch(
-      /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
+      /\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
     );
     expect(shared).toMatch(
       /\.neo-chat-rail:has\(~ \.neo-scene-list\.neo-scene-sheet\) \{\s*padding-bottom: calc\(var\(--neo-composer-height, 190px\) \+ 32px\);\s*\}/
     );
     expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/);
-    expect(shared).toMatch(/\.neo-scene-detail \{[^}]*padding: 0 20px calc\(/);
     expect(css.split('@media (min-width: 1120px) {')[1]).toMatch(
       /\.neo-chat-rail \{[^}]*padding: 68px 24px calc\(/
     );
-  });
-
-  it('restores public popover surface and offsets independently of the wide legacy sidebar', () => {
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const desktop = css.split('@media (min-width: 1120px) {')[1];
-    expect(desktop).toMatch(
-      /\.neo-public-layout \.neo-concerns-card\.is-open \{\s*top: 64px;\s*right: 8px;\s*width: min\(300px, calc\(100vw - 40px\)\);\s*background: var\(--surface-raised\);\s*box-shadow: 0 12px 36px color-mix\(in srgb, var\(--bg\) 35%, transparent\);\s*\}/
-    );
-    expect(css.split('@media (min-width: 1180px) {')[1]).toContain('box-shadow: none;');
   });
 
   it('transfers a reader’s normalized position across viewport and scene-count owner changes', () => {

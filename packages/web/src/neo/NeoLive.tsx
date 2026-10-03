@@ -6,12 +6,11 @@ import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { HyperNeoMark } from '../components/HyperNeoMark.tsx';
 import { useNeo } from './useNeo.ts';
-import { NeoIcon, concernColor } from './NeoIcon.tsx';
+import { NeoIcon } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
-import { NeoConsultationCard } from './NeoConsultationCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
@@ -67,7 +66,6 @@ export function NeoLive() {
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
   const concerns = neo.snapshot?.concerns ?? [];
-  const selected = concerns.find((item) => item.id === neo.selectedId);
   const view = neo.viewSnapshot;
   const viewWorks = view?.work ?? [];
   const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
@@ -143,25 +141,12 @@ export function NeoLive() {
       : undefined,
     dismissedWork
   );
-  const sceneGroups = (
-    [
-      { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
-      { key: 'running', label: 'In progress', scenes: scenes?.running ?? [] },
-      { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
-    ] as const
-  ).map((group) => ({
-    ...group,
-    scenes: publicConversation
-      ? group.scenes
-      : group.scenes.filter((scene) => scene.receipt.kind === 'work'),
-  }));
+  const sceneGroups = [
+    { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
+    { key: 'running', label: 'In progress', scenes: scenes?.running ?? [] },
+    { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
+  ] as const;
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
-  const sceneListLabel = sceneGroups.some((group) =>
-    group.scenes.some((scene) => scene.ref.kind === 'consultation')
-  )
-    ? 'Neo scenes'
-    : 'Work scenes';
-  const displayedGroups = sceneGroups;
   const sheet = !!publicConversation && narrow;
   const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
   const ready =
@@ -316,11 +301,6 @@ export function NeoLive() {
   }
 
   function openScene(ref: NeoSceneRef) {
-    if (ref.kind === 'consultation') {
-      const concernId = view?.consultations?.find((item) => item.id === ref.id)?.concernId;
-      if (concernId) open(concernId);
-      return;
-    }
     const sessionId = viewWorks.find((item) => item.id === ref.id)?.sessionId;
     if (sessionId) window.open(`/session/${encodeURIComponent(sessionId)}`, '_blank', 'noopener');
   }
@@ -398,49 +378,15 @@ export function NeoLive() {
           class="neo-chat-rail px-5 pt-5 sm:px-8"
           onScroll={(event) => recordScroll(event.currentTarget)}
         >
-          {selected ? (
-            <div class="neo-arrive mb-6">
-              <Button
-                variant="ghost"
-                size="sm"
-                class="mb-4 -ml-3"
-                onClick={() => open(null)}
-                icon={<NeoIcon name="back" />}
-              >
-                Back to Neo
-              </Button>
-              <div class="flex items-start gap-3">
-                <span class={`rounded-xl p-2 ${concernColor(selected.id)}`}>
-                  <NeoIcon name="context" />
-                </span>
-                <div>
-                  <p class="mb-2 text-xs text-fg-muted">One part of your world · 分身</p>
-                  <h1 class="break-words text-2xl font-medium tracking-tight">{selected.title}</h1>
-                </div>
-              </div>
-              <p class="mt-4 text-sm leading-relaxed text-fg-muted">{selected.summary}</p>
-              <details class="mt-4 rounded-xl border border-line bg-surface p-4 text-sm">
-                <summary class="cursor-pointer text-fg-muted">What I’m keeping in mind</summary>
-                <p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">
-                  {selected.context || 'No saved details yet.'}
-                </p>
-                <p class="mt-3 text-xs text-fg-faint">
-                  Tell Neo if anything here needs correcting. This context holder delegates work; it
-                  doesn’t execute it.
-                </p>
-              </details>
-            </div>
-          ) : (
-            <div class="mb-7">
-              <h1 class="text-3xl font-medium leading-tight tracking-tight">
-                A little less on your mind.
-              </h1>
-              <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">
-                Tell me what’s going on. I’ll hold the context, connect the right work, and bring
-                back what matters.
-              </p>
-            </div>
-          )}
+          <div class="mb-7">
+            <h1 class="text-3xl font-medium leading-tight tracking-tight">
+              A little less on your mind.
+            </h1>
+            <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">
+              Tell me what’s going on. I’ll hold the context, connect the right work, and bring back
+              what matters.
+            </p>
+          </div>
           {!connected && (
             <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
               Connecting to HyperNeo…
@@ -477,7 +423,6 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
-              snapshot={view}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
@@ -506,40 +451,6 @@ export function NeoLive() {
               </p>
             )
           )}
-          {!publicConversation &&
-            view?.consultations
-              ?.filter(
-                (item) =>
-                  item.status === 'pending' &&
-                  (!neo.selectedId || item.concernId === neo.selectedId)
-              )
-              .map((item) => (
-                <p
-                  key={item.id}
-                  role="status"
-                  class="my-4 rounded-xl border border-accent/20 bg-accent/5 px-4 py-3 text-sm text-fg-muted"
-                >
-                  Checking with{' '}
-                  <button
-                    type="button"
-                    class="text-accent hover:underline"
-                    onClick={() => open(item.concernId)}
-                  >
-                    {concerns.find((concern) => concern.id === item.concernId)?.title ??
-                      'your context holder'}
-                  </button>
-                  …
-                  <button
-                    type="button"
-                    class="ml-3 text-xs text-fg-muted underline disabled:opacity-50"
-                    title="Close this request without interrupting the holder or undoing saved context."
-                    disabled={!connected || !!neo.busyWork}
-                    onClick={() => void neo.act(item.id, 'stop-waiting')}
-                  >
-                    {neo.busyWork === item.id ? 'Closing…' : 'Stop waiting'}
-                  </button>
-                </p>
-              ))}
           {ready &&
             (!publicConversation || publicConversation.status === 'ready') &&
             messageCount === 0 &&
@@ -549,9 +460,8 @@ export function NeoLive() {
                   <NeoIcon name="spark" />
                 </span>
                 <p>
-                  {selected
-                    ? 'The context is already here. Pick up where you left off, or tell me what changed.'
-                    : 'No setup, no folders to choose. Ask a quick question or tell me about something ongoing.'}
+                  No setup, no folders to choose. Ask a quick question or tell me about something
+                  ongoing.
                 </p>
                 <p class="mt-2 text-xs">
                   A clear work request can start work. Proposal-only requests wait for the card’s
@@ -563,7 +473,7 @@ export function NeoLive() {
         <div
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role="region"
-          aria-label={sceneListLabel}
+          aria-label="Work scenes"
           aria-hidden={sheet && !scenesOpen ? true : undefined}
           inert={sheet && !scenesOpen}
         >
@@ -580,7 +490,7 @@ export function NeoLive() {
               </button>
             </div>
           )}
-          {displayedGroups.map((group) =>
+          {sceneGroups.map((group) =>
             group.scenes.length === 0 ? null : (
               <section
                 key={group.key}
@@ -608,26 +518,7 @@ export function NeoLive() {
                       onRetry={retryWork}
                       onDismiss={dismissWork}
                     />
-                  ) : (
-                    <NeoConsultationCard
-                      key={JSON.stringify(scene.ref)}
-                      consultation={scene.receipt}
-                      label={`Context check for ${
-                        concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
-                        'Your context holder'
-                      }`}
-                      holderName={
-                        concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
-                        'Your context holder'
-                      }
-                      busy={neo.busyWork === scene.ref.id}
-                      disabled={!connected || !!neo.busyWork}
-                      onOpen={() => openScene(scene.ref)}
-                      onOpenHolder={open}
-                      onStopWaiting={(id) => void neo.act(id, 'stop-waiting')}
-                      presentation={group.key === 'attention' ? 'detail' : 'summary'}
-                    />
-                  )
+                  ) : null
                 )}
               </section>
             )

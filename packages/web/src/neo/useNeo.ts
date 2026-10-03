@@ -11,7 +11,6 @@ import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
-import { projectNeoPublicAuthors } from './public-authors.ts';
 import { projectNeoPublicHolderConversation } from './public-holder-conversation.ts';
 
 export function useNeo() {
@@ -121,7 +120,7 @@ export function useNeo() {
     [store]
   );
 
-  async function act(id: string, action: 'start' | 'cancel' | 'stop-waiting') {
+  async function act(id: string, action: 'start' | 'cancel') {
     if (busyWork) return;
     setBusyWork(id);
     setError('');
@@ -129,13 +128,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const result = await invokeOperation<NeoResult<{ ok: true }>>(
         hub,
-        (
-          {
-            start: 'neo.work.start',
-            cancel: 'neo.work.cancel',
-            'stop-waiting': 'neo.concern.cancel',
-          } as const
-        )[action],
+        ({ start: 'neo.work.start', cancel: 'neo.work.cancel' } as const)[action],
         { id }
       );
       if (!result.ok) throw new Error(result.reason);
@@ -154,7 +147,6 @@ export function useNeo() {
     publications
   );
   return {
-    publicAuthors: projectNeoPublicAuthors(snapshot, publications),
     publicConversation,
     viewPublicConversation: projectNeoPublicHolderConversation(
       publicConversation,

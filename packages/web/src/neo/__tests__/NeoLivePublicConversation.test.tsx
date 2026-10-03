@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
-import { projectNeoPublicAuthors } from '../public-authors.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { projectNeoPublicHolderConversation } from '../public-holder-conversation.ts';
 import type { NeoAskState } from '../useNeoConversationAsks.ts';
@@ -201,7 +200,6 @@ beforeEach(async () => {
         rootSnapshot,
         sessionId.value
       ),
-      publicAuthors: projectNeoPublicAuthors(rootSnapshot, publications.value),
       asks: { ...asks.value, retry: retryAsks },
       publications: { ...publications.value, refresh: refreshPublications },
       error: error.value,

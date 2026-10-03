@@ -24,13 +24,10 @@ export function publicAskText(content: NeoConversationAsk['content']): string {
 
 function PublicEntry({
   entry,
-  onOpenAuthor,
   onOpenScene,
   canOpenScene,
 }: {
   entry: NeoPublicEntry;
-  authors?: ReadonlyMap<string, string>;
-  onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
 }) {
@@ -40,8 +37,7 @@ function PublicEntry({
   const images =
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
-  const producer = publication?.producerInput.sessionId;
-  const author = producer ? 'Neo' : 'You';
+  const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   return (
     <article
@@ -52,17 +48,7 @@ function PublicEntry({
       <div
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
-        {producer && onOpenAuthor ? (
-          <button
-            type="button"
-            class="neo-message-name font-medium hover:text-accent"
-            onClick={() => onOpenAuthor(producer)}
-          >
-            {author}
-          </button>
-        ) : (
-          <span class="neo-message-name font-medium">{author}</span>
-        )}
+        <span class="neo-message-name font-medium">{author}</span>
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
@@ -142,16 +128,12 @@ function PublicEntry({
 
 export function NeoPublicConversation({
   conversation,
-  authors,
-  onOpenAuthor,
   onOpenScene,
   canOpenScene,
   onRetry,
   onLoadEarlier,
 }: {
   conversation: Conversation;
-  authors?: ReadonlyMap<string, string>;
-  onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onRetry?: () => void;
@@ -190,8 +172,6 @@ export function NeoPublicConversation({
         <PublicEntry
           key={entry.key}
           entry={entry}
-          authors={authors}
-          onOpenAuthor={onOpenAuthor}
           onOpenScene={onOpenScene}
           canOpenScene={canOpenScene}
         />

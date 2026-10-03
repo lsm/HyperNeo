@@ -30,22 +30,6 @@ afterEach(() => {
   neoEvents.changed = null;
 });
 
-function Probe() {
-  const neo = useNeo();
-  return (
-    <>
-      <button
-        disabled={!neo.sessionId || !!neo.busyWork}
-        onClick={() => void neo.act('check', 'stop-waiting')}
-      >
-        Stop waiting
-      </button>
-      {neo.error && <p role="alert">{neo.error}</p>}
-      <p>Pending: {neo.snapshot?.consultations?.length ?? 0}</p>
-    </>
-  );
-}
-
 function ViewProbe() {
   const neo = useNeo();
   return (
@@ -95,53 +79,6 @@ describe('useNeo intake client', () => {
       })
     );
     expect(request.mock.calls.some((call) => call[0] === 'message.send')).toBe(false);
-  });
-});
-
-describe('useNeo stop waiting', () => {
-  it('uses the consultation operation, exposes failure, and refreshes after a successful retry', async () => {
-    let pending = true;
-    let settle: (value: unknown) => void = () => {};
-    request.mockImplementation(async (_method: string, { name }: { name: string }) => {
-      if (name === 'neo.concern.cancel')
-        return new Promise((resolve) => {
-          settle = resolve;
-        });
-      return {
-        ok: true,
-        sessionId: 'root',
-        concerns: [],
-        work: [],
-        consultations: pending ? [{ id: 'check' }] : [],
-      };
-    });
-    render(<Probe />);
-    await waitFor(() => expect(screen.getByRole('button').hasAttribute('disabled')).toBe(false));
-    fireEvent.click(screen.getByRole('button'));
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'neo.concern.cancel',
-        input: { id: 'check' },
-      })
-    );
-    expect(screen.getByRole('button').hasAttribute('disabled')).toBe(true);
-    await act(async () => {
-      settle({ ok: false, reason: 'Try again' });
-    });
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Try again'));
-    expect(screen.getByText('Pending: 1')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button'));
-    await waitFor(() =>
-      expect(
-        request.mock.calls.filter((call) => call[1].name === 'neo.concern.cancel')
-      ).toHaveLength(2)
-    );
-    pending = false;
-    await act(async () => {
-      settle({ ok: true });
-    });
-    await waitFor(() => expect(screen.getByText('Pending: 0')).toBeTruthy());
-    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
 
