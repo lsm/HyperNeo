@@ -67,7 +67,9 @@ describe('direct human publication prompt', () => {
     'lets %s send an interim message before a long investigation',
     (concernId) => {
       const prompt = delivered(concernId);
-      expect(prompt).toContain('make your first call a neo.publication.publish with interim:true');
+      expect(prompt).toContain(
+        'right after the turn-start neo.snapshot and before any other call, publish a brief neo.publication.publish message with interim:true'
+      );
       expect(prompt).toContain('If it is one quick check that may well be fast, skip that message');
       expect(prompt).toContain('never replaces the answer');
       expect(NeoPublicationSchema.pick({ interim: true }).parse({ interim: true })).toEqual({
