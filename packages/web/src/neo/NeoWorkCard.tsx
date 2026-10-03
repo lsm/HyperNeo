@@ -142,6 +142,16 @@ export function NeoWorkCard({
             <NeoIcon name="external" />
           </span>
         )}
+        {!openable && onOpen && work.sessionId && (
+          <button
+            type="button"
+            onClick={() => onOpen(work.id)}
+            class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
+          >
+            Open chat
+            <NeoIcon name="external" class="!h-3.5 !w-3.5" />
+          </button>
+        )}
       </div>
       <h3 class="break-words text-base font-medium">{work.title}</h3>
       {work.status === 'proposed' && (
@@ -195,15 +205,6 @@ export function NeoWorkCard({
               icon={<NeoIcon name="arrow" />}
             >
               {busy ? 'Starting…' : 'Start work'}
-            </Button>
-          )}
-          {onOpen && work.sessionId && (
-            <Button
-              variant="ghost"
-              icon={<NeoIcon name="external" />}
-              onClick={() => onOpen(work.id)}
-            >
-              Open chat
             </Button>
           )}
         </div>
