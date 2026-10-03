@@ -98,7 +98,8 @@ export function NeoWorkCard({
       : work.status === 'failed'
         ? 'text-warning bg-warning/10'
         : 'text-accent bg-accent/10';
-  const openable = !!onOpen && !!work.sessionId;
+  const hasActions = work.status === 'proposed' || work.status === 'failed' || active;
+  const openable = !!onOpen && !!work.sessionId && !hasActions;
   return (
     <article
       aria-label={work.title}
@@ -158,7 +159,7 @@ export function NeoWorkCard({
         ) : (
           <NeoWorkQuestion key={work.id} work={work} />
         ))}
-      {(work.status === 'proposed' || work.status === 'failed' || active) && (
+      {hasActions && (
         <div class="mt-4 flex flex-wrap items-center justify-end gap-4">
           {work.status === 'failed' && onDismiss && (
             <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
@@ -194,6 +195,15 @@ export function NeoWorkCard({
               icon={<NeoIcon name="arrow" />}
             >
               {busy ? 'Starting…' : 'Start work'}
+            </Button>
+          )}
+          {onOpen && work.sessionId && (
+            <Button
+              variant="ghost"
+              icon={<NeoIcon name="external" />}
+              onClick={() => onOpen(work.id)}
+            >
+              Open chat
             </Button>
           )}
         </div>
