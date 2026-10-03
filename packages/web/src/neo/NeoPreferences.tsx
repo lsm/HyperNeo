@@ -6,11 +6,12 @@ import { useModelSwitcher, filterModelsForPicker } from '../hooks/useModelSwitch
 import { useClickOutside } from '../hooks/useClickOutside.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
-import { shortenModelName } from '../lib/provider-brand.ts';
+import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
 import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
+import { ProviderLogo } from '../components/ProviderLogo.tsx';
 
 export function NeoPreferences({
   sessionId,
@@ -113,7 +114,15 @@ export function NeoPreferences({
         title={`${name} · Thinking: ${thinking}`}
         class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:border-accent/30 hover:text-fg sm:gap-2 sm:px-3"
       >
-        <NeoIcon name="spark" class="!h-3.5 !w-3.5 text-accent" />
+        <span
+          class="flex shrink-0"
+          style={{ color: providerLogoColor(model.currentModelInfo?.provider) }}
+        >
+          <ProviderLogo
+            provider={model.currentModelInfo?.provider ?? 'anthropic'}
+            class="h-3.5 w-3.5"
+          />
+        </span>
         <span class="max-w-32 truncate">{model.switching ? 'Switching…' : name}</span>
         <span aria-hidden="true" class="text-fg-faint">
           ·
