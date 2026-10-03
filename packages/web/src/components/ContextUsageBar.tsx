@@ -255,7 +255,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       {showContextDetails && hasContextData && (
         <div class="fixed right-0 px-4 z-50" style={{ bottom: `${dropdownBottom}px` }}>
           <div class="max-w-4xl mx-auto flex justify-end">
-            <div ref={dropdownRef}>
+            <div ref={dropdownRef} role="dialog" aria-label="Context usage">
               <div class="bg-surface-raised border border-line-strong rounded-lg p-4 w-72 shadow-xl">
                 <div class="flex items-center justify-between mb-3">
                   <h3 class="text-sm font-semibold text-fg-soft">Context Usage</h3>

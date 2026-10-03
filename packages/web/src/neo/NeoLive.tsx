@@ -52,6 +52,7 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
+  useEffect(() => setChat(null), [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
   const [questions, setQuestions] = useState<{
@@ -275,7 +276,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && workCount ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${publicConversation && (workCount || chat) ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
     >
       {publicConversation &&
         relevant
@@ -503,6 +504,7 @@ export function NeoLive() {
             key={chat.sessionId}
             sessionId={chat.sessionId}
             title={chat.title}
+            overlay={narrow}
             onClose={closeChat}
           />
         )}
