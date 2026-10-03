@@ -16,16 +16,10 @@ export function NeoWorkQuestionControls({
   const errorMessage = store.error.value?.message ?? loadError;
   return (
     <>
-      {question && work.sessionId && (
-        <a
-          href={`/session/${encodeURIComponent(work.sessionId)}`}
-          target="_blank"
-          rel="noreferrer"
-          class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-fg hover:border-accent/60"
-        >
-          <span>Waiting for your answer</span>
-          <span class="text-accent">Answer in chat ↗</span>
-        </a>
+      {question && (
+        <p class="mt-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-fg">
+          Waiting for your answer. Open the chat to reply.
+        </p>
       )}
       {errorMessage && (
         <div role="alert" class="mt-3 text-sm text-danger">
