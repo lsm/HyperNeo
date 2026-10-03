@@ -24,7 +24,6 @@ export function publicAskText(content: NeoConversationAsk['content']): string {
 
 function PublicEntry({
   entry,
-  authors,
   onOpenAuthor,
   onOpenScene,
   canOpenScene,
@@ -42,11 +41,8 @@ function PublicEntry({
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const producer = publication?.producerInput.sessionId;
-  const author = !producer
-    ? 'You'
-    : producer === `neo:${publication!.conversationId}`
-      ? 'Neo'
-      : authors?.get(producer) || 'Context holder';
+  const author = producer ? 'Neo' : 'You';
+  const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   return (
     <article
       id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
@@ -108,12 +104,12 @@ function PublicEntry({
         )}
         {publication && (
           <>
-            {publication.links.length > 0 && (
+            {links.length > 0 && (
               <ul
                 aria-label="Related Neo scenes"
                 class="mt-3 flex flex-wrap gap-3 text-sm text-accent"
               >
-                {publication.links.map((link) => (
+                {links.map((link) => (
                   <li key={JSON.stringify([link.kind, link.id])}>
                     {onOpenScene && (canOpenScene?.(link) ?? true) ? (
                       <button

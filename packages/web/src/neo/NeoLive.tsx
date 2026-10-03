@@ -13,7 +13,6 @@ import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoConsultationCard } from './NeoConsultationCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { NeoConcerns } from './NeoConcerns.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
@@ -69,7 +68,6 @@ export function NeoLive() {
   const scrollProgress = useRef(1);
   const concerns = neo.snapshot?.concerns ?? [];
   const selected = concerns.find((item) => item.id === neo.selectedId);
-  const works = neo.snapshot?.work ?? [];
   const view = neo.viewSnapshot;
   const viewWorks = view?.work ?? [];
   const relevant = viewWorks.filter((work) => !neo.selectedId || work.concernId === neo.selectedId);
@@ -310,15 +308,6 @@ export function NeoLive() {
     void neo.open(id);
   }
 
-  function openPublicAuthor(sessionId: string) {
-    if (sessionId === neo.snapshot?.sessionId) return open(null);
-    const binding = neo.snapshot?.publicAuthorBindings?.find(
-      (item) => item.kind === 'concern' && item.sessionId === sessionId
-    );
-    if (binding?.concernId && neo.publicAuthors.has(sessionId)) return open(binding.concernId);
-    neo.setError('This context holder is not available in Neo.');
-  }
-
   function retryPublicConversation() {
     neo.asks.retry();
     neo.publications.refresh();
@@ -375,13 +364,6 @@ export function NeoLive() {
           <HyperNeoMark />
         </button>
         <div class="neo-float-actions">
-          <NeoConcerns
-            concerns={concerns}
-            works={works}
-            consultations={neo.snapshot?.consultations ?? []}
-            selectedId={neo.selectedId}
-            onOpen={open}
-          />
           <a
             href="/"
             target="_blank"
@@ -491,19 +473,7 @@ export function NeoLive() {
               works={relevant}
               snapshot={view}
               publicConversation={publicConversation}
-              publicAuthors={neo.publicAuthors}
-              onOpenPublicAuthor={openPublicAuthor}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
-              publicConsultationIds={
-                new Set(
-                  sceneGroups.flatMap((group) =>
-                    group.scenes.flatMap((scene) =>
-                      scene.ref.kind === 'consultation' ? [scene.ref.id] : []
-                    )
-                  )
-                )
-              }
-              onOpenPublicConsultation={(id) => openScene({ kind: 'consultation', id })}
               onRetryPublic={retryPublicConversation}
               onProgress={setReplyProgress}
               onLoadEarlierPublic={() => {
@@ -578,9 +548,6 @@ export function NeoLive() {
                     : 'No setup, no folders to choose. Ask a quick question or tell me about something ongoing.'}
                 </p>
                 <p class="mt-2 text-xs">
-                  {selected
-                    ? 'This conversation stays focused on this part of your world.'
-                    : 'Only things worth keeping become a 分身.'}{' '}
                   A clear work request can start work. Proposal-only requests wait for the card’s
                   Start work button.
                 </p>
