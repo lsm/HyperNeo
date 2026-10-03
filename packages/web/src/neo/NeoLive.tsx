@@ -162,6 +162,8 @@ export function NeoLive() {
     ? 'Neo scenes'
     : 'Work scenes';
   const displayedGroups = sceneGroups;
+  const sheet = !!publicConversation && narrow;
+  const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
@@ -363,6 +365,22 @@ export function NeoLive() {
         >
           <HyperNeoMark />
         </button>
+        {sheet && workCount > 0 && (
+          <button
+            type="button"
+            aria-label={`Your work${attentionCount ? `, ${attentionCount} need your attention` : ''}`}
+            aria-expanded={scenesOpen}
+            onClick={() => setScenesOpen(true)}
+            class="neo-float-link relative"
+          >
+            <NeoIcon name="context" />
+            {attentionCount > 0 && (
+              <span class="absolute -right-1.5 -top-1.5 min-w-5 rounded-full bg-accent px-1.5 text-center text-[11px] font-medium leading-5 text-accent-fg">
+                {attentionCount}
+              </span>
+            )}
+          </button>
+        )}
       </header>
       <main
         ref={mainScroll}
@@ -542,79 +560,78 @@ export function NeoLive() {
               </div>
             )}
         </div>
-        <div class="neo-scene-list" role="region" aria-label={sceneListLabel}>
-          {publicConversation && narrow && workCount > 0 && (
-            <button
-              type="button"
-              data-scene-toggle
-              aria-expanded={scenesOpen}
-              onClick={() => setScenesOpen((value) => !value)}
-              class="mt-4 flex w-full items-center justify-between rounded-xl border border-line bg-surface/40 px-4 py-3 text-left text-xs text-fg-muted hover:text-accent"
-            >
-              <span>
-                {displayedGroups
-                  .filter((group) => group.scenes.length)
-                  .map((group) => `${group.label} · ${group.scenes.length}`)
-                  .join('  ·  ')}
-              </span>
-              <span>{scenesOpen ? 'Hide' : 'Show'}</span>
-            </button>
+        <div
+          class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
+          role="region"
+          aria-label={sceneListLabel}
+          aria-hidden={sheet && !scenesOpen ? true : undefined}
+          inert={sheet && !scenesOpen}
+        >
+          {sheet && (
+            <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
+              <h2 class="text-sm font-medium">Your work</h2>
+              <button
+                type="button"
+                aria-label="Close work list"
+                onClick={() => setScenesOpen(false)}
+                class="neo-float-link"
+              >
+                <NeoIcon name="close" />
+              </button>
+            </div>
           )}
-          {(!publicConversation || !narrow || scenesOpen) &&
-            displayedGroups.map((group) =>
-              group.scenes.length === 0 ? null : (
-                <section
-                  key={group.key}
-                  aria-label={group.label}
-                  class="mt-6 space-y-3"
-                  data-scene-group={group.key}
-                >
-                  <h2 class="text-xs font-medium text-fg-muted">
-                    {group.label} · {group.scenes.length}
-                  </h2>
-                  {group.scenes.map((scene) =>
-                    scene.receipt.kind === 'work' ? (
-                      <NeoWorkCard
-                        key={JSON.stringify(scene.ref)}
-                        work={scene.receipt}
-                        busy={neo.busyWork === scene.ref.id}
-                        disabled={!connected || !!neo.busyWork}
-                        onAction={(id, action) => void neo.act(id, action)}
-                        onOpen={() => openScene(scene.ref)}
-                        presentation={
-                          publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
-                        }
-                        questionSlot={publicConversation ? attachQuestion : undefined}
-                        waiting={
-                          questions.scope === sceneScope && questions.values.has(scene.ref.id)
-                        }
-                        onRetry={retryWork}
-                        onDismiss={dismissWork}
-                      />
-                    ) : (
-                      <NeoConsultationCard
-                        key={JSON.stringify(scene.ref)}
-                        consultation={scene.receipt}
-                        label={`Context check for ${
-                          concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
-                          'Your context holder'
-                        }`}
-                        holderName={
-                          concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
-                          'Your context holder'
-                        }
-                        busy={neo.busyWork === scene.ref.id}
-                        disabled={!connected || !!neo.busyWork}
-                        onOpen={() => openScene(scene.ref)}
-                        onOpenHolder={open}
-                        onStopWaiting={(id) => void neo.act(id, 'stop-waiting')}
-                        presentation={group.key === 'attention' ? 'detail' : 'summary'}
-                      />
-                    )
-                  )}
-                </section>
-              )
-            )}
+          {displayedGroups.map((group) =>
+            group.scenes.length === 0 ? null : (
+              <section
+                key={group.key}
+                aria-label={group.label}
+                class="mt-6 space-y-3"
+                data-scene-group={group.key}
+              >
+                <h2 class="text-xs font-medium text-fg-muted">
+                  {group.label} · {group.scenes.length}
+                </h2>
+                {group.scenes.map((scene) =>
+                  scene.receipt.kind === 'work' ? (
+                    <NeoWorkCard
+                      key={JSON.stringify(scene.ref)}
+                      work={scene.receipt}
+                      busy={neo.busyWork === scene.ref.id}
+                      disabled={!connected || !!neo.busyWork}
+                      onAction={(id, action) => void neo.act(id, action)}
+                      onOpen={() => openScene(scene.ref)}
+                      presentation={
+                        publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
+                      }
+                      questionSlot={publicConversation ? attachQuestion : undefined}
+                      waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
+                      onRetry={retryWork}
+                      onDismiss={dismissWork}
+                    />
+                  ) : (
+                    <NeoConsultationCard
+                      key={JSON.stringify(scene.ref)}
+                      consultation={scene.receipt}
+                      label={`Context check for ${
+                        concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
+                        'Your context holder'
+                      }`}
+                      holderName={
+                        concerns.find((item) => item.id === scene.receipt.concernId)?.title ??
+                        'Your context holder'
+                      }
+                      busy={neo.busyWork === scene.ref.id}
+                      disabled={!connected || !!neo.busyWork}
+                      onOpen={() => openScene(scene.ref)}
+                      onOpenHolder={open}
+                      onStopWaiting={(id) => void neo.act(id, 'stop-waiting')}
+                      presentation={group.key === 'attention' ? 'detail' : 'summary'}
+                    />
+                  )
+                )}
+              </section>
+            )
+          )}
         </div>
       </main>
       <footer
