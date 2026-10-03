@@ -8,6 +8,9 @@ import { MobileMenuButton } from './ui/MobileMenuButton';
 import { ChatHeaderMenu } from './ChatHeaderMenu.tsx';
 import { IconButton } from './ui/IconButton.tsx';
 import { CloneIcon } from './icons/CloneIcon.tsx';
+import { MoveSessionDialog, movableSession, moveSession } from './MoveSessionDialog.tsx';
+import { sessions } from '../lib/state.ts';
+import { useState } from 'preact/hooks';
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -42,6 +45,10 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const returnedAt = session?.metadata.clone?.returnedAt;
   const isClone = !!session?.parentSessionId;
+  const [moving, setMoving] = useState(false);
+  const movable = !!session && !readonly && movableSession(session);
+  const hasChildren =
+    !!session && sessions.value.some((item) => item.parentSessionId === session.id);
   const target = rightPanelTargetSignal.value;
   const inspectorAvailable = !!session && sessionStore.activeSessionId.value === session.id;
   const inspectorOpen = target?.type === 'inspector' && target.sessionId === session?.id;
@@ -151,7 +158,14 @@ export function ChatHeader({
           onResetClick={onResetClick}
           onArchiveClick={onArchiveClick}
           onDeleteClick={onDeleteClick}
+          onMoveUnderClick={movable && !isClone && !hasChildren ? () => setMoving(true) : undefined}
+          onMoveToTopClick={
+            movable && isClone ? () => void moveSession(session!.id, null) : undefined
+          }
         />
+        {session && moving && (
+          <MoveSessionDialog session={session} isOpen onClose={() => setMoving(false)} />
+        )}
         {inspectorAvailable && (
           <IconButton
             title="Conversation info"

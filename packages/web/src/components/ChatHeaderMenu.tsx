@@ -14,6 +14,8 @@ export interface ChatHeaderMenuProps {
   onResetClick: () => void;
   onArchiveClick: () => void;
   onDeleteClick: () => void;
+  onMoveUnderClick?: () => void;
+  onMoveToTopClick?: () => void;
 }
 
 export function ChatHeaderMenu({
@@ -27,6 +29,8 @@ export function ChatHeaderMenu({
   onResetClick,
   onArchiveClick,
   onDeleteClick,
+  onMoveUnderClick,
+  onMoveToTopClick,
 }: ChatHeaderMenuProps) {
   const isConnected = connectionState.value === 'connected';
   const items: DropdownMenuItem[] = [];
@@ -45,6 +49,20 @@ export function ChatHeaderMenu({
     onClick: onResetClick,
     disabled: resettingAgent || !isConnected,
   });
+  if (onMoveUnderClick)
+    items.push({
+      label: 'Move under…',
+      title: 'Move under another chat',
+      onClick: onMoveUnderClick,
+      disabled: !isConnected,
+    });
+  if (onMoveToTopClick)
+    items.push({
+      label: 'Move to top level',
+      title: 'Move to top level',
+      onClick: onMoveToTopClick,
+      disabled: !isConnected,
+    });
   if (features.archive) {
     items.push({ type: 'divider' });
     items.push({
