@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { neoNudgeMessageId } from '../../../../src/lib/neo/ask-origin.ts';
 import {
+  NEO_UNFINISHED_REPLY,
   type NeoDirectReplyRuntime,
   type NeoTurnReply,
   publishNeoDirectReplyFallback,
@@ -58,6 +60,8 @@ function runtime(overrides: Partial<NeoDirectReplyRuntime> = {}) {
     isPublished: () => false,
     startedWork: () => false,
     turnReply: () => ended(),
+    hasNudge: () => false,
+    nudge: vi.fn(),
     append: vi.fn(() => ({ accepted: true })),
     notify: vi.fn(),
     newId: () => publicationId,
@@ -120,8 +124,10 @@ describe('Neo direct reply fallback', () => {
     ['a turn that started a consultation or work', { startedWork: () => true }],
     ['a turn still running', { turnReply: () => ({ status: 'open' as const, text: 'Partial' }) }],
     ['a failed turn', { turnReply: () => ({ status: 'failed' as const, text: 'Partial' }) }],
-    ['a turn without reply text', { turnReply: () => ended('   ') }],
-    ['a turn with no reply at all', { turnReply: () => ended(null) }],
+    [
+      'an answer the nudged turn already published',
+      { isPublished: (_id: string, messageId: string) => messageId === neoNudgeMessageId(askA) },
+    ],
     ['a session with no human ask', { recentAsks: () => [] }],
     ['a missing root conversation', { getRootBinding: () => null }],
     [
@@ -140,6 +146,52 @@ describe('Neo direct reply fallback', () => {
     expect(requireNeoReplySession(sessionId, io)).toBeNull();
     expect(publishNeoDirectReplyFallback(sessionId, io)).toEqual([]);
     expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['without reply text', '   '],
+    ['with no reply at all', null],
+  ])('nudges Neo once when a turn ends %s', (_name, text) => {
+    const io = runtime({ turnReply: () => ended(text) });
+    expect(publishNeoDirectReplyFallback(root, io)).toEqual([]);
+    expect(io.nudge).toHaveBeenCalledExactlyOnceWith(root, neoNudgeMessageId(askA));
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test('waits while the nudged turn is still running', () => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) =>
+        messageId === askA ? ended(null) : { status: 'open', text: 'Working' },
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toEqual([]);
+    expect(io.nudge).not.toHaveBeenCalled();
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test('publishes the nudged turn text when Neo still did not publish', () => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) => (messageId === askA ? ended(null) : ended('Here it is.')),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([
+      { shortText: 'Here it is.', producerInput: { sessionId: root, messageId: askA } },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['ended empty', ended(null)],
+    ['failed', { status: 'failed' as const, text: null }],
+  ])('tells the human it could not finish when the nudged turn %s', (_name, nudged) => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) => (messageId === askA ? ended(null) : nudged),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([
+      { shortText: NEO_UNFINISHED_REPLY },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
   });
 
   test('does not notify when the ledger refuses the publication', () => {

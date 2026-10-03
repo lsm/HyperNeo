@@ -26,6 +26,15 @@ export interface NeoAskEvidence {
   workOrigin: NeoBinding | null;
 }
 const unknown: Stop = { kind: 'unknown' };
+const NUDGE_PREFIX = 'neo-nudge:';
+
+export function neoNudgeMessageId(messageId: string): string {
+  return `${NUDGE_PREFIX}${messageId}`;
+}
+
+function nudgedMessageId(messageId: string): string | null {
+  return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
+}
 
 export function requireNeoAskReference(input: Input): Gate {
   return input.sessionId && input.messageId
@@ -104,6 +113,8 @@ function validWorkOrigin(work: NeoWork, evidence: NeoAskEvidence): boolean {
 export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence): Hop {
   const { root, holder, consultation, work, envelope } = evidence;
   if (root?.kind !== 'neo' || root.concernId !== null) return unknown;
+  const nudged = nudgedMessageId(input.messageId);
+  if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
   if (!envelope) {
     return work?.id === input.messageId &&
       (work.status === 'reported' || work.status === 'failed') &&

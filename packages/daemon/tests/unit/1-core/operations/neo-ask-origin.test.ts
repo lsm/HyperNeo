@@ -5,6 +5,7 @@ import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/type
 import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
+  neoNudgeMessageId,
   readNeoAskEvidence,
   requireNeoAskCoordinator,
   requireNeoAskReference,
@@ -338,6 +339,19 @@ describe('synchronous bounded ask resolver', () => {
       originMessageId: human.messageId,
     });
     expect(createNeoAskOriginResolver(f.reads)(returned)).toEqual(human);
+  });
+  test('a publish nudge answers the human message it nudges, never a forged one', () => {
+    const f = fixtures();
+    const nudge = { sessionId: ask.sessionId, messageId: neoNudgeMessageId(ask.messageId) };
+    f.put(ask);
+    f.put(nudge, 'system');
+    expect(f.resolve(nudge)).toEqual(ask);
+    const humanNudge = { sessionId: ask.sessionId, messageId: neoNudgeMessageId('human:2') };
+    f.put(humanNudge);
+    expect(f.resolve(humanNudge)).toEqual(humanNudge);
+    const orphan = { sessionId: ask.sessionId, messageId: neoNudgeMessageId('missing') };
+    f.put(orphan, 'system');
+    expect(f.resolve(orphan)).toBeNull();
   });
   test('cycles stop before rereading and limits do not leak across calls', () => {
     const f = fixtures();
