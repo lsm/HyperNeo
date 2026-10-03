@@ -308,14 +308,14 @@ export function NeoLive() {
           class="neo-float-link"
         >
           <svg
-            viewBox="0 0 144 377"
-            class="h-6 w-auto"
+            viewBox="0 0 102 176"
+            class="h-[30px] w-auto"
             style={{ fill: 'light-dark(var(--hn-color-ink), var(--hn-color-paper))' }}
             aria-hidden="true"
           >
-            <rect x="0" y="0" width="55" height="377" rx="5.5" />
-            <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
-            <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+            <rect x="0" y="0" width="42" height="176" rx="6" />
+            <rect x="60" y="0" width="42" height="79" rx="6" />
+            <rect x="60" y="97" width="42" height="79" rx="6" />
           </svg>
         </button>
         {sheet && workCount > 0 && (
