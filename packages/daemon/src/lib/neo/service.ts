@@ -59,6 +59,8 @@ export function neoWorkScratchDir(sessionId: string): string {
   return join(tmpdir(), 'hyperneo-neo-work', sessionId.replace(/:/g, '-'));
 }
 
+const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+
 export class NeoService {
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
@@ -74,6 +76,9 @@ export class NeoService {
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
+  private readonly processingStatus = new Map<string, string>();
+  private readonly interruptedSessions = new Set<string>();
+  private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -193,6 +198,7 @@ export class NeoService {
       startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
+      recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
       nudge: (id, nudgeId) =>
         void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id).catch((error) =>
           this.log.warn('Publish nudge failed', error)
@@ -204,7 +210,11 @@ export class NeoService {
     this.unsubscribe = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
-        if (processingState?.status !== 'idle') return;
+        const status = processingState?.status;
+        if (status) this.processingStatus.set(sessionId, status);
+        if (status === 'interrupted') this.interruptedSessions.add(sessionId);
+        else if (status && status !== 'idle') this.interruptedSessions.delete(sessionId);
+        if (status !== 'idle') return;
         for (const item of this.consultations
           .unsettled()
           .filter((item) => item.sessionId === sessionId)) {
@@ -215,7 +225,10 @@ export class NeoService {
         const binding = this.repo.getBindingBySession(sessionId);
         if (binding && binding.kind !== 'worker') {
           try {
-            publishNeoDirectReplyFallback(sessionId, directReplies);
+            publishNeoDirectReplyFallback(sessionId, directReplies, {
+              settled: false,
+              interrupted: this.interruptedSessions.has(sessionId),
+            });
           } catch (error) {
             this.log.warn('Direct reply fallback failed', error);
           }
@@ -236,6 +249,26 @@ export class NeoService {
 
   dispose() {
     this.unsubscribe();
+    for (const timer of this.replyRechecks.values()) clearTimeout(timer);
+    this.replyRechecks.clear();
+  }
+
+  private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
+    if (this.replyRechecks.has(sessionId)) return;
+    const timer = setTimeout(() => {
+      this.replyRechecks.delete(sessionId);
+      if (this.processingStatus.get(sessionId) !== 'idle') return;
+      try {
+        publishNeoDirectReplyFallback(sessionId, runtime, {
+          settled: true,
+          interrupted: this.interruptedSessions.has(sessionId),
+        });
+      } catch (error) {
+        this.log.warn('Direct reply recheck failed', error);
+      }
+    }, NEO_STALLED_TURN_SETTLE_MS);
+    timer.unref?.();
+    this.replyRechecks.set(sessionId, timer);
   }
 
   open(concernId: string | null): Promise<string> {

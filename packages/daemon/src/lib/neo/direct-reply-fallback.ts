@@ -17,17 +17,24 @@ export type NeoDirectReplyRuntime = {
   turnReply: (sessionId: string, messageId: string) => NeoTurnReply;
   hasNudge: (sessionId: string, nudgeId: string) => boolean;
   nudge: (sessionId: string, nudgeId: string) => void;
+  recheck: (sessionId: string) => void;
   append: (input: NeoPublicationInput) => { accepted: boolean };
   notify: () => void;
   newId: () => string;
 };
-type Skip = { skipped: true; nudgeId?: string };
+type Skip = { skipped: true; nudgeId?: string; recheck?: true };
+export type NeoTurnSettlement = { settled: boolean; interrupted: boolean };
 type Gate<T> = { value: T } | { reason: Skip };
 type Scope = { sessionId: string; conversationId: string };
-type Turn = Scope & { ask: NeoConversationAsk; latest?: boolean };
+type Turn = Scope & {
+  ask: NeoConversationAsk;
+  latest?: boolean;
+  settlement?: NeoTurnSettlement;
+};
 type Reply = Turn & { text: string };
 
 const skip: { reason: Skip } = { reason: { skipped: true } };
+const recheck: { reason: Skip } = { reason: { skipped: true, recheck: true } };
 
 export const NEO_UNFINISHED_REPLY = 'I couldn’t finish answering that. Please ask again.';
 export const NEO_PUBLISH_NUDGE =
@@ -53,16 +60,24 @@ export function requireUnpublishedDirectAnswer(
   for (const id of [messageId, nudgeId])
     if (runtime.isPublished(turn.sessionId, id) || runtime.startedWork(turn.sessionId, id))
       return skip;
+  const settlement = turn.settlement ?? { settled: false, interrupted: false };
   const reply = runtime.turnReply(turn.sessionId, messageId);
   if (reply.status === 'missing') return skip;
   const text = reply.text?.trim();
   if (reply.status === 'ended' && text) return { value: { ...turn, text } };
-  if (!runtime.hasNudge(turn.sessionId, nudgeId))
-    return turn.latest ? { reason: { skipped: true, nudgeId } } : skip;
+  if (reply.status !== 'ended' && settlement.interrupted) return skip;
+  if (!runtime.hasNudge(turn.sessionId, nudgeId)) {
+    if (!turn.latest) return skip;
+    if (reply.status !== 'ended' && !settlement.settled) return recheck;
+    return { reason: { skipped: true, nudgeId } };
+  }
   const nudged = runtime.turnReply(turn.sessionId, nudgeId);
   if (nudged.status === 'missing') return skip;
   const nudgedText = nudged.status === 'ended' ? nudged.text?.trim() : null;
-  return { value: { ...turn, text: nudgedText || NEO_UNFINISHED_REPLY } };
+  if (nudgedText) return { value: { ...turn, text: nudgedText } };
+  if (nudged.status !== 'ended' && settlement.interrupted) return skip;
+  if (nudged.status !== 'ended' && !settlement.settled) return recheck;
+  return { value: { ...turn, text: NEO_UNFINISHED_REPLY } };
 }
 
 function publishDirectReply(
@@ -91,16 +106,24 @@ const publishTurn = (superpipe({})('neo-direct-reply-fallback') as PipelineAPI)
 
 export function publishNeoDirectReplyFallback(
   sessionId: string,
-  runtime: NeoDirectReplyRuntime
+  runtime: NeoDirectReplyRuntime,
+  settlement: NeoTurnSettlement = { settled: false, interrupted: false }
 ): NeoPublicationInput[] {
   const scope = requireNeoReplySession(sessionId, runtime);
   if (!scope) return [];
   const asks = runtime.recentAsks(scope.conversationId, sessionId);
+  let rechecking = false;
   return asks
-    .map((ask, index) => publishTurn({ ...scope, ask, latest: index === asks.length - 1 }, runtime))
+    .map((ask, index) =>
+      publishTurn({ ...scope, ask, latest: index === asks.length - 1, settlement }, runtime)
+    )
     .filter((result): result is NeoPublicationInput => {
       if (!('skipped' in result)) return true;
       if (result.nudgeId) runtime.nudge(sessionId, result.nudgeId);
+      if (result.recheck && !rechecking) {
+        rechecking = true;
+        runtime.recheck(sessionId);
+      }
       return false;
     });
 }
