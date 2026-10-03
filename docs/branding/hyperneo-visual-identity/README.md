@@ -28,7 +28,7 @@ This is the source-of-truth package for the HyperNeo identity built around appro
 
 The master `viewBox` is 144 × 377 units. The left bar and each half of the right bar are 55 units wide. The right-side vertical opening and the horizontal opening are each 34 units. Keep the mark upright: solid left, split right. Keep the openings, proportions, and corner radius exactly as drawn.
 
-Leave at least 34 source units of clear space around the mark. Use a minimum rendered mark height of 24 CSS pixels; 32 pixels is preferred for avatars and compact product surfaces. Use the favicon tile at 32 × 32 pixels or larger. The standalone mark is preferable to a wordmark below 200 pixels wide. Never connect, rotate, mirror, crop, outline, skew, or add effects that change the silhouette. Do not use jade on paper for small marks or text.
+Leave at least 34 source units of clear space around the mark. Render the master at 48 CSS pixels tall or larger; below that, including avatars, favicons and compact product surfaces, use mark 06S (below). Use the favicon tile at 32 × 32 pixels or larger. The standalone mark is preferable to a wordmark below 200 pixels wide. Never connect, rotate, mirror, crop, outline, skew, or add effects that change the silhouette. Do not use jade on paper for small marks or text.
 
 ### Small-size mark 06S
 

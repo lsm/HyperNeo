@@ -120,8 +120,7 @@
     "barWidth": 55,
     "opening": 34,
     "minimumClearSpace": 34,
-    "minimumDigitalMarkHeightPx": 24,
-    "preferredDigitalMarkHeightPx": 32,
+    "minimumDigitalMarkHeightPx": 48,
     "minimumHorizontalLockupWidthPx": 200,
     "minimumFaviconTilePx": 32,
     "small": {
