@@ -107,6 +107,9 @@ let refreshPublications: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
   connectionState.value = 'connected';
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   events = new Map();
   connections = new Set();
   request = vi.fn(async (method: string, data: Record<string, unknown> = {}) => {

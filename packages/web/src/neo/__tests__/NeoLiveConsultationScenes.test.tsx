@@ -234,7 +234,7 @@ describe('Neo public mixed consultation scenes', () => {
       const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
       fireEvent.input(draft, { target: { value: 'Fictional draft survives context detail' } });
       const detail = openCheck(container, id);
-      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(narrow);
+      expect(container.querySelector('.neo-chat-rail')?.hasAttribute('inert')).toBe(true);
       expect(detail.querySelector('button')).toBe(document.activeElement);
       expect(detail.querySelector('details p')?.textContent).toBe(
         id === 'queued' ? waiting().question : consultation(id, 'pending').question
@@ -312,13 +312,12 @@ describe('Neo public mixed consultation scenes', () => {
     }
   );
 
-  it('keeps work-only scene groups and no inline pending banner in legacy mode', () => {
+  it('shows every scene group in the work surface with no inline pending banner', () => {
     const { container, model } = mount(false);
-    expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Neo scenes' })).toBeTruthy();
     expect(container.textContent).not.toContain('Checking with');
-    expect(screen.getByRole('region', { name: 'In progress' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    for (const name of ['Needs your attention', 'In progress', 'Recent outcomes'])
+      expect(screen.getByRole('region', { name })).toBeTruthy();
     expect(model.value.act).not.toHaveBeenCalled();
   });
 
@@ -329,8 +328,7 @@ describe('Neo public mixed consultation scenes', () => {
       model.value = { ...model.value, viewPublicConversation: undefined };
     });
     expect(screen.queryByRole('region', { name: 'Selected context check' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'Stop waiting' })).toHaveLength(1);
-    expect(container.querySelector('[data-consultation-open]')).toBeNull();
+    expect(container.querySelector('.neo-scene-detail')).toBeNull();
     expect(model.value.act).not.toHaveBeenCalled();
   });
 });

@@ -70,6 +70,9 @@ let select: ReturnType<typeof vi.spyOn>;
 let destroy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   connectionState.value = 'connected';
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   vi.stubGlobal(
     'ResizeObserver',
     class {

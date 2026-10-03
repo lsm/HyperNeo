@@ -62,6 +62,9 @@ const snapshot: NeoSnapshot = {
 };
 
 const renderLive = () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   vi.stubGlobal(
     'ResizeObserver',
     class {

@@ -70,43 +70,6 @@ export function NeoWorkSurface({
         onOpen={(id) => onOpenConcern(id)}
       />
       <div class="neo-scene-list" role="region" aria-label={listLabel}>
-        {detail ? (
-          <section
-            aria-label={detailWork ? 'Selected work' : 'Selected context check'}
-            class="neo-scene-detail space-y-3"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onCloseScene}
-              icon={<NeoIcon name="back" />}
-              aria-label="Back to scenes"
-            >
-              Back to scenes
-            </Button>
-            {detailWork && (
-              <NeoWorkCard
-                key={detail.ref.id}
-                work={detailWork}
-                busy={busyWork === detailWork.id}
-                disabled={disabled}
-                onAction={onAction}
-                questionSlot={questionSlot}
-              />
-            )}
-            {detailConsultation && (
-              <NeoConsultationCard
-                consultation={detailConsultation}
-                label={`Context check for ${holder(detailConsultation.concernId)}`}
-                holderName={holder(detailConsultation.concernId)}
-                busy={busyWork === detailConsultation.id}
-                disabled={disabled}
-                onOpenHolder={onOpenHolder}
-                onStopWaiting={(id) => onAction(id, 'stop-waiting')}
-              />
-            )}
-          </section>
-        ) : null}
         {publicConversation && detail && groups.every((group) => !group.scenes.length) && (
           <p class="text-sm text-fg-muted">No other scenes right now.</p>
         )}
@@ -155,6 +118,43 @@ export function NeoWorkSurface({
             )
           )}
       </div>
+      {detail ? (
+        <section
+          aria-label={detailWork ? 'Selected work' : 'Selected context check'}
+          class="neo-scene-detail space-y-3"
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCloseScene}
+            icon={<NeoIcon name="back" />}
+            aria-label="Back to scenes"
+          >
+            Back to scenes
+          </Button>
+          {detailWork && (
+            <NeoWorkCard
+              key={detail.ref.id}
+              work={detailWork}
+              busy={busyWork === detailWork.id}
+              disabled={disabled}
+              onAction={onAction}
+              questionSlot={questionSlot}
+            />
+          )}
+          {detailConsultation && (
+            <NeoConsultationCard
+              consultation={detailConsultation}
+              label={`Context check for ${holder(detailConsultation.concernId)}`}
+              holderName={holder(detailConsultation.concernId)}
+              busy={busyWork === detailConsultation.id}
+              disabled={disabled}
+              onOpenHolder={onOpenHolder}
+              onStopWaiting={(id) => onAction(id, 'stop-waiting')}
+            />
+          )}
+        </section>
+      ) : null}
       <NeoConcernBoardPanel snapshot={snapshot} concernId={selectedId} />
     </>
   );

@@ -80,6 +80,9 @@ let destroy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   connectionState.value = 'connected';
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   states = new Map(
     ['a', 'b', 'c'].map((id) => [`worker-${id}`, native(id, id === 'c' ? null : pending(id))])
   );
