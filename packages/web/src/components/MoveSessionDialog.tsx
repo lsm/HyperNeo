@@ -28,12 +28,17 @@ export async function moveSession(sessionId: string, parentSessionId: string | n
     toast.error('Reconnect before moving this chat.');
     return false;
   }
-  const result = await invokeOperation<MoveResult>(hub, 'session.parent.set', {
-    sessionId,
-    parentSessionId,
-  });
-  if (!result.accepted) toast.error(result.message);
-  return result.accepted;
+  try {
+    const result = await invokeOperation<MoveResult>(hub, 'session.parent.set', {
+      sessionId,
+      parentSessionId,
+    });
+    if (!result.accepted) toast.error(result.message);
+    return result.accepted;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Could not move this chat.');
+    return false;
+  }
 }
 
 export function MoveSessionDialog({
