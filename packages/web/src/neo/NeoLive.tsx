@@ -4,7 +4,6 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { connectionState } from '../lib/state.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
-import { HyperNeoMark } from '../components/HyperNeoMark.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -305,9 +304,13 @@ export function NeoLive() {
           type="button"
           onClick={() => open()}
           aria-label="Back to Neo"
-          class="neo-float-logo"
+          class="neo-float-link text-fg-muted transition-colors hover:text-accent"
         >
-          <HyperNeoMark />
+          <svg viewBox="0 0 144 377" class="h-5 w-auto" fill="currentColor" aria-hidden="true">
+            <rect x="0" y="0" width="55" height="377" rx="5.5" />
+            <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
+            <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
+          </svg>
         </button>
         {sheet && workCount > 0 && (
           <button
