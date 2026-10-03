@@ -833,7 +833,7 @@ export default function ChatContainer({
     },
   });
 
-  const removedOutputs = session?.metadata?.removedOutputs || [];
+  const removedOutputs = session?.metadata?.removedOutputs;
   const messagesWithBackgroundTasks = useMemo(
     () => [...messages, ...backgroundTaskMessages],
     [messages, backgroundTaskMessages]
