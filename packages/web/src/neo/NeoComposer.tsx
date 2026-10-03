@@ -241,6 +241,9 @@ export function NeoComposer({
                     ? 'Return adds a line · Tap the arrow to send'
                     : 'Enter to send · Shift + Enter for a new line'}
         </span>
+        <span class="hidden min-w-0 flex-1 truncate text-center text-[10px] text-fg-faint lg:block">
+          Neo holds the context. HyperNeo does the work. You stay in control.
+        </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice
             sessionId={sessionId}

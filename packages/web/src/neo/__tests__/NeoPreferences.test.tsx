@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelInfo } from '@hyperneo/shared';
@@ -105,7 +105,7 @@ describe('Neo preferences', () => {
     expect(screen.queryByRole('button', { name: 'Think 16k', exact: true })).toBeNull();
     expect(screen.getByText('Not available for this model')).toBeTruthy();
   });
-  it('opens a parked concerns card and routes into its existing context', () => {
+  it('routes a parked concern from the work-surface section into its context', () => {
     const onOpen = vi.fn();
     render(
       <NeoConcerns
@@ -124,13 +124,9 @@ describe('Neo preferences', () => {
         onOpen={onOpen}
       />
     );
-    const trigger = screen.getByRole('button', { name: 'Your concerns · 1' });
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(trigger);
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'Book club Eight people' }));
+    const section = screen.getByRole('region', { name: 'Your concerns' });
+    fireEvent.click(within(section).getByRole('button', { name: 'Book club Eight people' }));
     expect(onOpen).toHaveBeenCalledWith('club');
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
   it('filters models, shows no matches, supports arrow keys and restores focus on Escape', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);

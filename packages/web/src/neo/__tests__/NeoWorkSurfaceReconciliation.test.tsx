@@ -37,6 +37,9 @@ beforeEach(async () => {
       disconnect() {}
     }
   );
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
 
@@ -125,8 +128,7 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(screen.queryByRole('region', { name: 'Work without a message here' })).toBeNull();
     expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: /Your concerns/ }));
-    const panel = screen.getByRole('complementary', { name: 'Your concerns' });
+    const panel = screen.getByRole('region', { name: 'Your concerns' });
     expect(within(panel).queryByRole('button', { name: 'Draft the agenda' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
@@ -154,10 +156,9 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(act).not.toHaveBeenCalled();
   });
 
-  it('keeps orphan decisions on their actionable scene, not an empty concerns panel', () => {
+  it('keeps orphan decisions on their actionable scene, not an empty concerns section', () => {
     const { act } = mount('ask', false);
-    expect(screen.queryByRole('button', { name: /Work in flight|Your concerns/ })).toBeNull();
-    expect(screen.queryByRole('complementary', { name: 'Your concerns' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Your concerns' })).toBeNull();
     const attention = screen.getByRole('region', { name: 'Needs your attention' });
     expect(within(attention).getByRole('article', { name: 'Draft the agenda' })).toBeTruthy();
     fireEvent.click(within(attention).getByRole('button', { name: 'Not now' }));

@@ -1,12 +1,9 @@
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { useState } from 'preact/hooks';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import { NeoConcernBoardPanel } from './NeoConcernBoard.tsx';
-import { neoRequestConsultationProgress, projectNeoRequestSnapshot } from './request-board.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
@@ -32,14 +29,12 @@ function PublicEntry({
   onOpenAuthor,
   onOpenScene,
   canOpenScene,
-  snapshot,
 }: {
   entry: NeoPublicEntry;
   authors?: ReadonlyMap<string, string>;
   onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  snapshot?: NeoSnapshot | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const ask = entry.kind === 'ask' ? entry.ask : null;
@@ -55,9 +50,6 @@ function PublicEntry({
       ? 'Neo'
       : authors?.get(producer) || 'Context holder';
   const replyTo = entry.kind === 'publication' ? entry.replyTo : null;
-  const checks = ask
-    ? neoRequestConsultationProgress(projectNeoRequestSnapshot(snapshot ?? null, ask.askOrigin))
-    : [];
   return (
     <article
       id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
@@ -189,26 +181,6 @@ function PublicEntry({
           disabled={!text.trim()}
         />
       </div>
-      {checks.map((check) => (
-        <p
-          key={check.id}
-          role="status"
-          aria-live="polite"
-          class="mt-2 flex items-center justify-end gap-2 text-xs text-fg-muted"
-        >
-          {check.status === 'pending' && (
-            <span class="neo-progress-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          )}
-          {check.label}
-        </p>
-      ))}
-      {ask && snapshot && (
-        <NeoConcernBoardPanel snapshot={snapshot} concernId={null} requestOrigin={ask.askOrigin} />
-      )}
     </article>
   );
 }
@@ -219,7 +191,6 @@ export function NeoPublicConversation({
   onOpenAuthor,
   onOpenScene,
   canOpenScene,
-  snapshot,
   onRetry,
   onLoadEarlier,
 }: {
@@ -228,7 +199,6 @@ export function NeoPublicConversation({
   onOpenAuthor?: (sessionId: string) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  snapshot?: NeoSnapshot | null;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
@@ -269,7 +239,6 @@ export function NeoPublicConversation({
           onOpenAuthor={onOpenAuthor}
           onOpenScene={onOpenScene}
           canOpenScene={canOpenScene}
-          snapshot={snapshot}
         />
       ))}
       {conversation.hasMore && onRetry && (

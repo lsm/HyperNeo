@@ -108,20 +108,20 @@ function mount(publicMode = true) {
 }
 
 describe('Neo desktop panes', () => {
-  it('keeps list and full detail beside the same chat and composer through a full open/back cycle', async () => {
+  it('keeps the chat and the open scene detail in separate panes through a full open/back cycle', async () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
+    const surface = screen.getByRole('complementary', { name: 'Work surface' });
     const list = screen.getByRole('region', { name: 'Work scenes' });
     expect(chat.parentElement).toBe(main);
-    expect(list.parentElement).toBe(main);
+    expect(surface.contains(list)).toBe(true);
     const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
     const opener = screen.getByRole('button', { name: 'View details for Fictional result' });
     fireEvent.click(opener);
     const detail = screen.getByRole('region', { name: 'Selected work' });
-    expect(detail.parentElement).toBe(main);
-    expect(detail.classList.contains('neo-scene-detail')).toBe(true);
+    expect(surface.contains(detail)).toBe(true);
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Keep my fictional draft');
@@ -144,7 +144,7 @@ describe('Neo desktop panes', () => {
     );
   });
 
-  it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
+  it('keeps the chat scroll owner at the desktop boundary regardless of scene count', () => {
     const { container, model } = mount();
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
@@ -166,29 +166,16 @@ describe('Neo desktop panes', () => {
       };
     });
     expect(chat.scrollTop).toBe(50);
-    vi.stubGlobal('innerWidth', 1119);
-    act(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
-    main.scrollTop = 2000;
-    fireEvent.scroll(main);
-    act(() => {
-      model.value = {
-        ...model.value,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          entries: [{ key: 'fictional' }, { key: 'next' }],
-        },
-      };
-    });
-    expect(main.scrollTop).toBe(2000);
-    expect(chat.scrollTop).toBe(50);
   });
 
-  it('does not enable the new layout for legacy SDK conversations', () => {
-    const { container } = mount(false);
-    expect(container.querySelector('.neo-public-layout')).toBeNull();
-    expect(container.querySelector('.neo-has-scenes')).toBeNull();
+  it('keeps the work-surface sections out of the chat flow on desktop', () => {
+    const { container } = mount();
+    const chat = container.querySelector('.neo-chat-rail')!;
+    for (const name of ['Needs your attention', 'In progress', 'Recent outcomes']) {
+      expect(chat.contains(screen.getByRole('region', { name }))).toBe(false);
+    }
+    expect(chat.textContent).not.toContain('Needs your attention');
+    expect(chat.textContent).not.toContain('Recent outcomes');
   });
 
   it('uses the CSS media match when scrollbars disagree with innerWidth', () => {
@@ -218,84 +205,59 @@ describe('Neo desktop panes', () => {
     ).toBeTruthy();
   });
 
-  it('scopes the three independent scroll panes and joint motion to 1120px desktop public mode', () => {
+  it('keeps the work surface pinned at desktop widths and off to the right on mobile', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const desktop = css.split('@media (min-width: 1120px) {')[1]?.split('@media')[0];
     expect(desktop).toBeTruthy();
-    expect(desktop).toContain('grid-template-rows: minmax(0, 1fr);');
-    for (const selector of ['.neo-chat-rail', '.neo-scene-list', '.neo-scene-detail'])
-      expect(desktop).toContain(`.neo-public-layout.neo-has-scenes ${selector}`);
-    expect(desktop).toMatch(/\.neo-chat-rail \{[^}]*overflow-y: auto;/);
-    expect(desktop).toMatch(/\.neo-scene-detail \{[^}]*overflow-y: auto;/);
-    expect(desktop).toMatch(/\.neo-scene-list \{[^}]*grid-column: 2;/);
-    expect(desktop).toMatch(/\.neo-scene-detail \{[^}]*grid-column: 3;/);
-    expect(desktop).toMatch(/\.neo-composer-dock \{[^}]*width: var\(--neo-chat-width\);/);
-    expect(css).toContain('@media (min-width: 1120px) and (prefers-reduced-motion: no-preference)');
-    expect(css).not.toContain('pointer: coarse');
-  });
-
-  it('retains composer clearance for narrow and legacy detail cards', () => {
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const shared = css.split('@media (min-width: 1120px) {')[0];
-    expect(shared).toMatch(
-      /\.neo-scene-list,\s*\.neo-scene-detail \{[^}]*padding: 0 20px calc\(var\(--neo-composer-height, 190px\) \+ 32px\);/
-    );
-    expect(shared).not.toMatch(/\.neo-scene-detail \{[^}]*padding-bottom: 0;/);
-    expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 16px 32px;');
-  });
-
-  it('removes intermediate chat clearance only when real scene cards follow', () => {
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const shared = css.split('@media (min-width: 1120px) {')[0];
-    expect(shared).toMatch(
-      /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
-    );
-    expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/);
-    expect(shared).toMatch(/\.neo-scene-detail \{[^}]*padding: 0 20px calc\(/);
-    expect(css.split('@media (min-width: 1120px) {')[1]).toMatch(
-      /\.neo-chat-rail \{[^}]*padding: 68px 24px calc\(/
-    );
-  });
-
-  it('restores public popover surface and offsets independently of the wide legacy sidebar', () => {
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const desktop = css.split('@media (min-width: 1120px) {')[1];
+    expect(desktop).toContain('.neo-surface-trigger');
+    expect(desktop).toMatch(/\.neo-work-surface \{[^}]*translateX\(0\);/s);
     expect(desktop).toMatch(
-      /\.neo-public-layout \.neo-concerns-card\.is-open \{\s*top: 64px;\s*right: 8px;\s*width: min\(300px, calc\(100vw - 40px\)\);\s*background: var\(--surface-raised\);\s*box-shadow: 0 12px 36px color-mix\(in srgb, var\(--bg\) 35%, transparent\);\s*\}/
+      /\.neo-chat-rail,\s*\.neo-composer-rail \{[^}]*width: calc\(100% - 340px\);/s
     );
-    expect(css.split('@media (min-width: 1180px) {')[1]).toContain('box-shadow: none;');
+    const narrow = css.split('@media (max-width: 1119px) {')[1]?.split('@media')[0];
+    expect(narrow).toBeTruthy();
+    expect(narrow).toMatch(/\.neo-surface-open \.neo-work-surface \{[^}]*translateX\(0\);/s);
+    expect(css).not.toContain('neo-mobile-detail');
   });
 
-  it('transfers a reader’s normalized position across viewport and scene-count owner changes', () => {
-    const { container, model } = mount();
+  it('retains composer clearance for the chat rail and the work surface body', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    const shared = css.split('@media (min-width: 1120px) {')[0];
+    expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/s);
+    expect(shared).toMatch(
+      /\.neo-work-surface-body \{[^}]*padding: 12px 16px calc\(var\(--neo-composer-height, 190px\) \+ 24px\);/s
+    );
+    expect(css.split('@media (min-width: 1120px) {')[1]).toContain('padding: 68px 24px calc(');
+  });
+
+  it('keeps the work surface and backdrop from using an unsupported blur', () => {
+    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
+    expect(css).not.toContain('neo-concerns-card');
+    expect(css).not.toMatch(/\.neo-work-surface \{[^}]*backdrop-filter/);
+    expect(css).toContain('@supports not (backdrop-filter: blur(1px))');
+    expect(css).toContain('.neo-work-surface-backdrop');
+  });
+
+  it('keeps the chat as the scroll owner on both sides of the desktop boundary', () => {
+    const { container } = mount();
     const main = container.querySelector('main')!;
-    const chat = container.querySelector('.neo-chat-rail')!;
-    Object.defineProperties(chat, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
+    const surface = container.querySelector<HTMLElement>('.neo-work-surface-body')!;
     Object.defineProperties(main, { scrollHeight: { value: 2000 }, clientHeight: { value: 500 } });
-    const view = model.value.viewSnapshot;
-    act(() => {
-      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
+    Object.defineProperties(surface, {
+      scrollHeight: { value: 1200 },
+      clientHeight: { value: 400 },
     });
-    main.scrollTop = 375;
-    fireEvent.scroll(main);
-    main.scrollTop = 0;
-    act(() => {
-      model.value = { ...model.value, viewSnapshot: view };
-    });
-    expect(chat.scrollTop).toBe(200);
     vi.stubGlobal('innerWidth', 1119);
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
-    expect(main.scrollTop).toBe(375);
+    main.scrollTop = 750;
+    fireEvent.scroll(main);
     vi.stubGlobal('innerWidth', 1120);
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
-    expect(chat.scrollTop).toBe(200);
-    act(() => {
-      model.value = { ...model.value, viewSnapshot: { ...view, work: [] } };
-    });
-    expect(main.scrollTop).toBe(375);
+    expect(surface.scrollTop).toBe(0);
+    expect(main.scrollTop).toBe(750);
   });
 });

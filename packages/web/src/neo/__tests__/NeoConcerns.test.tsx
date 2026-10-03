@@ -57,7 +57,7 @@ describe('prioritizedConcerns', () => {
 });
 
 describe('NeoConcerns', () => {
-  it('shows one parked attention cue per concern and still opens the selected holder', () => {
+  it('shows one parked attention cue per concern and opens the holder from the work surface', () => {
     const onOpen = vi.fn();
     render(
       <NeoConcerns
@@ -67,15 +67,10 @@ describe('NeoConcerns', () => {
         onOpen={onOpen}
       />
     );
-    const trigger = screen.getByRole('button', {
-      name: 'Your concerns · 2 · 1 thing needs your call',
-    });
-    fireEvent.click(trigger);
-    const list = screen.getByRole('complementary', { name: 'Your concerns' });
-    expect(within(list).getByText('1 thing needs your call')).toBeTruthy();
-    expect(within(list).getByText('Your call')).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: /Book club/ }));
+    const section = screen.getByRole('region', { name: 'Your concerns' });
+    expect(within(section).getByText('1 thing needs your call')).toBeTruthy();
+    expect(within(section).getByText('Your call')).toBeTruthy();
+    fireEvent.click(within(section).getByRole('button', { name: /Book club/ }));
     expect(onOpen).toHaveBeenCalledWith('Book club');
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 });

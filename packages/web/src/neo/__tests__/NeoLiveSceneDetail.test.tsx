@@ -50,6 +50,9 @@ beforeEach(async () => {
     },
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1120px)',
+  }));
   vi.doMock('../../lib/connection-manager.ts', () => ({
     connectionManager: {
       getHub: async () => {

@@ -145,98 +145,68 @@ describe('Neo mobile work detail', () => {
     }
   );
 
-  it('pushes only the visible detail while retaining the conversation, reader, draft and native actions', () => {
+  it('opens detail inside the work surface while retaining the conversation, draft and native actions', () => {
     const { container, model } = mount();
     const chat = container.querySelector('.neo-chat-rail')!;
-    const main = container.querySelector('main')!;
-    const list = screen.getByRole('region', { name: 'Work scenes' });
     const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
-    const pane = container.querySelector('.neo-mobile-detail')!;
+    const surface = screen.getByRole('complementary', { name: 'Work surface' });
     const opener = screen.getByRole('button', { name: 'Fictional one' });
-    main.scrollTop = 143;
     fireEvent.input(draft, { target: { value: 'Fictional unsent draft' } });
     fireEvent.click(opener);
     const detail = screen.getByRole('region', { name: 'Selected work' });
-    expect(detail).toBe(pane);
+    expect(surface.contains(detail)).toBe(true);
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
-    for (const element of [
-      chat,
-      list,
-      draft.closest('footer')!,
-      container.querySelector('header')!,
-    ]) {
-      expect(element.hasAttribute('inert')).toBe(true);
-      expect(element.getAttribute('inert')).toBe('');
-    }
-    expect(main.scrollTop).toBe(143);
-    main.scrollTop = 0;
-    fireEvent.scroll(main);
-    expect(detail.querySelector('button')).toBe(document.activeElement);
+    expect(chat.hasAttribute('inert')).toBe(false);
     expect(model.value.act).not.toHaveBeenCalled();
     fireEvent.click(within(detail).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('one', 'start');
     fireEvent.click(within(detail).getByRole('button', { name: 'Back to scenes' }));
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    expect(container.querySelector('.neo-mobile-detail')).toBe(pane);
-    expect(pane.hasAttribute('inert')).toBe(true);
-    expect(pane.classList.contains('neo-scene-detail')).toBe(false);
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Fictional unsent draft');
-    expect(main.scrollTop).toBe(143);
-    expect(chat.hasAttribute('inert')).toBe(false);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Fictional one' }));
+    expect(document.activeElement).toBe(opener);
   });
 
-  it('releases background controls at the real desktop boundary without remounting the selected card', () => {
+  it('reveals the work surface by swipe from the right edge and hides it on rightward swipe', () => {
     const { container } = mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Fictional one' }));
-    const card = within(screen.getByRole('region', { name: 'Selected work' })).getByRole('article');
-    const chat = container.querySelector('.neo-chat-rail')!;
-    vi.stubGlobal('innerWidth', 1120);
-    act(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
-    expect(chat.hasAttribute('inert')).toBe(false);
-    expect(within(screen.getByRole('region', { name: 'Selected work' })).getByRole('article')).toBe(
-      card
+    const shell = container.querySelector('.neo-shell')!;
+    const surface = screen.getByRole('complementary', { name: 'Work surface' });
+    expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(
+      false
     );
-    vi.stubGlobal('innerWidth', 1119);
-    act(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
-    expect(chat.hasAttribute('inert')).toBe(true);
-    expect(within(screen.getByRole('region', { name: 'Selected work' })).getByRole('article')).toBe(
-      card
+    const touch = (type: 'touchstart' | 'touchend', x: number, y: number) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, type === 'touchstart' ? 'touches' : 'changedTouches', {
+        value: [{ clientX: x, clientY: y }],
+      });
+      return event;
+    };
+    fireEvent(shell, touch('touchstart', 388, 400));
+    fireEvent(shell, touch('touchend', 340, 400));
+    expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(true);
+    expect(surface.getAttribute('aria-label')).toBe('Work surface');
+    fireEvent(shell, touch('touchstart', 120, 400));
+    fireEvent(shell, touch('touchend', 240, 400));
+    expect(container.querySelector('.neo-shell')!.classList.contains('neo-surface-open')).toBe(
+      false
     );
   });
 
-  it('clears an obsolete detail and restores reachable controls when the conversation scope changes', () => {
-    const { container, model } = mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Fictional one' }));
-    act(() => {
-      model.value = { ...model.value, selectedId: 'another-context' };
-    });
-    expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    expect(container.querySelector('.neo-chat-rail')!.hasAttribute('inert')).toBe(false);
-    expect(screen.getByRole('textbox', { name: 'Draft' })).toBeTruthy();
+  it('keeps the top-right trigger with an attention badge at mobile widths', () => {
+    mount();
+    const trigger = screen.getByRole('button', { name: /Work surface/ });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('keeps narrow motion, own detail scrolling and reduced-motion behavior separate from desktop panes', () => {
+  it('positions the work surface as a right-edge view with reduced-motion support', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const narrow = css.split('@media (max-width: 1119px) {')[1]!.split('@media')[0]!;
-    expect(narrow).toMatch(
-      /\.neo-public-layout \.neo-mobile-detail \{[^}]*position: absolute;[^}]*inset: 0;[^}]*overflow-y: auto;[^}]*transform: translateX\(100%\);[^}]*visibility: hidden;/
+    expect(css).toMatch(
+      /\.neo-work-surface \{[^}]*position: absolute;[^}]*right: 0;[^}]*translateX\(100%\);[^}]*visibility: hidden;/s
     );
-    expect(narrow).toMatch(
-      /\.neo-detail-open \.neo-mobile-detail \{[^}]*transform: translateX\(0\);[^}]*visibility: visible;/
-    );
-    expect(narrow).toContain('.neo-detail-open .neo-chat-rail,');
-    expect(narrow).toContain('.neo-detail-open .neo-scene-list,');
-    expect(narrow).toMatch(
-      /\.neo-detail-open \.neo-composer-dock \{[^}]*transform: translateX\(-100%\);/
-    );
-    expect(narrow).not.toContain('transition:');
-    expect(css).toContain('@media (max-width: 1119px) and (prefers-reduced-motion: no-preference)');
-    expect(css).not.toContain('pointer: coarse');
+    expect(css).toMatch(/@media \(max-width: 1119px\) \{[^}]*\.neo-surface-open \.neo-work-surface/s);
+    expect(css).not.toContain('neo-mobile-detail');
+    expect(css).not.toContain('neo-concerns-card');
   });
 });

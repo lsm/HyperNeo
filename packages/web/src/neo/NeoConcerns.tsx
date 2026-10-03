@@ -1,6 +1,4 @@
 import type { NeoConcern, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import { useRef, useState } from 'preact/hooks';
-import { useClickOutside } from '../hooks/useClickOutside.ts';
 import { NeoIcon, concernColor } from './NeoIcon.tsx';
 
 type Attention = 'decision' | 'working' | 'checking' | null;
@@ -53,97 +51,51 @@ export function NeoConcerns({
   selectedId: string | null;
   onOpen: (id: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useClickOutside(ref, () => setExpanded(false), expanded);
   const ordered = prioritizedConcerns(concerns, works, consultations);
   const decisionCount = ordered.filter((item) => item.attention === 'decision').length;
   const decisionLabel =
     decisionCount === 1 ? '1 thing needs your call' : `${decisionCount} things need your call`;
   if (!concerns.length) return null;
   return (
-    <div ref={ref} class="neo-concerns">
-      <button
-        ref={trigger}
-        type="button"
-        class="neo-concerns-trigger relative rounded-xl border border-accent/20 bg-accent/10 p-2 text-accent hover:bg-accent/20"
-        aria-label={`Your concerns · ${concerns.length}${decisionCount ? ` · ${decisionLabel}` : ''}`}
-        aria-expanded={expanded}
-        aria-controls="neo-concerns-list"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <NeoIcon name="context" />
-        {decisionCount > 0 && (
-          <span
-            aria-hidden="true"
-            class="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-warning"
-          />
-        )}
-        <span class="absolute -right-1 -top-1 rounded-full bg-accent px-1.5 text-[10px] text-accent-fg">
-          {concerns.length}
-        </span>
-      </button>
-      <aside
-        id="neo-concerns-list"
-        aria-label="Your concerns"
-        class={`neo-concerns-card ${expanded ? 'is-open' : ''}`}
-      >
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <div>
-            <h2 class="text-xs font-medium text-fg-muted">
-              {concerns.length} {concerns.length === 1 ? 'thing' : 'things'} I’m holding for you
-            </h2>
-            {decisionCount > 0 && <p class="mt-1 text-xs text-warning">{decisionLabel}</p>}
-          </div>
+    <section aria-label="Your concerns" class="neo-work-concerns">
+      <div>
+        <h2 class="text-xs font-medium text-fg-muted">
+          {concerns.length} {concerns.length === 1 ? 'thing' : 'things'} I’m holding for you
+        </h2>
+        {decisionCount > 0 && <p class="mt-1 text-xs text-warning">{decisionLabel}</p>}
+      </div>
+      <div class="mt-3 space-y-2">
+        {ordered.map(({ concern, attention }) => (
           <button
+            key={concern.id}
             type="button"
-            class="neo-concerns-trigger rounded-lg p-1 text-fg-muted hover:bg-fill-soft"
-            aria-label="Close concerns"
-            onClick={() => {
-              setExpanded(false);
-              trigger.current?.focus();
-            }}
+            aria-current={concern.id === selectedId ? 'page' : undefined}
+            onClick={() => onOpen(concern.id)}
+            class="flex w-full items-start gap-3 rounded-xl p-2 text-left transition-colors hover:bg-fill-soft aria-[current=page]:bg-accent/10"
           >
-            <NeoIcon name="close" />
-          </button>
-        </div>
-        <div class="space-y-2">
-          {ordered.map(({ concern, attention }) => (
-            <button
-              key={concern.id}
-              type="button"
-              aria-current={concern.id === selectedId ? 'page' : undefined}
-              onClick={() => {
-                setExpanded(false);
-                onOpen(concern.id);
-              }}
-              class="group flex w-full items-start gap-3 rounded-xl p-2 text-left transition-colors hover:bg-fill-soft aria-[current=page]:bg-accent/10"
-            >
-              <span class={`rounded-lg p-2 ${concernColor(concern.id)}`}>
-                <NeoIcon name="context" />
-              </span>
-              <span class="min-w-0">
-                <span class="block break-words text-sm font-medium">{concern.title}</span>
-                {attention && (
-                  <span
-                    class={`mt-1 block text-[11px] font-medium ${attention === 'decision' ? 'text-warning' : 'text-accent'}`}
-                  >
-                    {attention === 'decision'
-                      ? 'Your call'
-                      : attention === 'working'
-                        ? 'Work underway'
-                        : 'Checking context'}
-                  </span>
-                )}
-                <span class="mt-1 line-clamp-3 text-xs leading-relaxed text-fg-muted">
-                  {concern.summary}
+            <span class={`rounded-lg p-2 ${concernColor(concern.id)}`}>
+              <NeoIcon name="context" />
+            </span>
+            <span class="min-w-0">
+              <span class="block break-words text-sm font-medium">{concern.title}</span>
+              {attention && (
+                <span
+                  class={`mt-1 block text-[11px] font-medium ${attention === 'decision' ? 'text-warning' : 'text-accent'}`}
+                >
+                  {attention === 'decision'
+                    ? 'Your call'
+                    : attention === 'working'
+                      ? 'Work underway'
+                      : 'Checking context'}
                 </span>
+              )}
+              <span class="mt-1 line-clamp-3 text-xs leading-relaxed text-fg-muted">
+                {concern.summary}
               </span>
-            </button>
-          ))}
-        </div>
-      </aside>
-    </div>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }

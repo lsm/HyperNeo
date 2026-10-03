@@ -455,22 +455,18 @@ describe('NeoLive durable conversation activation', () => {
     };
     render(<NeoLive />);
     const original = askArticle('root-ask');
-    expect(within(original).getByRole('status').textContent).toBe(
-      'Checking Fictional research’s context…'
-    );
-    expect(within(askArticle('holder-ask')).queryByRole('status')).toBeNull();
-    toggle(within(original).getByText('How this is being handled').closest('details')!);
-    const board = await within(original).findByRole('region', { name: 'Concern board' });
-    expect(within(board).getByText('Checking root-ask')).toBeTruthy();
-    expect(within(board).queryByText('Checking holder-ask')).toBeNull();
+    expect(within(original).queryByRole('status')).toBeNull();
+    expect(screen.queryByText('How this is being handled')).toBeNull();
+    const running = screen.getByRole('region', { name: 'In progress' });
+    expect(running.textContent).toContain('Checking context');
+    const concern = screen.getByRole('region', { name: 'Your concerns' });
+    fireEvent.click(within(concern).getByRole('button', { name: /Fictional research/ }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'daemon.snapshot',
-        input: { limit: 50, includeArchived: false },
+        name: 'neo.open',
+        input: { concernId: 'a' },
       })
     );
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() => expect(within(askArticle('holder-ask')).getByRole('status')).toBeTruthy());
     expect(within(askArticle('root-ask')).queryByRole('status')).toBeNull();
   });
 

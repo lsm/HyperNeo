@@ -102,8 +102,8 @@ const renderLive = () => {
 };
 
 const banner = () => screen.getByRole('banner');
-const toggle = () => screen.getByRole('button', { name: /Your concerns/ });
-const concernsList = () => screen.getByRole('complementary', { name: 'Your concerns' });
+const surface = () => screen.getByRole('complementary', { name: 'Work surface' });
+const concerns = () => screen.getByRole('region', { name: 'Your concerns' });
 
 afterEach(() => {
   cleanup();
@@ -128,20 +128,11 @@ describe('Neo floating controls', () => {
     expect(open).toHaveBeenCalledWith(null);
   });
 
-  it('drives the real concerns toggle, selection, dismissal and focus return', () => {
+  it('reveals the work surface from the top-right trigger with its attention content', () => {
     const { open } = renderLive();
-    expect(concernsList().className).not.toContain('is-open');
-    const trigger = toggle();
-    fireEvent.click(trigger);
-    const list = concernsList();
-    expect(list.className).toContain('is-open');
-    expect(within(list).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(within(list).getByRole('button', { name: /Concern a/ }));
+    expect(within(surface()).getByText('Concern a')).toBeTruthy();
+    fireEvent.click(within(concerns()).getByRole('button', { name: /Concern a/ }));
     expect(open).toHaveBeenCalledWith('a');
-    fireEvent.click(toggle());
-    fireEvent.click(within(concernsList()).getByRole('button', { name: 'Close concerns' }));
-    expect(concernsList().className).not.toContain('is-open');
-    expect(document.activeElement).toBe(toggle());
   });
 
   it('keeps the Open HyperNeo native link attributes', () => {
@@ -151,31 +142,24 @@ describe('Neo floating controls', () => {
     expect(link.getAttribute('rel')).toBe('noreferrer');
   });
 
-  it('keeps draft and selected work intact while the controls are used', () => {
+  it('keeps draft and selected work intact while the work surface is used', () => {
     renderLive();
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
     fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
     expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
     expect(screen.queryByText('Conversation body')).toBeTruthy();
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
-    expect(screen.getByRole('region', { name: 'Selected work' })).toBeTruthy();
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     fireEvent.click(screen.getByRole('button', { name: 'Back to scenes' }));
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
   });
 
-  it('keeps one selected card through a real concerns round trip', () => {
+  it('keeps one selected card while the work surface shows its concerns', () => {
     renderLive();
     fireEvent.click(screen.getByRole('button', { name: 'Title w' }));
     const region = screen.getByRole('region', { name: 'Selected work' });
     const card = within(region).getByRole('article', { name: 'Title w' });
-    fireEvent.click(toggle());
-    expect(within(concernsList()).getByText('Concern a')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close concerns' }));
-    expect(document.activeElement).toBe(toggle());
+    expect(within(concerns()).getByText('Concern a')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Selected work' })).toBe(region);
     expect(within(region).getByRole('article', { name: 'Title w' })).toBe(card);
     expect(screen.getAllByRole('article', { name: 'Title w' })).toHaveLength(1);
@@ -192,22 +176,17 @@ describe('Neo floating controls', () => {
     await waitFor(() => expect(event.defaultPrevented).toBe(true));
   });
 
-  it('styles the dock from theme tokens with bounded blur, solid fallback and a 44px target', () => {
+  it('styles the dock and work surface from theme tokens with bounded blur and a 44px target', () => {
     const css = readFileSync('src/neo/neo.css', 'utf8');
     expect(css).toContain('color-mix(in srgb, var(--surface-raised) 82%, transparent)');
     expect(css).toContain('backdrop-filter: blur(8px)');
     expect(css).toContain('@supports not (backdrop-filter: blur(1px))');
     expect(css).toContain('outline: 2px solid var(--focus-ring)');
-    expect(css).toMatch(
-      /\.neo-float-actions > \.neo-concerns > \.neo-concerns-trigger\s*\{\s*min-height: 44px;\s*min-width: 44px;/
-    );
-    expect(css).toMatch(/\.neo-concerns-card\s*\{[^}]*top: 64px;[^}]*right: 8px;/);
-    const wideCss = css.slice(css.indexOf('@media (min-width: 1180px)'));
-    expect(wideCss).toMatch(
-      /\.neo-concerns-card\s*\{[^}]*top: 88px;[^}]*right: calc\(max\(24px, calc\(\(100vw - 1160px\) \/ 2\)\) - 12px\);/
-    );
+    expect(css).toMatch(/\.neo-surface-trigger\s*\{[^}]*min-height: 44px;[^}]*min-width: 44px;/s);
+    expect(css).toMatch(/\.neo-work-surface\s*\{[^}]*translateX\(100%\)/s);
+    expect(css).toMatch(/\.neo-surface-open \.neo-work-surface\s*\{[^}]*translateX\(0\)/s);
     expect(css).toContain('padding-top: 68px');
-    expect(css).toContain('.neo-float-actions > .neo-concerns > .neo-concerns-trigger:not(:hover)');
-    expect(css).not.toMatch(/\.neo-concerns-card[^{]*\{[^}]*backdrop-filter/);
+    expect(css).not.toMatch(/\.neo-work-surface[^{]*\{[^}]*backdrop-filter/);
+    expect(css).not.toContain('.neo-concerns-card');
   });
 });

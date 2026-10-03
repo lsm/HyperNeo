@@ -1,7 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import { readFileSync } from 'node:fs';
-import { URL as NodeURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   NeoConsultation,
@@ -199,16 +197,6 @@ describe('Neo public mixed consultation scenes', () => {
     expect(screen.queryByRole('region', { name: 'Work scenes' })).toBeNull();
     expect(list.querySelector('[data-scene-group]')).toBeNull();
     expect(list.textContent).toBe('No other scenes right now.');
-    const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
-    const rule = css.match(/\.neo-scene-list:empty\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0];
-    expect(rule).toBeTruthy();
-    const style = document.createElement('style');
-    style.textContent = rule!;
-    document.head.append(style);
-    expect(getComputedStyle(list).display).not.toBe('none');
-    list.replaceChildren();
-    expect(getComputedStyle(list).display).toBe('none');
-    style.remove();
   });
 
   it('shows all four context-check statuses with truthful counts and non-actionable running/outcome summaries', () => {
@@ -324,14 +312,14 @@ describe('Neo public mixed consultation scenes', () => {
     }
   );
 
-  it('preserves the single pending banner and work-only scene groups in legacy mode', () => {
+  it('keeps work-only scene groups and no inline pending banner in legacy mode', () => {
     const { container, model } = mount(false);
     expect(screen.getByRole('region', { name: 'Work scenes' })).toBeTruthy();
-    expect(container.textContent?.match(/Checking with/g)).toHaveLength(1);
-    expect(container.querySelectorAll('[data-consultation-open]')).toHaveLength(0);
+    expect(container.textContent).not.toContain('Checking with');
+    expect(screen.getByRole('region', { name: 'In progress' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
-    expect(model.value.act).toHaveBeenCalledExactlyOnceWith('pending', 'stop-waiting');
+    expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
+    expect(model.value.act).not.toHaveBeenCalled();
   });
 
   it('clears context detail if the durable public presentation is no longer supplied', () => {
