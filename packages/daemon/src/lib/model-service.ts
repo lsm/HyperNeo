@@ -860,6 +860,23 @@ function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[
 
 const PROVIDER_MODEL_LOAD_TIMEOUT_MS = 10_000;
 
+const refreshPreview = new Map<string, ModelInfo[]>();
+const refreshPreviewListeners = new Set<() => void>();
+
+function notifyRefreshPreview(): void {
+  const listeners = [...refreshPreviewListeners];
+  refreshPreviewListeners.clear();
+  for (const listener of listeners) listener();
+}
+
+export function getRefreshPreviewModels(): ModelInfo[] {
+  return filterModelsByCuration([...refreshPreview.values()].flat());
+}
+
+export function waitForRefreshPreview(): Promise<void> {
+  return new Promise((resolve) => refreshPreviewListeners.add(resolve));
+}
+
 async function loadProviderModelsBounded(
   provider: Provider,
   options?: { forceRemote?: boolean }
@@ -925,9 +942,20 @@ async function loadModelsFromProviders(options?: {
   const providers = getAvailableProviders();
   const loadSeq = ++modelLoadSequence;
 
+  refreshPreview.clear();
   const results = await Promise.allSettled(
-    providers.map((provider) => loadProviderModelsBounded(provider, options))
+    providers.map((provider) =>
+      loadProviderModelsBounded(provider, options).then((result) => {
+        if (result.status === 'loaded' && result.models.length > 0) {
+          refreshPreview.set(provider.id, filterProviderModels(provider.id, result.models));
+          notifyRefreshPreview();
+        }
+        return result;
+      })
+    )
   );
+  refreshPreview.clear();
+  notifyRefreshPreview();
 
   const cachedModels = modelsCache.get('global') ?? [];
   const { outcomes, forcedDiscoveryError } = classifyProviderLoadOutcomes(
@@ -1299,7 +1327,10 @@ export async function initializeModels(): Promise<void> {
 
   const refreshPromise = (async () => {
     initializeProviders();
-    await waitForOptionalProviderRegistration();
+    await raceWithTimeout(
+      waitForOptionalProviderRegistration(),
+      PROVIDER_MODEL_LOAD_TIMEOUT_MS
+    ).catch(() => {});
     if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
       return;
     }

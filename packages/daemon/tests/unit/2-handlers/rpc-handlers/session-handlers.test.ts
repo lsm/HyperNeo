@@ -227,6 +227,50 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
   });
 
+  it('returns the providers that answered first while a slow provider is still loading', async () => {
+    let releaseSlow: () => void = () => {};
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const provider = (id: string, getModels: () => Promise<ModelInfo[]>) =>
+      ({
+        id,
+        displayName: id,
+        isAvailable: () => true,
+        getModels,
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      }) as unknown as Provider;
+    const model = (provider: string, id: string) =>
+      ({ id, name: id, provider, contextWindow: 128_000 }) as ModelInfo;
+    getProviderRegistry().register(
+      provider('fast-provider', async () => [model('fast-provider', 'fast-1')])
+    );
+    getProviderRegistry().register(
+      provider('slow-provider', async () => {
+        await slowGate;
+        return [model('slow-provider', 'slow-1')];
+      })
+    );
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const first = (await handler({ useCache: true }, {})) as { models: Array<{ id: string }> };
+    expect(first.models.map((item) => item.id)).toEqual(['fast-1']);
+    expect(eventBus.publishAsync).not.toHaveBeenCalledWith('providers.changed', {
+      sessionId: 'global',
+    });
+
+    releaseSlow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+      sessionId: 'global',
+    });
+    const full = (await handler({ useCache: true }, {})) as { models: Array<{ id: string }> };
+    expect(full.models.map((item) => item.id).sort()).toEqual(['fast-1', 'slow-1']);
+  });
+
   it('does not refresh when the cache is populated but curation leaves it empty', async () => {
     let getModelCalls = 0;
     getProviderRegistry().register({
