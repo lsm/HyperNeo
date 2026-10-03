@@ -425,7 +425,7 @@ describe('NeoLive durable conversation activation', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
-  it('keeps per-request checks and real boards attributed by both original identifiers', async () => {
+  it('keeps context checks and boards out of the ask bubbles', async () => {
     source.value = {
       ...source.value,
       consultations: ['root-ask', 'holder-ask'].map((id) => ({
@@ -454,24 +454,10 @@ describe('NeoLive durable conversation activation', () => {
       ],
     };
     render(<NeoLive />);
-    const original = askArticle('root-ask');
-    expect(within(original).getByRole('status').textContent).toBe(
-      'Checking Fictional research’s context…'
-    );
-    expect(within(askArticle('holder-ask')).queryByRole('status')).toBeNull();
-    toggle(within(original).getByText('How this is being handled').closest('details')!);
-    const board = await within(original).findByRole('region', { name: 'Concern board' });
-    expect(within(board).getByText('Checking root-ask')).toBeTruthy();
-    expect(within(board).queryByText('Checking holder-ask')).toBeNull();
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'daemon.snapshot',
-        input: { limit: 50, includeArchived: false },
-      })
-    );
-    fireEvent.click(within(publicView()).getByRole('button', { name: 'Fictional research' }));
-    await waitFor(() => expect(within(askArticle('holder-ask')).getByRole('status')).toBeTruthy());
-    expect(within(askArticle('root-ask')).queryByRole('status')).toBeNull();
+    for (const id of ['root-ask', 'holder-ask']) {
+      expect(within(askArticle(id)).queryByRole('status')).toBeNull();
+      expect(within(askArticle(id)).queryByText('How this is being handled')).toBeNull();
+    }
   });
 
   it('bases empty-state and scrolling on public entries, retaining manual reading position', async () => {

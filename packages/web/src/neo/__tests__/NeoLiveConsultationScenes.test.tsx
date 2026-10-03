@@ -142,7 +142,10 @@ function mount(publicMode = true) {
     publications: { refresh: vi.fn() },
   });
   useNeoMock.mockImplementation(() => model.value);
-  return { ...render(<NeoLive />), model };
+  const view = render(<NeoLive />);
+  const toggle = view.container.querySelector('[data-scene-toggle]');
+  if (toggle) fireEvent.click(toggle);
+  return { ...view, model };
 }
 
 const openCheck = (container: Element, id: string) => {

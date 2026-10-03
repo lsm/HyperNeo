@@ -157,7 +157,10 @@ function mount() {
     publications: { refresh: vi.fn() },
   });
   useNeoMock.mockImplementation(() => model.value);
-  return { ...render(<NeoLive />), model };
+  const view = render(<NeoLive />);
+  const toggle = view.container.querySelector('[data-scene-toggle]');
+  if (toggle) fireEvent.click(toggle);
+  return { ...view, model };
 }
 const attention = () => screen.getByRole('region', { name: 'Needs your attention' });
 const compact = () => screen.getByRole('button', { name: 'View details for Fictional work' });

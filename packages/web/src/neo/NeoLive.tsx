@@ -29,6 +29,7 @@ export function NeoLive() {
   const attachments = useNeoAttachments(neo.sessionId);
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
+  const [scenesOpen, setScenesOpen] = useState(false);
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
@@ -677,7 +678,25 @@ export function NeoLive() {
             displayedGroups.every((group) => !group.scenes.length) && (
               <p class="text-sm text-fg-muted">No other scenes right now.</p>
             )}
+          {publicConversation && narrow && !detail && workCount > 0 && (
+            <button
+              type="button"
+              data-scene-toggle
+              aria-expanded={scenesOpen}
+              onClick={() => setScenesOpen((value) => !value)}
+              class="mt-4 flex w-full items-center justify-between rounded-xl border border-line bg-surface/40 px-4 py-3 text-left text-xs text-fg-muted hover:text-accent"
+            >
+              <span>
+                {displayedGroups
+                  .filter((group) => group.scenes.length)
+                  .map((group) => `${group.label} · ${group.scenes.length}`)
+                  .join('  ·  ')}
+              </span>
+              <span>{scenesOpen ? 'Hide' : 'Show'}</span>
+            </button>
+          )}
           {(publicConversation || !detail) &&
+            (!publicConversation || !narrow || scenesOpen) &&
             displayedGroups.map((group) =>
               group.scenes.length === 0 ? null : (
                 <section
@@ -782,9 +801,6 @@ export function NeoLive() {
               }}
             />
           )}
-          <p class="mt-2 text-center text-[10px] text-fg-faint">
-            Neo holds the context. HyperNeo does the work. You stay in control.
-          </p>
         </div>
       </footer>
       <ToastContainer />

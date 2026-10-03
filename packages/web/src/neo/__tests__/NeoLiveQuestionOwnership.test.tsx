@@ -186,7 +186,10 @@ const renderLive = () => {
     publications: { refresh: vi.fn() },
   });
   useNeoMock.mockImplementation(() => model.value);
-  return { ...render(<NeoLive />), model };
+  const view = render(<NeoLive />);
+  const toggle = view.container.querySelector('[data-scene-toggle]');
+  if (toggle) fireEvent.click(toggle);
+  return { ...view, model };
 };
 const card = (id: string) => screen.getByRole('article', { name: `Title ${id}` });
 const detail = () => screen.getByRole('region', { name: 'Selected work' });

@@ -170,7 +170,6 @@ export function NeoConversation({
             }}
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
-            snapshot={snapshot}
           />
         )}
         {progress !== 'inactive' &&

@@ -80,7 +80,8 @@
 }
 
 .neo-chat-rail:has(~ .neo-scene-detail),
-.neo-chat-rail:has(~ .neo-scene-list [data-scene-group]) {
+.neo-chat-rail:has(~ .neo-scene-list [data-scene-group]),
+.neo-chat-rail:has(~ .neo-scene-list [data-scene-toggle]) {
   padding-bottom: 0;
 }
 
@@ -297,7 +298,7 @@
 }
 
 .neo-composer-dock {
-  background: linear-gradient(transparent, var(--neo-background));
+  background: linear-gradient(transparent, var(--neo-background) 24px);
   padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
 

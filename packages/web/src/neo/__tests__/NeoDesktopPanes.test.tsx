@@ -248,7 +248,7 @@ describe('Neo desktop panes', () => {
     const css = readFileSync(new NodeURL('../neo.css', import.meta.url), 'utf8');
     const shared = css.split('@media (min-width: 1120px) {')[0];
     expect(shared).toMatch(
-      /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
+      /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-toggle\]\) \{\s*padding-bottom: 0;\s*\}/
     );
     expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/);
     expect(shared).toMatch(/\.neo-scene-detail \{[^}]*padding: 0 20px calc\(/);
