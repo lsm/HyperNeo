@@ -181,21 +181,18 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
   });
 
-  it('hides failed context checks and shows the other statuses with truthful counts and non-actionable running/outcome summaries', () => {
+  it('hides failed and answered context checks and shows the other statuses with truthful counts and non-actionable running/outcome summaries', () => {
     const { container, model } = mount();
     for (const [name, count] of [
       ['Needs your attention', 1],
       ['In progress', 2],
-      ['Recent outcomes', 1],
     ] as const)
       expect(screen.getByRole('region', { name }).textContent).toContain(`${name} · ${count}`);
     const running = screen.getByRole('region', { name: 'In progress' });
-    const outcomes = screen.getByRole('region', { name: 'Recent outcomes' });
     expect(running.textContent).toContain('Checking context');
     expect(running.textContent).toContain('Waiting for context');
-    expect(outcomes.textContent).toContain('Response ready');
+    expect(screen.queryByRole('region', { name: 'Recent outcomes' })).toBeNull();
     expect(running.querySelector('article, details, input, textarea, a')).toBeNull();
-    expect(outcomes.querySelector('article, details, input, textarea, a')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
     expect(container.textContent).not.toContain('Checking with');
     expect(model.value.act).not.toHaveBeenCalled();
@@ -232,11 +229,9 @@ describe('Neo public mixed consultation scenes', () => {
     expect(model.value.open).toHaveBeenCalledTimes(1);
   });
 
-  it('opens a reported context response through its holder', () => {
-    const { container, model } = mount();
-    openCheck(container, 'reported');
-    expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');
-    expect(model.value.act).not.toHaveBeenCalled();
+  it('does not list an answered context check', () => {
+    const { container } = mount();
+    expect(container.querySelector('[data-consultation-open="reported"]')).toBeNull();
   });
 
   it('preserves the single pending banner and work-only scene groups in legacy mode', () => {

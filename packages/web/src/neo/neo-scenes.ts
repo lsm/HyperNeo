@@ -146,7 +146,10 @@ export function hideNeoInternalReceipts(
 ): NeoBoardReceipt[] {
   return receipts.filter(
     (receipt) =>
-      !(receipt.kind === 'consultation' && receipt.status === 'failed') &&
+      !(
+        receipt.kind === 'consultation' &&
+        (receipt.status === 'failed' || receipt.status === 'reported')
+      ) &&
       !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId) &&
       !(receipt.kind === 'work' && receipt.status === 'failed' && dismissed.has(receipt.id))
   );

@@ -224,7 +224,7 @@ describe('Neo live public consultation link wiring', () => {
     expect(view.model.value.act).not.toHaveBeenCalled();
   });
 
-  it('opens a reported context response through the holder path', () => {
+  it('leaves an answered context check reference as text', () => {
     const view = mount();
     const receipt = view.model.value.viewSnapshot.consultations![0];
     act(() => {
@@ -242,8 +242,8 @@ describe('Neo live public consultation link wiring', () => {
         },
       };
     });
-    fireEvent.click(references().getByRole('button', { name: 'Garden context check' }));
-    expect(view.model.value.open).toHaveBeenCalledExactlyOnceWith('garden');
+    expect(references().queryByRole('button', { name: 'Garden context check' })).toBeNull();
+    expect(references().getByText('Garden context check')).toBeTruthy();
     expect(view.model.value.act).not.toHaveBeenCalled();
   });
 });

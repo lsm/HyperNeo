@@ -177,7 +177,14 @@ describe('groupNeoScenes', () => {
       [9, 9],
       before,
       groupNeoScenes(
-        classifyNeoScenes(board.receipts.filter((receipt) => receipt.id !== 'c-failed'))
+        classifyNeoScenes(
+          board.receipts.filter(
+            (receipt) =>
+              receipt.id !== 'c-failed' &&
+              receipt.id !== 'c-reported' &&
+              !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId)
+          )
+        )
       ),
     ]);
   });
