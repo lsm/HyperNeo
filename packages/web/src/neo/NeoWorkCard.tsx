@@ -181,7 +181,7 @@ export function NeoWorkCard({
               disabled={disabled || busy}
               onClick={() => onAction(work.id, 'cancel')}
             >
-              {busy ? 'Updating…' : 'Not now'}
+              {busy ? 'Declining…' : 'Decline'}
             </Button>
           )}
           {answering && (

@@ -147,6 +147,7 @@ export function hideNeoInternalReceipts(
   return receipts.filter(
     (receipt) =>
       !(receipt.kind === 'consultation' && receipt.status === 'failed') &&
+      !(receipt.kind === 'work' && receipt.status === 'cancelled' && !receipt.sessionId) &&
       !(receipt.kind === 'work' && receipt.status === 'failed' && dismissed.has(receipt.id))
   );
 }
