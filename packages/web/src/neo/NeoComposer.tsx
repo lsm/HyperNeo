@@ -188,7 +188,11 @@ export function NeoComposer({
         }}
         rows={2}
         maxLength={16000}
-        placeholder="Start anywhere. You don’t need to organize it first."
+        placeholder={`Start anywhere. You don’t need to organize it first.\n${
+          coarsePointer
+            ? 'Return adds a line · Tap the arrow to send'
+            : 'Enter to send · Shift + Enter for a new line'
+        }`}
         class="w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -206,14 +210,12 @@ export function NeoComposer({
         </div>
         <span
           role="status"
-          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted sm:flex sm:flex-1 ${
+          class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
             recordingVoice ||
             !connected ||
             store.agentState.value.status === 'waiting_for_input'
-              ? 'order-last flex w-full sm:order-none sm:w-auto'
-              : coarsePointer
-                ? 'flex'
-                : 'hidden'
+              ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
+              : 'hidden'
           }`}
         >
           {!connected
@@ -224,9 +226,7 @@ export function NeoComposer({
                 : 'Recording · Click the arrow to stop and send'
               : store.agentState.value.status === 'waiting_for_input'
                 ? 'A quick question for you above.'
-                : coarsePointer
-                  ? 'Return adds a line · Tap the arrow to send'
-                  : 'Enter to send · Shift + Enter for a new line'}
+                : ''}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice

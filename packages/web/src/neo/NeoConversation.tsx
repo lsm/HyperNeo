@@ -76,6 +76,7 @@ export function NeoConversation({
   onOpenPublicConsultation,
   onRetryPublic,
   onLoadEarlierPublic,
+  onProgress,
 }: {
   store: SessionStore;
   sessionId: string;
@@ -89,6 +90,7 @@ export function NeoConversation({
   onOpenPublicConsultation?: (consultationId: string) => void;
   onRetryPublic?: () => void;
   onLoadEarlierPublic?: () => void;
+  onProgress?: (label: string | null) => void;
 }) {
   const messages = store.sdkMessages.value;
   const maps = useMessageMaps(messages, sessionId);
@@ -131,6 +133,12 @@ export function NeoConversation({
     store.isRecovering?.value ?? true,
     visible
   );
+  const progressLabel =
+    progress !== 'inactive' && (publicConversation || !progress.messageId) ? progress.label : null;
+  useEffect(() => {
+    onProgress?.(progressLabel);
+  }, [progressLabel, onProgress]);
+  useEffect(() => () => onProgress?.(null), [onProgress]);
   const renderProgress = (label: string) => (
     <div role="status" class="neo-progress" aria-live="polite">
       <span class="neo-progress-dots" aria-hidden="true">
@@ -172,9 +180,7 @@ export function NeoConversation({
             onLoadEarlier={onLoadEarlierPublic}
           />
         )}
-        {progress !== 'inactive' &&
-          (publicConversation || !progress.messageId) &&
-          renderProgress(progress.label)}
+        {progressLabel && !onProgress && renderProgress(progressLabel)}
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"

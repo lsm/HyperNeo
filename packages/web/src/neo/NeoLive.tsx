@@ -30,6 +30,7 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
+  const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
@@ -541,6 +542,7 @@ export function NeoLive() {
               }
               onOpenPublicConsultation={(id) => openScene({ kind: 'consultation', id })}
               onRetryPublic={retryPublicConversation}
+              onProgress={setReplyProgress}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
                 const top = element?.getBoundingClientRect().top ?? 0;
@@ -759,6 +761,7 @@ export function NeoLive() {
             scenes={scenes?.running ?? []}
             concerns={concerns}
             enabled={connected && conversationReady}
+            reply={replyProgress}
           />
           {ready && neo.sessionId && (
             <NeoComposer
