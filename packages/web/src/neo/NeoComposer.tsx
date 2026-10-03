@@ -75,6 +75,7 @@ export function NeoComposer({
     const submitted = draft;
     const files = attachments.files;
     if (!submitted.trim() && !files.length) return;
+    if (voiceBusy) return;
     if (!connected) {
       onError('Reconnecting… your message is still here. Send again once connected.');
       return;

@@ -186,7 +186,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
         return { ok: true, requestId: 'rec-1', messageId: 'rec-1', created: true };
       throw new Error(`No handler for method: ${method}`);
     });
-    renderComposer();
+    const { onSend } = renderComposer();
 
     await awaitRecordingComposer();
     fireEvent.click(sendControl());
@@ -195,9 +195,13 @@ describe('NeoComposer and NeoVoice send integration', () => {
     );
     expect(buttonNamed('Send message').disabled).toBe(false);
     expect(stopControl().disabled).toBe(true);
+    fireEvent.click(buttonNamed('Send message'));
 
     releaseTranscribe({ text: 'spoken second' });
     await waitFor(() => expect(asks()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(asks()).toHaveLength(1);
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it('resending a persisted payload is not re-combined with the draft still in the box', async () => {
