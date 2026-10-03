@@ -1,3 +1,5 @@
+import { memo } from 'preact/compat';
+import { useMemo } from 'preact/hooks';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { ActiveTurnSummary, ActivityEntry, MessageDeliveryStatus } from '@hyperneo/shared';
 import {
@@ -34,6 +36,7 @@ import {
   type MessageReplacementStatus,
 } from '../../../../lib/sdk-message-replacement';
 import { agentInitial, formatClock, formatDuration, shortAgentName } from './minimal-mock-data';
+import { areTurnRowPropsEqual } from './feed-turn-equality';
 import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils';
 
@@ -2320,16 +2323,22 @@ function MinimalTurnRow({
   );
 }
 
+const MemoizedTurnRow = memo(MinimalTurnRow, areTurnRowPropsEqual);
+
 const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
+const EMPTY_ACTIVE_TURN_SUMMARIES: ActiveTurnSummary[] = [];
 
 export function MinimalThreadFeed({
   parsedRows,
   activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
-  activeTurnSummaries = [],
+  activeTurnSummaries = EMPTY_ACTIVE_TURN_SUMMARIES,
   overlayTaskId,
   overlayTaskReadonly,
 }: MinimalThreadFeedProps) {
-  const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
+  const turns = useMemo(
+    () => buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries),
+    [parsedRows, activeAgentLabels, activeTurnSummaries]
+  );
   if (turns.length === 0) return null;
 
   return (
@@ -2337,7 +2346,7 @@ export function MinimalThreadFeed({
       <style>{ANIMATIONS_CSS}</style>
       <div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
         {turns.map((turn) => (
-          <MinimalTurnRow
+          <MemoizedTurnRow
             key={turn.id}
             turn={turn}
             overlayTaskId={overlayTaskId}
