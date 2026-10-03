@@ -188,11 +188,11 @@ export function NeoComposer({
         }}
         rows={2}
         maxLength={16000}
-        placeholder={`Start anywhere. You don’t need to organize it first.\n${
+        placeholder={
           coarsePointer
             ? 'Return adds a line · Tap the arrow to send'
             : 'Enter to send · Shift + Enter for a new line'
-        }`}
+        }
         class="w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
