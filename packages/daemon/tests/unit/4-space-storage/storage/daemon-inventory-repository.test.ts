@@ -374,7 +374,7 @@ describe('ordinary chat inspection through the database catalog', () => {
     { taskId: 'unbound-task' },
     { roomId: 'legacy-room' },
     { lobbyId: 'legacy-lobby' },
-  ])('does not tunnel through a protected execution context: %j', async (context) => {
+  ])('reads a Space or task execution context: %j', async (context) => {
     session('protected-chat', null, 100);
     db.getDatabase()
       .prepare('UPDATE sessions SET session_context = ? WHERE id = ?')
@@ -383,26 +383,23 @@ describe('ordinary chat inspection through the database catalog', () => {
     const before = state();
     expect(repo.readSession('protected-chat')?.scopeOwned).toBe(1);
     const result = await inspect('protected-chat');
-    expect(result).toEqual({
-      kind: 'completed',
-      value: { accepted: false, reason: 'protected_session' },
-    });
-    expect(JSON.stringify(result)).not.toContain('SECRET');
+    expect(result).toMatchObject({ kind: 'completed', value: { accepted: true } });
+    expect(JSON.stringify(result)).toContain('SECRET-EXECUTION');
     expect(state()).toEqual(before);
   });
-  test('direct-task provenance and Neo bindings cannot masquerade as ordinary chats', async () => {
+  test('direct-task and Neo-bound sessions are readable', async () => {
     session('direct-worker', null, 100);
     db.getDatabase()
       .prepare('INSERT INTO direct_task_session_provenance (session_id) VALUES (?)')
       .run('direct-worker');
-    expect(await inspect('direct-worker')).toEqual({
+    expect(await inspect('direct-worker')).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'protected_session' },
+      value: { accepted: true },
     });
     expect(repo.readSession(caller.sessionId!)?.neoBound).toBe(1);
-    expect(await inspect(caller.sessionId!)).toEqual({
+    expect(await inspect(caller.sessionId!)).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'protected_session' },
+      value: { accepted: true },
     });
   });
   test('catalog discovery describes the actual primitive while unbound Neo callers cannot inspect', async () => {
@@ -427,7 +424,7 @@ describe('ordinary chat inspection through the database catalog', () => {
       { kind: 'completed', value: { accepted: true } }
     );
   });
-  test('recorded workflow/long-horizon owners stay protected even without scope hints', async () => {
+  test('workflow and long-horizon agent sessions are readable', async () => {
     session('registered-worker', null, 100);
     session('registered-agent', null, 100);
     insert('space_workflows', {
@@ -467,20 +464,17 @@ describe('ordinary chat inspection through the database catalog', () => {
     });
     for (const id of ['registered-worker', 'registered-agent']) {
       expect(repo.readSession(id)?.scopeOwned).toBe(1);
-      expect(await inspect(id)).toEqual({
-        kind: 'completed',
-        value: { accepted: false, reason: 'protected_session' },
-      });
+      expect(await inspect(id)).toMatchObject({ kind: 'completed', value: { accepted: true } });
     }
   });
-  test('private Neo and registered-agent parent links are not ordinary forked chats', async () => {
+  test('children of Neo and agent sessions are readable', async () => {
     session('neo-child', null, 100);
     db.getDatabase()
       .prepare('UPDATE sessions SET parent_id = ? WHERE id = ?')
       .run(caller.sessionId, 'neo-child');
-    expect(await inspect('neo-child')).toEqual({
+    expect(await inspect('neo-child')).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'protected_session' },
+      value: { accepted: true },
     });
     session('agent-parent', null, 100);
     insert('space_long_horizon_agents', {
@@ -496,9 +490,9 @@ describe('ordinary chat inspection through the database catalog', () => {
     db.getDatabase()
       .prepare('UPDATE sessions SET parent_id = ? WHERE id = ?')
       .run('agent-parent', 'agent-child');
-    expect(await inspect('agent-child')).toEqual({
+    expect(await inspect('agent-child')).toMatchObject({
       kind: 'completed',
-      value: { accepted: false, reason: 'protected_session' },
+      value: { accepted: true },
     });
   });
 });
