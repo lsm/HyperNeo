@@ -1,7 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useMemo } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
-import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 
@@ -99,17 +98,29 @@ export function NeoWorkCard({
       : work.status === 'failed'
         ? 'text-warning bg-warning/10'
         : 'text-accent bg-accent/10';
+  const openable = !!onOpen && !!work.sessionId;
   return (
     <article
       aria-label={work.title}
-      class="neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm"
+      data-scene-open={openable ? work.id : undefined}
+      tabIndex={openable ? 0 : undefined}
+      class={`neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm${
+        openable ? ' cursor-pointer transition-colors hover:border-accent/40' : ''
+      }`}
       onClick={
-        onOpen
+        openable
           ? (event) => {
               const target = event.target as Element | null;
               if (!target || target.closest?.(interactive)) return;
               if (insideUserSelection(event.currentTarget as Element)) return;
-              onOpen(work.id);
+              onOpen!(work.id);
+            }
+          : undefined
+      }
+      onKeyDown={
+        openable
+          ? (event) => {
+              if (event.key === 'Enter' && event.target === event.currentTarget) onOpen!(work.id);
             }
           : undefined
       }
@@ -125,30 +136,21 @@ export function NeoWorkCard({
             class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
           />
         )}
+        {openable && (
+          <span aria-hidden="true" class="ml-auto text-fg-faint">
+            <NeoIcon name="external" />
+          </span>
+        )}
       </div>
-      <h3 class="break-words text-base font-medium">
-        {onOpen ? (
-          <button
-            type="button"
-            onClick={() => onOpen(work.id)}
-            data-scene-open={work.id}
-            class="text-left hover:text-accent focus-visible:outline-accent"
-          >
-            {work.title}
-          </button>
-        ) : (
-          work.title
-        )}
-      </h3>
-      <details class="mt-3 text-sm text-fg-muted">
-        <summary class="cursor-pointer">
-          {work.status === 'proposed' ? 'Review the work brief' : 'What was delegated'}
-        </summary>
-        <p class="mt-3 whitespace-pre-wrap break-words leading-relaxed">{work.instruction}</p>
-        {work.targetSessionId && (
-          <p class="mt-2 break-all text-xs">Existing chat: {work.targetSessionId}</p>
-        )}
-      </details>
+      <h3 class="break-words text-base font-medium">{work.title}</h3>
+      {work.status === 'proposed' && (
+        <p class="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-fg-muted">
+          {work.instruction}
+        </p>
+      )}
+      {work.status === 'failed' && work.report && (
+        <p class="mt-2 line-clamp-2 break-words text-sm text-fg-muted">{work.report}</p>
+      )}
       {active &&
         work.sessionId &&
         (questionSlot ? (
@@ -156,75 +158,45 @@ export function NeoWorkCard({
         ) : (
           <NeoWorkQuestion key={work.id} work={work} />
         ))}
-      {work.status === 'proposed' && (
-        <p class="mt-3 text-xs leading-relaxed text-fg-muted">
-          {work.targetSessionId
-            ? 'Continues in the selected existing HyperNeo chat, keeping its workspace, tools and permissions.'
-            : 'Starts a real HyperNeo session with its existing tools and permissions, in a temporary scratch workspace — no folder of yours is selected.'}
-        </p>
-      )}
-      {work.report && (
-        <details class="mt-3 text-sm">
-          <summary class="cursor-pointer text-fg-muted">Read the execution’s response</summary>
-          <div class="mt-3 min-w-0 break-words">
-            <MarkdownRenderer content={work.report} />
-          </div>
-        </details>
-      )}
-      <div class="mt-4 flex flex-wrap items-center gap-2">
-        {work.status === 'proposed' && (
-          <Button
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'start')}
-            icon={<NeoIcon name="arrow" />}
-          >
-            {busy ? 'Starting…' : 'Start work'}
-          </Button>
-        )}
-        {work.status === 'failed' && onRetry && (
-          <Button disabled={disabled || busy} onClick={() => onRetry(work)}>
-            Try again
-          </Button>
-        )}
-        {work.status === 'failed' && onDismiss && (
-          <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
-            Dismiss
-          </Button>
-        )}
-        {(work.status === 'proposed' || active) && (
-          <Button
-            variant={active ? 'danger' : 'ghost'}
-            size={active ? 'sm' : undefined}
-            icon={active ? <NeoIcon name="stop" /> : undefined}
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'cancel')}
-          >
-            {busy
-              ? 'Updating…'
-              : active
-                ? work.targetSessionId
-                  ? 'Stop waiting'
-                  : 'Stop work'
-                : 'Not now'}
-          </Button>
-        )}
-        {work.sessionId && (
-          <a
-            class="ml-auto text-xs text-accent hover:underline"
-            href={`/session/${encodeURIComponent(work.sessionId)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open chat ↗
-          </a>
-        )}
-      </div>
-      {work.status === 'cancelled' && (
-        <p class="mt-2 text-xs text-fg-muted">
-          {work.targetSessionId
-            ? 'Stopped waiting for this result. The existing chat and its other work continue; changes are not undone.'
-            : 'Stopping does not undo changes already made.'}
-        </p>
+      {(work.status === 'proposed' || work.status === 'failed' || active) && (
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          {work.status === 'proposed' && (
+            <Button
+              disabled={disabled || busy}
+              onClick={() => onAction(work.id, 'start')}
+              icon={<NeoIcon name="arrow" />}
+            >
+              {busy ? 'Starting…' : 'Start work'}
+            </Button>
+          )}
+          {work.status === 'failed' && onRetry && (
+            <Button disabled={disabled || busy} onClick={() => onRetry(work)}>
+              Try again
+            </Button>
+          )}
+          {work.status === 'failed' && onDismiss && (
+            <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
+              Dismiss
+            </Button>
+          )}
+          {(work.status === 'proposed' || active) && (
+            <Button
+              variant={active ? 'danger' : 'ghost'}
+              size={active ? 'sm' : undefined}
+              icon={active ? <NeoIcon name="stop" /> : undefined}
+              disabled={disabled || busy}
+              onClick={() => onAction(work.id, 'cancel')}
+            >
+              {busy
+                ? 'Updating…'
+                : active
+                  ? work.targetSessionId
+                    ? 'Stop waiting'
+                    : 'Stop work'
+                  : 'Not now'}
+            </Button>
+          )}
+        </div>
       )}
     </article>
   );
