@@ -36,6 +36,7 @@ export function NeoWorkCard({
   questionSlot,
   onRetry,
   onDismiss,
+  waiting = false,
 }: {
   work: NeoWork;
   busy: boolean;
@@ -46,6 +47,7 @@ export function NeoWorkCard({
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
   onRetry?: (work: NeoWork) => void;
   onDismiss?: (id: string) => void;
+  waiting?: boolean;
 }) {
   const attachQuestion = useMemo(() => {
     let previous: HTMLElement | null = null;
@@ -78,17 +80,6 @@ export function NeoWorkCard({
             </span>
           )}
         </button>
-        {work.status === 'queued' && (
-          <Button
-            variant="danger"
-            size="sm"
-            icon={<NeoIcon name="stop" />}
-            disabled={disabled || busy}
-            onClick={() => onAction(work.id, 'cancel')}
-          >
-            {busy ? 'Stopping…' : work.targetSessionId ? 'Stop waiting' : 'Stop'}
-          </Button>
-        )}
       </div>
     );
   const active = work.status === 'queued';
@@ -98,7 +89,8 @@ export function NeoWorkCard({
       : work.status === 'failed'
         ? 'text-warning bg-warning/10'
         : 'text-accent bg-accent/10';
-  const hasActions = work.status === 'proposed' || work.status === 'failed' || active;
+  const answering = active && waiting && !!work.sessionId && !!onOpen;
+  const hasActions = work.status === 'proposed' || work.status === 'failed' || answering;
   const openable = !!onOpen && !!work.sessionId && !hasActions;
   return (
     <article
@@ -130,7 +122,9 @@ export function NeoWorkCard({
         <span class={`rounded-xl p-2 ${color}`}>
           <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
         </span>
-        <span class="text-xs font-medium text-fg-muted">{labels[work.status]}</span>
+        <span class="text-xs font-medium text-fg-muted">
+          {answering ? 'Waiting for your answer' : labels[work.status]}
+        </span>
         {active && (
           <span
             aria-hidden="true"
@@ -142,7 +136,7 @@ export function NeoWorkCard({
             <NeoIcon name="external" />
           </span>
         )}
-        {!openable && onOpen && work.sessionId && (
+        {!openable && !answering && onOpen && work.sessionId && (
           <button
             type="button"
             onClick={() => onOpen(work.id)}
@@ -181,21 +175,18 @@ export function NeoWorkCard({
               Try again
             </Button>
           )}
-          {(work.status === 'proposed' || active) && (
+          {work.status === 'proposed' && (
             <Button
-              variant={active ? 'danger' : 'ghost'}
-              size={active ? 'sm' : undefined}
-              icon={active ? <NeoIcon name="stop" /> : undefined}
+              variant="ghost"
               disabled={disabled || busy}
               onClick={() => onAction(work.id, 'cancel')}
             >
-              {busy
-                ? 'Updating…'
-                : active
-                  ? work.targetSessionId
-                    ? 'Stop waiting'
-                    : 'Stop work'
-                  : 'Not now'}
+              {busy ? 'Updating…' : 'Not now'}
+            </Button>
+          )}
+          {answering && (
+            <Button icon={<NeoIcon name="external" />} onClick={() => onOpen!(work.id)}>
+              Answer in chat
             </Button>
           )}
           {work.status === 'proposed' && (

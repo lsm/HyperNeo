@@ -12,15 +12,10 @@ export function NeoWorkQuestionControls({
   observation: ReturnType<typeof useNeoWorkQuestionObserver>;
   formDraft?: { value: QuestionFormDraft; onChange: (draft: QuestionFormDraft) => void };
 }) {
-  const { store, question, loadError } = observation;
+  const { store, loadError } = observation;
   const errorMessage = store.error.value?.message ?? loadError;
   return (
     <>
-      {question && (
-        <p class="mt-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-fg">
-          Waiting for your answer. Open the chat to reply.
-        </p>
-      )}
       {errorMessage && (
         <div role="alert" class="mt-3 text-sm text-danger">
           <p>{errorMessage}</p>

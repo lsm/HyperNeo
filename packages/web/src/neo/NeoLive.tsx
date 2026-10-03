@@ -630,6 +630,9 @@ export function NeoLive() {
                           publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
                         }
                         questionSlot={publicConversation ? attachQuestion : undefined}
+                        waiting={
+                          questions.scope === sceneScope && questions.values.has(scene.ref.id)
+                        }
                         onRetry={retryWork}
                         onDismiss={dismissWork}
                       />
