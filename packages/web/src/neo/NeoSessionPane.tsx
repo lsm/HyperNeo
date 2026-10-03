@@ -3,8 +3,6 @@ import { setupFocusTrap } from '../components/ui/Modal.tsx';
 import ChatContainer from '../islands/ChatContainer.tsx';
 import { SessionStore } from '../lib/session-store.ts';
 
-const escapeOwners = '[role="dialog"], [role="menu"]';
-
 export function NeoSessionPane({
   sessionId,
   title,
@@ -25,15 +23,6 @@ export function NeoSessionPane({
       owned?.destroy().catch(() => {});
     };
   }, []);
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (document.querySelector(escapeOwners)) return;
-      onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
   useEffect(() => {
     if (!overlay || !pane.current) return;
     const previous = document.activeElement as HTMLElement | null;
