@@ -19,6 +19,7 @@ import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import { type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
+import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 
 export function NeoLive() {
@@ -304,9 +305,14 @@ export function NeoLive() {
           type="button"
           onClick={() => open()}
           aria-label="Back to Neo"
-          class="neo-float-link text-fg-muted transition-colors hover:text-accent"
+          class="neo-float-link"
         >
-          <svg viewBox="0 0 144 377" class="h-5 w-auto" fill="currentColor" aria-hidden="true">
+          <svg
+            viewBox="0 0 144 377"
+            class="h-6 w-auto"
+            style={{ fill: 'light-dark(var(--hn-color-ink), var(--hn-color-paper))' }}
+            aria-hidden="true"
+          >
             <rect x="0" y="0" width="55" height="377" rx="5.5" />
             <rect x="89" y="0" width="55" height="171.5" rx="5.5" />
             <rect x="89" y="205.5" width="55" height="171.5" rx="5.5" />
