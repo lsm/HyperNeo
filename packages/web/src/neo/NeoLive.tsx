@@ -450,8 +450,8 @@ export function NeoLive() {
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role="region"
           aria-label="Work scenes"
-          aria-hidden={sheet && !scenesOpen ? true : undefined}
-          inert={sheet && !scenesOpen}
+          aria-hidden={(sheet && !scenesOpen) || chat ? true : undefined}
+          inert={(sheet && !scenesOpen) || !!chat}
         >
           {sheet && (
             <div class="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-[var(--neo-background)] px-5 py-3">
