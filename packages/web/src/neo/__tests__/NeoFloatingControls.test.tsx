@@ -154,9 +154,7 @@ describe('Neo floating controls', () => {
     expect(css).toContain('backdrop-filter: blur(8px)');
     expect(css).toContain('@supports not (backdrop-filter: blur(1px))');
     expect(css).toContain('outline: 2px solid var(--focus-ring)');
-    expect(css).toMatch(
-      /\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/
-    );
+    expect(css).toMatch(/\.neo-float-link\s*\{[^}]*min-height: 44px;\s*min-width: 44px;/);
     expect(css).toContain('padding-top: 68px');
   });
 });
