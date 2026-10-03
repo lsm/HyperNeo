@@ -35,6 +35,7 @@ export function readNeoTurnReply(db: Database, sessionId: string, messageId: str
        ORDER BY timestamp, rowid`
     )
     .all(sessionId, messageId) as Row[];
+  if (!rows.length) return { status: 'missing', text: null };
   const result = rows.findLast((row) => row.kind === 'result');
   const text = closingText(rows);
   if (!result) return { status: 'open', text };
