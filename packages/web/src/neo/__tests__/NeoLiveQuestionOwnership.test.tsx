@@ -29,6 +29,11 @@ vi.mock('../NeoConversation.tsx', () => ({
   NeoConversation: () => <p>Public fictional conversation</p>,
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+vi.mock('../../components/space/AgentOverlayChat.tsx', () => ({
+  AgentOverlayChat: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+  ),
+}));
 
 const root = 'neo:550e8400-e29b-41d4-a716-446655440000';
 const work = (id: string, status: NeoWork['status'] = 'queued', concernId = 'a'): NeoWork => ({
@@ -209,9 +214,8 @@ describe('NeoLive public question ownership', () => {
     fireEvent.input(screen.getByRole('textbox', { name: 'Composer draft' }), {
       target: { value: 'Composer stays' },
     });
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.click(within(card('a')).getByRole('button', { name: 'Answer in chat' }));
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/worker-a', '_blank', 'noopener');
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker-a');
     expect(
       (screen.getByRole('textbox', { name: 'Composer draft' }) as HTMLTextAreaElement).value
     ).toBe('Composer stays');

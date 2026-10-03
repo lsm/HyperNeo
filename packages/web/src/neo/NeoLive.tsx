@@ -11,6 +11,7 @@ import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
+import { AgentOverlayChat } from '../components/space/AgentOverlayChat.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
@@ -28,6 +29,7 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
+  const [chat, setChat] = useState<{ sessionId: string; title: string } | null>(null);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -265,8 +267,8 @@ export function NeoLive() {
   }
 
   function openScene(ref: NeoSceneRef) {
-    const sessionId = relevant.find((item) => item.id === ref.id)?.sessionId;
-    if (sessionId) window.open(`/session/${encodeURIComponent(sessionId)}`, '_blank', 'noopener');
+    const work = relevant.find((item) => item.id === ref.id);
+    if (work?.sessionId) setChat({ sessionId: work.sessionId, title: work.title });
   }
 
   return (
@@ -547,6 +549,13 @@ export function NeoLive() {
           )}
         </div>
       </footer>
+      {chat && (
+        <AgentOverlayChat
+          sessionId={chat.sessionId}
+          agentName={chat.title}
+          onClose={() => setChat(null)}
+        />
+      )}
       <ToastContainer />
     </div>
   );
