@@ -151,7 +151,6 @@ describe('Neo live public consultation link wiring', () => {
     async (mobile) => {
       narrow = mobile;
       const view = mount();
-      fireEvent.click(screen.getByText('Read full response', { exact: true }));
       const entry = view.container.querySelector('[data-public-entry]');
       fireEvent.input(screen.getByRole('textbox', { name: 'Message Neo' }), {
         target: { value: 'Fictional navigation draft' },
@@ -208,7 +207,6 @@ describe('Neo live public consultation link wiring', () => {
 
   it('rechecks scoped receipt membership without replacing an expanded public entry', async () => {
     const view = mount();
-    fireEvent.click(screen.getByText('Read full response', { exact: true }));
     const entry = view.container.querySelector('[data-public-entry]');
     act(() => {
       view.model.value = {

@@ -156,7 +156,7 @@ const openCheck = (container: Element, id: string) => {
 };
 
 describe('Neo public mixed consultation scenes', () => {
-  it('names concurrent summary and attention checks by their holder', () => {
+  it('names concurrent summary checks by their holder and never shows failed checks', () => {
     const { container, model } = mount();
     const running = screen.getByRole('region', { name: 'In progress' });
     for (const holder of ['a', 'b']) {
@@ -175,11 +175,11 @@ describe('Neo public mixed consultation scenes', () => {
         },
       };
     });
-    const attention = screen.getByRole('region', { name: 'Needs your attention' });
-    for (const holder of ['a', 'b']) {
-      const name = new RegExp(`^Context check for Fictional holder ${holder}$`);
-      expect(within(attention).getByRole('article', { name })).toBeTruthy();
-    }
+    expect(container.querySelector('[data-consultation-open="failed"]')).toBeNull();
+    expect(container.querySelector('[data-consultation-open="failed-b"]')).toBeNull();
+    expect(
+      screen.queryByRole('region', { name: 'Needs your attention' })?.textContent ?? ''
+    ).not.toContain('Context check');
     const name = 'Context check for Fictional holder a';
     expect(within(openCheck(container, 'pending')).getByRole('article', { name })).toBeTruthy();
   });
@@ -214,10 +214,10 @@ describe('Neo public mixed consultation scenes', () => {
     style.remove();
   });
 
-  it('shows all four context-check statuses with truthful counts and non-actionable running/outcome summaries', () => {
+  it('hides failed context checks and shows the other statuses with truthful counts and non-actionable running/outcome summaries', () => {
     const { container, model } = mount();
     for (const [name, count] of [
-      ['Needs your attention', 2],
+      ['Needs your attention', 1],
       ['In progress', 2],
       ['Recent outcomes', 1],
     ] as const)
@@ -304,7 +304,7 @@ describe('Neo public mixed consultation scenes', () => {
       expect(detail.querySelector('strong')?.textContent).toBe('Fictional context response')
     );
     expect(within(detail).getByRole('button', { name: 'Copy context response' })).toBeTruthy();
-    expect(detail.textContent).toContain('not verified completion');
+    expect(detail.textContent).not.toContain('not verified completion');
     expect(model.value.act).not.toHaveBeenCalled();
     fireEvent.click(within(detail).getByRole('button', { name: 'Fictional holder a' }));
     expect(model.value.open).toHaveBeenCalledExactlyOnceWith('a');

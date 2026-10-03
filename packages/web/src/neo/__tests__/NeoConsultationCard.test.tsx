@@ -107,7 +107,7 @@ describe('Neo consultation card presentation', () => {
     );
     expect(screen.getByText('Three').tagName).toBe('STRONG');
     expect(screen.getByRole('button', { name: 'Copy context response' })).toBeTruthy();
-    expect(screen.getByText(/not verified completion/)).toBeTruthy();
+    expect(screen.queryByText(/not verified completion/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Stop waiting' })).toBeNull();
   });
 

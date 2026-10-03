@@ -165,7 +165,6 @@ describe('public consultation reference capability', () => {
       />
     );
     const entry = view.container.querySelector('[data-public-entry]');
-    fireEvent.click(screen.getByText('Read full response', { exact: true }));
     expect(await screen.findByText('Full fictional response')).toBeTruthy();
     const rerender = (ids: ReadonlySet<string>, opener: typeof open | undefined) =>
       view.rerender(

@@ -58,7 +58,7 @@ const publication = (
   askOrigin: origin,
   producerInput: { sessionId: producer, messageId: `internal-${id}` },
   shortText: `Saved reply **${id}**`,
-  fullText: `## Full ${id}\n\n| Evidence | Result |\n| --- | --- |\n| Fictional | Reported |`,
+  fullText: `Saved reply **${id}**\n\n## Full ${id}\n\n| Evidence | Result |\n| --- | --- |\n| Fictional | Reported |`,
   links: [{ kind: 'concern', id: 'a', label: 'Source context' }],
   sequence,
   createdAt: `2026-10-01T01:00:1${sequence}Z`,
@@ -229,11 +229,6 @@ const askArticle = (id: string) =>
   [...publicView().querySelectorAll('article')].find((item) =>
     item.getAttribute('data-public-entry')?.includes(`"ask","${id}"`)
   )! as HTMLElement;
-const toggle = (detail: HTMLDetailsElement) => {
-  detail.open = true;
-  fireEvent(detail, new Event('toggle'));
-};
-
 describe('NeoLive durable conversation activation', () => {
   it('never shows the SDK transcript for a root without a durable conversation identity', async () => {
     source.value = { ...source.value, sessionId: 'neo:legacy' };
@@ -272,10 +267,7 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.queryByText('PRIVATE SDK EXECUTION')).toBeNull();
     expect(screen.queryByText(/Open full history/)).toBeNull();
-    expect(screen.queryByRole('table')).toBeNull();
-    const reply = screen.getAllByText('Read full response', { selector: 'summary' })[0];
-    toggle(reply.closest('details')!);
-    expect(await screen.findByRole('table')).toBeTruthy();
+    expect((await screen.findAllByRole('table')).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: 'Full a-reply' })).toBeTruthy();
     expect(within(publicView()).getAllByRole('img', { name: 'Message accepted' })).toHaveLength(3);
     expect(screen.getByLabelText('Draft')).toBeTruthy();

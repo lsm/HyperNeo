@@ -44,7 +44,7 @@ function page(name: string, after: number, count = after === 0 ? 50 : 1) {
           publicationId: id(sequence),
           producerInput: common.askOrigin,
           shortText: `Fictional reply ${sequence}`,
-          fullText: `## Full reply ${sequence}\n\nRetained Markdown.`,
+          fullText: `Fictional reply ${sequence}\n\n## Full reply ${sequence}\n\nRetained Markdown.`,
           links: [],
         };
   });
@@ -103,12 +103,10 @@ describe('NeoPublicConversation saved pagination', () => {
     const control = await screen.findByRole('button', { name: 'Load earlier saved conversation' });
     const second = () =>
       container.querySelector(
-        `[data-public-entry='${JSON.stringify([conversationId, 'publication', id(2)])}'] details`
-      ) as HTMLDetailsElement | null;
-    const detail = second()!;
-    detail.open = true;
-    fireEvent(detail, new Event('toggle'));
+        `[data-public-entry='${JSON.stringify([conversationId, 'publication', id(2)])}']`
+      );
     await screen.findByRole('heading', { name: 'Full reply 2' });
+    const entry = second();
     fireEvent.click(control);
     await screen.findByText('Fictional reply 1');
     expect(await screen.findByText('Fictional request 1')).toBeTruthy();
@@ -117,8 +115,7 @@ describe('NeoPublicConversation saved pagination', () => {
     );
     expect(keys).toHaveLength(102);
     expect(new Set(keys).size).toBe(102);
-    expect(second()).toBe(detail);
-    expect(detail.open).toBe(true);
+    expect(second()).toBe(entry);
     expect(screen.queryByRole('button', { name: 'Load earlier saved conversation' })).toBeNull();
     expect(screen.queryByText('Showing part of your saved conversation.')).toBeNull();
     expect(

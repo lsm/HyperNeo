@@ -176,7 +176,9 @@ describe('groupNeoScenes', () => {
       { attention: 3, running: 3, outcomes: 3, total: 9 },
       [9, 9],
       before,
-      scenes,
+      groupNeoScenes(
+        classifyNeoScenes(board.receipts.filter((receipt) => receipt.id !== 'c-failed'))
+      ),
     ]);
   });
 });

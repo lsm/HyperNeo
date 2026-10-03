@@ -217,9 +217,7 @@ export function NeoComposer({
         <span
           role="status"
           class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
-            recordingVoice ||
-            !connected ||
-            store.agentState.value.status === 'waiting_for_input'
+            recordingVoice || !connected || store.agentState.value.status === 'waiting_for_input'
               ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
               : 'hidden'
           }`}
@@ -232,7 +230,7 @@ export function NeoComposer({
                 : 'Recording · Click the arrow to stop and send'
               : store.agentState.value.status === 'waiting_for_input'
                 ? 'A quick question for you above.'
-                : ''}
+                : null}
         </span>
         <div class="ml-auto flex shrink-0 gap-2">
           <NeoVoice

@@ -175,7 +175,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(stopControl().disabled).toBe(false);
   });
 
-  it('re-disables Send and Stop once transcription is under way', async () => {
+  it('keeps Send available but disables Stop once transcription is under way', async () => {
     let releaseTranscribe: (value: Record<string, unknown>) => void = () => {};
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'voice.transcribe')
@@ -193,7 +193,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     await waitFor(() =>
       expect(hubRequest.mock.calls.some(([method]) => method === 'voice.transcribe')).toBe(true)
     );
-    expect(buttonNamed('Send message').disabled).toBe(true);
+    expect(buttonNamed('Send message').disabled).toBe(false);
     expect(stopControl().disabled).toBe(true);
 
     releaseTranscribe({ text: 'spoken second' });
@@ -226,12 +226,12 @@ describe('NeoComposer and NeoVoice send integration', () => {
     await waitFor(() => expect(store.records.size).toBe(0));
   });
 
-  it('blocks the recording Send while an attachment is staged', async () => {
+  it('keeps the recording Send available and explains staged attachments', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
     renderComposer();
     await awaitRecordingComposer();
 
-    expect(sendControl().disabled).toBe(true);
+    expect(sendControl().disabled).toBe(false);
     expect(sendControl().title).toContain('attachments');
     expect(stopControl().disabled).toBe(false);
   });

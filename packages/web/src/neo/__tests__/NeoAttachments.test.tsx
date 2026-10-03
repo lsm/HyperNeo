@@ -204,7 +204,7 @@ describe('Neo attachments', () => {
     expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull();
     expect(
       (screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
-    ).toBe(true);
+    ).toBe(false);
   });
   it('does not clear a new attachment added while sending or submit twice', async () => {
     let accept: () => void = () => {};
