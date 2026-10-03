@@ -17,6 +17,25 @@ export interface FileTree {
   children?: FileTree[];
 }
 
+const STAT_CONCURRENCY = 16;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 export class FileManager {
   constructor(private workspacePath: string) {}
 
@@ -89,18 +108,20 @@ export class FileManager {
       await this.walkDirectory(absolutePath, files);
     } else {
       const entries = await readdir(absolutePath, { withFileTypes: true });
+      const entryStats = await mapWithConcurrency(entries, STAT_CONCURRENCY, (entry) =>
+        stat(join(absolutePath, entry.name))
+      );
 
-      for (const entry of entries) {
+      for (const [index, entry] of entries.entries()) {
         const entryPath = join(absolutePath, entry.name);
-        const entryStats = await stat(entryPath);
         const relativePath = relative(this.workspacePath, entryPath);
 
         files.push({
           path: relativePath,
           name: entry.name,
           type: entry.isDirectory() ? 'directory' : 'file',
-          size: entry.isFile() ? entryStats.size : undefined,
-          mtime: entryStats.mtime.toISOString(),
+          size: entry.isFile() ? entryStats[index].size : undefined,
+          mtime: entryStats[index].mtime.toISOString(),
         });
       }
     }
@@ -115,18 +136,20 @@ export class FileManager {
 
   private async walkDirectory(dirPath: string, files: FileInfo[]): Promise<void> {
     const entries = await readdir(dirPath, { withFileTypes: true });
+    const entryStats = await mapWithConcurrency(entries, STAT_CONCURRENCY, (entry) =>
+      stat(join(dirPath, entry.name))
+    );
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       const entryPath = join(dirPath, entry.name);
-      const entryStats = await stat(entryPath);
       const relativePath = relative(this.workspacePath, entryPath);
 
       files.push({
         path: relativePath,
         name: entry.name,
         type: entry.isDirectory() ? 'directory' : 'file',
-        size: entry.isFile() ? entryStats.size : undefined,
-        mtime: entryStats.mtime.toISOString(),
+        size: entry.isFile() ? entryStats[index].size : undefined,
+        mtime: entryStats[index].mtime.toISOString(),
       });
 
       if (entry.isDirectory()) {
@@ -160,6 +183,16 @@ export class FileManager {
       };
     }
 
+    return this.buildDirectoryTree(absolutePath, dirPath, name, maxDepth, currentDepth);
+  }
+
+  private async buildDirectoryTree(
+    absolutePath: string,
+    dirPath: string,
+    name: string,
+    maxDepth: number,
+    currentDepth: number
+  ): Promise<FileTree> {
     const tree: FileTree = {
       name,
       path: dirPath,
@@ -199,7 +232,13 @@ export class FileManager {
 
     for (const entry of entries) {
       if (entry.type === 'directory') {
-        const subtree = await this.getFileTree(entry.path, maxDepth, currentDepth + 1);
+        const subtree = await this.buildDirectoryTree(
+          join(absolutePath, entry.name),
+          entry.path,
+          entry.name,
+          maxDepth,
+          currentDepth + 1
+        );
         tree.children!.push(subtree);
       } else {
         tree.children!.push({
