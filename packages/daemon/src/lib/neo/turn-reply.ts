@@ -3,16 +3,26 @@ import type { NeoTurnReply } from './direct-reply-fallback.ts';
 
 type Row = { kind: string; message: string };
 
-function replyText(message: string): string {
+type Block = { type?: unknown; text?: unknown };
+
+function replyBlocks(message: string): Block[] {
   const parsed = JSON.parse(message) as { message?: { content?: unknown } };
   const content = parsed.message?.content;
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .flatMap((block: { type?: unknown; text?: unknown }) =>
-      block?.type === 'text' && typeof block.text === 'string' ? [block.text] : []
-    )
-    .join('\n\n');
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  return Array.isArray(content) ? (content as Block[]) : [];
+}
+
+function closingText(rows: Row[]): string | null {
+  const closing: string[] = [];
+  for (const row of rows) {
+    if (row.kind !== 'assistant') continue;
+    for (const block of replyBlocks(row.message)) {
+      if (block?.type === 'tool_use') closing.length = 0;
+      else if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim())
+        closing.push(block.text);
+    }
+  }
+  return closing.length ? closing.join('\n\n') : null;
 }
 
 export function readNeoTurnReply(db: Database, sessionId: string, messageId: string): NeoTurnReply {
@@ -26,12 +36,7 @@ export function readNeoTurnReply(db: Database, sessionId: string, messageId: str
     )
     .all(sessionId, messageId) as Row[];
   const result = rows.findLast((row) => row.kind === 'result');
-  const text =
-    rows
-      .filter((row) => row.kind === 'assistant')
-      .map((row) => replyText(row.message))
-      .filter((value) => value.trim())
-      .at(-1) ?? null;
+  const text = closingText(rows);
   if (!result) return { status: 'open', text };
   const subtype = (JSON.parse(result.message) as { subtype?: unknown }).subtype;
   return { status: subtype === 'success' ? 'ended' : 'failed', text };
