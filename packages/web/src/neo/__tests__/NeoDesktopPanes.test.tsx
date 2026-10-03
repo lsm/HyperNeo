@@ -235,7 +235,7 @@ describe('Neo desktop panes', () => {
       /\.neo-chat-rail:has\(~ \.neo-scene-detail\),\s*\.neo-chat-rail:has\(~ \.neo-scene-list \[data-scene-group\]\) \{\s*padding-bottom: 0;\s*\}/
     );
     expect(shared).toMatch(
-      /\.neo-chat-rail:has\(~ \.neo-scene-sheet\) \{\s*padding-bottom: calc\(var\(--neo-composer-height, 190px\) \+ 32px\);\s*\}/
+      /\.neo-chat-rail:has\(~ \.neo-scene-list\.neo-scene-sheet\) \{\s*padding-bottom: calc\(var\(--neo-composer-height, 190px\) \+ 32px\);\s*\}/
     );
     expect(shared).toMatch(/\.neo-chat-rail \{[^}]*padding-bottom: calc\(/);
     expect(shared).toMatch(/\.neo-scene-detail \{[^}]*padding: 0 20px calc\(/);
