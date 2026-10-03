@@ -84,7 +84,7 @@
   padding-bottom: 0;
 }
 
-.neo-chat-rail:has(~ .neo-scene-sheet) {
+.neo-chat-rail:has(~ .neo-scene-list.neo-scene-sheet) {
   padding-bottom: calc(var(--neo-composer-height, 190px) + 32px);
 }
 
