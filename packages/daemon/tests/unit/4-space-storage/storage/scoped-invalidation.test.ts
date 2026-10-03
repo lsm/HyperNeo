@@ -120,7 +120,28 @@ describe('ReactiveDatabase — scope extraction', () => {
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
-    expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-1' });
+    expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-1', messageSubtype: null });
+  });
+
+  test('saveSDKMessage scope carries the saved message subtype', () => {
+    const events: TableChangeEvent[] = [];
+    reactiveDb.on('change', (data) => events.push(data));
+
+    reactiveDb.db.createSession(makeSession('sess-sub'));
+    const message = {
+      type: 'system',
+      subtype: 'task_progress',
+      uuid: 'progress-uuid',
+      session_id: 'sess-sub',
+      task_id: 'bg-1',
+      tool_use_id: 'tool-1',
+      description: 'working',
+      usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
+    };
+    reactiveDb.db.saveSDKMessage('sess-sub', message as any);
+
+    const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
+    expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-sub', messageSubtype: 'task_progress' });
   });
 
   test('saveUserMessage emits change event with sessionId scope', () => {
@@ -195,7 +216,7 @@ describe('ReactiveDatabase — scope extraction', () => {
 
     const scopedEvent = events.find((e) => e.scope?.sessionId === 'sess-4');
     expect(scopedEvent).toBeDefined();
-    expect(scopedEvent!.scope).toEqual({ sessionId: 'sess-4' });
+    expect(scopedEvent!.scope).toEqual({ sessionId: 'sess-4', messageSubtype: null });
   });
 
   test('transaction flush preserves compatible scope', () => {
@@ -235,7 +256,11 @@ describe('ReactiveDatabase — scope extraction', () => {
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
-    expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-task', taskId: 'task-1' });
+    expect(sdkEvent!.scope).toEqual({
+      sessionId: 'sess-task',
+      taskId: 'task-1',
+      messageSubtype: null,
+    });
   });
 
   test('transaction flush drops scope for mixed sessions', () => {

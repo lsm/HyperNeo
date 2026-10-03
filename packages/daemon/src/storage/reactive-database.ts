@@ -7,6 +7,7 @@ export interface TableChangeScope {
   roomId?: string;
   spaceId?: string;
   taskId?: string;
+  messageSubtype?: string | null;
 }
 
 export interface TableChangeEvent {
@@ -168,6 +169,13 @@ function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
   return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) ?? undefined };
 }
 
+function sdkMessageSubtype(message: unknown): string | null | undefined {
+  if (typeof message !== 'object' || message === null) return undefined;
+  const subtype = (message as { subtype?: unknown }).subtype;
+  if (subtype === undefined || subtype === null) return null;
+  return typeof subtype === 'string' ? subtype : undefined;
+}
+
 function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
   if (!Array.isArray(messageIds) || messageIds.length === 0) return {};
   try {
@@ -236,7 +244,10 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
   deleteSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
   saveSDKMessage: {
     table: 'sdk_messages',
-    extractScope: (args, db) => sdkMessageScope(db, args[0]),
+    extractScope: (args, db) => ({
+      ...sdkMessageScope(db, args[0]),
+      messageSubtype: sdkMessageSubtype(args[1]),
+    }),
   },
   saveUserMessage: {
     table: 'sdk_messages',
