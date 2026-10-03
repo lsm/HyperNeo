@@ -44,7 +44,7 @@ export function ChatHeader({
   onReturnToParent,
 }: ChatHeaderProps) {
   const returnedAt = session?.metadata.clone?.returnedAt;
-  const isClone = !!session?.parentSessionId;
+  const isClone = !!session?.parentSessionId && !session.id.startsWith('neo:');
   const [moving, setMoving] = useState(false);
   const movable = !!session && !readonly && movableSession(session);
   const hasChildren =

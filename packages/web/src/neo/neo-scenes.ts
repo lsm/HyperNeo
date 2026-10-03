@@ -153,9 +153,9 @@ export function hideNeoInternalReceipts(
 
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   .input(['board', 'questions', 'unavailableSessions', 'dismissed'])
-  .pipe(admitNeoSceneReceipts, 'board', 'result:receipts')
-  .pipe(hideNeoInternalReceipts, ['receipts', 'dismissed'], 'scenes')
-  .pipe(classifyNeoScenes, 'scenes', 'classified')
+  .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
+  .pipe(hideNeoInternalReceipts, ['scenes', 'dismissed'], 'visible')
+  .pipe(classifyNeoScenes, 'visible', 'classified')
   .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
   .pipe(groupNeoScenes, 'observed', 'scenes')
