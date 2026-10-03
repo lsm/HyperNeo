@@ -126,7 +126,9 @@ describe('original work surface reconciled with the live scenes', () => {
     const { act } = mount(origin);
     expect(document.querySelectorAll('[id^="inline-work-"]')).toHaveLength(0);
     expect(screen.queryByRole('region', { name: 'Work without a message here' })).toBeNull();
-    expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
+      1
+    );
     expect(screen.getAllByRole('button', { name: 'Start work' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
     expect(act).toHaveBeenCalledExactlyOnceWith('work', 'start');
@@ -141,7 +143,9 @@ describe('original work surface reconciled with the live scenes', () => {
     expect(act).not.toHaveBeenCalled();
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('worker');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
-    expect(screen.getAllByRole('article', { name: 'Draft the agenda' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: 'Draft the agenda', hidden: true })).toHaveLength(
+      1
+    );
     expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
       'Keep my draft'
     );

@@ -136,7 +136,7 @@ describe('Neo floating controls', () => {
     const card = screen.getByRole('article', { name: 'Title w' });
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('w-session');
-    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
+    expect(screen.getByRole('article', { name: 'Title w', hidden: true })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
   });

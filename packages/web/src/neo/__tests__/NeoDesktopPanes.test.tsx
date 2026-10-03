@@ -23,8 +23,12 @@ vi.mock('../NeoConversation.tsx', () => ({
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
 vi.mock('../NeoSessionPane.tsx', () => ({
-  NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+  NeoSessionPane: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId}>
+      <button type="button" onClick={onClose}>
+        Close chat
+      </button>
+    </div>
   ),
 }));
 
@@ -137,6 +141,11 @@ describe('Neo desktop panes', () => {
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Keep my fictional draft');
+    expect(list.inert).toBe(true);
+    expect(within(list).queryByRole('article', { name: 'Fictional proposal' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
+    expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
     fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('proposal', 'start');
