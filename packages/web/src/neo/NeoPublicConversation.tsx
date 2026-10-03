@@ -47,7 +47,6 @@ function PublicEntry({
     : producer === `neo:${publication!.conversationId}`
       ? 'Neo'
       : authors?.get(producer) || 'Context holder';
-  const replyTo = entry.kind === 'publication' ? entry.replyTo : null;
   return (
     <article
       id={ask ? neoMessageAnchor(ask.askOrigin.sessionId, ask.askOrigin.messageId) : undefined}
@@ -87,27 +86,6 @@ function PublicEntry({
       <div
         class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
       >
-        {publication && replyTo && (
-          <button
-            type="button"
-            class="mb-2 block max-w-full truncate text-left text-xs text-fg-muted hover:text-accent"
-            aria-label="Return to your request"
-            onClick={() =>
-              document
-                .getElementById(
-                  neoMessageAnchor(replyTo.askOrigin.sessionId, replyTo.askOrigin.messageId)
-                )
-                ?.scrollIntoView?.({ block: 'nearest' })
-            }
-          >
-            ↩{' '}
-            {publicAskText(replyTo.content).replace(/\s+/g, ' ').trim().slice(0, 120) ||
-              'Attached photos'}
-          </button>
-        )}
-        {publication && !replyTo && (
-          <p class="mb-2 text-xs text-fg-muted">Original request is outside this view.</p>
-        )}
         {images.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
             {images.map((src, index) => (
