@@ -98,15 +98,14 @@ describe('ordinary inspection pure gates', () => {
       });
     }
   );
-  test.each([{ scopeOwned: 1 }, { neoBound: 1 }, { scopeOwned: -1 }, { neoBound: 2 }])(
-    'protected or unknown scope stays protected: %j',
+  test.each([{ scopeOwned: 1 }, { neoBound: 1 }])(
+    'Space and Neo sessions are readable: %j',
     (patch) => {
-      expect(requireInspectionTarget(input, { ...row, ...patch })).toEqual({
-        reason: { accepted: false, reason: 'protected_session' },
-      });
+      const candidate = { ...row, ...patch };
+      expect(requireInspectionTarget(input, candidate)).toEqual({ value: candidate });
     }
   );
-  test('archive opt-in never bypasses protected context', () => {
+  test('archived history needs the opt-in for every kind of session', () => {
     const archived = { ...row, status: 'archived' };
     expect(requireInspectionTarget(input, archived)).toEqual({
       reason: { accepted: false, reason: 'session_archived' },
@@ -114,9 +113,13 @@ describe('ordinary inspection pure gates', () => {
     expect(requireInspectionTarget({ ...input, includeArchived: true }, archived)).toEqual({
       value: archived,
     });
-    expect(
-      requireInspectionTarget({ ...input, includeArchived: true }, { ...archived, neoBound: 1 })
-    ).toEqual({ reason: { accepted: false, reason: 'protected_session' } });
+    const neoArchived = { ...archived, neoBound: 1 };
+    expect(requireInspectionTarget(input, neoArchived)).toEqual({
+      reason: { accepted: false, reason: 'session_archived' },
+    });
+    expect(requireInspectionTarget({ ...input, includeArchived: true }, neoArchived)).toEqual({
+      value: neoArchived,
+    });
   });
 });
 
@@ -247,8 +250,6 @@ describe('ordinary session inspection operation', () => {
   });
   test.each([
     { candidate: null, reason: 'session_not_found' },
-    { candidate: { ...row, neoBound: 1 }, reason: 'protected_session' },
-    { candidate: { ...row, scopeOwned: 1 }, reason: 'protected_session' },
     { candidate: { ...row, status: 'archived' }, reason: 'session_archived' },
   ])('target gate precedes transcript read: %j', async ({ candidate, reason }) => {
     const f = fixtures();

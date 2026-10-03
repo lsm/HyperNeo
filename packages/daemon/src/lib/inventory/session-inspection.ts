@@ -16,12 +16,7 @@ const InputSchema = z
 type Input = z.infer<typeof InputSchema>;
 const RejectionSchema = z.object({
   accepted: z.literal(false),
-  reason: z.enum([
-    'inspection_forbidden',
-    'session_not_found',
-    'protected_session',
-    'session_archived',
-  ]),
+  reason: z.enum(['inspection_forbidden', 'session_not_found', 'session_archived']),
 });
 const ResultSchema = z.union([
   RejectionSchema,
@@ -92,8 +87,6 @@ export function requireInspectionTarget(
 ): Gate<SessionInspectionRecord> {
   if (!row || row.id !== input.sessionId)
     return { reason: { accepted: false, reason: 'session_not_found' } };
-  if (row.scopeOwned !== 0 || row.neoBound !== 0)
-    return { reason: { accepted: false, reason: 'protected_session' } };
   return row.status === 'archived' && !input.includeArchived
     ? { reason: { accepted: false, reason: 'session_archived' } }
     : { value: row };
@@ -173,7 +166,7 @@ export function createSessionInspectionOperation(deps: SessionInspectionDependen
   return defineOperation({
     name: 'daemon.session.inspect',
     description:
-      'Inspect an existing ordinary project/non-project chat by its exact daemon.snapshot session ID. Local human RPC or persisted Neo coordinators/holders only. Space/task/execution contexts and Neo-bound sessions stay protected; use their owning operations or holder consultation. Returns bounded newest-first excerpts with optional earlier-history cursor, never configs, prompts or raw transcripts. A filled page/cursor does not prove more history exists. Recorded processing status is not live progress or proof of completion. Archived history requires includeArchived. Starts no work and writes nothing.',
+      'Inspect any existing session by its exact daemon.snapshot session ID: ordinary chats, Space/task/workflow/execution sessions and Neo holders alike. Local human RPC or persisted Neo coordinators/holders only. Returns bounded newest-first excerpts with optional earlier-history cursor, never configs, prompts or raw transcripts. A filled page/cursor does not prove more history exists. Recorded processing status is not live progress or proof of completion. Archived history requires includeArchived. Starts no work and writes nothing.',
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: InputSchema,
     resultSchema: ResultSchema,

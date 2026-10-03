@@ -60,7 +60,7 @@ Override `--neo-user-link` or `--neo-assistant-link` instead to change only one 
 
 ## Deliberate MVP limits
 
-Neo can discover and inspect ordinary project/non-project chats with `daemon.session.inspect`: bounded metadata and recent excerpts, with an optional earlier-history cursor and explicit archived-history opt-in. It starts no SDK work and exposes no config/system prompt. Protected Space/execution and Neo-bound contexts retain their existing readers/holder consultation; this is on-demand inspection, not completed existing-world delegation or milestone acceptance.
+Neo can discover and inspect any session (ordinary chats, Space/task/workflow sessions, Neo holders) with `daemon.session.inspect`: bounded metadata and recent excerpts, with an optional earlier-history cursor and explicit archived-history opt-in. It starts no SDK work and exposes no config/system prompt. This is on-demand inspection, not completed existing-world delegation or milestone acceptance.
 
 Proposal and Start reuse the work-target resolver for exact existing execution-chat references. Missing, inactive, coordinator/holder or Space/task/workflow-owned contexts reject instead of guessing another executor or bypassing owner admission. Direct chat reuse is one thin adapter, not a fixed menu of execution modes; richer Space/manager delegation still uses its own operations and needs its own integrated acceptance.
 
