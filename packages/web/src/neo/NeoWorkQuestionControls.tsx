@@ -51,6 +51,7 @@ export function NeoWorkQuestionControls({
         <QuestionPrompt
           key={`${work.sessionId}:${work.id}:${question.toolUseId}`}
           pendingHeading="A quick choice"
+          skin="neo"
           sessionId={work.sessionId!}
           pendingQuestion={question}
           formDraft={formDraft}

@@ -184,6 +184,7 @@ export function NeoConversation({
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"
+            skin="neo"
             key={`${sessionId}:${pending.toolUseId}`}
             sessionId={sessionId}
             pendingQuestion={pending}

@@ -81,8 +81,9 @@ export function NeoWorkCard({
         </button>
         {work.status === 'queued' && (
           <Button
-            variant="ghost"
+            variant="danger"
             size="sm"
+            icon={<NeoIcon name="stop" />}
             disabled={disabled || busy}
             onClick={() => onAction(work.id, 'cancel')}
           >
@@ -192,7 +193,9 @@ export function NeoWorkCard({
         )}
         {(work.status === 'proposed' || active) && (
           <Button
-            variant="ghost"
+            variant={active ? 'danger' : 'ghost'}
+            size={active ? 'sm' : undefined}
+            icon={active ? <NeoIcon name="stop" /> : undefined}
             disabled={disabled || busy}
             onClick={() => onAction(work.id, 'cancel')}
           >
@@ -212,7 +215,7 @@ export function NeoWorkCard({
             target="_blank"
             rel="noreferrer"
           >
-            Inspect execution ↗
+            Open chat ↗
           </a>
         )}
       </div>

@@ -46,6 +46,7 @@ interface QuestionPromptProps {
   onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
   onError?: (cause: unknown) => void;
   formDraft?: { value: QuestionFormDraft; onChange: (draft: QuestionFormDraft) => void };
+  skin?: 'default' | 'neo';
 }
 
 export function QuestionPrompt({
@@ -58,6 +59,7 @@ export function QuestionPrompt({
   onResolved,
   onError,
   formDraft,
+  skin = 'default',
 }: QuestionPromptProps) {
   const { questions, toolUseId, draftResponses } = pendingQuestion;
   const { callIfConnected } = useMessageHub();
@@ -304,6 +306,92 @@ export function QuestionPrompt({
     if (resolvedState === 'cancelled') return questionColors.cancelled.text;
     return questionColors.active.text;
   };
+
+  if (skin === 'neo')
+    return (
+      <div class="mt-3 space-y-4" data-testid="question-prompt">
+        {isResolved && <p class="text-xs text-fg-muted">{getHeaderTitle()}</p>}
+        {questions.map((question, qIndex) => (
+          <fieldset key={qIndex} class="space-y-2">
+            <legend class="text-sm font-medium text-fg">{question.question}</legend>
+            {question.multiSelect && !isResolved && (
+              <p class="text-xs text-fg-muted">Pick any that apply</p>
+            )}
+            <div class="flex flex-wrap gap-2">
+              {(question.options || []).map((option) => {
+                const isSelected = selections.get(qIndex)?.has(option.label);
+                return (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => handleOptionClick(qIndex, option.label)}
+                    disabled={isResolved}
+                    aria-pressed={!!isSelected}
+                    title={option.description}
+                    class={cn(
+                      'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                      isSelected
+                        ? 'border-accent bg-accent/15 text-fg'
+                        : 'border-line text-fg-muted hover:border-accent/40 hover:text-fg',
+                      isResolved && 'cursor-default opacity-70'
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+              {!(isResolved && !showOther.has(qIndex)) && (
+                <button
+                  type="button"
+                  onClick={() => handleOtherClick(qIndex)}
+                  disabled={isResolved}
+                  aria-pressed={showOther.has(qIndex)}
+                  class={cn(
+                    'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                    showOther.has(qIndex)
+                      ? 'border-accent bg-accent/15 text-fg'
+                      : 'border-dashed border-line text-fg-muted hover:text-fg'
+                  )}
+                >
+                  Something else…
+                </button>
+              )}
+            </div>
+            {showOther.has(qIndex) && (
+              <textarea
+                placeholder="Type your answer"
+                value={customInputs.get(qIndex) || ''}
+                onInput={(e) => handleCustomInput(qIndex, (e.target as HTMLTextAreaElement).value)}
+                disabled={isResolved}
+                rows={2}
+                class="w-full resize-y rounded-xl border border-line bg-transparent px-3 py-2 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none"
+              />
+            )}
+          </fieldset>
+        ))}
+        {!isResolved && (
+          <div class="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!isValid || isSubmitting || isCancelling}
+              loading={isSubmitting}
+            >
+              Send answer
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleCancel}
+              disabled={isSubmitting || isCancelling}
+              loading={isCancelling}
+            >
+              Skip
+            </Button>
+          </div>
+        )}
+      </div>
+    );
 
   return (
     <div class={getContainerClasses()} data-testid="question-prompt">
