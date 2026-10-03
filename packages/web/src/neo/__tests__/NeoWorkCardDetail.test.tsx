@@ -96,7 +96,9 @@ describe('NeoWorkCard detail opening', () => {
     const action = vi.fn();
     const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
     const names = ['Decline', 'Start work'];
-    render(<NeoWorkCard work={item} busy={false} disabled={false} onAction={action} onOpen={open} />);
+    render(
+      <NeoWorkCard work={item} busy={false} disabled={false} onAction={action} onOpen={open} />
+    );
     const card = screen.getByRole('article', { name: item.title });
     expect(card.getAttribute('data-scene-open')).toBeNull();
     expect(card.getAttribute('tabindex')).toBeNull();

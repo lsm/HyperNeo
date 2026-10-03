@@ -518,9 +518,7 @@ export function NeoLive() {
                   );
                 writeDraft(text);
               }}
-              onTranscript={(text) =>
-                writeDraft([draft, text].filter(Boolean).join('\n'))
-              }
+              onTranscript={(text) => writeDraft([draft, text].filter(Boolean).join('\n'))}
               onError={neo.setError}
               onSend={(input) => {
                 const submitted = draft ?? '';

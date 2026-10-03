@@ -108,7 +108,9 @@ describe('useNeo root conversation', () => {
     act(() => neoEvents.changed?.());
     await waitFor(() => expect(screen.getByText('Overview work: refreshed')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Open Neo' }));
-    await waitFor(() => expect(request.mock.calls.filter(([, call]) => call.name === 'neo.open')).toHaveLength(2));
+    await waitFor(() =>
+      expect(request.mock.calls.filter(([, call]) => call.name === 'neo.open')).toHaveLength(2)
+    );
     expect(screen.getByText('Board work: refreshed')).toBeTruthy();
     for (const [, call] of request.mock.calls) expect(call.input).toEqual({});
     expect(screen.queryByRole('alert')).toBeNull();
