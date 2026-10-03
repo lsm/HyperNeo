@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="102" height="176" viewBox="0 0 102 176" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo small-size mark 06S, jade</title>
+  <desc id="desc">A continuous vertical jade bar beside a split jade bar, drawn for sizes below 48 pixels.</desc>
+  <g fill="#53E59A">
+    <rect x="0" y="0" width="42" height="176" rx="6" />
+    <rect x="60" y="0" width="42" height="79" rx="6" />
+    <rect x="60" y="97" width="42" height="79" rx="6" />
+  </g>
+</svg>

@@ -120,9 +120,18 @@
     "barWidth": 55,
     "opening": 34,
     "minimumClearSpace": 34,
-    "minimumDigitalMarkHeightPx": 24,
-    "preferredDigitalMarkHeightPx": 32,
+    "minimumDigitalMarkHeightPx": 48,
     "minimumHorizontalLockupWidthPx": 200,
-    "minimumFaviconTilePx": 32
+    "minimumFaviconTilePx": 32,
+    "small": {
+      "variant": "06S",
+      "viewBox": [0, 0, 102, 176],
+      "barWidth": 42,
+      "opening": 18,
+      "cornerRadius": 6,
+      "useBelowPx": 48,
+      "minimumDigitalMarkHeightPx": 16,
+      "faviconTileMarkHeight": 22
+    }
   }
 }

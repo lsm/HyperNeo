@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="102" height="176" viewBox="0 0 102 176" role="img" aria-labelledby="title desc">
+  <title id="title">HyperNeo small-size mark 06S, white</title>
+  <desc id="desc">A continuous vertical white bar beside a split white bar, drawn for sizes below 48 pixels.</desc>
+  <g fill="#F2F4EF">
+    <rect x="0" y="0" width="42" height="176" rx="6" />
+    <rect x="60" y="0" width="42" height="79" rx="6" />
+    <rect x="60" y="97" width="42" height="79" rx="6" />
+  </g>
+</svg>

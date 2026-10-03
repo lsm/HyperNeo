@@ -52,6 +52,10 @@
   --hn-logo-height: 377;
   --hn-logo-bar: 55;
   --hn-logo-gap: 34;
+  --hn-logo-small-width: 102;
+  --hn-logo-small-height: 176;
+  --hn-logo-small-bar: 42;
+  --hn-logo-small-gap: 18;
   --hn-icon-stroke: 2px;
   --hn-border-hairline: 1px;
   --hn-motion-quick: 160ms;
