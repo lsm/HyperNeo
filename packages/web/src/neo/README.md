@@ -1,6 +1,6 @@
 # Neo MVP
 
-The entry header shows the approved mark 06 in the approved paper color on dark themes and ink on light themes, 24px tall, in the same floating button style as the work-list button.
+The entry header shows the small-size mark 06S in paper on dark themes and ink on light themes, 30px tall (22/32 of the 44px button), in the same floating button style as the work-list button.
 
 An opt-in entry inside the existing web package at `/neo`, included in the web build. The old `/neo/index.html` URL and `/neo/` redirect to `/neo`, preserving query parameters. Development, build preview, and production servers serve the same entry. The normal HyperNeo entry remains unchanged. Requires this branch's daemon (schema migration 279) and a configured model provider.
 
