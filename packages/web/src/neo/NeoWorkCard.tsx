@@ -159,24 +159,15 @@ export function NeoWorkCard({
           <NeoWorkQuestion key={work.id} work={work} />
         ))}
       {(work.status === 'proposed' || work.status === 'failed' || active) && (
-        <div class="mt-4 flex flex-wrap items-center gap-2">
-          {work.status === 'proposed' && (
-            <Button
-              disabled={disabled || busy}
-              onClick={() => onAction(work.id, 'start')}
-              icon={<NeoIcon name="arrow" />}
-            >
-              {busy ? 'Starting…' : 'Start work'}
+        <div class="mt-4 flex flex-wrap items-center justify-end gap-4">
+          {work.status === 'failed' && onDismiss && (
+            <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
+              Dismiss
             </Button>
           )}
           {work.status === 'failed' && onRetry && (
             <Button disabled={disabled || busy} onClick={() => onRetry(work)}>
               Try again
-            </Button>
-          )}
-          {work.status === 'failed' && onDismiss && (
-            <Button variant="ghost" disabled={busy} onClick={() => onDismiss(work.id)}>
-              Dismiss
             </Button>
           )}
           {(work.status === 'proposed' || active) && (
@@ -194,6 +185,15 @@ export function NeoWorkCard({
                     ? 'Stop waiting'
                     : 'Stop work'
                   : 'Not now'}
+            </Button>
+          )}
+          {work.status === 'proposed' && (
+            <Button
+              disabled={disabled || busy}
+              onClick={() => onAction(work.id, 'start')}
+              icon={<NeoIcon name="arrow" />}
+            >
+              {busy ? 'Starting…' : 'Start work'}
             </Button>
           )}
         </div>
