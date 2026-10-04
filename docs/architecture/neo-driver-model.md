@@ -80,6 +80,17 @@ interface PlaceGroup {
   work: WorkSummary[];
 }
 
+type WorkRejection =
+  | 'unknown_adapter'
+  | 'unsupported'
+  | 'not_found'
+  | 'not_open'
+  | 'not_delivered'
+  | 'unreachable'
+  | 'invalid_place';
+
+type Result<T> = { ok: true; value: T } | { ok: false; reason: WorkRejection; detail: string };
+
 interface WorkAdapter {
   id: string;
   capabilities: ReadonlyArray<'find' | 'start' | 'send' | 'status' | 'stop'>;
@@ -92,6 +103,7 @@ interface WorkAdapter {
 ```
 
 - Five verbs. Finding a place is part of `find`, a deep link is a field, and push events wait: status is refreshed on read and on a timer until a backend can push.
+- Rejections are result values with a named reason, following ADR 0006; `detail` carries the backend's own words. `unknown_adapter` and `unsupported` come from the operation layer (an adapter id that isn't registered, or a verb it doesn't declare). `not_found` and `not_open` cover a ref that doesn't exist or is archived or ended, such as `message.send`'s archived and ended rejections. `not_delivered` means the backend refused or dropped the message. `unreachable` means the other daemon didn't answer. `invalid_place` is a folder or Space the adapter can't start work in.
 - `capabilities` makes a missing verb explicit. Claude Code Desktop has no `stop` today, so its adapter declares four verbs and Neo tells the user instead of failing.
 - A different implementation of the same backend can replace an adapter in the registry without touching Neo.
 
@@ -101,13 +113,13 @@ Neo reaches every adapter through one set of operations:
 
 | Operation | What it does |
 | --- | --- |
-| `work.find {text?, place?, adapters?, includeClosed?}` | Asks every local adapter and every attached daemon, merges the results by place, and returns the groups most recent first. |
+| `work.find {text?, folder?, spaceId?, adapters?, includeClosed?, limit?, localOnly?}` | Asks every local adapter and, unless `localOnly` is set, every attached daemon; merges the results by place and returns the groups most recent first, plus any source that could not answer. |
 | `work.start {adapter, place, title, message}` | Starts new work in a place and records a work item. |
 | `work.send {ref, message}` | Sends to existing work, confirms delivery, and records a work item. |
 | `work.status {ref}` | Returns the current status, the last reply and the link. |
 | `work.stop {ref}` | Stops the current turn, when the adapter supports it. |
 
-- A reference with a `daemon` is forwarded with `remoteDaemons.invoke(daemon, 'work.…', input)`, which already exists and calls any operation on an attached daemon. `work.find` passes a local-only flag when it fans out, so daemons never ask each other in a loop.
+- A reference with a `daemon` is forwarded with `remoteDaemons.invoke(daemon, 'work.…', input)`, which already exists and calls any operation on an attached daemon. `work.find` sets `localOnly: true` when it fans out, so two daemons attached both ways never ask each other in a loop.
 - `work.start` and `work.send` run straight away when the user's current message asked for the work. When a holder decides on its own, Neo shows a Start card first.
 
 ## Finding work and places
@@ -432,7 +444,8 @@ flowchart LR
 ```
 
 - An adapter runs next to its backend. Desktop adapters run on the laptop, where the apps are.
-- `remoteDaemons.invoke` already forwards any operation to an attached daemon. Attachments live only in memory today, so they need to be stored and restored at startup. The attach has no authentication, so it stays on the private network (Tailscale).
+- `remoteDaemons.invoke` already forwards any operation to an attached daemon. Attachments live only in memory today, so M6 stores them in global settings and restores them at startup.
+- The daemons' RPC door has no caller identity: any WebSocket peer that reaches it calls operations as the local user, including `daemon.attach`. That exposure exists whether or not attachments are remembered, so both daemons stay on the private network (Tailscale) for now, and a shared-secret handshake on attach and on the RPC door is planned as its own security slice.
 
 ## Gaps and fixes
 
@@ -466,7 +479,7 @@ The minimal path. Each slice stays under the 300 production-line limit from ADR 
 
 After M5, Neo drives HyperNeo and Spaces correctly on the iMac. M7 and M8 add the desktop apps.
 
-Later, outside the minimal path: push events instead of refresh, an `oap` adapter, `stop` for Claude Code Desktop when the app offers a way, a Codex Desktop deep link, and editing a topic's places in the UI.
+Later, outside the minimal path: a shared-secret handshake for daemon attach and the RPC door, push events instead of refresh, an `oap` adapter, `stop` for Claude Code Desktop when the app offers a way, a Codex Desktop deep link, and editing a topic's places in the UI.
 
 ## Open questions
 
