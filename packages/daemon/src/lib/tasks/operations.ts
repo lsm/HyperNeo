@@ -256,6 +256,7 @@ export function createSpaceOperationRegistryProvider(
               handoff: tasks.handoffWorkerSession,
             }),
           ]
-        : extra
+        : extra,
+      tasks.ensureTargetSession
     ));
 }

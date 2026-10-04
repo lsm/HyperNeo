@@ -5,6 +5,7 @@ export const AGENT_OPERATION_NAMES = [
   'agent.reminder.cancel',
   'agent.reminder.create',
   'agent.reminder.list',
+  'agent.resolve',
   'agent.session.ensure',
   'agent.template.create',
   'agent.template.delete',

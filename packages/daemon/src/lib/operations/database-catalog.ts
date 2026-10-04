@@ -14,6 +14,12 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
+import {
+  createAgentReferenceLookups,
+  createAgentSessionResolver,
+  createResolveAgentOperation,
+  type EnsureReferencedAgentSession,
+} from '../agents/agent-reference.ts';
 import { createMessageStatusOperation } from '../messaging/message-status.ts';
 import { MAILBOX_LANE } from '../mailbox/enqueue.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
@@ -35,8 +41,10 @@ export function createDatabaseOperationCatalog(
   db: Database,
   jobQueue = db.getJobQueueRepo(),
   overrides: Partial<TaskOperationDependencies> = {},
-  extra: readonly OperationDefinition[] = []
+  extra: readonly OperationDefinition[] = [],
+  ensureAgentSession?: EnsureReferencedAgentSession
 ) {
+  const agentLookups = createAgentReferenceLookups(() => db.getDatabase());
   const registry = createDaemonOperationCatalog(
     jobQueue,
     {
@@ -67,6 +75,9 @@ export function createDatabaseOperationCatalog(
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
       sessionStatus: (sessionId) => readSessionStatus(db, sessionId),
+      ...(ensureAgentSession
+        ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
+        : {}),
       ...overrides,
     },
     [
@@ -76,6 +87,7 @@ export function createDatabaseOperationCatalog(
         readCapabilities: (caller) =>
           listOperationSummaries(registry, caller).map(({ name }) => name),
       }),
+      createResolveAgentOperation(agentLookups),
       createMessageStatusOperation({
         readSendStatus: (sessionId, messageId) =>
           db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ?? null,

@@ -7,7 +7,11 @@ import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.
 import type { TransitionStandaloneTaskInput } from '../../storage/tasks/transition-task.ts';
 import { createGetTaskOperation } from '../tasks/get-operation.ts';
 import { createDiscoveryOperations } from './discovery.ts';
-import { createSendMessageOperation, type SessionStatusRead } from '../messaging/message-send.ts';
+import {
+  createSendMessageOperation,
+  type AgentTargetResolver,
+  type SessionStatusRead,
+} from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
 import {
   createDetachDaemonOperation,
@@ -41,6 +45,7 @@ export interface TaskOperationDependencies {
     typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
   >[0];
   sessionStatus: SessionStatusRead;
+  resolveMessageAgent?: AgentTargetResolver;
 }
 
 export function createDaemonOperationCatalog(
@@ -52,7 +57,8 @@ export function createDaemonOperationCatalog(
     createSendMessageOperation(
       jobQueue,
       tasks.sessionStatus,
-      createRemoteSendForwarder(remoteDaemons)
+      createRemoteSendForwarder(remoteDaemons),
+      tasks.resolveMessageAgent
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),
