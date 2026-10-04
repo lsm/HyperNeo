@@ -173,7 +173,7 @@ export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFail
 }
 
 export function renderMailboxFailureNotice(notice: MailboxFailureNotice): string {
-  return `Your message ${notice.messageUuid} to session ${notice.targetSessionId} was not delivered (${notice.reason}). The target never saw it. Send it to a live session instead; message.status reports where a sent message is.`;
+  return `Your message ${notice.messageUuid} to session ${notice.targetSessionId} was not delivered (${notice.reason}). The target never saw it. Send it to a live session instead.`;
 }
 
 export function selectFailureSender(entry: MailboxEntry | null): string | null {
