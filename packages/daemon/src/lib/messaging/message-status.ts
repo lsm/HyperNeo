@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SendStatus as MessageSendStatus } from '../../storage/repositories/sdk-message-repository.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { parseRemoteAddress } from '../mailbox/address.ts';
 
 export const MessageStatusInputSchema = z.object({
   sessionId: z.string().min(1),
@@ -74,11 +75,26 @@ export function explainMessageFailure(
   return reason ? { status, reason } : { status };
 }
 
+export function requireLocalTarget(
+  input: MessageStatusInput
+): { value: MessageStatusInput } | { reason: MessageStatusResult } {
+  return parseRemoteAddress(input.sessionId) === null
+    ? { value: input }
+    : {
+        reason: {
+          status: 'unknown',
+          reason:
+            'This message went to another daemon, which owns its delivery; call message.status on that daemon with the bare session id',
+        },
+      };
+}
+
 const runMessageStatus = (superpipe({})('read-message-status') as PipelineAPI)
   .input(['input', 'readers'])
-  .pipe(readMessageEvidence, ['input', 'readers'], 'evidence')
+  .pipe(requireLocalTarget, 'input', 'result:result')
+  .pipe(readMessageEvidence, ['result', 'readers'], 'evidence')
   .pipe(classifyMessageDelivery, 'evidence', 'status')
-  .pipe(explainMessageFailure, ['status', 'input', 'evidence', 'readers'], 'result')
+  .pipe(explainMessageFailure, ['status', 'result', 'evidence', 'readers'], 'result')
   .end('result') as (
   input: MessageStatusInput,
   readers: MessageStatusReaders
@@ -88,7 +104,7 @@ export function createMessageStatusOperation(readers: MessageStatusReaders) {
   return defineOperation({
     name: 'message.status',
     description:
-      'Read where a message sent with message.send is now, by its target sessionId and the messageId from the send receipt: queued, deferred, processing (the target is running a turn on it), delivered (the target consumed it), failed (with the reason, such as an archived target or an expired or erroring delivery) or unknown. Delivered means the target read the message, not that it replied.',
+      'Read where a message sent with message.send to a session on this daemon is now, by its target sessionId and the messageId from the send receipt: queued, deferred, processing (the target is running a turn on it), delivered (the target consumed it), failed (with the reason, such as an archived target or an expired or erroring delivery) or unknown. Delivered means the target read the message, not that it replied.',
     inputSchema: MessageStatusInputSchema,
     resultSchema: MessageStatusResultSchema,
     execute: async (input) => runMessageStatus(input, readers),

@@ -101,6 +101,20 @@ describe('message.status operation', () => {
     });
   });
 
+  test('says a remote-daemon receipt belongs to that daemon instead of guessing', async () => {
+    expect(
+      await invokeOperation(
+        registry(() => 'consumed'),
+        'message.status',
+        { sessionId: 'daemon:b::session:session-on-b', messageId: 'remote-message' },
+        { source: 'mcp', sessionId: 'neo:root' }
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { status: 'unknown', reason: expect.stringContaining('another daemon') },
+    });
+  });
+
   test('reports delivered once the target consumed the message', async () => {
     const ops = registry(() => 'consumed');
     const receipt = await send(ops);
