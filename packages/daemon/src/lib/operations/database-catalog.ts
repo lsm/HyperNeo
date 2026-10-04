@@ -37,7 +37,7 @@ export function createDatabaseOperationCatalog(
   extra: readonly OperationDefinition[] = [],
   ensureAgentSession?: EnsureReferencedAgentSession
 ) {
-  const agentLookups = createAgentReferenceLookups(db.getDatabase());
+  const agentLookups = createAgentReferenceLookups(() => db.getDatabase());
   const registry = createDaemonOperationCatalog(
     jobQueue,
     {

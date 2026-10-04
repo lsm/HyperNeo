@@ -163,14 +163,14 @@ export function resolveAgentReference(
   return settle(runResolveAgentReference(ref, lookups));
 }
 
-export function createAgentReferenceLookups(db: BunDatabase): AgentReferenceLookups {
+export function createAgentReferenceLookups(db: () => BunDatabase): AgentReferenceLookups {
   return {
     listSpaces: () =>
-      db
+      db()
         .prepare(`SELECT id, slug, name FROM spaces WHERE status != 'archived' ORDER BY slug`)
         .all() as ReferenceSpace[],
     listAgents: (spaceId) =>
-      db
+      db()
         .prepare(
           `SELECT id, handle, display_name AS displayName FROM space_long_horizon_agents
             WHERE space_id = ? AND status != 'archived' ORDER BY handle`
