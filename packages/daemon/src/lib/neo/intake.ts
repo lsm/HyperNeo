@@ -8,12 +8,12 @@ import type { Database } from '../../storage/database.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { SendMessageInputSchema } from '../messaging/message-send.ts';
+import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 const Input = z
   .object({
-    sessionId: SendMessageInputSchema.shape.sessionId,
+    sessionId: MessageSessionIdSchema,
     requestId: z.uuid(),
     content: SendMessageInputSchema.shape.message.shape.message.shape.content,
   })

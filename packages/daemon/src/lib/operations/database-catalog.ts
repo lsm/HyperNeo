@@ -14,6 +14,12 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
+import {
+  createAgentReferenceLookups,
+  createAgentSessionResolver,
+  createResolveAgentOperation,
+  type EnsureReferencedAgentSession,
+} from '../agents/agent-reference.ts';
 
 const FALLBACK_TASK_READ_ADMISSION = {
   getSession: () => null,
@@ -28,8 +34,10 @@ export function createDatabaseOperationCatalog(
   db: Database,
   jobQueue = db.getJobQueueRepo(),
   overrides: Partial<TaskOperationDependencies> = {},
-  extra: readonly OperationDefinition[] = []
+  extra: readonly OperationDefinition[] = [],
+  ensureAgentSession?: EnsureReferencedAgentSession
 ) {
+  const agentLookups = createAgentReferenceLookups(db.getDatabase());
   const registry = createDaemonOperationCatalog(
     jobQueue,
     {
@@ -60,6 +68,9 @@ export function createDatabaseOperationCatalog(
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
       sessionExists: (sessionId) => sessionRowExists(db, sessionId),
+      ...(ensureAgentSession
+        ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
+        : {}),
       ...overrides,
     },
     [
@@ -69,6 +80,7 @@ export function createDatabaseOperationCatalog(
         readCapabilities: (caller) =>
           listOperationSummaries(registry, caller).map(({ name }) => name),
       }),
+      createResolveAgentOperation(agentLookups),
       createSessionInspectionOperation({
         readBinding: (id) => new NeoRepository(db.getDatabase()).getBindingBySession(id),
         readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
