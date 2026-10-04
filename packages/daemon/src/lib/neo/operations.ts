@@ -9,6 +9,7 @@ import type {
   NeoBinding,
   NeoConsultation,
   NeoConsultationWaiter,
+  NeoWork,
 } from '@hyperneo/shared/types/neo-context';
 import {
   requireNeoWorkTargetSession,
@@ -231,6 +232,27 @@ export function requireNeoExecutionChoice(
       };
 }
 
+export function requireNeoWorkCancellation(
+  work: NeoWork,
+  caller: OperationCaller
+): { value: NeoWork } | { reason: Rejection } {
+  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId)
+    return {
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can withdraw it.',
+      },
+    };
+  if (work.status === 'proposed' || work.status === 'queued' || work.status === 'cancelled')
+    return { value: work };
+  return {
+    reason: {
+      ok: false,
+      reason: `work_not_cancelable: this work already ${work.status}; stop it through the owning runtime (session interrupt or Space task cancel)`,
+    },
+  };
+}
+
 export function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
@@ -269,7 +291,7 @@ export function admitNeoCaller(
     )
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
-  if (['neo.open', 'neo.work.cancel', 'neo.concern.cancel'].includes(name))
+  if (['neo.open', 'neo.concern.cancel'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -650,9 +672,12 @@ export function createNeoOperations(service: NeoService) {
   const cancel = path(
     'neo.work.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }) => {
-      if (!service.repo.getWork(id)) return { ok: false as const, reason: 'Work not found.' };
-      await service.cancel(id);
+    async ({ id }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      const admission = requireNeoWorkCancellation(work, caller);
+      if ('reason' in admission) return admission.reason;
+      if (work.status !== 'cancelled') await service.cancel(id);
       return { ok: true as const, work: service.repo.getWork(id)! };
     }
   );
@@ -746,10 +771,11 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.work.cancel',
-      description: 'Cancel a proposal or interrupt its execution.',
+      description:
+        'Withdraw work before it finishes: proposed or queued work becomes cancelled, disappears from pending surfaces, and its Neo-owned execution session is interrupted. The Neo session that proposed the work or the human can cancel. Retrying on already-cancelled work succeeds without another write. Work that already reported or failed rejects with work_not_cancelable; stop live execution through the owning runtime (session interrupt or Space task cancel) instead.',
       inputSchema: WorkId,
       resultSchema: WorkResult,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: cancel,
     }),
   ];
