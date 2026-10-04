@@ -14,6 +14,9 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
+import { createMessageStatusOperation } from '../messaging/message-status.ts';
+import { MAILBOX_LANE } from '../mailbox/enqueue.ts';
+import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 
 const FALLBACK_TASK_READ_ADMISSION = {
   getSession: () => null,
@@ -72,6 +75,18 @@ export function createDatabaseOperationCatalog(
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>
           listOperationSummaries(registry, caller).map(({ name }) => name),
+      }),
+      createMessageStatusOperation({
+        readSendStatus: (sessionId, messageId) =>
+          db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ?? null,
+        readMailboxAdmission: (sessionId, messageId) =>
+          jobQueue.getLatestByPayload(MAILBOX_LANE, {
+            'to.sessionId': sessionId,
+            messageUuid: messageId,
+          }),
+        readDeliveryError: (sessionId, messageId) =>
+          jobQueue.getLatestByPayload(MESSAGE_DELIVERY, { sessionId, messageUuid: messageId })
+            ?.error ?? null,
       }),
       createSessionInspectionOperation({
         readBinding: (id) => new NeoRepository(db.getDatabase()).getBindingBySession(id),
