@@ -16,6 +16,7 @@ import { MAILBOX_LANE } from './enqueue.ts';
 import {
   createMailboxDeadHandler,
   materializeMailboxFailure,
+  createMailboxSenderNotifier,
   type MailboxFailureDeps,
 } from './failure.ts';
 
@@ -69,6 +70,7 @@ function createFailureDeps(deps: MailboxRegistrationDeps): MailboxFailureDeps {
     settleSkipped: (sessionId, messageUuid) =>
       deps.sessionManager?.getCachedSession(sessionId)?.settleSkippedDelivery(messageUuid) ??
       Promise.resolve(),
+    notifySender: createMailboxSenderNotifier(deps.jobQueue),
   };
 }
 
