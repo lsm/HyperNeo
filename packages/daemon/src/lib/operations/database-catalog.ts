@@ -20,14 +20,21 @@ import {
   createResolveAgentOperation,
   type EnsureReferencedAgentSession,
 } from '../agents/agent-reference.ts';
+import { createMessageStatusOperation } from '../messaging/message-status.ts';
+import { MAILBOX_LANE } from '../mailbox/enqueue.ts';
+import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 
 const FALLBACK_TASK_READ_ADMISSION = {
   getSession: () => null,
   longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
 };
 
-function sessionRowExists(db: Database, sessionId: string): boolean {
-  return db.getDatabase().prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId) != null;
+function readSessionStatus(db: Database, sessionId: string): string | null {
+  const row = db.getDatabase().prepare('SELECT status FROM sessions WHERE id = ?').get(sessionId) as
+    | { status: string }
+    | undefined
+    | null;
+  return row?.status ?? null;
 }
 
 export function createDatabaseOperationCatalog(
@@ -67,7 +74,7 @@ export function createDatabaseOperationCatalog(
         ),
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
-      sessionExists: (sessionId) => sessionRowExists(db, sessionId),
+      sessionStatus: (sessionId) => readSessionStatus(db, sessionId),
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
         : {}),
@@ -81,6 +88,18 @@ export function createDatabaseOperationCatalog(
           listOperationSummaries(registry, caller).map(({ name }) => name),
       }),
       createResolveAgentOperation(agentLookups),
+      createMessageStatusOperation({
+        readSendStatus: (sessionId, messageId) =>
+          db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ?? null,
+        readMailboxAdmission: (sessionId, messageId) =>
+          jobQueue.getLatestByPayload(MAILBOX_LANE, {
+            'to.sessionId': sessionId,
+            messageUuid: messageId,
+          }),
+        readDeliveryError: (sessionId, messageId) =>
+          jobQueue.getLatestByPayload(MESSAGE_DELIVERY, { sessionId, messageUuid: messageId })
+            ?.error ?? null,
+      }),
       createSessionInspectionOperation({
         readBinding: (id) => new NeoRepository(db.getDatabase()).getBindingBySession(id),
         readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),

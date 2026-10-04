@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { enqueueMailboxEntry } from '../../../../src/lib/mailbox/enqueue';
-import type { MailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { parseMailboxEntry, type MailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { deterministicMailboxUuid } from '../../../../src/lib/mailbox/failure';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import type { Database } from '../../../../src/storage/database';
@@ -67,6 +67,32 @@ describe('materializeMailboxFailuresForSession', () => {
       status: 'failed',
     });
     expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'accepted-then-cancelled');
+  });
+
+  test('tells the sending session when teardown cancels its pending message', async () => {
+    enqueueMailboxEntry(mailbox.jobQueue, {
+      ...pendingEntry('neo-handoff'),
+      origin: 'session:neo%3Aroot',
+    });
+    const db = {
+      getJobQueueRepo: () => mailbox.jobQueue,
+      getSDKMessageRepo: () => mailbox.sdkMessageRepo,
+      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+        mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
+    } as unknown as Database;
+
+    materializeMailboxFailuresForSession(SESSION_ID, {
+      db,
+      internalEventBus: { publish: async () => {} } as never,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const notices = mailbox.rows().filter((row) => row.status === 'pending');
+    expect(notices).toHaveLength(1);
+    const notice = parseMailboxEntry(JSON.parse(notices[0].payload));
+    expect(notice?.to).toEqual({ kind: 'session', sessionId: 'neo:root' });
+    expect(notice?.origin).toBe('system');
+    expect(JSON.stringify(notice?.message)).toContain('cancelled by session abort');
   });
 
   test('reports the deterministic uuid for entries materialized without messageUuid', () => {

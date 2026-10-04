@@ -113,7 +113,7 @@ describe('message.send to an agent', () => {
     const registry = createOperationRegistry([
       createSendMessageOperation(
         mailbox.jobQueue,
-        (sessionId) => sessionId === 'agent-ui-session',
+        (sessionId) => (sessionId === 'agent-ui-session' ? 'active' : null),
         undefined,
         createAgentSessionResolver(lookups, ensure)
       ),
@@ -140,7 +140,7 @@ describe('message.send to an agent', () => {
     const registry = createOperationRegistry([
       createSendMessageOperation(
         mailbox.jobQueue,
-        () => true,
+        () => 'active',
         undefined,
         createAgentSessionResolver(lookups, async () => ({
           kind: 'unresolved',
@@ -167,7 +167,7 @@ describe('message.send to an agent', () => {
 
   test('requires exactly one of sessionId or agent', async () => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, () => true),
+      createSendMessageOperation(mailbox.jobQueue, () => 'active'),
     ]);
     const outcome = await invokeOperation(
       registry,
