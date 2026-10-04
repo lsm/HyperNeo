@@ -24,7 +24,7 @@ describe('shared message.send operation', () => {
     'accepts persisted work from %s before SDK delivery',
     async (source) => {
       const registry = createOperationRegistry([
-        createSendMessageOperation(mailbox.jobQueue, () => true),
+        createSendMessageOperation(mailbox.jobQueue, () => 'active'),
       ]);
       const outcome = await invokeOperation(
         registry,
@@ -54,7 +54,7 @@ describe('shared message.send operation', () => {
 
   test('preserves deferred delivery, images, and reference metadata', async () => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, () => true),
+      createSendMessageOperation(mailbox.jobQueue, () => 'active'),
     ]);
     const prepared = {
       ...message,
@@ -98,7 +98,7 @@ describe('shared message.send operation', () => {
     { sessionId: 'destination', message, deliveryMode: 'unknown' },
   ])('rejects invalid input without persistence: %j', async (input) => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, () => true),
+      createSendMessageOperation(mailbox.jobQueue, () => 'active'),
     ]);
     expect(await invokeOperation(registry, 'message.send', input, { source: 'mcp' })).toMatchObject(
       {
@@ -111,7 +111,7 @@ describe('shared message.send operation', () => {
 
   test('does not report acceptance when persistence fails', async () => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, () => true),
+      createSendMessageOperation(mailbox.jobQueue, () => 'active'),
     ]);
     mailbox.db.exec('DROP TABLE job_queue');
     expect(
@@ -153,7 +153,9 @@ describe('shared message.send operation', () => {
 
   test('rejects a send to a session id that does not exist', async () => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, (sessionId) => sessionId === 'destination'),
+      createSendMessageOperation(mailbox.jobQueue, (sessionId) =>
+        sessionId === 'destination' ? 'active' : null
+      ),
     ]);
     const outcome = await invokeOperation(
       registry,
@@ -168,9 +170,31 @@ describe('shared message.send operation', () => {
     expect(mailbox.rowCount()).toBe(0);
   });
 
+  test.each(['archived', 'ended'])('rejects a send to a %s session', async (status) => {
+    const registry = createOperationRegistry([
+      createSendMessageOperation(mailbox.jobQueue, () => status),
+    ]);
+    const outcome = await invokeOperation(
+      registry,
+      'message.send',
+      { sessionId: 'space:chat:space-a', message },
+      { source: 'mcp', sessionId: 'neo:root' }
+    );
+    expect(outcome).toEqual({
+      kind: 'completed',
+      value: {
+        kind: 'rejected',
+        reason: `Session space:chat:space-a is ${status} and cannot receive messages`,
+      },
+    });
+    expect(mailbox.rowCount()).toBe(0);
+  });
+
   test('accepts a send addressed outside the caller Space', async () => {
     const registry = createOperationRegistry([
-      createSendMessageOperation(mailbox.jobQueue, (sessionId) => sessionId === 'space-b-session'),
+      createSendMessageOperation(mailbox.jobQueue, (sessionId) =>
+        sessionId === 'space-b-session' ? 'active' : null
+      ),
     ]);
     const outcome = await invokeOperation(
       registry,

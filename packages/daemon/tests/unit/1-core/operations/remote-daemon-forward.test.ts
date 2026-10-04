@@ -40,7 +40,9 @@ type RemoteDaemon = {
 async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> {
   const mailbox = createMailboxTestDb();
   const registry = createOperationRegistry([
-    createSendMessageOperation(mailbox.jobQueue, (sessionId) => sessionId === knownSessionId),
+    createSendMessageOperation(mailbox.jobQueue, (sessionId) =>
+      sessionId === knownSessionId ? 'active' : null
+    ),
     ...createDiscoveryOperations(() => registry),
   ]);
   const router = new MessageHubRouter({
@@ -130,7 +132,7 @@ describe('forwarding message.send to an attached daemon', () => {
     return createOperationRegistry([
       createSendMessageOperation(
         local.jobQueue,
-        (sessionId) => sessionId === 'session-on-a',
+        (sessionId) => (sessionId === 'session-on-a' ? 'active' : null),
         createRemoteSendForwarder(daemons)
       ),
     ]);
@@ -262,7 +264,7 @@ describe('attaching a remote daemon', () => {
       createAttachDaemonOperation(daemons),
       createSendMessageOperation(
         local.jobQueue,
-        (sessionId) => sessionId === 'session-on-a',
+        (sessionId) => (sessionId === 'session-on-a' ? 'active' : null),
         createRemoteSendForwarder(daemons)
       ),
     ]);
@@ -305,7 +307,7 @@ describe('attaching a remote daemon', () => {
         createAttachDaemonOperation(daemons),
         createSendMessageOperation(
           local.jobQueue,
-          (sessionId) => sessionId === 'session-on-a',
+          (sessionId) => (sessionId === 'session-on-a' ? 'active' : null),
           createRemoteSendForwarder(daemons)
         ),
       ]);
@@ -382,7 +384,7 @@ describe('connect deadline on a forwarded send', () => {
     const registry = createOperationRegistry([
       createSendMessageOperation(
         local.jobQueue,
-        (sessionId) => sessionId === 'session-on-a',
+        (sessionId) => (sessionId === 'session-on-a' ? 'active' : null),
         createRemoteSendForwarder(daemons)
       ),
     ]);

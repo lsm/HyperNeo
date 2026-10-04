@@ -11,6 +11,7 @@ import {
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 
 const ContentBlockSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().min(1) }),
@@ -69,7 +70,7 @@ export const SendMessageResultSchema = z.discriminatedUnion('kind', [
 type SendInput = z.infer<typeof SendMessageInputSchema>;
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
-export type SessionExistenceCheck = (sessionId: string) => boolean;
+export type SessionStatusRead = (sessionId: string) => string | null;
 
 export type RemoteSendForwarder = (
   target: RemoteSessionAddress,
@@ -91,16 +92,19 @@ export function forwardRemoteMessage(
 
 export function requireTargetSession(
   input: SendInput,
-  sessionExists: SessionExistenceCheck
+  sessionStatus: SessionStatusRead
 ): { value: SendInput } | { reason: SendResult } {
-  return sessionExists(input.sessionId)
-    ? { value: input }
-    : {
+  const status = sessionStatus(input.sessionId);
+  if (status === null)
+    return { reason: { kind: 'rejected', reason: `Unknown session: ${input.sessionId}` } };
+  return sessionUnavailable(status)
+    ? {
         reason: {
           kind: 'rejected',
-          reason: `Unknown session: ${input.sessionId}`,
+          reason: `Session ${input.sessionId} is ${status} and cannot receive messages`,
         },
-      };
+      }
+    : { value: input };
 }
 
 function admitOperationMessage(
@@ -140,10 +144,10 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 }
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
-  .input(['input', 'caller', 'jobQueue', 'sessionExists', 'forwardRemote'])
+  .input(['input', 'caller', 'jobQueue', 'sessionStatus', 'forwardRemote'])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(forwardRemoteMessage, ['receipt', 'forwardRemote'], 'result:receipt')
-  .pipe(requireTargetSession, ['receipt', 'sessionExists'], 'result:receipt')
+  .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(selectMessageOrigin, 'caller', 'origin')
   .pipe(persistOperationMessage, ['receipt', 'origin', 'messageId', 'jobQueue'], 'handoff')
@@ -152,22 +156,22 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   input: SendInput,
   caller: OperationCaller,
   jobQueue: JobQueueRepository,
-  sessionExists: SessionExistenceCheck,
+  sessionStatus: SessionStatusRead,
   forwardRemote: RemoteSendForwarder
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
   jobQueue: JobQueueRepository,
-  sessionExists: SessionExistenceCheck,
+  sessionStatus: SessionStatusRead,
   forwardRemote: RemoteSendForwarder = rejectUnattachedDaemon
 ) {
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session, addressed by session id and not restricted to the caller Space. Rejects an unknown session id. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
+      'Persist a message for a session, addressed by session id and not restricted to the caller Space. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
     execute: (input, caller) =>
-      runSendMessage(input, caller, jobQueue, sessionExists, forwardRemote),
+      runSendMessage(input, caller, jobQueue, sessionStatus, forwardRemote),
   });
 }
