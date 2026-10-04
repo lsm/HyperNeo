@@ -71,7 +71,7 @@ The proposed operation (working name `work.find`) returns a short ranked list gr
 
 | Kind | Counts as open | Left out by default |
 | --- | --- | --- |
-| Session | active, paused | ended, archived |
+| Session | active, paused, pending worktree choice (shown as needs you) | ended, archived |
 | Space task | draft, open, in progress, review, approved, blocked, rate or usage limited | done, cancelled, stopped, archived |
 | Space agent | active, paused | disabled, archived |
 | Space | active, including paused | archived, stopped |
