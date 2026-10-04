@@ -20,6 +20,7 @@ import {
   type MailboxFailureDeps,
   materializeMailboxFailure,
   notifyFailureObserversStage,
+  renderMailboxFailureNotice,
   sessionFailureTarget,
 } from '../../../../src/lib/mailbox/failure';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
@@ -448,6 +449,44 @@ describe('createMailboxDeadHandler', () => {
 });
 
 describe('materializeMailboxFailure', () => {
+  test('tells the sending session that its message was not delivered', async () => {
+    const mailbox = createMailboxTestDb();
+    const notifySender = mock(async () => undefined);
+    const entry = makeEntry({ origin: 'session:neo%3Aroot', messageUuid: 'neo-handoff' });
+
+    materializeMailboxFailure(makeDeadJob(entry, 'mailbox: target session archived'), {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed: () => 'failed-row',
+      notifySender,
+    });
+    await Promise.resolve();
+
+    expect(notifySender).toHaveBeenCalledWith('neo:root', {
+      targetSessionId: SESSION_ID,
+      messageUuid: 'neo-handoff',
+      reason: 'mailbox: target session archived',
+    });
+    mailbox.close();
+  });
+
+  test.each(['system', 'chat', 'space_inject', `session:${SESSION_ID}`])(
+    'sends no notice for a %s origin',
+    async (origin) => {
+      const mailbox = createMailboxTestDb();
+      const notifySender = mock(async () => undefined);
+
+      materializeMailboxFailure(makeDeadJob(makeEntry({ origin }), 'delivery failed'), {
+        sdkMessageRepo: mailbox.sdkMessageRepo,
+        saveFailed: () => 'failed-row',
+        notifySender,
+      });
+      await Promise.resolve();
+
+      expect(notifySender).not.toHaveBeenCalled();
+      mailbox.close();
+    }
+  );
+
   test('skips entries addressed to an agent instead of a session', () => {
     const saveFailed = mock(() => 'should-not-happen');
     const entry = makeEntry({
@@ -745,5 +784,18 @@ describe('failure pipeline stages', () => {
 
     expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'row-2');
     expect(settleSkipped).not.toHaveBeenCalled();
+  });
+});
+
+describe('renderMailboxFailureNotice', () => {
+  test('names the message, the target and the reason', () => {
+    const text = renderMailboxFailureNotice({
+      targetSessionId: 'space:chat:space-a',
+      messageUuid: 'neo-handoff',
+      reason: 'mailbox: target session archived',
+    });
+    expect(text).toContain('neo-handoff');
+    expect(text).toContain('space:chat:space-a');
+    expect(text).toContain('mailbox: target session archived');
   });
 });

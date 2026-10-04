@@ -16,8 +16,11 @@ import { MAILBOX_LANE } from './enqueue.ts';
 import {
   createMailboxDeadHandler,
   materializeMailboxFailure,
+  renderMailboxFailureNotice,
   type MailboxFailureDeps,
 } from './failure.ts';
+import { handoffPromptToMailbox } from './handoff.ts';
+import { renderAddress } from './address.ts';
 
 interface MailboxRegistrationDeps {
   jobQueue: JobQueueRepository;
@@ -69,6 +72,18 @@ function createFailureDeps(deps: MailboxRegistrationDeps): MailboxFailureDeps {
     settleSkipped: (sessionId, messageUuid) =>
       deps.sessionManager?.getCachedSession(sessionId)?.settleSkippedDelivery(messageUuid) ??
       Promise.resolve(),
+    notifySender: (senderSessionId, notice) =>
+      handoffPromptToMailbox({
+        to: renderAddress({ kind: 'session', sessionId: senderSessionId }),
+        message: {
+          type: 'user',
+          message: { content: renderMailboxFailureNotice(notice) },
+          parent_tool_use_id: null,
+          inputKind: 'system',
+        },
+        origin: 'system',
+        jobQueue: deps.jobQueue,
+      }),
   };
 }
 

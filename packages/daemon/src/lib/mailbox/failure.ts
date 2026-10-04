@@ -8,6 +8,7 @@ import type { SDKMessageRepository } from '../../storage/repositories/sdk-messag
 import { canonicalJson, normalizePromptForComparison } from '../agent/prompt-comparison.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
 import { projectAdmissionMessage, type SessionMailboxEntry } from './admission-plan.ts';
+import { parseAddress } from './address.ts';
 import { mailboxMessageIsSynthetic, type MailboxEntry, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
@@ -15,6 +16,13 @@ export interface MailboxFailureDeps {
   publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
   saveFailed(sessionId: string, message: SDKUserMessage, origin?: MessageOrigin): string;
   settleSkipped?(sessionId: string, messageUuid: string): Promise<void>;
+  notifySender?(senderSessionId: string, notice: MailboxFailureNotice): Promise<unknown>;
+}
+
+export interface MailboxFailureNotice {
+  targetSessionId: string;
+  messageUuid: string;
+  reason: string;
 }
 
 export interface SessionFailureTarget {
@@ -145,7 +153,7 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
   }
 }
 
-function detachFailureCallback(invoke: () => Promise<void> | undefined): void {
+function detachFailureCallback(invoke: () => Promise<unknown> | undefined): void {
   try {
     void Promise.resolve(invoke()).catch(() => {});
   } catch {}
@@ -164,6 +172,32 @@ export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFail
   return ctx;
 }
 
+export function renderMailboxFailureNotice(notice: MailboxFailureNotice): string {
+  return `Your message ${notice.messageUuid} to session ${notice.targetSessionId} was not delivered (${notice.reason}). The target never saw it. Send it to a live session instead; message.status reports where a sent message is.`;
+}
+
+export function selectFailureSender(entry: MailboxEntry | null): string | null {
+  if (!entry || entry.to.kind !== 'session') return null;
+  const origin = parseAddress(entry.origin);
+  return origin?.kind === 'session' && origin.sessionId !== entry.to.sessionId
+    ? origin.sessionId
+    : null;
+}
+
+export function notifyFailureSenderStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+  const sender = selectFailureSender(ctx.entry);
+  const target = ctx.target;
+  if (!sender || !target || ctx.uuidOwned === false) return ctx;
+  detachFailureCallback(() =>
+    ctx.deps.notifySender?.(sender, {
+      targetSessionId: target.sessionId,
+      messageUuid: target.messageUuid,
+      reason: ctx.job.error ?? 'delivery failed',
+    })
+  );
+  return ctx;
+}
+
 const runMaterializeMailboxFailure = (
   superpipe<{ isSkippedMailboxFailure: (ctx: MailboxFailureCtx) => boolean }>({
     isSkippedMailboxFailure,
@@ -175,6 +209,7 @@ const runMaterializeMailboxFailure = (
   .pipe(buildFailureMessageStage, 'ctx', 'ctx')
   .pipe(persistFailedRowStage, 'ctx', 'ctx')
   .pipe(notifyFailureObserversStage, 'ctx', 'ctx')
+  .pipe(notifyFailureSenderStage, 'ctx', 'ctx')
   .end('ctx') as (ctx: MailboxFailureCtx) => MailboxFailureCtx;
 
 export function materializeMailboxFailure(job: Job, deps: MailboxFailureDeps): void {
