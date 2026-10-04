@@ -7,6 +7,7 @@ import type { SDKMessageRepository } from '../../storage/repositories/sdk-messag
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { parseMailboxEntry } from './entry.ts';
 import {
+  createMailboxSenderNotifier,
   type MailboxFailureDeps,
   materializeMailboxFailure,
   sessionFailureTarget,
@@ -91,6 +92,7 @@ export function materializeCancelledEntriesStage(ctx: MailboxCancelCtx): Mailbox
   if (jobQueue === null || sdkMessageRepo === null) return ctx;
   const failureDeps: MailboxFailureDeps = {
     sdkMessageRepo,
+    notifySender: createMailboxSenderNotifier(jobQueue),
     saveFailed: (sid, message: SDKUserMessage, origin?: MessageOrigin) =>
       ctx.deps.db.saveUserMessage(sid, message, 'failed', origin),
     publishFailed: async (sid, dbMessageId: string) => {

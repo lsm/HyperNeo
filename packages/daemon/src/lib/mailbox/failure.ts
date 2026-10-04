@@ -3,12 +3,13 @@ import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../../storage/busy-retry.ts';
-import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { canonicalJson, normalizePromptForComparison } from '../agent/prompt-comparison.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
 import { projectAdmissionMessage, type SessionMailboxEntry } from './admission-plan.ts';
-import { parseAddress } from './address.ts';
+import { parseAddress, renderAddress } from './address.ts';
+import { handoffPromptToMailbox } from './handoff.ts';
 import { mailboxMessageIsSynthetic, type MailboxEntry, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
@@ -174,6 +175,23 @@ export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFail
 
 export function renderMailboxFailureNotice(notice: MailboxFailureNotice): string {
   return `Your message ${notice.messageUuid} to session ${notice.targetSessionId} was not delivered (${notice.reason}). The target never saw it. Send it to a live session instead.`;
+}
+
+export function createMailboxSenderNotifier(
+  jobQueue: JobQueueRepository
+): NonNullable<MailboxFailureDeps['notifySender']> {
+  return (senderSessionId, notice) =>
+    handoffPromptToMailbox({
+      to: renderAddress({ kind: 'session', sessionId: senderSessionId }),
+      message: {
+        type: 'user',
+        message: { content: renderMailboxFailureNotice(notice) },
+        parent_tool_use_id: null,
+        inputKind: 'system',
+      },
+      origin: 'system',
+      jobQueue,
+    });
 }
 
 export function selectFailureSender(entry: MailboxEntry | null): string | null {
