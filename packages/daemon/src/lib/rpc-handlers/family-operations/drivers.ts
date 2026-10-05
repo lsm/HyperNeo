@@ -10,6 +10,7 @@ import {
 import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
+import { createReadWorkOperation } from '../../drivers/read-operation.ts';
 import {
   createHyperneoAdapter,
   type HyperneoSessionControl,
@@ -28,6 +29,7 @@ import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { readWorkTurns } from '../../../storage/work-turns.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 const WORK_CHAT_LIMIT = 200;
@@ -211,5 +213,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ...claudeDesktopAdapters(),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
-  return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
+  const readTurns = (
+    sessionId: string,
+    around: string | undefined,
+    before: number,
+    after: number
+  ) => readWorkTurns(db(), sessionId, around, before, after);
+  return [
+    createFindWorkOperation(deps),
+    ...createWorkVerbOperations(deps),
+    createReadWorkOperation({ readTurns, remote: remoteDaemons, daemonName: machine }),
+  ];
 }
