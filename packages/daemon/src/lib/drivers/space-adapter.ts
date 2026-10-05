@@ -45,6 +45,12 @@ export interface SpaceTaskDetailRow extends SpaceTaskRow {
   blockReason: string | null;
 }
 
+export interface SpaceTaskNode {
+  agentName: string;
+  workflowNodeId: string;
+  agentSessionId: string | null;
+}
+
 export interface SpaceTaskControl {
   create(
     spaceId: string,
@@ -58,7 +64,7 @@ export interface SpaceTaskControl {
   ): Promise<{ cancelled: true } | { reason: string }>;
   message(
     taskId: string,
-    agentName: string,
+    node: SpaceTaskNode,
     message: string,
     fromHuman: boolean
   ): Promise<{ delivered: true } | { reason: string }>;
@@ -305,18 +311,19 @@ export function requireTaskMessenger(
     : { value: task };
 }
 
-export function readActiveNodeAgent(db: BunDatabase, taskId: string): string | null {
+export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode | null {
   const row = db
     .prepare(
-      `SELECT n.agent_name AS agentName FROM node_executions n
+      `SELECT n.agent_name AS agentName, n.workflow_node_id AS workflowNodeId,
+              n.agent_session_id AS agentSessionId FROM node_executions n
          JOIN space_tasks t ON t.workflow_run_id = n.workflow_run_id
         WHERE t.id = ?
         ORDER BY CASE WHEN n.status IN ('in_progress', 'blocked', 'idle', 'waiting_rebind') THEN 0 ELSE 1 END,
           COALESCE(n.last_activity_at, n.updated_at) DESC
         LIMIT 1`
     )
-    .get(taskId) as { agentName: string } | null | undefined;
-  return row?.agentName ?? null;
+    .get(taskId) as SpaceTaskNode | null | undefined;
+  return row ?? null;
 }
 
 export async function messageSpaceTask(
@@ -325,11 +332,11 @@ export async function messageSpaceTask(
   context: WorkCallContext,
   deps: SpaceAdapterDeps
 ): Promise<Result<{ delivered: boolean }>> {
-  const agentName = readActiveNodeAgent(deps.db(), task.id);
-  if (!agentName) {
+  const node = readActiveNode(deps.db(), task.id);
+  if (!node) {
     return reject('unsupported', `Task #${task.taskNumber} has no workflow agent to message yet.`);
   }
-  const sent = await deps.tasks.message(task.id, agentName, message, context.from === 'chat');
+  const sent = await deps.tasks.message(task.id, node, message, context.from === 'chat');
   return 'reason' in sent
     ? reject('not_delivered', sent.reason)
     : { ok: true, value: { delivered: true } };

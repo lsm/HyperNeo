@@ -169,15 +169,16 @@ describe('space adapter send', () => {
       title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT,
       block_reason TEXT, workflow_run_id TEXT)`);
     db.exec(`CREATE TABLE node_executions (id TEXT PRIMARY KEY, workflow_run_id TEXT, agent_name TEXT,
-      status TEXT, last_activity_at INTEGER, updated_at INTEGER)`);
+      workflow_node_id TEXT, agent_session_id TEXT, status TEXT, last_activity_at INTEGER,
+      updated_at INTEGER)`);
     db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai')`);
     db.exec(`INSERT INTO space_tasks VALUES
       ('t1', 'sp1', 7, 'font size', 'in_progress', 10, NULL, NULL, NULL, 'run-1'),
       ('t2', 'sp1', 8, 'shipped', 'done', 20, NULL, NULL, NULL, 'run-2'),
       ('t3', 'sp1', 9, 'idea', 'open', 30, NULL, NULL, NULL, NULL)`);
     db.exec(`INSERT INTO node_executions VALUES
-      ('n1', 'run-1', 'planner', 'done', 50, 50),
-      ('n2', 'run-1', 'coder', 'in_progress', 40, 40)`);
+      ('n1', 'run-1', 'coder', 'node-review', 's-review', 'done', 50, 50),
+      ('n2', 'run-1', 'coder', 'node-code', 's-code', 'in_progress', 40, 40)`);
   });
 
   afterEach(() => db.close());
@@ -190,9 +191,9 @@ describe('space adapter send', () => {
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
-        message: async (taskId, agentName, message, fromHuman) => {
+        message: async (taskId, node, message, fromHuman) => {
           sent.push(
-            `${taskId} ${agentName} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
+            `${taskId} ${node.agentName}@${node.workflowNodeId} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
           );
           return { delivered: true };
         },
@@ -225,9 +226,9 @@ describe('space adapter send', () => {
       ok: true,
     });
     expect(sent).toEqual([
-      't1 coder use 16px from an agent',
-      't1 coder go on from an agent',
-      't1 coder stop there from you',
+      't1 coder@node-code use 16px from an agent',
+      't1 coder@node-code go on from an agent',
+      't1 coder@node-code stop there from you',
     ]);
   });
 
