@@ -100,6 +100,18 @@ describe('space adapter against the space tables', () => {
   });
   afterEach(() => db.close());
 
+  test('keeps every open task when closed tasks are added', async () => {
+    const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp1', ?, 'closed', 'done', ?)`);
+    for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
+    const adapter = createSpaceAdapter({
+      db: () => db,
+      machine: 'imac',
+      searchTaskIds: () => new Set(),
+    });
+    const [group] = await adapter.find({ includeClosed: true, limit: 20, text: 'open one' });
+    expect(group.work.map((w) => w.ref.id)).toEqual(['t1']);
+  });
+
   test('returns active Spaces with open tasks and counts, newest activity first', async () => {
     const adapter = createSpaceAdapter({
       db: () => db,

@@ -4,6 +4,7 @@ import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
+const CLOSED_TASKS = 500;
 
 export interface SpacePlaceRow {
   id: string;
@@ -55,8 +56,13 @@ export function readSpaceTasks(db: BunDatabase, includeClosed: boolean): SpaceTa
   return db
     .prepare(
       `SELECT id, space_id AS spaceId, task_number AS taskNumber, title, status, updated_at AS updatedAt
-         FROM space_tasks WHERE space_id IS NOT NULL AND (? = 1 OR ${OPEN_TASK})
-        ORDER BY updated_at DESC LIMIT 500`
+         FROM space_tasks WHERE space_id IS NOT NULL AND ${OPEN_TASK}
+       UNION ALL
+       SELECT * FROM (
+         SELECT id, space_id, task_number, title, status, updated_at FROM space_tasks
+          WHERE space_id IS NOT NULL AND ? = 1 AND NOT ${OPEN_TASK}
+          ORDER BY updated_at DESC LIMIT ${CLOSED_TASKS})
+       ORDER BY updatedAt DESC`
     )
     .all(includeClosed ? 1 : 0) as SpaceTaskRow[];
 }
