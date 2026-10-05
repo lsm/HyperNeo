@@ -504,7 +504,8 @@ export class NeoService {
 
   async refreshDriverWork(): Promise<void> {
     for (const work of this.repo.listWork()) {
-      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
+      if (work.status !== 'queued' || this.driverTargets.get(work.id)?.verb !== 'start') continue;
+      const ref = this.driverTargets.readRef(work.id);
       if (!ref) continue;
       const outcome = await invokeOperation(
         this.sessions.getOperationRegistry(),

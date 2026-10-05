@@ -104,7 +104,8 @@ describe('Neo work with a drivers target', () => {
   async function setup(
     reply: unknown,
     during?: (service: NeoService) => Promise<void>,
-    status: () => unknown = () => ({ ok: false, reason: 'unreachable', detail: 'down' })
+    status: () => unknown = () => ({ ok: false, reason: 'unreachable', detail: 'down' }),
+    target: NeoDriverTarget = startTarget
   ) {
     const db = await createTestDb();
     const calls: Array<{ name: string; input: unknown; caller: OperationCaller }> = [];
@@ -145,7 +146,7 @@ describe('Neo work with a drivers target', () => {
         title: work.title,
         instruction: work.instruction,
       },
-      startTarget
+      target
     );
     return { db, service, calls, proposed };
   }
@@ -236,6 +237,24 @@ describe('Neo work with a drivers target', () => {
       expect(calls.filter((call) => call.name === 'work.status').map((call) => call.input)).toEqual(
         [{ ref }, { ref }]
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('leaves a message sent to existing work for Neo to follow up', async () => {
+    const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => done,
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(calls.map((call) => call.name)).toEqual(['work.send']);
     } finally {
       db.close();
     }
