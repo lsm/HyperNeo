@@ -3,8 +3,22 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   buildSpaceGroups,
   createSpaceAdapter,
+  spaceAgentWorkStatus,
   spaceTaskWorkStatus,
 } from '../../../../src/lib/drivers/space-adapter';
+
+describe('spaceAgentWorkStatus', () => {
+  test('reads closed and paused agents first, then the session like a HyperNeo chat', () => {
+    expect(spaceAgentWorkStatus({ status: 'archived', processing: 'processing' })).toBe('stopped');
+    expect(spaceAgentWorkStatus({ status: 'paused', processing: null })).toBe('needs_you');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'processing' })).toBe('running');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'rate_limit_cooldown' })).toBe(
+      'queued'
+    );
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'interrupted' })).toBe('stopped');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: null })).toBe('done');
+  });
+});
 
 describe('spaceTaskWorkStatus', () => {
   test.each([
@@ -93,6 +107,11 @@ describe('space adapter against the space tables', () => {
       stopped INTEGER, updated_at INTEGER)`);
     db.exec(`CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, task_number INTEGER,
       title TEXT, status TEXT, updated_at INTEGER)`);
+    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, space_id TEXT,
+      handle TEXT, display_name TEXT, status TEXT, session_id TEXT, updated_at INTEGER)`);
+    db.exec(
+      `CREATE TABLE sessions (id TEXT PRIMARY KEY, processing_state TEXT, last_active_at TEXT)`
+    );
     db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai', '/focus/dev-neokai', 'active', 0, 5),
       ('sp2', 'gone', '/focus/gone', 'archived', 0, 50)`);
     db.exec(`INSERT INTO space_tasks VALUES ('t1', 'sp1', 1, 'open one', 'review', 20),
@@ -159,5 +178,47 @@ describe('space adapter against the space tables', () => {
         g.work.map((w) => w.ref.id),
       ])
     ).toEqual([['dev-neokai', 1, 1, 30, ['t1']]]);
+  });
+
+  test('lists active and paused Space agents with their live state and reports one', async () => {
+    db.exec(`INSERT INTO sessions VALUES ('s1', '{"status":"processing"}', 'not a date'),
+      ('s2', 'not json', '1970-01-01T00:00:00.100Z')`);
+    db.exec(`INSERT INTO space_long_horizon_agents VALUES
+      ('a1', 'sp1', 'ui-ux', 'Designer', 'active', 's1', 40),
+      ('a2', 'sp1', 'docs', 'Writer', 'paused', 's2', 35),
+      ('a3', 'sp1', 'old', 'Retired', 'archived', NULL, 50)`);
+    const adapter = createSpaceAdapter({
+      db: () => db,
+      machine: 'imac',
+      searchTaskIds: () => new Set(),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+        message: async () => ({ reason: 'unused' }),
+      },
+    });
+    const [group] = await adapter.find({ includeClosed: false, limit: 20 });
+    expect(group.work.map((w) => [w.ref.id, w.title, w.status])).toEqual([
+      ['agent:a2', '@docs Writer', 'needs_you'],
+      ['agent:a1', '@ui-ux Designer', 'running'],
+      ['t1', '#1 open one', 'needs_you'],
+    ]);
+    const [designer] = await adapter.find({ includeClosed: false, limit: 20, text: 'designer' });
+    expect(designer.work.map((w) => w.ref.id)).toEqual(['agent:a1']);
+    expect(await adapter.status?.({ adapter: 'space', id: 'agent:a3' })).toEqual({
+      ok: true,
+      value: {
+        ref: { adapter: 'space', id: 'agent:a3' },
+        title: '@old Retired',
+        place: { machine: 'imac', spaceId: 'sp1', name: 'dev-neokai' },
+        status: 'stopped',
+        lastActivityAt: 50,
+        link: '/space/sp1/agent/old',
+      },
+    });
+    expect(await adapter.status?.({ adapter: 'space', id: 'agent:nope' })).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
   });
 });
