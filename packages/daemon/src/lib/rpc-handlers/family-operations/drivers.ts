@@ -1,9 +1,20 @@
+import { hostname } from 'node:os';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
-import type { WorkAdapter } from '../../drivers/types.ts';
+import { createSpaceAdapter } from '../../drivers/space-adapter.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
+import type { FamilyOperationContext } from './context.ts';
 
-export function registerDriverOperations(): OperationDefinition[] {
-  const adapters: WorkAdapter[] = [];
+export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
+  const search = (text: string) =>
+    context.deps.db.getSDKMessageRepo().searchMessages({ query: text, limit: 50 }).results;
+  const adapters = [
+    createSpaceAdapter({
+      db: () => context.deps.db.getDatabase(),
+      machine: hostname(),
+      searchTaskIds: (text) =>
+        new Set(search(text).flatMap((result) => (result.taskId ? [result.taskId] : []))),
+    }),
+  ];
   return [createFindWorkOperation({ adapters: () => adapters, remote: remoteDaemons })];
 }
