@@ -3,12 +3,13 @@ import { SendMessageResultSchema, type RemoteSendForwarder } from '../messaging/
 import type { RemoteDaemonRegistry } from './registry.ts';
 
 export function createRemoteSendForwarder(registry: RemoteDaemonRegistry): RemoteSendForwarder {
-  return async (target, input) => {
+  return async (target, input, origin) => {
     try {
       const reply = await registry.invoke(target.daemonId, 'message.send', {
         sessionId: target.sessionId,
         message: input.message,
         ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
+        from: origin,
       });
       const parsed = SendMessageResultSchema.safeParse(reply);
       return parsed.success

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   isValidAddress,
+  parseAddress,
   parseRemoteAddress,
   renderAddress,
   type RemoteSessionAddress,
@@ -65,6 +66,7 @@ export const SendMessageInputSchema = z
         if ('reason' in projected) ctx.addIssue({ code: 'custom', message: projected.reason });
       }),
     deliveryMode: z.enum(['immediate', 'defer']).optional(),
+    from: z.string().min(1).max(500).optional(),
   })
   .refine((input) => (input.sessionId === undefined) !== (input.agent === undefined), {
     message: 'Address the message with exactly one of sessionId or agent',
@@ -83,7 +85,8 @@ export type SessionStatusRead = (sessionId: string) => string | null;
 
 export type RemoteSendForwarder = (
   target: RemoteSessionAddress,
-  input: SendInput
+  input: SendInput,
+  origin: string
 ) => Promise<SendResult>;
 
 export type AgentTargetResolver = (
@@ -110,12 +113,13 @@ const rejectUnattachedDaemon: RemoteSendForwarder = (target) =>
 
 export function forwardRemoteMessage(
   input: SendInput,
+  origin: string,
   forwardRemote: RemoteSendForwarder
 ): Promise<{ value: SendInput } | { reason: SendResult }> {
   const target = parseRemoteAddress(input.sessionId);
   return target === null
     ? Promise.resolve({ value: input })
-    : forwardRemote(target, input).then((reason) => ({ reason }));
+    : forwardRemote(target, input, origin).then((reason) => ({ reason }));
 }
 
 export function requireTargetSession(
@@ -149,6 +153,12 @@ export function selectMessageOrigin(caller: OperationCaller): string {
   return caller.source === 'rpc' ? 'chat' : 'system';
 }
 
+export function selectSendOrigin(input: { from?: string }, caller: OperationCaller): string {
+  return caller.source === 'rpc' && input.from && parseAddress(input.from)
+    ? input.from
+    : selectMessageOrigin(caller);
+}
+
 export function persistOperationMessage(
   input: SendInput,
   origin: string,
@@ -175,10 +185,10 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .input(['input', 'caller', 'jobQueue', 'sessionStatus', 'forwardRemote', 'resolveAgent'])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
-  .pipe(forwardRemoteMessage, ['receipt', 'forwardRemote'], 'result:receipt')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
+  .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
   .pipe(generateUUID, undefined, 'messageId')
-  .pipe(selectMessageOrigin, 'caller', 'origin')
   .pipe(persistOperationMessage, ['receipt', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
   .endAsync('receipt') as (
@@ -199,7 +209,7 @@ export function createSendMessageOperation(
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied.',
+      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. from is set by a daemon forwarding a send and is ignored unless the caller is on the RPC door and it is a mailbox address.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
     execute: (input, caller) =>
