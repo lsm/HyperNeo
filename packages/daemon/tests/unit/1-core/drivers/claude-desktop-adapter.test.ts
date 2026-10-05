@@ -122,6 +122,7 @@ describe('claude-desktop adapter against the app session records', () => {
     const first = await readClaudeDesktopRecords(dir, cache);
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
     const reused = cache.get(path);
+    const untouched = cache.get(join(dir, 'acct-a/scope-1/local_a2.json'));
     writeFileSync(
       path,
       JSON.stringify(record('a1', { originCwd: '/focus/dolmen', title: 'renamed' }))
@@ -137,9 +138,7 @@ describe('claude-desktop adapter against the app session records', () => {
     ]);
     expect(second.map((r) => r.title).sort()).toEqual(['fiso init', 'old review', 'renamed']);
     expect(cache.get(path)).not.toBe(reused);
-    expect(cache.get(join(dir, 'acct-a/scope-1/local_a2.json'))?.records[0].title).toBe(
-      'old review'
-    );
+    expect(cache.get(join(dir, 'acct-a/scope-1/local_a2.json'))).toBe(untouched);
     expect(cache.has(join(dir, 'acct-b/scope-2/local_b2.json'))).toBe(false);
   });
 
