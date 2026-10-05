@@ -202,7 +202,7 @@ describe('Neo existing chat work', () => {
     ).toEqual({ reason: { accepted: false, reason: 'target_session_not_active' } });
     expect(neoPrompt(null)).toContain('pass that targetSessionId to neo.work.propose');
     expect(neoPrompt('research')).toContain(
-      'a Space task, a Codex Desktop thread, a Claude Code Desktop session, or a ref with a daemon'
+      'a work proposal always shows targetSessionId null because its target is the work field'
     );
   });
 
