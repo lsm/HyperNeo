@@ -21,15 +21,16 @@ export class NeoWorkDriverTargetRepository {
     })();
   }
 
+  private hasTable(): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = 'neo_work_driver_targets' AND type = 'table'"
+      )
+      .get();
+  }
+
   get(workId: string): NeoDriverTarget | null {
-    if (
-      !this.db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE name = 'neo_work_driver_targets' AND type = 'table'"
-        )
-        .get()
-    )
-      return null;
+    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT target FROM neo_work_driver_targets WHERE work_id = ?')
       .get(workId) as { target: string } | null | undefined;
@@ -39,6 +40,7 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readRef(workId: string): WorkRef | null {
+    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT ref FROM neo_work_driver_targets WHERE work_id = ? AND ref IS NOT NULL')
       .get(workId) as { ref: string } | null | undefined;
