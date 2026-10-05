@@ -7,6 +7,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { admitNeoPublication } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { NeoRoutingLogRepository } from './neo-routing-log-repository.ts';
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -96,7 +97,16 @@ export class NeoPublicationRepository {
 
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
-    return result === 'invalid_publication' ? { accepted: false, reason: result } : result;
+    if (result === 'invalid_publication') return { accepted: false, reason: result };
+    if (result.accepted && result.created && !result.publication.interim) {
+      const { askOrigin, shortText } = result.publication;
+      new NeoRoutingLogRepository(this.db).recordOutcome(
+        askOrigin.messageId,
+        shortText,
+        Date.now()
+      );
+    }
+    return result;
   }
 
   get(conversationId: string, publicationId: string): NeoPublication | null {
