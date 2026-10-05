@@ -6,6 +6,16 @@ import {
   spaceTaskWorkStatus,
 } from '../../../../src/lib/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
+
+const chat = (sessionId: string | null, taskId: string | null = null): WorkChatMatch => ({
+  sessionId,
+  taskId,
+  hits: 1,
+  lastHitAt: 1,
+  score: 32.8,
+  snippets: [{ messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' }],
+});
 
 describe('spaceAgentWorkStatus', () => {
   test('reads closed and paused agents first, then the session like a HyperNeo chat', () => {
@@ -59,7 +69,7 @@ describe('buildSpaceGroups', () => {
   const query = { includeClosed: false, limit: 20 };
 
   test('lists open Spaces with their tasks, including Spaces with none', () => {
-    const groups = buildSpaceGroups(spaces, tasks, query, { machine: 'imac' }, new Set());
+    const groups = buildSpaceGroups(spaces, tasks, query, { machine: 'imac' }, new Map());
     expect(groups.map((g) => [g.place.name, g.work.map((w) => w.title)])).toEqual([
       ['dev-neokai', ['#2008 Fix font size']],
       ['ops', []],
@@ -74,9 +84,13 @@ describe('buildSpaceGroups', () => {
 
   test('matches tasks by number, title or full-text hit and Spaces by name', () => {
     const names = (text: string, hits: string[] = []) =>
-      buildSpaceGroups(spaces, tasks, { ...query, text }, { machine: 'imac' }, new Set(hits)).map(
-        (g) => [g.place.name, g.work.length]
-      );
+      buildSpaceGroups(
+        spaces,
+        tasks,
+        { ...query, text },
+        { machine: 'imac' },
+        new Map(hits.map((id) => [id, chat(null, id)]))
+      ).map((g) => [g.place.name, g.work.length]);
     expect(names('2008')).toEqual([['dev-neokai', 1]]);
     expect(names('font')).toEqual([['dev-neokai', 1]]);
     expect(names('zzz', ['t1'])).toEqual([['dev-neokai', 1]]);
@@ -85,7 +99,7 @@ describe('buildSpaceGroups', () => {
 
   test('narrows to one Space or to the Space working in a folder', () => {
     expect(
-      buildSpaceGroups(spaces, tasks, { ...query, spaceId: 'sp2' }, { machine: 'imac' }, new Set())
+      buildSpaceGroups(spaces, tasks, { ...query, spaceId: 'sp2' }, { machine: 'imac' }, new Map())
     ).toHaveLength(1);
     expect(
       buildSpaceGroups(
@@ -93,7 +107,7 @@ describe('buildSpaceGroups', () => {
         tasks,
         { ...query, folder: '/focus/dev-neokai' },
         { machine: 'imac' },
-        new Set()
+        new Map()
       ).map((g) => g.place.spaceId)
     ).toEqual(['sp1']);
   });
@@ -125,7 +139,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchWorkIds: () => new Set(),
+      searchChats: () => [],
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -144,7 +158,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchWorkIds: (text) => new Set(text === 'parser' ? ['t2'] : []),
+      searchChats: (text) => (text === 'parser' ? [chat('w2', 't2')] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -163,7 +177,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchWorkIds: () => new Set(),
+      searchChats: () => [],
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -193,7 +207,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchWorkIds: (text) => new Set(text === '16px' ? ['s1'] : []),
+      searchChats: (text) => (text === '16px' ? [chat('s1')] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),

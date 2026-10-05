@@ -30,7 +30,7 @@ flowchart TD
   Neo --> H1["分身: Neo UI cleanup"]
   Neo --> H2["分身: YouTube pipeline"]
   Neo --> H3["分身: Codex models"]
-  subgraph Drivers["lib/drivers: one WorkAdapter interface, operations work.find, work.start, work.send, work.status, work.stop"]
+  subgraph Drivers["lib/drivers: one WorkAdapter interface, operations work.find, work.read, work.start, work.send, work.status, work.stop"]
     A1["hyperneo"]
     A2["space"]
     A3["codex-desktop"]

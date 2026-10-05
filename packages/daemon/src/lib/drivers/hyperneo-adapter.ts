@@ -1,8 +1,10 @@
 import { basename } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -55,7 +57,7 @@ export interface HyperneoSessionControl {
 export interface HyperneoAdapterDeps {
   db: () => BunDatabase;
   machine: string;
-  searchSessionIds: (text: string) => ReadonlySet<string>;
+  searchChats: (text: string) => readonly WorkChatMatch[];
   handoff: (sessionId: string, message: string, from: string) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
@@ -138,7 +140,7 @@ export function buildHyperneoGroups(
   sessions: readonly HyperneoSessionRow[],
   query: FindQuery,
   deps: Pick<HyperneoAdapterDeps, 'machine'>,
-  matchedIds: ReadonlySet<string>
+  matched: ReadonlyMap<string, WorkChatMatch>
 ): PlaceGroup[] {
   const machine = deps.machine;
   const text = query.text?.toLowerCase();
@@ -153,11 +155,12 @@ export function buildHyperneoGroups(
         .filter(
           (session) =>
             placeMatches ||
-            matchedIds.has(session.id) ||
+            matched.has(session.id) ||
             session.title.toLowerCase().includes(text ?? '')
         )
-        .slice(0, SESSIONS_PER_PLACE)
-        .map((session) => toWork(session, machine));
+        .map((session) => withChatEvidence(toWork(session, machine), matched.get(session.id)))
+        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+        .slice(0, SESSIONS_PER_PLACE);
       if (!placeMatches && work.length === 0) return [];
       return [
         {
@@ -190,8 +193,13 @@ export function loadHyperneoSessions(
 export function matchHyperneoSessions(
   query: FindQuery,
   deps: HyperneoAdapterDeps
-): ReadonlySet<string> {
-  return query.text ? deps.searchSessionIds(query.text) : new Set();
+): ReadonlyMap<string, WorkChatMatch> {
+  const chats = query.text ? deps.searchChats(query.text) : [];
+  return new Map(
+    chats.flatMap((chat) =>
+      chat.taskId === null && chat.sessionId ? [[chat.sessionId, chat] as const] : []
+    )
+  );
 }
 
 export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reason: PlaceGroup[] } {
@@ -203,8 +211,8 @@ const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadHyperneoPlaces, 'deps', 'places')
   .pipe(loadHyperneoSessions, ['query', 'deps'], 'sessions')
-  .pipe(matchHyperneoSessions, ['query', 'deps'], 'matchedIds')
-  .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matchedIds'], 'groups')
+  .pipe(matchHyperneoSessions, ['query', 'deps'], 'matched')
+  .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matched'], 'groups')
   .end('groups') as (query: FindQuery, deps: HyperneoAdapterDeps) => PlaceGroup[];
 
 export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
