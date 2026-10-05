@@ -80,6 +80,11 @@ export interface SpaceTaskControl {
     message: string,
     fromHuman: boolean
   ): Promise<{ delivered: boolean } | { reason: string }>;
+  messageAgent(
+    agent: Pick<SpaceAgentRow, 'id' | 'spaceId'>,
+    message: string,
+    context: WorkCallContext
+  ): Promise<{ accepted: true } | { reason: string }>;
 }
 
 export interface SpaceAdapterDeps {
@@ -454,13 +459,54 @@ const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
   deps: SpaceAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
+export function requireSpaceAgentRecipient(
+  ref: WorkRef,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+): Gate<SpaceAgentRow> {
+  const agent = readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0];
+  if (!agent) return { reason: reject('not_found', `No Space agent ${ref.id}.`) };
+  if (context.caller.source === 'mcp' && context.caller.role !== 'neo') {
+    return { reason: reject('unsupported', 'Agents message Space agents with message.send.') };
+  }
+  return agent.status === 'archived' || agent.status === 'disabled'
+    ? { reason: reject('not_open', `@${agent.handle} is ${agent.status}.`) }
+    : { value: agent };
+}
+
+export async function messageSpaceAgent(
+  agent: SpaceAgentRow,
+  message: string,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  const sent = await deps.tasks.messageAgent(agent, message, context);
+  return 'reason' in sent
+    ? reject('not_delivered', sent.reason)
+    : { ok: true, value: { delivered: spaceAgentWorkStatus(agent) === 'done' } };
+}
+
+const runSpaceAgentSend = (superpipe({})('space-agent-send-work') as PipelineAPI)
+  .input(['ref', 'message', 'context', 'deps'])
+  .pipe(requireSpaceAgentRecipient, ['ref', 'context', 'deps'], 'result:outcome')
+  .pipe(messageSpaceAgent, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+) => Promise<Result<{ delivered: boolean }>>;
+
 export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
   return {
     id: 'space',
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: (query) => runSpaceFind(query, deps),
     start: (request, context) => runSpaceStart(request, context, deps),
-    send: (ref, message, context) => runSpaceSend(ref, message, context, deps),
+    send: (ref, message, context) =>
+      ref.id.startsWith(AGENT_REF)
+        ? runSpaceAgentSend(ref, message, context, deps)
+        : runSpaceSend(ref, message, context, deps),
     status: async (ref) => reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps),
     stop: (ref, context) => runSpaceStop(ref, context, deps),
   };

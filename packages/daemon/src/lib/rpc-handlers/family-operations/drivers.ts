@@ -113,6 +113,27 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
       const reason = taskOperationRejection(created);
       return reason === null ? { taskId: (created as { id: string }).id } : { reason };
     },
+    messageAgent: async (agent, message, { from, caller }) => {
+      const sent = (await invoke(
+        'message.send',
+        {
+          agent: { space: agent.spaceId, agent: agent.id },
+          message: {
+            type: 'user',
+            message: { role: 'user', content: message },
+            parent_tool_use_id: null,
+            ...(from === 'chat' ? {} : { inputKind: 'task' }),
+          },
+          from,
+        },
+        caller
+      )) as { kind?: unknown; reason?: unknown } | string;
+      if (typeof sent === 'object' && sent?.kind === 'accepted') return { accepted: true };
+      return {
+        reason:
+          typeof sent === 'string' ? sent : String(sent?.reason ?? 'message.send refused it.'),
+      };
+    },
     message: async (taskId, node, message, fromHuman) => {
       try {
         const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
