@@ -89,11 +89,11 @@ function PublicEntry({
           </div>
         )}
         {/^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
-          <p class="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+          <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
         ) : (
           <MarkdownRenderer
             content={text}
-            class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-sm leading-relaxed`}
+            class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
           />
         )}
         {publication && (
