@@ -66,6 +66,7 @@ function claudeDesktopAdapters(): WorkAdapter[] {
   return [
     createClaudeDesktopAdapter({
       sessionsDir,
+      projectsDir: join(homedir(), '.claude', 'projects'),
       machine: hostname(),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
     }),

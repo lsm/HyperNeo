@@ -69,6 +69,7 @@ describe('claude-desktop adapter against the app session records', () => {
   function adapter(live = [{ sessionId: 'cli-a1', status: 'waiting' }]) {
     return createClaudeDesktopAdapter({
       sessionsDir: dir,
+      projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => live,
     });
@@ -153,6 +154,7 @@ describe('claude-desktop adapter against the app session records', () => {
     );
     await createClaudeDesktopAdapter({
       sessionsDir: archivedOnly,
+      projectsDir: join(archivedOnly, 'projects'),
       machine: 'laptop',
       liveSessions: async () => {
         asked = true;
@@ -163,10 +165,44 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(asked).toBe(false);
   });
 
+  test('status reports live state and the last reply from the transcript', async () => {
+    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    mkdirSync(transcripts, { recursive: true });
+    const turn = (type: string, text: string) =>
+      JSON.stringify({ type, message: { role: type, content: [{ type: 'text', text }] } });
+    writeFileSync(
+      join(transcripts, 'cli-a1.jsonl'),
+      [turn('user', 'load it'), turn('assistant', 'Loaded 3 tables.'), '{"type":"pr-link"}'].join(
+        '\n'
+      )
+    );
+    expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_a1' })).toEqual({
+      ok: true,
+      value: {
+        ref: { adapter: 'claude-desktop', id: 'local_a1' },
+        title: 'lakehouse loader',
+        place: { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' },
+        status: 'needs_you',
+        lastActivityAt: 30,
+        link: 'claude://claude.ai/epitaxy/local_a1',
+        lastReply: 'Loaded 3 tables.',
+      },
+    });
+    expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_b2' })).toMatchObject({
+      ok: true,
+      value: { title: 'woodpecker', status: 'done' },
+    });
+    expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_zz' })).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+  });
+
   test('answers a Space search without reading records or asking the CLI', async () => {
     let asked = false;
     const groups = await createClaudeDesktopAdapter({
       sessionsDir: join(dir, 'missing'),
+      projectsDir: join(dir, 'missing'),
       machine: 'laptop',
       liveSessions: async () => {
         asked = true;
