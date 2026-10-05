@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { runMigration298 } from '../../../../src/storage/schema/m298-message-search-session-index';
 import { readWorkTurns } from '../../../../src/storage/work-turns';
 
 describe('readWorkTurns', () => {
@@ -38,5 +39,22 @@ describe('readWorkTurns', () => {
   test('returns null for an unknown message or an empty session', () => {
     expect(readWorkTurns(db, 's1', 'm7', 2, 2)).toBeNull();
     expect(readWorkTurns(db, 'nobody', undefined, 2, 2)).toBeNull();
+  });
+
+  test('reads a session through the session index instead of scanning every turn', () => {
+    runMigration298(db);
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM message_search_content
+          WHERE kind = 'message' AND session_id = ? ORDER BY timestamp DESC, id DESC LIMIT 3`
+      )
+      .all('s1') as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join(' ')).toContain(
+      'idx_message_search_content_session_turns'
+    );
+    expect(readWorkTurns(db, 's1', 'm3', 1, 0)?.map((turn) => turn.messageId)).toEqual([
+      'm2',
+      'm3',
+    ]);
   });
 });

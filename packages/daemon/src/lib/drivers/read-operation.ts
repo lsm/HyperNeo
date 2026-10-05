@@ -71,7 +71,7 @@ export function createReadWorkOperation(deps: ReadWorkDeps) {
   return defineOperation({
     name: 'work.read',
     description:
-      'Read the user and agent turns of a session, by the handle on a work.find snippet: sessionId, around (its messageId) and daemon (the place daemon, if any). Returns before turns earlier than the message, the message itself, and after turns later, oldest first; each turn text is cut at 4000 characters. Without around, returns the latest turns. Use this to check what a snippet came from instead of reading the whole session.',
+      'Read the user and agent turns of a session: sessionId, around (a messageId from a work.find snippet handle or an earlier work.read turn) and daemon (the place daemon, if any). Returns before turns earlier than the message, the message itself, and after turns later, oldest first; each turn text is cut at 4000 characters. Without around, returns the latest turns. Use this to check what a snippet came from instead of reading the whole session.',
     inputSchema: ReadWorkInputSchema,
     resultSchema: ReadWorkResultSchema,
     policy: { safetyClass: 'read' },
