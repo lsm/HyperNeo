@@ -20,8 +20,13 @@ describe('neoCoordinatorRuntimePath', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test('runs a new coordinator in the Neo project folder', () => {
-    expect(neoCoordinatorRuntimePath('neo:new-session')).toBe(join(home, 'data', 'Neo'));
+  test('runs each new coordinator in its own folder inside the Neo project', () => {
+    expect(neoCoordinatorRuntimePath('neo:new-session')).toBe(
+      join(home, 'data', 'Neo', '.coordinators', 'neo-new-session')
+    );
+    expect(neoCoordinatorRuntimePath('neo:other')).not.toBe(
+      neoCoordinatorRuntimePath('neo:new-session')
+    );
   });
 
   test('keeps a coordinator whose SDK history lives under its old folder', () => {

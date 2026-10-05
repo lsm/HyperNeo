@@ -15,7 +15,9 @@ function sdkTranscriptsExist(cwd: string): boolean {
 
 export function neoCoordinatorRuntimePath(sessionId: string): string {
   const legacy = join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
-  return sdkTranscriptsExist(legacy) ? legacy : neoFolderPath();
+  return sdkTranscriptsExist(legacy)
+    ? legacy
+    : join(neoFolderPath(), '.coordinators', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
 }
 
 export function neoCoordinatorBinding(
