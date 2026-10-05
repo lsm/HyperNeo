@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { NEO_CAPABILITIES_BRIEFING, NEO_RESPONSE_FOCUS_BRIEFING } from '@hyperneo/prompts';
-import { WORK_OPERATION_NAMES } from '../../../../../shared/src/types/operation-names/work.ts';
+import { WORK_OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
 import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
