@@ -163,6 +163,27 @@ describe('codex-desktop adapter against a Codex state database', () => {
     expect(groups[0].work.map((w) => w.title)).toEqual(['Untitled thread']);
   });
 
+  test('skips or fills rows with missing values instead of failing the search', async () => {
+    const db = new Database(statePath);
+    db.exec(`INSERT INTO projects VALUES ('p3', NULL, NULL)`);
+    db.exec(`INSERT INTO project_roots VALUES ('p3', 0, '/focus/nameless'), ('p3', 1, NULL)`);
+    db.exec(`INSERT INTO threads VALUES ('t7', 'stray', '', '', NULL, 'vscode', 0, ${NOW}),
+      ('t8', 'odd', '', '', '/focus/nameless', NULL, NULL, NULL)`);
+    db.close();
+    const groups = await adapter().find({
+      includeClosed: false,
+      limit: 20,
+      folder: '/focus/nameless',
+    });
+    expect(groups).toEqual([
+      expect.objectContaining({
+        place: { machine: 'laptop', folder: '/focus/nameless', name: 'nameless' },
+        openCount: 1,
+        work: [expect.objectContaining({ title: 'odd', lastActivityAt: 0, status: 'done' })],
+      }),
+    ]);
+  });
+
   test('answers a Space search without opening the state database', async () => {
     const groups = await createCodexDesktopAdapter({
       statePath: join(dir, 'missing.sqlite'),

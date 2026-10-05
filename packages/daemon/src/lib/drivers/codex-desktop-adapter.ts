@@ -4,9 +4,9 @@ import { Database } from '../../storage/sqlite-compat.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
-const OWN_THREADS = `source NOT LIKE '%subagent%'`;
+const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(substr(first_user_message, 1, 80), ''), 'Untitled thread') AS title,
-  cwd AS folder, archived, updated_at_ms AS updatedAt`;
+  cwd AS folder, COALESCE(archived, 0) AS archived, COALESCE(updated_at_ms, 0) AS updatedAt`;
 const THREADS_PER_PLACE = 20;
 const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
@@ -56,23 +56,25 @@ export function readCodexSnapshot(statePath: string, includeClosed: boolean): Co
     return {
       roots: db
         .prepare(
-          `SELECT p.name AS name, r.path AS folder, p.updated_at_ms AS lastActiveAt
-             FROM projects p JOIN project_roots r ON r.project_id = p.id`
+          `SELECT COALESCE(p.name, '') AS name, r.path AS folder,
+             COALESCE(p.updated_at_ms, 0) AS lastActiveAt
+             FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
         )
         .all() as CodexRootRow[],
       folders: db
         .prepare(
-          `SELECT cwd AS folder, SUM(archived = 0) AS openCount, SUM(archived != 0) AS archivedCount,
-             MAX(updated_at_ms) AS lastActiveAt FROM threads WHERE ${OWN_THREADS} GROUP BY cwd`
+          `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
+             SUM(COALESCE(archived, 0) != 0) AS archivedCount,
+             COALESCE(MAX(updated_at_ms), 0) AS lastActiveAt FROM threads WHERE ${OWN_THREADS} GROUP BY cwd`
         )
         .all() as CodexFolderRow[],
       threads: db
         .prepare(
           `SELECT * FROM (
-             SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND archived = 0
+             SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
              UNION ALL
              SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
-               WHERE ${OWN_THREADS} AND ? = 1 AND archived != 0
+               WHERE ${OWN_THREADS} AND ? = 1 AND COALESCE(archived, 0) != 0
                ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
            ORDER BY updatedAt DESC`
         )
@@ -96,7 +98,13 @@ export function codexProjectFolder(
 function codexPlaces(snapshot: CodexSnapshot, worktreesDir: string): CodexPlace[] {
   const places = new Map<string, CodexPlace>();
   for (const root of snapshot.roots) {
-    places.set(root.folder, { ...root, openCount: 0, archivedCount: 0, known: true });
+    places.set(root.folder, {
+      ...root,
+      name: root.name || basename(root.folder) || root.folder,
+      openCount: 0,
+      archivedCount: 0,
+      known: true,
+    });
   }
   for (const row of snapshot.folders) {
     const folder = codexProjectFolder(row.folder, snapshot.roots, worktreesDir);
