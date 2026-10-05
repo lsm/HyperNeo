@@ -14,7 +14,9 @@ const chat = (sessionId: string | null, taskId: string | null = null): WorkChatM
   hits: 1,
   lastHitAt: 1,
   score: 32.8,
-  snippets: [{ messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' }],
+  snippets: [
+    { match: 'exact', messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' },
+  ],
 });
 
 describe('spaceAgentWorkStatus', () => {
@@ -139,7 +141,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -158,7 +160,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: (text) => (text === 'parser' ? [chat('w2', 't2')] : []),
+      searchChats: async (text) => (text === 'parser' ? [chat('w2', 't2')] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -177,7 +179,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -207,7 +209,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: (text) => (text === '16px' ? [chat('s1')] : []),
+      searchChats: async (text) => (text === '16px' ? [chat('s1')] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { fuseWorkChats, searchWorkChats } from '../../../../src/storage/work-chat-search';
+import {
+  fuseWorkChats,
+  searchWorkChats,
+  vectorWorkChats,
+} from '../../../../src/storage/work-chat-search';
+import { saveTurnVector } from '../../../../src/storage/turn-vectors';
+import { runMigration297 } from '../../../../src/storage/schema/m297-message-search-vectors';
 
 const tables = { sessions: true, spaceTasks: false };
 
@@ -42,6 +48,7 @@ describe('searchWorkChats', () => {
     ]);
     expect(chats[0].lastHitAt).toBe(1119);
     expect(chats[1].snippets[0]).toEqual({
+      match: 'exact',
       messageId: 'msg121',
       sessionId: 'quiet',
       role: 'assistant',
@@ -79,5 +86,66 @@ describe('fuseWorkChats', () => {
       ['best', 32.522],
       ['stale', 31.746],
     ]);
+  });
+});
+
+describe('vectorWorkChats', () => {
+  test('finds chats by meaning, newest vectors only, tagged semantic', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
+      message_id TEXT, session_id TEXT, task_id TEXT, message_type TEXT, body TEXT, timestamp INTEGER)`);
+    runMigration297(db);
+    const insert = db.prepare(
+      `INSERT INTO message_search_content (kind, source_id, message_id, session_id, message_type, body, timestamp)
+       VALUES ('message', ?, ?, ?, 'assistant', ?, ?)`
+    );
+    insert.run('r1', 'm1', 'font-chat', 'bumped message text to sixteen pixels', 10);
+    insert.run('r2', 'm2', 'font-chat', 'composer text matches now', 20);
+    insert.run('r3', 'm3', 'other', 'unrelated database work', 30);
+    const save = (id: number, values: number[]) => {
+      const { bodyLength } = db
+        .prepare(`SELECT length(body) AS bodyLength FROM message_search_content WHERE id = ?`)
+        .get(id) as { bodyLength: number };
+      saveTurnVector(db, { id, bodyLength }, 'm', Float32Array.from(values), 1);
+    };
+    save(1, [1, 0, 0]);
+    save(2, [0.9, 0.1, 0]);
+    save(3, [0, 0, 1]);
+    const chats = vectorWorkChats(
+      db,
+      { sessions: false, spaceTasks: false },
+      Float32Array.from([1, 0, 0]),
+      'm',
+      10
+    );
+    expect(chats.map((chat) => [chat.sessionId, chat.hits, chat.lastHitAt])).toEqual([
+      ['font-chat', 2, 20],
+    ]);
+    expect(chats[0].snippets[0]).toEqual({
+      match: 'semantic',
+      messageId: 'm1',
+      sessionId: 'font-chat',
+      role: 'assistant',
+      at: 10,
+      text: 'bumped message text to sixteen pixels',
+    });
+    db.close();
+  });
+});
+
+describe('fuseWorkChats with meaning matches', () => {
+  test('keeps exact matches above semantic-only ones and lifts chats found both ways', () => {
+    const chat = (sessionId: string, lastHitAt: number) => ({
+      sessionId,
+      taskId: null,
+      hits: 1,
+      lastHitAt,
+      snippets: [],
+    });
+    const fused = fuseWorkChats(
+      [chat('keyword-only', 9), chat('both', 1)],
+      [chat('meaning-only', 10), chat('both', 1)]
+    );
+    expect(fused.map((c) => c.sessionId)).toEqual(['both', 'keyword-only', 'meaning-only']);
   });
 });
