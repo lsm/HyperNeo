@@ -5,6 +5,7 @@ import {
   createSendMessageOperation,
   SendMessageInputSchema,
   selectMessageOrigin,
+  selectSendOrigin,
   mapMessageReceipt,
 } from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -140,6 +141,20 @@ describe('shared message.send operation', () => {
       'session:sender%2Fone'
     );
     expect(selectMessageOrigin({ source: 'internal' })).toBe('system');
+  });
+
+  test('selectSendOrigin keeps a forwarded sender only from the RPC door and only as an address', () => {
+    expect(selectSendOrigin({ from: 'session:agent-on-a' }, { source: 'rpc' })).toBe(
+      'session:agent-on-a'
+    );
+    expect(selectSendOrigin({ from: 'not an address' }, { source: 'rpc' })).toBe('chat');
+    expect(selectSendOrigin({ from: 'chat' }, { source: 'mcp', sessionId: 'w1' })).toBe(
+      'session:w1'
+    );
+    expect(selectSendOrigin({}, { source: 'rpc' })).toBe('chat');
+    expect(selectSendOrigin({ from: 'daemon:a::session:agent-on-a' }, { source: 'rpc' })).toBe(
+      'daemon:a::session:agent-on-a'
+    );
     expect(mapMessageReceipt({ kind: 'enqueued', id: 'mailbox-1' }, 'message-1')).toEqual({
       kind: 'accepted',
       mailboxId: 'mailbox-1',
