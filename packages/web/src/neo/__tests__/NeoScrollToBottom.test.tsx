@@ -1,6 +1,6 @@
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
@@ -60,10 +60,15 @@ const snapshot: NeoSnapshot = {
   ],
 };
 
+const resized: Array<() => void> = [];
 const renderLive = () => {
+  resized.length = 0;
   vi.stubGlobal(
     'ResizeObserver',
     class {
+      constructor(callback: () => void) {
+        resized.push(callback);
+      }
       observe() {}
       disconnect() {}
     }
@@ -126,6 +131,25 @@ describe('Neo scroll to bottom', () => {
     placeScroll(main, 900);
     expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();
     placeScroll(main, 1500);
+    expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
+  });
+
+  it('follows content that an opened detail grows or shrinks without a scroll event', () => {
+    renderLive();
+    const main = screen.getByRole('main');
+    placeScroll(main, 1500);
+    const details = document.createElement('summary');
+    main.append(details);
+    fireEvent.click(details);
+    Object.defineProperty(main, 'scrollHeight', { value: 3000, configurable: true });
+    act(() => {
+      for (const callback of resized) callback();
+    });
+    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();
+    Object.defineProperty(main, 'scrollHeight', { value: 2000, configurable: true });
+    act(() => {
+      for (const callback of resized) callback();
+    });
     expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
   });
 });

@@ -185,9 +185,12 @@ export function NeoLive() {
     element.style.overflowAnchor = '';
   }, [publicConversation?.entries.length, publicConversation?.status]);
 
+  const isAtBottom = (element: HTMLElement) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 160;
+
   function recordScroll(element: HTMLElement) {
     if (element !== scroll.current) return;
-    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 160;
+    const atBottom = isAtBottom(element);
     if (element.scrollTop < lastScrollTop.current - 1 || atBottom) nearBottom.current = atBottom;
     setAwayFromBottom(!atBottom);
     lastScrollTop.current = element.scrollTop;
@@ -243,6 +246,7 @@ export function NeoLive() {
       shell.current?.style.setProperty('--neo-composer-height', `${element.offsetHeight}px`);
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
+      if (scroll.current) setAwayFromBottom(!isAtBottom(scroll.current));
     });
     resize.observe(element);
     if (rail.current) resize.observe(rail.current);
