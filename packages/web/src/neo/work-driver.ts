@@ -19,5 +19,5 @@ export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
 export function neoWorkDriverLink(driver: NeoWorkDriverReceipt | undefined): string | null {
   const link = driver?.link;
   if (!link) return null;
-  return /^(\/|codex:\/\/|claude:\/\/)/.test(link) ? link : null;
+  return /^(\/(?![/\\])|codex:\/\/|claude:\/\/)/.test(link) ? link : null;
 }

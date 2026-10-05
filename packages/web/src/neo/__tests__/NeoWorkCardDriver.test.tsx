@@ -53,6 +53,8 @@ describe('neoWorkDriverLink', () => {
     expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
     expect(neoWorkDriverLink({ ...driver, link: '/space/sp1/task/t1' })).toBe('/space/sp1/task/t1');
     expect(neoWorkDriverLink({ ...driver, link: 'javascript:alert(1)' })).toBeNull();
+    expect(neoWorkDriverLink({ ...driver, link: '//evil.com' })).toBeNull();
+    expect(neoWorkDriverLink({ ...driver, link: '/\\evil.com' })).toBeNull();
     expect(neoWorkDriverLink({ ...driver, link: null })).toBeNull();
     expect(neoWorkDriverLink(undefined)).toBeNull();
   });
