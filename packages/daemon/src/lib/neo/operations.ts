@@ -25,6 +25,7 @@ import {
   type NeoAgentWorkOwner,
 } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
+import { createNeoRouter } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
@@ -732,7 +733,12 @@ export function createNeoOperations(service: NeoService) {
     }
   );
   return [
-    createNeoIntakeOperation(service.db, service.repo, service.notifyChanged),
+    createNeoIntakeOperation(
+      service.db,
+      service.repo,
+      service.notifyChanged,
+      createNeoRouter(service.db, service.repo)
+    ),
     createNeoPublicationOperation(service.publish),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
