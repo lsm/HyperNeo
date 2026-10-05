@@ -36,6 +36,7 @@ import {
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverSettlement,
 } from './driver-work.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -498,6 +499,26 @@ export class NeoService {
       } catch (error) {
         this.log.warn('Neo recovery pending', error);
       }
+    }
+  }
+
+  async refreshDriverWork(): Promise<void> {
+    for (const work of this.repo.listWork()) {
+      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
+      if (!ref) continue;
+      const outcome = await invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.status',
+        { ref },
+        driverWorkCaller(work)
+      ).catch(() => null);
+      const settled = outcome ? readDriverSettlement(work, outcome) : null;
+      if (!settled) continue;
+      const done = this.repo.transitionWork(work.id, work, {
+        status: settled.status,
+        report: settled.report.slice(0, 12000),
+      });
+      if (done) await this.returnReport(done);
     }
   }
 

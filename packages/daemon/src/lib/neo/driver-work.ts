@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { PlaceSchema, WorkRefSchema, type WorkRef } from '../drivers/types.ts';
+import { PlaceSchema, WorkRefSchema, WorkStatusSchema, type WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
@@ -63,4 +63,41 @@ export function readDriverOutcome(
   return target.verb === 'send'
     ? { ref: target.ref }
     : { failure: 'work.start returned no reference.' };
+}
+
+const DriverStatusSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    value: z
+      .object({
+        status: WorkStatusSchema,
+        lastActivityAt: z.number(),
+        lastReply: z.string().optional(),
+      })
+      .passthrough(),
+  }),
+  z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
+]);
+
+export function readDriverSettlement(
+  work: Pick<NeoWork, 'updatedAt'>,
+  outcome: OperationOutcome
+): { status: 'reported' | 'failed'; report: string } | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  if (!reply.success) return null;
+  if (!reply.data.ok) {
+    return reply.data.reason === 'not_found'
+      ? { status: 'failed', report: `The work is gone: ${reply.data.detail}` }
+      : null;
+  }
+  const { status, lastActivityAt, lastReply } = reply.data.value;
+  if (lastActivityAt <= work.updatedAt) return null;
+  if (status === 'done') {
+    return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
+  }
+  if (status === 'failed' || status === 'stopped') {
+    return { status: 'failed', report: `It ${status}.${lastReply ? ` ${lastReply}` : ''}` };
+  }
+  return null;
 }
