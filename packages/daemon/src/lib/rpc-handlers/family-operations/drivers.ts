@@ -5,6 +5,7 @@ import {
   createClaudeDesktopAdapter,
   readLiveClaudeSessions,
 } from '../../drivers/claude-desktop-adapter.ts';
+import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createHyperneoAdapter } from '../../drivers/hyperneo-adapter.ts';
 import { createSpaceAdapter } from '../../drivers/space-adapter.ts';
@@ -14,6 +15,20 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import type { FamilyOperationContext } from './context.ts';
+
+function codexDesktopAdapters(): WorkAdapter[] {
+  const codexHome = join(homedir(), '.codex');
+  const statePath = join(codexHome, 'state_5.sqlite');
+  if (!existsSync(statePath)) return [];
+  return [
+    createCodexDesktopAdapter({
+      statePath,
+      worktreesDir: join(codexHome, 'worktrees'),
+      machine: hostname(),
+      now: Date.now,
+    }),
+  ];
+}
 
 function claudeDesktopAdapters(): WorkAdapter[] {
   const sessionsDir = join(
@@ -51,6 +66,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchTaskIds: (text) =>
         new Set(search(text).flatMap((result) => (result.taskId ? [result.taskId] : []))),
     }),
+    ...codexDesktopAdapters(),
     ...claudeDesktopAdapters(),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons };
