@@ -45,6 +45,18 @@ export function readPendingTurns(
     .all(low, limit) as PendingTurn[];
 }
 
+export function countPendingTurns(db: BunDatabase, model: string, dimensions: number): number {
+  const { low, high } = embeddedRange(db, model, dimensions);
+  const where = low === null || high === null ? '' : 'AND (id > ? OR id < ?)';
+  const bounds = low === null || high === null ? [] : [high, low];
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS pending FROM message_search_content WHERE ${ELIGIBLE_TURN} ${where}`
+    )
+    .get(...bounds) as { pending: number } | undefined;
+  return row?.pending ?? 0;
+}
+
 export function saveTurnVector(
   db: BunDatabase,
   turn: Pick<PendingTurn, 'id' | 'bodyLength'>,
