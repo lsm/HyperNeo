@@ -93,4 +93,31 @@ export class NeoRoutingLogRepository {
       .all(limit)
       .reverse() as NeoRoute[];
   }
+
+  find(messageId: string): NeoRoute | null {
+    if (!this.ready()) return null;
+    return (
+      (this.db
+        .prepare(`SELECT ${columns} FROM neo_routing_log WHERE message_id = ?`)
+        .get(messageId) as NeoRoute | null) ?? null
+    );
+  }
+
+  latest(): NeoRoute | null {
+    if (!this.ready()) return null;
+    return (
+      (this.db
+        .prepare(`SELECT ${columns} FROM neo_routing_log ORDER BY id DESC LIMIT 1`)
+        .get() as NeoRoute | null) ?? null
+    );
+  }
+
+  recentAsks(concernId: string, limit: number): string[] {
+    if (!this.ready()) return [];
+    return (
+      this.db
+        .prepare(`SELECT ask FROM neo_routing_log WHERE concern_id = ? ORDER BY id DESC LIMIT ?`)
+        .all(concernId, limit) as Array<{ ask: string }>
+    ).map((row) => row.ask);
+  }
 }

@@ -1,0 +1,230 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Session } from '@hyperneo/shared';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
+import {
+  chooseNeoRoute,
+  type NeoHolder,
+  type NeoRouterDeps,
+  pickNeoHolder,
+  stickyNeoRoute,
+} from '../../../../src/lib/neo/router.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import {
+  type NeoRoute,
+  NeoRoutingLogRepository,
+} from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
+import type { Database } from '../../../../src/storage/database.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
+import { createTables } from '../../../../src/storage/schema/index.ts';
+
+const drivers: NeoHolder = {
+  concernId: 'drivers',
+  sessionId: 'neo:holder:drivers',
+  title: 'Neo driver epic',
+  summary: 'drivers',
+};
+const youtube: NeoHolder = {
+  ...drivers,
+  concernId: 'youtube',
+  sessionId: 'neo:holder:yt',
+  title: 'YouTube',
+};
+const route = (fields: Partial<NeoRoute>): NeoRoute => ({
+  id: 1,
+  messageId: 'm',
+  conversationId: 'c',
+  askedAt: 1_000,
+  ask: 'a',
+  destination: 'holder',
+  targetSessionId: drivers.sessionId,
+  concernId: 'drivers',
+  signal: 'embedding',
+  confidence: 0.8,
+  outcome: null,
+  outcomeAt: null,
+  ...fields,
+});
+
+describe('stickyNeoRoute', () => {
+  test('keeps a short follow-up with the holder that just answered', () => {
+    expect(stickyNeoRoute('yes, do it', [drivers], route({}), 61_000)).toMatchObject({
+      concernId: 'drivers',
+      signal: 'sticky',
+    });
+  });
+
+  test('lets go after five minutes, for long messages, and after main Neo', () => {
+    expect(stickyNeoRoute('yes', [drivers], route({}), 1_000 + 5 * 60_000 + 1)).toBeNull();
+    expect(stickyNeoRoute('x'.repeat(121), [drivers], route({}), 2_000)).toBeNull();
+    expect(
+      stickyNeoRoute('yes', [drivers], route({ destination: 'main', concernId: null }), 2_000)
+    ).toBeNull();
+  });
+});
+
+describe('pickNeoHolder', () => {
+  test('picks a holder only when it is close enough and clearly ahead', () => {
+    expect(
+      pickNeoHolder([
+        { holder: drivers, similarity: 0.7 },
+        { holder: youtube, similarity: 0.6 },
+      ])
+    ).toMatchObject({ concernId: 'drivers', confidence: 0.7 });
+    expect(
+      pickNeoHolder([
+        { holder: drivers, similarity: 0.7 },
+        { holder: youtube, similarity: 0.68 },
+      ])
+    ).toBeNull();
+    expect(pickNeoHolder([{ holder: drivers, similarity: 0.5 }])).toBeNull();
+  });
+});
+
+describe('chooseNeoRoute', () => {
+  const vectors: Record<string, number[]> = {
+    'restart the daemon after the driver merge': [1, 0, 0],
+    'Neo driver epic\ndrivers': [0.95, 0.05, 0],
+    'YouTube\ndrivers': [0, 1, 0],
+  };
+  const deps = (latest: NeoRoute | null = null): NeoRouterDeps => ({
+    holders: () => [drivers, youtube],
+    latestRoute: () => latest,
+    recentAsks: () => [],
+    embed: async (text) => (vectors[text] ? Float32Array.from(vectors[text]) : null),
+    now: () => 2_000,
+  });
+
+  test('routes by meaning when nothing sticks', async () => {
+    expect(await chooseNeoRoute('restart the daemon after the driver merge', deps())).toMatchObject(
+      {
+        concernId: 'drivers',
+        signal: 'embedding',
+      }
+    );
+  });
+
+  test('prefers stickiness and gives up without holders or vectors', async () => {
+    expect(
+      await chooseNeoRoute(
+        'ok',
+        deps(route({ concernId: 'youtube', targetSessionId: youtube.sessionId }))
+      )
+    ).toMatchObject({ concernId: 'youtube', signal: 'sticky' });
+    expect(await chooseNeoRoute('unknown text', deps())).toBeNull();
+    expect(await chooseNeoRoute('anything', { ...deps(), holders: () => [] })).toBeNull();
+  });
+});
+
+describe('neo.message.send with a router', () => {
+  const conversationId = '10000000-0000-4000-8000-000000000001';
+  const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
+  const holder: NeoBinding = {
+    sessionId: drivers.sessionId,
+    kind: 'concern',
+    concernId: 'drivers',
+  };
+  const ask = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  let directory: string;
+  let writer: Sqlite;
+  let db: Database;
+  let repo: NeoRepository;
+  let sdk: SDKMessageRepository;
+  let calls: string[];
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'neo-router-'));
+    writer = new Sqlite(join(directory, 'fictional.db'));
+    createTables(writer);
+    const sessions = new SessionRepository(writer);
+    sdk = new SDKMessageRepository(writer as never);
+    const jobs = new JobQueueRepository(writer);
+    repo = new NeoRepository(writer);
+    calls = [];
+    for (const binding of [root, holder]) {
+      repo.reserveBinding(binding);
+      sessions.createSession({
+        id: binding.sessionId,
+        title: 'Fictional',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {},
+        metadata: {},
+      } as Session);
+    }
+    db = {
+      getDatabase: () => writer,
+      getSDKMessageRepo: () => sdk,
+      getJobQueueRepo: () => jobs,
+      getSession: (id: string) => sessions.getSession(id),
+    } as unknown as Database;
+  });
+  afterEach(() => {
+    writer.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  const send = (sessionId: string, requestId: string, content: string) =>
+    invokeOperation(
+      createOperationRegistry([
+        createNeoIntakeOperation(
+          db,
+          repo,
+          () => {},
+          async (text) => {
+            calls.push(text);
+            return text.includes('driver')
+              ? {
+                  concernId: 'drivers',
+                  sessionId: drivers.sessionId,
+                  signal: 'embedding',
+                  confidence: 0.71,
+                }
+              : null;
+          }
+        ),
+      ]),
+      'neo.message.send',
+      { sessionId, requestId, content },
+      { source: 'rpc', principal: 'local' }
+    );
+  const delivered = (sessionId: string, requestId: string) =>
+    sdk.getDeliveryMessageIdsByUuids(sessionId, [requestId]).length;
+
+  test('delivers a confident ask to the holder and logs why', async () => {
+    await send(root.sessionId, ask(1), 'merge the driver PR');
+    expect([delivered(holder.sessionId, ask(1)), delivered(root.sessionId, ask(1))]).toEqual([
+      1, 0,
+    ]);
+    expect(new NeoRoutingLogRepository(writer).find(ask(1))).toMatchObject({
+      destination: 'holder',
+      concernId: 'drivers',
+      signal: 'embedding',
+      confidence: 0.71,
+    });
+  });
+
+  test('keeps an unsure ask with main Neo and reuses the first route on retry', async () => {
+    await send(root.sessionId, ask(2), 'weather tomorrow?');
+    expect(delivered(root.sessionId, ask(2))).toBe(1);
+    await send(root.sessionId, ask(3), 'merge the driver PR');
+    await send(root.sessionId, ask(3), 'merge the driver PR');
+    expect(calls).toEqual(['weather tomorrow?', 'merge the driver PR']);
+    expect(delivered(holder.sessionId, ask(3))).toBe(1);
+  });
+
+  test('does not reroute an ask sent to a holder directly', async () => {
+    await send(holder.sessionId, ask(4), 'weather tomorrow?');
+    expect(calls).toEqual([]);
+    expect(delivered(holder.sessionId, ask(4))).toBe(1);
+  });
+});
