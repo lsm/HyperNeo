@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   createSpaceAdapter,
   spaceTaskCaller,
   taskOperationRejection,
 } from '../../../../src/lib/drivers/space-adapter';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('taskOperationRejection', () => {
   test('reads a task or an accepted job as success and anything else as a reason', () => {
@@ -67,6 +67,7 @@ describe('space adapter start, status and stop', () => {
           calls.push(`cancel ${taskId} as ${caller.source}`);
           return refuse ? { reason: refuse } : { cancelled: true };
         },
+        message: async () => ({ reason: 'unused' }),
       },
     });
   }
@@ -153,5 +154,119 @@ describe('space adapter start, status and stop', () => {
       detail: 'invalid_transition',
     });
     expect(calls).toEqual(['cancel t1 as rpc', 'cancel t1 as rpc']);
+  });
+});
+
+describe('space adapter send', () => {
+  let db: Database;
+  let sent: string[];
+
+  beforeEach(() => {
+    sent = [];
+    db = new Database(':memory:');
+    db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY, name TEXT)`);
+    db.exec(`CREATE TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT, task_number INTEGER,
+      title TEXT, status TEXT, updated_at INTEGER, result TEXT, reported_summary TEXT,
+      block_reason TEXT, workflow_run_id TEXT)`);
+    db.exec(`CREATE TABLE node_executions (id TEXT PRIMARY KEY, workflow_run_id TEXT, agent_name TEXT,
+      workflow_node_id TEXT, agent_session_id TEXT, status TEXT, last_activity_at INTEGER,
+      updated_at INTEGER)`);
+    db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai')`);
+    db.exec(`INSERT INTO space_tasks VALUES
+      ('t1', 'sp1', 7, 'font size', 'in_progress', 10, NULL, NULL, NULL, 'run-1'),
+      ('t2', 'sp1', 8, 'shipped', 'done', 20, NULL, NULL, NULL, 'run-2'),
+      ('t3', 'sp1', 9, 'idea', 'open', 30, NULL, NULL, NULL, NULL),
+      ('t4', 'sp1', 10, 'paused', 'open', 40, NULL, NULL, NULL, 'run-4')`);
+    db.exec(`INSERT INTO node_executions VALUES
+      ('n1', 'run-1', 'coder', 'node-review', 's-review', 'cancelled', 50, 50),
+      ('n2', 'run-1', 'coder', 'node-code', 's-code', 'in_progress', 40, 40),
+      ('n3', 'run-4', 'coder', 'node-code', 's-old', 'cancelled', 60, 60),
+      ('n4', 'run-4', 'reviewer', 'node-review', NULL, 'pending', 70, 70)`);
+  });
+
+  afterEach(() => db.close());
+
+  function adapter() {
+    return createSpaceAdapter({
+      db: () => db,
+      machine: 'imac',
+      searchTaskIds: () => new Set(),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+        message: async (taskId, node, message, fromHuman) => {
+          sent.push(
+            `${taskId} ${node.agentName}@${node.workflowNodeId} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
+          );
+          return { delivered: !message.startsWith('later') };
+        },
+      },
+    });
+  }
+
+  const ref = (id: string) => ({ adapter: 'space', id });
+  const neo = {
+    from: 'session:neo%3Aroot',
+    caller: { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const },
+  };
+
+  test('sends to the workflow agent that is working on the task', async () => {
+    expect(await adapter().send?.(ref('t1'), 'use 16px', neo)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    const relayedNeo = {
+      from: 'daemon:imac::session:neo%3Aroot',
+      caller: { source: 'rpc' as const },
+    };
+    expect(await adapter().send?.(ref('t1'), 'go on', relayedNeo)).toMatchObject({ ok: true });
+    expect(
+      await adapter().send?.(ref('t1'), 'stop there', {
+        from: 'chat',
+        caller: { source: 'rpc' as const },
+      })
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(sent).toEqual([
+      't1 coder@node-code use 16px from an agent',
+      't1 coder@node-code go on from an agent',
+      't1 coder@node-code stop there from you',
+    ]);
+  });
+
+  test('reports a message the agent will only see after its current turn', async () => {
+    expect(await adapter().send?.(ref('t1'), 'later, check the tests', neo)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+  });
+
+  test('never wakes a cancelled or pending node', async () => {
+    expect(await adapter().send?.(ref('t4'), 'hi', neo)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+    });
+    expect(sent).toEqual([]);
+  });
+
+  test('refuses other agents, finished tasks and tasks without a workflow agent', async () => {
+    const worker = {
+      from: 'session:w1',
+      caller: { source: 'mcp' as const, sessionId: 'w1', role: 'workflow_worker' as const },
+    };
+    expect(await adapter().send?.(ref('t1'), 'hi', worker)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+    });
+    expect(await adapter().send?.(ref('t2'), 'hi', neo)).toMatchObject({
+      ok: false,
+      reason: 'not_open',
+    });
+    expect(await adapter().send?.(ref('t3'), 'hi', neo)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+    });
+    expect(sent).toEqual([]);
   });
 });

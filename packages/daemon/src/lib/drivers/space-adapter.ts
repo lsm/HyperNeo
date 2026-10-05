@@ -45,6 +45,12 @@ export interface SpaceTaskDetailRow extends SpaceTaskRow {
   blockReason: string | null;
 }
 
+export interface SpaceTaskNode {
+  agentName: string;
+  workflowNodeId: string;
+  agentSessionId: string | null;
+}
+
 export interface SpaceTaskControl {
   create(
     spaceId: string,
@@ -56,6 +62,12 @@ export interface SpaceTaskControl {
     taskId: string,
     caller: OperationCaller
   ): Promise<{ cancelled: true } | { reason: string }>;
+  message(
+    taskId: string,
+    node: SpaceTaskNode,
+    message: string,
+    fromHuman: boolean
+  ): Promise<{ delivered: boolean } | { reason: string }>;
 }
 
 export interface SpaceAdapterDeps {
@@ -283,6 +295,68 @@ const runSpaceStart = (superpipe({})('space-start-work') as PipelineAPI)
   deps: SpaceAdapterDeps
 ) => Promise<Result<WorkSummary>>;
 
+export function requireTaskMessenger(
+  task: SpaceTaskDetailRow,
+  context: WorkCallContext
+): Gate<SpaceTaskDetailRow> {
+  const { caller } = context;
+  if (caller.source === 'mcp' && caller.role !== 'neo') {
+    return {
+      reason: reject('unsupported', 'Agents message Space tasks with task.message.send.'),
+    };
+  }
+  const status = spaceTaskWorkStatus(task.status);
+  return status === 'done' || status === 'stopped'
+    ? { reason: reject('not_open', `Task #${task.taskNumber} is ${task.status}.`) }
+    : { value: task };
+}
+
+export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode | null {
+  const row = db
+    .prepare(
+      `SELECT n.agent_name AS agentName, n.workflow_node_id AS workflowNodeId,
+              n.agent_session_id AS agentSessionId FROM node_executions n
+         JOIN space_tasks t ON t.workflow_run_id = n.workflow_run_id
+        WHERE t.id = ?
+          AND n.status IN ('in_progress', 'blocked', 'idle', 'waiting_rebind')
+        ORDER BY COALESCE(n.last_activity_at, n.updated_at) DESC
+        LIMIT 1`
+    )
+    .get(taskId) as SpaceTaskNode | null | undefined;
+  return row ?? null;
+}
+
+export async function messageSpaceTask(
+  task: SpaceTaskDetailRow,
+  message: string,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  const node = readActiveNode(deps.db(), task.id);
+  if (!node) {
+    return reject(
+      'unsupported',
+      `Task #${task.taskNumber} has no workflow agent working on it to message.`
+    );
+  }
+  const sent = await deps.tasks.message(task.id, node, message, context.from === 'chat');
+  return 'reason' in sent
+    ? reject('not_delivered', sent.reason)
+    : { ok: true, value: { delivered: sent.delivered } };
+}
+
+const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)
+  .input(['ref', 'message', 'context', 'deps'])
+  .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireTaskMessenger, ['outcome', 'context'], 'result:outcome')
+  .pipe(messageSpaceTask, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+) => Promise<Result<{ delivered: boolean }>>;
+
 const runSpaceStatus = (superpipe({})('space-work-status') as PipelineAPI)
   .input(['ref', 'deps'])
   .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
@@ -302,9 +376,10 @@ const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
 export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
   return {
     id: 'space',
-    capabilities: ['find', 'start', 'status', 'stop'],
+    capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: (query) => runSpaceFind(query, deps),
     start: (request, context) => runSpaceStart(request, context, deps),
+    send: (ref, message, context) => runSpaceSend(ref, message, context, deps),
     status: async (ref) => runSpaceStatus(ref, deps),
     stop: (ref, context) => runSpaceStop(ref, context, deps),
   };

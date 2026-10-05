@@ -108,6 +108,29 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
       const reason = taskOperationRejection(created);
       return reason === null ? { taskId: (created as { id: string }).id } : { reason };
     },
+    message: async (taskId, node, message, fromHuman) => {
+      try {
+        const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
+          kind: 'worker',
+          taskId,
+          agentName: node.agentName,
+          workflowNodeId: node.workflowNodeId,
+          waitCapMs: 0,
+        });
+        const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
+        if (!sessionId)
+          return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
+        const messageId = await context.taskAgentManager.injectSubSessionMessage(
+          sessionId,
+          message,
+          !fromHuman
+        );
+        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
+        return { delivered: sent?.sendStatus !== 'deferred' };
+      } catch (error) {
+        return { reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
     cancel: async (taskId, caller) => {
       const reason = taskOperationRejection(
         await invoke('task.transition', { taskId, status: 'cancelled' }, caller)

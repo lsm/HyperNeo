@@ -128,13 +128,15 @@ describe('codex-desktop adapter status and send', () => {
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
   });
 
+  const user = { from: 'user', caller: { source: 'rpc' as const } };
+
   test('send queues the message and reports it delivered once the rollout shows it', async () => {
-    expect(await adapter().send?.(ref('busy'), '-v after this')).toEqual({
+    expect(await adapter().send?.(ref('busy'), '-v after this', user)).toEqual({
       ok: true,
       value: { delivered: false },
     });
     appendFileSync(join(dir, 'finished.jsonl'), `\n${heard('next step\nwith detail')}`);
-    expect(await adapter().send?.(ref('idle'), 'next step\nwith detail')).toEqual({
+    expect(await adapter().send?.(ref('idle'), 'next step\nwith detail', user)).toEqual({
       ok: true,
       value: { delivered: true },
     });
@@ -145,11 +147,11 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   test('send refuses archived threads and reports a failed queue', async () => {
-    expect(await adapter().send?.(ref('old'), 'hi')).toMatchObject({
+    expect(await adapter().send?.(ref('old'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_open',
     });
-    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi')).toEqual({
+    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi', user)).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail: 'no such thread',
