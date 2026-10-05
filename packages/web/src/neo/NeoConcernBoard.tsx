@@ -1,13 +1,14 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
+import type { NeoSnapshot, NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { connectionState } from '../lib/state.ts';
 import { readDaemonInventory } from '../lib/daemon-inventory.ts';
-import { NeoIcon } from './NeoIcon.tsx';
-import { projectNeoConcernBoard, type NeoConcernBoard } from './neo-concern-board.ts';
-import { projectNeoRequestSnapshot, type NeoRequestOrigin } from './request-board.ts';
+import { connectionState } from '../lib/state.ts';
 import { neoBoardReceiptLabel } from './board-receipt-label.ts';
+import { NeoIcon } from './NeoIcon.tsx';
+import { type NeoConcernBoard, projectNeoConcernBoard } from './neo-concern-board.ts';
+import { type NeoRequestOrigin, projectNeoRequestSnapshot } from './request-board.ts';
+import { neoWorkDriverLabel } from './work-driver.ts';
 
 const statusLabels = {
   proposed: 'Your call',
@@ -22,10 +23,20 @@ const refKey = (ref: DaemonInventoryLink) => JSON.stringify([ref.kind, ref.id]);
 export function NeoConcernBoardView({
   board,
   requestScoped = false,
+  drivers = [],
 }: {
   board: NeoConcernBoard;
   requestScoped?: boolean;
+  drivers?: readonly NeoWorkDriverReceipt[];
 }) {
+  const statusOf = (item: NeoConcernBoard['receipts'][number]) => {
+    if (item.kind === 'consultation' && item.status === 'queued') return 'Waiting for context';
+    const driver =
+      item.kind === 'work' && item.status === 'queued'
+        ? drivers.find((candidate) => candidate.workId === item.id)
+        : undefined;
+    return driver ? neoWorkDriverLabel(driver) : statusLabels[item.status];
+  };
   const name = (ref: DaemonInventoryLink) =>
     board.participants.find((item) => refKey(item.ref) === refKey(ref))?.metadata?.name || ref.id;
   return (
@@ -52,9 +63,7 @@ export function NeoConcernBoardView({
           >
             <p class="mb-2 flex items-center gap-2 text-xs text-accent">
               <NeoIcon name={item.kind === 'work' ? 'work' : 'context'} />
-              {item.kind === 'consultation' && item.status === 'queued'
-                ? 'Waiting for context'
-                : statusLabels[item.status]}
+              {statusOf(item)}
             </p>
             <p class="break-words text-sm font-medium">
               {neoBoardReceiptLabel(item, board.receipts)}
@@ -212,7 +221,11 @@ export function NeoConcernBoardPanel({
           aria-label="Concern board"
           class={requestOrigin ? 'mt-3 rounded-xl border border-line bg-surface p-4' : 'mt-5'}
         >
-          <NeoConcernBoardView board={board} requestScoped={!!requestOrigin} />
+          <NeoConcernBoardView
+            board={board}
+            requestScoped={!!requestOrigin}
+            drivers={snapshot?.workDrivers}
+          />
           {!connected && (
             <p role="status" class="mt-3 text-xs text-warning">
               Reconnect to refresh resource details.
