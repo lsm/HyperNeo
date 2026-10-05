@@ -7,11 +7,13 @@ import type {
   Result,
   StartRequest,
   WorkAdapter,
+  WorkCallContext,
   WorkDetail,
   WorkRef,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
@@ -47,9 +49,13 @@ export interface SpaceTaskControl {
   create(
     spaceId: string,
     title: string,
-    description: string
+    description: string,
+    caller: OperationCaller
   ): Promise<{ taskId: string } | { reason: string }>;
-  cancel(taskId: string): Promise<{ cancelled: true } | { reason: string }>;
+  cancel(
+    taskId: string,
+    caller: OperationCaller
+  ): Promise<{ cancelled: true } | { reason: string }>;
 }
 
 export interface SpaceAdapterDeps {
@@ -187,6 +193,10 @@ const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds'], 'groups')
   .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
 
+export function spaceTaskCaller(caller: OperationCaller): OperationCaller {
+  return caller.role === 'neo' ? { ...caller, source: 'internal' } : caller;
+}
+
 export function taskOperationRejection(value: unknown): string | null {
   if (typeof value === 'string') return value;
   if (value === null || typeof value !== 'object') return 'No task came back.';
@@ -237,9 +247,10 @@ export function requireTaskSpace(request: StartRequest, deps: SpaceAdapterDeps):
 export async function createSpaceTask(
   spaceId: string,
   request: StartRequest,
+  context: WorkCallContext,
   deps: SpaceAdapterDeps
 ): Promise<Result<WorkSummary>> {
-  const created = await deps.tasks.create(spaceId, request.title, request.message);
+  const created = await deps.tasks.create(spaceId, request.title, request.message, context.caller);
   if ('reason' in created) return reject('invalid_place', created.reason);
   const task = readSpaceTask(deps.db(), created.taskId);
   return task
@@ -249,26 +260,26 @@ export async function createSpaceTask(
 
 export async function cancelSpaceTask(
   task: SpaceTaskDetailRow,
+  context: WorkCallContext,
   deps: SpaceAdapterDeps
 ): Promise<Result<{ stopped: boolean }>> {
-  if (
-    spaceTaskWorkStatus(task.status) === 'done' ||
-    spaceTaskWorkStatus(task.status) === 'stopped'
-  ) {
+  const status = spaceTaskWorkStatus(task.status);
+  if (task.status === 'draft' || status === 'done' || status === 'stopped') {
     return { ok: true, value: { stopped: false } };
   }
-  const cancelled = await deps.tasks.cancel(task.id);
+  const cancelled = await deps.tasks.cancel(task.id, context.caller);
   return 'reason' in cancelled
     ? reject('not_delivered', cancelled.reason)
     : { ok: true, value: { stopped: true } };
 }
 
 const runSpaceStart = (superpipe({})('space-start-work') as PipelineAPI)
-  .input(['request', 'deps'])
+  .input(['request', 'context', 'deps'])
   .pipe(requireTaskSpace, ['request', 'deps'], 'result:outcome')
-  .pipe(createSpaceTask, ['outcome', 'request', 'deps'], 'outcome')
+  .pipe(createSpaceTask, ['outcome', 'request', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
+  context: WorkCallContext,
   deps: SpaceAdapterDeps
 ) => Promise<Result<WorkSummary>>;
 
@@ -279,11 +290,12 @@ const runSpaceStatus = (superpipe({})('space-work-status') as PipelineAPI)
   .end('outcome') as (ref: WorkRef, deps: SpaceAdapterDeps) => Result<WorkDetail>;
 
 const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
-  .input(['ref', 'deps'])
+  .input(['ref', 'context', 'deps'])
   .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
-  .pipe(cancelSpaceTask, ['outcome', 'deps'], 'outcome')
+  .pipe(cancelSpaceTask, ['outcome', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
+  context: WorkCallContext,
   deps: SpaceAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
@@ -292,8 +304,8 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
     id: 'space',
     capabilities: ['find', 'start', 'status', 'stop'],
     find: (query) => runSpaceFind(query, deps),
-    start: (request) => runSpaceStart(request, deps),
+    start: (request, context) => runSpaceStart(request, context, deps),
     status: async (ref) => runSpaceStatus(ref, deps),
-    stop: (ref) => runSpaceStop(ref, deps),
+    stop: (ref, context) => runSpaceStop(ref, context, deps),
   };
 }
