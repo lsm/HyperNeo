@@ -327,14 +327,14 @@ describe('Neo work with a drivers target', () => {
 
 describe('readDriverSettlement', () => {
   const work = { updatedAt: 100 };
-  const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
-    readDriverSettlement(work, outcome, now);
   const status = (value: Record<string, unknown>) => ({
     kind: 'completed' as const,
     value: { ok: true, value: { lastActivityAt: 200, ...value } },
   });
 
   test('settles finished, failed and stopped work that moved after it was handed over', () => {
+    const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
+      readDriverSettlement(work, outcome, now);
     expect(settle(status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
       status: 'reported',
       report: 'Shipped.',
@@ -354,6 +354,8 @@ describe('readDriverSettlement', () => {
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
+    const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
+      readDriverSettlement(work, outcome, now);
     expect(settle(status({ status: 'running' }))).toBeNull();
     expect(settle(status({ status: 'needs_you' }))).toBeNull();
     expect(settle(status({ status: 'done', lastActivityAt: 100 }))).toBeNull();
