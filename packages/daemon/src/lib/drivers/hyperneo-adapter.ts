@@ -32,11 +32,11 @@ export interface HyperneoAdapterDeps {
 }
 
 export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
-  if (status === 'archived' || status === 'ended') return 'stopped';
+  if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
   if (status === 'pending_worktree_choice' || processing === 'waiting_for_input')
     return 'needs_you';
   if (processing === 'processing') return 'running';
-  return processing === 'queued' ? 'queued' : 'done';
+  return processing === 'queued' || processing === 'rate_limit_cooldown' ? 'queued' : 'done';
 }
 
 function timestamp(value: string | null): number {
