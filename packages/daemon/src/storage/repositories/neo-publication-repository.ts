@@ -98,7 +98,7 @@ export class NeoPublicationRepository {
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
-    if (result.accepted && result.created && !result.publication.interim) {
+    if (result.accepted && !result.publication.interim) {
       const { askOrigin, shortText } = result.publication;
       new NeoRoutingLogRepository(this.db).recordOutcome(
         askOrigin.messageId,

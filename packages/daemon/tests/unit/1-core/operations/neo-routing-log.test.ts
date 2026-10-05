@@ -114,6 +114,8 @@ describe('neo.message.send routing log', () => {
     expect(log.listAfter(0, 10)[0].outcome).toBeNull();
     publications.append(reply(2, 'It announces Artifacts in open beta.'));
     publications.append(reply(3, 'A later follow-up.'));
+    writer.exec(`UPDATE neo_routing_log SET outcome = NULL WHERE message_id = '${ask(3)}'`);
+    publications.append(reply(2, 'It announces Artifacts in open beta.'));
     expect(log.listAfter(0, 10)[0]).toMatchObject({
       outcome: 'It announces Artifacts in open beta.',
     });
