@@ -17,7 +17,7 @@ async function invoke(deps: ReadWorkDeps, input: Record<string, unknown>) {
   return outcome.kind === 'completed' ? outcome.value : outcome;
 }
 
-describe('createReadWorkOperation', () => {
+describe('work.read operation', () => {
   const remoteCalls: Array<[string, string, unknown]> = [];
   const deps: ReadWorkDeps = {
     readTurns: (sessionId, around) =>
