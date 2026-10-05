@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   buildSpaceGroups,
   createSpaceAdapter,
   spaceAgentWorkStatus,
   spaceTaskWorkStatus,
 } from '../../../../src/lib/drivers/space-adapter';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('spaceAgentWorkStatus', () => {
   test('reads closed and paused agents first, then the session like a HyperNeo chat', () => {
@@ -125,7 +125,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchTaskIds: () => new Set(),
+      searchWorkIds: () => new Set(),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -144,7 +144,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchTaskIds: (text) => new Set(text === 'parser' ? ['t2'] : []),
+      searchWorkIds: (text) => new Set(text === 'parser' ? ['t2'] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -163,7 +163,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchTaskIds: () => new Set(),
+      searchWorkIds: () => new Set(),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -193,7 +193,7 @@ describe('space adapter against the space tables', () => {
     const adapter = createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchTaskIds: () => new Set(),
+      searchWorkIds: (text) => new Set(text === '16px' ? ['s1'] : []),
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
@@ -209,6 +209,8 @@ describe('space adapter against the space tables', () => {
     ]);
     const [designer] = await adapter.find({ includeClosed: false, limit: 20, text: 'designer' });
     expect(designer.work.map((w) => w.ref.id)).toEqual(['agent:a1']);
+    const [byChat] = await adapter.find({ includeClosed: false, limit: 20, text: '16px' });
+    expect(byChat.work.map((w) => w.ref.id)).toEqual(['agent:a1']);
     expect(await adapter.status?.({ adapter: 'space', id: 'agent:a3' })).toEqual({
       ok: true,
       value: {

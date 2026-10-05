@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { OperationCaller } from '../operations/registry.ts';
+import { hyperneoWorkStatus } from './hyperneo-adapter.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -13,8 +15,6 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import type { OperationCaller } from '../operations/registry.ts';
-import { hyperneoWorkStatus } from './hyperneo-adapter.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
@@ -52,6 +52,7 @@ export interface SpaceAgentRow {
   spaceId: string;
   handle: string;
   displayName: string;
+  sessionId: string | null;
   status: string;
   updatedAt: number;
   processing: string | null;
@@ -90,7 +91,7 @@ export interface SpaceTaskControl {
 export interface SpaceAdapterDeps {
   db: () => BunDatabase;
   machine: string;
-  searchTaskIds: (text: string) => ReadonlySet<string>;
+  searchWorkIds: (text: string) => ReadonlySet<string>;
   tasks: SpaceTaskControl;
 }
 
@@ -161,6 +162,7 @@ export function readSpaceAgents(
   const rows = db
     .prepare(
       `SELECT a.id, a.space_id AS spaceId, a.handle, a.display_name AS displayName, a.status,
+         a.session_id AS sessionId,
          a.updated_at AS updatedAt, s.last_active_at AS sessionActiveAt,
          CASE WHEN json_valid(s.processing_state) THEN json_extract(s.processing_state, '$.status') END AS processing
          FROM space_long_horizon_agents a LEFT JOIN sessions s ON s.id = a.session_id
@@ -234,8 +236,13 @@ export function buildSpaceGroups(
       work.unshift(
         ...agents
           .filter((agent) => agent.spaceId === space.id)
+          .filter(
+            (agent) =>
+              placeMatches ||
+              (agent.sessionId !== null && matchedIds.has(agent.sessionId)) ||
+              `@${agent.handle} ${agent.displayName}`.toLowerCase().includes(text ?? '')
+          )
           .map((agent) => toAgentWork(agent, space.name, deps.machine))
-          .filter((agent) => placeMatches || agent.title.toLowerCase().includes(text ?? ''))
       );
       if (!placeMatches && work.length === 0) return [];
       return [
@@ -264,7 +271,7 @@ export function loadSpaceTasks(
 }
 
 export function matchSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): ReadonlySet<string> {
-  return query.text ? deps.searchTaskIds(query.text) : new Set();
+  return query.text ? deps.searchWorkIds(query.text) : new Set();
 }
 
 export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): SpaceAgentRow[] {

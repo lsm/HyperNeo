@@ -195,8 +195,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createSpaceAdapter({
       db,
       machine,
-      searchTaskIds: (text) =>
-        new Set(search(text).flatMap((result) => (result.taskId ? [result.taskId] : []))),
+      searchWorkIds: (text) =>
+        new Set(
+          search(text).flatMap((result) =>
+            [result.taskId, result.sessionId].filter((id): id is string => Boolean(id))
+          )
+        ),
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(),
