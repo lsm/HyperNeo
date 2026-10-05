@@ -97,6 +97,29 @@ describe('requireNeoReceipt', () => {
 });
 
 describe('Neo intake submission lifecycle', () => {
+  it('sends on a plain-HTTP page where crypto.randomUUID is missing', async () => {
+    const original = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      value: undefined,
+      configurable: true,
+    });
+    try {
+      const { client, request } = setup();
+      await expect(client.send({ sessionId: 'neo:root', text: 'Hi' })).resolves.toHaveProperty(
+        'ok',
+        true
+      );
+      expect(request.mock.calls[0][1].input.requestId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      );
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        value: original,
+        configurable: true,
+      });
+    }
+  });
+
   it('does not connect for an empty ask', async () => {
     const { client, getHub, request } = setup();
     expect(await client.send({ sessionId: 'neo:root', text: '  ' })).toHaveProperty('ok', false);
