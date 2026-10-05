@@ -98,7 +98,7 @@ describe('hyperneo adapter send and status', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
-  const from = { from: 'session:neo:root' };
+  const from = { from: 'session:neo:root', caller: { source: 'rpc' as const } };
 
   test('status returns the session with its last top-level reply', async () => {
     expect(await adapter().status?.(ref('idle'))).toEqual({
@@ -199,7 +199,7 @@ describe('hyperneo adapter start and stop', () => {
     });
   }
 
-  const from = { from: 'session:neo%3Aroot' };
+  const from = { from: 'session:neo%3Aroot', caller: { source: 'rpc' as const } };
   const place = (folder?: string) => ({
     machine: 'imac',
     name: 'x',
@@ -245,7 +245,7 @@ describe('hyperneo adapter start and stop', () => {
     db.exec(
       `UPDATE sessions SET processing_state = '{"status":"rate_limit_cooldown"}' WHERE id = 'idle'`
     );
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' })).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
       ok: true,
       value: { stopped: true },
     });
@@ -253,11 +253,11 @@ describe('hyperneo adapter start and stop', () => {
   });
 
   test('stop interrupts a running session and leaves an idle one alone', async () => {
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'busy' })).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'busy' }, from)).toEqual({
       ok: true,
       value: { stopped: true },
     });
-    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' })).toEqual({
+    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
       ok: true,
       value: { stopped: false },
     });

@@ -158,6 +158,18 @@ describe('buildHyperneoGroups', () => {
   });
 });
 
+const findOnly = {
+  handoff: async () => ({ kind: 'enqueued' as const, id: 'mb1' }),
+  sessions: {
+    create: async () => 'new',
+    chooseWorktree: async () => {},
+    announce: () => {},
+    interrupt: () => false,
+  },
+  neoFolder: () => '/data/Neo',
+  folderExists: () => true,
+};
+
 describe('skipSpaceQuery', () => {
   test('leaves Spaces to the space adapter without reading anything', async () => {
     expect(skipSpaceQuery({ includeClosed: false, limit: 20, spaceId: 'sp' })).toEqual({
@@ -171,6 +183,7 @@ describe('skipSpaceQuery', () => {
       searchSessionIds: () => {
         throw new Error('searched messages');
       },
+      ...findOnly,
     });
     expect(
       await adapter.find({ includeClosed: true, limit: 20, spaceId: 'sp', text: 'x' })
@@ -262,6 +275,7 @@ describe('hyperneo adapter against the sessions table', () => {
       db: () => db,
       machine: 'imac',
       searchSessionIds: () => new Set(),
+      ...findOnly,
     });
     const groups = await adapter.find({ includeClosed: true, limit: 20, text: 'loader' });
     expect(groups.flatMap((g) => g.work.map((w) => w.ref.id))).toEqual(['s1']);

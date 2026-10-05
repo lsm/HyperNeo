@@ -79,7 +79,7 @@ describe('space adapter start, status and stop', () => {
     expect(
       await adapter().start?.(
         { place: space, title: 'bigger font', message: 'raise it to 16px' },
-        { caller: rpc }
+        { from: 'chat', caller: rpc }
       )
     ).toEqual({
       ok: true,
@@ -97,7 +97,10 @@ describe('space adapter start, status and stop', () => {
 
   test('start needs a Space on this machine and passes a refusal through', async () => {
     const start = (place: Record<string, string>, refuse?: string) =>
-      adapter(refuse).start?.({ place: place as never, title: 't', message: 'm' }, { caller: rpc });
+      adapter(refuse).start?.(
+        { place: place as never, title: 't', message: 'm' },
+        { from: 'chat', caller: rpc }
+      );
     expect(await start({ machine: 'imac', name: 'x', folder: '/x' })).toMatchObject({
       ok: false,
       reason: 'invalid_place',
@@ -126,7 +129,7 @@ describe('space adapter start, status and stop', () => {
     db.exec(
       `INSERT INTO space_tasks VALUES ('t4', 'sp1', 10, 'idea', 'draft', 40, NULL, NULL, NULL)`
     );
-    expect(await adapter().stop?.(ref('t4'), { caller: rpc })).toEqual({
+    expect(await adapter().stop?.(ref('t4'), { from: 'chat', caller: rpc })).toEqual({
       ok: true,
       value: { stopped: false },
     });
@@ -134,15 +137,17 @@ describe('space adapter start, status and stop', () => {
   });
 
   test('stop cancels open tasks and leaves finished ones alone', async () => {
-    expect(await adapter().stop?.(ref('t1'), { caller: rpc })).toEqual({
+    expect(await adapter().stop?.(ref('t1'), { from: 'chat', caller: rpc })).toEqual({
       ok: true,
       value: { stopped: true },
     });
-    expect(await adapter().stop?.(ref('t2'), { caller: rpc })).toEqual({
+    expect(await adapter().stop?.(ref('t2'), { from: 'chat', caller: rpc })).toEqual({
       ok: true,
       value: { stopped: false },
     });
-    expect(await adapter('invalid_transition').stop?.(ref('t1'), { caller: rpc })).toEqual({
+    expect(
+      await adapter('invalid_transition').stop?.(ref('t1'), { from: 'chat', caller: rpc })
+    ).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail: 'invalid_transition',
