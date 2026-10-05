@@ -153,16 +153,26 @@ export function readSpaceAgents(
   includeClosed: boolean,
   id?: string
 ): SpaceAgentRow[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT a.id, a.space_id AS spaceId, a.handle, a.display_name AS displayName, a.status,
-         a.updated_at AS updatedAt,
+         a.updated_at AS updatedAt, s.last_active_at AS sessionActiveAt,
          CASE WHEN json_valid(s.processing_state) THEN json_extract(s.processing_state, '$.status') END AS processing
          FROM space_long_horizon_agents a LEFT JOIN sessions s ON s.id = a.session_id
         WHERE (?1 = 1 OR a.status IN ('active', 'paused')) AND (?2 IS NULL OR a.id = ?2)
-        ORDER BY a.updated_at DESC`
+`
     )
-    .all(includeClosed ? 1 : 0, id ?? null) as SpaceAgentRow[];
+    .all(includeClosed ? 1 : 0, id ?? null) as Array<
+    SpaceAgentRow & { sessionActiveAt: string | null }
+  >;
+  return rows
+    .map(({ sessionActiveAt, ...agent }) => {
+      const active = sessionActiveAt ? Date.parse(sessionActiveAt) : Number.NaN;
+      return Number.isFinite(active) && active > agent.updatedAt
+        ? { ...agent, updatedAt: active }
+        : agent;
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function toAgentWork(agent: SpaceAgentRow, spaceName: string, machine: string): WorkSummary {
