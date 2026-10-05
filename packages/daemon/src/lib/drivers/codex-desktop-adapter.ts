@@ -20,7 +20,8 @@ import type {
 import { reject } from './work-operations.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
-const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(substr(first_user_message, 1, 80), ''), 'Untitled thread') AS title,
+const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
+const THREAD_COLUMNS = `id, COALESCE(NULLIF(substr(trim(replace(replace(${THREAD_TITLE}, char(13), ' '), char(10), ' ')), 1, 80), ''), 'Untitled thread') AS title,
   cwd AS folder, COALESCE(archived, 0) AS archived, COALESCE(updated_at_ms, 0) AS updatedAt`;
 const THREADS_PER_PLACE = 20;
 const CLOSED_THREADS = 500;
