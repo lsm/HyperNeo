@@ -26,6 +26,11 @@ beforeEach(async () => {
     NeoConversation: () => <p>Conversation body</p>,
   }));
   vi.doMock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+  vi.doMock('../NeoSessionPane.tsx', () => ({
+    NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
+      <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+    ),
+  }));
   ({ NeoLive } = await import('../NeoLive.tsx'));
 });
 
@@ -127,15 +132,13 @@ describe('Neo floating controls', () => {
 
   it('keeps draft and the work card intact while the controls are used', () => {
     renderLive();
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.input(screen.getByLabelText('Draft'), { target: { value: 'hold this' } });
     const card = screen.getByRole('article', { name: 'Title w' });
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/w-session', '_blank', 'noopener');
-    expect(screen.getByRole('article', { name: 'Title w' })).toBe(card);
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('w-session');
+    expect(screen.getByRole('article', { name: 'Title w', hidden: true })).toBe(card);
     expect((screen.getByLabelText('Draft') as HTMLTextAreaElement).value).toBe('hold this');
     expect(screen.getByText('Conversation body')).toBeTruthy();
-    opened.mockRestore();
   });
 
   it('still accepts a dropped file on the preserved banner', async () => {

@@ -116,6 +116,25 @@
   }
 }
 
+.neo-session-pane {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .neo-session-pane {
+    animation: neo-session-pane-in 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  }
+}
+
+@keyframes neo-session-pane-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
 .neo-scene-list {
   max-width: 48rem;
   margin-inline: auto;
@@ -395,6 +414,9 @@
   .neo-public-layout.neo-has-scenes {
     --neo-chat-width: 58%;
   }
+  .neo-public-layout.neo-has-scenes.neo-has-session {
+    --neo-chat-width: 45%;
+  }
   .neo-public-layout .neo-chat-rail,
   .neo-public-layout .neo-composer-rail {
     width: 100%;
@@ -431,6 +453,18 @@
     display: block;
     grid-column: 2;
     grid-row: 1;
+  }
+  .neo-public-layout.neo-has-scenes.neo-has-session .neo-scene-list {
+    visibility: hidden;
+  }
+  .neo-public-layout.neo-has-scenes .neo-session-pane {
+    position: static;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    border-left: 1px solid var(--line);
   }
   .neo-public-layout.neo-has-scenes .neo-composer-dock {
     width: var(--neo-chat-width);

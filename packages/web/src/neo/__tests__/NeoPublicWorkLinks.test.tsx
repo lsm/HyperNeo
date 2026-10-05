@@ -13,6 +13,11 @@ import { projectNeoPublicConversation } from '../public-conversation.ts';
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId} />
+  ),
+}));
 vi.mock('../NeoComposer.tsx', () => ({
   NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
     <textarea
@@ -210,18 +215,13 @@ describe('public work reference navigation', () => {
         publications: { refresh: vi.fn() },
       });
       useNeoMock.mockImplementation(() => model.value);
-      const opened = vi.spyOn(window, 'open').mockReturnValue(null);
       const view = render(<NeoLive />);
       const entry = view.container.querySelector('[data-public-entry]');
       fireEvent.input(screen.getByRole('textbox', { name: 'Draft' }), {
         target: { value: 'Keep this fictional draft' },
       });
       fireEvent.click(screen.getByRole('button', { name: 'Flower work' }));
-      expect(opened).toHaveBeenCalledExactlyOnceWith(
-        '/session/flower-session',
-        '_blank',
-        'noopener'
-      );
+      expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('flower-session');
       expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
       expect(model.value.act).not.toHaveBeenCalled();
       expect(model.value.open).not.toHaveBeenCalled();
@@ -229,7 +229,6 @@ describe('public work reference navigation', () => {
       expect((screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement).value).toBe(
         'Keep this fictional draft'
       );
-      opened.mockRestore();
     }
   );
 });

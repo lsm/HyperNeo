@@ -22,6 +22,15 @@ vi.mock('../NeoConversation.tsx', () => ({
   NeoConversation: () => <p>Durable fictional conversation</p>,
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+vi.mock('../NeoSessionPane.tsx', () => ({
+  NeoSessionPane: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
+    <div data-testid="neo-chat-panel" data-session-id={sessionId}>
+      <button type="button" onClick={onClose}>
+        Close chat
+      </button>
+    </div>
+  ),
+}));
 
 beforeEach(() => {
   connectionState.value = 'connected';
@@ -119,7 +128,6 @@ describe('Neo desktop panes', () => {
         },
       };
     });
-    const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     const main = container.querySelector('main')!;
     const chat = container.querySelector('.neo-chat-rail')!;
     const list = screen.getByRole('region', { name: 'Work scenes' });
@@ -128,15 +136,19 @@ describe('Neo desktop panes', () => {
     const draft = screen.getByRole('textbox', { name: 'Draft' }) as HTMLTextAreaElement;
     fireEvent.input(draft, { target: { value: 'Keep my fictional draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Open chat for Fictional result' }));
-    expect(opened).toHaveBeenCalledExactlyOnceWith('/session/result-session', '_blank', 'noopener');
+    expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('result-session');
     expect(screen.queryByRole('region', { name: 'Selected work' })).toBeNull();
     expect(container.querySelector('.neo-chat-rail')).toBe(chat);
     expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft);
     expect(draft.value).toBe('Keep my fictional draft');
+    expect(list.inert).toBe(true);
+    expect(within(list).queryByRole('article', { name: 'Fictional proposal' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
+    expect(screen.queryByTestId('neo-chat-panel')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Work scenes' })).toBe(list);
     expect(within(list).getByRole('article', { name: 'Fictional proposal' })).toBeTruthy();
     fireEvent.click(within(list).getByRole('button', { name: 'Start work' }));
     expect(model.value.act).toHaveBeenCalledExactlyOnceWith('proposal', 'start');
-    opened.mockRestore();
   });
 
   it('uses the chat scroll owner only at the actual desktop boundary and preserves a reader position', () => {
