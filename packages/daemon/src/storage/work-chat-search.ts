@@ -8,6 +8,7 @@ const VECTOR_SCAN_TURNS = 10_000;
 const VECTOR_TOP_TURNS = 200;
 const MIN_SIMILARITY = 0.3;
 const SEMANTIC_SNIPPET_CHARS = 240;
+const EXACT_MATCH_BONUS = 100;
 
 export interface WorkChatSnippet {
   match: 'exact' | 'semantic';
@@ -70,14 +71,10 @@ export function fuseWorkChats(
         (sum, rank) => (rank === undefined ? sum : sum + 1 / (FUSION_K + rank + 1)),
         0
       );
-      return { ...chat, score: Math.round(fused * 1e6) / 1e3 };
+      const bonus = lists[0].has(chatKey(chat)) ? EXACT_MATCH_BONUS : 0;
+      return { ...chat, score: Math.round(fused * 1e6) / 1e3 + bonus };
     })
-    .sort(
-      (a, b) =>
-        Number(lists[0].has(chatKey(b))) - Number(lists[0].has(chatKey(a))) ||
-        b.score - a.score ||
-        b.lastHitAt - a.lastHitAt
-    );
+    .sort((a, b) => b.score - a.score || b.lastHitAt - a.lastHitAt);
 }
 
 function cosine(left: Float32Array, right: Float32Array): number {

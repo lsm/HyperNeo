@@ -82,9 +82,9 @@ describe('fuseWorkChats', () => {
     });
     const fused = fuseWorkChats([chat('best', 5), chat('newest', 9), chat('stale', 1)]);
     expect(fused.map((c) => [c.sessionId, c.score])).toEqual([
-      ['newest', 32.522],
-      ['best', 32.522],
-      ['stale', 31.746],
+      ['newest', 132.522],
+      ['best', 132.522],
+      ['stale', 131.746],
     ]);
   });
 });
@@ -147,5 +147,7 @@ describe('fuseWorkChats with meaning matches', () => {
       [chat('meaning-only', 10), chat('both', 1)]
     );
     expect(fused.map((c) => c.sessionId)).toEqual(['both', 'keyword-only', 'meaning-only']);
+    expect(fused[2].score).toBeLessThan(fused[1].score);
+    expect(fused[1].score).toBeGreaterThan(100);
   });
 });
