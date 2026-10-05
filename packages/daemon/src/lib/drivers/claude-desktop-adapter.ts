@@ -8,6 +8,7 @@ import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
+const LIVE_REUSE_MS = 5_000;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -85,7 +86,11 @@ export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLive
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = spawn(['claude', 'agents', '--json'], { stdout: 'pipe', stderr: 'ignore' });
-    timer = setTimeout(() => proc.kill(), LIVE_TIMEOUT_MS);
+    timer = setTimeout(() => {
+      try {
+        proc.kill('SIGKILL');
+      } catch {}
+    }, LIVE_TIMEOUT_MS);
     const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     const live = LiveSessionsSchema.safeParse(JSON.parse(output));
     return live.success ? live.data : [];
@@ -161,17 +166,30 @@ export function loadClaudeDesktopRecords(
   return readClaudeDesktopRecords(deps.sessionsDir, cache);
 }
 
-export function loadLiveClaudeSessions(
-  deps: ClaudeDesktopAdapterDeps
+export async function loadLiveClaudeSessions(
+  deps: ClaudeDesktopAdapterDeps,
+  records: readonly ClaudeDesktopRecord[]
 ): Promise<readonly ClaudeLiveSession[]> {
-  return deps.liveSessions();
+  return records.some((record) => !record.isArchived) ? deps.liveSessions() : [];
+}
+
+export function reuseLiveSessions(
+  read: () => Promise<readonly ClaudeLiveSession[]>,
+  now: () => number,
+  freshForMs = LIVE_REUSE_MS
+): () => Promise<readonly ClaudeLiveSession[]> {
+  let cached: { at: number; sessions: Promise<readonly ClaudeLiveSession[]> } | null = null;
+  return () => {
+    if (!cached || now() - cached.at >= freshForMs) cached = { at: now(), sessions: read() };
+    return cached.sessions;
+  };
 }
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)
   .input(['query', 'deps', 'cache'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
-  .pipe(loadLiveClaudeSessions, 'deps', 'liveSessions')
+  .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
   .pipe(buildClaudeDesktopGroups, ['records', 'liveSessions', 'query', 'deps'], 'groups')
   .endAsync('groups') as (
   query: FindQuery,
@@ -181,9 +199,10 @@ const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as Pipel
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
+  const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
     capabilities: ['find'],
-    find: (query) => runClaudeDesktopFind(query, deps, cache),
+    find: (query) => runClaudeDesktopFind(query, reused, cache),
   };
 }

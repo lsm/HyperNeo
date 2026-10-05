@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
+  reuseLiveSessions,
   readLiveClaudeSessions,
   type ClaudeRecordCache,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
@@ -142,6 +143,26 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(cache.has(join(dir, 'acct-b/scope-2/local_b2.json'))).toBe(false);
   });
 
+  test('does not ask the CLI when every session is archived', async () => {
+    let asked = false;
+    const archivedOnly = mkdtempSync(join(tmpdir(), 'claude-archived-'));
+    mkdirSync(join(archivedOnly, 'a/s'), { recursive: true });
+    writeFileSync(
+      join(archivedOnly, 'a/s/local_z.json'),
+      JSON.stringify(record('z', { originCwd: '/focus/old', isArchived: true }))
+    );
+    await createClaudeDesktopAdapter({
+      sessionsDir: archivedOnly,
+      machine: 'laptop',
+      liveSessions: async () => {
+        asked = true;
+        return [];
+      },
+    }).find({ includeClosed: true, limit: 20 });
+    rmSync(archivedOnly, { recursive: true, force: true });
+    expect(asked).toBe(false);
+  });
+
   test('answers a Space search without reading records or asking the CLI', async () => {
     let asked = false;
     const groups = await createClaudeDesktopAdapter({
@@ -183,5 +204,27 @@ describe('readLiveClaudeSessions', () => {
         throw new Error('ENOENT');
       })
     ).toEqual([]);
+  });
+});
+
+describe('reuseLiveSessions', () => {
+  test('asks the CLI again only after the reuse window', async () => {
+    let reads = 0;
+    let clock = 0;
+    const live = reuseLiveSessions(
+      async () => {
+        reads++;
+        return [];
+      },
+      () => clock,
+      1_000
+    );
+    await live();
+    clock = 999;
+    await live();
+    expect(reads).toBe(1);
+    clock = 1_000;
+    await live();
+    expect(reads).toBe(2);
   });
 });
