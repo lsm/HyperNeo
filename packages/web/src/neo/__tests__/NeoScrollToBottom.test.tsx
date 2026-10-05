@@ -119,7 +119,9 @@ describe('Neo scroll to bottom', () => {
     placeScroll(main, 1500);
     expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
     placeScroll(main, 200);
-    fireEvent.click(screen.getByRole('button', { name: 'Scroll to bottom' }));
+    const button = screen.getByRole('button', { name: 'Scroll to bottom' });
+    expect(button.closest('.neo-composer-rail')?.classList.contains('relative')).toBe(true);
+    fireEvent.click(button);
     expect(scrollTo).toHaveBeenCalledWith({ top: 2000, behavior: 'smooth' });
     expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
   });

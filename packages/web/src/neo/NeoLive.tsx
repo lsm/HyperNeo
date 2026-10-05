@@ -514,7 +514,7 @@ export function NeoLive() {
         ref={footer}
         class="neo-composer-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-3 pt-6"
       >
-        <div class="neo-composer-rail px-3 sm:px-8">
+        <div class="neo-composer-rail relative px-3 sm:px-8">
           {awayFromBottom && (
             <ScrollToBottomButton
               onClick={scrollToBottom}
