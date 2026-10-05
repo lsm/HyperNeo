@@ -25,15 +25,19 @@ export async function embedPendingTurns(
   budgetMs = TURN_EMBED_BUDGET_MS
 ): Promise<{ embedded: number; remaining: number }> {
   const started = Date.now();
+  const tried = new Set<number>();
   let embedded = 0;
   for (;;) {
-    const pending = readPendingTurns(db, embedder.model, embedder.dimensions, TURN_BATCH);
+    const pending = readPendingTurns(db, embedder.model, embedder.dimensions, TURN_BATCH).filter(
+      (turn) => !tried.has(turn.id)
+    );
     for (const turn of pending) {
+      tried.add(turn.id);
       const vector = Float32Array.from(await embedder.embedPassage(turn.text));
       saveTurnVector(db, turn, embedder.model, vector, Date.now());
     }
     embedded += pending.length;
-    if (pending.length < TURN_BATCH || Date.now() - started >= budgetMs) break;
+    if (pending.length === 0 || Date.now() - started >= budgetMs) break;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return { embedded, remaining: countPendingTurns(db, embedder.model, embedder.dimensions) };

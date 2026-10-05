@@ -92,4 +92,13 @@ describe('embedPendingTurns', () => {
     expect(await embedPendingTurns(db, embedder, 0)).toEqual({ embedded: 32, remaining: 40 });
     expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 40, remaining: 0 });
   });
+
+  test('drains older backlog in the same run after a short batch of new turns', async () => {
+    await embedPendingTurns(db, embedder, 0);
+    db.exec(`DELETE FROM message_search_vectors WHERE content_id = 1`);
+    db.prepare(
+      `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
+    ).run('a brand new turn about fonts');
+    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2, remaining: 0 });
+  });
 });
