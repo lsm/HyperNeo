@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { embedPendingTurns } from '../../../../src/lib/drivers/turn-embedding';
 import { runMigration297 } from '../../../../src/storage/schema/m297-message-search-vectors';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readPendingTurns } from '../../../../src/storage/turn-vectors';
+import { readPendingTurns, saveTurnVector } from '../../../../src/storage/turn-vectors';
 
 describe('embedPendingTurns', () => {
   let db: Database;
@@ -20,17 +20,22 @@ describe('embedPendingTurns', () => {
   beforeEach(() => {
     embedded.length = 0;
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, body TEXT)`);
+    db.exec(
+      `CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, message_type TEXT, body TEXT)`
+    );
     runMigration297(db);
-    const insert = db.prepare(`INSERT INTO message_search_content (kind, body) VALUES (?, ?)`);
-    insert.run('message', 'an older turn about the font size');
-    insert.run('message', 'short');
-    insert.run('task', 'a task record long enough to embed');
-    insert.run('message', `the newest turn ${'y'.repeat(3_000)}`);
+    const insert = db.prepare(
+      `INSERT INTO message_search_content (kind, message_type, body) VALUES (?, ?, ?)`
+    );
+    insert.run('message', 'user', 'an older turn about the font size');
+    insert.run('message', 'assistant', 'short');
+    insert.run('task', null, 'a task record long enough to embed');
+    insert.run('message', 'assistant', `the newest turn ${'y'.repeat(3_000)}`);
+    insert.run('message', 'system', 'a system notice long enough to embed');
   });
   afterEach(() => db.close());
 
-  test('embeds the newest pending turns once, skipping tasks and short text', async () => {
+  test('embeds the newest pending turns once, skipping tasks, system notices and short text', async () => {
     expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2 });
     expect(embedded.map((text) => text.slice(0, 16))).toEqual([
       'the newest turn ',
@@ -44,6 +49,19 @@ describe('embedPendingTurns', () => {
       )
       .get();
     expect(row).toEqual({ model: 'test-model', dimensions: 3, bytes: 12 });
+  });
+
+  test('picks up turns added after the newest vector before older backfill', async () => {
+    await embedPendingTurns(db, embedder);
+    db.prepare(
+      `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
+    ).run('a brand new turn about fonts');
+    expect(readPendingTurns(db, 'test-model', 3, 10).map((turn) => turn.id)).toEqual([6]);
+  });
+
+  test('does not save a vector for a turn whose text changed under the same id', () => {
+    saveTurnVector(db, { id: 4, bodyLength: 5 }, 'test-model', Float32Array.from([1, 0, 0]), 1);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_vectors`).get()).toEqual({ n: 0 });
   });
 
   test('re-embeds turns from another model and drops vectors with their turn', async () => {

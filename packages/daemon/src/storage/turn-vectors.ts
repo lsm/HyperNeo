@@ -2,10 +2,26 @@ import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIN_TURN_CHARS = 20;
 const TURN_EMBED_CHARS = 2_000;
+const ELIGIBLE_TURN = `kind = 'message' AND message_type IN ('user', 'assistant')
+  AND length(body) >= ${MIN_TURN_CHARS}`;
 
 export interface PendingTurn {
   id: number;
   text: string;
+  bodyLength: number;
+}
+
+function embeddedRange(
+  db: BunDatabase,
+  model: string,
+  dimensions: number
+): { low: number | null; high: number | null } {
+  return db
+    .prepare(
+      `SELECT MIN(content_id) AS low, MAX(content_id) AS high FROM message_search_vectors
+        WHERE model = ? AND dimensions = ?`
+    )
+    .get(model, dimensions) as { low: number | null; high: number | null };
 }
 
 export function readPendingTurns(
@@ -14,37 +30,42 @@ export function readPendingTurns(
   dimensions: number,
   limit: number
 ): PendingTurn[] {
-  const rows = db
-    .prepare(
-      `SELECT msc.id, msc.body AS text FROM message_search_content msc
-         LEFT JOIN message_search_vectors v ON v.content_id = msc.id
-        WHERE msc.kind = 'message' AND length(msc.body) >= ${MIN_TURN_CHARS}
-          AND (v.content_id IS NULL OR v.model != ? OR v.dimensions != ?)
-        ORDER BY msc.id DESC LIMIT ?`
-    )
-    .all(model, dimensions, limit) as Array<{ id: number; text: string }>;
-  return rows.map((row) => ({ id: row.id, text: row.text.slice(0, TURN_EMBED_CHARS) }));
+  const select = `SELECT id, substr(body, 1, ${TURN_EMBED_CHARS}) AS text, length(body) AS bodyLength
+    FROM message_search_content WHERE ${ELIGIBLE_TURN}`;
+  const { low, high } = embeddedRange(db, model, dimensions);
+  if (high === null || low === null) {
+    return db.prepare(`${select} ORDER BY id DESC LIMIT ?`).all(limit) as PendingTurn[];
+  }
+  const fresh = db
+    .prepare(`${select} AND id > ? ORDER BY id ASC LIMIT ?`)
+    .all(high, limit) as PendingTurn[];
+  if (fresh.length > 0) return fresh;
+  return db
+    .prepare(`${select} AND id < ? ORDER BY id DESC LIMIT ?`)
+    .all(low, limit) as PendingTurn[];
 }
 
 export function saveTurnVector(
   db: BunDatabase,
-  id: number,
+  turn: Pick<PendingTurn, 'id' | 'bodyLength'>,
   model: string,
   vector: Float32Array,
   now: number
 ): void {
   db.prepare(
     `INSERT INTO message_search_vectors (content_id, model, dimensions, embedding, embedded_at)
-     SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM message_search_content WHERE id = ?)
+     SELECT ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM message_search_content WHERE id = ? AND length(body) = ?)
      ON CONFLICT(content_id) DO UPDATE SET model = excluded.model,
        dimensions = excluded.dimensions, embedding = excluded.embedding,
        embedded_at = excluded.embedded_at`
   ).run(
-    id,
+    turn.id,
     model,
     vector.length,
     Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength),
     now,
-    id
+    turn.id,
+    turn.bodyLength
   );
 }

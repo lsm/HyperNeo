@@ -25,7 +25,7 @@ export async function embedPendingTurns(
   const pending = readPendingTurns(db, embedder.model, embedder.dimensions, TURN_BATCH);
   for (const turn of pending) {
     const vector = Float32Array.from(await embedder.embedPassage(turn.text));
-    saveTurnVector(db, turn.id, embedder.model, vector, Date.now());
+    saveTurnVector(db, turn, embedder.model, vector, Date.now());
   }
   return { embedded: pending.length };
 }
