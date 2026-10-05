@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { getDataDir } from '../../data-dir.ts';
+import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import {
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
 import { createSpaceAdapter } from '../../drivers/space-adapter.ts';
+import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
@@ -39,6 +41,20 @@ function neoFolder(): string {
   const folder = join(getDataDir(), 'Neo');
   mkdirSync(folder, { recursive: true });
   return folder;
+}
+
+function codexDesktopAdapters(): WorkAdapter[] {
+  const codexHome = join(homedir(), '.codex');
+  const statePath = join(codexHome, 'state_5.sqlite');
+  if (!existsSync(statePath)) return [];
+  return [
+    createCodexDesktopAdapter({
+      statePath,
+      worktreesDir: join(codexHome, 'worktrees'),
+      machine: hostname(),
+      now: Date.now,
+    }),
+  ];
 }
 
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
@@ -73,6 +89,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchTaskIds: (text) =>
         new Set(search(text).flatMap((result) => (result.taskId ? [result.taskId] : []))),
     }),
+    ...codexDesktopAdapters(),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons };
   return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
