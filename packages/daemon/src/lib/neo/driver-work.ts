@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { PlaceSchema, WorkRefSchema, WorkStatusSchema, type WorkRef } from '../drivers/types.ts';
+import {
+  PlaceSchema,
+  WorkRefSchema,
+  WorkStatusSchema,
+  type WorkRef,
+  type WorkStatus,
+} from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
@@ -88,6 +94,16 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
+
+export function readDriverLive(
+  outcome: OperationOutcome
+): { status: WorkStatus; link?: string } | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  if (!reply.success || !reply.data.ok) return null;
+  const { status, link } = reply.data.value as { status: WorkStatus; link?: unknown };
+  return typeof link === 'string' ? { status, link } : { status };
+}
 
 export function readDriverNeedsYou(
   outcome: OperationOutcome

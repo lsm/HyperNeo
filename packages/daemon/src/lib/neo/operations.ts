@@ -43,6 +43,7 @@ import {
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
 import { NeoDriverTargetSchema, type NeoDriverTarget } from './driver-work.ts';
+import { WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 
 const Concern = z.object({
@@ -125,6 +126,18 @@ const Snapshot = z.union([
     consultationWaiters: z.array(ConsultationWaiter).optional(),
     workResources: z
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
+      .max(100)
+      .optional(),
+    workDrivers: z
+      .array(
+        z.object({
+          workId: z.string(),
+          adapter: z.string(),
+          daemon: z.string().nullable(),
+          status: WorkStatusSchema.nullable(),
+          link: z.string().nullable(),
+        })
+      )
       .max(100)
       .optional(),
     askOrigins: z
@@ -354,6 +367,7 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
+      workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,

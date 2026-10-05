@@ -1,4 +1,5 @@
-import type { WorkRef } from '../../lib/drivers/types.ts';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drivers/types.ts';
 import { NeoDriverTargetSchema, type NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
@@ -69,9 +70,58 @@ export class NeoWorkDriverTargetRepository {
       .run(since, workId);
   }
 
-  recordRef(workId: string, ref: WorkRef, startedAt?: number): void {
+  recordRef(workId: string, ref: WorkRef, startedAt?: number, link?: string): void {
     this.db
-      .prepare('UPDATE neo_work_driver_targets SET ref = ?, started_at = ? WHERE work_id = ?')
-      .run(JSON.stringify(ref), startedAt ?? null, workId);
+      .prepare(
+        'UPDATE neo_work_driver_targets SET ref = ?, started_at = ?, link = ? WHERE work_id = ?'
+      )
+      .run(JSON.stringify(ref), startedAt ?? null, link ?? null, workId);
+  }
+
+  recordLive(workId: string, status: WorkStatus, link: string | undefined): void {
+    this.db
+      .prepare(
+        'UPDATE neo_work_driver_targets SET live_status = ?, link = COALESCE(?, link) WHERE work_id = ?'
+      )
+      .run(status, link ?? null, workId);
+  }
+
+  receipts(workIds: readonly string[]): NeoWorkDriverReceipt[] {
+    if (!this.hasTable() || workIds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT work_id AS workId, target, ref, live_status AS status, link
+           FROM neo_work_driver_targets WHERE work_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(workIds)) as Array<{
+      workId: string;
+      target: string;
+      ref: string | null;
+      status: string | null;
+      link: string | null;
+    }>;
+    return rows.flatMap((row) => {
+      const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
+      if (!target.success) return [];
+      const ref = row.ref ? (JSON.parse(row.ref) as WorkRef) : null;
+      const adapter =
+        ref?.adapter ??
+        (target.data.verb === 'start' ? target.data.adapter : target.data.ref.adapter);
+      const daemon =
+        ref?.daemon ??
+        (target.data.verb === 'send'
+          ? (target.data.ref.daemon ?? null)
+          : (target.data.place.daemon ?? null));
+      const status = WorkStatusSchema.safeParse(row.status);
+      return [
+        {
+          workId: row.workId,
+          adapter,
+          daemon,
+          status: status.success ? status.data : null,
+          link: row.link,
+        },
+      ];
+    });
   }
 }

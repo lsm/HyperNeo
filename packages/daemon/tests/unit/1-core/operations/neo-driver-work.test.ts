@@ -306,6 +306,38 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('records the live status and link of sent work without settling it', async () => {
+    const reply = {
+      ok: true,
+      value: { status: 'running', lastActivityAt: 1, link: 'codex://threads/s1' },
+    };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    try {
+      expect(service.driverTargets.receipts(['work-1'])).toEqual([
+        { workId: 'work-1', adapter: 'hyperneo', daemon: null, status: null, link: null },
+      ]);
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1', 'missing'])).toEqual([
+        {
+          workId: 'work-1',
+          adapter: 'hyperneo',
+          daemon: null,
+          status: 'running',
+          link: 'codex://threads/s1',
+        },
+      ]);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
   test('leaves a message sent to existing work for Neo to follow up', async () => {
     const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
     const { db, service, calls } = await setup(
@@ -318,7 +350,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
-      expect(calls.map((call) => call.name)).toEqual(['work.send']);
+      expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status']);
     } finally {
       db.close();
     }
