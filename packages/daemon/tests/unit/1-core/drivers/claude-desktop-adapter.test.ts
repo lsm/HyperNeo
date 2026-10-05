@@ -88,6 +88,7 @@ describe('claude-desktop adapter against the app session records', () => {
         if (live instanceof Error) throw live;
         return live;
       },
+      folderExists: (folder) => folder !== '/gone',
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         onSpawn();
@@ -190,6 +191,7 @@ describe('claude-desktop adapter against the app session records', () => {
       spawn: () => {
         throw new Error('not spawned');
       },
+      folderExists: () => true,
     }).find({ includeClosed: true, limit: 20 });
     rmSync(archivedOnly, { recursive: true, force: true });
     expect(asked).toBe(false);
@@ -302,12 +304,32 @@ describe('claude-desktop adapter against the app session records', () => {
   });
 
   test('send resumes a session the app is not running and refuses archived ones', async () => {
-    expect(
-      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
-    ).toEqual({ ok: true, value: { delivered: false } });
+    const b2 = { adapter: 'claude-desktop', id: 'local_b2' };
+    expect(await adapter([]).send?.(b2, '-v next', user)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
     expect(spawned).toEqual([
-      { args: ['claude', '-p', '--resume', 'cli-b2', 'next'], cwd: '/focus/ops' },
+      { args: ['claude', '-p', '--resume', 'cli-b2', '--', '-v next'], cwd: '/focus/ops' },
     ]);
+    expect(await adapter([], 1).send?.(b2, 'next', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'relay failed',
+    });
+    writeFileSync(
+      join(dir, 'acct-b/scope-2/local_g1.json'),
+      JSON.stringify(record('g1', { cwd: '/gone', title: 'moved' }))
+    );
+    spawned = [];
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_g1' }, 'next', user)
+    ).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'moved works in /gone, which is gone.',
+    });
+    expect(spawned).toEqual([]);
     expect(
       await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
     ).toMatchObject({ ok: false, reason: 'not_open' });
@@ -327,6 +349,7 @@ describe('claude-desktop adapter against the app session records', () => {
       spawn: () => {
         throw new Error('not spawned');
       },
+      folderExists: () => true,
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
     expect(asked).toBe(false);

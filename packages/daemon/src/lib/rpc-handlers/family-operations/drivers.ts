@@ -70,6 +70,7 @@ function claudeDesktopAdapters(): WorkAdapter[] {
       machine: hostname(),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       spawn: spawnProcess,
+      folderExists: existsSync,
     }),
   ];
 }

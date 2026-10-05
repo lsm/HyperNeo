@@ -23,6 +23,7 @@ const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
 const RELAY_TIMEOUT_MS = 120_000;
+const RESUME_SETTLE_MS = 3_000;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -47,6 +48,7 @@ export interface ClaudeDesktopAdapterDeps {
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
   spawn: SpawnFn;
+  folderExists: (folder: string) => boolean;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -427,17 +429,46 @@ export async function sendClaudeMessage(
     }
     return relayToLiveSession(record, name, message, deps);
   }
+  return resumeClaudeSession(record, message, deps);
+}
+
+export async function resumeClaudeSession(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  message: string,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  const folder = record.cwd ?? record.originCwd;
+  if (!folder || !deps.folderExists(folder)) {
+    return reject(
+      'not_delivered',
+      `${record.title} works in ${folder ?? 'no folder'}, which is gone.`
+    );
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, message], {
-      cwd: record.cwd ?? record.originCwd,
+    const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, '--', message], {
+      cwd: folder,
       stdout: 'ignore',
-      stderr: 'ignore',
+      stderr: 'pipe',
       detached: true,
     });
-    proc.exited.catch(() => undefined);
-    return { ok: true, value: { delivered: false } };
+    const stderr = new Response(proc.stderr).text().catch(() => '');
+    const early = await Promise.race([
+      proc.exited.catch(() => -1),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), RESUME_SETTLE_MS);
+      }),
+    ]);
+    if (early === null) return { ok: true, value: { delivered: false } };
+    if (early === 0) return { ok: true, value: { delivered: true } };
+    return reject(
+      'not_delivered',
+      (await stderr).trim() || `claude --resume exited with ${early}.`
+    );
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
   }
 }
 
