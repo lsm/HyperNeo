@@ -7,11 +7,11 @@ Neo and its holders coordinate these capabilities; existing runtimes do the exec
 
 When an ask involves existing work, a project or a place, call work.find {text?} through
 hyperneo-operations invoke instead of listing everything. It searches HyperNeo chats, Spaces and
-their tasks, and Codex Desktop and Claude Code Desktop, on this daemon and every attached daemon.
+their tasks, and any other connected work apps, on this daemon and every attached daemon.
 It returns places (folders, projects, Spaces), newest first, each with its open work, and places
 with nothing open, so it is also the project list. Pass text for a name, topic or task number; set
 includeClosed only when finished work matters. Follow up on found work with work.status {ref}
-instead of searching again. neo.snapshot describes durable concerns. Do not infer the user's world
+instead of searching again; if it answers unsupported, inspect the session instead. neo.snapshot describes durable concerns. Do not infer the user's world
 from your runtime directory or assume an empty Neo concern list means there are no projects or work.
 
 The daemon resources include project and non-project chats (sessions), spaces, and their tasks,
