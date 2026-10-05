@@ -6,6 +6,7 @@ import {
   codexTurnState,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -62,7 +63,10 @@ describe('codex-desktop adapter status and send', () => {
     const finished = join(dir, 'finished.jsonl');
     writeFileSync(
       running,
-      [line('event_msg', { type: 'task_started' }), said('reading the repo')].join('\n')
+      [
+        line('event_msg', { type: 'task_started', turn_id: 'turn-1' }),
+        said('reading the repo'),
+      ].join('\n')
     );
     writeFileSync(
       finished,
@@ -84,7 +88,11 @@ describe('codex-desktop adapter status and send', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter(exitCode = 0, stderr = '') {
+  function adapter(
+    exitCode = 0,
+    stderr = '',
+    appServer: () => Promise<CodexAppServer> = () => Promise.reject(new Error('not used'))
+  ) {
     const spawn: SpawnFn = (args) => {
       spawned.push(args);
       return {
@@ -101,12 +109,80 @@ describe('codex-desktop adapter status and send', () => {
       machine: 'laptop',
       now: () => NOW,
       spawn,
-      appServer: () => Promise.reject(new Error('not used')),
+      appServer,
       folderExists: () => true,
     });
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test('stop interrupts the running turn through the shared app-server', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    let closed = false;
+    const server = async (): Promise<CodexAppServer> => ({
+      call: async (method, params) => {
+        calls.push([method, params]);
+        return {};
+      },
+      close: () => {
+        closed = true;
+      },
+    });
+    expect(await adapter(0, '', server).stop?.(ref('busy'), user)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(calls).toEqual([['turn/interrupt', { threadId: 'busy', turnId: 'turn-1' }]]);
+    expect(closed).toBe(true);
+    expect(await adapter(0, '', server).stop?.(ref('idle'), user)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test('stop finds a turn that began before the recent rollout and reports one that just ended', async () => {
+    const calls: string[] = [];
+    const chatty = join(dir, 'running.jsonl');
+    appendFileSync(chatty, `\n${said('x'.repeat(5 * 1024 * 1024))}`);
+    const finishing = async (): Promise<CodexAppServer> => ({
+      call: async (_method, params) => {
+        calls.push(String(params.turnId));
+        if (calls.length === 1) return {};
+        appendFileSync(chatty, `\n${line('event_msg', { type: 'task_complete' })}`);
+        throw new Error('turn/interrupt got no answer from the Codex app-server.');
+      },
+      close: () => {},
+    });
+    expect(await adapter(0, '', finishing).stop?.(ref('busy'), user)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(await adapter(0, '', finishing).stop?.(ref('busy'), user)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(calls).toEqual(['turn-1', 'turn-1']);
+  });
+
+  test('stop leaves threads Codex Desktop runs itself to the app', async () => {
+    const server = async (): Promise<CodexAppServer> => ({
+      call: async () => {
+        throw new Error('turn/interrupt: {"code":-32600,"message":"thread not found: busy"}');
+      },
+      close: () => {},
+    });
+    expect(await adapter(0, '', server).stop?.(ref('busy'), user)).toEqual({
+      ok: false,
+      reason: 'unsupported',
+      detail: 'Codex Desktop runs thread busy itself; stop it in the app.',
+    });
+    expect(await adapter().stop?.(ref('busy'), user)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+    expect(await adapter().stop?.(ref('nope'), user)).toMatchObject({ reason: 'not_found' });
+  });
 
   test('status reads the turn from the rollout and places the thread in its project', async () => {
     expect(await adapter().status?.(ref('busy'))).toEqual({
