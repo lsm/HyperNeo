@@ -9,6 +9,7 @@ import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
+import { spawnProcess } from '../../runtime-spawn/index.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 function codexDesktopAdapters(): WorkAdapter[] {
@@ -21,6 +22,7 @@ function codexDesktopAdapters(): WorkAdapter[] {
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),
       now: Date.now,
+      spawn: spawnProcess,
     }),
   ];
 }
