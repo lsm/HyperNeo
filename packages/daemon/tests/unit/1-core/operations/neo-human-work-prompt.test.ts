@@ -79,6 +79,9 @@ describe('current human work guidance', () => {
     );
     expect(prompt).toContain("work {verb:'start',adapter,place} using an adapter that place lists");
     expect(prompt).toContain('Do not call work.start, work.send or work.stop yourself');
+    expect(prompt).toContain(
+      "the instruction is delivered verbatim as the worker's own message, so write it as the task itself"
+    );
     expect(prompt).toContain('not a returned work or consultation result');
     expect(prompt).toContain('never supply an approval or authority flag');
     expect(prompt).toContain('no second model pass');
