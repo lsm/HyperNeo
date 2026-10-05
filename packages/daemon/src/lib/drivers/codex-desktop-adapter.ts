@@ -10,6 +10,7 @@ const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF
 const THREADS_PER_PLACE = 20;
 const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
+const BUSY_TIMEOUT_MS = 2_000;
 
 export interface CodexRootRow {
   name: string;
@@ -53,6 +54,7 @@ interface CodexPlace extends CodexFolderRow {
 export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
   const db = new Database(statePath, { readonly: true });
   try {
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     return {
       roots: db
         .prepare(
