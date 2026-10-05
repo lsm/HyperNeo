@@ -243,6 +243,21 @@ describe('hyperneo adapter against the sessions table', () => {
   });
   afterEach(() => db.close());
 
+  test('keeps every open session when closed ones are added', async () => {
+    const closed =
+      db.prepare(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at, type)
+      VALUES (?, 'old', '/focus/dolmen', 'archived', ?, 'worker')`);
+    for (let n = 0; n < 600; n++)
+      closed.run(`x${n}`, `2026-10-05T00:00:${String(n % 60).padStart(2, '0')}.${n}Z`);
+    const adapter = createHyperneoAdapter({
+      db: () => db,
+      machine: 'imac',
+      searchSessionIds: () => new Set(),
+    });
+    const groups = await adapter.find({ includeClosed: true, limit: 20, text: 'loader' });
+    expect(groups.flatMap((g) => g.work.map((w) => w.ref.id))).toEqual(['s1']);
+  });
+
   test('groups its own sessions by project root and adds folders from workspace history', async () => {
     const adapter = createHyperneoAdapter({
       db: () => db,

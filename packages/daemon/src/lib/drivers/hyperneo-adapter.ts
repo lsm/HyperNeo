@@ -6,7 +6,10 @@ import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
 const FOLDER = 'COALESCE(main_repo_path, workspace_path)';
+const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
+  CASE WHEN json_valid(processing_state) THEN json_extract(processing_state, '$.status') END AS processing`;
 const SESSIONS_PER_PLACE = 20;
+const CLOSED_SESSIONS = 500;
 
 export interface HyperneoPlaceRow {
   folder: string | null;
@@ -73,10 +76,13 @@ export function readHyperneoSessions(
 ): HyperneoSessionRow[] {
   return db
     .prepare(
-      `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-         CASE WHEN json_valid(processing_state) THEN json_extract(processing_state, '$.status') END AS processing
-         FROM sessions WHERE ${OWN_SESSIONS} AND (? = 1 OR ${OPEN})
-        ORDER BY last_active_at DESC LIMIT 500`
+      `SELECT * FROM (
+         SELECT ${SESSION_COLUMNS} FROM sessions WHERE ${OWN_SESSIONS} AND ${OPEN}
+         UNION ALL
+         SELECT * FROM (SELECT ${SESSION_COLUMNS} FROM sessions
+           WHERE ${OWN_SESSIONS} AND ? = 1 AND NOT ${OPEN}
+           ORDER BY lastActiveAt DESC LIMIT ${CLOSED_SESSIONS}))
+       ORDER BY lastActiveAt DESC`
     )
     .all(includeClosed ? 1 : 0) as HyperneoSessionRow[];
 }
