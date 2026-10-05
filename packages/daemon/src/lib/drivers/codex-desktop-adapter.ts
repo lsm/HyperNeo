@@ -4,7 +4,10 @@ import { Database } from '../../storage/sqlite-compat.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const OWN_THREADS = `source NOT LIKE '%subagent%'`;
+const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), substr(first_user_message, 1, 80)) AS title,
+  cwd AS folder, archived, updated_at_ms AS updatedAt`;
 const THREADS_PER_PLACE = 20;
+const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
 
 export interface CodexRootRow {
@@ -64,10 +67,13 @@ export function readCodexSnapshot(statePath: string, includeClosed: boolean): Co
         .all() as CodexFolderRow[],
       threads: db
         .prepare(
-          `SELECT id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), substr(first_user_message, 1, 80)) AS title,
-             cwd AS folder, archived, updated_at_ms AS updatedAt
-             FROM threads WHERE ${OWN_THREADS} AND (? = 1 OR archived = 0)
-            ORDER BY updated_at_ms DESC LIMIT 500`
+          `SELECT * FROM (
+             SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND archived = 0
+             UNION ALL
+             SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
+               WHERE ${OWN_THREADS} AND ? = 1 AND archived != 0
+               ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
+           ORDER BY updatedAt DESC`
         )
         .all(includeClosed ? 1 : 0) as CodexThreadRow[],
     };

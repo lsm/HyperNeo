@@ -118,6 +118,22 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
   });
 
+  test('keeps every open thread when archived ones are added', async () => {
+    const db = new Database(statePath);
+    const insert = db.prepare(
+      `INSERT INTO threads VALUES (?, 'old', '', '', '/focus/x', 'vscode', 1, ?)`
+    );
+    for (let n = 0; n < 600; n++) insert.run(`a${n}`, NOW + n);
+    db.close();
+    const groups = await adapter().find({
+      includeClosed: true,
+      limit: 20,
+      folder: '/focus/dolmen',
+      text: 'loader',
+    });
+    expect(groups.map((g) => g.work.map((w) => w.ref.id))).toEqual([['t2']]);
+  });
+
   test('adds archived threads and folders holding only those when asked for closed work', async () => {
     const groups = await adapter().find({ includeClosed: true, limit: 20 });
     expect(groups.map((g) => [g.place.folder, g.work.length])).toEqual([
