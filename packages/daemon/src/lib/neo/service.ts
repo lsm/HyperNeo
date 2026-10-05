@@ -1,5 +1,4 @@
 import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -41,6 +40,7 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
 } from './driver-work.ts';
+import { neoFolder, neoTaskFolderName } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorNativeTools } from './session-policy.ts';
@@ -68,10 +68,6 @@ const dispatchNeoConsultationWaiter = (
     ['service', 'admission']
   )
   .endAsync('admission');
-
-export function neoWorkScratchDir(sessionId: string): string {
-  return join(tmpdir(), 'hyperneo-neo-work', sessionId.replace(/:/g, '-'));
-}
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 
@@ -101,7 +97,8 @@ export class NeoService {
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
-    events: InternalEventBus<DaemonInternalEventMap>
+    events: InternalEventBus<DaemonInternalEventMap>,
+    private readonly workRoot: () => string = neoFolder
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
@@ -392,13 +389,14 @@ export class NeoService {
       concernId: work.concernId,
       kind: 'worker',
     });
-    const scratchDir = neoWorkScratchDir(work.sessionId);
-    mkdirSync(scratchDir, { recursive: true });
+    const root = this.workRoot();
+    const taskFolder = neoTaskFolderName(work.title, work.sessionId);
+    mkdirSync(join(root, taskFolder), { recursive: true });
     if (!this.db.getSession(work.sessionId)) {
       await this.sessions.createSession({
         sessionId: work.sessionId,
         title: work.title,
-        workspacePath: scratchDir,
+        workspacePath: root,
         worktreeMode: 'direct',
         config: {
           permissionMode: 'acceptEdits',
@@ -406,8 +404,7 @@ export class NeoService {
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append:
-              'You are executing a user-approved work brief delegated by Neo. Do the work using existing HyperNeo capabilities. Your working directory is a temporary scratch space created for this task, not a chosen workspace: keep every file you create inside it and never write elsewhere. If the work truly needs a real repository or folder, say so in your result instead of guessing paths. Stay within the approved scope and do not claim actions succeeded without evidence. If blocked or additional authority is needed, explain precisely. End with a concise result, evidence and unresolved issues. Your response will return to Neo. Do not access private Neo context or try to impersonate a human.',
+            append: `You are executing a user-approved work brief delegated by Neo. Do the work using existing HyperNeo capabilities. Your working directory is the shared Neo folder for Neo's ad-hoc work, not a project: keep every file you create for this task inside ./${taskFolder}/ and never write elsewhere. If the work truly needs a real repository or folder, say so in your result instead of guessing paths. Stay within the approved scope and do not claim actions succeeded without evidence. If blocked or additional authority is needed, explain precisely. End with a concise result, evidence and unresolved issues. Your response will return to Neo. Do not access private Neo context or try to impersonate a human.`,
           },
         },
       });

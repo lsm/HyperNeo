@@ -1,4 +1,8 @@
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+
 import type { MessageHub } from '@hyperneo/shared';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
@@ -15,7 +19,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService, neoWorkScratchDir } from '../../../../src/lib/neo/service.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
   neoCoordinatorBinding,
@@ -37,6 +41,8 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
+
+const neoRoot = mkdtempSync(join(tmpdir(), 'neo-root-'));
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const concern = {
@@ -133,7 +139,8 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events
+      events,
+      () => neoRoot
     );
   });
   afterEach(() => {
@@ -413,9 +420,12 @@ describe('Neo MVP', () => {
     });
     expect(service.repo.getBindingBySession(saved.sessionId!)?.kind).toBe('worker');
     expect(created[0].workspacePath).toBeNull();
-    expect(created[1].workspacePath).toBe(neoWorkScratchDir(saved.sessionId!));
+    expect(created[1].workspacePath).toBe(neoRoot);
     expect(created[1].worktreeMode).toBe('direct');
-    expect(created[1].workspacePath).toContain('hyperneo-neo-work');
+    const taskFolder = `${work.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${saved.sessionId!.slice(0, 8)}`;
+    expect(existsSync(join(neoRoot, taskFolder))).toBe(true);
+    const config = created[1].config as { systemPrompt: { append: string } };
+    expect(config.systemPrompt.append).toContain(`inside ./${taskFolder}/`);
   });
 
   test('a response returns through the mailbox only after a terminal result and recovers without duplication', async () => {
@@ -688,7 +698,8 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events
+      events,
+      () => neoRoot
     );
     await service.recover();
     expect(jobs).toHaveLength(1);
@@ -832,7 +843,8 @@ describe('Neo MVP', () => {
         db,
         sessions,
         { event: mock(() => {}) } as unknown as MessageHub,
-        events
+        events,
+        () => neoRoot
       );
       await service.recover();
       await service.recover();
@@ -1422,7 +1434,8 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events
+      events,
+      () => neoRoot
     );
     await service.recover();
     expect(jobs).toHaveLength(1);

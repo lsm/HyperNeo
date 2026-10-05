@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { WorkChatMatch } from '../../../storage/work-chat-search.ts';
-import { getDataDir } from '../../data-dir.ts';
 import {
   createClaudeDesktopAdapter,
   readLiveClaudeSessions,
@@ -27,6 +26,7 @@ import { renderAddress } from '../../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
+import { neoFolder } from '../../neo/folder.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { readWorkTurns } from '../../../storage/work-turns.ts';
@@ -53,12 +53,6 @@ function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessio
       return true;
     },
   };
-}
-
-function neoFolder(): string {
-  const folder = join(getDataDir(), 'Neo');
-  mkdirSync(folder, { recursive: true });
-  return folder;
 }
 
 function claudeDesktopAdapters(): WorkAdapter[] {
