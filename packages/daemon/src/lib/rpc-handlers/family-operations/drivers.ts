@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
+import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 
@@ -23,5 +24,6 @@ function codexDesktopAdapters(): WorkAdapter[] {
 
 export function registerDriverOperations(): OperationDefinition[] {
   const adapters = codexDesktopAdapters();
-  return [createFindWorkOperation({ adapters: () => adapters, remote: remoteDaemons })];
+  const deps = { adapters: () => adapters, remote: remoteDaemons };
+  return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
 }
