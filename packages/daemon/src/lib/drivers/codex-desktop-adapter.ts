@@ -262,8 +262,8 @@ function parseLine(line: string): { type?: unknown; payload?: Record<string, unk
   }
 }
 
-function assistantText(payload: Record<string, unknown>): string | null {
-  if (payload.type !== 'message' || payload.role !== 'assistant') return null;
+function messageText(payload: Record<string, unknown>, role: string): string | null {
+  if (payload.type !== 'message' || payload.role !== role) return null;
   const parts = Array.isArray(payload.content) ? payload.content : [];
   const text = parts
     .flatMap((part) =>
@@ -281,7 +281,8 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
   for (const line of [...lines].reverse()) {
     const entry = parseLine(line);
     const payload = entry?.payload ?? {};
-    if (reply === null && entry?.type === 'response_item') reply = assistantText(payload);
+    if (reply === null && entry?.type === 'response_item')
+      reply = messageText(payload, 'assistant');
     if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
       const finalMessage =
         payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
@@ -344,26 +345,33 @@ export function describeCodexThread(
   };
 }
 
+export function rolloutHasUserMessage(lines: readonly string[], message: string): boolean {
+  const opening = message.trim().split('\n')[0].slice(0, 200);
+  return lines.some((line) => {
+    const entry = parseLine(line);
+    if (entry?.type !== 'response_item') return false;
+    return messageText(entry.payload ?? {}, 'user')?.includes(opening) ?? false;
+  });
+}
+
 export async function queueCodexMessage(
   detail: CodexThreadDetail,
-  state: CodexTurnState,
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<{ delivered: boolean }>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = deps.spawn(
-      ['codex', 'queue', '--thread', detail.thread.id, '--message', message],
-      {
-        stdout: 'ignore',
-        stderr: 'pipe',
-      }
+      ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
+      { stdout: 'ignore', stderr: 'pipe' }
     );
     timer = setTimeout(() => proc.kill(), QUEUE_TIMEOUT_MS);
     const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    return code === 0
-      ? { ok: true, value: { delivered: state.marker !== 'task_started' } }
-      : reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
+    if (code !== 0) {
+      return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
+    }
+    const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
+    return { ok: true, value: { delivered: rolloutHasUserMessage(tail, message) } };
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   } finally {
@@ -385,8 +393,7 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   .input(['ref', 'message', 'deps'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
-  .pipe(readCodexTurn, 'outcome', 'turn')
-  .pipe(queueCodexMessage, ['outcome', 'turn', 'message', 'deps'], 'outcome')
+  .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,

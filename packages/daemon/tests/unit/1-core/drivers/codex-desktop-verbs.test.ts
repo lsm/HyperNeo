@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -12,6 +12,8 @@ import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
 const line = (type: string, payload: Record<string, unknown>) => JSON.stringify({ type, payload });
+const heard = (text: string) =>
+  line('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
 const said = (text: string) =>
   line('response_item', {
     type: 'message',
@@ -124,18 +126,19 @@ describe('codex-desktop adapter status and send', () => {
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
   });
 
-  test('send queues the message with the codex CLI', async () => {
-    expect(await adapter().send?.(ref('idle'), 'next step')).toEqual({
-      ok: true,
-      value: { delivered: true },
-    });
-    expect(await adapter().send?.(ref('busy'), 'after this')).toEqual({
+  test('send queues the message and reports it delivered once the rollout shows it', async () => {
+    expect(await adapter().send?.(ref('busy'), '-v after this')).toEqual({
       ok: true,
       value: { delivered: false },
     });
+    appendFileSync(join(dir, 'finished.jsonl'), `\n${heard('next step\nwith detail')}`);
+    expect(await adapter().send?.(ref('idle'), 'next step\nwith detail')).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
     expect(spawned).toEqual([
-      ['codex', 'queue', '--thread', 'idle', '--message', 'next step'],
-      ['codex', 'queue', '--thread', 'busy', '--message', 'after this'],
+      ['codex', 'queue', '--thread=busy', '--message=-v after this'],
+      ['codex', 'queue', '--thread=idle', '--message=next step\nwith detail'],
     ]);
   });
 
