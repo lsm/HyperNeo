@@ -7,6 +7,14 @@ import { NeoPublicationRepository } from '../../storage/repositories/neo-publica
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
+import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import {
+  driverWorkCall,
+  driverWorkCaller,
+  readDriverOutcome,
+  type NeoDriverTarget,
+} from './driver-work.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
@@ -67,6 +75,7 @@ export class NeoService {
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
+  readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -95,6 +104,7 @@ export class NeoService {
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
+    this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -338,6 +348,8 @@ export class NeoService {
   private async startReservedWork(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
+    const driver = this.driverTargets.get(id);
+    if (driver) return this.startDriverWork(work, driver);
     const target = this.resolveWorkTarget(id);
     if (!target.accepted) {
       await this.failUnavailableTarget(work, target.reason);
@@ -410,6 +422,33 @@ export class NeoService {
       const session = await this.sessions.getSessionAsync(cancelled.sessionId);
       await session?.handleInterrupt({ skipDeferredReplay: true });
     }
+  }
+
+  private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
+    if (work.status === 'queued' && this.driverTargets.readRef(work.id)) return;
+    const queued =
+      work.status === 'proposed'
+        ? this.repo.transitionWork(work.id, work, { status: 'queued' })
+        : work;
+    if (!queued || queued.status !== 'queued') return;
+    const call = driverWorkCall(target, queued);
+    const outcome = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      call.name,
+      call.input,
+      driverWorkCaller(queued)
+    );
+    const result = readDriverOutcome(target, outcome);
+    if ('ref' in result) {
+      this.driverTargets.recordRef(queued.id, result.ref);
+      this.notifyChanged();
+      return;
+    }
+    const failed = this.repo.transitionWork(queued.id, queued, {
+      status: 'failed',
+      report: `Could not start the execution: ${result.failure}`.slice(0, 12000),
+    });
+    if (failed) await this.returnReport(failed);
   }
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {
