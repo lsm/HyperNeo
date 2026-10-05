@@ -1,11 +1,25 @@
+import { hostname } from 'node:os';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
-import type { WorkAdapter } from '../../drivers/types.ts';
+import { createHyperneoAdapter } from '../../drivers/hyperneo-adapter.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
+import type { FamilyOperationContext } from './context.ts';
 
-export function registerDriverOperations(): OperationDefinition[] {
-  const adapters: WorkAdapter[] = [];
+export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
+  const adapters = [
+    createHyperneoAdapter({
+      db: () => context.deps.db.getDatabase(),
+      machine: hostname(),
+      searchSessionIds: (text) =>
+        new Set(
+          context.deps.db
+            .getSDKMessageRepo()
+            .searchMessages({ query: text, limit: 50 })
+            .results.flatMap((result) => (result.sessionId ? [result.sessionId] : []))
+        ),
+    }),
+  ];
   const deps = { adapters: () => adapters, remote: remoteDaemons };
   return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
 }
