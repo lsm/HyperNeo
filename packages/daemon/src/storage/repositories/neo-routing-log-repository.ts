@@ -80,18 +80,26 @@ export class NeoRoutingLogRepository {
       .all(afterId, limit) as NeoRoute[];
   }
 
-  sinceLastMainTurn(limit: number): NeoRoute[] {
+  undigested(limit: number): NeoRoute[] {
     if (!this.ready()) return [];
     return this.db
       .prepare(
         `SELECT ${columns} FROM neo_routing_log
-          WHERE destination != 'main' AND id > COALESCE((
-            SELECT id FROM neo_routing_log WHERE destination = 'main'
-             ORDER BY id DESC LIMIT 1 OFFSET 1), 0)
+          WHERE destination != 'main' AND digested_at IS NULL
           ORDER BY id DESC LIMIT ?`
       )
       .all(limit)
       .reverse() as NeoRoute[];
+  }
+
+  markDigested(ids: readonly number[], at: number): void {
+    if (!this.ready() || ids.length === 0) return;
+    this.db
+      .prepare(
+        `UPDATE neo_routing_log SET digested_at = ?
+          WHERE id IN (${ids.map(() => '?').join(', ')})`
+      )
+      .run(at, ...ids);
   }
 
   find(messageId: string): NeoRoute | null {

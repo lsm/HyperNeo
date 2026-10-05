@@ -2,6 +2,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
 import { createNeoRoutingLogTable } from './m299-neo-routing-log.ts';
+import { addNeoRoutingDigestedColumn } from './m300-neo-routing-digested.ts';
 
 export function createNeoContextTables(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_concerns (
@@ -46,4 +47,5 @@ export function createNeoTables(db: Database): void {
   createNeoPublicationTable(db);
   createNeoConsultationPublicationTable(db);
   createNeoRoutingLogTable(db);
+  addNeoRoutingDigestedColumn(db);
 }
