@@ -2,13 +2,25 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
+import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
-import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+function sdkTranscriptsExist(cwd: string): boolean {
+  const projects = join(homedir(), '.claude', 'projects');
+  const encode = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-');
+  let real = cwd;
+  try {
+    real = realpathSync(cwd);
+  } catch {}
+  return existsSync(join(projects, encode(real))) || existsSync(join(projects, encode(cwd)));
+}
+
 export function neoCoordinatorRuntimePath(sessionId: string): string {
-  return join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+  const legacy = join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+  return sdkTranscriptsExist(legacy) ? legacy : neoFolderPath();
 }
 
 export function neoCoordinatorBinding(

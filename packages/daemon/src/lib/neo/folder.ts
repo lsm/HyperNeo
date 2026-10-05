@@ -2,8 +2,12 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
 
+export function neoFolderPath(): string {
+  return join(getDataDir(), 'Neo');
+}
+
 export function neoFolder(): string {
-  const folder = join(getDataDir(), 'Neo');
+  const folder = neoFolderPath();
   mkdirSync(folder, { recursive: true });
   return folder;
 }
