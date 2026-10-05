@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { OperationCaller } from '../operations/registry.ts';
 
 export const WorkStatusSchema = z.enum([
   'queued',
@@ -86,12 +87,19 @@ export interface StartRequest {
   message: string;
 }
 
+export interface WorkCallContext {
+  caller: OperationCaller;
+}
+
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
-  readonly start?: (request: StartRequest) => Promise<Result<WorkSummary>>;
+  readonly start?: (
+    request: StartRequest,
+    context: WorkCallContext
+  ) => Promise<Result<WorkSummary>>;
   readonly send?: (ref: WorkRef, message: string) => Promise<Result<{ delivered: boolean }>>;
   readonly status?: (ref: WorkRef) => Promise<Result<WorkDetail>>;
-  readonly stop?: (ref: WorkRef) => Promise<Result<{ stopped: boolean }>>;
+  readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
 }
