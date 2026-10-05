@@ -2,13 +2,22 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
+import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
+import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+function sdkTranscriptsExist(cwd: string): boolean {
+  return [cwd, `/private${cwd}`].some((path) => existsSync(getSDKProjectDir(path)));
+}
+
 export function neoCoordinatorRuntimePath(sessionId: string): string {
-  return join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+  const legacy = join(tmpdir(), 'hyperneo-neo-context', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+  return sdkTranscriptsExist(legacy)
+    ? legacy
+    : join(neoFolderPath(), '.coordinators', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
 }
 
 export function neoCoordinatorBinding(
