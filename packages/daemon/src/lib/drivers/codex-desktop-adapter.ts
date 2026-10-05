@@ -298,7 +298,7 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
   return { marker: null, reply };
 }
 
-export function activeCodexTurn(lines: readonly string[]): string | null {
+export function activeCodexTurn(lines: readonly string[]): string | null | undefined {
   for (const line of [...lines].reverse()) {
     const entry = parseLine(line);
     const payload = entry?.payload ?? {};
@@ -308,7 +308,17 @@ export function activeCodexTurn(lines: readonly string[]): string | null {
         : null;
     }
   }
-  return null;
+  return undefined;
+}
+
+async function readActiveCodexTurn(rolloutPath: string): Promise<string | null> {
+  try {
+    const recent = activeCodexTurn(await readRolloutTail(rolloutPath));
+    if (recent !== undefined) return recent;
+    return activeCodexTurn(await readRolloutTail(rolloutPath, Number.MAX_SAFE_INTEGER)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function turnStatus(thread: CodexThreadRow, state: CodexTurnState, now: number): WorkStatus {
@@ -501,9 +511,7 @@ export async function interruptCodexTurn(
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<{ stopped: boolean }>> {
   const threadId = detail.thread.id;
-  const turnId = activeCodexTurn(
-    await readRolloutTail(detail.thread.rolloutPath).catch((): string[] => [])
-  );
+  const turnId = await readActiveCodexTurn(detail.thread.rolloutPath);
   if (!turnId) return { ok: true, value: { stopped: false } };
   let server: CodexAppServer;
   try {
@@ -519,9 +527,15 @@ export async function interruptCodexTurn(
     return { ok: true, value: { stopped: true } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return message.includes('thread not found')
-      ? reject('unsupported', `Codex Desktop runs thread ${threadId} itself; stop it in the app.`)
-      : reject('not_delivered', message);
+    if (message.includes('thread not found')) {
+      return reject(
+        'unsupported',
+        `Codex Desktop runs thread ${threadId} itself; stop it in the app.`
+      );
+    }
+    return (await readActiveCodexTurn(detail.thread.rolloutPath)) === turnId
+      ? reject('not_delivered', message)
+      : { ok: true, value: { stopped: false } };
   } finally {
     server.close();
   }

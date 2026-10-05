@@ -141,6 +141,30 @@ describe('codex-desktop adapter status and send', () => {
     expect(calls).toHaveLength(1);
   });
 
+  test('stop finds a turn that began before the recent rollout and reports one that just ended', async () => {
+    const calls: string[] = [];
+    const chatty = join(dir, 'running.jsonl');
+    appendFileSync(chatty, `\n${said('x'.repeat(5 * 1024 * 1024))}`);
+    const finishing = async (): Promise<CodexAppServer> => ({
+      call: async (_method, params) => {
+        calls.push(String(params.turnId));
+        if (calls.length === 1) return {};
+        appendFileSync(chatty, `\n${line('event_msg', { type: 'task_complete' })}`);
+        throw new Error('turn/interrupt got no answer from the Codex app-server.');
+      },
+      close: () => {},
+    });
+    expect(await adapter(0, '', finishing).stop?.(ref('busy'), user)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(await adapter(0, '', finishing).stop?.(ref('busy'), user)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(calls).toEqual(['turn-1', 'turn-1']);
+  });
+
   test('stop leaves threads Codex Desktop runs itself to the app', async () => {
     const server = async (): Promise<CodexAppServer> => ({
       call: async () => {
