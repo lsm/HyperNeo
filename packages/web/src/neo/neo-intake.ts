@@ -1,4 +1,5 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
@@ -108,7 +109,7 @@ export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
         submission: {
           ...draft,
           images: draft.images?.map((image) => ({ ...image })),
-          requestId: crypto.randomUUID(),
+          requestId: generateUUID(),
         },
       };
       entries.add(entry);

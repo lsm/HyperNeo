@@ -1,4 +1,4 @@
-import { DRAFT_CHAR_LIMIT } from '@hyperneo/shared';
+import { DRAFT_CHAR_LIMIT, generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
 type Draft = { sessionId: string; text: string; base: string | null };
@@ -84,7 +84,7 @@ export function createNeoDraftReloadBuffer(
         sessionId,
         text,
         base ?? prior?.base ?? null,
-        crypto.randomUUID()
+        generateUUID()
       );
       if ('kind' in planned) return false;
       if (raw === null) {

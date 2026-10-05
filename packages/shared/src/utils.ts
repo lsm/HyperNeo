@@ -42,8 +42,12 @@ export function generateUUID(): string {
     return globalThis.crypto.randomUUID();
   }
 
+  const random = (): number => {
+    if (typeof globalThis.crypto?.getRandomValues !== 'function') return (Math.random() * 16) | 0;
+    return globalThis.crypto.getRandomValues(new Uint8Array(1))[0] & 0x0f;
+  };
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
+    const r = random();
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
