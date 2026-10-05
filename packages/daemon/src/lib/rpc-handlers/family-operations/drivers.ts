@@ -116,8 +116,13 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
         const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
         if (!sessionId)
           return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
-        await context.taskAgentManager.injectSubSessionMessage(sessionId, message, !fromHuman);
-        return { delivered: true };
+        const messageId = await context.taskAgentManager.injectSubSessionMessage(
+          sessionId,
+          message,
+          !fromHuman
+        );
+        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
+        return { delivered: sent?.sendStatus !== 'deferred' };
       } catch (error) {
         return { reason: error instanceof Error ? error.message : String(error) };
       }

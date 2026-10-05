@@ -67,7 +67,7 @@ export interface SpaceTaskControl {
     node: SpaceTaskNode,
     message: string,
     fromHuman: boolean
-  ): Promise<{ delivered: true } | { reason: string }>;
+  ): Promise<{ delivered: boolean } | { reason: string }>;
 }
 
 export interface SpaceAdapterDeps {
@@ -318,8 +318,8 @@ export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode |
               n.agent_session_id AS agentSessionId FROM node_executions n
          JOIN space_tasks t ON t.workflow_run_id = n.workflow_run_id
         WHERE t.id = ?
-        ORDER BY CASE WHEN n.status IN ('in_progress', 'blocked', 'idle', 'waiting_rebind') THEN 0 ELSE 1 END,
-          COALESCE(n.last_activity_at, n.updated_at) DESC
+          AND n.status IN ('in_progress', 'blocked', 'idle', 'waiting_rebind')
+        ORDER BY COALESCE(n.last_activity_at, n.updated_at) DESC
         LIMIT 1`
     )
     .get(taskId) as SpaceTaskNode | null | undefined;
@@ -334,12 +334,15 @@ export async function messageSpaceTask(
 ): Promise<Result<{ delivered: boolean }>> {
   const node = readActiveNode(deps.db(), task.id);
   if (!node) {
-    return reject('unsupported', `Task #${task.taskNumber} has no workflow agent to message yet.`);
+    return reject(
+      'unsupported',
+      `Task #${task.taskNumber} has no workflow agent working on it to message.`
+    );
   }
   const sent = await deps.tasks.message(task.id, node, message, context.from === 'chat');
   return 'reason' in sent
     ? reject('not_delivered', sent.reason)
-    : { ok: true, value: { delivered: true } };
+    : { ok: true, value: { delivered: sent.delivered } };
 }
 
 const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)

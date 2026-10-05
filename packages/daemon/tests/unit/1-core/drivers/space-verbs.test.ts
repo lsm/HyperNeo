@@ -175,10 +175,13 @@ describe('space adapter send', () => {
     db.exec(`INSERT INTO space_tasks VALUES
       ('t1', 'sp1', 7, 'font size', 'in_progress', 10, NULL, NULL, NULL, 'run-1'),
       ('t2', 'sp1', 8, 'shipped', 'done', 20, NULL, NULL, NULL, 'run-2'),
-      ('t3', 'sp1', 9, 'idea', 'open', 30, NULL, NULL, NULL, NULL)`);
+      ('t3', 'sp1', 9, 'idea', 'open', 30, NULL, NULL, NULL, NULL),
+      ('t4', 'sp1', 10, 'paused', 'open', 40, NULL, NULL, NULL, 'run-4')`);
     db.exec(`INSERT INTO node_executions VALUES
-      ('n1', 'run-1', 'coder', 'node-review', 's-review', 'done', 50, 50),
-      ('n2', 'run-1', 'coder', 'node-code', 's-code', 'in_progress', 40, 40)`);
+      ('n1', 'run-1', 'coder', 'node-review', 's-review', 'cancelled', 50, 50),
+      ('n2', 'run-1', 'coder', 'node-code', 's-code', 'in_progress', 40, 40),
+      ('n3', 'run-4', 'coder', 'node-code', 's-old', 'cancelled', 60, 60),
+      ('n4', 'run-4', 'reviewer', 'node-review', NULL, 'pending', 70, 70)`);
   });
 
   afterEach(() => db.close());
@@ -195,7 +198,7 @@ describe('space adapter send', () => {
           sent.push(
             `${taskId} ${node.agentName}@${node.workflowNodeId} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
           );
-          return { delivered: true };
+          return { delivered: !message.startsWith('later') };
         },
       },
     });
@@ -230,6 +233,21 @@ describe('space adapter send', () => {
       't1 coder@node-code go on from an agent',
       't1 coder@node-code stop there from you',
     ]);
+  });
+
+  test('reports a message the agent will only see after its current turn', async () => {
+    expect(await adapter().send?.(ref('t1'), 'later, check the tests', neo)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+  });
+
+  test('never wakes a cancelled or pending node', async () => {
+    expect(await adapter().send?.(ref('t4'), 'hi', neo)).toMatchObject({
+      ok: false,
+      reason: 'unsupported',
+    });
+    expect(sent).toEqual([]);
   });
 
   test('refuses other agents, finished tasks and tasks without a workflow agent', async () => {
