@@ -298,6 +298,19 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
   return { marker: null, reply };
 }
 
+export function activeCodexTurn(lines: readonly string[]): string | null {
+  for (const line of [...lines].reverse()) {
+    const entry = parseLine(line);
+    const payload = entry?.payload ?? {};
+    if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
+      return payload.type === 'task_started' && typeof payload.turn_id === 'string'
+        ? payload.turn_id
+        : null;
+    }
+  }
+  return null;
+}
+
 function turnStatus(thread: CodexThreadRow, state: CodexTurnState, now: number): WorkStatus {
   if (thread.archived) return 'stopped';
   if (state.marker === 'task_started') return 'running';
@@ -483,13 +496,54 @@ const runCodexStart = (superpipe({})('codex-start-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<WorkSummary>>;
 
+export async function interruptCodexTurn(
+  detail: CodexThreadDetail,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<{ stopped: boolean }>> {
+  const threadId = detail.thread.id;
+  const turnId = activeCodexTurn(
+    await readRolloutTail(detail.thread.rolloutPath).catch((): string[] => [])
+  );
+  if (!turnId) return { ok: true, value: { stopped: false } };
+  let server: CodexAppServer;
+  try {
+    server = await deps.appServer();
+  } catch (error) {
+    return reject(
+      'unreachable',
+      `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  try {
+    await server.call('turn/interrupt', { threadId, turnId });
+    return { ok: true, value: { stopped: true } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('thread not found')
+      ? reject('unsupported', `Codex Desktop runs thread ${threadId} itself; stop it in the app.`)
+      : reject('not_delivered', message);
+  } finally {
+    server.close();
+  }
+}
+
+const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(interruptCodexTurn, ['outcome', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ stopped: boolean }>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
-    capabilities: ['find', 'start', 'send', 'status'],
+    capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: (query) => runCodexFind(query, deps),
     start: (request) => runCodexStart(request, deps),
     send: (ref, message) => runCodexSend(ref, message, deps),
     status: (ref) => runCodexStatus(ref, deps),
+    stop: (ref) => runCodexStop(ref, deps),
   };
 }
