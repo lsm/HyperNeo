@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const place = { machine: 'imac', folder: '/focus/dolmen', name: 'dolmen' };
@@ -44,14 +47,19 @@ const desktop: WorkAdapter = {
 
 type Invoke = (daemonId: string, name: string, input: unknown) => Promise<unknown>;
 
-async function call(name: string, input: unknown, invoke: Invoke = async () => ({})) {
+async function call(
+  name: string,
+  input: unknown,
+  invoke: Invoke = async () => ({}),
+  caller: OperationCaller = { source: 'rpc' }
+) {
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [hyperneo, desktop],
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
     })
   );
-  const outcome = await invokeOperation(registry, name, input, { source: 'rpc' });
+  const outcome = await invokeOperation(registry, name, input, caller);
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
   return outcome.value;
 }
@@ -134,6 +142,34 @@ describe('work verb operations', () => {
         input: { adapter: 'codex-desktop', place, title: 't', message: 'm' },
       },
     ]);
+  });
+
+  test('lets only Neo or the user change work on another daemon', async () => {
+    let forwarded = 0;
+    const invoke = async () => {
+      forwarded++;
+      return { ok: true, value: { stopped: true } };
+    };
+    const ref = { adapter: 'space', daemon: 'laptop', id: 't1' };
+    expect(
+      await call('work.stop', { ref }, invoke, {
+        source: 'mcp',
+        sessionId: 'w1',
+        role: 'workflow_worker',
+      })
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(
+      await call('work.stop', { ref }, invoke, {
+        source: 'mcp',
+        sessionId: 'neo:root',
+        role: 'neo',
+      })
+    ).toEqual({ ok: true, value: { stopped: true } });
+    expect(await call('work.stop', { ref }, invoke)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(forwarded).toBe(2);
   });
 
   test('reports a daemon that fails or answers with something unusable as unreachable', async () => {

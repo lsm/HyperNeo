@@ -75,6 +75,21 @@ export function pickRoute<Verb extends RoutedVerb>(
   return { value: { local } };
 }
 
+export function admitRemoteCaller<Verb extends RoutedVerb>(
+  route: Route<Verb>,
+  caller: OperationCaller
+): Gate<Route<Verb>> {
+  if (!('daemon' in route) || caller.source !== 'mcp' || caller.role === 'neo') {
+    return { value: route };
+  }
+  return {
+    reason: reject(
+      'unsupported',
+      `Only Neo or the user can change work on another daemon (${route.daemon}).`
+    ),
+  };
+}
+
 function localRef(ref: WorkRef): WorkRef {
   return { adapter: ref.adapter, id: ref.id };
 }
@@ -182,6 +197,7 @@ export async function stopWork(
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(startWork, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
@@ -190,10 +206,15 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
 ) => Promise<StartResult>;
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(sendWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: SendInput, deps: WorkVerbDeps) => Promise<SendResult>;
+  .endAsync('outcome') as (
+  input: SendInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<SendResult>;
 
 const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .input(['input', 'deps'])
@@ -204,6 +225,7 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
 const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(stopWork, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: RefInput,
@@ -229,7 +251,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runSendWork(input, deps),
+      execute: (input, caller) => runSendWork(input, caller, deps),
     }),
     defineOperation({
       name: 'work.status',
