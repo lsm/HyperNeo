@@ -114,6 +114,20 @@ describe('claude-desktop adapter against the app session records', () => {
     expect((await find({ text: 'fiso' })).map((g) => g.place.name)).toEqual(['fiso']);
     expect(await find({ spaceId: 'sp1' })).toEqual([]);
   });
+
+  test('answers a Space search without reading records or asking the CLI', async () => {
+    let asked = false;
+    const groups = await createClaudeDesktopAdapter({
+      sessionsDir: join(dir, 'missing'),
+      machine: 'laptop',
+      liveSessions: async () => {
+        asked = true;
+        return [];
+      },
+    }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
+    expect(groups).toEqual([]);
+    expect(asked).toBe(false);
+  });
 });
 
 describe('readLiveClaudeSessions', () => {

@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
+import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const SESSIONS_PER_PLACE = 20;
@@ -104,7 +105,6 @@ export function buildClaudeDesktopGroups(
   query: FindQuery,
   deps: Pick<ClaudeDesktopAdapterDeps, 'machine'>
 ): PlaceGroup[] {
-  if (query.spaceId) return [];
   const text = query.text?.toLowerCase();
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const folders = [...new Set(records.flatMap((record) => folderOf(record) ?? []))];
@@ -157,6 +157,7 @@ export function loadLiveClaudeSessions(
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)
   .input(['query', 'deps'])
+  .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadClaudeDesktopRecords, 'deps', 'records')
   .pipe(loadLiveClaudeSessions, 'deps', 'liveSessions')
   .pipe(buildClaudeDesktopGroups, ['records', 'liveSessions', 'query', 'deps'], 'groups')
