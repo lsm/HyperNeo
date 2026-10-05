@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -116,6 +117,39 @@ export function persistNeoIntake(
       };
 }
 
+export function logNeoRoute(
+  receipt: IntakeResult,
+  message: ReturnType<typeof neoIntakeMessage>,
+  binding: NeoBinding,
+  conversationId: string,
+  db: Database
+): IntakeResult {
+  if (!receipt.ok) return receipt;
+  const content = message.message.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : content
+          .flatMap((block: { type: string; text?: string }) =>
+            block.type === 'text' && block.text ? [block.text] : []
+          )
+          .join(' ');
+  try {
+    new NeoRoutingLogRepository(db.getDatabase()).record({
+      messageId: message.uuid,
+      conversationId,
+      askedAt: Date.now(),
+      ask: text || '(attachment)',
+      destination: binding.kind === 'concern' ? 'holder' : 'main',
+      targetSessionId: binding.sessionId,
+      concernId: binding.concernId,
+      signal: 'opened',
+      confidence: 1,
+    });
+  } catch {}
+  return receipt;
+}
+
 export function notifyNeoIntakeAcceptance(
   receipt: IntakeResult,
   notify: NeoIntakeNotifier
@@ -152,7 +186,9 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:receipt')
   .pipe(neoIntakeMessage, 'input', 'message')
+  .pipe((conversationId: string) => conversationId, 'receipt', 'conversationId')
   .pipe(persistNeoIntake, ['message', 'target', 'db', 'receipt'], 'receipt')
+  .pipe(logNeoRoute, ['receipt', 'message', 'binding', 'conversationId', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
   .end('receipt') as (
   input: IntakeInput,
