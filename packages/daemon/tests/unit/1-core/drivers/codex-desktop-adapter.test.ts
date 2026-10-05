@@ -7,8 +7,13 @@ import {
   codexProjectFolder,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
+
+const unusedSpawn: SpawnFn = () => {
+  throw new Error('find never spawns');
+};
 
 describe('codexProjectFolder', () => {
   const roots = [
@@ -87,6 +92,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       worktreesDir: '/codex/worktrees',
       machine: 'laptop',
       now: () => NOW,
+      spawn: unusedSpawn,
     });
   }
 
@@ -190,6 +196,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       worktreesDir: '/codex/worktrees',
       machine: 'laptop',
       now: () => NOW,
+      spawn: unusedSpawn,
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
   });

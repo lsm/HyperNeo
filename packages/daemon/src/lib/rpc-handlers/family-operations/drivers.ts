@@ -50,6 +50,7 @@ function codexDesktopAdapters(): WorkAdapter[] {
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),
       now: Date.now,
+      spawn: spawnProcess,
     }),
   ];
 }
