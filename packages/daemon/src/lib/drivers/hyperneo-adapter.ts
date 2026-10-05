@@ -8,6 +8,7 @@ import type {
   PlaceGroup,
   Rejected,
   Result,
+  StartRequest,
   WorkAdapter,
   WorkCallContext,
   WorkDetail,
@@ -44,11 +45,21 @@ export interface HyperneoSessionRow {
   lastActiveAt: string | null;
 }
 
+export interface HyperneoSessionControl {
+  create(workspacePath: string, title: string): Promise<string>;
+  chooseWorktree(sessionId: string): Promise<void>;
+  announce(sessionId: string): void;
+  interrupt(sessionId: string): boolean;
+}
+
 export interface HyperneoAdapterDeps {
   db: () => BunDatabase;
   machine: string;
   searchSessionIds: (text: string) => ReadonlySet<string>;
   handoff: (sessionId: string, message: string, from: string) => Promise<MailboxHandoffOutcome>;
+  sessions: HyperneoSessionControl;
+  neoFolder: () => string;
+  folderExists: (folder: string) => boolean;
 }
 
 export interface HyperneoLastResult {
@@ -264,6 +275,77 @@ export async function deliverToHyperneo(
   return { ok: true, value: { delivered: !busy } };
 }
 
+export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
+  const { place } = request;
+  if (place.spaceId) {
+    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
+  }
+  if (place.machine !== deps.machine) {
+    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
+  }
+  if (!place.folder) return { value: deps.neoFolder() };
+  return deps.folderExists(place.folder)
+    ? { value: place.folder }
+    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+}
+
+export async function createHyperneoSession(
+  folder: string,
+  request: StartRequest,
+  deps: HyperneoAdapterDeps
+): Promise<string> {
+  const sessionId = await deps.sessions.create(folder, request.title);
+  if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
+    await deps.sessions.chooseWorktree(sessionId);
+  }
+  deps.sessions.announce(sessionId);
+  return sessionId;
+}
+
+export async function openHyperneoWork(
+  sessionId: string,
+  request: StartRequest,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+): Promise<Result<WorkSummary>> {
+  const outcome = await deps.handoff(sessionId, request.message, context.from);
+  if (outcome.kind === 'rejected') {
+    return reject(
+      'not_delivered',
+      `Session ${sessionId} started without its message: ${outcome.reason}`
+    );
+  }
+  const row = readHyperneoSession(deps.db(), sessionId);
+  return row
+    ? { ok: true, value: toWork(row, deps.machine) }
+    : reject('not_found', `Session ${sessionId} is gone.`);
+}
+
+export function stopHyperneoWork(
+  row: HyperneoSessionRow,
+  deps: HyperneoAdapterDeps
+): Result<{ stopped: boolean }> {
+  const running = row.processing === 'processing' || row.processing === 'queued';
+  return { ok: true, value: { stopped: running && deps.sessions.interrupt(row.id) } };
+}
+
+const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
+  .input(['request', 'context', 'deps'])
+  .pipe(selectStartFolder, ['request', 'deps'], 'result:outcome')
+  .pipe(createHyperneoSession, ['outcome', 'request', 'deps'], 'sessionId')
+  .pipe(openHyperneoWork, ['sessionId', 'request', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  request: StartRequest,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+) => Promise<Result<WorkSummary>>;
+
+const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
+  .pipe(stopHyperneoWork, ['outcome', 'deps'], 'outcome')
+  .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<{ stopped: boolean }>;
+
 const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
   .input(['ref', 'deps'])
   .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
@@ -285,9 +367,11 @@ const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
-    capabilities: ['find', 'send', 'status'],
+    capabilities: ['find', 'start', 'send', 'status', 'stop'],
     find: (query) => runHyperneoFind(query, deps),
+    start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     status: async (ref) => runHyperneoStatus(ref, deps),
+    stop: async (ref) => runHyperneoStop(ref, deps),
   };
 }

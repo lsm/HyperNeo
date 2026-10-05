@@ -1,6 +1,12 @@
+import { existsSync, mkdirSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { join } from 'node:path';
+import { getDataDir } from '../../data-dir.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
-import { createHyperneoAdapter } from '../../drivers/hyperneo-adapter.ts';
+import {
+  createHyperneoAdapter,
+  type HyperneoSessionControl,
+} from '../../drivers/hyperneo-adapter.ts';
 import { createSpaceAdapter } from '../../drivers/space-adapter.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -8,6 +14,32 @@ import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
+
+function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
+  const { sessionManager, internalEventBus } = context.deps;
+  return {
+    create: (workspacePath, title) => sessionManager.createSession({ workspacePath, title }),
+    chooseWorktree: async (sessionId) => {
+      await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
+    },
+    announce: (sessionId) => {
+      const session = sessionManager.getSessionFromDB(sessionId);
+      if (session)
+        internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});
+    },
+    interrupt: (sessionId) => {
+      if (!sessionManager.getCachedSession(sessionId)) return false;
+      internalEventBus.publish('agent.interruptRequest', { sessionId }).catch(() => {});
+      return true;
+    },
+  };
+}
+
+function neoFolder(): string {
+  const folder = join(getDataDir(), 'Neo');
+  mkdirSync(folder, { recursive: true });
+  return folder;
+}
 
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
   const db = () => context.deps.db.getDatabase();
@@ -31,6 +63,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           origin: from,
           jobQueue: context.deps.jobQueue,
         }),
+      sessions: hyperneoSessionControl(context),
+      neoFolder,
+      folderExists: existsSync,
     }),
     createSpaceAdapter({
       db,

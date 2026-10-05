@@ -273,6 +273,14 @@ describe('hyperneo adapter against the sessions table', () => {
       machine: 'imac',
       searchSessionIds: () => new Set(),
       handoff: async () => ({ kind: 'enqueued', id: 'mb1' }),
+      sessions: {
+        create: async () => 'new',
+        chooseWorktree: async () => {},
+        announce: () => {},
+        interrupt: () => false,
+      },
+      neoFolder: () => '/data/Neo',
+      folderExists: () => true,
     });
     const groups = await adapter.find({ includeClosed: false, limit: 20 });
     expect(
