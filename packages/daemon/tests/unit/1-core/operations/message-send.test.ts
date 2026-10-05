@@ -152,6 +152,9 @@ describe('shared message.send operation', () => {
       'session:w1'
     );
     expect(selectSendOrigin({}, { source: 'rpc' })).toBe('chat');
+    expect(selectSendOrigin({ from: 'daemon:a::session:agent-on-a' }, { source: 'rpc' })).toBe(
+      'daemon:a::session:agent-on-a'
+    );
     expect(mapMessageReceipt({ kind: 'enqueued', id: 'mailbox-1' }, 'message-1')).toEqual({
       kind: 'accepted',
       mailboxId: 'mailbox-1',

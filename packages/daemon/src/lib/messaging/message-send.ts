@@ -154,7 +154,9 @@ export function selectMessageOrigin(caller: OperationCaller): string {
 }
 
 export function selectSendOrigin(input: { from?: string }, caller: OperationCaller): string {
-  return caller.source === 'rpc' && input.from && parseAddress(input.from)
+  const relayed =
+    input.from && (parseRemoteAddress(input.from) !== null || parseAddress(input.from) !== null);
+  return caller.source === 'rpc' && relayed && input.from
     ? input.from
     : selectMessageOrigin(caller);
 }
@@ -209,7 +211,7 @@ export function createSendMessageOperation(
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. from is set by a daemon forwarding a send and is ignored unless the caller is on the RPC door and it is a mailbox address.',
+      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
     execute: (input, caller) =>

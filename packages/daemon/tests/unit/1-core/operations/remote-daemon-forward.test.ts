@@ -133,7 +133,7 @@ describe('forwarding message.send to an attached daemon', () => {
       createSendMessageOperation(
         local.jobQueue,
         (sessionId) => (sessionId === 'session-on-a' ? 'active' : null),
-        createRemoteSendForwarder(daemons)
+        createRemoteSendForwarder(daemons, 'a')
       ),
     ]);
   }
@@ -155,7 +155,7 @@ describe('forwarding message.send to an attached daemon', () => {
     const entry = parseMailboxEntry(JSON.parse(remote.mailbox.rows()[0].payload));
     expect(entry?.to).toEqual({ kind: 'session', sessionId: 'session-on-b' });
     expect(entry?.message).toEqual(message);
-    expect(entry?.origin).toBe('session:agent-on-a');
+    expect(entry?.origin).toBe('daemon:a::session:agent-on-a');
     expect(outcome).toEqual({
       kind: 'completed',
       value: { kind: 'accepted', mailboxId: entry?.id, messageId: entry?.messageUuid },
