@@ -17,6 +17,10 @@ function mergePair(into: PlaceGroup, next: PlaceGroup): PlaceGroup {
   };
 }
 
+function bestScore(group: PlaceGroup): number {
+  return Math.max(-1, ...group.work.map((work) => work.score ?? -1));
+}
+
 export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): PlaceGroup[] {
   const byPlace = new Map<string, PlaceGroup>();
   for (const group of groups) {
@@ -31,7 +35,7 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
         (a, b) => (b.score ?? -1) - (a.score ?? -1) || b.lastActivityAt - a.lastActivityAt
       ),
     }))
-    .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+    .sort((a, b) => bestScore(b) - bestScore(a) || b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit);
 }
 
