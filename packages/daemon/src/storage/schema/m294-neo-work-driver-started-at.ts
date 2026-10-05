@@ -1,0 +1,16 @@
+import type { Database } from '../sqlite-compat.ts';
+
+export function runMigration294(db: Database): void {
+  const table = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE name = 'neo_work_driver_targets' AND type = 'table'"
+    )
+    .get();
+  if (!table) return;
+  const columns = db.prepare('PRAGMA table_info(neo_work_driver_targets)').all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === 'started_at')) {
+    db.exec('ALTER TABLE neo_work_driver_targets ADD COLUMN started_at INTEGER');
+  }
+}

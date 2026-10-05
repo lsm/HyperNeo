@@ -242,7 +242,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('keeps refreshing when returning one report fails', async () => {
+  test('keeps refreshing when returning one report fails and returns it again on recovery', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
@@ -257,6 +257,14 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await expect(service.refreshDriverWork()).resolves.toBeUndefined();
       expect(service.repo.getWork('work-1')?.status).toBe('failed');
+      const returned: string[] = [];
+      Object.assign(service, {
+        returnReport: async (work: { id: string }) => {
+          returned.push(work.id);
+        },
+      });
+      await service.reconcile('work-1');
+      expect(returned).toEqual(['work-1']);
     } finally {
       db.close();
     }
@@ -351,6 +359,16 @@ describe('readDriverSettlement', () => {
       status: 'failed',
       report: 'It stopped.',
     });
+  });
+
+  test('compares status with the start time the backend reported, on its own clock', () => {
+    const work = { updatedAt: 100 };
+    const done = {
+      kind: 'completed' as const,
+      value: { ok: true, value: { status: 'done', lastActivityAt: 250 } },
+    };
+    expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
+    expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {

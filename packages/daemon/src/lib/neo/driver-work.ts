@@ -51,14 +51,22 @@ export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): Operat
 export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
-): { ref: WorkRef; link?: string } | { failure: string } {
+): { ref: WorkRef; link?: string; startedAt?: number } | { failure: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
   if (!reply.data.ok) return { failure: `${reply.data.reason}: ${reply.data.detail}` };
   if ('ref' in reply.data.value) {
-    const { ref, link } = reply.data.value as { ref: WorkRef; link?: unknown };
-    return typeof link === 'string' ? { ref, link } : { ref };
+    const { ref, link, lastActivityAt } = reply.data.value as {
+      ref: WorkRef;
+      link?: unknown;
+      lastActivityAt?: unknown;
+    };
+    return {
+      ref,
+      ...(typeof link === 'string' ? { link } : {}),
+      ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
+    };
   }
   return target.verb === 'send'
     ? { ref: target.ref }
@@ -84,7 +92,8 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
 export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,
-  now: number
+  now: number,
+  startedAt: number | null = null
 ): { status: 'reported' | 'failed'; report: string } | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
@@ -95,7 +104,8 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReply } = reply.data.value;
-  if (lastActivityAt <= work.updatedAt && now - work.updatedAt < SETTLE_GRACE_MS) return null;
+  const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
+  if (!fresh && now - work.updatedAt < SETTLE_GRACE_MS) return null;
   if (status === 'done') {
     return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
   }

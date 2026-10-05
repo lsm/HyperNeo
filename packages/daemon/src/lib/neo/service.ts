@@ -453,7 +453,7 @@ export class NeoService {
     );
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
-      this.driverTargets.recordRef(queued.id, result.ref);
+      this.driverTargets.recordRef(queued.id, result.ref, result.startedAt);
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
@@ -520,7 +520,12 @@ export class NeoService {
       { ref },
       driverWorkCaller(work)
     );
-    const settled = readDriverSettlement(work, outcome, Date.now());
+    const settled = readDriverSettlement(
+      work,
+      outcome,
+      Date.now(),
+      this.driverTargets.readStartedAt(work.id)
+    );
     if (!settled) return;
     const done = this.repo.transitionWork(work.id, work, {
       status: settled.status,
@@ -597,7 +602,12 @@ export class NeoService {
 
   async reconcile(id: string): Promise<void> {
     let work = this.repo.getWork(id);
-    if (!work?.sessionId || work.status === 'cancelled' || work.status === 'proposed') return;
+    if (!work?.sessionId) {
+      if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
+        await this.returnReport(work);
+      return;
+    }
+    if (work.status === 'cancelled' || work.status === 'proposed') return;
     if (work.status === 'queued') {
       const target = this.resolveWorkTarget(id);
       if (!target.accepted) {
