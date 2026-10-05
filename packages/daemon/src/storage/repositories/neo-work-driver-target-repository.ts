@@ -78,12 +78,14 @@ export class NeoWorkDriverTargetRepository {
       .run(JSON.stringify(ref), startedAt ?? null, link ?? null, workId);
   }
 
-  recordLive(workId: string, status: WorkStatus, link: string | undefined): void {
-    this.db
+  recordLive(workId: string, status: WorkStatus, link: string | undefined): boolean {
+    const result = this.db
       .prepare(
-        'UPDATE neo_work_driver_targets SET live_status = ?, link = COALESCE(?, link) WHERE work_id = ?'
+        `UPDATE neo_work_driver_targets SET live_status = ?1, link = COALESCE(?2, link)
+          WHERE work_id = ?3 AND (live_status IS NOT ?1 OR (?2 IS NOT NULL AND link IS NOT ?2))`
       )
       .run(status, link ?? null, workId);
+    return result.changes > 0;
   }
 
   receipts(workIds: readonly string[]): NeoWorkDriverReceipt[] {

@@ -322,7 +322,11 @@ describe('Neo work with a drivers target', () => {
         { workId: 'work-1', adapter: 'hyperneo', daemon: null, status: null, link: null },
       ]);
       await service.start('work-1');
+      let changes = 0;
+      Object.assign(service, { notifyChanged: () => changes++ });
       await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(changes).toBe(1);
       expect(service.driverTargets.receipts(['work-1', 'missing'])).toEqual([
         {
           workId: 'work-1',
