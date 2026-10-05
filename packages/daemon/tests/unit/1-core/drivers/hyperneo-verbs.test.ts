@@ -213,7 +213,7 @@ describe('hyperneo adapter start and stop', () => {
     );
     expect(result).toMatchObject({
       ok: true,
-      value: { ref: { adapter: 'hyperneo', id: 'new' }, title: 'font size', status: 'done' },
+      value: { ref: { adapter: 'hyperneo', id: 'new' }, title: 'font size', status: 'queued' },
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
     expect(handed).toEqual(['new: make it larger']);

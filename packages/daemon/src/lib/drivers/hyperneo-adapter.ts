@@ -321,9 +321,9 @@ export async function openHyperneoWork(
     );
   }
   const row = readHyperneoSession(deps.db(), sessionId);
-  return row
-    ? { ok: true, value: toWork(row, deps.machine) }
-    : reject('not_found', `Session ${sessionId} is gone.`);
+  if (!row) return reject('not_found', `Session ${sessionId} is gone.`);
+  const work = toWork(row, deps.machine);
+  return { ok: true, value: work.status === 'done' ? { ...work, status: 'queued' } : work };
 }
 
 export function stopHyperneoWork(
