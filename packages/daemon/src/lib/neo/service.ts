@@ -36,6 +36,7 @@ import {
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverLive,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -455,7 +456,7 @@ export class NeoService {
     );
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
-      this.driverTargets.recordRef(queued.id, result.ref, result.startedAt);
+      this.driverTargets.recordRef(queued.id, result.ref, result.startedAt, result.link);
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
@@ -506,8 +507,7 @@ export class NeoService {
 
   async refreshDriverWork(): Promise<void> {
     for (const work of this.repo.listWork()) {
-      if (work.status !== 'queued' || this.driverTargets.get(work.id)?.verb !== 'start') continue;
-      const ref = this.driverTargets.readRef(work.id);
+      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
       if (!ref) continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
@@ -522,6 +522,10 @@ export class NeoService {
       { ref },
       driverWorkCaller(work)
     );
+    const live = readDriverLive(outcome);
+    if (live && this.driverTargets.recordLive(work.id, live.status, live.link))
+      this.notifyChanged();
+    if (this.driverTargets.get(work.id)?.verb !== 'start') return;
     const settled = readDriverSettlement(
       work,
       outcome,
