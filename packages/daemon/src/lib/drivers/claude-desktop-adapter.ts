@@ -22,6 +22,7 @@ const LIVE_TIMEOUT_MS = 5_000;
 const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
+const RELAY_TIMEOUT_MS = 120_000;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -33,7 +34,9 @@ const RecordSchema = z.object({
   lastActivityAt: z.number().default(0),
 });
 
-const LiveSessionsSchema = z.array(z.object({ sessionId: z.string(), status: z.string() }));
+const LiveSessionsSchema = z.array(
+  z.object({ sessionId: z.string(), status: z.string(), name: z.string().optional() })
+);
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
 export type ClaudeLiveSession = z.infer<typeof LiveSessionsSchema>[number];
@@ -43,6 +46,7 @@ export interface ClaudeDesktopAdapterDeps {
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
+  spawn: SpawnFn;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -315,13 +319,113 @@ const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as P
   cache: ClaudeRecordCache
 ) => Promise<Result<WorkDetail>>;
 
+export function requireOpenClaudeRecord(
+  record: ClaudeDesktopRecord
+): Gate<ClaudeDesktopRecord & { cliSessionId: string }> {
+  if (record.isArchived) return { reason: reject('not_open', `${record.title} is archived.`) };
+  const { cliSessionId } = record;
+  return cliSessionId
+    ? { value: { ...record, cliSessionId } }
+    : { reason: reject('not_open', `${record.title} has no Claude Code session yet.`) };
+}
+
+export function claudeRelayPrompt(name: string, message: string): string {
+  return `Use the SendMessage tool once to send the text between the message tags, exactly and without the tags, to the session named ${JSON.stringify(name)}. Do nothing else, then stop.\n<message>\n${message}\n</message>`;
+}
+
+export function transcriptHasRelayedMessage(lines: readonly string[], message: string): boolean {
+  const opening = JSON.stringify(message.trim().split('\n')[0].slice(0, 200)).slice(1, -1);
+  return lines.some((line) => line.includes('cross-session-message') && line.includes(opening));
+}
+
+async function relayToLiveSession(
+  record: ClaudeDesktopRecord,
+  name: string,
+  message: string,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const proc = deps.spawn(
+      [
+        'claude',
+        '-p',
+        '--model',
+        'haiku',
+        '--max-turns',
+        '4',
+        '--allowedTools',
+        'SendMessage ListAgents',
+        '-n',
+        'HyperNeo relay',
+        claudeRelayPrompt(name, message),
+      ],
+      { stdout: 'ignore', stderr: 'pipe' }
+    );
+    timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    if (code !== 0)
+      return reject('not_delivered', stderr.trim() || `The relay exited with ${code}.`);
+    const path = claudeTranscriptPath(deps.projectsDir, record);
+    const tail = path ? await readTailLines(path, TRANSCRIPT_TAIL_BYTES).catch(() => []) : [];
+    return { ok: true, value: { delivered: transcriptHasRelayedMessage(tail, message) } };
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function sendClaudeMessage(
+  record: ClaudeDesktopRecord & { cliSessionId: string },
+  liveSessions: readonly ClaudeLiveSession[],
+  message: string,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  const live = liveSessions.find((session) => session.sessionId === record.cliSessionId);
+  if (live) {
+    const name = live.name;
+    if (!name || liveSessions.filter((session) => session.name === name).length > 1) {
+      return reject('not_delivered', `${record.title} has no unique name to relay a message to.`);
+    }
+    return relayToLiveSession(record, name, message, deps);
+  }
+  try {
+    const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, message], {
+      cwd: record.cwd ?? record.originCwd,
+      stdout: 'ignore',
+      stderr: 'ignore',
+      detached: true,
+    });
+    proc.exited.catch(() => undefined);
+    return { ok: true, value: { delivered: false } };
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  }
+}
+
+const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
+  .input(['ref', 'message', 'deps', 'cache'])
+  .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
+  .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
+  .pipe(requireOpenClaudeRecord, 'outcome', 'result:outcome')
+  .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
+  .pipe(sendClaudeMessage, ['outcome', 'liveSessions', 'message', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  deps: ClaudeDesktopAdapterDeps,
+  cache: ClaudeRecordCache
+) => Promise<Result<{ delivered: boolean }>>;
+
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
-    capabilities: ['find', 'status'],
+    capabilities: ['find', 'send', 'status'],
     find: (query) => runClaudeDesktopFind(query, reused, cache),
+    send: (ref, message) => runClaudeDesktopSend(ref, message, reused, cache),
     status: (ref) => runClaudeDesktopStatus(ref, reused, cache),
   };
 }

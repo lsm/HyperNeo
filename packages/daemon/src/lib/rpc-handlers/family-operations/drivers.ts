@@ -14,9 +14,9 @@ import {
 } from '../../drivers/hyperneo-adapter.ts';
 import {
   createSpaceAdapter,
+  type SpaceTaskControl,
   spaceTaskCaller,
   taskOperationRejection,
-  type SpaceTaskControl,
 } from '../../drivers/space-adapter.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
@@ -69,6 +69,7 @@ function claudeDesktopAdapters(): WorkAdapter[] {
       projectsDir: join(homedir(), '.claude', 'projects'),
       machine: hostname(),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
+      spawn: spawnProcess,
     }),
   ];
 }

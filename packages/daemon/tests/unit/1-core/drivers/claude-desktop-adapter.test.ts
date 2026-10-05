@@ -3,17 +3,19 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type ClaudeRecordCache,
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
-  reuseLiveSessions,
   readLiveClaudeSessions,
-  type ClaudeRecordCache,
+  reuseLiveSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
 function record(id: string, fields: Record<string, unknown>) {
   return { sessionId: `local_${id}`, cliSessionId: `cli-${id}`, ...fields };
 }
+
+const user = { from: 'user', caller: { source: 'rpc' as const } };
 
 describe('claude-desktop adapter against the app session records', () => {
   let dir: string;
@@ -66,12 +68,30 @@ describe('claude-desktop adapter against the app session records', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter(live = [{ sessionId: 'cli-a1', status: 'waiting' }]) {
+  let spawned: Array<{ args: string[]; cwd?: string }>;
+
+  function adapter(
+    live: Array<{ sessionId: string; status: string; name?: string }> = [
+      { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
+    ],
+    exitCode = 0
+  ) {
+    spawned = [];
     return createClaudeDesktopAdapter({
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => live,
+      spawn: (args, options) => {
+        spawned.push({ args, cwd: options?.cwd });
+        return {
+          stdout: null,
+          stderr: new Response(exitCode ? 'relay failed' : '').body,
+          exited: Promise.resolve(exitCode),
+          exitCode,
+          kill: () => {},
+        };
+      },
     });
   }
 
@@ -160,6 +180,9 @@ describe('claude-desktop adapter against the app session records', () => {
         asked = true;
         return [];
       },
+      spawn: () => {
+        throw new Error('not spawned');
+      },
     }).find({ includeClosed: true, limit: 20 });
     rmSync(archivedOnly, { recursive: true, force: true });
     expect(asked).toBe(false);
@@ -198,6 +221,63 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
+  test('send relays to a live session and confirms it from the transcript', async () => {
+    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    mkdirSync(transcripts, { recursive: true });
+    writeFileSync(
+      join(transcripts, 'cli-a1.jsonl'),
+      JSON.stringify({
+        type: 'user',
+        message: {
+          content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
+        },
+      })
+    );
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    expect(await adapter().send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(spawned[0].args.slice(0, 9)).toEqual([
+      'claude',
+      '-p',
+      '--model',
+      'haiku',
+      '--max-turns',
+      '4',
+      '--allowedTools',
+      'SendMessage ListAgents',
+      '-n',
+    ]);
+    expect(spawned[0].args.at(-1)).toContain('session named "lakehouse loader"');
+    expect(await adapter(undefined, 1).send?.(ref, 'hi', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'relay failed',
+    });
+    const twins = [
+      { sessionId: 'cli-a1', status: 'idle', name: 'init' },
+      { sessionId: 'cli-x', status: 'idle', name: 'init' },
+    ];
+    expect(await adapter(twins).send?.(ref, 'hi', user)).toMatchObject({
+      reason: 'not_delivered',
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test('send resumes a session the app is not running and refuses archived ones', async () => {
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)
+    ).toEqual({ ok: true, value: { delivered: false } });
+    expect(spawned).toEqual([
+      { args: ['claude', '-p', '--resume', 'cli-b2', 'next'], cwd: '/focus/ops' },
+    ]);
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
+    ).toMatchObject({ ok: false, reason: 'not_open' });
+    expect(spawned).toEqual([]);
+  });
+
   test('answers a Space search without reading records or asking the CLI', async () => {
     let asked = false;
     const groups = await createClaudeDesktopAdapter({
@@ -207,6 +287,9 @@ describe('claude-desktop adapter against the app session records', () => {
       liveSessions: async () => {
         asked = true;
         return [];
+      },
+      spawn: () => {
+        throw new Error('not spawned');
       },
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
@@ -230,7 +313,7 @@ describe('readLiveClaudeSessions', () => {
       await readLiveClaudeSessions(
         spawnWith('[{"pid":1,"sessionId":"cli-a1","status":"busy","name":"x"}]')
       )
-    ).toEqual([{ sessionId: 'cli-a1', status: 'busy' }]);
+    ).toEqual([{ sessionId: 'cli-a1', status: 'busy', name: 'x' }]);
   });
 
   test('treats a missing CLI or unreadable output as no live sessions', async () => {
