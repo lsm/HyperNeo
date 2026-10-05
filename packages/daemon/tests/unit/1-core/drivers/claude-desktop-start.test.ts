@@ -43,7 +43,12 @@ describe('claude-desktop start', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter(options: { openExit?: number; appearsAfter?: number; relayWrites?: boolean }) {
+  function adapter(options: {
+    openExit?: number;
+    appearsAfter?: number;
+    relayWrites?: boolean;
+    twin?: boolean;
+  }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
     mkdirSync(transcripts, { recursive: true });
     let polls = 0;
@@ -54,7 +59,12 @@ describe('claude-desktop start', () => {
       liveSessions: async () => {
         polls++;
         return options.appearsAfter !== undefined && polls > options.appearsAfter
-          ? [{ sessionId: 'u1', status: 'idle', name: 'Bigger font' }]
+          ? [
+              { sessionId: 'u1', status: 'idle', name: 'Bigger font' },
+              ...(options.twin
+                ? [{ sessionId: 'other', status: 'idle', name: 'Bigger font' }]
+                : []),
+            ]
           : [];
       },
       spawn: (args) => {
@@ -116,6 +126,16 @@ describe('claude-desktop start', () => {
       'u1',
     ]);
     expect(spawned[2].at(-1)).toContain('session named "Bigger font"');
+  });
+
+  test('refuses to relay when another live session has the same name', async () => {
+    expect(await adapter({ appearsAfter: 0, twin: true }).start?.(request, user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail:
+        'local_u1 opened, but the task did not reach it: Bigger font has no unique name to relay a message to.',
+    });
+    expect(spawned).toHaveLength(2);
   });
 
   test('stops when the opening turn fails and reports a session the app never opened', async () => {

@@ -534,12 +534,13 @@ async function runToExit(
 async function waitUntilLive(
   cliSessionId: string,
   deps: ClaudeDesktopAdapterDeps
-): Promise<ClaudeLiveSession | null> {
+): Promise<readonly ClaudeLiveSession[] | null> {
   const until = deps.now() + OPEN_WAIT_MS;
   while (deps.now() < until) {
     const live = await deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
-    const session = live.find((candidate) => candidate.sessionId === cliSessionId);
-    if (session?.name) return session;
+    if (live.some((candidate) => candidate.sessionId === cliSessionId && candidate.name)) {
+      return live;
+    }
     await deps.sleep(OPEN_POLL_MS);
   }
   return null;
@@ -573,7 +574,8 @@ export async function startClaudeSession(
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }
   const live = await waitUntilLive(cliSessionId, deps);
-  if (!live?.name) {
+  const session = live?.find((candidate) => candidate.sessionId === cliSessionId);
+  if (!live || !session) {
     return reject(
       'not_delivered',
       `${sessionId} was created but Claude Code Desktop did not open it; send the task to it with work.send.`
@@ -587,7 +589,7 @@ export async function startClaudeSession(
     isArchived: false,
     lastActivityAt: deps.now(),
   };
-  const sent = await relayToLiveSession(record, live.name, request.message, deps);
+  const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
   if (!sent.ok) {
     return reject(
       'not_delivered',
@@ -597,7 +599,7 @@ export async function startClaudeSession(
   return {
     ok: true,
     value: {
-      ...toClaudeWork(record, new Map([[cliSessionId, live.status]]), deps.machine),
+      ...toClaudeWork(record, new Map([[cliSessionId, session.status]]), deps.machine),
       place: { machine: deps.machine, folder, name: request.place.name },
       status: sent.value.delivered ? 'running' : 'queued',
     },

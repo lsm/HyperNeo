@@ -209,7 +209,7 @@ describe('work verb operations', () => {
         throw new Error('Request timeout');
       }
     );
-    expect(timeouts).toEqual([{ timeoutMs: 120_000 }]);
+    expect(timeouts).toEqual([{ timeoutMs: 360_000 }]);
     expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
     expect((result as { detail: string }).detail).toContain(
       'check work.find before starting it again'
