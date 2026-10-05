@@ -7,7 +7,11 @@ import {
   readDriverOutcome,
   type NeoDriverTarget,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { requireNeoExecutionChoice } from '../../../../src/lib/neo/operations.ts';
+import {
+  createNeoOperations,
+  requireNeoExecutionChoice,
+} from '../../../../src/lib/neo/operations.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   createOperationRegistry,
@@ -19,7 +23,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { createTestDb } from '../../../helpers/database.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
@@ -176,6 +180,47 @@ describe('Neo work with a drivers target', () => {
       });
       expect(service.driverTargets.readRef('work-1')).toBeNull();
     } finally {
+      db.close();
+    }
+  });
+});
+
+describe('neo.work.propose with a drivers target', () => {
+  test('keeps a request key bound to its drivers target', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    db.createSession(createTestSession('root'));
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    const neo: OperationCaller = {
+      source: 'mcp',
+      sessionId: 'root',
+      role: 'neo',
+      neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
+    };
+    const propose = (target: Record<string, unknown>) =>
+      invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.propose',
+        { requestKey: 'font', title: work.title, instruction: work.instruction, ...target },
+        neo
+      );
+    try {
+      expect(await propose({ work: sendTarget })).toMatchObject({
+        kind: 'completed',
+        value: { ok: true },
+      });
+      expect(await propose({ work: sendTarget })).toMatchObject({ value: { ok: true } });
+      expect(await propose({ targetSessionId: null })).toMatchObject({
+        value: { ok: false, reason: 'This request key belongs to another execution target.' },
+      });
+      expect(await propose({ work: startTarget })).toMatchObject({ value: { ok: false } });
+    } finally {
+      service.dispose();
       db.close();
     }
   });

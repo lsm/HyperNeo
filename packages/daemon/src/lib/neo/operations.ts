@@ -672,6 +672,13 @@ export function createNeoOperations(service: NeoService) {
           },
           target.agent
         );
+        if (service.driverTargets.get(receipt.work.id))
+          return {
+            reason: {
+              ok: false,
+              reason: 'This request key belongs to another execution target.',
+            },
+          };
         return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
