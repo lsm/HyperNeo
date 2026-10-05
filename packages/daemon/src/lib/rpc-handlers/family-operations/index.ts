@@ -20,7 +20,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     ...registerAgentOperations(context),
     ...registerArtifactOperations(context),
     ...registerAuditOperations(context),
-    ...registerDriverOperations(),
+    ...registerDriverOperations(context),
     ...registerEvolutionOperations(context),
     ...registerExternalEventOperations(context),
     ...registerGoalOperations(context),
