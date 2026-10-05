@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
+import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
 import {
   buildHyperneoGroups,
   createHyperneoAdapter,
   hyperneoWorkStatus,
   skipSpaceQuery,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
-import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
+import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 import type { PlaceGroup, WorkAdapter } from '../../../../src/lib/drivers/types';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
 
 function group(machine: string, folder: string, adapter: string, at: number): PlaceGroup {
   return {
@@ -31,6 +32,15 @@ function group(machine: string, folder: string, adapter: string, at: number): Pl
   };
 }
 
+const chat = (sessionId: string | null, taskId: string | null = null): WorkChatMatch => ({
+  sessionId,
+  taskId,
+  hits: 1,
+  lastHitAt: 1,
+  score: 32.8,
+  snippets: [{ messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' }],
+});
+
 describe('mergePlaceGroups', () => {
   test('merges one folder on one machine across adapters, newest first', () => {
     const merged = mergePlaceGroups(
@@ -46,6 +56,23 @@ describe('mergePlaceGroups', () => {
       ['imac', ['hyperneo'], 1],
     ]);
     expect(merged[0].work.map((w) => w.lastActivityAt)).toEqual([30, 10]);
+  });
+
+  test('puts work with a search score first, highest score first', () => {
+    const [scored] = mergePlaceGroups(
+      [
+        group('laptop', '/focus/dolmen', 'claude-desktop', 30),
+        group('laptop', '/focus/dolmen', 'hyperneo', 10),
+      ].map((g, index) => ({
+        ...g,
+        work: g.work.map((w) => (index === 1 ? { ...w, score: 30 } : w)),
+      })),
+      10
+    );
+    expect(scored.work.map((w) => [w.lastActivityAt, w.score])).toEqual([
+      [10, 30],
+      [30, undefined],
+    ]);
   });
 });
 
@@ -101,7 +128,7 @@ describe('buildHyperneoGroups', () => {
   const query = { includeClosed: false, limit: 20 };
 
   test('returns open and remembered places without text, not folders holding only closed work', () => {
-    const groups = buildHyperneoGroups(places, sessions, query, { machine: 'imac' }, new Set());
+    const groups = buildHyperneoGroups(places, sessions, query, { machine: 'imac' }, new Map());
     expect(groups.map((g) => [g.place.name, g.work.length, g.archivedCount])).toEqual([
       ['dolmen', 1, 2],
       ['superpipe', 0, 3],
@@ -120,7 +147,7 @@ describe('buildHyperneoGroups', () => {
         sessions,
         { ...query, includeClosed: true },
         { machine: 'imac' },
-        new Set()
+        new Map()
       ).map((g) => g.place.name)
     ).toEqual(['dolmen', 'superpipe', 'a1']);
   });
@@ -131,7 +158,7 @@ describe('buildHyperneoGroups', () => {
       sessions,
       { ...query, text: 'superpipe' },
       { machine: 'imac' },
-      new Set()
+      new Map()
     );
     expect(groups.map((g) => g.place.name)).toEqual(['superpipe']);
   });
@@ -143,16 +170,32 @@ describe('buildHyperneoGroups', () => {
         sessions,
         { ...query, text: 'zzz' },
         { machine: 'imac' },
-        new Set(['s1'])
-      ).flatMap((g) => g.work.map((w) => w.ref.id))
-    ).toEqual(['s1']);
+        new Map([['s1', chat('s1')]])
+      ).flatMap((g) => g.work)
+    ).toEqual([
+      expect.objectContaining({
+        ref: { adapter: 'hyperneo', id: 's1' },
+        score: 32.8,
+        hits: 1,
+        lastHitAt: 1,
+        snippets: [
+          {
+            match: 'exact',
+            at: 1,
+            role: 'assistant',
+            text: 'a hit',
+            handle: { sessionId: 's1', messageId: 'm1' },
+          },
+        ],
+      }),
+    ]);
     expect(
       buildHyperneoGroups(
         places,
         sessions,
         { ...query, text: 'loader' },
         { machine: 'imac' },
-        new Set()
+        new Map()
       ).flatMap((g) => g.work.map((w) => w.ref.id))
     ).toEqual(['s1']);
   });
@@ -180,7 +223,7 @@ describe('skipSpaceQuery', () => {
         throw new Error('read the database');
       },
       machine: 'imac',
-      searchSessionIds: () => {
+      searchChats: () => {
         throw new Error('searched messages');
       },
       ...findOnly,
@@ -274,7 +317,7 @@ describe('hyperneo adapter against the sessions table', () => {
     const adapter = createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchSessionIds: () => new Set(),
+      searchChats: () => [],
       ...findOnly,
     });
     const groups = await adapter.find({ includeClosed: true, limit: 20, text: 'loader' });
@@ -285,7 +328,7 @@ describe('hyperneo adapter against the sessions table', () => {
     const adapter = createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchSessionIds: () => new Set(),
+      searchChats: () => [],
       handoff: async () => ({ kind: 'enqueued', id: 'mb1' }),
       sessions: {
         create: async () => 'new',

@@ -93,3 +93,28 @@ export function buildFtsQuery(query: string): string {
   const terms = buildFtsTerms(query);
   return terms.map((term) => `"${term}"*`).join(' ');
 }
+
+export function messageSearchPolicy(tables: { sessions: boolean; spaceTasks: boolean }): {
+  joins: string;
+  where: string;
+} {
+  const joins = [
+    tables.sessions ? 'LEFT JOIN sessions s ON s.id = msc.session_id' : '',
+    tables.spaceTasks ? 'LEFT JOIN space_tasks st ON st.id = msc.task_id' : '',
+  ].join('\n');
+  const sessionPolicy = tables.sessions
+    ? `AND COALESCE(s.status, '') != 'archived'
+				AND NOT (
+					COALESCE(s.status, '') = 'ended'
+					AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days')
+				)`
+    : '';
+  const taskPolicy = tables.spaceTasks
+    ? `AND COALESCE(st.status, '') != 'archived'
+				AND NOT (
+					COALESCE(st.status, '') IN ('done', 'cancelled', 'completed')
+					AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+				)`
+    : '';
+  return { joins, where: `${sessionPolicy}\n${taskPolicy}` };
+}
