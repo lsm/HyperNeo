@@ -1,6 +1,10 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../operations/registry.ts';
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import {
@@ -71,6 +75,21 @@ export function pickRoute<Verb extends RoutedVerb>(
   return { value: { local } };
 }
 
+export function admitRemoteCaller<Verb extends RoutedVerb>(
+  route: Route<Verb>,
+  caller: OperationCaller
+): Gate<Route<Verb>> {
+  if (!('daemon' in route) || caller.source !== 'mcp' || caller.role === 'neo') {
+    return { value: route };
+  }
+  return {
+    reason: reject(
+      'unsupported',
+      `Only Neo or the user can change work on another daemon (${route.daemon}).`
+    ),
+  };
+}
+
 function localRef(ref: WorkRef): WorkRef {
   return { adapter: ref.adapter, id: ref.id };
 }
@@ -101,9 +120,10 @@ export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'s
 export async function startWork(
   route: Route<'start'>,
   input: StartInput,
+  caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<StartResult> {
-  if ('local' in route) return route.local(input);
+  if ('local' in route) return route.local(input, { caller });
   const { daemon: _daemon, ...place } = input.place;
   const result = await forwardWork(
     route.daemon,
@@ -161,9 +181,10 @@ export function routeStop(input: RefInput, deps: WorkVerbDeps): Gate<Route<'stop
 export async function stopWork(
   route: Route<'stop'>,
   input: RefInput,
+  caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<StopResult> {
-  if ('local' in route) return route.local(input.ref);
+  if ('local' in route) return route.local(input.ref, { caller });
   return forwardWork(
     route.daemon,
     'work.stop',
@@ -174,16 +195,26 @@ export async function stopWork(
 }
 
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
-  .pipe(startWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: StartInput, deps: WorkVerbDeps) => Promise<StartResult>;
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(startWork, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: StartInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<StartResult>;
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(sendWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: SendInput, deps: WorkVerbDeps) => Promise<SendResult>;
+  .endAsync('outcome') as (
+  input: SendInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<SendResult>;
 
 const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .input(['input', 'deps'])
@@ -192,30 +223,35 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .endAsync('outcome') as (input: RefInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
 const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
-  .pipe(stopWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: RefInput, deps: WorkVerbDeps) => Promise<StopResult>;
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(stopWork, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: RefInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<StopResult>;
 
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runStartWork(input, deps),
+      execute: (input, caller) => runStartWork(input, caller, deps),
     }),
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false means it was accepted and queued behind the current turn. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, unsupported or unreachable.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false means it was accepted and queued behind the current turn. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runSendWork(input, deps),
+      execute: (input, caller) => runSendWork(input, caller, deps),
     }),
     defineOperation({
       name: 'work.status',
@@ -229,11 +265,11 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.stop',
       description:
-        'Stop the current turn of work by ref. stopped false means nothing was running. Some adapters cannot stop work (unsupported); tell the user instead of retrying.',
+        'Stop the current turn of work by ref. stopped false means nothing was running. Some adapters cannot stop work (unsupported); tell the user instead of retrying. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: WorkRefInputSchema,
       resultSchema: StopWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runStopWork(input, deps),
+      execute: (input, caller) => runStopWork(input, caller, deps),
     }),
   ];
 }
