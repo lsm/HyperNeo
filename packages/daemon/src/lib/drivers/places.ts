@@ -1,3 +1,4 @@
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { Place, PlaceGroup, WorkSummary } from './types.ts';
 
 export function placeKey(place: Place): string {
@@ -26,7 +27,9 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
   return [...byPlace.values()]
     .map((group) => ({
       ...group,
-      work: [...group.work].sort((a, b) => b.lastActivityAt - a.lastActivityAt),
+      work: [...group.work].sort(
+        (a, b) => (b.score ?? -1) - (a.score ?? -1) || b.lastActivityAt - a.lastActivityAt
+      ),
     }))
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit);
@@ -42,4 +45,23 @@ export function stampDaemon(groups: readonly PlaceGroup[], daemon: string): Plac
 
 export function stampWork<Work extends WorkSummary>(work: Work, daemon: string): Work {
   return { ...work, ref: { ...work.ref, daemon }, place: { ...work.place, daemon } };
+}
+
+export function withChatEvidence(work: WorkSummary, chat: WorkChatMatch | undefined): WorkSummary {
+  if (!chat) return work;
+  return {
+    ...work,
+    score: chat.score,
+    hits: chat.hits,
+    lastHitAt: chat.lastHitAt,
+    snippets: chat.snippets.map((snippet) => ({
+      match: 'exact' as const,
+      at: snippet.at,
+      role: snippet.role,
+      text: snippet.text,
+      ...(snippet.sessionId
+        ? { handle: { sessionId: snippet.sessionId, messageId: snippet.messageId } }
+        : {}),
+    })),
+  };
 }

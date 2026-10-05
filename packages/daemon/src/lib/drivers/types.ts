@@ -24,6 +24,14 @@ export const WorkRefSchema = z.object({
   id: z.string().min(1),
 });
 
+export const WorkSnippetSchema = z.object({
+  match: z.enum(['exact', 'semantic']),
+  at: z.number(),
+  role: z.string(),
+  text: z.string(),
+  handle: z.object({ sessionId: z.string(), messageId: z.string() }).optional(),
+});
+
 export const WorkSummarySchema = z.object({
   ref: WorkRefSchema,
   title: z.string(),
@@ -31,6 +39,10 @@ export const WorkSummarySchema = z.object({
   status: WorkStatusSchema,
   lastActivityAt: z.number(),
   link: z.string().optional(),
+  score: z.number().optional(),
+  hits: z.number().int().nonnegative().optional(),
+  lastHitAt: z.number().optional(),
+  snippets: z.array(WorkSnippetSchema).optional(),
 });
 
 export const PlaceGroupSchema = z.object({
