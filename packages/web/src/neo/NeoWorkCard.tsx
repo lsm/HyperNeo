@@ -1,8 +1,10 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
+import { neoWorkDriverLabel, neoWorkDriverLink } from './work-driver.ts';
 
 const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
@@ -28,6 +30,7 @@ function insideUserSelection(scope: Element): boolean {
 
 export function NeoWorkCard({
   work,
+  driver,
   busy,
   disabled,
   onAction,
@@ -37,6 +40,7 @@ export function NeoWorkCard({
   waiting = false,
 }: {
   work: NeoWork;
+  driver?: NeoWorkDriverReceipt;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: 'start' | 'cancel') => void;
@@ -52,6 +56,19 @@ export function NeoWorkCard({
       previous = node;
     };
   }, [work.id, questionSlot]);
+  const label =
+    work.status === 'queued' && driver ? neoWorkDriverLabel(driver) : labels[work.status];
+  const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
+  const openLink = driverLink && (
+    <a
+      href={driverLink}
+      class="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
+      aria-label={`Open ${work.title}`}
+    >
+      Open
+      <NeoIcon name="external" class="!h-3.5 !w-3.5" />
+    </a>
+  );
   if (presentation === 'summary' && onOpen)
     return (
       <div class="flex min-h-11 w-full items-center gap-2 rounded-xl border border-line bg-surface pr-2 hover:border-accent/40">
@@ -68,7 +85,7 @@ export function NeoWorkCard({
           </span>
           <span class="min-w-0 flex-1">
             <span class="block break-words text-sm font-medium">{work.title}</span>
-            <span class="mt-1 block text-xs text-fg-muted">{labels[work.status]}</span>
+            <span class="mt-1 block text-xs text-fg-muted">{label}</span>
           </span>
           {work.sessionId && (
             <span aria-hidden="true" class="shrink-0 text-fg-faint">
@@ -76,6 +93,7 @@ export function NeoWorkCard({
             </span>
           )}
         </button>
+        {openLink}
       </div>
     );
   const active = work.status === 'queued';
@@ -119,7 +137,7 @@ export function NeoWorkCard({
           <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
         </span>
         <span class="text-xs font-medium text-fg-muted">
-          {answering ? 'Waiting for your answer' : labels[work.status]}
+          {answering ? 'Waiting for your answer' : label}
         </span>
         {active && (
           <span
@@ -127,6 +145,7 @@ export function NeoWorkCard({
             class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
           />
         )}
+        {openLink}
         {openable && (
           <span aria-hidden="true" class="ml-auto text-fg-faint">
             <NeoIcon name="external" />

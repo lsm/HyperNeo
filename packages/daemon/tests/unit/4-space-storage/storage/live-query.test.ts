@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { LiveQueryEngine, computeDiff, extractTables } from '../../../../src/storage/live-query';
 import type { QueryDiff } from '../../../../src/storage/live-query';
+import type { TableChangeScope } from '../../../../src/storage/reactive-database';
 
 interface MockReactiveDatabase {
   on(
@@ -11,8 +12,8 @@ interface MockReactiveDatabase {
   ): void;
   off(event: string, listener: (...args: unknown[]) => void): void;
   getTableVersion(table: string): number;
-  fireChange(tables: string[]): void;
-  bumpAndFire(table: string): void;
+  fireChange(tables: string[], scope?: TableChangeScope): void;
+  bumpAndFire(table: string, scope?: TableChangeScope): void;
 }
 
 function createMockReactiveDatabase(): MockReactiveDatabase {
@@ -32,16 +33,16 @@ function createMockReactiveDatabase(): MockReactiveDatabase {
     getTableVersion(table: string): number {
       return versions[table] ?? 0;
     },
-    fireChange(tables: string[]): void {
+    fireChange(tables: string[], scope?: TableChangeScope): void {
       const v: Record<string, number> = {};
       for (const t of tables) {
         v[t] = versions[t] ?? 0;
       }
-      emitter.emit('change', { tables, versions: v });
+      emitter.emit('change', { tables, versions: v, scope });
     },
-    bumpAndFire(table: string): void {
+    bumpAndFire(table: string, scope?: TableChangeScope): void {
       versions[table] = (versions[table] ?? 0) + 1;
-      this.fireChange([table]);
+      this.fireChange([table], scope);
     },
   };
 }
@@ -430,6 +431,77 @@ describe('LiveQueryEngine', () => {
       expect(metadataCalls).toBe(2);
       expect(diffs2[0].type).toBe('snapshot');
       expect(diffs2[0].metadata).toEqual({ sideCount: 1 });
+    });
+
+    test('metadataScopeFilter skips metadata recomputation for irrelevant changes', async () => {
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      let metadataCalls = 0;
+      const getMetadata = (rows: Record<string, unknown>[]) => {
+        metadataCalls += 1;
+        return { count: rows.length };
+      };
+      const metadataScopeFilter = (scope: TableChangeScope) => scope.messageSubtype !== null;
+
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { getMetadata, metadataScopeFilter });
+      expect(metadataCalls).toBe(1);
+
+      insertItem(db, 'plain', 'Plain', 1);
+      mockReactive.bumpAndFire('items', { sessionId: 's1', messageSubtype: null });
+      await Promise.resolve();
+
+      expect(metadataCalls).toBe(1);
+      expect(diffs.length).toBe(2);
+      expect(diffs[1].added?.map((row) => row.id)).toEqual(['plain']);
+      expect(diffs[1].metadata).toBeUndefined();
+
+      insertItem(db, 'relevant', 'Relevant', 2);
+      mockReactive.bumpAndFire('items', { sessionId: 's1', messageSubtype: 'task_progress' });
+      await Promise.resolve();
+
+      expect(metadataCalls).toBe(2);
+      expect(diffs[2].metadata).toEqual({ count: 2 });
+
+      insertItem(db, 'unscoped', 'Unscoped', 3);
+      mockReactive.bumpAndFire('items');
+      await Promise.resolve();
+
+      expect(metadataCalls).toBe(3);
+      expect(diffs[3].metadata).toEqual({ count: 3 });
+    });
+
+    test('a relevant change coalesced into a pending evaluation still refreshes metadata', async () => {
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      let metadataCalls = 0;
+      const getMetadata = (rows: Record<string, unknown>[]) => {
+        metadataCalls += 1;
+        return { count: rows.length };
+      };
+      const metadataScopeFilter = (scope: TableChangeScope) => scope.messageSubtype !== null;
+
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { getMetadata, metadataScopeFilter });
+
+      insertItem(db, 'a', 'A', 1);
+      mockReactive.bumpAndFire('items', { sessionId: 's1', messageSubtype: null });
+      insertItem(db, 'b', 'B', 2);
+      mockReactive.bumpAndFire('items', { sessionId: 's1', messageSubtype: 'task_started' });
+      await Promise.resolve();
+
+      expect(metadataCalls).toBe(2);
+      expect(diffs.length).toBe(2);
+      expect(diffs[1].metadata).toEqual({ count: 2 });
+    });
+
+    test('row-only deltas omit unchanged metadata', async () => {
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { getMetadata: () => ({ fixed: 1 }) });
+
+      insertItem(db, 'row', 'Row', 1);
+      mockReactive.bumpAndFire('items');
+      await Promise.resolve();
+
+      expect(diffs.length).toBe(2);
+      expect(diffs[1].added?.map((row) => row.id)).toEqual(['row']);
+      expect(diffs[1].metadata).toBeUndefined();
     });
   });
 

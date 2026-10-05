@@ -119,6 +119,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('NeoConcernBoardView', () => {
+  it('names the app and live state of handed-off work', () => {
+    const board = projectNeoConcernBoard(snapshot, 'a', inventory())!;
+    render(
+      <NeoConcernBoardView
+        board={board}
+        drivers={[
+          {
+            workId: 'work-a',
+            adapter: 'claude-desktop',
+            daemon: 'laptop',
+            status: 'running',
+            link: null,
+          },
+        ]}
+      />
+    );
+    expect(screen.getByText('Running in Claude Code Desktop on laptop')).toBeTruthy();
+    expect(screen.queryByText('Handed to HyperNeo')).toBeNull();
+  });
+
   it('renders actual scoped receipts, unknown references and outgoing relationships', () => {
     const board = projectNeoConcernBoard(snapshot, 'a', inventory())!;
     render(<NeoConcernBoardView board={board} />);

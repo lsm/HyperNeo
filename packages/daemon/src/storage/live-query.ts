@@ -17,6 +17,7 @@ export interface LiveQuerySubscribeOptions {
     params: ReadonlyArray<unknown>
   ) => Record<string, unknown> | undefined;
   scopeFilter?: (scope: TableChangeScope) => boolean;
+  metadataScopeFilter?: (scope: TableChangeScope) => boolean;
   rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
@@ -55,6 +56,8 @@ interface QueryEntry<T extends Record<string, unknown>> {
   pendingTimer: ReturnType<typeof setTimeout> | null;
   debounceMs: number;
   scopeFilter: ((scope: TableChangeScope) => boolean) | undefined;
+  metadataScopeFilter: ((scope: TableChangeScope) => boolean) | undefined;
+  metadataDirty: boolean;
   rowFingerprint: ((row: Record<string, unknown>) => unknown) | undefined;
 }
 
@@ -222,6 +225,8 @@ export class LiveQueryEngine {
         pendingTimer: null,
         debounceMs,
         scopeFilter: options.scopeFilter,
+        metadataScopeFilter: options.metadataScopeFilter,
+        metadataDirty: false,
         rowFingerprint: options.rowFingerprint,
       } as unknown as QueryEntry<T>;
 
@@ -305,12 +310,17 @@ export class LiveQueryEngine {
 
     for (const cacheKey of keys) {
       const entry = this.queries.get(cacheKey);
-      if (!entry || entry.pendingEval) continue;
+      if (!entry) continue;
 
       if (scope && entry.scopeFilter && !entry.scopeFilter(scope)) {
         skipped++;
         continue;
       }
+
+      if (!scope || !entry.metadataScopeFilter || entry.metadataScopeFilter(scope)) {
+        entry.metadataDirty = true;
+      }
+      if (entry.pendingEval) continue;
 
       evaluated++;
       entry.pendingEval = true;
@@ -337,8 +347,12 @@ export class LiveQueryEngine {
 
     const newRows = this.runQuery(entry.sql, entry.params);
     const newHashSnapshot = hashRows(newRows, entry.rowFingerprint);
-    const newMetadata = entry.getMetadata?.(newRows, entry.params);
-    const newMetadataHash = hashMetadata(newMetadata);
+    const metadataStale = entry.metadataDirty || !entry.metadataScopeFilter;
+    entry.metadataDirty = false;
+    const newMetadata = metadataStale
+      ? entry.getMetadata?.(newRows, entry.params)
+      : entry.cachedMetadata;
+    const newMetadataHash = metadataStale ? hashMetadata(newMetadata) : entry.cachedMetadataHash;
     const rowsChanged = newHashSnapshot.hash !== entry.cachedHash;
     const metadataChanged = newMetadataHash !== entry.cachedMetadataHash;
 
@@ -363,7 +377,7 @@ export class LiveQueryEngine {
       removed: diff.removed,
       updated: diff.updated,
       version,
-      metadata: newMetadata,
+      ...(metadataChanged ? { metadata: newMetadata } : {}),
     };
 
     for (const subscriber of entry.subscribers) {

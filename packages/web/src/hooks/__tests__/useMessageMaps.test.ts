@@ -1152,3 +1152,78 @@ describe('useMessageMaps', () => {
     });
   });
 });
+
+describe('useMessageMaps identity stability', () => {
+  const toolUse = {
+    type: 'assistant',
+    uuid: uuid1,
+    session_id: 'session-1',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: '/a' } }],
+    },
+  };
+  const toolResult = {
+    type: 'user',
+    uuid: uuid2,
+    session_id: 'session-1',
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
+    },
+  };
+  const text = (uuid: string) => ({
+    type: 'assistant',
+    uuid,
+    session_id: 'session-1',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+  });
+
+  it('keeps every map identity when an appended message affects none of them', () => {
+    const { result, rerender } = renderHook(
+      ({ messages }) => useMessageMaps(messages, 'session-1'),
+      {
+        initialProps: { messages: [toolUse, toolResult] },
+      }
+    );
+    const before = result.current;
+
+    rerender({ messages: [toolUse, toolResult, text(uuid3)] });
+
+    for (const key of Object.keys(before)) {
+      expect(result.current[key]).toBe(before[key]);
+    }
+  });
+
+  it('replaces a map whose contents change', () => {
+    const { result, rerender } = renderHook(
+      ({ messages }) => useMessageMaps(messages, 'session-1'),
+      {
+        initialProps: { messages: [toolUse] },
+      }
+    );
+    const before = result.current;
+
+    rerender({ messages: [toolUse, toolResult] });
+
+    expect(result.current.toolResultsMap).not.toBe(before.toolResultsMap);
+    expect(result.current.toolResultsMap.get('tool-1')?.messageUuid).toBe(uuid2);
+    expect(result.current.toolInputsMap).toBe(before.toolInputsMap);
+  });
+
+  it('keeps toolResultsMap identity when removedOutputs is a new but equal array', () => {
+    const messages = [toolUse, toolResult];
+    const { result, rerender } = renderHook(
+      ({ removed }) => useMessageMaps(messages, 'session-1', removed),
+      { initialProps: { removed: [] as string[] } }
+    );
+    const before = result.current.toolResultsMap;
+
+    rerender({ removed: [] });
+    expect(result.current.toolResultsMap).toBe(before);
+
+    rerender({ removed: [uuid2] });
+    expect(result.current.toolResultsMap).not.toBe(before);
+    expect(result.current.toolResultsMap.get('tool-1')?.isOutputRemoved).toBe(true);
+  });
+});

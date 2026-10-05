@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { neoNudgeMessageId } from '../../../../src/lib/neo/ask-origin.ts';
 import {
+  NEO_UNFINISHED_REPLY,
   type NeoDirectReplyRuntime,
   type NeoTurnReply,
   publishNeoDirectReplyFallback,
@@ -58,6 +60,9 @@ function runtime(overrides: Partial<NeoDirectReplyRuntime> = {}) {
     isPublished: () => false,
     startedWork: () => false,
     turnReply: () => ended(),
+    hasNudge: () => false,
+    nudge: vi.fn(),
+    recheck: vi.fn(),
     append: vi.fn(() => ({ accepted: true })),
     notify: vi.fn(),
     newId: () => publicationId,
@@ -118,10 +123,14 @@ describe('Neo direct reply fallback', () => {
   test.each([
     ['an already published answer', { isPublished: () => true }],
     ['a turn that started a consultation or work', { startedWork: () => true }],
-    ['a turn still running', { turnReply: () => ({ status: 'open' as const, text: 'Partial' }) }],
-    ['a failed turn', { turnReply: () => ({ status: 'failed' as const, text: 'Partial' }) }],
-    ['a turn without reply text', { turnReply: () => ended('   ') }],
-    ['a turn with no reply at all', { turnReply: () => ended(null) }],
+    [
+      'a turn that has not started',
+      { turnReply: () => ({ status: 'missing' as const, text: null }) },
+    ],
+    [
+      'an answer the nudged turn already published',
+      { isPublished: (_id: string, messageId: string) => messageId === neoNudgeMessageId(askA) },
+    ],
     ['a session with no human ask', { recentAsks: () => [] }],
     ['a missing root conversation', { getRootBinding: () => null }],
     [
@@ -140,6 +149,124 @@ describe('Neo direct reply fallback', () => {
     expect(requireNeoReplySession(sessionId, io)).toBeNull();
     expect(publishNeoDirectReplyFallback(sessionId, io)).toEqual([]);
     expect(io.append).not.toHaveBeenCalled();
+  });
+
+  const settled = { settled: true, interrupted: false };
+  test.each([
+    ['ends without reply text', ended('   '), undefined],
+    ['ends with no reply at all', ended(null), undefined],
+    ['ends with an error, once settled', { status: 'failed' as const, text: 'Partial' }, settled],
+    [
+      'stops without a final result, once settled',
+      { status: 'open' as const, text: 'Partial' },
+      settled,
+    ],
+  ])('nudges Neo once when a turn %s', (_name, reply, settlement) => {
+    const io = runtime({ turnReply: () => reply });
+    expect(publishNeoDirectReplyFallback(root, io, settlement)).toEqual([]);
+    expect(io.nudge).toHaveBeenCalledExactlyOnceWith(root, neoNudgeMessageId(askA));
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['ended with an error', { status: 'failed' as const, text: 'Partial' }],
+    ['stopped without a final result', { status: 'open' as const, text: 'Partial' }],
+  ])('waits to see whether a turn that %s is retried before nudging', (_name, reply) => {
+    const io = runtime({ turnReply: () => reply });
+    expect(publishNeoDirectReplyFallback(root, io)).toEqual([]);
+    expect(io.recheck).toHaveBeenCalledExactlyOnceWith(root);
+    expect(io.nudge).not.toHaveBeenCalled();
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test('never nudges a turn the human stopped', () => {
+    const io = runtime({
+      turnReply: (_id, messageId) =>
+        messageId === askA
+          ? { status: 'open', text: 'Partial' }
+          : { status: 'missing', text: null },
+    });
+    for (const settled of [false, true])
+      expect(publishNeoDirectReplyFallback(root, io, { settled, interrupted: true })).toEqual([]);
+    expect(io.nudge).not.toHaveBeenCalled();
+    expect(io.recheck).not.toHaveBeenCalled();
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test('never nudges an older message, only the newest', () => {
+    const io = runtime({
+      recentAsks: (_conversation, id) => [ask(askA, id), ask(askB, id)],
+      turnReply: (_id, messageId) =>
+        messageId === askA ? { status: 'failed', text: null } : ended('Answer to B.'),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([{ shortText: 'Answer to B.' }]);
+    expect(io.nudge).not.toHaveBeenCalled();
+  });
+
+  test('still resolves an older message that was already nudged', () => {
+    const io = runtime({
+      recentAsks: (_conversation, id) => [ask(askA, id), ask(askB, id)],
+      hasNudge: (_id, nudgeId) => nudgeId === neoNudgeMessageId(askA),
+      turnReply: (_id, messageId) =>
+        messageId === askA
+          ? ended(null)
+          : messageId === askB
+            ? ended('Answer to B.')
+            : ended('Late answer to A.'),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([
+      { shortText: 'Late answer to A.' },
+      { shortText: 'Answer to B.' },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
+  });
+
+  test('waits while the nudge has not started', () => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) =>
+        messageId === askA ? ended(null) : { status: 'missing', text: null },
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toEqual([]);
+    expect(io.nudge).not.toHaveBeenCalled();
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test('publishes the nudged turn text when Neo still did not publish', () => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) => (messageId === askA ? ended(null) : ended('Here it is.')),
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toMatchObject([
+      { shortText: 'Here it is.', producerInput: { sessionId: root, messageId: askA } },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
+  });
+
+  test('waits to see whether a failed nudged turn is retried', () => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) =>
+        messageId === askA ? ended(null) : { status: 'failed', text: null },
+    });
+    expect(publishNeoDirectReplyFallback(root, io)).toEqual([]);
+    expect(io.recheck).toHaveBeenCalledOnce();
+    expect(io.append).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['ended empty', ended(null)],
+    ['failed', { status: 'failed' as const, text: 'Partial' }],
+    ['stopped without a final result', { status: 'open' as const, text: 'Partial' }],
+  ])('tells the human it could not finish when the nudged turn %s', (_name, nudged) => {
+    const io = runtime({
+      hasNudge: () => true,
+      turnReply: (_id, messageId) => (messageId === askA ? ended(null) : nudged),
+    });
+    expect(publishNeoDirectReplyFallback(root, io, settled)).toMatchObject([
+      { shortText: NEO_UNFINISHED_REPLY },
+    ]);
+    expect(io.nudge).not.toHaveBeenCalled();
   });
 
   test('does not notify when the ledger refuses the publication', () => {
@@ -192,11 +319,30 @@ describe('readNeoTurnReply', () => {
     expect(readNeoTurnReply(db, root, askB)).toEqual({ status: 'open', text: 'Reply to B.' });
   });
 
+  test('ignores narration written before a tool call', () => {
+    save(assistant('a-1', [{ type: 'text', text: 'Let me inspect the second chat.' }]), askA);
+    save(assistant('a-2', [{ type: 'tool_use', id: 't-1', name: 'invoke', input: {} }]), askA);
+    save(result('a-done', 'success'), askA);
+    expect(readNeoTurnReply(db, root, askA)).toEqual({ status: 'ended', text: null });
+  });
+
+  test('keeps only the text written after the last tool call', () => {
+    save(assistant('a-1', [{ type: 'text', text: 'Checking both chats.' }]), askA);
+    save(assistant('a-2', [{ type: 'tool_use', id: 't-1', name: 'invoke', input: {} }]), askA);
+    save(assistant('a-3', [{ type: 'text', text: 'Both are done.' }]), askA);
+    save(assistant('a-4', [{ type: 'text', text: 'The guide is ready.' }]), askA);
+    save(result('a-done', 'success'), askA);
+    expect(readNeoTurnReply(db, root, askA)).toEqual({
+      status: 'ended',
+      text: 'Both are done.\n\nThe guide is ready.',
+    });
+  });
+
   test('reports a failed turn and an empty turn', () => {
     save(assistant('a-1', 'Partial answer'), askA);
     save(result('a-done', 'error_during_execution'), askA);
     expect(readNeoTurnReply(db, root, askA)).toEqual({ status: 'failed', text: 'Partial answer' });
-    expect(readNeoTurnReply(db, root, 'missing')).toEqual({ status: 'open', text: null });
+    expect(readNeoTurnReply(db, root, 'missing')).toEqual({ status: 'missing', text: null });
   });
 });
 
@@ -241,6 +387,48 @@ describe('NeoService direct reply fallback wiring', () => {
   const idle = () =>
     events.publish('session.updated', { sessionId: root, processingState: { status: 'idle' } });
   const published = () => service.publications.list(conversationId, 0, 50) ?? [];
+
+  function stallNewestAsk() {
+    const { sequence: _sequence, createdAt: _createdAt, ...input } = ask(askB);
+    expect(service.asks.append(input).accepted).toBe(true);
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      session_id: root,
+      type: 'assistant',
+      uuid: 'stalled',
+      parent_tool_use_id: null,
+      message: { role: 'assistant', content: 'Partial thought' },
+      neoInputOrigin: { sessionId: root, messageId: askB },
+    } as unknown as SDKMessage);
+  }
+  const nudgeQueued = () =>
+    db.getJobQueueRepo().listActiveByPayload('mailbox', {
+      'to.sessionId': root,
+      messageUuid: neoNudgeMessageId(askB),
+    }).length > 0;
+
+  test.each([
+    ['nudges a stalled turn once it stays idle', [], true],
+    ['never nudges a turn the human stopped', ['processing', 'interrupted'], false],
+    ['does not nudge when the run resumed during the settle window', ['RESUME'], false],
+  ])('%s', async (_name, before, expected) => {
+    stallNewestAsk();
+    vi.useFakeTimers();
+    try {
+      for (const status of before.filter((item) => item !== 'RESUME'))
+        await events.publish('session.updated', { sessionId: root, processingState: { status } });
+      await idle();
+      expect(nudgeQueued()).toBe(false);
+      if (before.includes('RESUME'))
+        await events.publish('session.updated', {
+          sessionId: root,
+          processingState: { status: 'processing' },
+        });
+      await vi.advanceTimersByTimeAsync(21_000);
+      await vi.waitFor(() => expect(nudgeQueued()).toBe(expected));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   test('keeps a pending line unpublished while its consultation is still queued', async () => {
     service.consultationWaiters.enqueue({

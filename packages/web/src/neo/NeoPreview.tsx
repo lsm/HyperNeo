@@ -1,3 +1,4 @@
+import { generateUUID } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../components/ui/Button.tsx';
 import { previewConcerns } from './preview-concerns.ts';
@@ -33,7 +34,7 @@ export function NeoPreview() {
       );
       setNotice('Added to this concern in the preview. No work was started.');
     } else {
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       setConcerns((items) => [
         ...items,
         {

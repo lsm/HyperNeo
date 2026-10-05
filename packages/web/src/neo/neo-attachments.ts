@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import type { MessageImage } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { fileToBase64, validateImageFile } from '../lib/file-utils.ts';
 
@@ -30,7 +31,7 @@ function admitFile(file: File): { value: File } | { reason: string } {
 }
 
 async function readFile(file: File): Promise<{ value: NeoAttachment }> {
-  const base = { id: crypto.randomUUID(), name: file.name, size: file.size };
+  const base = { id: generateUUID(), name: file.name, size: file.size };
   if (file.type.startsWith('image/'))
     return {
       value: {

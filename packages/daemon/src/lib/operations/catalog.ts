@@ -9,7 +9,8 @@ import { createGetTaskOperation } from '../tasks/get-operation.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import {
   createSendMessageOperation,
-  type SessionExistenceCheck,
+  type AgentTargetResolver,
+  type SessionStatusRead,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
 import {
@@ -43,7 +44,8 @@ export interface TaskOperationDependencies {
   transitionTask: Parameters<
     typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
   >[0];
-  sessionExists: SessionExistenceCheck;
+  sessionStatus: SessionStatusRead;
+  resolveMessageAgent?: AgentTargetResolver;
 }
 
 export function createDaemonOperationCatalog(
@@ -54,8 +56,9 @@ export function createDaemonOperationCatalog(
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(
       jobQueue,
-      tasks.sessionExists,
-      createRemoteSendForwarder(remoteDaemons)
+      tasks.sessionStatus,
+      createRemoteSendForwarder(remoteDaemons),
+      tasks.resolveMessageAgent
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

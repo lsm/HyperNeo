@@ -153,9 +153,9 @@ export function RemoteDaemonsSettings() {
   return (
     <SettingsSection title="Remote Daemons">
       <div class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-fg-soft">
-        Attachments are held in this daemon's memory and are gone when it restarts — you have to
-        attach them again after every restart. Test a URL before attaching it to verify the remote
-        operation door is reachable.
+        Attachments are saved in this daemon's settings and restored when it restarts. The link is
+        not authenticated, so attach only daemons on a private network such as Tailscale. Test a URL
+        before attaching it to verify the remote operation door is reachable.
       </div>
 
       <div class="space-y-3 rounded-xl border border-line bg-surface p-4">

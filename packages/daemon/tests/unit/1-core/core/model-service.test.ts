@@ -738,6 +738,38 @@ describe('Model Service', () => {
       expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
     });
 
+    it('a provider that never answers cannot hold the whole model refresh', async () => {
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'hung-provider',
+        getModels: () => new Promise<ModelInfo[]>(() => {}),
+        isAvailable: () => new Promise<boolean>(() => {}),
+      } as ProviderLike);
+      getProviderRegistry().register({
+        id: 'answering-provider',
+        getModels: async () => [writePathModel('answering-provider', 'answering-1')],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      jest.useFakeTimers();
+      try {
+        const { refreshModels } = await import('../../../../src/lib/model-service');
+        let settled = false;
+        const refreshing = refreshModels().then(() => {
+          settled = true;
+        });
+        await jest.advanceTimersByTimeAsync(9_000);
+        expect(settled).toBe(false);
+        await jest.advanceTimersByTimeAsync(2_000);
+        await refreshing;
+        expect(settled).toBe(true);
+        expect(
+          getAvailableModels('global').filter((m) => m.provider === 'answering-provider')
+        ).toEqual([writePathModel('answering-provider', 'answering-1')]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('restoreProviderPendingSlice reinstates a captured overlay and clears its release marker', () => {
       applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-first')]);
       const captured = getPendingProviderSlice('acp');
@@ -1328,7 +1360,7 @@ describe('Model Service', () => {
       }
     });
 
-    it('preserves a recovered slice when an overlapping foreground merge installs a larger list', async () => {
+    it('preserves a recovered slice when an overlapping foreground load times out', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
@@ -1385,7 +1417,7 @@ describe('Model Service', () => {
             .filter((m) => m.provider === 'glm')
             .map((m) => m.id)
         ).toEqual(['glm-5-recovered']);
-        expect(getAvailableModels('global').filter((m) => m.provider === 'stub-b').length).toBe(20);
+        expect(getAvailableModels('global').filter((m) => m.provider === 'stub-b').length).toBe(1);
       } finally {
         jest.useRealTimers();
       }

@@ -34,8 +34,14 @@ async function withConnectDeadline<T>(
   }
 }
 
+export interface DaemonAttachment {
+  daemonId: string;
+  url: string;
+}
+
 export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
+  private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
   private readonly attempts = new Map<string, RemoteAttempt>();
   private readonly connectTimeoutMs: number;
   private readonly probeRequestTimeoutMs: number;
@@ -45,18 +51,28 @@ export class RemoteDaemonRegistry {
     this.probeRequestTimeoutMs = options.probeRequestTimeoutMs ?? DEFAULT_PROBE_REQUEST_TIMEOUT_MS;
   }
 
+  restore(
+    attachments: readonly DaemonAttachment[],
+    persist: (attachments: DaemonAttachment[]) => void
+  ): void {
+    for (const { daemonId, url } of attachments) this.urls.set(daemonId, url);
+    this.persist = persist;
+  }
+
   attach(daemonId: string, url: string): void {
     this.urls.set(daemonId, url);
     this.forget(daemonId);
+    this.persist?.(this.list());
   }
 
-  list(): { daemonId: string; url: string }[] {
+  list(): DaemonAttachment[] {
     return [...this.urls].map(([daemonId, url]) => ({ daemonId, url }));
   }
 
   detach(daemonId: string): boolean {
     const wasAttached = this.urls.delete(daemonId);
     this.forget(daemonId);
+    if (wasAttached) this.persist?.(this.list());
     return wasAttached;
   }
 
@@ -113,13 +129,22 @@ export class RemoteDaemonRegistry {
     attempt.hub.cleanup();
   }
 
-  readonly invoke = async (daemonId: string, name: string, input: unknown): Promise<unknown> => {
+  readonly invoke = async (
+    daemonId: string,
+    name: string,
+    input: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<unknown> => {
     const url = this.urls.get(daemonId);
     if (url === undefined) throw new Error(`No attached daemon: ${daemonId}`);
     const attempt = this.open(daemonId, url);
     const connection = await attempt.connection;
     try {
-      return await connection.hub.request('operation.invoke', { name, input });
+      return await connection.hub.request(
+        'operation.invoke',
+        { name, input },
+        options?.timeoutMs ? { timeout: options.timeoutMs } : undefined
+      );
     } catch (error) {
       this.discard(daemonId, attempt);
       throw error;

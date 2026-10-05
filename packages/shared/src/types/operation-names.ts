@@ -11,6 +11,7 @@ import { SCHEDULE_OPERATION_NAMES } from './operation-names/schedule.ts';
 import { SESSION_OPERATION_NAMES } from './operation-names/session.ts';
 import { SPACE_OPERATION_NAMES } from './operation-names/space.ts';
 import { TASK_OPERATION_NAMES } from './operation-names/task.ts';
+import { WORK_OPERATION_NAMES } from './operation-names/work.ts';
 import { WORKFLOW_OPERATION_NAMES } from './operation-names/workflow.ts';
 
 export const OPERATION_NAME_FAMILIES = {
@@ -27,6 +28,7 @@ export const OPERATION_NAME_FAMILIES = {
   session: SESSION_OPERATION_NAMES,
   space: SPACE_OPERATION_NAMES,
   task: TASK_OPERATION_NAMES,
+  work: WORK_OPERATION_NAMES,
   workflow: WORKFLOW_OPERATION_NAMES,
 } as const;
 
@@ -44,6 +46,7 @@ export const OPERATION_NAMES = [
   ...SESSION_OPERATION_NAMES,
   ...SPACE_OPERATION_NAMES,
   ...TASK_OPERATION_NAMES,
+  ...WORK_OPERATION_NAMES,
   ...WORKFLOW_OPERATION_NAMES,
 ] as const;
 

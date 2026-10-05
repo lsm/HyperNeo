@@ -11,6 +11,7 @@ import {
   DEFAULT_LOBBY_FEATURES,
   DEFAULT_WORKER_FEATURES,
   normalizeThinkingLevel,
+  generateUUID,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKSystemMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
@@ -255,7 +256,7 @@ export default function ChatContainer({
     setPendingSubmitting(true);
     setPendingErrorMessage(null);
     try {
-      const clientMessageId = pendingDraftNonceRef.current ?? crypto.randomUUID();
+      const clientMessageId = pendingDraftNonceRef.current ?? generateUUID();
       pendingDraftNonceRef.current = clientMessageId;
       const result = await spaceStore.activateTaskNodeAgent(
         pendingAgent.taskId,
@@ -833,7 +834,7 @@ export default function ChatContainer({
     },
   });
 
-  const removedOutputs = session?.metadata?.removedOutputs || [];
+  const removedOutputs = session?.metadata?.removedOutputs;
   const messagesWithBackgroundTasks = useMemo(
     () => [...messages, ...backgroundTaskMessages],
     [messages, backgroundTaskMessages]

@@ -6,6 +6,14 @@ export interface NeoWorkResourceReceipt {
   refs: DaemonInventoryLink[] | null;
 }
 
+export interface NeoWorkDriverReceipt {
+  workId: string;
+  adapter: string;
+  daemon: string | null;
+  status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
+  link: string | null;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -22,6 +30,7 @@ export interface NeoSnapshot {
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
+  workDrivers?: NeoWorkDriverReceipt[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

@@ -934,6 +934,148 @@ describe('Neo MVP', () => {
     expect(jobs).toHaveLength(1);
   });
 
+  test('neo.work.cancel withdraws proposed and queued work through the operation door', async () => {
+    const proposed = await propose();
+    const queued = await propose();
+    await service.start(queued.id);
+    expect(service.repo.getWork(queued.id)?.status).toBe('queued');
+    expect(await invoke('neo.work.cancel', { id: proposed.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { id: proposed.id, status: 'cancelled' } },
+    });
+    expect(await invoke('neo.work.cancel', { id: queued.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { id: queued.id, status: 'cancelled' } },
+    });
+    expect(interrupt).toHaveBeenCalledWith({ skipDeferredReplay: true });
+  });
+
+  test('cancel is idempotent for withdrawn work and rejects work that already ran', async () => {
+    const withdrawn = await propose();
+    expect(await invoke('neo.work.cancel', { id: withdrawn.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { status: 'cancelled' } },
+    });
+    const settled = service.repo.getWork(withdrawn.id)!;
+    expect(await invoke('neo.work.cancel', { id: withdrawn.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { status: 'cancelled', updatedAt: settled.updatedAt } },
+    });
+    const reported = await propose();
+    service.repo.transitionWork(reported.id, reported, { status: 'reported', report: 'Done.' });
+    expect(await invoke('neo.work.cancel', { id: reported.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringContaining('work_not_cancelable') },
+    });
+    const failed = await propose();
+    service.repo.transitionWork(failed.id, failed, { status: 'failed', report: 'Broke.' });
+    expect(await invoke('neo.work.cancel', { id: failed.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringContaining('work_not_cancelable') },
+    });
+    expect(await invoke('neo.work.cancel', { id: 'missing' })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'work_not_found' },
+    });
+    expect(service.repo.getWork(reported.id)?.status).toBe('reported');
+    expect(service.repo.getWork(failed.id)?.status).toBe('failed');
+  });
+
+  test('the proposing Neo session and the human can cancel; other sessions cannot', async () => {
+    const own = await propose();
+    const proposer: OperationCaller = {
+      source: 'mcp',
+      role: 'neo',
+      sessionId: own.originSessionId,
+    };
+    expect(
+      listOperationSummaries(createOperationRegistry(createNeoOperations(service)), proposer).map(
+        (item) => item.name
+      )
+    ).toContain('neo.work.cancel');
+    expect(await invoke('neo.work.cancel', { id: own.id }, proposer)).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { id: own.id, status: 'cancelled' } },
+    });
+    const work = await propose();
+    await invoke('neo.concern.save', concern);
+    const holder = await service.open(concern.id);
+    expect(
+      await invoke(
+        'neo.work.cancel',
+        { id: work.id },
+        { source: 'mcp', role: 'neo', sessionId: holder }
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can withdraw it.',
+      },
+    });
+    expect(
+      await invoke(
+        'neo.work.cancel',
+        { id: work.id },
+        {
+          source: 'mcp',
+          role: 'neo',
+          sessionId: 'impostor',
+        }
+      )
+    ).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'This operation belongs to Neo.' },
+    });
+    expect(service.repo.getWork(work.id)?.status).toBe('proposed');
+    expect(await invoke('neo.work.cancel', { id: work.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { id: work.id, status: 'cancelled' } },
+    });
+  });
+
+  test('cancelled work stops surfacing as pending while proposed work still needs a decision', async () => {
+    const root = await service.open(null);
+    const pending = service.repo.proposeWork({
+      id: 'pending-oldest',
+      requestKey: 'pending-oldest',
+      concernId: null,
+      originSessionId: root,
+      title: 'Still needs a decision',
+      instruction: 'Draft a plan.',
+    });
+    const withdrawn = service.repo.proposeWork({
+      id: 'withdrawn-oldest',
+      requestKey: 'withdrawn-oldest',
+      concernId: null,
+      originSessionId: root,
+      title: 'Withdrawn proposal',
+      instruction: 'Draft a plan.',
+    });
+    expect(await invoke('neo.work.cancel', { id: withdrawn.id })).toMatchObject({
+      kind: 'completed',
+      value: { ok: true, work: { status: 'cancelled' } },
+    });
+    sqlite.prepare('UPDATE neo_work SET created_at = 1 WHERE id = ?').run(pending.id);
+    sqlite.prepare('UPDATE neo_work SET created_at = 2 WHERE id = ?').run(withdrawn.id);
+    for (let index = 0; index < 50; index++) {
+      service.repo.proposeWork({
+        id: `recent-${index}`,
+        requestKey: `recent-${index}`,
+        concernId: null,
+        originSessionId: root,
+        title: 'Newer work',
+        instruction: 'Draft a plan.',
+      });
+    }
+    const snapshot = (await invoke('neo.snapshot')) as {
+      value: { work: Array<{ id: string }> };
+    };
+    expect(snapshot.value.work).toHaveLength(51);
+    expect(snapshot.value.work.some((item) => item.id === pending.id)).toBe(true);
+    expect(snapshot.value.work.some((item) => item.id === withdrawn.id)).toBe(false);
+  });
+
   test('query restriction removes coding tools, plugins, settings and extra MCP servers', () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };
     const options: Options = {

@@ -179,6 +179,22 @@ describe('Neo publication ledger', () => {
     expect(repo.list(input.conversationId)).toMatchObject([input]);
     expect(repo.list('bad-conversation')).toBeNull();
   });
+
+  test('an interim message is a normal publication but never stands in for the answer', () => {
+    const interim = { ...next(5), shortText: 'Checking that now.', interim: true as const };
+    const accepted = repo.append(interim);
+    expect(accepted).toMatchObject({ accepted: true, publication: interim });
+    expect(repo.list(input.conversationId)).toHaveLength(1);
+    expect(repo.findByProducer('avatar', 'internal-input')).toBeNull();
+    expect(repo.append(input).accepted).toBe(true);
+    expect(repo.list(input.conversationId)).toHaveLength(2);
+    expect(repo.findByProducer('avatar', 'internal-input')?.publicationId).toBe(
+      input.publicationId
+    );
+    expect(admitNeoPublication({ ...input, interim: false })).toEqual({
+      reason: 'invalid_publication',
+    });
+  });
 });
 
 describe('migration 288 publication durability', () => {

@@ -200,7 +200,7 @@ export function NeoComposer({
             ? 'Return adds a line · Tap the arrow to send'
             : 'Enter to send · Shift + Enter for a new line'
         }
-        class="w-full resize-none bg-transparent text-sm leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
+        class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-1">

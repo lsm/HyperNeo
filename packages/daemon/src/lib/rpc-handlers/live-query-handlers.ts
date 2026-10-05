@@ -38,6 +38,7 @@ export interface NamedQuery {
     params: ReadonlyArray<unknown>,
     db: BunDatabase
   ) => ((scope: TableChangeScope) => boolean) | undefined;
+  metadataScopeFilter?: (scope: TableChangeScope) => boolean;
   rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
@@ -3644,6 +3645,18 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
 
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+const BACKGROUND_TASK_METADATA_SOURCE_SUBTYPES: ReadonlySet<string> = new Set([
+  ...BACKGROUND_TASK_METADATA_SUBTYPES,
+  'task_progress',
+]);
+
+function mayChangeBackgroundTaskMetadata(scope: TableChangeScope): boolean {
+  if (scope.messageSubtype === undefined) return true;
+  return (
+    scope.messageSubtype !== null &&
+    BACKGROUND_TASK_METADATA_SOURCE_SUBTYPES.has(scope.messageSubtype)
+  );
+}
 const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
@@ -3701,6 +3714,16 @@ recent_progress AS (
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
+terminal_task_ids AS MATERIALIZED (
+  SELECT DISTINCT COALESCE(
+    CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+    task_id
+  ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_notification'
+),
 recent_task_ids AS (
   SELECT DISTINCT candidate.task_id
   FROM (
@@ -3709,16 +3732,8 @@ recent_task_ids AS (
     SELECT task_id FROM recent_progress
   ) candidate
   WHERE candidate.task_id IS NOT NULL AND candidate.task_id != ''
-    AND NOT EXISTS (
-      SELECT 1
-      FROM sdk_messages terminal
-      WHERE terminal.session_id = ?
-        AND terminal.parent_tool_use_id IS NULL
-        AND terminal.message_subtype_norm = 'task_notification'
-        AND COALESCE(
-          CASE WHEN json_valid(terminal.sdk_message) THEN json_extract(terminal.sdk_message, '$.task_id') END,
-          terminal.task_id
-        ) = candidate.task_id
+    AND candidate.task_id NOT IN (
+      SELECT task_id FROM terminal_task_ids WHERE task_id IS NOT NULL
     )
 ),
 task_starts AS (
@@ -4358,6 +4373,7 @@ export function setupLiveQueryHandlers(
   const stmtBackgroundTaskMetadata = db.prepare(BACKGROUND_TASK_METADATA_SQL);
   activeRegistry.set('messages.bySession', {
     ...messagesBySessionBase,
+    metadataScopeFilter: mayChangeBackgroundTaskMetadata,
     mapResult: (_rawRows, params) => {
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
@@ -4680,6 +4696,7 @@ export function setupLiveQueryHandlers(
         debounceMs: namedQuery.debounceMs,
         getMetadata: namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+        metadataScopeFilter: namedQuery.metadataScopeFilter,
         rowFingerprint: namedQuery.rowFingerprint,
       }
     );

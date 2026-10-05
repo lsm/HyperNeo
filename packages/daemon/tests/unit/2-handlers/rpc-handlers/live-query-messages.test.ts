@@ -645,6 +645,51 @@ describe('messages.bySession — SQL behavior', () => {
     expect(metadata.backgroundTaskMessages.at(-1)?.id).toBe('task-updated-300');
   });
 
+  test('leaves out the starts of finished tasks once metadata is capped, checking finishes once', () => {
+    const system = (id: string, subtype: string, taskId: string, at: string) =>
+      insertSdkMessage(db, {
+        id,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `${id}-uuid`,
+          session_id: 's1',
+          task_id: taskId,
+        },
+        timestamp: at,
+      });
+    system('done-started', 'task_started', 'task-done', '2024-01-01 00:00:01');
+    system('live-started', 'task_started', 'task-live', '2024-01-01 00:00:02');
+    system('done-finished', 'task_notification', 'task-done', '2024-01-01 00:00:03');
+    for (let i = 0; i < 301; i++) {
+      for (const taskId of ['task-done', 'task-live'])
+        system(
+          `${taskId}-updated-${i}`,
+          'task_updated',
+          taskId,
+          new Date(Date.UTC(2024, 0, 1, 0, 1, i)).toISOString()
+        );
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const ids = (
+      snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> }
+    ).backgroundTaskMessages.map((message) => message.id);
+    expect(ids).toContain('live-started');
+    expect(ids).not.toContain('done-started');
+    const plan = (
+      db
+        .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
+        .all('s1', 's1', 's1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>
+    )
+      .map((row) => row.detail)
+      .join('\n');
+    expect(plan).not.toContain('CORRELATED');
+  });
+
   test('matches LiveQuery task starts by SDK task id before session task id', () => {
     insertSdkMessage(db, {
       id: 'old-task-started',
@@ -1444,6 +1489,60 @@ describe('messages.bySession — transcript reconciliation', () => {
     ]);
     expect(JSON.stringify(trace.mock.calls)).not.toContain('the answer');
     trace.mockRestore();
+    cleanup();
+    engine.dispose();
+  });
+
+  test('background task metadata is only re-queried for background-task message writes', async () => {
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const setup = createMockHub();
+    const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+
+    await setup.subscribe('s1', 100);
+    expect(setup.sentMessages[0].message.data.metadata).toEqual({ backgroundTaskMessages: [] });
+
+    insertSdkMessage(db, {
+      id: 'm-assistant',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: { type: 'assistant', uuid: 'u-assistant', message: { content: [] } },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    insertSdkMessage(db, {
+      id: 'm-started-unnotified',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: { type: 'system', subtype: 'task_started', uuid: 'u-hidden', task_id: 'bg-0' },
+      timestamp: '2024-01-01 00:00:03',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1', messageSubtype: null });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const rowDelta = setup.sentMessages.at(-1)!.message;
+    expect(rowDelta.method).toBe('liveQuery.delta');
+    expect(rowDelta.data.metadata).toBeUndefined();
+
+    insertSdkMessage(db, {
+      id: 'm-started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: { type: 'system', subtype: 'task_started', uuid: 'u-started', task_id: 'bg-1' },
+      timestamp: '2024-01-01 00:00:04',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1', messageSubtype: 'task_started' });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const metadataDelta = setup.sentMessages.at(-1)!.message;
+    const metadata = metadataDelta.data.metadata as {
+      backgroundTaskMessages: Array<{ id: string }>;
+    };
+    expect(metadata.backgroundTaskMessages.map((row) => row.id).sort()).toEqual([
+      'm-started',
+      'm-started-unnotified',
+    ]);
     cleanup();
     engine.dispose();
   });

@@ -207,7 +207,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           askOrigin: proof.ask,
           producerInput: proof.input,
         };
-        return runtime.append(input, proof.turn.consultationId);
+        return runtime.append(input, draft.interim ? undefined : proof.turn.consultationId);
       },
       ['draft', 'publication'],
       'publication'
@@ -230,7 +230,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
+      'Publish an explicitly authored short reply, full details and labelled Neo scene references from this live avatar input. Runtime supplies original human ask and producer attribution. Reuse publicationId only for identical retries; do not publish internal compaction or tool chatter. Set interim:true on a message sent before the answer while you are still working on it; the answer itself omits interim. Scene refs must exist and work/consultation links must belong to this ask. No model summarization or execution is performed.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([

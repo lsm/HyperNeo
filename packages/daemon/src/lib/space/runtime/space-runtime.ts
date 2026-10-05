@@ -747,6 +747,8 @@ export class SpaceRuntime {
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickInFlight = false;
+  private tickActiveSpaces: { spaces: Promise<import('@hyperneo/shared').Space[]> | null } | null =
+    null;
   private lastGlobalCyclePruneAt = 0;
 
   private internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
@@ -3200,7 +3202,19 @@ export class SpaceRuntime {
     }
   }
 
-  private async listActiveSpaces(): Promise<import('@hyperneo/shared').Space[]> {
+  private listActiveSpaces(): Promise<import('@hyperneo/shared').Space[]> {
+    const tick = this.tickActiveSpaces;
+    if (!tick) return this.fetchActiveSpaces();
+    if (!tick.spaces) {
+      tick.spaces = this.fetchActiveSpaces();
+      tick.spaces.catch(() => {
+        tick.spaces = null;
+      });
+    }
+    return tick.spaces;
+  }
+
+  private async fetchActiveSpaces(): Promise<import('@hyperneo/shared').Space[]> {
     const spaces = await this.config.spaceManager.listSpaces(false);
     return spaces.filter((s) => !s.paused && !s.stopped);
   }
@@ -4079,6 +4093,7 @@ export class SpaceRuntime {
         this.redispatchRetainedExternalEvents();
       }
 
+      this.tickActiveSpaces = { spaces: null };
       let activationError: unknown = null;
       const failedActivationSpaceIds = new Set<string>();
       try {
@@ -4109,6 +4124,7 @@ export class SpaceRuntime {
       this.pruneDigestHandoffDebt();
     } finally {
       this.tickInFlight = false;
+      this.tickActiveSpaces = null;
       if (rehydrating && !rehydratedGateSettled) {
         const pending = this.currentReconciliation;
         if (pending && !pending.settled) {
@@ -8575,10 +8591,14 @@ export class SpaceRuntime {
     const attempts = new DirectTaskExecutionRepository(this.config.db);
     const now = Date.now();
     for (const space of await this.listActiveSpaces()) {
-      const evidence = this.config.taskRepo
+      const inProgress = this.config.taskRepo
         .listBySpace(space.id, false)
-        .filter((task) => task.status === 'in_progress')
-        .map((task) => ({ task, hasDirectAttempt: !!attempts.getActive(task.id) }));
+        .filter((task) => task.status === 'in_progress');
+      const withDirectAttempt = attempts.getActiveTaskIds(inProgress.map((task) => task.id));
+      const evidence = inProgress.map((task) => ({
+        task,
+        hasDirectAttempt: withDirectAttempt.has(task.id),
+      }));
       for (const task of selectOrphanedInProgressTasks(evidence, now)) {
         const reopened = this.config.taskRepo.updateTask(
           task.id,

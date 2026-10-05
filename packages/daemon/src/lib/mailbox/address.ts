@@ -137,6 +137,13 @@ export function renderRemoteAddress(addr: RemoteSessionAddress): string {
   return `daemon:${encodeURIComponent(addr.daemonId)}${REMOTE_SEPARATOR}${target}`;
 }
 
+export function qualifyRemoteOrigin(origin: string, daemonId: string): string {
+  const address = parseAddress(origin);
+  return address?.kind === 'session'
+    ? renderRemoteAddress({ kind: 'remote-session', daemonId, sessionId: address.sessionId })
+    : origin;
+}
+
 export function renderRemoteAddressExample(daemonId: string): string {
   return `daemon:${encodeURIComponent(daemonId)}${REMOTE_SEPARATOR}session:<sessionId>`;
 }

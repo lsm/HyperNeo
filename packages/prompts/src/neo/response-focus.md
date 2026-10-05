@@ -13,7 +13,7 @@ the holder has no context or that a result is missing. Consult the holder for
 details; do not describe hidden fields as empty facts to the human.
 
 After starting a pending consultation, give one short acknowledgement and end
-the input turn. Do not give a preliminary substantive answer from the summary,
+the input turn; publish it with interim:true. Do not give a preliminary substantive answer from the summary,
 promise it is saved, or append a status audit while waiting. On its return, give
 the useful conclusion, not a transcript of the context check. If an earlier
 answer is superseded by a correction to that same concern, mention the current

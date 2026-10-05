@@ -9,6 +9,7 @@ import type {
   NeoBinding,
   NeoConsultation,
   NeoConsultationWaiter,
+  NeoWork,
 } from '@hyperneo/shared/types/neo-context';
 import {
   requireNeoWorkTargetSession,
@@ -41,6 +42,8 @@ import {
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
+import { NeoDriverTargetSchema, type NeoDriverTarget } from './driver-work.ts';
+import { WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 
 const Concern = z.object({
@@ -125,6 +128,18 @@ const Snapshot = z.union([
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
       .optional(),
+    workDrivers: z
+      .array(
+        z.object({
+          workId: z.string(),
+          adapter: z.string(),
+          daemon: z.string().nullable(),
+          status: WorkStatusSchema.nullable(),
+          link: z.string().nullable(),
+        })
+      )
+      .max(100)
+      .optional(),
     askOrigins: z
       .array(
         z.object({
@@ -158,6 +173,7 @@ const Propose = z.object({
       sessionId: z.string().min(1).max(160),
     })
     .optional(),
+  work: NeoDriverTargetSchema.optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -217,10 +233,17 @@ export function requireNeoConsultationReceipt(
 }
 
 export function requireNeoExecutionChoice(
-  input: { targetSessionId?: string | null },
+  input: { targetSessionId?: string | null; work?: NeoDriverTarget },
   caller: OperationCaller
 ): { value: OperationCaller } | { reason: Rejection } {
-  return caller.source !== 'mcp' || input.targetSessionId !== undefined
+  if (input.work && (input.targetSessionId || (input as { targetAgent?: unknown }).targetAgent))
+    return {
+      reason: {
+        ok: false,
+        reason: 'Choose either work (a work.find place or ref) or targetSessionId, not both.',
+      },
+    };
+  return caller.source !== 'mcp' || input.targetSessionId !== undefined || input.work
     ? { value: caller }
     : {
         reason: {
@@ -229,6 +252,27 @@ export function requireNeoExecutionChoice(
             'Choose targetSessionId explicitly: use the exact existing chat ID to reuse it, or null for genuinely self-contained scratch work. An instruction mentioning a chat does not bind its execution target. Inspect operations.describe for neo.work.propose, then retry.',
         },
       };
+}
+
+export function requireNeoWorkCancellation(
+  work: NeoWork,
+  caller: OperationCaller
+): { value: NeoWork } | { reason: Rejection } {
+  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId)
+    return {
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can withdraw it.',
+      },
+    };
+  if (work.status === 'proposed' || work.status === 'queued' || work.status === 'cancelled')
+    return { value: work };
+  return {
+    reason: {
+      ok: false,
+      reason: `work_not_cancelable: this work already ${work.status}; stop it through the owning runtime (session interrupt or Space task cancel)`,
+    },
+  };
 }
 
 export function admitNeoCaller(
@@ -269,7 +313,7 @@ export function admitNeoCaller(
     )
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
-  if (['neo.open', 'neo.work.cancel', 'neo.concern.cancel'].includes(name))
+  if (['neo.open', 'neo.concern.cancel'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -323,6 +367,7 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
+      workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
@@ -611,6 +656,26 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
+        if (input.work) {
+          const proposed = service.driverTargets.propose(
+            service.repo,
+            {
+              ...input,
+              ...origin,
+              requestKey: `${origin.originSessionId}:${input.requestKey}`,
+              id: target.id,
+            },
+            input.work
+          );
+          return JSON.stringify(proposed.target) === JSON.stringify(input.work)
+            ? requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null })
+            : {
+                reason: {
+                  ok: false,
+                  reason: 'This request key belongs to another execution target.',
+                },
+              };
+        }
         const receipt = service.agentTargets.propose(
           service.repo,
           {
@@ -621,6 +686,13 @@ export function createNeoOperations(service: NeoService) {
           },
           target.agent
         );
+        if (service.driverTargets.get(receipt.work.id))
+          return {
+            reason: {
+              ok: false,
+              reason: 'This request key belongs to another execution target.',
+            },
+          };
         return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
@@ -650,9 +722,12 @@ export function createNeoOperations(service: NeoService) {
   const cancel = path(
     'neo.work.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }) => {
-      if (!service.repo.getWork(id)) return { ok: false as const, reason: 'Work not found.' };
-      await service.cancel(id);
+    async ({ id }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      const admission = requireNeoWorkCancellation(work, caller);
+      if ('reason' in admission) return admission.reason;
+      if (work.status !== 'cancelled') await service.cancel(id);
       return { ok: true as const, work: service.repo.getWork(id)! };
     }
   );
@@ -718,7 +793,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
+        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -746,10 +821,11 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.work.cancel',
-      description: 'Cancel a proposal or interrupt its execution.',
+      description:
+        'Withdraw work before it finishes: proposed or queued work becomes cancelled, disappears from pending surfaces, and its Neo-owned execution session is interrupted. The Neo session that proposed the work or the human can cancel. Retrying on already-cancelled work succeeds without another write. Work that already reported or failed rejects with work_not_cancelable; stop live execution through the owning runtime (session interrupt or Space task cancel) instead.',
       inputSchema: WorkId,
       resultSchema: WorkResult,
-      policy: { safetyClass: 'human_only' },
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: cancel,
     }),
   ];

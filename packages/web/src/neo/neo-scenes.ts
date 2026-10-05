@@ -1,7 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoConcernBoard } from './neo-concern-board.ts';
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { requireNeoQuestionOrigin, requireNeoQuestionWork } from './work-question.ts';
+import { neoWorkDriverLabel } from './work-driver.ts';
 
 type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
 type NeoWorkReceipt = Extract<NeoBoardReceipt, { kind: 'work' }>;
@@ -31,6 +33,7 @@ export type NeoSceneGroups = {
 export type NeoSceneSelection = { value: NeoScene } | { reason: 'unknown_scene' };
 export type NeoSceneQuestions = ReadonlyMap<string, PendingUserQuestion>;
 export type NeoSceneUnavailableSessions = ReadonlyMap<string, string>;
+export type NeoSceneDrivers = ReadonlyMap<string, NeoWorkDriverReceipt>;
 type SceneTruth = { group: NeoSceneGroup; label: string };
 
 const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
@@ -88,6 +91,21 @@ export function promoteNeoQuestionScenes(
   questions: NeoSceneQuestions
 ): NeoScene[] {
   return scenes.map((scene) => promoteNeoQuestionScene(scene, questions.get(scene.ref.id)));
+}
+
+export function describeNeoDriverScenes(
+  scenes: readonly NeoScene[],
+  drivers: NeoSceneDrivers
+): NeoScene[] {
+  return scenes.map((scene) => {
+    const driver = drivers.get(scene.ref.id);
+    if (scene.receipt.kind !== 'work' || scene.receipt.status !== 'queued' || !driver) return scene;
+    return {
+      ...scene,
+      group: driver.status === 'needs_you' ? 'attention' : scene.group,
+      label: neoWorkDriverLabel(driver),
+    };
+  });
 }
 
 function promoteNeoUnavailableScenes(
@@ -149,23 +167,26 @@ export function hideNeoInternalReceipts(receipts: readonly NeoBoardReceipt[]): N
 }
 
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
-  .input(['board', 'questions', 'unavailableSessions'])
+  .input(['board', 'questions', 'unavailableSessions', 'drivers'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
   .pipe(hideNeoInternalReceipts, 'scenes', 'visible')
   .pipe(classifyNeoScenes, 'visible', 'classified')
-  .pipe(promoteNeoQuestionScenes, ['classified', 'questions'], 'promoted')
+  .pipe(describeNeoDriverScenes, ['classified', 'drivers'], 'described')
+  .pipe(promoteNeoQuestionScenes, ['described', 'questions'], 'promoted')
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
   .pipe(groupNeoScenes, 'observed', 'scenes')
   .end('scenes') as (
   board: NeoConcernBoard | null,
   questions: NeoSceneQuestions,
-  unavailableSessions: NeoSceneUnavailableSessions
+  unavailableSessions: NeoSceneUnavailableSessions,
+  drivers: NeoSceneDrivers
 ) => NeoSceneGroups | null;
 
 export function projectNeoScenes(
   board: NeoConcernBoard | null,
   questions: NeoSceneQuestions = new Map(),
-  unavailableSessions: NeoSceneUnavailableSessions = new Map()
+  unavailableSessions: NeoSceneUnavailableSessions = new Map(),
+  drivers: NeoSceneDrivers = new Map()
 ): NeoSceneGroups | null {
-  return projectScenes(board, questions, unavailableSessions);
+  return projectScenes(board, questions, unavailableSessions, drivers);
 }

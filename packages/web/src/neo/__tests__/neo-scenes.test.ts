@@ -3,13 +3,14 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoSnapshot, NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
 import { type NeoConcernBoard, projectNeoConcernBoard } from '../neo-concern-board.ts';
 import {
   admitNeoSceneReceipts,
   classifyNeoScene,
   classifyNeoScenes,
+  describeNeoDriverScenes,
   groupNeoScenes,
   type NeoSceneRef,
   projectNeoScenes,
@@ -263,5 +264,36 @@ describe('selectNeoScene', () => {
       selectNeoScene(scenes, null),
       selectNeoScene(null, { kind: 'work', id: 'w-queued' }),
     ]).toEqual([unknown, unknown, unknown, unknown]);
+  });
+});
+
+describe('describeNeoDriverScenes', () => {
+  const driver: NeoWorkDriverReceipt = {
+    workId: 'w',
+    adapter: 'codex-desktop',
+    daemon: 'laptop',
+    status: 'needs_you',
+    link: 'codex://threads/t1',
+  };
+
+  it('names where queued work went and raises it when it needs the user', () => {
+    const scenes = classifyNeoScenes([
+      { kind: 'work', ...work('w', 'queued', 1) },
+      { kind: 'work', ...work('r', 'queued', 2) },
+      { kind: 'work', ...work('done', 'reported', 3) },
+    ] as NeoBoardReceipt[]);
+    const described = describeNeoDriverScenes(
+      scenes,
+      new Map([
+        ['w', driver],
+        ['r', { ...driver, workId: 'r', status: 'running' }],
+        ['done', { ...driver, workId: 'done', status: 'done' }],
+      ])
+    );
+    expect(described.map((scene) => [scene.ref.id, scene.group, scene.label])).toEqual([
+      ['w', 'attention', 'Needs you in Codex Desktop on laptop'],
+      ['r', 'running', 'Running in Codex Desktop on laptop'],
+      ['done', 'outcomes', 'Response ready'],
+    ]);
   });
 });

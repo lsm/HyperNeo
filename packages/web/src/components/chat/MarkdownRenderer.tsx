@@ -4,6 +4,7 @@ import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
+import { LruCache } from '../../lib/lru-cache.ts';
 
 interface MarkdownRendererProps {
   content: string;
@@ -22,6 +23,10 @@ type MarkdownModules = {
 
 type RehypeHighlight = typeof import('rehype-highlight').default;
 type RehypeKatex = typeof import('rehype-katex').default;
+
+const RENDERED_MARKDOWN_CACHE_LIMIT = 200;
+const renderedMarkdownCache = new LruCache<string, string>(RENDERED_MARKDOWN_CACHE_LIMIT);
+const markdownProcessors = new Map<string, Promise<MarkdownProcessor>>();
 
 let markdownModulesPromise: Promise<MarkdownModules> | null = null;
 let rehypeHighlightPromise: Promise<RehypeHighlight> | null = null;
@@ -1078,17 +1083,12 @@ function openImageAtFullSize(src: string, owner: unknown) {
   window.open(src, '_blank', 'noopener,noreferrer');
 }
 
-async function renderMarkdown(content: string) {
+type MarkdownProcessor = Awaited<ReturnType<typeof buildMarkdownProcessor>>;
+
+async function buildMarkdownProcessor(shouldRenderMath: boolean, shouldHighlightCode: boolean) {
   const modules = await getMarkdownModules();
-  const escapedContent = escapeRawHtmlBlocks(content);
-  const shouldRenderMath = hasMath(content);
-  const shouldHighlightCode = hasCodeBlock(escapedContent);
   const rehypeKatex = shouldRenderMath ? await getRehypeKatex() : null;
   const rehypeHighlight = shouldHighlightCode ? await getRehypeHighlight() : null;
-
-  if (shouldRenderMath) {
-    loadKatexCss().catch(() => undefined);
-  }
 
   const processor = modules
     .unified()
@@ -1107,18 +1107,51 @@ async function renderMarkdown(content: string) {
     processor.use(rehypeHighlight, { detect: true, ignoreMissing: true, plainText: ['mermaid'] });
   }
 
-  const file = await processor.use(modules.rehypeStringify).process(escapedContent);
+  return processor.use(modules.rehypeStringify).freeze();
+}
+
+function getMarkdownProcessor(shouldRenderMath: boolean, shouldHighlightCode: boolean) {
+  const key = `${shouldRenderMath}:${shouldHighlightCode}`;
+  let processor = markdownProcessors.get(key);
+  if (!processor) {
+    processor = buildMarkdownProcessor(shouldRenderMath, shouldHighlightCode);
+    processor.catch(() => markdownProcessors.delete(key));
+    markdownProcessors.set(key, processor);
+  }
+  return processor;
+}
+
+async function renderMarkdown(content: string) {
+  const cached = renderedMarkdownCache.get(content);
+  if (cached !== undefined) return cached;
+
+  const escapedContent = escapeRawHtmlBlocks(content);
+  const shouldRenderMath = hasMath(content);
+  const shouldHighlightCode = hasCodeBlock(escapedContent);
+
+  if (shouldRenderMath) {
+    loadKatexCss().catch(() => undefined);
+  }
+
+  const processor = await getMarkdownProcessor(shouldRenderMath, shouldHighlightCode);
+  const file = await processor.process(escapedContent);
   const htmlStr = String(file).replace(/(^|>[^<]*)-->([^<]*<|$)/g, '$1--&gt;$2');
+  renderedMarkdownCache.set(content, htmlStr);
   return htmlStr;
 }
 
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayOwner = useRef({});
-  const [html, setHtml] = useState<string | null>(null);
+  const [html, setHtml] = useState<string | null>(() => renderedMarkdownCache.get(content) ?? null);
   const theme = resolvedTheme.value;
 
   useEffect(() => {
+    const cached = renderedMarkdownCache.get(content);
+    if (cached !== undefined) {
+      setHtml(cached);
+      return;
+    }
     let cancelled = false;
     const rafId = requestAnimationFrame(() => {
       renderMarkdown(content)

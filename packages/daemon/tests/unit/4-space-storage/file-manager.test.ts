@@ -247,6 +247,45 @@ describe('FileManager (Unit)', () => {
       const files = await fileManager.listDirectory('subdir/');
       expect(files.length).toBe(2);
     });
+
+    it('keeps directory mtime and every entry when listing recursively', async () => {
+      const files = await fileManager.listDirectory('.', true);
+
+      const subdir = files.find((f) => f.path === 'subdir');
+      expect(subdir?.type).toBe('directory');
+      expect(subdir?.size).toBeUndefined();
+      expect(typeof subdir?.mtime).toBe('string');
+      const nested = files.find((f) => f.path === join('subdir', 'nested.txt'));
+      expect(nested?.size).toBe('nested'.length);
+      expect(files.map((f) => f.path).sort()).toEqual(
+        [
+          'alpha.txt',
+          'beta.md',
+          'emptydir',
+          'gamma',
+          'subdir',
+          join('subdir', 'deep.txt'),
+          join('subdir', 'nested.txt'),
+        ].sort()
+      );
+    });
+
+    it('stats many entries concurrently and keeps each size on its own entry', async () => {
+      await mkdir(join(testWorkspace, 'wide'), { recursive: true });
+      for (let i = 0; i < 40; i++) {
+        await writeFile(
+          join(testWorkspace, 'wide', `f${String(i).padStart(2, '0')}.txt`),
+          'x'.repeat(i)
+        );
+      }
+
+      const files = await fileManager.listDirectory('wide');
+
+      expect(files.map((f) => f.name)).toEqual(
+        Array.from({ length: 40 }, (_, i) => `f${String(i).padStart(2, '0')}.txt`)
+      );
+      expect(files.map((f) => f.size)).toEqual(Array.from({ length: 40 }, (_, i) => i));
+    });
   });
 
   describe('getFileTree', () => {
@@ -273,6 +312,20 @@ describe('FileManager (Unit)', () => {
       expect(tree.type).toBe('file');
       expect(tree.name).toBe('file1.txt');
       expect(tree.children).toBeUndefined();
+    });
+
+    it('names and paths nested directories by their relative path', async () => {
+      const tree = await fileManager.getFileTree('.');
+
+      const dir1 = tree.children!.find((c) => c.name === 'dir1')!;
+      expect(dir1.path).toBe('dir1');
+      expect(dir1.children!.map((c) => [c.name, c.path, c.type])).toEqual([
+        ['subdir', join('dir1', 'subdir'), 'directory'],
+        ['file.txt', join('dir1', 'file.txt'), 'file'],
+      ]);
+      expect(dir1.children![0].children).toEqual([
+        { name: 'nested.txt', path: join('dir1', 'subdir', 'nested.txt'), type: 'file' },
+      ]);
     });
 
     it('should respect max depth', async () => {

@@ -8,6 +8,7 @@ import type {
   WorkflowNodeAgent,
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
@@ -423,7 +424,7 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
       : to;
     updateChannels([
       ...channels,
-      { id: crypto.randomUUID(), from, to: toValue, label: label || undefined },
+      { id: generateUUID(), from, to: toValue, label: label || undefined },
     ]);
   }
 
