@@ -150,6 +150,7 @@ import {
 } from './lib/process-watchdog.ts';
 import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
+import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -525,6 +526,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       return Math.min(MAX_GITHUB_POLLING_INTERVAL_SECONDS, Math.max(0, Math.trunc(value)));
     };
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
+    remoteDaemons.restore(
+      settingsManager.getGlobalSettings().attachedDaemons ?? [],
+      (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons })
+    );
 
     for (const record of db.providers.listProviders()) {
       if (record.kind === 'built_in' && record.isEnabled === false) {

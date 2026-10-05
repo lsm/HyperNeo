@@ -132,7 +132,7 @@ export function createListDaemonsOperation(registry: RemoteDaemonRegistry) {
     name: 'daemon.list',
     policy: { safetyClass: 'human_only' },
     description:
-      'List the remote HyperNeo daemons currently attached to this daemon, with the address prefix each one answers to. Only a caller on the RPC door may list them; agent callers are rejected. The list lives in memory and is empty again after this daemon process restarts.',
+      'List the remote HyperNeo daemons currently attached to this daemon, with the address prefix each one answers to. Only a caller on the RPC door may list them; agent callers are rejected. The list is saved in global settings and restored when this daemon process restarts.',
     inputSchema: ListDaemonsInputSchema,
     resultSchema: ListDaemonsResultSchema,
     execute: (input, caller) => runListDaemons(input, caller, registry),

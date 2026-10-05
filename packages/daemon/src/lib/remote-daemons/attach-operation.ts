@@ -74,7 +74,7 @@ export function createAttachDaemonOperation(registry: RemoteDaemonRegistry) {
     name: 'daemon.attach',
     policy: { safetyClass: 'human_only' },
     description:
-      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a caller on the RPC door can attach a daemon; agent callers are rejected. The attachment lives in memory for the life of this daemon process and is replaced when the same id is attached again. No connection is opened until the first forwarded call.',
+      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a caller on the RPC door can attach a daemon; agent callers are rejected. The attachment is saved in global settings, restored when this daemon process restarts, and replaced when the same id is attached again. No connection is opened until the first forwarded call.',
     inputSchema: AttachDaemonInputSchema,
     resultSchema: AttachDaemonResultSchema,
     execute: (input, caller) => runAttachDaemon(input, caller, registry),

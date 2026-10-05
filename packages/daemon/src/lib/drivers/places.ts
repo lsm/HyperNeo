@@ -1,4 +1,4 @@
-import type { Place, PlaceGroup } from './types.ts';
+import type { Place, PlaceGroup, WorkSummary } from './types.ts';
 
 export function placeKey(place: Place): string {
   const where = place.folder ?? (place.spaceId ? `space:${place.spaceId}` : `chats`);
@@ -35,6 +35,11 @@ export function mergePlaceGroups(groups: readonly PlaceGroup[], limit: number): 
 export function stampDaemon(groups: readonly PlaceGroup[], daemon: string): PlaceGroup[] {
   return groups.map((group) => ({
     ...group,
-    work: group.work.map((work) => ({ ...work, ref: { ...work.ref, daemon } })),
+    place: { ...group.place, daemon },
+    work: group.work.map((work) => stampWork(work, daemon)),
   }));
+}
+
+export function stampWork<Work extends WorkSummary>(work: Work, daemon: string): Work {
+  return { ...work, ref: { ...work.ref, daemon }, place: { ...work.place, daemon } };
 }
