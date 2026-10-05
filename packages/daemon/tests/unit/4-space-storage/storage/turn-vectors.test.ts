@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { embedPendingTurns } from '../../../../src/lib/drivers/turn-embedding';
 import { runMigration297 } from '../../../../src/storage/schema/m297-message-search-vectors';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readPendingTurns, saveTurnVector } from '../../../../src/storage/turn-vectors';
+import { readPendingTurns } from '../../../../src/storage/turn-vectors';
 
 describe('embedPendingTurns', () => {
   let db: Database;
@@ -59,9 +59,20 @@ describe('embedPendingTurns', () => {
     expect(readPendingTurns(db, 'test-model', 3, 10).map((turn) => turn.id)).toEqual([6]);
   });
 
-  test('does not save a vector for a turn whose text changed under the same id', () => {
-    saveTurnVector(db, { id: 4, bodyLength: 5 }, 'test-model', Float32Array.from([1, 0, 0]), 1);
-    expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_vectors`).get()).toEqual({ n: 0 });
+  test('does not save a vector for a turn whose text changed under the same id', async () => {
+    const changing = {
+      ...embedder,
+      embedPassage: async (text: string) => {
+        db.exec(
+          `UPDATE message_search_content SET body = 'rewritten while embedding' WHERE id = 4`
+        );
+        return [text.length, 1, 0];
+      },
+    };
+    await embedPendingTurns(db, changing);
+    expect(
+      db.prepare(`SELECT content_id FROM message_search_vectors ORDER BY content_id`).all()
+    ).toEqual([{ content_id: 1 }]);
   });
 
   test('re-embeds turns from another model and drops vectors with their turn', async () => {
