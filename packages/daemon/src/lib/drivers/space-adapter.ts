@@ -14,6 +14,7 @@ import type {
   WorkSummary,
 } from './types.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { hyperneoWorkStatus } from './hyperneo-adapter.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
@@ -143,9 +144,8 @@ export function spaceAgentWorkStatus(
   agent: Pick<SpaceAgentRow, 'status' | 'processing'>
 ): WorkStatus {
   if (agent.status === 'archived' || agent.status === 'disabled') return 'stopped';
-  if (agent.status === 'paused' || agent.processing === 'waiting_for_input') return 'needs_you';
-  if (agent.processing === 'processing') return 'running';
-  return agent.processing === 'queued' ? 'queued' : 'done';
+  if (agent.status === 'paused') return 'needs_you';
+  return hyperneoWorkStatus('active', agent.processing);
 }
 
 export function readSpaceAgents(
@@ -172,7 +172,7 @@ function toAgentWork(agent: SpaceAgentRow, spaceName: string, machine: string): 
     place: { machine, spaceId: agent.spaceId, name: spaceName },
     status: spaceAgentWorkStatus(agent),
     lastActivityAt: agent.updatedAt,
-    link: `/space/${agent.spaceId}/agent/${agent.id}`,
+    link: `/space/${agent.spaceId}/agent/${agent.handle}`,
   };
 }
 

@@ -3,8 +3,22 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   buildSpaceGroups,
   createSpaceAdapter,
+  spaceAgentWorkStatus,
   spaceTaskWorkStatus,
 } from '../../../../src/lib/drivers/space-adapter';
+
+describe('spaceAgentWorkStatus', () => {
+  test('reads closed and paused agents first, then the session like a HyperNeo chat', () => {
+    expect(spaceAgentWorkStatus({ status: 'archived', processing: 'processing' })).toBe('stopped');
+    expect(spaceAgentWorkStatus({ status: 'paused', processing: null })).toBe('needs_you');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'processing' })).toBe('running');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'rate_limit_cooldown' })).toBe(
+      'queued'
+    );
+    expect(spaceAgentWorkStatus({ status: 'active', processing: 'interrupted' })).toBe('stopped');
+    expect(spaceAgentWorkStatus({ status: 'active', processing: null })).toBe('done');
+  });
+});
 
 describe('spaceTaskWorkStatus', () => {
   test.each([
@@ -196,7 +210,7 @@ describe('space adapter against the space tables', () => {
         place: { machine: 'imac', spaceId: 'sp1', name: 'dev-neokai' },
         status: 'stopped',
         lastActivityAt: 50,
-        link: '/space/sp1/agent/a3',
+        link: '/space/sp1/agent/old',
       },
     });
     expect(await adapter.status?.({ adapter: 'space', id: 'agent:nope' })).toMatchObject({
