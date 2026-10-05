@@ -72,6 +72,9 @@ function claudeDesktopAdapters(): WorkAdapter[] {
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       spawn: spawnProcess,
       folderExists: existsSync,
+      newId: () => crypto.randomUUID(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: Date.now,
     }),
   ];
 }
