@@ -12,6 +12,11 @@ import {
   recoverNeoConsultations,
   scheduleConsultationRecovery,
 } from '../neo/consultation-recovery.ts';
+import {
+  NEO_DRIVER_REFRESH,
+  refreshNeoDriverWork,
+  scheduleDriverRefresh,
+} from '../neo/driver-refresh.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1637,6 +1642,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     recoverNeoConsultations(deps.jobQueue, neoService)
   );
   scheduleConsultationRecovery(deps.jobQueue);
+  deps.jobProcessor.register(NEO_DRIVER_REFRESH, () =>
+    refreshNeoDriverWork(deps.jobQueue, neoService)
+  );
+  scheduleDriverRefresh(deps.jobQueue);
 
   return {
     cleanup: async () => {

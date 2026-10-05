@@ -36,6 +36,7 @@ import {
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverSettlement,
 } from './driver-work.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -452,7 +453,7 @@ export class NeoService {
     );
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
-      this.driverTargets.recordRef(queued.id, result.ref);
+      this.driverTargets.recordRef(queued.id, result.ref, result.startedAt);
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
@@ -499,6 +500,38 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
+  }
+
+  async refreshDriverWork(): Promise<void> {
+    for (const work of this.repo.listWork()) {
+      if (work.status !== 'queued' || this.driverTargets.get(work.id)?.verb !== 'start') continue;
+      const ref = this.driverTargets.readRef(work.id);
+      if (!ref) continue;
+      await this.settleDriverWork(work, ref).catch((error) =>
+        this.log.warn('Driver work refresh pending', error)
+      );
+    }
+  }
+
+  private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
+    const outcome = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.status',
+      { ref },
+      driverWorkCaller(work)
+    );
+    const settled = readDriverSettlement(
+      work,
+      outcome,
+      Date.now(),
+      this.driverTargets.readStartedAt(work.id)
+    );
+    if (!settled) return;
+    const done = this.repo.transitionWork(work.id, work, {
+      status: settled.status,
+      report: settled.report.slice(0, 12000),
+    });
+    if (done) await this.returnReport(done);
   }
 
   async recoverConsultations(): Promise<void> {
@@ -569,7 +602,12 @@ export class NeoService {
 
   async reconcile(id: string): Promise<void> {
     let work = this.repo.getWork(id);
-    if (!work?.sessionId || work.status === 'cancelled' || work.status === 'proposed') return;
+    if (!work?.sessionId) {
+      if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
+        await this.returnReport(work);
+      return;
+    }
+    if (work.status === 'cancelled' || work.status === 'proposed') return;
     if (work.status === 'queued') {
       const target = this.resolveWorkTarget(id);
       if (!target.accepted) {

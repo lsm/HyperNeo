@@ -10,6 +10,7 @@ import {
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
 import {
   createNeoOperations,
@@ -100,7 +101,12 @@ describe('readDriverOutcome', () => {
 });
 
 describe('Neo work with a drivers target', () => {
-  async function setup(reply: unknown, during?: (service: NeoService) => Promise<void>) {
+  async function setup(
+    reply: unknown,
+    during?: (service: NeoService) => Promise<void>,
+    status: () => unknown = () => ({ ok: false, reason: 'unreachable', detail: 'down' }),
+    target: NeoDriverTarget = startTarget
+  ) {
     const db = await createTestDb();
     const calls: Array<{ name: string; input: unknown; caller: OperationCaller }> = [];
     let service: NeoService;
@@ -113,6 +119,7 @@ describe('Neo work with a drivers target', () => {
         execute: async (input, caller) => {
           calls.push({ name, input, caller });
           if (name === 'work.start') await during?.(service);
+          if (name === 'work.status') return status();
           return name === 'work.stop' ? { ok: true, value: { stopped: true } } : reply;
         },
       });
@@ -120,6 +127,7 @@ describe('Neo work with a drivers target', () => {
       operation('work.start'),
       operation('work.send'),
       operation('work.stop'),
+      operation('work.status'),
     ]);
     service = new NeoService(
       db,
@@ -138,7 +146,7 @@ describe('Neo work with a drivers target', () => {
         title: work.title,
         instruction: work.instruction,
       },
-      startTarget
+      target
     );
     return { db, service, calls, proposed };
   }
@@ -198,6 +206,88 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('settles started work from work.status once it finishes and reports back', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 0 } };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { ref } },
+      undefined,
+      () => reply
+    );
+    const returned: string[] = [];
+    Object.assign(service, {
+      returnReport: async (settled: { id: string }) => {
+        returned.push(settled.id);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Font is 16px.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Font is 16px.',
+      });
+      expect(returned).toEqual(['work-1']);
+      expect(calls.filter((call) => call.name === 'work.status').map((call) => call.input)).toEqual(
+        [{ ref }, { ref }]
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('keeps refreshing when returning one report fails and returns it again on recovery', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'failed', lastActivityAt: Date.now() + 1_000 },
+    }));
+    Object.assign(service, {
+      returnReport: async () => {
+        throw new Error('mailbox rejected');
+      },
+    });
+    try {
+      await service.start('work-1');
+      await expect(service.refreshDriverWork()).resolves.toBeUndefined();
+      expect(service.repo.getWork('work-1')?.status).toBe('failed');
+      const returned: string[] = [];
+      Object.assign(service, {
+        returnReport: async (work: { id: string }) => {
+          returned.push(work.id);
+        },
+      });
+      await service.reconcile('work-1');
+      expect(returned).toEqual(['work-1']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('leaves a message sent to existing work for Neo to follow up', async () => {
+    const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => done,
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(calls.map((call) => call.name)).toEqual(['work.send']);
+    } finally {
+      db.close();
+    }
+  });
+
   test('fails queued work without a ref instead of starting it twice', async () => {
     const { db, service, calls } = await setup({ ok: true, value: { ref: null } });
     Object.assign(service, { returnReport: async () => {} });
@@ -240,6 +330,71 @@ describe('Neo work with a drivers target', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('readDriverSettlement', () => {
+  const work = { updatedAt: 100 };
+  const status = (value: Record<string, unknown>) => ({
+    kind: 'completed' as const,
+    value: { ok: true, value: { lastActivityAt: 200, ...value } },
+  });
+
+  test('settles finished, failed and stopped work that moved after it was handed over', () => {
+    const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
+      readDriverSettlement(work, outcome, now);
+    expect(settle(status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
+      status: 'reported',
+      report: 'Shipped.',
+    });
+    expect(settle(status({ status: 'done' }))).toEqual({
+      status: 'reported',
+      report: 'It finished without a written reply.',
+    });
+    expect(settle(status({ status: 'failed', lastReply: 'Tests broke.' }))).toEqual({
+      status: 'failed',
+      report: 'It failed. Tests broke.',
+    });
+    expect(settle(status({ status: 'stopped' }))).toEqual({
+      status: 'failed',
+      report: 'It stopped.',
+    });
+  });
+
+  test('compares status with the start time the backend reported, on its own clock', () => {
+    const work = { updatedAt: 100 };
+    const done = {
+      kind: 'completed' as const,
+      value: { ok: true, value: { status: 'done', lastActivityAt: 250 } },
+    };
+    expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
+    expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
+  });
+
+  test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
+    const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
+      readDriverSettlement(work, outcome, now);
+    expect(settle(status({ status: 'running' }))).toBeNull();
+    expect(settle(status({ status: 'needs_you' }))).toBeNull();
+    expect(settle(status({ status: 'done', lastActivityAt: 100 }))).toBeNull();
+    expect(settle(status({ status: 'done', lastActivityAt: 100 }), 100 + 10 * 60_000)).toEqual({
+      status: 'reported',
+      report: 'It finished without a written reply.',
+    });
+    expect(
+      settle({
+        kind: 'completed',
+        value: { ok: false, reason: 'unreachable', detail: 'laptop asleep' },
+      })
+    ).toBeNull();
+    expect(settle({ kind: 'completed', value: 'nope' })).toBeNull();
+    expect(settle({ kind: 'failed', code: 'execution_failed', message: 'boom' })).toBeNull();
+    expect(
+      settle({
+        kind: 'completed',
+        value: { ok: false, reason: 'not_found', detail: 'thread deleted' },
+      })
+    ).toEqual({ status: 'failed', report: 'The work is gone: thread deleted' });
   });
 });
 
