@@ -53,7 +53,7 @@ describe('space adapter start, status and stop', () => {
     return createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       tasks: {
         create: async (spaceId, title, description, caller) => {
           calls.push(`create ${spaceId} ${title}: ${description} as ${caller.source}`);
@@ -201,7 +201,7 @@ describe('space adapter send', () => {
     return createSpaceAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),

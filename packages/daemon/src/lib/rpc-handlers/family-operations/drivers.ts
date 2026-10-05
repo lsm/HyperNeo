@@ -175,11 +175,24 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
-  let lastSearch: { text: string; at: number; chats: readonly WorkChatMatch[] } | null = null;
-  const searchChats = (text: string): readonly WorkChatMatch[] => {
+  let lastSearch: { text: string; at: number; chats: Promise<readonly WorkChatMatch[]> } | null =
+    null;
+  const embedQuery = async (text: string) => {
+    const embedder = context.deps.db.getEmbedder();
+    if (!context.deps.db.getSDKMessageRepo().hasTurnVectors(embedder.model)) return undefined;
+    try {
+      const vector = Float32Array.from(await embedder.embedQuery(text));
+      return { vector, model: embedder.model };
+    } catch {
+      return undefined;
+    }
+  };
+  const searchChats = (text: string): Promise<readonly WorkChatMatch[]> => {
     const now = Date.now();
     if (lastSearch?.text === text && now - lastSearch.at < SEARCH_REUSE_MS) return lastSearch.chats;
-    const chats = context.deps.db.getSDKMessageRepo().searchWorkChats(text, WORK_CHAT_LIMIT);
+    const chats = embedQuery(text).then((semantic) =>
+      context.deps.db.getSDKMessageRepo().searchWorkChats(text, WORK_CHAT_LIMIT, semantic)
+    );
     lastSearch = { text, at: now, chats };
     return chats;
   };

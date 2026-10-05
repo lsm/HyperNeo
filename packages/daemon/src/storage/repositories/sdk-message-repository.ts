@@ -2533,13 +2533,25 @@ export class SDKMessageRepository {
     return { results, limit, offset };
   }
 
-  searchWorkChats(query: string, limit: number): WorkChatMatch[] {
+  hasTurnVectors(model: string): boolean {
+    if (!this.tableExists('message_search_vectors')) return false;
+    return !!this.db
+      .prepare(`SELECT 1 FROM message_search_vectors WHERE model = ? LIMIT 1`)
+      .get(model);
+  }
+
+  searchWorkChats(
+    query: string,
+    limit: number,
+    semantic?: { vector: Float32Array; model: string }
+  ): WorkChatMatch[] {
     if (!this.hasMessageSearchIndex()) return [];
     const tables = {
       sessions: this.tableExists('sessions'),
       spaceTasks: this.tableExists('space_tasks'),
     };
-    return queryWorkChats(this.db, tables, query, limit);
+    const vectors = semantic && this.tableExists('message_search_vectors') ? semantic : undefined;
+    return queryWorkChats(this.db, tables, query, limit, vectors);
   }
 }
 

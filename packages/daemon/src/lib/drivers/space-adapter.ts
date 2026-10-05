@@ -93,7 +93,7 @@ export interface SpaceTaskControl {
 export interface SpaceAdapterDeps {
   db: () => BunDatabase;
   machine: string;
-  searchChats: (text: string) => readonly WorkChatMatch[];
+  searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
   tasks: SpaceTaskControl;
 }
 
@@ -279,10 +279,8 @@ export function loadSpaceTasks(
 }
 
 export function matchSpaceTasks(
-  query: FindQuery,
-  deps: SpaceAdapterDeps
+  chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  const chats = query.text ? deps.searchChats(query.text) : [];
   return new Map(
     chats.flatMap((chat) => {
       const key = chat.taskId ?? chat.sessionId;
@@ -296,13 +294,17 @@ export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): Space
 }
 
 const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
-  .input(['query', 'deps'])
+  .input(['query', 'deps', 'chats'])
   .pipe(loadSpacePlaces, 'deps', 'spaces')
-  .pipe(matchSpaceTasks, ['query', 'deps'], 'matched')
+  .pipe(matchSpaceTasks, 'chats', 'matched')
   .pipe(loadSpaceTasks, ['query', 'deps', 'matched'], 'tasks')
   .pipe(loadSpaceAgents, ['query', 'deps'], 'agents')
   .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matched', 'agents'], 'groups')
-  .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
+  .end('groups') as (
+  query: FindQuery,
+  deps: SpaceAdapterDeps,
+  chats: readonly WorkChatMatch[]
+) => PlaceGroup[];
 
 export function spaceTaskCaller(caller: OperationCaller): OperationCaller {
   return caller.role === 'neo' ? { ...caller, source: 'internal' } : caller;
@@ -525,7 +527,8 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
   return {
     id: 'space',
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
-    find: (query) => runSpaceFind(query, deps),
+    find: async (query) =>
+      runSpaceFind(query, deps, query.text ? await deps.searchChats(query.text) : []),
     start: (request, context) => runSpaceStart(request, context, deps),
     send: (ref, message, context) =>
       ref.id.startsWith(AGENT_REF)
