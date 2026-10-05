@@ -79,4 +79,18 @@ export class NeoRoutingLogRepository {
       .prepare(`SELECT ${columns} FROM neo_routing_log WHERE id > ? ORDER BY id LIMIT ?`)
       .all(afterId, limit) as NeoRoute[];
   }
+
+  sinceLastMainTurn(limit: number): NeoRoute[] {
+    if (!this.ready()) return [];
+    return this.db
+      .prepare(
+        `SELECT ${columns} FROM neo_routing_log
+          WHERE destination != 'main' AND id > COALESCE((
+            SELECT id FROM neo_routing_log WHERE destination = 'main'
+             ORDER BY id DESC LIMIT 1 OFFSET 1), 0)
+          ORDER BY id DESC LIMIT ?`
+      )
+      .all(limit)
+      .reverse() as NeoRoute[];
+  }
 }
