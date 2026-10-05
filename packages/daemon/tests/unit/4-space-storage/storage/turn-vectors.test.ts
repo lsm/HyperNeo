@@ -36,13 +36,13 @@ describe('embedPendingTurns', () => {
   afterEach(() => db.close());
 
   test('embeds the newest pending turns once, skipping tasks, system notices and short text', async () => {
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2 });
+    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2, remaining: 0 });
     expect(embedded.map((text) => text.slice(0, 16))).toEqual([
       'the newest turn ',
       'an older turn ab',
     ]);
     expect(embedded[0]).toHaveLength(2_000);
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 0 });
+    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 0, remaining: 0 });
     const row = db
       .prepare(
         `SELECT model, dimensions, length(embedding) AS bytes FROM message_search_vectors WHERE content_id = 4`
@@ -82,5 +82,14 @@ describe('embedPendingTurns', () => {
     expect(
       db.prepare(`SELECT content_id FROM message_search_vectors ORDER BY content_id`).all()
     ).toEqual([{ content_id: 1 }]);
+  });
+
+  test('works through a backlog in batches until done or out of time, and reports what is left', async () => {
+    const insert = db.prepare(
+      `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
+    );
+    for (let n = 0; n < 70; n++) insert.run(`backlog turn number ${n} about fonts`);
+    expect(await embedPendingTurns(db, embedder, 0)).toEqual({ embedded: 32, remaining: 40 });
+    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 40, remaining: 0 });
   });
 });
