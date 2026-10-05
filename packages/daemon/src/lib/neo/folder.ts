@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 import { getDataDir } from '../data-dir.ts';
 
 export function neoFolder(): string {
@@ -16,4 +17,13 @@ export function neoTaskFolderName(title: string, sessionId: string): string {
     .slice(0, 48)
     .replace(/-+$/, '');
   return `${slug || 'task'}-${sessionId.slice(0, 8)}`;
+}
+
+export function ensureNeoProject(
+  history: Pick<WorkspaceHistoryRepository, 'get' | 'upsert'>,
+  folder: () => string = neoFolder
+): string {
+  const path = folder();
+  if (!history.get(path)) history.upsert(path);
+  return path;
 }

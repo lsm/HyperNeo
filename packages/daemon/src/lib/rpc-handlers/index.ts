@@ -22,6 +22,7 @@ import {
   scheduleTurnEmbedding,
   WORK_TURN_EMBED,
 } from '../drivers/turn-embedding.ts';
+import { ensureNeoProject } from '../neo/folder.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1654,7 +1655,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
   );
-  if (process.env.NODE_ENV !== 'test') scheduleTurnEmbedding(deps.jobQueue);
+  if (process.env.NODE_ENV !== 'test') {
+    scheduleTurnEmbedding(deps.jobQueue);
+    ensureNeoProject(deps.db.workspaceHistory);
+  }
 
   return {
     cleanup: async () => {
