@@ -196,3 +196,27 @@ describe('the RPC-only gate on remote daemon management', () => {
     });
   });
 });
+
+describe('remembering attached daemons', () => {
+  test('restores saved attachments and saves every change after that', async () => {
+    const { daemons, call } = daemonCatalog();
+    const saved: { daemonId: string; url: string }[][] = [];
+    daemons.restore([{ daemonId: 'laptop', url: 'ws://laptop:9283/ws' }], (list) => {
+      saved.push(list);
+    });
+    expect(daemons.list()).toEqual([{ daemonId: 'laptop', url: 'ws://laptop:9283/ws' }]);
+    expect(saved).toEqual([]);
+
+    await call('daemon.attach', { daemonId: 'imac', url: 'ws://imac:8399/ws' }, HUMAN);
+    await call('daemon.detach', { daemonId: 'laptop' }, HUMAN);
+    await call('daemon.detach', { daemonId: 'never-attached' }, HUMAN);
+
+    expect(saved).toEqual([
+      [
+        { daemonId: 'laptop', url: 'ws://laptop:9283/ws' },
+        { daemonId: 'imac', url: 'ws://imac:8399/ws' },
+      ],
+      [{ daemonId: 'imac', url: 'ws://imac:8399/ws' }],
+    ]);
+  });
+});
