@@ -14,6 +14,14 @@ const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
 const CLASSIFY_FLOOR = 0.35;
 const CLASSIFY_CANDIDATES = 4;
+export const NEO_INBOX_ID = 'inbox';
+export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
+const INBOX_CHOICE: NeoHolder = {
+  concernId: NEO_INBOX_ID,
+  sessionId: '',
+  title: 'Inbox',
+  summary: NEO_INBOX_SUMMARY,
+};
 
 export interface NeoHolder {
   concernId: string;
@@ -35,6 +43,7 @@ export interface NeoRouterDeps {
   recentAsks(concernId: string, limit: number): string[];
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, candidates: readonly NeoHolder[]): Promise<NeoHolder | null>;
+  inbox?(): Promise<NeoHolder | null>;
   now(): number;
 }
 
@@ -101,7 +110,9 @@ export function stickyExit(
   now: number
 ): { value: NeoHolder[] } | Exit {
   const sticky = stickyNeoRoute(text, holders, latest, now);
-  return sticky ? { reason: { choice: sticky } } : { value: [...holders] };
+  return sticky
+    ? { reason: { choice: sticky } }
+    : { value: holders.filter((holder) => holder.concernId !== NEO_INBOX_ID) };
 }
 
 export function neoHolderProfile(holder: NeoHolder, asks: readonly string[]): string {
@@ -137,12 +148,15 @@ export function embeddingExit(scores: readonly Score[]): { value: Score[] } | Ex
   return picked ? { reason: { choice: picked } } : { value: [...scores] };
 }
 
-export function classifierCandidates(scores: readonly Score[]): NeoHolder[] {
-  return scores
-    .filter((score) => score.similarity >= CLASSIFY_FLOOR)
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, CLASSIFY_CANDIDATES)
-    .map((score) => score.holder);
+export function classifierCandidates(scores: readonly Score[], withInbox: boolean): NeoHolder[] {
+  return [
+    ...scores
+      .filter((score) => score.similarity >= CLASSIFY_FLOOR)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, CLASSIFY_CANDIDATES)
+      .map((score) => score.holder),
+    ...(withInbox ? [INBOX_CHOICE] : []),
+  ];
 }
 
 export async function classifyNeoAsk(
@@ -152,11 +166,12 @@ export async function classifyNeoAsk(
 ): Promise<Routed> {
   if (!deps.classify || candidates.length === 0) return { choice: null };
   const chosen = await deps.classify(text, candidates);
+  const holder = chosen?.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
   return {
-    choice: chosen
+    choice: holder
       ? {
-          concernId: chosen.concernId,
-          sessionId: chosen.sessionId,
+          concernId: holder.concernId,
+          sessionId: holder.sessionId,
           signal: 'classifier',
           confidence: 0.6,
         }
@@ -173,7 +188,8 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe(stickyExit, ['route', 'holders', 'latest', 'now'], 'result:route')
   .pipe(scoreNeoHolders, ['text', 'route', 'deps'], 'scores')
   .pipe(embeddingExit, 'scores', 'result:route')
-  .pipe(classifierCandidates, 'route', 'candidates')
+  .pipe((deps: NeoRouterDeps) => !!deps.inbox, 'deps', 'withInbox')
+  .pipe(classifierCandidates, ['route', 'withInbox'], 'candidates')
   .pipe(classifyNeoAsk, ['text', 'candidates', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
@@ -186,7 +202,11 @@ export async function chooseNeoRoute(
 
 export type NeoRouter = (text: string) => Promise<NeoRouteChoice | null>;
 
-export function createNeoRouter(db: Database, repo: NeoRepository): NeoRouter {
+export function createNeoRouter(
+  db: Database,
+  repo: NeoRepository,
+  openHolder?: (concernId: string) => Promise<string>
+): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
     holders: () =>
@@ -215,6 +235,16 @@ export function createNeoRouter(db: Database, repo: NeoRepository): NeoRouter {
       }
     },
     classify: classifyNeoRoute,
+    inbox: openHolder
+      ? async () => {
+          repo.saveConcern(
+            { id: NEO_INBOX_ID, title: 'Inbox', summary: NEO_INBOX_SUMMARY, context: '' },
+            0
+          );
+          const sessionId = await openHolder(NEO_INBOX_ID);
+          return { ...INBOX_CHOICE, sessionId };
+        }
+      : undefined,
     now: () => Date.now(),
   };
   return (text) => chooseNeoRoute(text, deps);
