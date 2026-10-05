@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
+import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const OWN_THREADS = `source NOT LIKE '%subagent%'`;
@@ -127,7 +128,6 @@ export function buildCodexGroups(
   query: FindQuery,
   deps: Omit<CodexDesktopAdapterDeps, 'statePath'>
 ): PlaceGroup[] {
-  if (query.spaceId) return [];
   const text = query.text?.toLowerCase();
   const now = deps.now();
   return codexPlaces(snapshot, deps.worktreesDir)
@@ -171,6 +171,7 @@ export function loadCodexSnapshot(query: FindQuery, deps: CodexDesktopAdapterDep
 
 const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
   .input(['query', 'deps'])
+  .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadCodexSnapshot, ['query', 'deps'], 'snapshot')
   .pipe(buildCodexGroups, ['snapshot', 'query', 'deps'], 'groups')
   .end('groups') as (query: FindQuery, deps: CodexDesktopAdapterDeps) => PlaceGroup[];

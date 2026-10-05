@@ -152,4 +152,14 @@ describe('codex-desktop adapter against a Codex state database', () => {
     expect((await find({ text: 'superpipe' })).map((g) => g.place.name)).toEqual(['superpipe']);
     expect(await find({ spaceId: 'sp1' })).toEqual([]);
   });
+
+  test('answers a Space search without opening the state database', async () => {
+    const groups = await createCodexDesktopAdapter({
+      statePath: join(dir, 'missing.sqlite'),
+      worktreesDir: '/codex/worktrees',
+      machine: 'laptop',
+      now: () => NOW,
+    }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
+    expect(groups).toEqual([]);
+  });
 });
