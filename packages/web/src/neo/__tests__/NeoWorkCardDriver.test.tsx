@@ -51,7 +51,12 @@ describe('neoWorkDriverLabel', () => {
 describe('neoWorkDriverLink', () => {
   it('keeps app and in-app links and drops anything else', () => {
     expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
-    expect(neoWorkDriverLink({ ...driver, link: '/space/sp1/task/t1' })).toBe('/space/sp1/task/t1');
+    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/space/sp1/task/t1' })).toBe(
+      '/space/sp1/task/t1'
+    );
+    expect(neoWorkDriverLink({ ...driver, link: '/session/s1' })).toBeNull();
+    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/\t/evil.com' })).toBeNull();
+    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/\n\\evil.com' })).toBeNull();
     expect(neoWorkDriverLink({ ...driver, link: 'javascript:alert(1)' })).toBeNull();
     expect(neoWorkDriverLink({ ...driver, link: '//evil.com' })).toBeNull();
     expect(neoWorkDriverLink({ ...driver, link: '/\\evil.com' })).toBeNull();
