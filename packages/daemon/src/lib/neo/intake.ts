@@ -124,7 +124,7 @@ export function logNeoRoute(
   conversationId: string,
   db: Database
 ): IntakeResult {
-  if (!receipt.ok || !receipt.created) return receipt;
+  if (!receipt.ok) return receipt;
   const content = message.message.content;
   const text =
     typeof content === 'string'
@@ -134,17 +134,19 @@ export function logNeoRoute(
             block.type === 'text' && block.text ? [block.text] : []
           )
           .join(' ');
-  new NeoRoutingLogRepository(db.getDatabase()).record({
-    messageId: message.uuid,
-    conversationId,
-    askedAt: Date.now(),
-    ask: text || '(attachment)',
-    destination: binding.kind === 'concern' ? 'holder' : 'main',
-    targetSessionId: binding.sessionId,
-    concernId: binding.concernId,
-    signal: 'opened',
-    confidence: 1,
-  });
+  try {
+    new NeoRoutingLogRepository(db.getDatabase()).record({
+      messageId: message.uuid,
+      conversationId,
+      askedAt: Date.now(),
+      ask: text || '(attachment)',
+      destination: binding.kind === 'concern' ? 'holder' : 'main',
+      targetSessionId: binding.sessionId,
+      concernId: binding.concernId,
+      signal: 'opened',
+      confidence: 1,
+    });
+  } catch {}
   return receipt;
 }
 

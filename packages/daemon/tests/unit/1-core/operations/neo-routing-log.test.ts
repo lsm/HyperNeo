@@ -97,6 +97,18 @@ describe('neo.message.send routing log', () => {
     expect(log.listAfter(rows[0].id, 10).map((row) => row.messageId)).toEqual([ask(2)]);
   });
 
+  test('logs an accepted retry whose first log write was lost, and never fails intake', async () => {
+    await send(root.sessionId, ask(5), 'first try');
+    writer.exec('DELETE FROM neo_routing_log');
+    expect((await send(root.sessionId, ask(5), 'first try')).value).toMatchObject({ ok: true });
+    expect(log.listAfter(0, 10).map((row) => row.messageId)).toEqual([ask(5)]);
+    writer.exec('DROP TABLE neo_routing_log');
+    expect((await send(root.sessionId, ask(6), 'still accepted')).value).toMatchObject({
+      ok: true,
+      created: true,
+    });
+  });
+
   test('fills the outcome from the first final reply to that ask', async () => {
     await send(root.sessionId, ask(3), 'Summarize it');
     const publications = new NeoPublicationRepository(writer);
