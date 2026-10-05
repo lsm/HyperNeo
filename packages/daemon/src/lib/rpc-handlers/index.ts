@@ -17,6 +17,11 @@ import {
   refreshNeoDriverWork,
   scheduleDriverRefresh,
 } from '../neo/driver-refresh.ts';
+import {
+  runTurnEmbedding,
+  scheduleTurnEmbedding,
+  WORK_TURN_EMBED,
+} from '../drivers/turn-embedding.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -1646,6 +1651,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     refreshNeoDriverWork(deps.jobQueue, neoService)
   );
   scheduleDriverRefresh(deps.jobQueue);
+  deps.jobProcessor.register(WORK_TURN_EMBED, () =>
+    runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
+  );
+  if (process.env.NODE_ENV !== 'test') scheduleTurnEmbedding(deps.jobQueue);
 
   return {
     cleanup: async () => {

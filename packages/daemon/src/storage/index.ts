@@ -42,7 +42,10 @@ import { McpEnablementRepository } from './repositories/mcp-enablement-repositor
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
 import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers.ts';
-import { AgentMemoryRepository } from './repositories/agent-memory-repository.ts';
+import {
+  type AgentMemoryEmbedder,
+  AgentMemoryRepository,
+} from './repositories/agent-memory-repository.ts';
 import { EvolutionRepository } from './repositories/evolution-repository.ts';
 import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
 import { ProviderRepository } from './repositories/provider-repository.ts';
@@ -116,6 +119,7 @@ export class Database {
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
   private agentMemoryRepo!: AgentMemoryRepository;
+  private readonly embedder = new TransformersAgentMemoryEmbedder();
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -161,11 +165,7 @@ export class Database {
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
     this.skillRepo = new SkillRepository(db, reactiveDb);
     this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
-    this.agentMemoryRepo = new AgentMemoryRepository(
-      db,
-      reactiveDb,
-      new TransformersAgentMemoryEmbedder()
-    );
+    this.agentMemoryRepo = new AgentMemoryRepository(db, reactiveDb, this.embedder);
     this.evolutionRepo = new EvolutionRepository(db);
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
@@ -572,6 +572,10 @@ export class Database {
 
   getJobQueueRepo(): JobQueueRepository {
     return this.jobQueueRepo;
+  }
+
+  getEmbedder(): AgentMemoryEmbedder {
+    return this.embedder;
   }
 
   get appMcpServers(): AppMcpServerRepository {
