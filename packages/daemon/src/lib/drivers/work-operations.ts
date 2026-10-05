@@ -33,6 +33,7 @@ export interface WorkVerbDeps {
 }
 
 const MessageSchema = z.string().trim().min(1).max(20_000);
+const REMOTE_START_TIMEOUT_MS = 120_000;
 const ForwardedOriginSchema = z.string().min(1).max(500).optional();
 
 export const StartWorkInputSchema = z.object({
@@ -98,10 +99,13 @@ export async function forwardWork<Result>(
   name: string,
   input: unknown,
   schema: z.ZodType<Result>,
-  remote: RemoteDaemons
+  remote: RemoteDaemons,
+  timeoutMs?: number
 ): Promise<Result | Rejected> {
   try {
-    const reply = schema.safeParse(await remote.invoke(daemon, name, input));
+    const reply = schema.safeParse(
+      await remote.invoke(daemon, name, input, timeoutMs ? { timeoutMs } : undefined)
+    );
     return reply.success ? reply.data : reject('unreachable', `${daemon} sent an unusable reply.`);
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
@@ -129,9 +133,16 @@ export async function startWork(
     'work.start',
     { ...input, place, from },
     StartWorkResultSchema,
-    deps.remote
+    deps.remote,
+    REMOTE_START_TIMEOUT_MS
   );
-  return result.ok ? { ok: true, value: stampWork(result.value, route.daemon) } : result;
+  if (result.ok) return { ok: true, value: stampWork(result.value, route.daemon) };
+  return result.reason === 'unreachable'
+    ? {
+        ...result,
+        detail: `${result.detail} The work may still have started there; check work.find before starting it again.`,
+      }
+    : result;
 }
 
 export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'send'>> {

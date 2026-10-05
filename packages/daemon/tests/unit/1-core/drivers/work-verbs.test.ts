@@ -47,7 +47,12 @@ const desktop: WorkAdapter = {
   send: async () => ({ ok: true, value: { delivered: false } }),
 };
 
-type Invoke = (daemonId: string, name: string, input: unknown) => Promise<unknown>;
+type Invoke = (
+  daemonId: string,
+  name: string,
+  input: unknown,
+  options?: { timeoutMs?: number }
+) => Promise<unknown>;
 
 async function call(
   name: string,
@@ -187,6 +192,23 @@ describe('work verb operations', () => {
         input: { adapter: 'codex-desktop', place, title: 't', message: 'm', from: 'chat' },
       },
     ]);
+  });
+
+  test('gives a remote start time to create its session and warns it may have started', async () => {
+    const timeouts: unknown[] = [];
+    const result = await call(
+      'work.start',
+      { adapter: 'hyperneo', place: { ...place, daemon: 'laptop' }, title: 't', message: 'm' },
+      async (_daemonId, _name, _input, options) => {
+        timeouts.push(options);
+        throw new Error('Request timeout');
+      }
+    );
+    expect(timeouts).toEqual([{ timeoutMs: 120_000 }]);
+    expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect((result as { detail: string }).detail).toContain(
+      'check work.find before starting it again'
+    );
   });
 
   test('reports a daemon that fails or answers with something unusable as unreachable', async () => {
