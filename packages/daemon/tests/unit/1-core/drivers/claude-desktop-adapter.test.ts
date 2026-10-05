@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createClaudeDesktopAdapter,
+  readClaudeDesktopRecords,
   readLiveClaudeSessions,
+  type ClaudeRecordCache,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
@@ -113,6 +115,32 @@ describe('claude-desktop adapter against the app session records', () => {
     ]);
     expect((await find({ text: 'fiso' })).map((g) => g.place.name)).toEqual(['fiso']);
     expect(await find({ spaceId: 'sp1' })).toEqual([]);
+  });
+
+  test('reparses only session files that changed since the last search', async () => {
+    const cache: ClaudeRecordCache = new Map();
+    const first = await readClaudeDesktopRecords(dir, cache);
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    const reused = cache.get(path);
+    writeFileSync(
+      path,
+      JSON.stringify(record('a1', { originCwd: '/focus/dolmen', title: 'renamed' }))
+    );
+    utimesSync(path, new Date(), new Date(Date.now() + 5_000));
+    rmSync(join(dir, 'acct-b/scope-2/local_b2.json'));
+    const second = await readClaudeDesktopRecords(dir, cache);
+    expect(first.map((r) => r.title).sort()).toEqual([
+      'fiso init',
+      'lakehouse loader',
+      'old review',
+      'woodpecker',
+    ]);
+    expect(second.map((r) => r.title).sort()).toEqual(['fiso init', 'old review', 'renamed']);
+    expect(cache.get(path)).not.toBe(reused);
+    expect(cache.get(join(dir, 'acct-a/scope-1/local_a2.json'))?.records[0].title).toBe(
+      'old review'
+    );
+    expect(cache.has(join(dir, 'acct-b/scope-2/local_b2.json'))).toBe(false);
   });
 
   test('answers a Space search without reading records or asking the CLI', async () => {

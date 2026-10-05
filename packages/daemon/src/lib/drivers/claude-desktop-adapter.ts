@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -34,17 +34,26 @@ async function listDir(dir: string): Promise<string[]> {
   return readdir(dir).catch(() => []);
 }
 
-async function readRecord(path: string): Promise<ClaudeDesktopRecord[]> {
+export type ClaudeRecordCache = Map<string, { modifiedAt: number; records: ClaudeDesktopRecord[] }>;
+
+async function readRecord(path: string, cache: ClaudeRecordCache): Promise<ClaudeDesktopRecord[]> {
   try {
+    const modifiedAt = (await stat(path)).mtimeMs;
+    const cached = cache.get(path);
+    if (cached?.modifiedAt === modifiedAt) return cached.records;
     const record = RecordSchema.safeParse(JSON.parse(await readFile(path, 'utf8')));
-    return record.success ? [record.data] : [];
+    const records = record.success ? [record.data] : [];
+    cache.set(path, { modifiedAt, records });
+    return records;
   } catch {
+    cache.delete(path);
     return [];
   }
 }
 
 export async function readClaudeDesktopRecords(
-  sessionsDir: string
+  sessionsDir: string,
+  cache: ClaudeRecordCache
 ): Promise<ClaudeDesktopRecord[]> {
   const accounts = await listDir(sessionsDir);
   const scopes = (
@@ -67,7 +76,9 @@ export async function readClaudeDesktopRecords(
       )
     )
   ).flat();
-  return (await Promise.all(files.map(readRecord))).flat();
+  const present = new Set(files);
+  for (const path of cache.keys()) if (!present.has(path)) cache.delete(path);
+  return (await Promise.all(files.map((path) => readRecord(path, cache)))).flat();
 }
 
 export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLiveSession[]> {
@@ -144,9 +155,10 @@ export function buildClaudeDesktopGroups(
 }
 
 export function loadClaudeDesktopRecords(
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  cache: ClaudeRecordCache
 ): Promise<ClaudeDesktopRecord[]> {
-  return readClaudeDesktopRecords(deps.sessionsDir);
+  return readClaudeDesktopRecords(deps.sessionsDir, cache);
 }
 
 export function loadLiveClaudeSessions(
@@ -156,20 +168,22 @@ export function loadLiveClaudeSessions(
 }
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)
-  .input(['query', 'deps'])
+  .input(['query', 'deps', 'cache'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
-  .pipe(loadClaudeDesktopRecords, 'deps', 'records')
+  .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(loadLiveClaudeSessions, 'deps', 'liveSessions')
   .pipe(buildClaudeDesktopGroups, ['records', 'liveSessions', 'query', 'deps'], 'groups')
   .endAsync('groups') as (
   query: FindQuery,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  cache: ClaudeRecordCache
 ) => Promise<PlaceGroup[]>;
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
+  const cache: ClaudeRecordCache = new Map();
   return {
     id: 'claude-desktop',
     capabilities: ['find'],
-    find: (query) => runClaudeDesktopFind(query, deps),
+    find: (query) => runClaudeDesktopFind(query, deps, cache),
   };
 }
