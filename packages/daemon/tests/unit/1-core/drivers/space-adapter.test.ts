@@ -112,6 +112,26 @@ describe('space adapter against the space tables', () => {
     expect(group.work.map((w) => w.ref.id)).toEqual(['t1']);
   });
 
+  test('finds an old closed task by text even when a busier Space has more recent ones', async () => {
+    db.exec(`INSERT INTO spaces VALUES ('sp3', 'busy', '/focus/busy', 'active', 0, 5)`);
+    const insert = db.prepare(`INSERT INTO space_tasks VALUES (?, 'sp3', ?, 'routine', 'done', ?)`);
+    for (let n = 0; n < 600; n++) insert.run(`c${n}`, 100 + n, 1000 + n);
+    const adapter = createSpaceAdapter({
+      db: () => db,
+      machine: 'imac',
+      searchTaskIds: (text) => new Set(text === 'parser' ? ['t2'] : []),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+      },
+    });
+    const find = (text?: string) => adapter.find({ includeClosed: true, limit: 20, text });
+    expect((await find('finished')).flatMap((g) => g.work.map((w) => w.ref.id))).toEqual(['t2']);
+    expect((await find('parser')).flatMap((g) => g.work.map((w) => w.ref.id))).toEqual(['t2']);
+    const busy = (await find()).find((g) => g.place.spaceId === 'sp3');
+    expect(busy?.work).toHaveLength(20);
+  });
+
   test('returns active Spaces with open tasks and counts, newest activity first', async () => {
     const adapter = createSpaceAdapter({
       db: () => db,

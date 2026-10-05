@@ -4,7 +4,6 @@ import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
-const CLOSED_TASKS = 500;
 
 export interface SpacePlaceRow {
   id: string;
@@ -52,19 +51,32 @@ export function readSpacePlaces(db: BunDatabase): SpacePlaceRow[] {
     .all() as SpacePlaceRow[];
 }
 
-export function readSpaceTasks(db: BunDatabase, includeClosed: boolean): SpaceTaskRow[] {
+export function readSpaceTasks(
+  db: BunDatabase,
+  includeClosed: boolean,
+  text: string | undefined,
+  matchedIds: ReadonlySet<string>
+): SpaceTaskRow[] {
+  const pattern = text ? `%${text.toLowerCase().replace(/[\\%_]/g, '\\$&')}%` : null;
   return db
     .prepare(
       `SELECT id, space_id AS spaceId, task_number AS taskNumber, title, status, updated_at AS updatedAt
          FROM space_tasks WHERE space_id IS NOT NULL AND ${OPEN_TASK}
        UNION ALL
-       SELECT * FROM (
-         SELECT id, space_id, task_number, title, status, updated_at FROM space_tasks
-          WHERE space_id IS NOT NULL AND ? = 1 AND NOT ${OPEN_TASK}
-          ORDER BY updated_at DESC LIMIT ${CLOSED_TASKS})
+       SELECT id, spaceId, taskNumber, title, status, updatedAt FROM (
+         SELECT t.id, t.space_id AS spaceId, t.task_number AS taskNumber, t.title, t.status,
+           t.updated_at AS updatedAt,
+           ROW_NUMBER() OVER (PARTITION BY t.space_id ORDER BY t.updated_at DESC) AS rank
+           FROM space_tasks t JOIN spaces s ON s.id = t.space_id
+          WHERE ?1 = 1 AND NOT t.${OPEN_TASK}
+            AND (?2 IS NULL
+              OR lower('#' || t.task_number || ' ' || t.title) LIKE ?2 ESCAPE '\\'
+              OR lower(s.name) LIKE ?2 ESCAPE '\\'
+              OR t.id IN (SELECT value FROM json_each(?3))))
+        WHERE rank <= ${TASKS_PER_SPACE}
        ORDER BY updatedAt DESC`
     )
-    .all(includeClosed ? 1 : 0) as SpaceTaskRow[];
+    .all(includeClosed ? 1 : 0, pattern, JSON.stringify([...matchedIds])) as SpaceTaskRow[];
 }
 
 function toWork(task: SpaceTaskRow, space: SpacePlaceRow, machine: string): WorkSummary {
@@ -120,8 +132,12 @@ export function loadSpacePlaces(deps: SpaceAdapterDeps): SpacePlaceRow[] {
   return readSpacePlaces(deps.db());
 }
 
-export function loadSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): SpaceTaskRow[] {
-  return readSpaceTasks(deps.db(), query.includeClosed);
+export function loadSpaceTasks(
+  query: FindQuery,
+  deps: SpaceAdapterDeps,
+  matchedIds: ReadonlySet<string>
+): SpaceTaskRow[] {
+  return readSpaceTasks(deps.db(), query.includeClosed, query.text, matchedIds);
 }
 
 export function matchSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): ReadonlySet<string> {
@@ -131,8 +147,8 @@ export function matchSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): Reado
 const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .input(['query', 'deps'])
   .pipe(loadSpacePlaces, 'deps', 'spaces')
-  .pipe(loadSpaceTasks, ['query', 'deps'], 'tasks')
   .pipe(matchSpaceTasks, ['query', 'deps'], 'matchedIds')
+  .pipe(loadSpaceTasks, ['query', 'deps', 'matchedIds'], 'tasks')
   .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds'], 'groups')
   .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
 
