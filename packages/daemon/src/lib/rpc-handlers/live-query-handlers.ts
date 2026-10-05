@@ -3714,6 +3714,16 @@ recent_progress AS (
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
+terminal_task_ids AS MATERIALIZED (
+  SELECT DISTINCT COALESCE(
+    CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+    task_id
+  ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_notification'
+),
 recent_task_ids AS (
   SELECT DISTINCT candidate.task_id
   FROM (
@@ -3722,16 +3732,8 @@ recent_task_ids AS (
     SELECT task_id FROM recent_progress
   ) candidate
   WHERE candidate.task_id IS NOT NULL AND candidate.task_id != ''
-    AND NOT EXISTS (
-      SELECT 1
-      FROM sdk_messages terminal
-      WHERE terminal.session_id = ?
-        AND terminal.parent_tool_use_id IS NULL
-        AND terminal.message_subtype_norm = 'task_notification'
-        AND COALESCE(
-          CASE WHEN json_valid(terminal.sdk_message) THEN json_extract(terminal.sdk_message, '$.task_id') END,
-          terminal.task_id
-        ) = candidate.task_id
+    AND candidate.task_id NOT IN (
+      SELECT task_id FROM terminal_task_ids WHERE task_id IS NOT NULL
     )
 ),
 task_starts AS (

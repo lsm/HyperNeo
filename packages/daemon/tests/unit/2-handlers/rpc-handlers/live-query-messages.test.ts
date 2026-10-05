@@ -645,6 +645,51 @@ describe('messages.bySession — SQL behavior', () => {
     expect(metadata.backgroundTaskMessages.at(-1)?.id).toBe('task-updated-300');
   });
 
+  test('leaves out the starts of finished tasks once metadata is capped, checking finishes once', () => {
+    const system = (id: string, subtype: string, taskId: string, at: string) =>
+      insertSdkMessage(db, {
+        id,
+        sessionId: 's1',
+        messageType: 'system',
+        messageSubtype: subtype,
+        sdkMessage: {
+          type: 'system',
+          subtype,
+          uuid: `${id}-uuid`,
+          session_id: 's1',
+          task_id: taskId,
+        },
+        timestamp: at,
+      });
+    system('done-started', 'task_started', 'task-done', '2024-01-01 00:00:01');
+    system('live-started', 'task_started', 'task-live', '2024-01-01 00:00:02');
+    system('done-finished', 'task_notification', 'task-done', '2024-01-01 00:00:03');
+    for (let i = 0; i < 301; i++) {
+      for (const taskId of ['task-done', 'task-live'])
+        system(
+          `${taskId}-updated-${i}`,
+          'task_updated',
+          taskId,
+          new Date(Date.UTC(2024, 0, 1, 0, 1, i)).toISOString()
+        );
+    }
+
+    const snapshot = subscribeMessagesBySession(db, 's1', 1);
+    const ids = (
+      snapshot?.metadata as { backgroundTaskMessages: Array<{ id: string }> }
+    ).backgroundTaskMessages.map((message) => message.id);
+    expect(ids).toContain('live-started');
+    expect(ids).not.toContain('done-started');
+    const plan = (
+      db
+        .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
+        .all('s1', 's1', 's1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>
+    )
+      .map((row) => row.detail)
+      .join('\n');
+    expect(plan).not.toContain('CORRELATED');
+  });
+
   test('matches LiveQuery task starts by SDK task id before session task id', () => {
     insertSdkMessage(db, {
       id: 'old-task-started',
