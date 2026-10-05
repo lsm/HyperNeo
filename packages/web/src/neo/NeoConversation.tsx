@@ -58,8 +58,10 @@ export function NeoConversation({
   onRetryPublic,
   onLoadEarlierPublic,
   onProgress,
+  topics,
 }: {
   store: SessionStore;
+  topics?: ReadonlyMap<string, string>;
   sessionId: string;
   works?: NeoWork[];
   publicConversation?: PublicConversation;
@@ -131,6 +133,7 @@ export function NeoConversation({
         {publicConversation && (
           <NeoPublicConversation
             conversation={publicConversation}
+            topics={topics}
             canOpenScene={(ref) =>
               ref.kind === 'work' && !!onOpenPublicWork && works.some((work) => work.id === ref.id)
             }
