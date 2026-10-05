@@ -1,6 +1,11 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
+import { selectMessageOrigin } from '../messaging/message-send.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../operations/registry.ts';
 import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import {
@@ -101,9 +106,10 @@ export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'s
 export async function startWork(
   route: Route<'start'>,
   input: StartInput,
+  from: string,
   deps: WorkVerbDeps
 ): Promise<StartResult> {
-  if ('local' in route) return route.local(input);
+  if ('local' in route) return route.local(input, { from });
   const { daemon: _daemon, ...place } = input.place;
   const result = await forwardWork(
     route.daemon,
@@ -122,9 +128,10 @@ export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'sen
 export async function sendWork(
   route: Route<'send'>,
   input: SendInput,
+  from: string,
   deps: WorkVerbDeps
 ): Promise<SendResult> {
-  if ('local' in route) return route.local(input.ref, input.message);
+  if ('local' in route) return route.local(input.ref, input.message, { from });
   return forwardWork(
     route.daemon,
     'work.send',
@@ -174,16 +181,26 @@ export async function stopWork(
 }
 
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
-  .pipe(startWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: StartInput, deps: WorkVerbDeps) => Promise<StartResult>;
+  .pipe(selectMessageOrigin, 'caller', 'from')
+  .pipe(startWork, ['outcome', 'input', 'from', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: StartInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<StartResult>;
 
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
-  .input(['input', 'deps'])
+  .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
-  .pipe(sendWork, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: SendInput, deps: WorkVerbDeps) => Promise<SendResult>;
+  .pipe(selectMessageOrigin, 'caller', 'from')
+  .pipe(sendWork, ['outcome', 'input', 'from', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  input: SendInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<SendResult>;
 
 const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .input(['input', 'deps'])
@@ -206,7 +223,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runStartWork(input, deps),
+      execute: (input, caller) => runStartWork(input, caller, deps),
     }),
     defineOperation({
       name: 'work.send',
@@ -215,7 +232,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
-      execute: (input) => runSendWork(input, deps),
+      execute: (input, caller) => runSendWork(input, caller, deps),
     }),
     defineOperation({
       name: 'work.status',

@@ -272,6 +272,7 @@ describe('hyperneo adapter against the sessions table', () => {
       db: () => db,
       machine: 'imac',
       searchSessionIds: () => new Set(),
+      handoff: async () => ({ kind: 'enqueued', id: 'mb1' }),
     });
     const groups = await adapter.find({ includeClosed: false, limit: 20 });
     expect(

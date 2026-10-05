@@ -1,15 +1,31 @@
 import { basename } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
+import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
+import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import type {
+  FindQuery,
+  PlaceGroup,
+  Rejected,
+  Result,
+  WorkAdapter,
+  WorkCallContext,
+  WorkDetail,
+  WorkRef,
+  WorkStatus,
+  WorkSummary,
+} from './types.ts';
+import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
 const FOLDER = 'COALESCE(main_repo_path, workspace_path)';
+const PROCESSING = `CASE WHEN json_valid(processing_state) THEN json_extract(processing_state, '$.status') END`;
 const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-  CASE WHEN json_valid(processing_state) THEN json_extract(processing_state, '$.status') END AS processing`;
+  ${PROCESSING} AS processing`;
 const SESSIONS_PER_PLACE = 20;
 const CLOSED_SESSIONS = 500;
+const REPLY_LIMIT = 4_000;
 
 export interface HyperneoPlaceRow {
   folder: string | null;
@@ -32,7 +48,15 @@ export interface HyperneoAdapterDeps {
   db: () => BunDatabase;
   machine: string;
   searchSessionIds: (text: string) => ReadonlySet<string>;
+  handoff: (sessionId: string, message: string, from: string) => Promise<MailboxHandoffOutcome>;
 }
+
+export interface HyperneoLastResult {
+  reply: string | null;
+  failed: number | null;
+}
+
+type Gate<Value> = { value: Value } | { reason: Rejected };
 
 export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
   if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
@@ -172,10 +196,98 @@ const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matchedIds'], 'groups')
   .end('groups') as (query: FindQuery, deps: HyperneoAdapterDeps) => PlaceGroup[];
 
+export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
+  const row = db
+    .prepare(
+      `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
+         ${PROCESSING} AS processing FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
+    )
+    .get(id) as HyperneoSessionRow | null | undefined;
+  return row ?? null;
+}
+
+export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
+  const row = db
+    .prepare(
+      `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed
+         FROM sdk_messages WHERE session_id = ? AND message_type = 'result' AND parent_tool_use_id IS NULL
+        ORDER BY timestamp DESC LIMIT 1`
+    )
+    .get(id) as HyperneoLastResult | null | undefined;
+  return row ?? null;
+}
+
+export function requireHyperneoSession(
+  ref: WorkRef,
+  deps: HyperneoAdapterDeps
+): Gate<HyperneoSessionRow> {
+  const row = readHyperneoSession(deps.db(), ref.id);
+  return row ? { value: row } : { reason: reject('not_found', `No HyperNeo session ${ref.id}.`) };
+}
+
+export function requireOpenHyperneoSession(row: HyperneoSessionRow): Gate<HyperneoSessionRow> {
+  return sessionUnavailable(row.status)
+    ? {
+        reason: reject(
+          'not_open',
+          `Session ${row.id} is ${row.status} and cannot receive messages.`
+        ),
+      }
+    : { value: row };
+}
+
+export function describeHyperneoWork(
+  row: HyperneoSessionRow,
+  deps: HyperneoAdapterDeps
+): Result<WorkDetail> {
+  const work = toWork(row, deps.machine);
+  const last = readHyperneoLastResult(deps.db(), row.id);
+  return {
+    ok: true,
+    value: {
+      ...work,
+      status: work.status === 'done' && last?.failed ? 'failed' : work.status,
+      ...(last?.reply ? { lastReply: last.reply.slice(0, REPLY_LIMIT) } : {}),
+    },
+  };
+}
+
+export async function deliverToHyperneo(
+  row: HyperneoSessionRow,
+  message: string,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  const outcome = await deps.handoff(row.id, message, context.from);
+  if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
+  const busy = row.processing === 'processing' || row.processing === 'queued';
+  return { ok: true, value: { delivered: !busy } };
+}
+
+const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
+  .pipe(describeHyperneoWork, ['outcome', 'deps'], 'outcome')
+  .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<WorkDetail>;
+
+const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
+  .input(['ref', 'message', 'context', 'deps'])
+  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenHyperneoSession, 'outcome', 'result:outcome')
+  .pipe(deliverToHyperneo, ['outcome', 'message', 'context', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+) => Promise<Result<{ delivered: boolean }>>;
+
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
-    capabilities: ['find'],
+    capabilities: ['find', 'send', 'status'],
     find: (query) => runHyperneoFind(query, deps),
+    send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
+    status: async (ref) => runHyperneoStatus(ref, deps),
   };
 }

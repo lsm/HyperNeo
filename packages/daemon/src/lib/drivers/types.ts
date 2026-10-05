@@ -86,12 +86,23 @@ export interface StartRequest {
   message: string;
 }
 
+export interface WorkCallContext {
+  from: string;
+}
+
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
-  readonly start?: (request: StartRequest) => Promise<Result<WorkSummary>>;
-  readonly send?: (ref: WorkRef, message: string) => Promise<Result<{ delivered: boolean }>>;
+  readonly start?: (
+    request: StartRequest,
+    context: WorkCallContext
+  ) => Promise<Result<WorkSummary>>;
+  readonly send?: (
+    ref: WorkRef,
+    message: string,
+    context: WorkCallContext
+  ) => Promise<Result<{ delivered: boolean }>>;
   readonly status?: (ref: WorkRef) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef) => Promise<Result<{ stopped: boolean }>>;
 }

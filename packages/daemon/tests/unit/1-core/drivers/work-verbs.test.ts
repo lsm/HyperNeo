@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const place = { machine: 'imac', folder: '/focus/dolmen', name: 'dolmen' };
@@ -16,6 +19,8 @@ function summary(adapter: string, id: string): WorkSummary {
   };
 }
 
+let origin = 'chat';
+
 const hyperneo: WorkAdapter = {
   id: 'hyperneo',
   capabilities: ['find', 'start', 'send', 'status', 'stop'],
@@ -24,8 +29,8 @@ const hyperneo: WorkAdapter = {
     ok: true,
     value: { ...summary('hyperneo', 's1'), title: request.title },
   }),
-  send: async (ref) =>
-    ref.id === 'gone'
+  send: async (ref, _message, context) =>
+    ref.id === 'gone' || context.from !== origin
       ? { ok: false, reason: 'not_open', detail: 'archived' }
       : { ok: true, value: { delivered: true } },
   status: async (ref) => ({
@@ -44,14 +49,19 @@ const desktop: WorkAdapter = {
 
 type Invoke = (daemonId: string, name: string, input: unknown) => Promise<unknown>;
 
-async function call(name: string, input: unknown, invoke: Invoke = async () => ({})) {
+async function call(
+  name: string,
+  input: unknown,
+  invoke: Invoke = async () => ({}),
+  caller: OperationCaller = { source: 'rpc' }
+) {
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [hyperneo, desktop],
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
     })
   );
-  const outcome = await invokeOperation(registry, name, input, { source: 'rpc' });
+  const outcome = await invokeOperation(registry, name, input, caller);
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
   return outcome.value;
 }
@@ -75,6 +85,19 @@ describe('work verb operations', () => {
     expect(
       await call('work.start', { adapter: 'hyperneo', place, title: 'font size', message: 'go' })
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
+  });
+
+  test('tells the adapter who is sending', async () => {
+    origin = 'session:neo%3Aroot';
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' },
+        undefined,
+        { source: 'mcp', sessionId: 'neo:root' }
+      )
+    ).toEqual({ ok: true, value: { delivered: true } });
+    origin = 'chat';
   });
 
   test('passes the adapter rejection through', async () => {
