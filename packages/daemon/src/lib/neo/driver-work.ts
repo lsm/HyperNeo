@@ -65,6 +65,8 @@ export function readDriverOutcome(
     : { failure: 'work.start returned no reference.' };
 }
 
+const SETTLE_GRACE_MS = 10 * 60_000;
+
 const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
@@ -81,7 +83,8 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
 
 export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
-  outcome: OperationOutcome
+  outcome: OperationOutcome,
+  now: number
 ): { status: 'reported' | 'failed'; report: string } | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
@@ -92,7 +95,7 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReply } = reply.data.value;
-  if (lastActivityAt <= work.updatedAt) return null;
+  if (lastActivityAt <= work.updatedAt && now - work.updatedAt < SETTLE_GRACE_MS) return null;
   if (status === 'done') {
     return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
   }

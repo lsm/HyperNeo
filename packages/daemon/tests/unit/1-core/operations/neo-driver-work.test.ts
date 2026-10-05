@@ -242,6 +242,26 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('keeps refreshing when returning one report fails', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'failed', lastActivityAt: Date.now() + 1_000 },
+    }));
+    Object.assign(service, {
+      returnReport: async () => {
+        throw new Error('mailbox rejected');
+      },
+    });
+    try {
+      await service.start('work-1');
+      await expect(service.refreshDriverWork()).resolves.toBeUndefined();
+      expect(service.repo.getWork('work-1')?.status).toBe('failed');
+    } finally {
+      db.close();
+    }
+  });
+
   test('leaves a message sent to existing work for Neo to follow up', async () => {
     const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
     const { db, service, calls } = await setup(
@@ -307,45 +327,50 @@ describe('Neo work with a drivers target', () => {
 
 describe('readDriverSettlement', () => {
   const work = { updatedAt: 100 };
+  const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
+    readDriverSettlement(work, outcome, now);
   const status = (value: Record<string, unknown>) => ({
     kind: 'completed' as const,
     value: { ok: true, value: { lastActivityAt: 200, ...value } },
   });
 
   test('settles finished, failed and stopped work that moved after it was handed over', () => {
-    expect(readDriverSettlement(work, status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
+    expect(settle(status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
       status: 'reported',
       report: 'Shipped.',
     });
-    expect(readDriverSettlement(work, status({ status: 'done' }))).toEqual({
+    expect(settle(status({ status: 'done' }))).toEqual({
       status: 'reported',
       report: 'It finished without a written reply.',
     });
-    expect(
-      readDriverSettlement(work, status({ status: 'failed', lastReply: 'Tests broke.' }))
-    ).toEqual({ status: 'failed', report: 'It failed. Tests broke.' });
-    expect(readDriverSettlement(work, status({ status: 'stopped' }))).toEqual({
+    expect(settle(status({ status: 'failed', lastReply: 'Tests broke.' }))).toEqual({
+      status: 'failed',
+      report: 'It failed. Tests broke.',
+    });
+    expect(settle(status({ status: 'stopped' }))).toEqual({
       status: 'failed',
       report: 'It stopped.',
     });
   });
 
-  test('keeps waiting on running, stale, unreachable or unreadable status, and fails gone work', () => {
-    expect(readDriverSettlement(work, status({ status: 'running' }))).toBeNull();
-    expect(readDriverSettlement(work, status({ status: 'needs_you' }))).toBeNull();
-    expect(readDriverSettlement(work, status({ status: 'done', lastActivityAt: 100 }))).toBeNull();
+  test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
+    expect(settle(status({ status: 'running' }))).toBeNull();
+    expect(settle(status({ status: 'needs_you' }))).toBeNull();
+    expect(settle(status({ status: 'done', lastActivityAt: 100 }))).toBeNull();
+    expect(settle(status({ status: 'done', lastActivityAt: 100 }), 100 + 10 * 60_000)).toEqual({
+      status: 'reported',
+      report: 'It finished without a written reply.',
+    });
     expect(
-      readDriverSettlement(work, {
+      settle({
         kind: 'completed',
         value: { ok: false, reason: 'unreachable', detail: 'laptop asleep' },
       })
     ).toBeNull();
-    expect(readDriverSettlement(work, { kind: 'completed', value: 'nope' })).toBeNull();
+    expect(settle({ kind: 'completed', value: 'nope' })).toBeNull();
+    expect(settle({ kind: 'failed', code: 'execution_failed', message: 'boom' })).toBeNull();
     expect(
-      readDriverSettlement(work, { kind: 'failed', code: 'execution_failed', message: 'boom' })
-    ).toBeNull();
-    expect(
-      readDriverSettlement(work, {
+      settle({
         kind: 'completed',
         value: { ok: false, reason: 'not_found', detail: 'thread deleted' },
       })

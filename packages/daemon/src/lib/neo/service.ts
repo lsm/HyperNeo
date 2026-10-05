@@ -507,20 +507,26 @@ export class NeoService {
       if (work.status !== 'queued' || this.driverTargets.get(work.id)?.verb !== 'start') continue;
       const ref = this.driverTargets.readRef(work.id);
       if (!ref) continue;
-      const outcome = await invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.status',
-        { ref },
-        driverWorkCaller(work)
-      ).catch(() => null);
-      const settled = outcome ? readDriverSettlement(work, outcome) : null;
-      if (!settled) continue;
-      const done = this.repo.transitionWork(work.id, work, {
-        status: settled.status,
-        report: settled.report.slice(0, 12000),
-      });
-      if (done) await this.returnReport(done);
+      await this.settleDriverWork(work, ref).catch((error) =>
+        this.log.warn('Driver work refresh pending', error)
+      );
     }
+  }
+
+  private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
+    const outcome = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.status',
+      { ref },
+      driverWorkCaller(work)
+    );
+    const settled = readDriverSettlement(work, outcome, Date.now());
+    if (!settled) return;
+    const done = this.repo.transitionWork(work.id, work, {
+      status: settled.status,
+      report: settled.report.slice(0, 12000),
+    });
+    if (done) await this.returnReport(done);
   }
 
   async recoverConsultations(): Promise<void> {
