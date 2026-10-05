@@ -58,6 +58,22 @@ describe('mergePlaceGroups', () => {
     expect(merged[0].work.map((w) => w.lastActivityAt)).toEqual([30, 10]);
   });
 
+  test('orders places by their best search score before recency, across daemons', () => {
+    const scored = (g: PlaceGroup, score: number) => ({
+      ...g,
+      work: g.work.map((w) => ({ ...w, score })),
+    });
+    const merged = mergePlaceGroups(
+      [
+        group('imac', '/focus/new', 'hyperneo', 50),
+        scored(group('laptop', '/focus/old', 'hyperneo', 10), 30),
+        scored(group('imac', '/focus/mid', 'hyperneo', 20), 32),
+      ],
+      10
+    );
+    expect(merged.map((g) => g.place.name)).toEqual(['mid', 'old', 'new']);
+  });
+
   test('puts work with a search score first, highest score first', () => {
     const [scored] = mergePlaceGroups(
       [
