@@ -55,6 +55,20 @@ export class NeoWorkDriverTargetRepository {
     return row?.startedAt ?? null;
   }
 
+  readNeedsYouSince(workId: string): number | null {
+    if (!this.hasTable()) return null;
+    const row = this.db
+      .prepare('SELECT needs_you_since AS since FROM neo_work_driver_targets WHERE work_id = ?')
+      .get(workId) as { since: number | null } | null | undefined;
+    return row?.since ?? null;
+  }
+
+  recordNeedsYouSince(workId: string, since: number | null): void {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET needs_you_since = ? WHERE work_id = ?')
+      .run(since, workId);
+  }
+
   recordRef(workId: string, ref: WorkRef, startedAt?: number): void {
     this.db
       .prepare('UPDATE neo_work_driver_targets SET ref = ?, started_at = ? WHERE work_id = ?')

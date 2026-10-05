@@ -9,6 +9,7 @@ import {
   driverWorkCall,
   driverWorkCaller,
   type NeoDriverTarget,
+  readDriverNeedsYou,
   readDriverOutcome,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -270,6 +271,41 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('tells the proposing session once each time started work comes to need the user', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const at = (status: string, lastActivityAt: number) => ({
+      ok: true,
+      value: { status, lastActivityAt, lastReply: 'Approve the migration?' },
+    });
+    let reply: unknown = at('running', 0);
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (target: string, messageId: string, content: string) => {
+        notes.push([target, messageId]);
+        expect(content).toContain('Approve the migration?');
+      },
+    });
+    try {
+      await service.start('work-1');
+      reply = at('needs_you', 5);
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      reply = at('running', 6);
+      await service.refreshDriverWork();
+      reply = at('needs_you', 7);
+      await service.refreshDriverWork();
+      expect(notes).toEqual([
+        ['neo:root', 'work-1:needs-you:5'],
+        ['neo:root', 'work-1:needs-you:7'],
+      ]);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
   test('leaves a message sent to existing work for Neo to follow up', async () => {
     const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
     const { db, service, calls } = await setup(
@@ -330,6 +366,32 @@ describe('Neo work with a drivers target', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('readDriverNeedsYou', () => {
+  test('reads whether the work waits on the user, and ignores failures', () => {
+    expect(
+      readDriverNeedsYou({
+        kind: 'completed',
+        value: { ok: true, value: { status: 'needs_you', lastActivityAt: 9, lastReply: 'Allow?' } },
+      })
+    ).toEqual({ needsYou: true, since: 9, lastReply: 'Allow?' });
+    expect(
+      readDriverNeedsYou({
+        kind: 'completed',
+        value: { ok: true, value: { status: 'running', lastActivityAt: 9 } },
+      })
+    ).toMatchObject({ needsYou: false });
+    expect(
+      readDriverNeedsYou({
+        kind: 'completed',
+        value: { ok: false, reason: 'unreachable', detail: 'asleep' },
+      })
+    ).toBeNull();
+    expect(
+      readDriverNeedsYou({ kind: 'failed', code: 'execution_failed', message: 'boom' })
+    ).toBeNull();
   });
 });
 

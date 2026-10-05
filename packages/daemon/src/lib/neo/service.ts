@@ -19,7 +19,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { invokeOperation } from '../operations/invoke.ts';
+import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
@@ -36,7 +36,9 @@ import {
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverOutcome,
+  readDriverNeedsYou,
   readDriverSettlement,
+  driverNeedsYouNote,
 } from './driver-work.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -526,12 +528,35 @@ export class NeoService {
       Date.now(),
       this.driverTargets.readStartedAt(work.id)
     );
-    if (!settled) return;
+    if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
     const done = this.repo.transitionWork(work.id, work, {
       status: settled.status,
       report: settled.report.slice(0, 12000),
     });
     if (done) await this.returnReport(done);
+  }
+
+  private async noteDriverNeedsYou(
+    work: NeoWork,
+    ref: WorkRef,
+    outcome: OperationOutcome
+  ): Promise<void> {
+    const state = readDriverNeedsYou(outcome);
+    if (!state) return;
+    const noted = this.driverTargets.readNeedsYouSince(work.id);
+    if (!state.needsYou) {
+      if (noted !== null) this.driverTargets.recordNeedsYouSince(work.id, null);
+      return;
+    }
+    if (noted !== null) return;
+    if (this.db.getSession(work.originSessionId))
+      await this.deliver(
+        work.originSessionId,
+        `${work.id}:needs-you:${state.since}`,
+        driverNeedsYouNote(work, ref, state.lastReply),
+        work.originSessionId
+      );
+    this.driverTargets.recordNeedsYouSince(work.id, state.since);
   }
 
   async recoverConsultations(): Promise<void> {
