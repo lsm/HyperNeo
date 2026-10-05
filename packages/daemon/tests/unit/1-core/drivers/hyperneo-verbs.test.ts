@@ -88,7 +88,7 @@ describe('hyperneo adapter send and status', () => {
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       handoff: async (sessionId, message, from) => {
         handed.push({ sessionId, message, from });
         return outcome;
@@ -190,7 +190,7 @@ describe('hyperneo adapter start and stop', () => {
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       handoff: async (sessionId, message) => {
         handed.push(`${sessionId}: ${message}`);
         return { kind: 'enqueued', id: 'mb1' };

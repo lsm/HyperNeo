@@ -59,7 +59,7 @@ export function withChatEvidence(work: WorkSummary, chat: WorkChatMatch | undefi
     hits: chat.hits,
     lastHitAt: chat.lastHitAt,
     snippets: chat.snippets.map((snippet) => ({
-      match: 'exact' as const,
+      match: snippet.match,
       at: snippet.at,
       role: snippet.role,
       text: snippet.text,

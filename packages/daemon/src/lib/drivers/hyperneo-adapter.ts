@@ -57,7 +57,7 @@ export interface HyperneoSessionControl {
 export interface HyperneoAdapterDeps {
   db: () => BunDatabase;
   machine: string;
-  searchChats: (text: string) => readonly WorkChatMatch[];
+  searchChats: (text: string) => Promise<readonly WorkChatMatch[]>;
   handoff: (sessionId: string, message: string, from: string) => Promise<MailboxHandoffOutcome>;
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
@@ -191,10 +191,8 @@ export function loadHyperneoSessions(
 }
 
 export function matchHyperneoSessions(
-  query: FindQuery,
-  deps: HyperneoAdapterDeps
+  chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  const chats = query.text ? deps.searchChats(query.text) : [];
   return new Map(
     chats.flatMap((chat) =>
       chat.taskId === null && chat.sessionId ? [[chat.sessionId, chat] as const] : []
@@ -207,13 +205,17 @@ export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reaso
 }
 
 const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
-  .input(['query', 'deps'])
+  .input(['query', 'deps', 'chats'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadHyperneoPlaces, 'deps', 'places')
   .pipe(loadHyperneoSessions, ['query', 'deps'], 'sessions')
-  .pipe(matchHyperneoSessions, ['query', 'deps'], 'matched')
+  .pipe(matchHyperneoSessions, 'chats', 'matched')
   .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matched'], 'groups')
-  .end('groups') as (query: FindQuery, deps: HyperneoAdapterDeps) => PlaceGroup[];
+  .end('groups') as (
+  query: FindQuery,
+  deps: HyperneoAdapterDeps,
+  chats: readonly WorkChatMatch[]
+) => PlaceGroup[];
 
 export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
   const status = hyperneoWorkStatus(row.status, row.processing);
@@ -383,7 +385,12 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
-    find: (query) => runHyperneoFind(query, deps),
+    find: async (query) =>
+      runHyperneoFind(
+        query,
+        deps,
+        query.text && !query.spaceId ? await deps.searchChats(query.text) : []
+      ),
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     status: async (ref) => runHyperneoStatus(ref, deps),

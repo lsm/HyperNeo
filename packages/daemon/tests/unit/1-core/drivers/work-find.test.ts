@@ -38,7 +38,9 @@ const chat = (sessionId: string | null, taskId: string | null = null): WorkChatM
   hits: 1,
   lastHitAt: 1,
   score: 32.8,
-  snippets: [{ messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' }],
+  snippets: [
+    { match: 'exact', messageId: 'm1', sessionId, role: 'assistant', at: 1, text: 'a hit' },
+  ],
 });
 
 describe('mergePlaceGroups', () => {
@@ -239,7 +241,7 @@ describe('skipSpaceQuery', () => {
         throw new Error('read the database');
       },
       machine: 'imac',
-      searchChats: () => {
+      searchChats: async () => {
         throw new Error('searched messages');
       },
       ...findOnly,
@@ -333,7 +335,7 @@ describe('hyperneo adapter against the sessions table', () => {
     const adapter = createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       ...findOnly,
     });
     const groups = await adapter.find({ includeClosed: true, limit: 20, text: 'loader' });
@@ -344,7 +346,7 @@ describe('hyperneo adapter against the sessions table', () => {
     const adapter = createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchChats: () => [],
+      searchChats: async () => [],
       handoff: async () => ({ kind: 'enqueued', id: 'mb1' }),
       sessions: {
         create: async () => 'new',
