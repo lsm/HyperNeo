@@ -1,8 +1,21 @@
+import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
+import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
-import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
+import type {
+  FindQuery,
+  PlaceGroup,
+  Rejected,
+  Result,
+  WorkAdapter,
+  WorkDetail,
+  WorkRef,
+  WorkStatus,
+  WorkSummary,
+} from './types.ts';
+import { reject } from './work-operations.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(substr(first_user_message, 1, 80), ''), 'Untitled thread') AS title,
@@ -11,6 +24,10 @@ const THREADS_PER_PLACE = 20;
 const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
 const BUSY_TIMEOUT_MS = 2_000;
+const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
+const REPLY_LIMIT = 4_000;
+const QUEUE_TIMEOUT_MS = 30_000;
+const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
 
 export interface CodexRootRow {
   name: string;
@@ -44,7 +61,20 @@ export interface CodexDesktopAdapterDeps {
   worktreesDir: string;
   machine: string;
   now: () => number;
+  spawn: SpawnFn;
 }
+
+export interface CodexThreadDetail {
+  thread: CodexThreadRow & { rolloutPath: string };
+  roots: CodexRootRow[];
+}
+
+export interface CodexTurnState {
+  marker: string | null;
+  reply: string | null;
+}
+
+type Gate<Value> = { value: Value } | { reason: Rejected };
 
 interface CodexPlace extends CodexFolderRow {
   name: string;
@@ -186,10 +216,196 @@ const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
   .pipe(buildCodexGroups, ['snapshot', 'query', 'deps'], 'groups')
   .end('groups') as (query: FindQuery, deps: CodexDesktopAdapterDeps) => PlaceGroup[];
 
+export function readCodexThread(statePath: string, id: string): CodexThreadDetail | null {
+  const db = new Database(statePath, { readonly: true });
+  try {
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    const thread = db
+      .prepare(
+        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath FROM threads
+          WHERE id = ? AND ${OWN_THREADS}`
+      )
+      .get(id) as CodexThreadDetail['thread'] | null | undefined;
+    if (!thread) return null;
+    const roots = db
+      .prepare(
+        `SELECT COALESCE(p.name, '') AS name, r.path AS folder, 0 AS lastActiveAt
+           FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
+      )
+      .all() as CodexRootRow[];
+    return { thread, roots };
+  } finally {
+    db.close();
+  }
+}
+
+export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
+  const handle = await open(path, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - bytes);
+    const buffer = Buffer.alloc(size - start);
+    await handle.read(buffer, 0, buffer.length, start);
+    const lines = buffer.toString('utf8').split('\n');
+    return start > 0 ? lines.slice(1) : lines;
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseLine(line: string): { type?: unknown; payload?: Record<string, unknown> } | null {
+  try {
+    const entry = JSON.parse(line) as { type?: unknown; payload?: Record<string, unknown> };
+    return entry && typeof entry === 'object' ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+function messageText(payload: Record<string, unknown>, role: string): string | null {
+  if (payload.type !== 'message' || payload.role !== role) return null;
+  const parts = Array.isArray(payload.content) ? payload.content : [];
+  const text = parts
+    .flatMap((part) =>
+      part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+        ? [(part as { text: string }).text]
+        : []
+    )
+    .join('\n')
+    .trim();
+  return text || null;
+}
+
+export function codexTurnState(lines: readonly string[]): CodexTurnState {
+  let reply: string | null = null;
+  for (const line of [...lines].reverse()) {
+    const entry = parseLine(line);
+    const payload = entry?.payload ?? {};
+    if (reply === null && entry?.type === 'response_item')
+      reply = messageText(payload, 'assistant');
+    if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
+      const finalMessage =
+        payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
+          ? payload.last_agent_message
+          : null;
+      return { marker: String(payload.type), reply: finalMessage ?? reply };
+    }
+  }
+  return { marker: null, reply };
+}
+
+function turnStatus(thread: CodexThreadRow, state: CodexTurnState, now: number): WorkStatus {
+  if (thread.archived) return 'stopped';
+  if (state.marker === 'task_started') return 'running';
+  if (state.marker === 'turn_aborted') return 'stopped';
+  return state.marker === 'task_complete' ? 'done' : codexStatus(thread, now);
+}
+
+export function requireCodexThread(
+  ref: WorkRef,
+  deps: CodexDesktopAdapterDeps
+): Gate<CodexThreadDetail> {
+  const detail = readCodexThread(deps.statePath, ref.id);
+  return detail ? { value: detail } : { reason: reject('not_found', `No Codex thread ${ref.id}.`) };
+}
+
+export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThreadDetail> {
+  return detail.thread.archived
+    ? { reason: reject('not_open', `Codex thread ${detail.thread.id} is archived.`) }
+    : { value: detail };
+}
+
+export async function readCodexTurn(detail: CodexThreadDetail): Promise<CodexTurnState> {
+  try {
+    return codexTurnState(await readRolloutTail(detail.thread.rolloutPath));
+  } catch {
+    return { marker: null, reply: null };
+  }
+}
+
+export function describeCodexThread(
+  detail: CodexThreadDetail,
+  state: CodexTurnState,
+  deps: CodexDesktopAdapterDeps
+): Result<WorkDetail> {
+  const { thread, roots } = detail;
+  const folder = codexProjectFolder(thread.folder, roots, deps.worktreesDir);
+  const root = roots.find((candidate) => candidate.folder === folder);
+  return {
+    ok: true,
+    value: {
+      ref: { adapter: 'codex-desktop', id: thread.id },
+      title: thread.title,
+      place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
+      status: turnStatus(thread, state, deps.now()),
+      lastActivityAt: thread.updatedAt,
+      link: `codex://threads/${thread.id}`,
+      ...(state.reply ? { lastReply: state.reply.slice(0, REPLY_LIMIT) } : {}),
+    },
+  };
+}
+
+export function rolloutHasUserMessage(lines: readonly string[], message: string): boolean {
+  const opening = message.trim().split('\n')[0].slice(0, 200);
+  return lines.some((line) => {
+    const entry = parseLine(line);
+    if (entry?.type !== 'response_item') return false;
+    return messageText(entry.payload ?? {}, 'user')?.includes(opening) ?? false;
+  });
+}
+
+export async function queueCodexMessage(
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<{ delivered: boolean }>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const proc = deps.spawn(
+      ['codex', 'queue', `--thread=${detail.thread.id}`, `--message=${message}`],
+      { stdout: 'ignore', stderr: 'pipe' }
+    );
+    timer = setTimeout(() => proc.kill(), QUEUE_TIMEOUT_MS);
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    if (code !== 0) {
+      return reject('not_delivered', stderr.trim() || `codex queue exited with ${code}.`);
+    }
+    const tail = await readRolloutTail(detail.thread.rolloutPath).catch(() => []);
+    return { ok: true, value: { delivered: rolloutHasUserMessage(tail, message) } };
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(readCodexTurn, 'outcome', 'turn')
+  .pipe(describeCodexThread, ['outcome', 'turn', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<WorkDetail>>;
+
+const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
+  .input(['ref', 'message', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
+  .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ delivered: boolean }>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
-    capabilities: ['find'],
+    capabilities: ['find', 'send', 'status'],
     find: (query) => runCodexFind(query, deps),
+    send: (ref, message) => runCodexSend(ref, message, deps),
+    status: (ref) => runCodexStatus(ref, deps),
   };
 }

@@ -107,6 +107,10 @@ describe('space adapter against the space tables', () => {
       db: () => db,
       machine: 'imac',
       searchTaskIds: () => new Set(),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+      },
     });
     const [group] = await adapter.find({ includeClosed: true, limit: 20, text: 'open one' });
     expect(group.work.map((w) => w.ref.id)).toEqual(['t1']);
@@ -120,6 +124,10 @@ describe('space adapter against the space tables', () => {
       db: () => db,
       machine: 'imac',
       searchTaskIds: (text) => new Set(text === 'parser' ? ['t2'] : []),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+      },
     });
     const find = (text?: string) => adapter.find({ includeClosed: true, limit: 20, text });
     expect((await find('finished')).flatMap((g) => g.work.map((w) => w.ref.id))).toEqual(['t2']);
@@ -133,6 +141,10 @@ describe('space adapter against the space tables', () => {
       db: () => db,
       machine: 'imac',
       searchTaskIds: () => new Set(),
+      tasks: {
+        create: async () => ({ reason: 'unused' }),
+        cancel: async () => ({ reason: 'unused' }),
+      },
     });
     const groups = await adapter.find({ includeClosed: false, limit: 20 });
     expect(
