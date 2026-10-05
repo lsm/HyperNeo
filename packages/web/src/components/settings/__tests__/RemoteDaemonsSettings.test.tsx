@@ -98,13 +98,13 @@ describe('RemoteDaemonsSettings', () => {
     expect(invocations()[0]).toEqual({ name: 'daemon.list', input: {} });
   });
 
-  it('says plainly that attachments do not survive a daemon restart', async () => {
+  it('says that attachments are restored after a daemon restart', async () => {
     respondWith([[]]);
 
     render(<RemoteDaemonsSettings />);
 
     await waitFor(() => expect(screen.getByText('No remote daemons attached.')).toBeTruthy());
-    expect(document.body.textContent).toContain('gone when it restarts');
+    expect(document.body.textContent).toContain('restored when it restarts');
   });
 
   it('attaches what the form holds and shows the daemon in the refreshed list', async () => {

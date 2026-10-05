@@ -1,6 +1,7 @@
 import { hostname } from 'node:os';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createHyperneoAdapter } from '../../drivers/hyperneo-adapter.ts';
+import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -19,5 +20,6 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ),
     }),
   ];
-  return [createFindWorkOperation({ adapters: () => adapters, remote: remoteDaemons })];
+  const deps = { adapters: () => adapters, remote: remoteDaemons };
+  return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
 }
