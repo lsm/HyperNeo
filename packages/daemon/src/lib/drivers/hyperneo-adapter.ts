@@ -105,7 +105,6 @@ export function buildHyperneoGroups(
   deps: Pick<HyperneoAdapterDeps, 'machine'>,
   matchedIds: ReadonlySet<string>
 ): PlaceGroup[] {
-  if (query.spaceId) return [];
   const machine = deps.machine;
   const text = query.text?.toLowerCase();
   return places
@@ -160,8 +159,13 @@ export function matchHyperneoSessions(
   return query.text ? deps.searchSessionIds(query.text) : new Set();
 }
 
+export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reason: PlaceGroup[] } {
+  return query.spaceId ? { reason: [] } : { value: query };
+}
+
 const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .input(['query', 'deps'])
+  .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadHyperneoPlaces, 'deps', 'places')
   .pipe(loadHyperneoSessions, ['query', 'deps'], 'sessions')
   .pipe(matchHyperneoSessions, ['query', 'deps'], 'matchedIds')

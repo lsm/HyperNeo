@@ -5,6 +5,7 @@ import {
   buildHyperneoGroups,
   createHyperneoAdapter,
   hyperneoWorkStatus,
+  skipSpaceQuery,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { createFindWorkOperation } from '../../../../src/lib/drivers/find-operation';
 import type { PlaceGroup, WorkAdapter } from '../../../../src/lib/drivers/types';
@@ -155,16 +156,24 @@ describe('buildHyperneoGroups', () => {
       ).flatMap((g) => g.work.map((w) => w.ref.id))
     ).toEqual(['s1']);
   });
+});
 
-  test('leaves Spaces to the space adapter', () => {
+describe('skipSpaceQuery', () => {
+  test('leaves Spaces to the space adapter without reading anything', async () => {
+    expect(skipSpaceQuery({ includeClosed: false, limit: 20, spaceId: 'sp' })).toEqual({
+      reason: [],
+    });
+    const adapter = createHyperneoAdapter({
+      db: () => {
+        throw new Error('read the database');
+      },
+      machine: 'imac',
+      searchSessionIds: () => {
+        throw new Error('searched messages');
+      },
+    });
     expect(
-      buildHyperneoGroups(
-        places,
-        sessions,
-        { ...query, spaceId: 'sp' },
-        { machine: 'imac' },
-        new Set()
-      )
+      await adapter.find({ includeClosed: true, limit: 20, spaceId: 'sp', text: 'x' })
     ).toEqual([]);
   });
 });
