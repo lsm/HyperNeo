@@ -2,11 +2,13 @@ import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { NeoHolder } from './router.ts';
 
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 1_000;
 const SUMMARY_CHARS = 240;
+const CLASSIFY_TIMEOUT_MS = 4_000;
 
 export function buildNeoRoutePrompt(text: string, candidates: readonly NeoHolder[]): string {
   const topics = candidates
@@ -39,11 +41,11 @@ export function readNeoRouteAnswer(
   return candidates.find((holder) => holder.concernId === answer) ?? null;
 }
 
-export async function classifyNeoRoute(
+async function askNeoRouteModel(
   text: string,
-  candidates: readonly NeoHolder[]
+  candidates: readonly NeoHolder[],
+  abortController: AbortController
 ): Promise<NeoHolder | null> {
-  if (candidates.length === 0 || process.env.NODE_ENV === 'test') return null;
   const providers = getProviderService();
   let restore: Awaited<ReturnType<typeof providers.applyEnvVarsToProcessForProvider>> = {};
   try {
@@ -73,7 +75,11 @@ export async function classifyNeoRoute(
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
         env,
-        thinking: { type: 'disabled' },
+        abortController,
+        thinking:
+          provider === 'kimi'
+            ? KimiProvider.resolveKimiTitleThinkingConfig(config.modelId)
+            : { type: 'disabled' },
       },
     });
     for await (const message of run) {
@@ -92,5 +98,26 @@ export async function classifyNeoRoute(
     try {
       providers.restoreEnvVars(restore);
     } catch {}
+  }
+}
+
+export async function classifyNeoRoute(
+  text: string,
+  candidates: readonly NeoHolder[],
+  timeoutMs = CLASSIFY_TIMEOUT_MS
+): Promise<NeoHolder | null> {
+  if (candidates.length === 0 || process.env.NODE_ENV === 'test') return null;
+  const abortController = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      abortController.abort();
+      resolve(null);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([askNeoRouteModel(text, candidates, abortController), timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
