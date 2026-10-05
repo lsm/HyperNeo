@@ -38,6 +38,9 @@ describe('readNeoCatchUp', () => {
   test('is empty when nothing went around main Neo', () => {
     log.record(entry(1, { destination: 'main', concernId: null }));
     expect(readNeoCatchUp(db)).toBe('');
+    log.recordOutcome('m5', 'It announces Artifacts.', at);
+    expect(readNeoCatchUp(db)).toContain('"cloudflare post" → It announces Artifacts.');
+    expect(readNeoCatchUp(db)).toBe('');
   });
 
   test('digests each holder-routed ask once, even when main Neo answers late', () => {

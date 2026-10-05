@@ -67,7 +67,7 @@ export class NeoRoutingLogRepository {
     if (!this.ready()) return;
     this.db
       .prepare(
-        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?
+        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?, digested_at = NULL
           WHERE message_id = ? AND outcome IS NULL`
       )
       .run(clip(outcome), at, messageId);
