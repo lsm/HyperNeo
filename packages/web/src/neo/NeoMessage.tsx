@@ -110,11 +110,11 @@ export function NeoMessage({
           </div>
         )}
         {/^\s*\d+[.)]?\s*$/.test(text) ? (
-          <p class="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+          <p class="whitespace-pre-wrap text-base leading-relaxed">{text}</p>
         ) : (
           <MarkdownRenderer
             content={text}
-            class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-sm leading-relaxed`}
+            class={`neo-markdown ${user ? 'neo-markdown-user' : 'neo-markdown-assistant'} text-base leading-relaxed`}
           />
         )}
         {work?.report && !user && (
@@ -128,7 +128,7 @@ export function NeoMessage({
               </p>
               <MarkdownRenderer
                 content={work.report}
-                class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
+                class="neo-markdown neo-markdown-assistant text-base leading-relaxed"
               />
               <CopyButton text={work.report} label="Copy work result" />
             </div>
