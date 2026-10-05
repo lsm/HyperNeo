@@ -238,7 +238,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -247,7 +247,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false means it was accepted and queued behind the current turn. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, unsupported or unreachable.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false means it was accepted and queued behind the current turn. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },
@@ -265,7 +265,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.stop',
       description:
-        'Stop the current turn of work by ref. stopped false means nothing was running. Some adapters cannot stop work (unsupported); tell the user instead of retrying.',
+        'Stop the current turn of work by ref. stopped false means nothing was running. Some adapters cannot stop work (unsupported); tell the user instead of retrying. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: WorkRefInputSchema,
       resultSchema: StopWorkResultSchema,
       policy: { safetyClass: 'mutate' },
