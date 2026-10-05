@@ -25,7 +25,12 @@ type SourceOutcome = { groups: PlaceGroup[]; unreachable: FindResult['unreachabl
 
 export interface RemoteDaemons {
   list(): { daemonId: string }[];
-  invoke(daemonId: string, name: string, input: unknown): Promise<unknown>;
+  invoke(
+    daemonId: string,
+    name: string,
+    input: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<unknown>;
 }
 
 export interface FindWorkDeps {

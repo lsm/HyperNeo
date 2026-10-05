@@ -88,6 +88,7 @@ export interface StartRequest {
 }
 
 export interface WorkCallContext {
+  from: string;
   caller: OperationCaller;
 }
 
@@ -99,7 +100,11 @@ export interface WorkAdapter {
     request: StartRequest,
     context: WorkCallContext
   ) => Promise<Result<WorkSummary>>;
-  readonly send?: (ref: WorkRef, message: string) => Promise<Result<{ delivered: boolean }>>;
+  readonly send?: (
+    ref: WorkRef,
+    message: string,
+    context: WorkCallContext
+  ) => Promise<Result<{ delivered: boolean }>>;
   readonly status?: (ref: WorkRef) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
 }

@@ -19,6 +19,8 @@ function summary(adapter: string, id: string): WorkSummary {
   };
 }
 
+let origin = 'chat';
+
 const hyperneo: WorkAdapter = {
   id: 'hyperneo',
   capabilities: ['find', 'start', 'send', 'status', 'stop'],
@@ -27,8 +29,8 @@ const hyperneo: WorkAdapter = {
     ok: true,
     value: { ...summary('hyperneo', 's1'), title: request.title },
   }),
-  send: async (ref) =>
-    ref.id === 'gone'
+  send: async (ref, _message, context) =>
+    ref.id === 'gone' || context.from !== origin
       ? { ok: false, reason: 'not_open', detail: 'archived' }
       : { ok: true, value: { delivered: true } },
   status: async (ref) => ({
@@ -45,7 +47,12 @@ const desktop: WorkAdapter = {
   send: async () => ({ ok: true, value: { delivered: false } }),
 };
 
-type Invoke = (daemonId: string, name: string, input: unknown) => Promise<unknown>;
+type Invoke = (
+  daemonId: string,
+  name: string,
+  input: unknown,
+  options?: { timeoutMs?: number }
+) => Promise<unknown>;
 
 async function call(
   name: string,
@@ -57,6 +64,7 @@ async function call(
     createWorkVerbOperations({
       adapters: () => [hyperneo, desktop],
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
+      daemonName: 'imac',
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -83,6 +91,53 @@ describe('work verb operations', () => {
     expect(
       await call('work.start', { adapter: 'hyperneo', place, title: 'font size', message: 'go' })
     ).toMatchObject({ ok: true, value: { title: 'font size' } });
+  });
+
+  test('tells the adapter who is sending', async () => {
+    origin = 'session:neo%3Aroot';
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' },
+        undefined,
+        { source: 'mcp', sessionId: 'neo:root' }
+      )
+    ).toEqual({ ok: true, value: { delivered: true } });
+    origin = 'chat';
+  });
+
+  test('carries the sender to another daemon and honors it only from the RPC door', async () => {
+    const forwarded: unknown[] = [];
+    await call(
+      'work.send',
+      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      async (_daemonId, _name, input) => {
+        forwarded.push(input);
+        return { ok: true, value: { delivered: true } };
+      },
+      { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+    );
+    expect(forwarded).toEqual([
+      {
+        ref: { adapter: 'hyperneo', id: 's9' },
+        message: 'hi',
+        from: 'daemon:imac::session:neo%3Aroot',
+      },
+    ]);
+    origin = 'session:neo%3Aroot';
+    const relayed = { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', from: origin };
+    expect(await call('work.send', relayed)).toEqual({ ok: true, value: { delivered: true } });
+    origin = 'chat';
+    expect(await call('work.send', { ...relayed, from: 'not an address' })).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(
+      await call('work.send', { ...relayed, from: 'chat' }, undefined, {
+        source: 'mcp',
+        sessionId: 'agent-1',
+      })
+    ).toMatchObject({ ok: false, reason: 'not_open' });
   });
 
   test('passes the adapter rejection through', async () => {
@@ -139,9 +194,26 @@ describe('work verb operations', () => {
       {
         daemonId: 'laptop',
         name: 'work.start',
-        input: { adapter: 'codex-desktop', place, title: 't', message: 'm' },
+        input: { adapter: 'codex-desktop', place, title: 't', message: 'm', from: 'chat' },
       },
     ]);
+  });
+
+  test('gives a remote start time to create its session and warns it may have started', async () => {
+    const timeouts: unknown[] = [];
+    const result = await call(
+      'work.start',
+      { adapter: 'hyperneo', place: { ...place, daemon: 'laptop' }, title: 't', message: 'm' },
+      async (_daemonId, _name, _input, options) => {
+        timeouts.push(options);
+        throw new Error('Request timeout');
+      }
+    );
+    expect(timeouts).toEqual([{ timeoutMs: 120_000 }]);
+    expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect((result as { detail: string }).detail).toContain(
+      'check work.find before starting it again'
+    );
   });
 
   test('lets only Neo or the user change work on another daemon', async () => {

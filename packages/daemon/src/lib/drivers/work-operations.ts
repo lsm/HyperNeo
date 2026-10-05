@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { qualifyRemoteOrigin } from '../mailbox/address.ts';
+import { selectMessageOrigin, selectSendOrigin } from '../messaging/message-send.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -28,17 +30,25 @@ type Gate<Value> = { value: Value } | { reason: Rejected };
 export interface WorkVerbDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
+  daemonName: string;
 }
 
 const MessageSchema = z.string().trim().min(1).max(20_000);
+const REMOTE_START_TIMEOUT_MS = 120_000;
+const ForwardedOriginSchema = z.string().min(1).max(500).optional();
 
 export const StartWorkInputSchema = z.object({
   adapter: z.string().min(1),
   place: PlaceSchema,
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
+  from: ForwardedOriginSchema,
 });
-export const SendWorkInputSchema = z.object({ ref: WorkRefSchema, message: MessageSchema });
+export const SendWorkInputSchema = z.object({
+  ref: WorkRefSchema,
+  message: MessageSchema,
+  from: ForwardedOriginSchema,
+});
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
 
 export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
@@ -99,10 +109,13 @@ export async function forwardWork<Result>(
   name: string,
   input: unknown,
   schema: z.ZodType<Result>,
-  remote: RemoteDaemons
+  remote: RemoteDaemons,
+  timeoutMs?: number
 ): Promise<Result | Rejected> {
   try {
-    const reply = schema.safeParse(await remote.invoke(daemon, name, input));
+    const reply = schema.safeParse(
+      await remote.invoke(daemon, name, input, timeoutMs ? { timeoutMs } : undefined)
+    );
     return reply.success ? reply.data : reject('unreachable', `${daemon} sent an unusable reply.`);
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
@@ -120,19 +133,27 @@ export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'s
 export async function startWork(
   route: Route<'start'>,
   input: StartInput,
+  from: string,
   caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<StartResult> {
-  if ('local' in route) return route.local(input, { caller });
+  if ('local' in route) return route.local(input, { from, caller });
   const { daemon: _daemon, ...place } = input.place;
   const result = await forwardWork(
     route.daemon,
     'work.start',
-    { ...input, place },
+    { ...input, place, from: qualifyRemoteOrigin(from, deps.daemonName) },
     StartWorkResultSchema,
-    deps.remote
+    deps.remote,
+    REMOTE_START_TIMEOUT_MS
   );
-  return result.ok ? { ok: true, value: stampWork(result.value, route.daemon) } : result;
+  if (result.ok) return { ok: true, value: stampWork(result.value, route.daemon) };
+  return result.reason === 'unreachable'
+    ? {
+        ...result,
+        detail: `${result.detail} The work may still have started there; check work.find before starting it again.`,
+      }
+    : result;
 }
 
 export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'send'>> {
@@ -142,13 +163,19 @@ export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'sen
 export async function sendWork(
   route: Route<'send'>,
   input: SendInput,
+  from: string,
+  caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<SendResult> {
-  if ('local' in route) return route.local(input.ref, input.message);
+  if ('local' in route) return route.local(input.ref, input.message, { from, caller });
   return forwardWork(
     route.daemon,
     'work.send',
-    { ref: localRef(input.ref), message: input.message },
+    {
+      ref: localRef(input.ref),
+      message: input.message,
+      from: qualifyRemoteOrigin(from, deps.daemonName),
+    },
     SendWorkResultSchema,
     deps.remote
   );
@@ -184,7 +211,8 @@ export async function stopWork(
   caller: OperationCaller,
   deps: WorkVerbDeps
 ): Promise<StopResult> {
-  if ('local' in route) return route.local(input.ref, { caller });
+  if ('local' in route)
+    return route.local(input.ref, { from: selectMessageOrigin(caller), caller });
   return forwardWork(
     route.daemon,
     'work.stop',
@@ -198,7 +226,8 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
-  .pipe(startWork, ['outcome', 'input', 'caller', 'deps'], 'outcome')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
   caller: OperationCaller,
@@ -209,7 +238,8 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
-  .pipe(sendWork, ['outcome', 'input', 'deps'], 'outcome')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
+  .pipe(sendWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
   caller: OperationCaller,
