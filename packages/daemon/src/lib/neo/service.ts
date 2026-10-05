@@ -9,7 +9,9 @@ import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-r
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import { invokeOperation } from '../operations/invoke.ts';
+import type { WorkRef } from '../drivers/types.ts';
 import {
+  driverStartedReport,
   driverWorkCall,
   driverWorkCaller,
   readDriverOutcome,
@@ -414,6 +416,11 @@ export class NeoService {
     const work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
     const cancelled = this.repo.transitionWork(id, work, { status: 'cancelled' });
+    const driverRef = cancelled ? this.driverTargets.readRef(id) : null;
+    if (cancelled && driverRef) {
+      await this.stopDriverWork(driverRef, cancelled);
+      return;
+    }
     if (cancelled?.sessionId) {
       const target = this.resolveWorkTarget(id);
       if (!target.accepted || target.targetSessionId !== null) return;
@@ -441,7 +448,15 @@ export class NeoService {
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
       this.driverTargets.recordRef(queued.id, result.ref);
-      this.notifyChanged();
+      const current = this.repo.getWork(queued.id);
+      if (current?.status !== 'queued') {
+        await this.stopDriverWork(result.ref, queued);
+        return;
+      }
+      this.repo.transitionWork(queued.id, current, {
+        status: 'queued',
+        report: driverStartedReport(result.ref, result.link),
+      });
       return;
     }
     const failed = this.repo.transitionWork(queued.id, queued, {
@@ -449,6 +464,15 @@ export class NeoService {
       report: `Could not start the execution: ${result.failure}`.slice(0, 12000),
     });
     if (failed) await this.returnReport(failed);
+  }
+
+  private async stopDriverWork(ref: WorkRef, work: NeoWork): Promise<void> {
+    await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.stop',
+      { ref },
+      driverWorkCaller(work)
+    ).catch(() => undefined);
   }
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {

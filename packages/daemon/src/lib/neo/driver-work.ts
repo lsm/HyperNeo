@@ -39,6 +39,11 @@ export function driverWorkCall(
     : { name: 'work.send', input: { ref: target.ref, message: work.instruction } };
 }
 
+export function driverStartedReport(ref: WorkRef, link?: string): string {
+  const where = link ? ` It opens at ${link}.` : '';
+  return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
+}
+
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {
   return { source: 'internal', sessionId: work.originSessionId, role: 'neo' };
 }
@@ -46,12 +51,15 @@ export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): Operat
 export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
-): { ref: WorkRef } | { failure: string } {
+): { ref: WorkRef; link?: string } | { failure: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
   if (!reply.data.ok) return { failure: `${reply.data.reason}: ${reply.data.detail}` };
-  if ('ref' in reply.data.value) return { ref: reply.data.value.ref as WorkRef };
+  if ('ref' in reply.data.value) {
+    const { ref, link } = reply.data.value as { ref: WorkRef; link?: unknown };
+    return typeof link === 'string' ? { ref, link } : { ref };
+  }
   return target.verb === 'send'
     ? { ref: target.ref }
     : { failure: 'work.start returned no reference.' };

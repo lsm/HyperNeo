@@ -100,9 +100,10 @@ describe('readDriverOutcome', () => {
 });
 
 describe('Neo work with a drivers target', () => {
-  async function setup(reply: unknown) {
+  async function setup(reply: unknown, during?: (service: NeoService) => Promise<void>) {
     const db = await createTestDb();
     const calls: Array<{ name: string; input: unknown; caller: OperationCaller }> = [];
+    let service: NeoService;
     const operation = (name: string) =>
       defineOperation({
         name,
@@ -111,11 +112,16 @@ describe('Neo work with a drivers target', () => {
         resultSchema: z.unknown(),
         execute: async (input, caller) => {
           calls.push({ name, input, caller });
-          return reply;
+          if (name === 'work.start') await during?.(service);
+          return name === 'work.stop' ? { ok: true, value: { stopped: true } } : reply;
         },
       });
-    const registry = createOperationRegistry([operation('work.start'), operation('work.send')]);
-    const service = new NeoService(
+    const registry = createOperationRegistry([
+      operation('work.start'),
+      operation('work.send'),
+      operation('work.stop'),
+    ]);
+    service = new NeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
@@ -151,9 +157,42 @@ describe('Neo work with a drivers target', () => {
         },
       ]);
       expect(service.repo.getWork('work-1')).toMatchObject({ status: 'queued', sessionId: null });
+      expect(service.repo.getWork('work-1')?.report).toContain(
+        `Follow up with work.status ${JSON.stringify({ ref })}`
+      );
       expect(service.driverTargets.readRef('work-1')).toEqual(ref);
       await service.start('work-1');
       expect(calls).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('stops work that was cancelled while it was starting', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, (neo) =>
+      neo.cancel('work-1')
+    );
+    try {
+      await service.start('work-1');
+      expect(calls.map((call) => [call.name, call.input])).toEqual([
+        ['work.start', driverWorkCall(startTarget, work).input],
+        ['work.stop', { ref }],
+      ]);
+      expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('stops started work when it is cancelled later', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } });
+    try {
+      await service.start('work-1');
+      await service.cancel('work-1');
+      expect(calls.map((call) => call.name)).toEqual(['work.start', 'work.stop']);
+      expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
     } finally {
       db.close();
     }
