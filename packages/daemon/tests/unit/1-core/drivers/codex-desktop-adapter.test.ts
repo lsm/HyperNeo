@@ -171,6 +171,19 @@ describe('codex-desktop adapter against a Codex state database', () => {
     expect(groups[0].work.map((w) => w.title)).toEqual(['Untitled thread']);
   });
 
+  test('titles a thread by one short line of its first message, not the whole prompt', async () => {
+    const prompt = `<system>\nYou are a bridge.\n${'filler '.repeat(5000)}Pick a font.`;
+    const db = new Database(statePath);
+    db.prepare(
+      `INSERT INTO threads VALUES ('t7', NULL, ?, NULL, '/focus/superpipe', 'vscode', 0, ${NOW})`
+    ).run(prompt);
+    db.close();
+    expect(await adapter().find({ includeClosed: false, limit: 20, text: 'font' })).toEqual([]);
+    const groups = await adapter().find({ includeClosed: false, limit: 20, text: 'superpipe' });
+    const title = groups[0].work.find((w) => w.ref.id === 't7')?.title;
+    expect(title).toBe(`<system> You are a bridge. ${'filler '.repeat(7)}fill`);
+  });
+
   test('skips or fills rows with missing values instead of failing the search', async () => {
     const db = new Database(statePath);
     db.exec(`INSERT INTO projects VALUES ('p3', NULL, NULL)`);
