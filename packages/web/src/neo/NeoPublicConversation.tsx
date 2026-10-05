@@ -26,8 +26,10 @@ function PublicEntry({
   entry,
   onOpenScene,
   canOpenScene,
+  topics,
 }: {
   entry: NeoPublicEntry;
+  topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
 }) {
@@ -38,6 +40,7 @@ function PublicEntry({
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : 'You';
+  const topic = publication ? topics?.get(publication.producerInput.sessionId) : undefined;
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   return (
     <article
@@ -49,6 +52,11 @@ function PublicEntry({
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
         <span class="neo-message-name font-medium">{author}</span>
+        {topic && (
+          <span class="neo-message-topic max-w-[16rem] truncate text-fg-faint" title={topic}>
+            {topic}
+          </span>
+        )}
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
@@ -132,8 +140,10 @@ export function NeoPublicConversation({
   canOpenScene,
   onRetry,
   onLoadEarlier,
+  topics,
 }: {
   conversation: Conversation;
+  topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onRetry?: () => void;
@@ -174,6 +184,7 @@ export function NeoPublicConversation({
           entry={entry}
           onOpenScene={onOpenScene}
           canOpenScene={canOpenScene}
+          topics={topics}
         />
       ))}
       {conversation.hasMore && onRetry && (

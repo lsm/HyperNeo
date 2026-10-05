@@ -419,3 +419,27 @@ describe('durable public conversation presentation', () => {
     expect(publicAskText([photo])).toBe('');
   });
 });
+
+describe('NeoPublicConversation topic labels', () => {
+  afterEach(cleanup);
+
+  it('labels a holder reply with its topic and leaves main Neo replies plain', () => {
+    const mainReply = publication({
+      publicationId: '20000000-0000-4000-8000-000000000002',
+      producerInput: { sessionId: root, messageId: 'original' },
+      fullText: 'Main Neo answer.',
+      links: [],
+      sequence: 2,
+    });
+    render(
+      <NeoPublicConversation
+        conversation={conversation([ask()], [publication(), mainReply])}
+        topics={new Map([[holder, 'Fictional research']])}
+      />
+    );
+    const replies = screen.getAllByRole('article').filter((item) => !item.id);
+    expect(within(replies[0]).getByText('Fictional research')).toBeTruthy();
+    expect(within(replies[1]).queryByText('Fictional research')).toBeNull();
+    expect(within(replies[1]).getByText('Neo')).toBeTruthy();
+  });
+});

@@ -50,6 +50,12 @@ export function NeoLive() {
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
   const drivers = new Map((view?.workDrivers ?? []).map((driver) => [driver.workId, driver]));
+  const topics = new Map(
+    (view?.publicAuthorBindings ?? []).flatMap((binding) => {
+      const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
+      return title ? [[binding.sessionId, title] as const] : [];
+    })
+  );
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
@@ -429,6 +435,7 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant}
+              topics={topics}
               publicConversation={publicConversation}
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
