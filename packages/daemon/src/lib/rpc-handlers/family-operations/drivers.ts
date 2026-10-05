@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
+import type { WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import { getDataDir } from '../../data-dir.ts';
 import {
   createClaudeDesktopAdapter,
@@ -28,6 +29,9 @@ import type { OperationCaller, OperationDefinition } from '../../operations/regi
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import type { FamilyOperationContext } from './context.ts';
+
+const WORK_CHAT_LIMIT = 200;
+const SEARCH_REUSE_MS = 2_000;
 
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus } = context.deps;
@@ -169,14 +173,19 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
-  const search = (text: string) =>
-    context.deps.db.getSDKMessageRepo().searchMessages({ query: text, limit: 50 }).results;
+  let lastSearch: { text: string; at: number; chats: readonly WorkChatMatch[] } | null = null;
+  const searchChats = (text: string): readonly WorkChatMatch[] => {
+    const now = Date.now();
+    if (lastSearch?.text === text && now - lastSearch.at < SEARCH_REUSE_MS) return lastSearch.chats;
+    const chats = context.deps.db.getSDKMessageRepo().searchWorkChats(text, WORK_CHAT_LIMIT);
+    lastSearch = { text, at: now, chats };
+    return chats;
+  };
   const adapters = [
     createHyperneoAdapter({
       db,
       machine,
-      searchSessionIds: (text) =>
-        new Set(search(text).flatMap((result) => (result.sessionId ? [result.sessionId] : []))),
+      searchChats,
       handoff: (sessionId, message, from) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
@@ -195,12 +204,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createSpaceAdapter({
       db,
       machine,
-      searchWorkIds: (text) =>
-        new Set(
-          search(text).flatMap((result) =>
-            [result.taskId, result.sessionId].filter((id): id is string => Boolean(id))
-          )
-        ),
+      searchChats,
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(),

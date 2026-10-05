@@ -25,11 +25,13 @@ import {
   type MessageSearchParams,
   type MessageSearchResponse,
   type MessageSearchResult,
+  messageSearchPolicy,
 } from '../message-search.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { createSQLiteAsciiPrefixRange } from '../sqlite-prefix-range.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
+import { searchWorkChats as queryWorkChats, type WorkChatMatch } from '../work-chat-search.ts';
 import {
   type DeliveryTransitionAction,
   deliveryTransitionRule,
@@ -2417,24 +2419,10 @@ export class SDKMessageRepository {
     if (!ftsQuery) return { results: [], limit, offset };
 
     const broadQuery = isBroadMessageSearchQuery(params.query);
-    const hasSessions = this.tableExists('sessions');
-    const hasSpaceTasks = this.tableExists('space_tasks');
-    const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = msc.session_id' : '';
-    const taskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = msc.task_id' : '';
-    const sessionPolicy = hasSessions
-      ? `AND COALESCE(s.status, '') != 'archived'
-				AND NOT (
-					COALESCE(s.status, '') = 'ended'
-					AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days')
-				)`
-      : '';
-    const taskPolicy = hasSpaceTasks
-      ? `AND COALESCE(st.status, '') != 'archived'
-				AND NOT (
-					COALESCE(st.status, '') IN ('done', 'cancelled', 'completed')
-					AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
-				)`
-      : '';
+    const policy = messageSearchPolicy({
+      sessions: this.tableExists('sessions'),
+      spaceTasks: this.tableExists('space_tasks'),
+    });
     let candidateSql = `
 			SELECT
 				msc.id,
@@ -2443,15 +2431,13 @@ export class SDKMessageRepository {
 				msc.source_id
 			FROM message_search_fts
 			JOIN message_search_content msc ON msc.id = message_search_fts.rowid
-			${sessionJoin}
-			${taskJoin}
+			${policy.joins}
 			WHERE message_search_fts MATCH ?
 			  AND (
 				msc.kind != 'message'
 				OR (
 					1 = 1
-					${sessionPolicy}
-					${taskPolicy}
+					${policy.where}
 				)
 			  )`;
     const values: SQLiteValue[] = [ftsQuery];
@@ -2545,6 +2531,15 @@ export class SDKMessageRepository {
       });
 
     return { results, limit, offset };
+  }
+
+  searchWorkChats(query: string, limit: number): WorkChatMatch[] {
+    if (!this.hasMessageSearchIndex()) return [];
+    const tables = {
+      sessions: this.tableExists('sessions'),
+      spaceTasks: this.tableExists('space_tasks'),
+    };
+    return queryWorkChats(this.db, tables, query, limit);
   }
 }
 

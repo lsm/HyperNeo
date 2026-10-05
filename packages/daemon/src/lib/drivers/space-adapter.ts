@@ -1,7 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { hyperneoWorkStatus } from './hyperneo-adapter.ts';
+import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -91,7 +93,7 @@ export interface SpaceTaskControl {
 export interface SpaceAdapterDeps {
   db: () => BunDatabase;
   machine: string;
-  searchWorkIds: (text: string) => ReadonlySet<string>;
+  searchChats: (text: string) => readonly WorkChatMatch[];
   tasks: SpaceTaskControl;
 }
 
@@ -213,7 +215,7 @@ export function buildSpaceGroups(
   tasks: readonly SpaceTaskRow[],
   query: FindQuery,
   deps: Pick<SpaceAdapterDeps, 'machine'>,
-  matchedIds: ReadonlySet<string>,
+  matched: ReadonlyMap<string, WorkChatMatch>,
   agents: readonly SpaceAgentRow[] = []
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
@@ -228,21 +230,27 @@ export function buildSpaceGroups(
         .filter(
           (task) =>
             placeMatches ||
-            matchedIds.has(task.id) ||
+            matched.has(task.id) ||
             `#${task.taskNumber} ${task.title}`.toLowerCase().includes(text ?? '')
         )
-        .slice(0, TASKS_PER_SPACE)
-        .map((task) => toWork(task, space, deps.machine));
+        .map((task) => withChatEvidence(toWork(task, space, deps.machine), matched.get(task.id)))
+        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+        .slice(0, TASKS_PER_SPACE);
       work.unshift(
         ...agents
           .filter((agent) => agent.spaceId === space.id)
           .filter(
             (agent) =>
               placeMatches ||
-              (agent.sessionId !== null && matchedIds.has(agent.sessionId)) ||
+              (agent.sessionId !== null && matched.has(agent.sessionId)) ||
               `@${agent.handle} ${agent.displayName}`.toLowerCase().includes(text ?? '')
           )
-          .map((agent) => toAgentWork(agent, space.name, deps.machine))
+          .map((agent) =>
+            withChatEvidence(
+              toAgentWork(agent, space.name, deps.machine),
+              agent.sessionId === null ? undefined : matched.get(agent.sessionId)
+            )
+          )
       );
       if (!placeMatches && work.length === 0) return [];
       return [
@@ -265,13 +273,22 @@ export function loadSpacePlaces(deps: SpaceAdapterDeps): SpacePlaceRow[] {
 export function loadSpaceTasks(
   query: FindQuery,
   deps: SpaceAdapterDeps,
-  matchedIds: ReadonlySet<string>
+  matched: ReadonlyMap<string, WorkChatMatch>
 ): SpaceTaskRow[] {
-  return readSpaceTasks(deps.db(), query.includeClosed, query.text, matchedIds);
+  return readSpaceTasks(deps.db(), query.includeClosed, query.text, new Set(matched.keys()));
 }
 
-export function matchSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): ReadonlySet<string> {
-  return query.text ? deps.searchWorkIds(query.text) : new Set();
+export function matchSpaceTasks(
+  query: FindQuery,
+  deps: SpaceAdapterDeps
+): ReadonlyMap<string, WorkChatMatch> {
+  const chats = query.text ? deps.searchChats(query.text) : [];
+  return new Map(
+    chats.flatMap((chat) => {
+      const key = chat.taskId ?? chat.sessionId;
+      return key ? [[key, chat] as const] : [];
+    })
+  );
 }
 
 export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): SpaceAgentRow[] {
@@ -281,10 +298,10 @@ export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): Space
 const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .input(['query', 'deps'])
   .pipe(loadSpacePlaces, 'deps', 'spaces')
-  .pipe(matchSpaceTasks, ['query', 'deps'], 'matchedIds')
-  .pipe(loadSpaceTasks, ['query', 'deps', 'matchedIds'], 'tasks')
+  .pipe(matchSpaceTasks, ['query', 'deps'], 'matched')
+  .pipe(loadSpaceTasks, ['query', 'deps', 'matched'], 'tasks')
   .pipe(loadSpaceAgents, ['query', 'deps'], 'agents')
-  .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds', 'agents'], 'groups')
+  .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matched', 'agents'], 'groups')
   .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
 
 export function spaceTaskCaller(caller: OperationCaller): OperationCaller {

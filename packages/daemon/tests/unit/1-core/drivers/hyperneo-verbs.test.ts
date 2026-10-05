@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function control(db: Database, events: string[]) {
   return {
@@ -88,7 +88,7 @@ describe('hyperneo adapter send and status', () => {
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchSessionIds: () => new Set(),
+      searchChats: () => [],
       handoff: async (sessionId, message, from) => {
         handed.push({ sessionId, message, from });
         return outcome;
@@ -190,7 +190,7 @@ describe('hyperneo adapter start and stop', () => {
     return createHyperneoAdapter({
       db: () => db,
       machine: 'imac',
-      searchSessionIds: () => new Set(),
+      searchChats: () => [],
       handoff: async (sessionId, message) => {
         handed.push(`${sessionId}: ${message}`);
         return { kind: 'enqueued', id: 'mb1' };
