@@ -100,6 +100,32 @@ describe('work verb operations', () => {
     origin = 'chat';
   });
 
+  test('carries the sender to another daemon and honors it only from the RPC door', async () => {
+    const forwarded: unknown[] = [];
+    await call(
+      'work.send',
+      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      async (_daemonId, _name, input) => {
+        forwarded.push(input);
+        return { ok: true, value: { delivered: true } };
+      },
+      { source: 'mcp', sessionId: 'neo:root' }
+    );
+    expect(forwarded).toEqual([
+      { ref: { adapter: 'hyperneo', id: 's9' }, message: 'hi', from: 'session:neo%3Aroot' },
+    ]);
+    origin = 'session:neo%3Aroot';
+    const relayed = { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', from: origin };
+    expect(await call('work.send', relayed)).toEqual({ ok: true, value: { delivered: true } });
+    origin = 'chat';
+    expect(
+      await call('work.send', { ...relayed, from: 'chat' }, undefined, {
+        source: 'mcp',
+        sessionId: 'agent-1',
+      })
+    ).toMatchObject({ ok: false, reason: 'not_open' });
+  });
+
   test('passes the adapter rejection through', async () => {
     expect(
       await call('work.send', { ref: { adapter: 'hyperneo', id: 'gone' }, message: 'hi' })
@@ -154,7 +180,7 @@ describe('work verb operations', () => {
       {
         daemonId: 'laptop',
         name: 'work.start',
-        input: { adapter: 'codex-desktop', place, title: 't', message: 'm' },
+        input: { adapter: 'codex-desktop', place, title: 't', message: 'm', from: 'chat' },
       },
     ]);
   });

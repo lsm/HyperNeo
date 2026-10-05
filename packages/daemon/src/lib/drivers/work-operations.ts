@@ -32,14 +32,20 @@ export interface WorkVerbDeps {
 }
 
 const MessageSchema = z.string().trim().min(1).max(20_000);
+const ForwardedOriginSchema = z.string().min(1).max(500).optional();
 
 export const StartWorkInputSchema = z.object({
   adapter: z.string().min(1),
   place: PlaceSchema,
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
+  from: ForwardedOriginSchema,
 });
-export const SendWorkInputSchema = z.object({ ref: WorkRefSchema, message: MessageSchema });
+export const SendWorkInputSchema = z.object({
+  ref: WorkRefSchema,
+  message: MessageSchema,
+  from: ForwardedOriginSchema,
+});
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
 
 export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
@@ -57,6 +63,10 @@ type StopResult = z.infer<typeof StopWorkResultSchema>;
 
 export function reject(reason: WorkRejection, detail: string): Rejected {
   return { ok: false, reason, detail };
+}
+
+export function selectWorkOrigin(input: { from?: string }, caller: OperationCaller): string {
+  return caller.source === 'rpc' && input.from ? input.from : selectMessageOrigin(caller);
 }
 
 export function pickRoute<Verb extends RoutedVerb>(
@@ -114,7 +124,7 @@ export async function startWork(
   const result = await forwardWork(
     route.daemon,
     'work.start',
-    { ...input, place },
+    { ...input, place, from },
     StartWorkResultSchema,
     deps.remote
   );
@@ -135,7 +145,7 @@ export async function sendWork(
   return forwardWork(
     route.daemon,
     'work.send',
-    { ref: localRef(input.ref), message: input.message },
+    { ref: localRef(input.ref), message: input.message, from },
     SendWorkResultSchema,
     deps.remote
   );
@@ -183,7 +193,7 @@ export async function stopWork(
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
-  .pipe(selectMessageOrigin, 'caller', 'from')
+  .pipe(selectWorkOrigin, ['input', 'caller'], 'from')
   .pipe(startWork, ['outcome', 'input', 'from', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
@@ -194,7 +204,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
 const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
-  .pipe(selectMessageOrigin, 'caller', 'from')
+  .pipe(selectWorkOrigin, ['input', 'caller'], 'from')
   .pipe(sendWork, ['outcome', 'input', 'from', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
