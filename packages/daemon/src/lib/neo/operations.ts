@@ -42,6 +42,7 @@ import {
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
+import { NeoDriverTargetSchema, type NeoDriverTarget } from './driver-work.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 
 const Concern = z.object({
@@ -159,6 +160,7 @@ const Propose = z.object({
       sessionId: z.string().min(1).max(160),
     })
     .optional(),
+  work: NeoDriverTargetSchema.optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -218,10 +220,17 @@ export function requireNeoConsultationReceipt(
 }
 
 export function requireNeoExecutionChoice(
-  input: { targetSessionId?: string | null },
+  input: { targetSessionId?: string | null; work?: NeoDriverTarget },
   caller: OperationCaller
 ): { value: OperationCaller } | { reason: Rejection } {
-  return caller.source !== 'mcp' || input.targetSessionId !== undefined
+  if (input.work && (input.targetSessionId || (input as { targetAgent?: unknown }).targetAgent))
+    return {
+      reason: {
+        ok: false,
+        reason: 'Choose either work (a work.find place or ref) or targetSessionId, not both.',
+      },
+    };
+  return caller.source !== 'mcp' || input.targetSessionId !== undefined || input.work
     ? { value: caller }
     : {
         reason: {
@@ -633,6 +642,26 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
+        if (input.work) {
+          const proposed = service.driverTargets.propose(
+            service.repo,
+            {
+              ...input,
+              ...origin,
+              requestKey: `${origin.originSessionId}:${input.requestKey}`,
+              id: target.id,
+            },
+            input.work
+          );
+          return JSON.stringify(proposed.target) === JSON.stringify(input.work)
+            ? requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null })
+            : {
+                reason: {
+                  ok: false,
+                  reason: 'This request key belongs to another execution target.',
+                },
+              };
+        }
         const receipt = service.agentTargets.propose(
           service.repo,
           {
@@ -643,6 +672,13 @@ export function createNeoOperations(service: NeoService) {
           },
           target.agent
         );
+        if (service.driverTargets.get(receipt.work.id))
+          return {
+            reason: {
+              ok: false,
+              reason: 'This request key belongs to another execution target.',
+            },
+          };
         return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
@@ -743,7 +779,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
+        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
