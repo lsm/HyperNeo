@@ -420,12 +420,14 @@ describe('Neo MVP', () => {
     });
     expect(service.repo.getBindingBySession(saved.sessionId!)?.kind).toBe('worker');
     expect(created[0].workspacePath).toBeNull();
-    expect(created[1].workspacePath).toBe(neoRoot);
-    expect(created[1].worktreeMode).toBe('direct');
     const taskFolder = `${work.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${saved.sessionId!.slice(0, 8)}`;
+    expect(created[1].workspacePath).toBe(join(neoRoot, taskFolder));
+    expect(created[1].worktreeMode).toBe('direct');
     expect(existsSync(join(neoRoot, taskFolder))).toBe(true);
     const config = created[1].config as { systemPrompt: { append: string } };
-    expect(config.systemPrompt.append).toContain(`inside ./${taskFolder}/`);
+    expect(config.systemPrompt.append).toContain(
+      "this task's own folder inside the shared Neo folder"
+    );
   });
 
   test('a response returns through the mailbox only after a terminal result and recovers without duplication', async () => {

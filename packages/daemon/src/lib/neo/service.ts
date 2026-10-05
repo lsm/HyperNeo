@@ -389,14 +389,13 @@ export class NeoService {
       concernId: work.concernId,
       kind: 'worker',
     });
-    const root = this.workRoot();
-    const taskFolder = neoTaskFolderName(work.title, work.sessionId);
-    mkdirSync(join(root, taskFolder), { recursive: true });
+    const taskFolder = join(this.workRoot(), neoTaskFolderName(work.title, work.sessionId));
+    mkdirSync(taskFolder, { recursive: true });
     if (!this.db.getSession(work.sessionId)) {
       await this.sessions.createSession({
         sessionId: work.sessionId,
         title: work.title,
-        workspacePath: root,
+        workspacePath: taskFolder,
         worktreeMode: 'direct',
         config: {
           permissionMode: 'acceptEdits',
@@ -404,7 +403,7 @@ export class NeoService {
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append: `You are executing a user-approved work brief delegated by Neo. Do the work using existing HyperNeo capabilities. Your working directory is the shared Neo folder for Neo's ad-hoc work, not a project: keep every file you create for this task inside ./${taskFolder}/ and never write elsewhere. If the work truly needs a real repository or folder, say so in your result instead of guessing paths. Stay within the approved scope and do not claim actions succeeded without evidence. If blocked or additional authority is needed, explain precisely. End with a concise result, evidence and unresolved issues. Your response will return to Neo. Do not access private Neo context or try to impersonate a human.`,
+            append: `You are executing a user-approved work brief delegated by Neo. Do the work using existing HyperNeo capabilities. Your working directory is this task's own folder inside the shared Neo folder for Neo's ad-hoc work, not a project: keep every file you create inside it and never write elsewhere, including other tasks' folders. If the work truly needs a real repository or folder, say so in your result instead of guessing paths. Stay within the approved scope and do not claim actions succeeded without evidence. If blocked or additional authority is needed, explain precisely. End with a concise result, evidence and unresolved issues. Your response will return to Neo. Do not access private Neo context or try to impersonate a human.`,
           },
         },
       });

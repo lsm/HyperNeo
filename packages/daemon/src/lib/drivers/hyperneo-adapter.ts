@@ -204,11 +204,54 @@ export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reaso
   return query.spaceId ? { reason: [] } : { value: query };
 }
 
+function insideNeo(folder: string | null, root: string): boolean {
+  return !!folder && folder.startsWith(`${root}/`);
+}
+
+export function foldNeoPlaces(
+  places: readonly HyperneoPlaceRow[],
+  root: string
+): HyperneoPlaceRow[] {
+  const folded = new Map<string | null, HyperneoPlaceRow>();
+  for (const place of places) {
+    const folder = insideNeo(place.folder, root) ? root : place.folder;
+    const seen = folded.get(folder);
+    folded.set(
+      folder,
+      seen
+        ? {
+            folder,
+            openCount: seen.openCount + place.openCount,
+            archivedCount: seen.archivedCount + place.archivedCount,
+            known: Math.max(seen.known, place.known),
+            lastActiveAt:
+              (seen.lastActiveAt ?? '') > (place.lastActiveAt ?? '')
+                ? seen.lastActiveAt
+                : place.lastActiveAt,
+          }
+        : { ...place, folder }
+    );
+  }
+  return [...folded.values()];
+}
+
+export function foldNeoSessions(
+  sessions: readonly HyperneoSessionRow[],
+  root: string
+): HyperneoSessionRow[] {
+  return sessions.map((session) =>
+    insideNeo(session.folder, root) ? { ...session, folder: root } : session
+  );
+}
+
 const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .input(['query', 'deps', 'chats'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
-  .pipe(loadHyperneoPlaces, 'deps', 'places')
-  .pipe(loadHyperneoSessions, ['query', 'deps'], 'sessions')
+  .pipe(loadHyperneoPlaces, 'deps', 'rawPlaces')
+  .pipe(loadHyperneoSessions, ['query', 'deps'], 'rawSessions')
+  .pipe((deps: HyperneoAdapterDeps) => deps.neoFolder(), 'deps', 'neoRoot')
+  .pipe(foldNeoPlaces, ['rawPlaces', 'neoRoot'], 'places')
+  .pipe(foldNeoSessions, ['rawSessions', 'neoRoot'], 'sessions')
   .pipe(matchHyperneoSessions, 'chats', 'matched')
   .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matched'], 'groups')
   .end('groups') as (
