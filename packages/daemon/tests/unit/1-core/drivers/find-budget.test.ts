@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { combineFindResults, fitFindBudget } from '../../../../src/lib/drivers/find-operation';
+import {
+  combineFindResults,
+  findRemotely,
+  fitFindBudget,
+} from '../../../../src/lib/drivers/find-operation';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types';
 
 function place(name: string, titles: string[]): PlaceGroup {
@@ -49,5 +53,18 @@ describe('combineFindResults', () => {
     expect(
       combineFindResults(local, { groups: [], unreachable: [] }, { ...input, limit: 5 }).more
     ).toBe(false);
+  });
+
+  test('keeps more from an attached daemon that trimmed its reply', async () => {
+    const input = { includeClosed: false, limit: 5, localOnly: false };
+    const remote = await findRemotely(input, {
+      adapters: () => [],
+      remote: {
+        list: () => [{ daemonId: 'laptop' }],
+        invoke: async () => ({ places: [place('a', ['one'])], unreachable: [], more: true }),
+      },
+    });
+    const local = { groups: [], unreachable: [] };
+    expect(combineFindResults(local, remote, input).more).toBe(true);
   });
 });

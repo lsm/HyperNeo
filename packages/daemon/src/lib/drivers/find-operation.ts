@@ -25,7 +25,11 @@ const TITLE_BUDGET_CHARS = 200;
 
 type FindInput = z.infer<typeof FindWorkInputSchema>;
 type FindResult = z.infer<typeof FindWorkResultSchema>;
-type SourceOutcome = { groups: PlaceGroup[]; unreachable: FindResult['unreachable'] };
+type SourceOutcome = {
+  groups: PlaceGroup[];
+  unreachable: FindResult['unreachable'];
+  more?: boolean;
+};
 
 export interface RemoteDaemons {
   list(): { daemonId: string }[];
@@ -97,6 +101,7 @@ async function findOnDaemon(
   if (!reply.success) throw new Error('unusable work.find reply');
   return {
     groups: stampDaemon(reply.data.places, daemonId),
+    more: reply.data.more === true,
     unreachable: reply.data.unreachable.map(({ source, reason }) => ({
       source: `${daemonId}/${source}`,
       reason,
@@ -115,6 +120,7 @@ export async function findRemotely(input: FindInput, deps: FindWorkDeps): Promis
       result.status === 'fulfilled'
         ? {
             groups: [...outcome.groups, ...result.value.groups],
+            more: outcome.more === true || result.value.more === true,
             unreachable: [...outcome.unreachable, ...result.value.unreachable],
           }
         : {
@@ -175,7 +181,7 @@ export function combineFindResults(
   return {
     places: fitted.places,
     unreachable: [...local.unreachable, ...remote.unreachable],
-    more: fitted.more || merged.length > input.limit,
+    more: fitted.more || remote.more === true || merged.length > input.limit,
   };
 }
 
