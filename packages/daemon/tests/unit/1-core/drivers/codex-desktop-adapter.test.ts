@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   codexProjectFolder,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -93,6 +93,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
       machine: 'laptop',
       now: () => NOW,
       spawn: unusedSpawn,
+      appServer: () => Promise.reject(new Error('not used')),
+      folderExists: () => true,
     });
   }
 
@@ -197,6 +199,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
       machine: 'laptop',
       now: () => NOW,
       spawn: unusedSpawn,
+      appServer: () => Promise.reject(new Error('not used')),
+      folderExists: () => true,
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
   });

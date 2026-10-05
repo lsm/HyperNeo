@@ -6,6 +6,7 @@ import {
   createClaudeDesktopAdapter,
   readLiveClaudeSessions,
 } from '../../drivers/claude-desktop-adapter.ts';
+import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import {
@@ -84,6 +85,9 @@ function codexDesktopAdapters(): WorkAdapter[] {
       machine: hostname(),
       now: Date.now,
       spawn: spawnProcess,
+      appServer: () =>
+        connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
+      folderExists: existsSync,
     }),
   ];
 }

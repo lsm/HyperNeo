@@ -1,0 +1,112 @@
+import { describe, expect, test } from 'bun:test';
+import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
+import {
+  createCodexDesktopAdapter,
+  startedThreadId,
+} from '../../../../src/lib/drivers/codex-desktop-adapter';
+
+const NOW = Date.parse('2026-10-05T12:00:00.000Z');
+const user = { from: 'user', caller: { source: 'rpc' as const } };
+const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
+const request = { place, title: 'Bigger font', message: 'Raise the body font to 16px.' };
+
+function adapter(server: Partial<CodexAppServer> | Error, folders = ['/focus/dolmen']) {
+  const calls: Array<[string, Record<string, unknown>]> = [];
+  let closed = false;
+  const instance = createCodexDesktopAdapter({
+    statePath: '/codex/state.sqlite',
+    worktreesDir: '/codex/worktrees',
+    machine: 'laptop',
+    now: () => NOW,
+    spawn: () => {
+      throw new Error('not used');
+    },
+    appServer: async () => {
+      if (server instanceof Error) throw server;
+      return {
+        call: async (method, params) => {
+          calls.push([method, params]);
+          return server.call?.(method, params);
+        },
+        close: () => {
+          closed = true;
+        },
+      };
+    },
+    folderExists: (folder) => folders.includes(folder),
+  });
+  return { instance, calls, closed: () => closed };
+}
+
+describe('startedThreadId', () => {
+  test('reads the id from thread/start in either shape', () => {
+    expect(startedThreadId({ thread: { id: 'th1' } })).toBe('th1');
+    expect(startedThreadId({ threadId: 'th2' })).toBe('th2');
+    expect(startedThreadId({ thread: {} })).toBeNull();
+    expect(startedThreadId(null)).toBeNull();
+  });
+});
+
+describe('codex-desktop start', () => {
+  test('starts a named thread in the folder and sends the first turn', async () => {
+    const { instance, calls, closed } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    expect(await instance.start?.(request, user)).toEqual({
+      ok: true,
+      value: {
+        ref: { adapter: 'codex-desktop', id: 'th1' },
+        title: 'Bigger font',
+        place,
+        status: 'running',
+        lastActivityAt: NOW,
+        link: 'codex://threads/th1',
+      },
+    });
+    expect(calls).toEqual([
+      ['thread/start', { cwd: '/focus/dolmen' }],
+      ['thread/name/set', { threadId: 'th1', name: 'Bigger font' }],
+      [
+        'turn/start',
+        { threadId: 'th1', input: [{ type: 'text', text: 'Raise the body font to 16px.' }] },
+      ],
+    ]);
+    expect(closed()).toBe(true);
+  });
+
+  test('needs an existing folder on this machine', async () => {
+    const { instance, calls } = adapter({});
+    const start = (at: Record<string, string>) =>
+      instance.start?.({ ...request, place: at as typeof place }, user);
+    expect(await start({ machine: 'laptop', name: 'Chats' })).toMatchObject({
+      reason: 'invalid_place',
+    });
+    expect(await start({ ...place, machine: 'imac' })).toMatchObject({ reason: 'invalid_place' });
+    expect(await start({ ...place, folder: '/gone' })).toEqual({
+      ok: false,
+      reason: 'invalid_place',
+      detail: '/gone does not exist.',
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test('reports an absent app-server and a thread left without its first turn', async () => {
+    expect(await adapter(new Error('ENOENT')).instance.start?.(request, user)).toEqual({
+      ok: false,
+      reason: 'unreachable',
+      detail: 'The Codex app-server is not running: ENOENT',
+    });
+    const halfway = adapter({
+      call: async (method) => {
+        if (method === 'turn/start') throw new Error('turn/start: busy');
+        return method === 'thread/start' ? { threadId: 'th2' } : {};
+      },
+    });
+    expect(await halfway.instance.start?.(request, user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'turn/start: busy Thread th2 was created without its first turn.',
+    });
+    expect(halfway.closed()).toBe(true);
+  });
+});

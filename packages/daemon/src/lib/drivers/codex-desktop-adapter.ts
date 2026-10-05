@@ -3,12 +3,14 @@ import { basename } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
+import type { CodexAppServer } from './codex-app-server.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type {
   FindQuery,
   PlaceGroup,
   Rejected,
   Result,
+  StartRequest,
   WorkAdapter,
   WorkDetail,
   WorkRef,
@@ -62,6 +64,8 @@ export interface CodexDesktopAdapterDeps {
   machine: string;
   now: () => number;
   spawn: SpawnFn;
+  appServer: () => Promise<CodexAppServer>;
+  folderExists: (folder: string) => boolean;
 }
 
 export interface CodexThreadDetail {
@@ -400,11 +404,91 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   deps: CodexDesktopAdapterDeps
 ) => Promise<Result<{ delivered: boolean }>>;
 
+export function selectCodexStartFolder(
+  request: StartRequest,
+  deps: CodexDesktopAdapterDeps
+): Gate<string> {
+  const { place } = request;
+  if (place.spaceId) {
+    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
+  }
+  if (place.machine !== deps.machine) {
+    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
+  }
+  if (!place.folder) {
+    return { reason: reject('invalid_place', 'A Codex thread needs a folder to work in.') };
+  }
+  return deps.folderExists(place.folder)
+    ? { value: place.folder }
+    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+}
+
+export function startedThreadId(started: unknown): string | null {
+  const value = started as { thread?: { id?: unknown }; threadId?: unknown } | null;
+  const id = value?.thread?.id ?? value?.threadId;
+  return typeof id === 'string' && id ? id : null;
+}
+
+export async function startCodexThread(
+  folder: string,
+  request: StartRequest,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkSummary>> {
+  let server: CodexAppServer;
+  try {
+    server = await deps.appServer();
+  } catch (error) {
+    return reject(
+      'unreachable',
+      `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  let threadId: string | null = null;
+  try {
+    threadId = startedThreadId(await server.call('thread/start', { cwd: folder }));
+    if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+    await server.call('thread/name/set', { threadId, name: request.title });
+    await server.call('turn/start', {
+      threadId,
+      input: [{ type: 'text', text: request.message }],
+    });
+    return {
+      ok: true,
+      value: {
+        ref: { adapter: 'codex-desktop', id: threadId },
+        title: request.title,
+        place: { machine: deps.machine, folder, name: request.place.name },
+        status: 'running',
+        lastActivityAt: deps.now(),
+        link: `codex://threads/${threadId}`,
+      },
+    };
+  } catch (error) {
+    const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
+    return reject(
+      'not_delivered',
+      `${error instanceof Error ? error.message : String(error)}${made}`
+    );
+  } finally {
+    server.close();
+  }
+}
+
+const runCodexStart = (superpipe({})('codex-start-work') as PipelineAPI)
+  .input(['request', 'deps'])
+  .pipe(selectCodexStartFolder, ['request', 'deps'], 'result:outcome')
+  .pipe(startCodexThread, ['outcome', 'request', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  request: StartRequest,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<WorkSummary>>;
+
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
   return {
     id: 'codex-desktop',
-    capabilities: ['find', 'send', 'status'],
+    capabilities: ['find', 'start', 'send', 'status'],
     find: (query) => runCodexFind(query, deps),
+    start: (request) => runCodexStart(request, deps),
     send: (ref, message) => runCodexSend(ref, message, deps),
     status: (ref) => runCodexStatus(ref, deps),
   };
