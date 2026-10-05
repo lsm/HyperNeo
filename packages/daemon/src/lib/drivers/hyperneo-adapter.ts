@@ -227,6 +227,7 @@ export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLas
     .prepare(
       `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed
          FROM sdk_messages WHERE session_id = ? AND message_type = 'result' AND parent_tool_use_id IS NULL
+          AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
         ORDER BY timestamp DESC LIMIT 1`
     )
     .get(id) as HyperneoLastResult | null | undefined;

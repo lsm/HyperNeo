@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
+import { parseAddress } from '../mailbox/address.ts';
 import { selectMessageOrigin } from '../messaging/message-send.ts';
 import {
   defineOperation,
@@ -66,7 +67,9 @@ export function reject(reason: WorkRejection, detail: string): Rejected {
 }
 
 export function selectWorkOrigin(input: { from?: string }, caller: OperationCaller): string {
-  return caller.source === 'rpc' && input.from ? input.from : selectMessageOrigin(caller);
+  return caller.source === 'rpc' && input.from && parseAddress(input.from)
+    ? input.from
+    : selectMessageOrigin(caller);
 }
 
 export function pickRoute<Verb extends RoutedVerb>(

@@ -118,6 +118,10 @@ describe('work verb operations', () => {
     const relayed = { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', from: origin };
     expect(await call('work.send', relayed)).toEqual({ ok: true, value: { delivered: true } });
     origin = 'chat';
+    expect(await call('work.send', { ...relayed, from: 'not an address' })).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
     expect(
       await call('work.send', { ...relayed, from: 'chat' }, undefined, {
         source: 'mcp',

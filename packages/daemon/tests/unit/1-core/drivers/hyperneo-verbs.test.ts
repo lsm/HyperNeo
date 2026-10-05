@@ -69,6 +69,12 @@ describe('hyperneo adapter send and status', () => {
     );
     result.run('idle', '{"result":"subagent note"}', '2026-10-04T11:00:00.000Z', 'tool-1');
     result.run(
+      'idle',
+      '{"result":"Compacted.","internal_compaction_turn":1}',
+      '2026-10-04T12:00:00.000Z',
+      null
+    );
+    result.run(
       'busy',
       '{"result":"API Error: 401","is_error":true}',
       '2026-10-04T10:00:00.000Z',
