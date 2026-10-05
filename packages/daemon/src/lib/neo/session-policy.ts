@@ -15,7 +15,7 @@ function sdkTranscriptsExist(cwd: string): boolean {
   try {
     real = realpathSync(cwd);
   } catch {}
-  return existsSync(join(projects, encode(real))) || existsSync(join(projects, encode(cwd)));
+  return [real, cwd, `/private${cwd}`].some((path) => existsSync(join(projects, encode(path))));
 }
 
 export function neoCoordinatorRuntimePath(sessionId: string): string {

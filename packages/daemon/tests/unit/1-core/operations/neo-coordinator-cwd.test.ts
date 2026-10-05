@@ -30,4 +30,11 @@ describe('neoCoordinatorRuntimePath', () => {
     mkdirSync(join(home, '.claude', 'projects', encoded), { recursive: true });
     expect(neoCoordinatorRuntimePath('neo:old-session')).toBe(legacy);
   });
+
+  test('still finds that history after the OS removed the old temp folder', () => {
+    const legacy = join(tmpdir(), 'hyperneo-neo-context', 'neo-gone-session');
+    const encoded = `/private${legacy}`.replace(/[^a-zA-Z0-9]/g, '-');
+    mkdirSync(join(home, '.claude', 'projects', encoded), { recursive: true });
+    expect(neoCoordinatorRuntimePath('neo:gone-session')).toBe(legacy);
+  });
 });
