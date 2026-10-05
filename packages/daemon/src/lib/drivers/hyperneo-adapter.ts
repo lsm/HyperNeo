@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
@@ -205,7 +205,7 @@ export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reaso
 }
 
 function insideNeo(folder: string | null, root: string): boolean {
-  return !!folder && folder.startsWith(`${root}/`);
+  return !!folder && folder.startsWith(`${root}${sep}`);
 }
 
 export function foldNeoPlaces(

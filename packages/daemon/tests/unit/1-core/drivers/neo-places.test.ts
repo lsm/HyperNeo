@@ -1,7 +1,8 @@
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { foldNeoPlaces, foldNeoSessions } from '../../../../src/lib/drivers/hyperneo-adapter';
 
-const root = '/data/Neo';
+const root = join('/data', 'Neo');
 
 describe('foldNeoPlaces', () => {
   test('folds Neo task folders into the one Neo place and keeps other folders', () => {
@@ -9,14 +10,14 @@ describe('foldNeoPlaces', () => {
       foldNeoPlaces(
         [
           {
-            folder: `${root}/research-a-1`,
+            folder: join(root, 'research-a-1'),
             openCount: 1,
             archivedCount: 0,
             known: 0,
             lastActiveAt: '2026-10-05T10:00:00Z',
           },
           {
-            folder: `${root}/research-b-2`,
+            folder: join(root, 'research-b-2'),
             openCount: 2,
             archivedCount: 1,
             known: 0,
@@ -66,7 +67,7 @@ describe('foldNeoSessions', () => {
     expect(
       foldNeoSessions(
         [
-          { ...session, folder: `${root}/research-a-1` },
+          { ...session, folder: join(root, 'research-a-1') },
           { ...session, id: 'd', folder: '/focus/dolmen' },
         ],
         root
