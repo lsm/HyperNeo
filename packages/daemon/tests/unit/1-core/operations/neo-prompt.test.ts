@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { NEO_CAPABILITIES_BRIEFING, NEO_RESPONSE_FOCUS_BRIEFING } from '@hyperneo/prompts';
+import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
+import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
+import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
+import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorNativeTools,
@@ -113,6 +117,18 @@ describe('Neo world briefing delivery', () => {
     expect(NEO_CAPABILITIES_BRIEFING.length).toBeLessThan(3500);
     expect(NEO_CAPABILITIES_BRIEFING).not.toContain('id: NEO_CAPABILITIES_BRIEFING');
     expect(NEO_CAPABILITIES_BRIEFING).not.toContain('<p>');
+  });
+
+  test('names only work operations and fields that exist', () => {
+    const named = NEO_CAPABILITIES_BRIEFING.match(/work\.[a-z]+/g) ?? [];
+    expect(named).toContain('work.read');
+    const known: readonly string[] = OPERATION_NAMES;
+    for (const name of named) expect(known).toContain(name);
+    expect(Object.keys(ReadWorkInputSchema.shape)).toEqual(
+      expect.arrayContaining(['sessionId', 'around', 'daemon'])
+    );
+    expect(Object.keys(WorkSummarySchema.shape)).toContain('snippets');
+    expect(Object.keys(FindWorkResultSchema.shape)).toContain('more');
   });
 
   test.each([null, 'saas'])('delivers a refreshed custom Neo prompt for %s', (concernId) => {
