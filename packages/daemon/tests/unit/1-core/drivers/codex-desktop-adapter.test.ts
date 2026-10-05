@@ -153,6 +153,16 @@ describe('codex-desktop adapter against a Codex state database', () => {
     expect(await find({ spaceId: 'sp1' })).toEqual([]);
   });
 
+  test('names a thread with no name, title or message', async () => {
+    const db = new Database(statePath);
+    db.exec(
+      `INSERT INTO threads VALUES ('t6', NULL, NULL, NULL, '/focus/superpipe', 'vscode', 0, ${NOW})`
+    );
+    db.close();
+    const groups = await adapter().find({ includeClosed: false, limit: 20, text: 'superpipe' });
+    expect(groups[0].work.map((w) => w.title)).toEqual(['Untitled thread']);
+  });
+
   test('answers a Space search without opening the state database', async () => {
     const groups = await createCodexDesktopAdapter({
       statePath: join(dir, 'missing.sqlite'),

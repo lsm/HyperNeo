@@ -5,7 +5,7 @@ import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
 
 const OWN_THREADS = `source NOT LIKE '%subagent%'`;
-const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), substr(first_user_message, 1, 80)) AS title,
+const THREAD_COLUMNS = `id, COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(substr(first_user_message, 1, 80), ''), 'Untitled thread') AS title,
   cwd AS folder, archived, updated_at_ms AS updatedAt`;
 const THREADS_PER_PLACE = 20;
 const CLOSED_THREADS = 500;
