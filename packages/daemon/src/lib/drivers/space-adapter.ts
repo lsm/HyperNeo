@@ -18,6 +18,7 @@ import { reject } from './work-operations.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
+const AGENT_REF = 'agent:';
 
 export interface SpacePlaceRow {
   id: string;
@@ -43,6 +44,16 @@ export interface SpaceTaskDetailRow extends SpaceTaskRow {
   result: string | null;
   reportedSummary: string | null;
   blockReason: string | null;
+}
+
+export interface SpaceAgentRow {
+  id: string;
+  spaceId: string;
+  handle: string;
+  displayName: string;
+  status: string;
+  updatedAt: number;
+  processing: string | null;
 }
 
 export interface SpaceTaskNode {
@@ -128,6 +139,43 @@ export function readSpaceTasks(
     .all(includeClosed ? 1 : 0, pattern, JSON.stringify([...matchedIds])) as SpaceTaskRow[];
 }
 
+export function spaceAgentWorkStatus(
+  agent: Pick<SpaceAgentRow, 'status' | 'processing'>
+): WorkStatus {
+  if (agent.status === 'archived' || agent.status === 'disabled') return 'stopped';
+  if (agent.status === 'paused' || agent.processing === 'waiting_for_input') return 'needs_you';
+  if (agent.processing === 'processing') return 'running';
+  return agent.processing === 'queued' ? 'queued' : 'done';
+}
+
+export function readSpaceAgents(
+  db: BunDatabase,
+  includeClosed: boolean,
+  id?: string
+): SpaceAgentRow[] {
+  return db
+    .prepare(
+      `SELECT a.id, a.space_id AS spaceId, a.handle, a.display_name AS displayName, a.status,
+         a.updated_at AS updatedAt,
+         CASE WHEN json_valid(s.processing_state) THEN json_extract(s.processing_state, '$.status') END AS processing
+         FROM space_long_horizon_agents a LEFT JOIN sessions s ON s.id = a.session_id
+        WHERE (?1 = 1 OR a.status IN ('active', 'paused')) AND (?2 IS NULL OR a.id = ?2)
+        ORDER BY a.updated_at DESC`
+    )
+    .all(includeClosed ? 1 : 0, id ?? null) as SpaceAgentRow[];
+}
+
+function toAgentWork(agent: SpaceAgentRow, spaceName: string, machine: string): WorkSummary {
+  return {
+    ref: { adapter: 'space', id: `${AGENT_REF}${agent.id}` },
+    title: `@${agent.handle} ${agent.displayName}`,
+    place: { machine, spaceId: agent.spaceId, name: spaceName },
+    status: spaceAgentWorkStatus(agent),
+    lastActivityAt: agent.updatedAt,
+    link: `/space/${agent.spaceId}/agent/${agent.id}`,
+  };
+}
+
 function toWork(
   task: SpaceTaskRow,
   space: Pick<SpacePlaceRow, 'id' | 'name'>,
@@ -148,7 +196,8 @@ export function buildSpaceGroups(
   tasks: readonly SpaceTaskRow[],
   query: FindQuery,
   deps: Pick<SpaceAdapterDeps, 'machine'>,
-  matchedIds: ReadonlySet<string>
+  matchedIds: ReadonlySet<string>,
+  agents: readonly SpaceAgentRow[] = []
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   return spaces
@@ -167,6 +216,12 @@ export function buildSpaceGroups(
         )
         .slice(0, TASKS_PER_SPACE)
         .map((task) => toWork(task, space, deps.machine));
+      work.unshift(
+        ...agents
+          .filter((agent) => agent.spaceId === space.id)
+          .map((agent) => toAgentWork(agent, space.name, deps.machine))
+          .filter((agent) => placeMatches || agent.title.toLowerCase().includes(text ?? ''))
+      );
       if (!placeMatches && work.length === 0) return [];
       return [
         {
@@ -197,12 +252,17 @@ export function matchSpaceTasks(query: FindQuery, deps: SpaceAdapterDeps): Reado
   return query.text ? deps.searchTaskIds(query.text) : new Set();
 }
 
+export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): SpaceAgentRow[] {
+  return readSpaceAgents(deps.db(), query.includeClosed);
+}
+
 const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .input(['query', 'deps'])
   .pipe(loadSpacePlaces, 'deps', 'spaces')
   .pipe(matchSpaceTasks, ['query', 'deps'], 'matchedIds')
   .pipe(loadSpaceTasks, ['query', 'deps', 'matchedIds'], 'tasks')
-  .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds'], 'groups')
+  .pipe(loadSpaceAgents, ['query', 'deps'], 'agents')
+  .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds', 'agents'], 'groups')
   .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
 
 export function spaceTaskCaller(caller: OperationCaller): OperationCaller {
@@ -357,6 +417,17 @@ const runSpaceSend = (superpipe({})('space-send-work') as PipelineAPI)
   deps: SpaceAdapterDeps
 ) => Promise<Result<{ delivered: boolean }>>;
 
+export function reportSpaceAgent(ref: WorkRef, deps: SpaceAdapterDeps): Result<WorkDetail> | null {
+  if (!ref.id.startsWith(AGENT_REF)) return null;
+  const agent = readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0];
+  if (!agent) return reject('not_found', `No Space agent ${ref.id}.`);
+  const space = deps.db().prepare('SELECT name FROM spaces WHERE id = ?').get(agent.spaceId) as
+    | { name: string }
+    | null
+    | undefined;
+  return { ok: true, value: toAgentWork(agent, space?.name ?? agent.spaceId, deps.machine) };
+}
+
 const runSpaceStatus = (superpipe({})('space-work-status') as PipelineAPI)
   .input(['ref', 'deps'])
   .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
@@ -380,7 +451,7 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
     find: (query) => runSpaceFind(query, deps),
     start: (request, context) => runSpaceStart(request, context, deps),
     send: (ref, message, context) => runSpaceSend(ref, message, context, deps),
-    status: async (ref) => runSpaceStatus(ref, deps),
+    status: async (ref) => reportSpaceAgent(ref, deps) ?? runSpaceStatus(ref, deps),
     stop: (ref, context) => runSpaceStop(ref, context, deps),
   };
 }
