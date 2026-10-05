@@ -1,49 +1,49 @@
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
-import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
-import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
-import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
-import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
-import { invokeOperation } from '../operations/invoke.ts';
-import type { WorkRef } from '../drivers/types.ts';
-import {
-  driverStartedReport,
-  driverWorkCall,
-  driverWorkCaller,
-  readDriverOutcome,
-  type NeoDriverTarget,
-} from './driver-work.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
+import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
-import type { SessionManager } from '../session/session-manager.ts';
+import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
+import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
+import type { WorkRef } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { renderAddress } from '../mailbox/address.ts';
 import { Logger } from '../logger.ts';
-import { neoPrompt } from './prompt.ts';
-import { neoCoordinatorNativeTools } from './session-policy.ts';
-import { returnWorkThroughHolder } from './work-return.ts';
-import { createNeoWorkReporter } from './work-report.ts';
+import { renderAddress } from '../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import type { SessionManager } from '../session/session-manager.ts';
 import { createNeoAskOriginResolver } from './ask-origin.ts';
-import { createNeoWorkTargetResolver } from './work-target.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
-import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
-import { createNeoPublisher } from './publication-operation.ts';
+import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
+import {
+  driverStartedReport,
+  driverWorkCall,
+  driverWorkCaller,
+  type NeoDriverTarget,
+  readDriverOutcome,
+} from './driver-work.ts';
+import { neoPrompt } from './prompt.ts';
+import { createNeoPublisher } from './publication-operation.ts';
+import { neoCoordinatorNativeTools } from './session-policy.ts';
 import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
-import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createNeoWorkReporter } from './work-report.ts';
+import { returnWorkThroughHolder } from './work-return.ts';
+import { createNeoWorkTargetResolver } from './work-target.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -432,11 +432,16 @@ export class NeoService {
   }
 
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
-    if (work.status === 'queued' && this.driverTargets.readRef(work.id)) return;
-    const queued =
-      work.status === 'proposed'
-        ? this.repo.transitionWork(work.id, work, { status: 'queued' })
-        : work;
+    if (work.status === 'queued') {
+      if (this.driverTargets.readRef(work.id)) return;
+      const interrupted = this.repo.transitionWork(work.id, work, {
+        status: 'failed',
+        report: `Starting was interrupted before ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
+      });
+      if (interrupted) await this.returnReport(interrupted);
+      return;
+    }
+    const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     const call = driverWorkCall(target, queued);
     const outcome = await invokeOperation(

@@ -2,27 +2,27 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
+import {
   driverWorkCall,
   driverWorkCaller,
-  readDriverOutcome,
   type NeoDriverTarget,
+  readDriverOutcome,
 } from '../../../../src/lib/neo/driver-work.ts';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
 } from '../../../../src/lib/neo/operations.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
   defineOperation,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import {
-  InternalEventBus,
-  type DaemonInternalEventMap,
-} from '../../../../src/lib/internal-event-bus.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
@@ -193,6 +193,23 @@ describe('Neo work with a drivers target', () => {
       await service.cancel('work-1');
       expect(calls.map((call) => call.name)).toEqual(['work.start', 'work.stop']);
       expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('fails queued work without a ref instead of starting it twice', async () => {
+    const { db, service, calls } = await setup({ ok: true, value: { ref: null } });
+    Object.assign(service, { returnReport: async () => {} });
+    try {
+      const proposed = service.repo.getWork('work-1');
+      if (proposed) service.repo.transitionWork('work-1', proposed, { status: 'queued' });
+      await service.start('work-1');
+      expect(calls).toEqual([]);
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'failed',
+        report: expect.stringContaining('check work.find'),
+      });
     } finally {
       db.close();
     }
