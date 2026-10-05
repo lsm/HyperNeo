@@ -1,6 +1,18 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
+import type {
+  FindQuery,
+  PlaceGroup,
+  Rejected,
+  Result,
+  StartRequest,
+  WorkAdapter,
+  WorkDetail,
+  WorkRef,
+  WorkStatus,
+  WorkSummary,
+} from './types.ts';
+import { reject } from './work-operations.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
@@ -24,11 +36,30 @@ export interface SpaceTaskRow {
   updatedAt: number;
 }
 
+export interface SpaceTaskDetailRow extends SpaceTaskRow {
+  spaceName: string;
+  result: string | null;
+  reportedSummary: string | null;
+  blockReason: string | null;
+}
+
+export interface SpaceTaskControl {
+  create(
+    spaceId: string,
+    title: string,
+    description: string
+  ): Promise<{ taskId: string } | { reason: string }>;
+  cancel(taskId: string): Promise<{ cancelled: true } | { reason: string }>;
+}
+
 export interface SpaceAdapterDeps {
   db: () => BunDatabase;
   machine: string;
   searchTaskIds: (text: string) => ReadonlySet<string>;
+  tasks: SpaceTaskControl;
 }
+
+type Gate<Value> = { value: Value } | { reason: Rejected };
 
 export function spaceTaskWorkStatus(status: string): WorkStatus {
   if (status === 'in_progress' || status === 'approved') return 'running';
@@ -79,7 +110,11 @@ export function readSpaceTasks(
     .all(includeClosed ? 1 : 0, pattern, JSON.stringify([...matchedIds])) as SpaceTaskRow[];
 }
 
-function toWork(task: SpaceTaskRow, space: SpacePlaceRow, machine: string): WorkSummary {
+function toWork(
+  task: SpaceTaskRow,
+  space: Pick<SpacePlaceRow, 'id' | 'name'>,
+  machine: string
+): WorkSummary {
   return {
     ref: { adapter: 'space', id: task.id },
     title: `#${task.taskNumber} ${task.title}`,
@@ -152,10 +187,113 @@ const runSpaceFind = (superpipe({})('space-find-work') as PipelineAPI)
   .pipe(buildSpaceGroups, ['spaces', 'tasks', 'query', 'deps', 'matchedIds'], 'groups')
   .end('groups') as (query: FindQuery, deps: SpaceAdapterDeps) => PlaceGroup[];
 
+export function taskOperationRejection(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value === null || typeof value !== 'object') return 'No task came back.';
+  const record = value as { accepted?: unknown; reason?: unknown; detail?: unknown };
+  if (record.accepted !== false && typeof record.reason !== 'string') return null;
+  return [record.reason, record.detail].filter((part) => typeof part === 'string').join(': ');
+}
+
+export function readSpaceTask(db: BunDatabase, id: string): SpaceTaskDetailRow | null {
+  const row = db
+    .prepare(
+      `SELECT t.id, t.space_id AS spaceId, t.task_number AS taskNumber, t.title, t.status,
+         t.updated_at AS updatedAt, t.result, t.reported_summary AS reportedSummary,
+         t.block_reason AS blockReason, s.name AS spaceName
+         FROM space_tasks t JOIN spaces s ON s.id = t.space_id WHERE t.id = ?`
+    )
+    .get(id) as SpaceTaskDetailRow | null | undefined;
+  return row ?? null;
+}
+
+function describeTask(task: SpaceTaskDetailRow, machine: string): WorkDetail {
+  const work = toWork(task, { id: task.spaceId, name: task.spaceName }, machine);
+  const lastReply = task.result ?? task.reportedSummary ?? task.blockReason;
+  return lastReply ? { ...work, lastReply } : work;
+}
+
+export function requireSpaceTask(ref: WorkRef, deps: SpaceAdapterDeps): Gate<SpaceTaskDetailRow> {
+  const task = readSpaceTask(deps.db(), ref.id);
+  return task ? { value: task } : { reason: reject('not_found', `No Space task ${ref.id}.`) };
+}
+
+export function reportSpaceTask(
+  task: SpaceTaskDetailRow,
+  deps: SpaceAdapterDeps
+): Result<WorkDetail> {
+  return { ok: true, value: describeTask(task, deps.machine) };
+}
+
+export function requireTaskSpace(request: StartRequest, deps: SpaceAdapterDeps): Gate<string> {
+  const { place } = request;
+  if (!place.spaceId)
+    return { reason: reject('invalid_place', 'Name a Space to start a task in.') };
+  return place.machine === deps.machine
+    ? { value: place.spaceId }
+    : { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
+}
+
+export async function createSpaceTask(
+  spaceId: string,
+  request: StartRequest,
+  deps: SpaceAdapterDeps
+): Promise<Result<WorkSummary>> {
+  const created = await deps.tasks.create(spaceId, request.title, request.message);
+  if ('reason' in created) return reject('invalid_place', created.reason);
+  const task = readSpaceTask(deps.db(), created.taskId);
+  return task
+    ? { ok: true, value: describeTask(task, deps.machine) }
+    : reject('not_found', `Task ${created.taskId} is gone.`);
+}
+
+export async function cancelSpaceTask(
+  task: SpaceTaskDetailRow,
+  deps: SpaceAdapterDeps
+): Promise<Result<{ stopped: boolean }>> {
+  if (
+    spaceTaskWorkStatus(task.status) === 'done' ||
+    spaceTaskWorkStatus(task.status) === 'stopped'
+  ) {
+    return { ok: true, value: { stopped: false } };
+  }
+  const cancelled = await deps.tasks.cancel(task.id);
+  return 'reason' in cancelled
+    ? reject('not_delivered', cancelled.reason)
+    : { ok: true, value: { stopped: true } };
+}
+
+const runSpaceStart = (superpipe({})('space-start-work') as PipelineAPI)
+  .input(['request', 'deps'])
+  .pipe(requireTaskSpace, ['request', 'deps'], 'result:outcome')
+  .pipe(createSpaceTask, ['outcome', 'request', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  request: StartRequest,
+  deps: SpaceAdapterDeps
+) => Promise<Result<WorkSummary>>;
+
+const runSpaceStatus = (superpipe({})('space-work-status') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
+  .pipe(reportSpaceTask, ['outcome', 'deps'], 'outcome')
+  .end('outcome') as (ref: WorkRef, deps: SpaceAdapterDeps) => Result<WorkDetail>;
+
+const runSpaceStop = (superpipe({})('space-stop-work') as PipelineAPI)
+  .input(['ref', 'deps'])
+  .pipe(requireSpaceTask, ['ref', 'deps'], 'result:outcome')
+  .pipe(cancelSpaceTask, ['outcome', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  deps: SpaceAdapterDeps
+) => Promise<Result<{ stopped: boolean }>>;
+
 export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
   return {
     id: 'space',
-    capabilities: ['find'],
+    capabilities: ['find', 'start', 'status', 'stop'],
     find: (query) => runSpaceFind(query, deps),
+    start: (request) => runSpaceStart(request, deps),
+    status: async (ref) => runSpaceStatus(ref, deps),
+    stop: (ref) => runSpaceStop(ref, deps),
   };
 }
