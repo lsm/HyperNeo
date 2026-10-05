@@ -202,7 +202,7 @@ HyperNeo's own sessions and projects. They run on the Claude Agent SDK and show 
 
 ### space
 
-HyperNeo Spaces. The adapter calls the Space managers directly, so the Space caller gates that blocked Neo do not apply.
+HyperNeo Spaces. The adapter calls the Space task operations as the real caller, so an agent keeps its own Space's gates; Neo, which acts for the user everywhere, runs them with internal authority.
 
 - `find`: Spaces, their open tasks and agents.
 - `start`: a task with a workflow, or a message to an agent by `@handle` (#5586).

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import {
+  createWorkVerbOperations,
+  qualifyOrigin,
+  selectWorkOrigin,
+} from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
@@ -64,6 +68,7 @@ async function call(
     createWorkVerbOperations({
       adapters: () => [hyperneo, desktop],
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
+      daemonName: 'imac',
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -114,10 +119,14 @@ describe('work verb operations', () => {
         forwarded.push(input);
         return { ok: true, value: { delivered: true } };
       },
-      { source: 'mcp', sessionId: 'neo:root' }
+      { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
     );
     expect(forwarded).toEqual([
-      { ref: { adapter: 'hyperneo', id: 's9' }, message: 'hi', from: 'session:neo%3Aroot' },
+      {
+        ref: { adapter: 'hyperneo', id: 's9' },
+        message: 'hi',
+        from: 'daemon:imac::session:neo%3Aroot',
+      },
     ]);
     origin = 'session:neo%3Aroot';
     const relayed = { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', from: origin };
@@ -211,6 +220,34 @@ describe('work verb operations', () => {
     );
   });
 
+  test('lets only Neo or the user change work on another daemon', async () => {
+    let forwarded = 0;
+    const invoke = async () => {
+      forwarded++;
+      return { ok: true, value: { stopped: true } };
+    };
+    const ref = { adapter: 'space', daemon: 'laptop', id: 't1' };
+    expect(
+      await call('work.stop', { ref }, invoke, {
+        source: 'mcp',
+        sessionId: 'w1',
+        role: 'workflow_worker',
+      })
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(
+      await call('work.stop', { ref }, invoke, {
+        source: 'mcp',
+        sessionId: 'neo:root',
+        role: 'neo',
+      })
+    ).toEqual({ ok: true, value: { stopped: true } });
+    expect(await call('work.stop', { ref }, invoke)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(forwarded).toBe(2);
+  });
+
   test('reports a daemon that fails or answers with something unusable as unreachable', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     expect(
@@ -223,5 +260,20 @@ describe('work verb operations', () => {
       reason: 'unreachable',
       detail: 'laptop sent an unusable reply.',
     });
+  });
+});
+
+describe('qualifyOrigin', () => {
+  test('names this daemon on a forwarded session sender and leaves other origins alone', () => {
+    expect(qualifyOrigin('session:neo%3Aroot', 'imac')).toBe('daemon:imac::session:neo%3Aroot');
+    expect(qualifyOrigin('chat', 'imac')).toBe('chat');
+  });
+});
+
+describe('selectWorkOrigin', () => {
+  test('keeps a relayed remote sender from the RPC door only', () => {
+    const from = 'daemon:imac::session:neo%3Aroot';
+    expect(selectWorkOrigin({ from }, { source: 'rpc' })).toBe(from);
+    expect(selectWorkOrigin({ from }, { source: 'mcp', sessionId: 'w1' })).toBe('session:w1');
   });
 });
