@@ -7,6 +7,7 @@ import {
 } from '../../drivers/claude-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createHyperneoAdapter } from '../../drivers/hyperneo-adapter.ts';
+import { createSpaceAdapter } from '../../drivers/space-adapter.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
@@ -33,17 +34,22 @@ function claudeDesktopAdapters(): WorkAdapter[] {
 }
 
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
+  const db = () => context.deps.db.getDatabase();
+  const machine = hostname();
+  const search = (text: string) =>
+    context.deps.db.getSDKMessageRepo().searchMessages({ query: text, limit: 50 }).results;
   const adapters = [
     createHyperneoAdapter({
-      db: () => context.deps.db.getDatabase(),
-      machine: hostname(),
+      db,
+      machine,
       searchSessionIds: (text) =>
-        new Set(
-          context.deps.db
-            .getSDKMessageRepo()
-            .searchMessages({ query: text, limit: 50 })
-            .results.flatMap((result) => (result.sessionId ? [result.sessionId] : []))
-        ),
+        new Set(search(text).flatMap((result) => (result.sessionId ? [result.sessionId] : []))),
+    }),
+    createSpaceAdapter({
+      db,
+      machine,
+      searchTaskIds: (text) =>
+        new Set(search(text).flatMap((result) => (result.taskId ? [result.taskId] : []))),
     }),
     ...claudeDesktopAdapters(),
   ];
