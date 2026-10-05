@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -69,21 +69,27 @@ describe('claude-desktop adapter against the app session records', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   let spawned: Array<{ args: string[]; cwd?: string }>;
+  let liveReads = 0;
 
   function adapter(
     live: Array<{ sessionId: string; status: string; name?: string }> = [
       { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
     ],
-    exitCode = 0
+    exitCode = 0,
+    onSpawn = () => {}
   ) {
     spawned = [];
     return createClaudeDesktopAdapter({
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
-      liveSessions: async () => live,
+      liveSessions: async () => {
+        liveReads++;
+        return live;
+      },
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
+        onSpawn();
         return {
           stdout: null,
           stderr: new Response(exitCode ? 'relay failed' : '').body,
@@ -224,17 +230,21 @@ describe('claude-desktop adapter against the app session records', () => {
   test('send relays to a live session and confirms it from the transcript', async () => {
     const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
     mkdirSync(transcripts, { recursive: true });
-    writeFileSync(
-      join(transcripts, 'cli-a1.jsonl'),
-      JSON.stringify({
-        type: 'user',
-        message: {
-          content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
-        },
-      })
-    );
+    const transcript = join(transcripts, 'cli-a1.jsonl');
+    const relayed = `${JSON.stringify({
+      type: 'user',
+      message: {
+        content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
+      },
+    })}\n`;
+    writeFileSync(transcript, relayed);
     const ref = { adapter: 'claude-desktop', id: 'local_a1' };
     expect(await adapter().send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+    const relay = adapter(undefined, 0, () => appendFileSync(transcript, relayed));
+    expect(await relay.send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
       ok: true,
       value: { delivered: true },
     });
@@ -263,6 +273,14 @@ describe('claude-desktop adapter against the app session records', () => {
       reason: 'not_delivered',
     });
     expect(spawned).toEqual([]);
+  });
+
+  test('send asks the CLI afresh which sessions the app is running', async () => {
+    const reader = adapter([]);
+    await reader.find({ includeClosed: false, limit: 20 });
+    const before = liveReads;
+    await reader.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user);
+    expect(liveReads).toBe(before + 1);
   });
 
   test('send resumes a session the app is not running and refuses archived ones', async () => {

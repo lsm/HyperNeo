@@ -338,6 +338,27 @@ export function transcriptHasRelayedMessage(lines: readonly string[], message: s
   return lines.some((line) => line.includes('cross-session-message') && line.includes(opening));
 }
 
+async function transcriptSize(path: string | null): Promise<number> {
+  if (!path) return 0;
+  return stat(path).then(
+    (info) => info.size,
+    () => 0
+  );
+}
+
+async function readLinesAfter(path: string, offset: number): Promise<string[]> {
+  const handle = await open(path, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.min(offset, size);
+    const buffer = Buffer.alloc(Math.min(size - start, TRANSCRIPT_TAIL_BYTES));
+    await handle.read(buffer, 0, buffer.length, start);
+    return buffer.toString('utf8').split('\n');
+  } finally {
+    await handle.close();
+  }
+}
+
 async function relayToLiveSession(
   record: ClaudeDesktopRecord,
   name: string,
@@ -345,6 +366,8 @@ async function relayToLiveSession(
   deps: ClaudeDesktopAdapterDeps
 ): Promise<Result<{ delivered: boolean }>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const path = claudeTranscriptPath(deps.projectsDir, record);
+  const before = await transcriptSize(path);
   try {
     const proc = deps.spawn(
       [
@@ -366,9 +389,8 @@ async function relayToLiveSession(
     const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     if (code !== 0)
       return reject('not_delivered', stderr.trim() || `The relay exited with ${code}.`);
-    const path = claudeTranscriptPath(deps.projectsDir, record);
-    const tail = path ? await readTailLines(path, TRANSCRIPT_TAIL_BYTES).catch(() => []) : [];
-    return { ok: true, value: { delivered: transcriptHasRelayedMessage(tail, message) } };
+    const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
+    return { ok: true, value: { delivered: transcriptHasRelayedMessage(appended, message) } };
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   } finally {
@@ -425,7 +447,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     id: 'claude-desktop',
     capabilities: ['find', 'send', 'status'],
     find: (query) => runClaudeDesktopFind(query, reused, cache),
-    send: (ref, message) => runClaudeDesktopSend(ref, message, reused, cache),
+    send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
     status: (ref) => runClaudeDesktopStatus(ref, reused, cache),
   };
 }
