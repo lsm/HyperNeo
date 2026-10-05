@@ -2,6 +2,10 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { getDataDir } from '../../data-dir.ts';
+import {
+  createClaudeDesktopAdapter,
+  readLiveClaudeSessions,
+} from '../../drivers/claude-desktop-adapter.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import {
@@ -21,6 +25,7 @@ import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
+import { spawnProcess } from '../../runtime-spawn/index.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
@@ -47,6 +52,24 @@ function neoFolder(): string {
   const folder = join(getDataDir(), 'Neo');
   mkdirSync(folder, { recursive: true });
   return folder;
+}
+
+function claudeDesktopAdapters(): WorkAdapter[] {
+  const sessionsDir = join(
+    homedir(),
+    'Library',
+    'Application Support',
+    'Claude',
+    'claude-code-sessions'
+  );
+  if (!existsSync(sessionsDir)) return [];
+  return [
+    createClaudeDesktopAdapter({
+      sessionsDir,
+      machine: hostname(),
+      liveSessions: () => readLiveClaudeSessions(spawnProcess),
+    }),
+  ];
 }
 
 function codexDesktopAdapters(): WorkAdapter[] {
@@ -122,6 +145,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(),
+    ...claudeDesktopAdapters(),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
   return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];

@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { parseAddress, parseRemoteAddress, renderRemoteAddress } from '../mailbox/address.ts';
-import { selectMessageOrigin } from '../messaging/message-send.ts';
+import { qualifyRemoteOrigin } from '../mailbox/address.ts';
+import { selectMessageOrigin, selectSendOrigin } from '../messaging/message-send.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -66,25 +66,6 @@ type StopResult = z.infer<typeof StopWorkResultSchema>;
 
 export function reject(reason: WorkRejection, detail: string): Rejected {
   return { ok: false, reason, detail };
-}
-
-export function selectWorkOrigin(input: { from?: string }, caller: OperationCaller): string {
-  const relayed =
-    input.from && (parseRemoteAddress(input.from) !== null || parseAddress(input.from) !== null);
-  return caller.source === 'rpc' && relayed && input.from
-    ? input.from
-    : selectMessageOrigin(caller);
-}
-
-export function qualifyOrigin(from: string, daemonName: string): string {
-  const address = parseAddress(from);
-  return address?.kind === 'session'
-    ? renderRemoteAddress({
-        kind: 'remote-session',
-        daemonId: daemonName,
-        sessionId: address.sessionId,
-      })
-    : from;
 }
 
 export function pickRoute<Verb extends RoutedVerb>(
@@ -161,7 +142,7 @@ export async function startWork(
   const result = await forwardWork(
     route.daemon,
     'work.start',
-    { ...input, place, from: qualifyOrigin(from, deps.daemonName) },
+    { ...input, place, from: qualifyRemoteOrigin(from, deps.daemonName) },
     StartWorkResultSchema,
     deps.remote,
     REMOTE_START_TIMEOUT_MS
@@ -193,7 +174,7 @@ export async function sendWork(
     {
       ref: localRef(input.ref),
       message: input.message,
-      from: qualifyOrigin(from, deps.daemonName),
+      from: qualifyRemoteOrigin(from, deps.daemonName),
     },
     SendWorkResultSchema,
     deps.remote
@@ -245,7 +226,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
-  .pipe(selectWorkOrigin, ['input', 'caller'], 'from')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
@@ -257,7 +238,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
-  .pipe(selectWorkOrigin, ['input', 'caller'], 'from')
+  .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(sendWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,

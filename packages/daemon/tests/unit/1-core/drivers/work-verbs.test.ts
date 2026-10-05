@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  createWorkVerbOperations,
-  qualifyOrigin,
-  selectWorkOrigin,
-} from '../../../../src/lib/drivers/work-operations';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
@@ -260,20 +256,5 @@ describe('work verb operations', () => {
       reason: 'unreachable',
       detail: 'laptop sent an unusable reply.',
     });
-  });
-});
-
-describe('qualifyOrigin', () => {
-  test('names this daemon on a forwarded session sender and leaves other origins alone', () => {
-    expect(qualifyOrigin('session:neo%3Aroot', 'imac')).toBe('daemon:imac::session:neo%3Aroot');
-    expect(qualifyOrigin('chat', 'imac')).toBe('chat');
-  });
-});
-
-describe('selectWorkOrigin', () => {
-  test('keeps a relayed remote sender from the RPC door only', () => {
-    const from = 'daemon:imac::session:neo%3Aroot';
-    expect(selectWorkOrigin({ from }, { source: 'rpc' })).toBe(from);
-    expect(selectWorkOrigin({ from }, { source: 'mcp', sessionId: 'w1' })).toBe('session:w1');
   });
 });
