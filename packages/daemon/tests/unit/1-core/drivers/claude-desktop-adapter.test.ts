@@ -1,19 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type ClaudeRecordCache,
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
-  reuseLiveSessions,
   readLiveClaudeSessions,
-  type ClaudeRecordCache,
+  reuseLiveSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
 function record(id: string, fields: Record<string, unknown>) {
   return { sessionId: `local_${id}`, cliSessionId: `cli-${id}`, ...fields };
 }
+
+const user = { from: 'user', caller: { source: 'rpc' as const } };
 
 describe('claude-desktop adapter against the app session records', () => {
   let dir: string;
@@ -66,12 +68,38 @@ describe('claude-desktop adapter against the app session records', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter(live = [{ sessionId: 'cli-a1', status: 'waiting' }]) {
+  let spawned: Array<{ args: string[]; cwd?: string }>;
+  let liveReads = 0;
+
+  function adapter(
+    live: Array<{ sessionId: string; status: string; name?: string }> | Error = [
+      { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
+    ],
+    exitCode = 0,
+    onSpawn = () => {}
+  ) {
+    spawned = [];
     return createClaudeDesktopAdapter({
       sessionsDir: dir,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
-      liveSessions: async () => live,
+      liveSessions: async () => {
+        liveReads++;
+        if (live instanceof Error) throw live;
+        return live;
+      },
+      folderExists: (folder) => folder !== '/gone',
+      spawn: (args, options) => {
+        spawned.push({ args, cwd: options?.cwd });
+        onSpawn();
+        return {
+          stdout: null,
+          stderr: new Response(exitCode ? 'relay failed' : '').body,
+          exited: Promise.resolve(exitCode),
+          exitCode,
+          kill: () => {},
+        };
+      },
     });
   }
 
@@ -160,6 +188,10 @@ describe('claude-desktop adapter against the app session records', () => {
         asked = true;
         return [];
       },
+      spawn: () => {
+        throw new Error('not spawned');
+      },
+      folderExists: () => true,
     }).find({ includeClosed: true, limit: 20 });
     rmSync(archivedOnly, { recursive: true, force: true });
     expect(asked).toBe(false);
@@ -198,6 +230,112 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
+  test('send relays to a live session and confirms it from the transcript', async () => {
+    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    mkdirSync(transcripts, { recursive: true });
+    const transcript = join(transcripts, 'cli-a1.jsonl');
+    const relayed = `${JSON.stringify({
+      type: 'user',
+      message: {
+        content: '<cross-session-message from="x">\nload "orders"\n</cross-session-message>',
+      },
+    })}\n`;
+    writeFileSync(transcript, relayed);
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    expect(await adapter().send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+    const relay = adapter(undefined, 0, () => appendFileSync(transcript, relayed));
+    expect(await relay.send?.(ref, 'load "orders"\nthen stop', user)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(spawned[0].args.slice(0, 9)).toEqual([
+      'claude',
+      '-p',
+      '--model',
+      'haiku',
+      '--max-turns',
+      '4',
+      '--allowedTools',
+      'SendMessage ListAgents',
+      '-n',
+    ]);
+    expect(spawned[0].args.at(-1)).toContain('session named "lakehouse loader"');
+    expect(await adapter(undefined, 1).send?.(ref, 'hi', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'relay failed',
+    });
+    const twins = [
+      { sessionId: 'cli-a1', status: 'idle', name: 'init' },
+      { sessionId: 'cli-x', status: 'idle', name: 'init' },
+    ];
+    expect(await adapter(twins).send?.(ref, 'hi', user)).toMatchObject({
+      reason: 'not_delivered',
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test('send refuses to resume when it cannot tell what the app runs, while find carries on', async () => {
+    const blind = adapter(new Error('timed out'));
+    expect(await blind.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)).toEqual(
+      {
+        ok: false,
+        reason: 'not_delivered',
+        detail: 'Could not tell whether Claude Code Desktop runs this session: timed out',
+      }
+    );
+    expect(spawned).toEqual([]);
+    const groups = await blind.find({ includeClosed: false, limit: 20 });
+    expect(groups.flatMap((group) => group.work.map((work) => work.status))).not.toContain(
+      'needs_you'
+    );
+    expect(groups.length).toBeGreaterThan(0);
+  });
+
+  test('send asks the CLI afresh which sessions the app is running', async () => {
+    const reader = adapter([]);
+    await reader.find({ includeClosed: false, limit: 20 });
+    const before = liveReads;
+    await reader.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user);
+    expect(liveReads).toBe(before + 1);
+  });
+
+  test('send resumes a session the app is not running and refuses archived ones', async () => {
+    const b2 = { adapter: 'claude-desktop', id: 'local_b2' };
+    expect(await adapter([]).send?.(b2, '-v next', user)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(spawned).toEqual([
+      { args: ['claude', '-p', '--resume', 'cli-b2', '--', '-v next'], cwd: '/focus/ops' },
+    ]);
+    expect(await adapter([], 1).send?.(b2, 'next', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'relay failed',
+    });
+    writeFileSync(
+      join(dir, 'acct-b/scope-2/local_g1.json'),
+      JSON.stringify(record('g1', { cwd: '/gone', title: 'moved' }))
+    );
+    spawned = [];
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_g1' }, 'next', user)
+    ).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'moved works in /gone, which is gone.',
+    });
+    expect(spawned).toEqual([]);
+    expect(
+      await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
+    ).toMatchObject({ ok: false, reason: 'not_open' });
+    expect(spawned).toEqual([]);
+  });
+
   test('answers a Space search without reading records or asking the CLI', async () => {
     let asked = false;
     const groups = await createClaudeDesktopAdapter({
@@ -208,6 +346,10 @@ describe('claude-desktop adapter against the app session records', () => {
         asked = true;
         return [];
       },
+      spawn: () => {
+        throw new Error('not spawned');
+      },
+      folderExists: () => true,
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
     expect(asked).toBe(false);
@@ -230,16 +372,19 @@ describe('readLiveClaudeSessions', () => {
       await readLiveClaudeSessions(
         spawnWith('[{"pid":1,"sessionId":"cli-a1","status":"busy","name":"x"}]')
       )
-    ).toEqual([{ sessionId: 'cli-a1', status: 'busy' }]);
+    ).toEqual([{ sessionId: 'cli-a1', status: 'busy', name: 'x' }]);
   });
 
-  test('treats a missing CLI or unreadable output as no live sessions', async () => {
-    expect(await readLiveClaudeSessions(spawnWith('Usage: claude'))).toEqual([]);
-    expect(
-      await readLiveClaudeSessions(() => {
+  test('fails when the CLI is missing or its output is unreadable', async () => {
+    await expect(readLiveClaudeSessions(spawnWith('Usage: claude'))).rejects.toThrow();
+    await expect(readLiveClaudeSessions(spawnWith('{"sessions":[]}'))).rejects.toThrow(
+      'unknown shape'
+    );
+    await expect(
+      readLiveClaudeSessions(() => {
         throw new Error('ENOENT');
       })
-    ).toEqual([]);
+    ).rejects.toThrow('ENOENT');
   });
 });
 

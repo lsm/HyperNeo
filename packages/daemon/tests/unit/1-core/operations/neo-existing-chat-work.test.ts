@@ -202,7 +202,7 @@ describe('Neo existing chat work', () => {
     ).toEqual({ reason: { accepted: false, reason: 'target_session_not_active' } });
     expect(neoPrompt(null)).toContain('pass that targetSessionId to neo.work.propose');
     expect(neoPrompt('research')).toContain(
-      'Space/task/workflow-owned contexts must use their owning operations'
+      'a work proposal always shows targetSessionId null because its target is the work field'
     );
   });
 

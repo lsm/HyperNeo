@@ -15,9 +15,9 @@ import {
 } from '../../drivers/hyperneo-adapter.ts';
 import {
   createSpaceAdapter,
+  type SpaceTaskControl,
   spaceTaskCaller,
   taskOperationRejection,
-  type SpaceTaskControl,
 } from '../../drivers/space-adapter.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
@@ -70,6 +70,8 @@ function claudeDesktopAdapters(): WorkAdapter[] {
       projectsDir: join(homedir(), '.claude', 'projects'),
       machine: hostname(),
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
+      spawn: spawnProcess,
+      folderExists: existsSync,
     }),
   ];
 }
@@ -107,6 +109,29 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
       const created = await invoke('task.create', { spaceId, title, description }, caller);
       const reason = taskOperationRejection(created);
       return reason === null ? { taskId: (created as { id: string }).id } : { reason };
+    },
+    message: async (taskId, node, message, fromHuman) => {
+      try {
+        const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
+          kind: 'worker',
+          taskId,
+          agentName: node.agentName,
+          workflowNodeId: node.workflowNodeId,
+          waitCapMs: 0,
+        });
+        const sessionId = ensured.kind === 'resolved' ? ensured.sessionId : node.agentSessionId;
+        if (!sessionId)
+          return { reason: 'reason' in ensured ? ensured.reason : 'No worker session.' };
+        const messageId = await context.taskAgentManager.injectSubSessionMessage(
+          sessionId,
+          message,
+          !fromHuman
+        );
+        const sent = context.deps.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
+        return { delivered: sent?.sendStatus !== 'deferred' };
+      } catch (error) {
+        return { reason: error instanceof Error ? error.message : String(error) };
+      }
     },
     cancel: async (taskId, caller) => {
       const reason = taskOperationRejection(
