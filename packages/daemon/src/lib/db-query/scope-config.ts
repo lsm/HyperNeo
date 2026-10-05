@@ -517,6 +517,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'delivery_turn_end',
   'delivery_consumed_seq',
   'memory_vectors',
+  'message_search_vectors',
   'space_agent_memory_fts',
   'space_agent_memory_fts_config',
   'space_agent_memory_fts_data',
