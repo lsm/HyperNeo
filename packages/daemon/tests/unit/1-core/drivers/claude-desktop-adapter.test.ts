@@ -89,6 +89,9 @@ describe('claude-desktop adapter against the app session records', () => {
         return live;
       },
       folderExists: (folder) => folder !== '/gone',
+      newId: () => 'unused',
+      sleep: async () => {},
+      now: () => 0,
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         onSpawn();
@@ -192,6 +195,9 @@ describe('claude-desktop adapter against the app session records', () => {
         throw new Error('not spawned');
       },
       folderExists: () => true,
+      newId: () => 'unused',
+      sleep: async () => {},
+      now: () => 0,
     }).find({ includeClosed: true, limit: 20 });
     rmSync(archivedOnly, { recursive: true, force: true });
     expect(asked).toBe(false);
@@ -350,6 +356,9 @@ describe('claude-desktop adapter against the app session records', () => {
         throw new Error('not spawned');
       },
       folderExists: () => true,
+      newId: () => 'unused',
+      sleep: async () => {},
+      now: () => 0,
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
     expect(asked).toBe(false);

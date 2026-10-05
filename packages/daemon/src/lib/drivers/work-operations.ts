@@ -34,7 +34,7 @@ export interface WorkVerbDeps {
 }
 
 const MessageSchema = z.string().trim().min(1).max(20_000);
-const REMOTE_START_TIMEOUT_MS = 120_000;
+const REMOTE_START_TIMEOUT_MS = 360_000;
 const ForwardedOriginSchema = z.string().min(1).max(500).optional();
 
 export const StartWorkInputSchema = z.object({

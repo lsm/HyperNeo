@@ -9,6 +9,7 @@ import type {
   PlaceGroup,
   Rejected,
   Result,
+  StartRequest,
   WorkAdapter,
   WorkDetail,
   WorkRef,
@@ -24,6 +25,10 @@ const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
 const RELAY_TIMEOUT_MS = 120_000;
 const RESUME_SETTLE_MS = 3_000;
+const OPEN_WAIT_MS = 60_000;
+const OPEN_POLL_MS = 2_000;
+const OPENING_MESSAGE =
+  'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.';
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -49,6 +54,9 @@ export interface ClaudeDesktopAdapterDeps {
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
+  newId: () => string;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -488,13 +496,133 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   cache: ClaudeRecordCache
 ) => Promise<Result<{ delivered: boolean }>>;
 
+export function selectClaudeStartFolder(
+  request: StartRequest,
+  deps: ClaudeDesktopAdapterDeps
+): Gate<string> {
+  const { place } = request;
+  if (place.spaceId) {
+    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
+  }
+  if (place.machine !== deps.machine) {
+    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
+  }
+  if (!place.folder) {
+    return { reason: reject('invalid_place', 'A Claude Code session needs a folder to work in.') };
+  }
+  return deps.folderExists(place.folder)
+    ? { value: place.folder }
+    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+}
+
+async function runToExit(
+  deps: ClaudeDesktopAdapterDeps,
+  args: string[],
+  cwd: string
+): Promise<{ code: number; stderr: string }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const proc = deps.spawn(args, { cwd, stdout: 'ignore', stderr: 'pipe' });
+    timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    return { code, stderr: stderr.trim() };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function waitUntilLive(
+  cliSessionId: string,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<readonly ClaudeLiveSession[] | null> {
+  const until = deps.now() + OPEN_WAIT_MS;
+  while (deps.now() < until) {
+    const live = await deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
+    if (live.some((candidate) => candidate.sessionId === cliSessionId && candidate.name)) {
+      return live;
+    }
+    await deps.sleep(OPEN_POLL_MS);
+  }
+  return null;
+}
+
+export async function startClaudeSession(
+  folder: string,
+  request: StartRequest,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<WorkSummary>> {
+  const cliSessionId = deps.newId();
+  const sessionId = `local_${cliSessionId}`;
+  try {
+    const opened = await runToExit(
+      deps,
+      ['claude', '-p', '--session-id', cliSessionId, '-n', request.title, '--', OPENING_MESSAGE],
+      folder
+    );
+    if (opened.code !== 0) {
+      return reject('not_delivered', opened.stderr || `claude -p exited with ${opened.code}.`);
+    }
+    deps
+      .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
+        cwd: folder,
+        stdout: 'ignore',
+        stderr: 'ignore',
+        detached: true,
+      })
+      .exited.catch(() => undefined);
+  } catch (error) {
+    return reject('not_delivered', error instanceof Error ? error.message : String(error));
+  }
+  const live = await waitUntilLive(cliSessionId, deps);
+  const session = live?.find((candidate) => candidate.sessionId === cliSessionId);
+  if (!live || !session) {
+    return reject(
+      'not_delivered',
+      `${sessionId} was created but Claude Code Desktop did not open it; send the task to it with work.send.`
+    );
+  }
+  const record: ClaudeDesktopRecord = {
+    sessionId,
+    cliSessionId,
+    cwd: folder,
+    title: request.title,
+    isArchived: false,
+    lastActivityAt: deps.now(),
+  };
+  const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
+  if (!sent.ok) {
+    return reject(
+      'not_delivered',
+      `${sessionId} opened, but the task did not reach it: ${sent.detail}`
+    );
+  }
+  return {
+    ok: true,
+    value: {
+      ...toClaudeWork(record, new Map([[cliSessionId, session.status]]), deps.machine),
+      place: { machine: deps.machine, folder, name: request.place.name },
+      status: sent.value.delivered ? 'running' : 'queued',
+    },
+  };
+}
+
+const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
+  .input(['request', 'deps'])
+  .pipe(selectClaudeStartFolder, ['request', 'deps'], 'result:outcome')
+  .pipe(startClaudeSession, ['outcome', 'request', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  request: StartRequest,
+  deps: ClaudeDesktopAdapterDeps
+) => Promise<Result<WorkSummary>>;
+
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
   const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
   return {
     id: 'claude-desktop',
-    capabilities: ['find', 'send', 'status'],
+    capabilities: ['find', 'start', 'send', 'status'],
     find: (query) => runClaudeDesktopFind(query, reused, cache),
+    start: (request) => runClaudeDesktopStart(request, deps),
     send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
     status: (ref) => runClaudeDesktopStatus(ref, reused, cache),
   };
