@@ -7,6 +7,7 @@ import {
 } from '../../drivers/claude-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import type { WorkAdapter } from '../../drivers/types.ts';
+import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
@@ -31,5 +32,6 @@ function claudeDesktopAdapters(): WorkAdapter[] {
 
 export function registerDriverOperations(): OperationDefinition[] {
   const adapters = claudeDesktopAdapters();
-  return [createFindWorkOperation({ adapters: () => adapters, remote: remoteDaemons })];
+  const deps = { adapters: () => adapters, remote: remoteDaemons };
+  return [createFindWorkOperation(deps), ...createWorkVerbOperations(deps)];
 }
