@@ -85,40 +85,53 @@ interface CodexPlace extends CodexFolderRow {
   known: boolean;
 }
 
-export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
-  const db = new Database(statePath, { readonly: true });
+function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
+  const db = new Database(path, { readonly: true });
   try {
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
-    return {
-      roots: db
-        .prepare(
-          `SELECT COALESCE(p.name, '') AS name, r.path AS folder,
+    return read(db);
+  } finally {
+    db.close();
+  }
+}
+
+export function withCodexState<T>(statePath: string, read: (db: Database) => T): T {
+  try {
+    return readCodexStateOnce(statePath, read);
+  } catch (error) {
+    if (!/unable to open database file|readonly database/.test(String(error))) throw error;
+    return readCodexStateOnce(`file:${encodeURI(statePath)}?immutable=1`, read);
+  }
+}
+
+export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
+  return withCodexState(statePath, (db) => ({
+    roots: db
+      .prepare(
+        `SELECT COALESCE(p.name, '') AS name, r.path AS folder,
              COALESCE(p.updated_at_ms, 0) AS lastActiveAt
              FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
-        )
-        .all() as CodexRootRow[],
-      folders: db
-        .prepare(
-          `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
+      )
+      .all() as CodexRootRow[],
+    folders: db
+      .prepare(
+        `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
              SUM(COALESCE(archived, 0) != 0) AS archivedCount,
              COALESCE(MAX(updated_at_ms), 0) AS lastActiveAt FROM threads WHERE ${OWN_THREADS} GROUP BY cwd`
-        )
-        .all() as CodexFolderRow[],
-      threads: db
-        .prepare(
-          `SELECT * FROM (
+      )
+      .all() as CodexFolderRow[],
+    threads: db
+      .prepare(
+        `SELECT * FROM (
              SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
              UNION ALL
              SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
                WHERE ${OWN_THREADS} AND ? = 1 AND COALESCE(archived, 0) != 0
                ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
            ORDER BY updatedAt DESC`
-        )
-        .all(includeClosed ? 1 : 0) as CodexThreadRow[],
-    };
-  } finally {
-    db.close();
-  }
+      )
+      .all(includeClosed ? 1 : 0) as CodexThreadRow[],
+  }));
 }
 
 export function codexProjectFolder(
@@ -221,9 +234,7 @@ const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
   .end('groups') as (query: FindQuery, deps: CodexDesktopAdapterDeps) => PlaceGroup[];
 
 export function readCodexThread(statePath: string, id: string): CodexThreadDetail | null {
-  const db = new Database(statePath, { readonly: true });
-  try {
-    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  return withCodexState(statePath, (db) => {
     const thread = db
       .prepare(
         `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath FROM threads
@@ -238,9 +249,7 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
       )
       .all() as CodexRootRow[];
     return { thread, roots };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
