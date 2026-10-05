@@ -111,7 +111,7 @@ function placeScroll(element: HTMLElement, scrollTop: number) {
 }
 
 describe('Neo scroll to bottom', () => {
-  it('appears away from the bottom, jumps back down, and hides at the bottom', () => {
+  it('stays until the smooth scroll reaches the bottom, then hides', () => {
     renderLive();
     const main = screen.getByRole('main');
     const scrollTo = vi.fn();
@@ -123,6 +123,9 @@ describe('Neo scroll to bottom', () => {
     expect(button.closest('.neo-composer-rail')?.classList.contains('relative')).toBe(true);
     fireEvent.click(button);
     expect(scrollTo).toHaveBeenCalledWith({ top: 2000, behavior: 'smooth' });
+    placeScroll(main, 900);
+    expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeTruthy();
+    placeScroll(main, 1500);
     expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).toBeNull();
   });
 });

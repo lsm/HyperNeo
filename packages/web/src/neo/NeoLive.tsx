@@ -262,7 +262,6 @@ export function NeoLive() {
     const element = scroll.current;
     if (!element) return;
     nearBottom.current = true;
-    setAwayFromBottom(false);
     element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
   }
 
