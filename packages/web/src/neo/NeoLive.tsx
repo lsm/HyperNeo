@@ -113,7 +113,8 @@ export function NeoLive() {
     publicConversation && questions.scope === sceneScope ? questions.values : undefined,
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
-      : undefined
+      : undefined,
+    drivers
   );
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
