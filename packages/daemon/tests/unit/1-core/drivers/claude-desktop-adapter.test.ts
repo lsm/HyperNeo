@@ -72,7 +72,7 @@ describe('claude-desktop adapter against the app session records', () => {
   let liveReads = 0;
 
   function adapter(
-    live: Array<{ sessionId: string; status: string; name?: string }> = [
+    live: Array<{ sessionId: string; status: string; name?: string }> | Error = [
       { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
     ],
     exitCode = 0,
@@ -85,6 +85,7 @@ describe('claude-desktop adapter against the app session records', () => {
       machine: 'laptop',
       liveSessions: async () => {
         liveReads++;
+        if (live instanceof Error) throw live;
         return live;
       },
       spawn: (args, options) => {
@@ -275,6 +276,23 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(spawned).toEqual([]);
   });
 
+  test('send refuses to resume when it cannot tell what the app runs, while find carries on', async () => {
+    const blind = adapter(new Error('timed out'));
+    expect(await blind.send?.({ adapter: 'claude-desktop', id: 'local_b2' }, 'next', user)).toEqual(
+      {
+        ok: false,
+        reason: 'not_delivered',
+        detail: 'Could not tell whether Claude Code Desktop runs this session: timed out',
+      }
+    );
+    expect(spawned).toEqual([]);
+    const groups = await blind.find({ includeClosed: false, limit: 20 });
+    expect(groups.flatMap((group) => group.work.map((work) => work.status))).not.toContain(
+      'needs_you'
+    );
+    expect(groups.length).toBeGreaterThan(0);
+  });
+
   test('send asks the CLI afresh which sessions the app is running', async () => {
     const reader = adapter([]);
     await reader.find({ includeClosed: false, limit: 20 });
@@ -334,13 +352,16 @@ describe('readLiveClaudeSessions', () => {
     ).toEqual([{ sessionId: 'cli-a1', status: 'busy', name: 'x' }]);
   });
 
-  test('treats a missing CLI or unreadable output as no live sessions', async () => {
-    expect(await readLiveClaudeSessions(spawnWith('Usage: claude'))).toEqual([]);
-    expect(
-      await readLiveClaudeSessions(() => {
+  test('fails when the CLI is missing or its output is unreadable', async () => {
+    await expect(readLiveClaudeSessions(spawnWith('Usage: claude'))).rejects.toThrow();
+    await expect(readLiveClaudeSessions(spawnWith('{"sessions":[]}'))).rejects.toThrow(
+      'unknown shape'
+    );
+    await expect(
+      readLiveClaudeSessions(() => {
         throw new Error('ENOENT');
       })
-    ).toEqual([]);
+    ).rejects.toThrow('ENOENT');
   });
 });
 

@@ -113,9 +113,8 @@ export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLive
     }, LIVE_TIMEOUT_MS);
     const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     const live = LiveSessionsSchema.safeParse(JSON.parse(output));
-    return live.success ? live.data : [];
-  } catch {
-    return [];
+    if (!live.success) throw new Error('claude agents --json answered in an unknown shape.');
+    return live.data;
   } finally {
     clearTimeout(timer);
   }
@@ -201,7 +200,23 @@ export async function loadLiveClaudeSessions(
   deps: ClaudeDesktopAdapterDeps,
   records: readonly ClaudeDesktopRecord[]
 ): Promise<readonly ClaudeLiveSession[]> {
-  return records.some((record) => !record.isArchived) ? deps.liveSessions() : [];
+  if (!records.some((record) => !record.isArchived)) return [];
+  return deps.liveSessions().catch((): readonly ClaudeLiveSession[] => []);
+}
+
+export async function probeLiveClaudeSessions(
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Gate<readonly ClaudeLiveSession[]>> {
+  try {
+    return { value: await deps.liveSessions() };
+  } catch (error) {
+    return {
+      reason: reject(
+        'not_delivered',
+        `Could not tell whether Claude Code Desktop runs this session: ${error instanceof Error ? error.message : String(error)}`
+      ),
+    };
+  }
 }
 
 export function reuseLiveSessions(
@@ -431,8 +446,10 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
   .pipe(requireOpenClaudeRecord, 'outcome', 'result:outcome')
-  .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(sendClaudeMessage, ['outcome', 'liveSessions', 'message', 'deps'], 'outcome')
+  .pipe((record: ClaudeDesktopRecord) => record, 'outcome', 'record')
+  .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
+  .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
+  .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
