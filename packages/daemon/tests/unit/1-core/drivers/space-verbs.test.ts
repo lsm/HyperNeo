@@ -68,6 +68,7 @@ describe('space adapter start, status and stop', () => {
           return refuse ? { reason: refuse } : { cancelled: true };
         },
         message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
       },
     });
   }
@@ -172,6 +173,16 @@ describe('space adapter send', () => {
       workflow_node_id TEXT, agent_session_id TEXT, status TEXT, last_activity_at INTEGER,
       updated_at INTEGER)`);
     db.exec(`INSERT INTO spaces VALUES ('sp1', 'dev-neokai')`);
+    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY, space_id TEXT,
+      handle TEXT, display_name TEXT, status TEXT, session_id TEXT, updated_at INTEGER)`);
+    db.exec(
+      `CREATE TABLE sessions (id TEXT PRIMARY KEY, processing_state TEXT, last_active_at TEXT)`
+    );
+    db.exec(`INSERT INTO sessions VALUES ('s1', '{"status":"processing"}', NULL)`);
+    db.exec(`INSERT INTO space_long_horizon_agents VALUES
+      ('a1', 'sp1', 'ui-ux', 'Designer', 'active', 's1', 40),
+      ('a2', 'sp1', 'docs', 'Writer', 'active', NULL, 30),
+      ('a3', 'sp1', 'old', 'Retired', 'archived', NULL, 20)`);
     db.exec(`INSERT INTO space_tasks VALUES
       ('t1', 'sp1', 7, 'font size', 'in_progress', 10, NULL, NULL, NULL, 'run-1'),
       ('t2', 'sp1', 8, 'shipped', 'done', 20, NULL, NULL, NULL, 'run-2'),
@@ -199,6 +210,10 @@ describe('space adapter send', () => {
             `${taskId} ${node.agentName}@${node.workflowNodeId} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
           );
           return { delivered: !message.startsWith('later') };
+        },
+        messageAgent: async (agent, message, context) => {
+          sent.push(`${agent.spaceId}/${agent.id} ${message} from ${context.from}`);
+          return message === 'refuse' ? { reason: 'agent session is gone' } : { accepted: true };
         },
       },
     });
@@ -233,6 +248,44 @@ describe('space adapter send', () => {
       't1 coder@node-code go on from an agent',
       't1 coder@node-code stop there from you',
     ]);
+  });
+
+  test('sends to a Space agent through message.send, queued while it is busy', async () => {
+    expect(await adapter().send?.(ref('agent:a1'), 'review the header', neo)).toEqual({
+      ok: true,
+      value: { delivered: false },
+    });
+    expect(await adapter().send?.(ref('agent:a2'), 'write the notes', neo)).toEqual({
+      ok: true,
+      value: { delivered: true },
+    });
+    expect(await adapter().send?.(ref('agent:a2'), 'refuse', neo)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'agent session is gone',
+    });
+    expect(sent).toEqual([
+      'sp1/a1 review the header from session:neo%3Aroot',
+      'sp1/a2 write the notes from session:neo%3Aroot',
+      'sp1/a2 refuse from session:neo%3Aroot',
+    ]);
+  });
+
+  test('refuses archived agents, unknown agents and other agents as senders', async () => {
+    const worker = {
+      from: 'session:w1',
+      caller: { source: 'mcp' as const, sessionId: 'w1', role: 'workflow_worker' as const },
+    };
+    expect(await adapter().send?.(ref('agent:a3'), 'hi', neo)).toMatchObject({
+      reason: 'not_open',
+    });
+    expect(await adapter().send?.(ref('agent:zz'), 'hi', neo)).toMatchObject({
+      reason: 'not_found',
+    });
+    expect(await adapter().send?.(ref('agent:a2'), 'hi', worker)).toMatchObject({
+      reason: 'unsupported',
+    });
+    expect(sent).toEqual([]);
   });
 
   test('reports a message the agent will only see after its current turn', async () => {

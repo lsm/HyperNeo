@@ -75,7 +75,7 @@ describe('current human work guidance', () => {
       'verify the returned targetSessionId matches your intended chat or agent'
     );
     expect(prompt).toContain(
-      'To continue a Space task, a Codex Desktop thread, a Claude Code Desktop session or a hyperneo ref with a daemon'
+      'To continue a Space task or agent, a Codex Desktop thread, a Claude Code Desktop session or a hyperneo ref with a daemon'
     );
     expect(prompt).toContain("work {verb:'start',adapter,place} using an adapter that place lists");
     expect(prompt).toContain('Do not call work.start, work.send or work.stop yourself');

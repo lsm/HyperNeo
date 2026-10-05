@@ -130,6 +130,7 @@ describe('space adapter against the space tables', () => {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
         message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
       },
     });
     const [group] = await adapter.find({ includeClosed: true, limit: 20, text: 'open one' });
@@ -148,6 +149,7 @@ describe('space adapter against the space tables', () => {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
         message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
       },
     });
     const find = (text?: string) => adapter.find({ includeClosed: true, limit: 20, text });
@@ -166,6 +168,7 @@ describe('space adapter against the space tables', () => {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
         message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
       },
     });
     const groups = await adapter.find({ includeClosed: false, limit: 20 });
@@ -195,6 +198,7 @@ describe('space adapter against the space tables', () => {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
         message: async () => ({ reason: 'unused' }),
+        messageAgent: async () => ({ reason: 'unused' }),
       },
     });
     const [group] = await adapter.find({ includeClosed: false, limit: 20 });
