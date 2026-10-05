@@ -204,15 +204,17 @@ describe('Neo work with a drivers target', () => {
       reason: 'invalid_place',
       detail: '/focus/dolmen does not exist.',
     });
-    const returned: string[] = [];
+    const delivered: Array<[string, string, string]> = [];
+    db.createSession(createTestSession('neo:root'));
     Object.assign(service, {
-      returnReport: async (failed: { id: string }) => {
-        returned.push(failed.id);
+      open: async () => 'neo:root',
+      deliver: async (target: string, messageId: string, _content: string, origin: string) => {
+        delivered.push([target, messageId, origin]);
       },
     });
     try {
       await service.start('work-1');
-      expect(returned).toEqual(['work-1']);
+      expect(delivered).toEqual([['neo:root', 'work-1', 'neo:root']]);
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'failed',
         report: 'Could not start the execution: invalid_place: /focus/dolmen does not exist.',
