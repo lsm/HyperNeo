@@ -4,6 +4,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { connectionState } from '../lib/state.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
@@ -28,6 +29,7 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [replyProgress, setReplyProgress] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const [draft, setDraft] = useState<string | undefined>(undefined);
@@ -183,10 +185,14 @@ export function NeoLive() {
     element.style.overflowAnchor = '';
   }, [publicConversation?.entries.length, publicConversation?.status]);
 
+  const isAtBottom = (element: HTMLElement) =>
+    element.scrollHeight - element.scrollTop - element.clientHeight < 160;
+
   function recordScroll(element: HTMLElement) {
     if (element !== scroll.current) return;
-    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 160;
+    const atBottom = isAtBottom(element);
     if (element.scrollTop < lastScrollTop.current - 1 || atBottom) nearBottom.current = atBottom;
+    setAwayFromBottom(!atBottom);
     lastScrollTop.current = element.scrollTop;
     scrollProgress.current =
       element.scrollTop / Math.max(1, element.scrollHeight - element.clientHeight);
@@ -240,6 +246,7 @@ export function NeoLive() {
       shell.current?.style.setProperty('--neo-composer-height', `${element.offsetHeight}px`);
       if (nearBottom.current && scroll.current)
         scroll.current.scrollTop = scroll.current.scrollHeight;
+      if (scroll.current) setAwayFromBottom(!isAtBottom(scroll.current));
     });
     resize.observe(element);
     if (rail.current) resize.observe(rail.current);
@@ -254,6 +261,13 @@ export function NeoLive() {
         scroll.current.scrollTop /
         Math.max(1, scroll.current.scrollHeight - scroll.current.clientHeight);
   }, [messageCount, lastPublicEntry, neo.sessionId, workCount]);
+
+  function scrollToBottom() {
+    const element = scroll.current;
+    if (!element) return;
+    nearBottom.current = true;
+    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
+  }
 
   function open() {
     nearBottom.current = true;
@@ -503,7 +517,13 @@ export function NeoLive() {
         ref={footer}
         class="neo-composer-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-3 pt-6"
       >
-        <div class="neo-composer-rail px-3 sm:px-8">
+        <div class="neo-composer-rail relative px-3 sm:px-8">
+          {awayFromBottom && (
+            <ScrollToBottomButton
+              onClick={scrollToBottom}
+              bottomClass="bottom-full mb-2 pointer-events-auto"
+            />
+          )}
           <NeoActivity
             key={sceneScope}
             scenes={scenes?.running ?? []}
