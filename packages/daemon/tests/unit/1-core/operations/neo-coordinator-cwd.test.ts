@@ -6,14 +6,15 @@ import { neoCoordinatorRuntimePath } from '../../../../src/lib/neo/session-polic
 
 describe('neoCoordinatorRuntimePath', () => {
   let home: string;
-  const saved = { home: process.env.HOME, data: process.env.HYPERNEO_DATA_DIR };
+  const saved = { sdk: process.env.TEST_SDK_SESSION_DIR, data: process.env.HYPERNEO_DATA_DIR };
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'neo-home-'));
-    process.env.HOME = home;
+    process.env.TEST_SDK_SESSION_DIR = join(home, '.claude');
     process.env.HYPERNEO_DATA_DIR = join(home, 'data');
   });
   afterEach(() => {
-    process.env.HOME = saved.home;
+    if (saved.sdk === undefined) delete process.env.TEST_SDK_SESSION_DIR;
+    else process.env.TEST_SDK_SESSION_DIR = saved.sdk;
     if (saved.data === undefined) delete process.env.HYPERNEO_DATA_DIR;
     else process.env.HYPERNEO_DATA_DIR = saved.data;
     rmSync(home, { recursive: true, force: true });
@@ -26,14 +27,14 @@ describe('neoCoordinatorRuntimePath', () => {
   test('keeps a coordinator whose SDK history lives under its old folder', () => {
     const legacy = join(tmpdir(), 'hyperneo-neo-context', 'neo-old-session');
     mkdirSync(legacy, { recursive: true });
-    const encoded = realpathSync(legacy).replace(/[^a-zA-Z0-9]/g, '-');
+    const encoded = realpathSync(legacy).replace(/[/.]/g, '-');
     mkdirSync(join(home, '.claude', 'projects', encoded), { recursive: true });
     expect(neoCoordinatorRuntimePath('neo:old-session')).toBe(legacy);
   });
 
   test('still finds that history after the OS removed the old temp folder', () => {
     const legacy = join(tmpdir(), 'hyperneo-neo-context', 'neo-gone-session');
-    const encoded = `/private${legacy}`.replace(/[^a-zA-Z0-9]/g, '-');
+    const encoded = `/private${legacy}`.replace(/[/.]/g, '-');
     mkdirSync(join(home, '.claude', 'projects', encoded), { recursive: true });
     expect(neoCoordinatorRuntimePath('neo:gone-session')).toBe(legacy);
   });

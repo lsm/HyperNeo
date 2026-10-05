@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from '../storage/database.ts';
 
-function getSDKProjectDir(workspacePath: string): string {
+export function getSDKProjectDir(workspacePath: string): string {
   const resolved = existsSync(workspacePath) ? realpathSync(workspacePath) : workspacePath;
   const projectKey = resolved.replace(/[/.]/g, '-');
   const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
