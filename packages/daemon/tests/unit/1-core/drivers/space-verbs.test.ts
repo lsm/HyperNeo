@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   createSpaceAdapter,
   spaceTaskCaller,
   taskOperationRejection,
 } from '../../../../src/lib/drivers/space-adapter';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('taskOperationRejection', () => {
   test('reads a task or an accepted job as success and anything else as a reason', () => {
@@ -190,8 +190,10 @@ describe('space adapter send', () => {
       tasks: {
         create: async () => ({ reason: 'unused' }),
         cancel: async () => ({ reason: 'unused' }),
-        message: async (taskId, agentName, message, caller) => {
-          sent.push(`${taskId} ${agentName} ${message} as ${caller.role ?? caller.source}`);
+        message: async (taskId, agentName, message, fromHuman) => {
+          sent.push(
+            `${taskId} ${agentName} ${message} ${fromHuman ? 'from you' : 'from an agent'}`
+          );
           return { delivered: true };
         },
       },
@@ -209,7 +211,24 @@ describe('space adapter send', () => {
       ok: true,
       value: { delivered: true },
     });
-    expect(sent).toEqual(['t1 coder use 16px as neo']);
+    const relayedNeo = {
+      from: 'daemon:imac::session:neo%3Aroot',
+      caller: { source: 'rpc' as const },
+    };
+    expect(await adapter().send?.(ref('t1'), 'go on', relayedNeo)).toMatchObject({ ok: true });
+    expect(
+      await adapter().send?.(ref('t1'), 'stop there', {
+        from: 'chat',
+        caller: { source: 'rpc' as const },
+      })
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(sent).toEqual([
+      't1 coder use 16px from an agent',
+      't1 coder go on from an agent',
+      't1 coder stop there from you',
+    ]);
   });
 
   test('refuses other agents, finished tasks and tasks without a workflow agent', async () => {

@@ -60,7 +60,7 @@ export interface SpaceTaskControl {
     taskId: string,
     agentName: string,
     message: string,
-    caller: OperationCaller
+    fromHuman: boolean
   ): Promise<{ delivered: true } | { reason: string }>;
 }
 
@@ -329,7 +329,7 @@ export async function messageSpaceTask(
   if (!agentName) {
     return reject('unsupported', `Task #${task.taskNumber} has no workflow agent to message yet.`);
   }
-  const sent = await deps.tasks.message(task.id, agentName, message, context.caller);
+  const sent = await deps.tasks.message(task.id, agentName, message, context.from === 'chat');
   return 'reason' in sent
     ? reject('not_delivered', sent.reason)
     : { ok: true, value: { delivered: true } };

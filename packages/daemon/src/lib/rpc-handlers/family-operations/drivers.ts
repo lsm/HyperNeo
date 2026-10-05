@@ -104,7 +104,7 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
       const reason = taskOperationRejection(created);
       return reason === null ? { taskId: (created as { id: string }).id } : { reason };
     },
-    message: async (taskId, agentName, message, caller) => {
+    message: async (taskId, agentName, message, fromHuman) => {
       try {
         const ensured = await context.spaceRuntimeService.ensureToolTargetSession({
           kind: 'worker',
@@ -116,7 +116,7 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
         await context.taskAgentManager.injectSubSessionMessage(
           ensured.sessionId,
           message,
-          caller.source !== 'rpc'
+          !fromHuman
         );
         return { delivered: true };
       } catch (error) {
