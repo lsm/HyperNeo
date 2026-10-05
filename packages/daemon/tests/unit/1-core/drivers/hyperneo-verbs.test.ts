@@ -235,6 +235,17 @@ describe('hyperneo adapter start and stop', () => {
     expect(events).toEqual([]);
   });
 
+  test('stop interrupts a session waiting out a rate limit', async () => {
+    db.exec(
+      `UPDATE sessions SET processing_state = '{"status":"rate_limit_cooldown"}' WHERE id = 'idle'`
+    );
+    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' })).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(events).toEqual(['interrupt idle']);
+  });
+
   test('stop interrupts a running session and leaves an idle one alone', async () => {
     expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'busy' })).toEqual({
       ok: true,

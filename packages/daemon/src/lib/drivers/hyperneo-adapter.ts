@@ -207,6 +207,11 @@ const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matchedIds'], 'groups')
   .end('groups') as (query: FindQuery, deps: HyperneoAdapterDeps) => PlaceGroup[];
 
+export function hyperneoSessionBusy(row: HyperneoSessionRow): boolean {
+  const status = hyperneoWorkStatus(row.status, row.processing);
+  return status === 'running' || status === 'queued';
+}
+
 export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessionRow | null {
   const row = db
     .prepare(
@@ -271,8 +276,7 @@ export async function deliverToHyperneo(
 ): Promise<Result<{ delivered: boolean }>> {
   const outcome = await deps.handoff(row.id, message, context.from);
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
-  const busy = row.processing === 'processing' || row.processing === 'queued';
-  return { ok: true, value: { delivered: !busy } };
+  return { ok: true, value: { delivered: !hyperneoSessionBusy(row) } };
 }
 
 export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
@@ -325,8 +329,10 @@ export function stopHyperneoWork(
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps
 ): Result<{ stopped: boolean }> {
-  const running = row.processing === 'processing' || row.processing === 'queued';
-  return { ok: true, value: { stopped: running && deps.sessions.interrupt(row.id) } };
+  return {
+    ok: true,
+    value: { stopped: hyperneoSessionBusy(row) && deps.sessions.interrupt(row.id) },
+  };
 }
 
 const runHyperneoStart = (superpipe({})('hyperneo-start-work') as PipelineAPI)
