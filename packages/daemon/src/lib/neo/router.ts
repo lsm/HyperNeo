@@ -44,6 +44,7 @@ export interface NeoRouteChoice {
 }
 
 export type NeoRouteAnswer = NeoHolder | 'main' | null;
+export type NeoRouteVerdict = NeoRouteAnswer | 'timeout' | 'failed';
 
 export interface NeoRouterDeps {
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
@@ -51,7 +52,7 @@ export interface NeoRouterDeps {
   topicTurns(): NeoRoute[];
   recentAsks(concernId: string, limit: number): string[];
   embed(text: string): Promise<Float32Array | null>;
-  classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteAnswer>;
+  classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
@@ -86,7 +87,8 @@ export function pickNeoHolder(
 }
 
 type Score = { holder: NeoHolder; similarity: number };
-type Routed = { choice: NeoRouteChoice | null };
+export type NeoRouted = { choice: NeoRouteChoice | null; fallback?: string };
+type Routed = NeoRouted;
 type Exit = { reason: Routed };
 
 export function requireAskText(text: string): { value: string } | Exit {
@@ -223,8 +225,9 @@ export async function classifyNeoAsk(
 ): Promise<Routed> {
   const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
   const chosen = deps.classify ? await deps.classify(text, options, context) : null;
-  if (chosen === 'main') return { choice: null };
-  if (!chosen) return { choice: pickNeoHolder(scores) };
+  if (chosen === 'main') return { choice: null, fallback: 'classifier' };
+  if (!chosen || chosen === 'timeout' || chosen === 'failed')
+    return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
   const holder = chosen.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
   return {
     choice: holder
@@ -235,6 +238,7 @@ export async function classifyNeoAsk(
           confidence: 0.6,
         }
       : null,
+    fallback: holder ? undefined : 'inbox-unavailable',
   };
 }
 
@@ -265,14 +269,11 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe(classifyNeoAsk, ['text', 'candidates', 'context', 'scores', 'withInbox', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
-export async function chooseNeoRoute(
-  text: string,
-  deps: NeoRouterDeps
-): Promise<NeoRouteChoice | null> {
-  return (await runNeoRoute(text, deps)).choice;
+export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRouted> {
+  return runNeoRoute(text, deps);
 }
 
-export type NeoRouter = (text: string) => Promise<NeoRouteChoice | null>;
+export type NeoRouter = (text: string) => Promise<NeoRouted>;
 
 export function createNeoRouter(
   db: Database,

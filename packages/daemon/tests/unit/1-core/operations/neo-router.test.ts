@@ -187,10 +187,10 @@ describe('chooseNeoRoute', () => {
   });
 
   test('falls back to a clear embedding match when no classifier answers', async () => {
-    expect(await chooseNeoRoute('restart the daemon after the driver merge', deps())).toMatchObject(
-      { concernId: 'drivers', signal: 'embedding' }
-    );
-    expect(await chooseNeoRoute('unknown text', deps())).toBeNull();
+    expect(
+      (await chooseNeoRoute('restart the daemon after the driver merge', deps())).choice
+    ).toMatchObject({ concernId: 'drivers', signal: 'embedding' });
+    expect((await chooseNeoRoute('unknown text', deps())).choice).toBeNull();
   });
 
   test('sends a follow-up to main when the classifier reads it as continuing main', async () => {
@@ -203,7 +203,7 @@ describe('chooseNeoRoute', () => {
         return 'main';
       },
     });
-    expect(choice).toBeNull();
+    expect(choice).toEqual({ choice: null, fallback: 'classifier' });
     expect(seen[0]).toContain('[main] you: "is PR 5650 done?"');
   });
 
@@ -217,7 +217,7 @@ describe('chooseNeoRoute', () => {
         return 'main';
       },
     });
-    expect([choice, asked]).toEqual([null, 0]);
+    expect([choice, asked]).toEqual([{ choice: null }, 0]);
   });
 });
 
@@ -281,12 +281,14 @@ describe('neo.message.send with a router', () => {
             calls.push(text);
             return text.includes('driver')
               ? {
-                  concernId: 'drivers',
-                  sessionId: drivers.sessionId,
-                  signal: 'embedding',
-                  confidence: 0.71,
+                  choice: {
+                    concernId: 'drivers',
+                    sessionId: drivers.sessionId,
+                    signal: 'embedding',
+                    confidence: 0.71,
+                  },
                 }
-              : null;
+              : { choice: null, fallback: 'classifier-timeout' };
           }
         ),
       ]),
@@ -313,6 +315,10 @@ describe('neo.message.send with a router', () => {
   test('keeps an unsure ask with main Neo and reuses the first route on retry', async () => {
     await send(root.sessionId, ask(2), 'weather tomorrow?');
     expect(delivered(root.sessionId, ask(2))).toBe(1);
+    expect(new NeoRoutingLogRepository(writer).find(ask(2))).toMatchObject({
+      destination: 'main',
+      signal: 'classifier-timeout',
+    });
     await send(root.sessionId, ask(3), 'merge the driver PR');
     await send(root.sessionId, ask(3), 'merge the driver PR');
     expect(calls).toEqual(['weather tomorrow?', 'merge the driver PR']);
