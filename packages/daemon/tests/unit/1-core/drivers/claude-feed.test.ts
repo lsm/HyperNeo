@@ -140,10 +140,12 @@ describe('Claude transcript feed', () => {
 
   test('a deleted resumed copy gives its shared turns back to the surviving transcript', async () => {
     const project = join(root, '-Users-me-focus-neokai');
+    const elsewhere = join(root, '-Users-me-focus-other');
     mkdirSync(project, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
     const said = line({ type: 'user', uuid: 'u1', message: { content: 'plan the heron rollout' } });
     const original = join(project, 'cli-1.jsonl');
-    const resumed = join(project, 'cli-2.jsonl');
+    const resumed = join(elsewhere, 'cli-2.jsonl');
     writeFileSync(original, `${said}\n`);
     writeFileSync(
       resumed,

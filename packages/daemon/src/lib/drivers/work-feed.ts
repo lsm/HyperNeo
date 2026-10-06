@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   dropWorkFeedSession,
@@ -120,11 +120,10 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   const known = readWorkFeedOffsets(db);
   const gone = vanishedFeedPaths(root, known);
   for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
-  if (source.sharesTurnsWithSiblings) {
-    const folders = new Set(gone.map((path) => dirname(path)));
+  if (source.sharesTurnsWithSiblings && gone.length > 0) {
     forgetWorkFeedOffsets(
       db,
-      [...known.keys()].filter((path) => folders.has(dirname(path)) && !gone.includes(path))
+      [...known.keys()].filter((path) => path.startsWith(`${root}${sep}`) && !gone.includes(path))
     );
   }
   return gone.length;
