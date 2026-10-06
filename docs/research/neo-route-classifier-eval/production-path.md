@@ -180,6 +180,38 @@ user's messages.
 - **The recommendation stands:** glm-4.7 on the subscription. GLM-5.3-Flash matches it on
   accuracy but always reasons and has the slowest p95.
 
+## 6. Asking for the bare basis rule
+
+Section 5 found that most replies explained the rule after its name, and 14–32 gave prose with
+no rule. The prompt now says `basis is the name of the rule below, exactly as written, with no
+explanation.` Same 105 cases, same production path, on the branch for that change. Raw logs:
+`results/tts-basis-<model>.jsonl`.
+
+| model | correct (all · synthetic · real) | follow-ups → inbox | basis exact | invalid choice | reasoned | output tokens p50 / p95 / max | p50 / p95 / max ms | calls > 4 s · > 15 s | cost / 1k |
+|---|---|---|---|---|---|---|---|---|---|
+| glm-4.7 | 100 / 105 (95%) · 94% · 97% | 0 / 74 | 105 | 0 | 41 | 26 / 88 / 161 | 1839 / 4924 / 7683 | 8 · 0 | $0.41 |
+| glm-5-turbo | 97 / 105 (92%) · 94% · 89% | 0 / 74 | 105 | 0 | 39 | 26 / 88 / 175 | 1936 / 5286 / 11664 | 12 · 0 | $0.79 |
+| GLM-5.3-Flash | 96 / 105 (91%) · 89% · 97% | 0 / 74 | 105 | 1 | 42 | 26 / 105 / 256 | 1759 / 5701 / 20629 | 9 · 1 | $0.09 |
+| DeepSeek Flash | 95 / 105 (90%) · 90% · 91% | 0 / 74 | 104 | 1 | 0 | 24 / 27 / 29 | 868 / 1138 / 1317 | 0 · 0 | $0.08 |
+
+| model | follow up | second last | waiting yes | two waiting | one off | new subject | thanks | long dictated | mixed language | real |
+|---|---|---|---|---|---|---|---|---|---|---|
+| glm-4.7 | 100% | 100% | 100% | 83% | 75% | 88% | 100% | 100% | 100% | 97% |
+| glm-5-turbo | 100% | 100% | 100% | 67% | 100% | 75% | 100% | 100% | 100% | 89% |
+| GLM-5.3-Flash | 100% | 100% | 100% | 50% | 75% | 75% | 100% | 100% | 88% | 97% |
+| DeepSeek Flash | 92% | 100% | 100% | 50% | 100% | 75% | 83% | 100% | 100% | 91% |
+
+- **The basis now survives.** 104–105 of 105 replies gave the exact rule, against 19–25 before.
+- **Replies got shorter and faster.** Median output fell from about 46 to 26 tokens. glm-4.7's
+  p50 went from 2.1 s to 1.8 s, its slowest call from 28 s to 7.7 s, and calls over 4 s from 15
+  to 8.
+- **Accuracy held on glm-4.7 (95%) and rose on DeepSeek Flash (87% → 90%).** GLM-5.3-Flash fell
+  from 96% to 91%. At 105 cases, a few points is 3–5 routes.
+- **"Invalid choice" replies parsed but named no listed id:** GLM-5.3-Flash put the rule name in
+  `choice` once, and DeepSeek Flash gave a truncated topic id once. Production treats both as no
+  answer and falls back to the embedding pick.
+- glm-4.7 stays the recommendation.
+
 ## Recommendation
 
 Use **glm-4.7** as the routing model on the GLM subscription, in Settings → Neo → Routing model:

@@ -189,6 +189,8 @@ Per-kind accuracy for every run is in [`report.md`](report.md).
    - DeepSeek's Anthropic endpoint does honor `thinking: disabled` (at most 8 output tokens).
 5. **The Codex bridge sends no reasoning effort when thinking is disabled,** so `gpt-5.6-luna`
    ran at its default effort until the harness forced `reasoning.effort: "none"` upstream.
+   #5720 since made the Codex bridge send `effort: "none"` when thinking is disabled. The
+   Chat Completions bridge sends a thinking-off effort only for models that declare one (#5782).
 6. **GLM-5-Turbo needs its thinking to be accurate here.** It scored 94% with thinking (Agent SDK,
    lean) and 87% without (native API). Without thinking it is also slow: native p95 5.3 s, past
    the 4 s timeout, so 74% after timeouts.
