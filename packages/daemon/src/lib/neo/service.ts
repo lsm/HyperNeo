@@ -43,7 +43,7 @@ import {
 import { neoFolder, neoTaskFolderName } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
-import { neoCoordinatorNativeTools } from './session-policy.ts';
+import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
 import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
@@ -328,7 +328,6 @@ export class NeoService {
     }
     if (!binding) throw new Error('Could not reserve Neo context.');
     if (!this.db.getSession(binding.sessionId)) {
-      const nativeTools = neoCoordinatorNativeTools(concernId);
       const root = concernId ? this.repo.getBindingForConcern(null)?.sessionId : undefined;
       const rootSession = root ? this.db.getSession(root) : null;
       await this.sessions.createSession({
@@ -338,9 +337,9 @@ export class NeoService {
         workspacePath: null,
         config: {
           systemPrompt: neoPrompt(concernId),
-          sdkToolsPreset: nativeTools,
+          sdkToolsPreset: neoCoordinatorNativeTools(concernId),
           permissionMode: 'dontAsk',
-          allowedTools: [...nativeTools, 'mcp__hyperneo-operations__invoke'],
+          allowedTools: neoCoordinatorAllowedTools(concernId),
           maxTurns: 32,
           ...(rootSession?.config?.model
             ? { model: rootSession.config.model, provider: rootSession.config.provider }

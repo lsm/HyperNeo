@@ -7,6 +7,10 @@ import { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-bui
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorNativeTools,
+} from '../../../../src/lib/neo/session-policy.ts';
 import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -185,10 +189,9 @@ describe('published consultation runtime activation', () => {
       const sessionId = await service.open(concernId);
       expect(createSession).toHaveBeenCalledTimes(1);
       expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(concernId));
-      expect(db.getSession(sessionId)?.config.allowedTools).toEqual([
-        ...(concernId ? ['AskUserQuestion'] : []),
-        'mcp__hyperneo-operations__invoke',
-      ]);
+      expect(db.getSession(sessionId)?.config.allowedTools).toEqual(
+        neoCoordinatorAllowedTools(concernId)
+      );
     }
   );
 
@@ -253,14 +256,11 @@ describe('published consultation runtime activation', () => {
           snapshot: false,
         });
         expect(options.permissionMode).toBe('dontAsk');
-        expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
+        expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
         expect(options.plugins).toEqual([]);
         expect(options.settingSources).toEqual([]);
         expect(options.agents).toEqual({});
-        expect(options.allowedTools).toEqual([
-          ...(concernId ? ['AskUserQuestion'] : []),
-          'mcp__hyperneo-operations__invoke',
-        ]);
+        expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
         const rebuilt = await new QueryOptionsBuilder(agent).build();
         expect(rebuilt.systemPrompt).toEqual({
           type: 'custom',

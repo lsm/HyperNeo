@@ -6,7 +6,7 @@ import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { existsSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 function sdkTranscriptsExist(cwd: string): boolean {
@@ -34,8 +34,35 @@ export function neoCoordinatorBinding(
   return row ?? null;
 }
 
-export function neoCoordinatorNativeTools(concernId: string | null): 'AskUserQuestion'[] {
-  return concernId ? ['AskUserQuestion'] : [];
+const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const NEO_LOOKUP_COMMANDS = [
+  'cd',
+  'gh pr view',
+  'gh pr list',
+  'gh pr checks',
+  'gh pr diff',
+  'gh issue view',
+  'gh issue list',
+  'gh run view',
+  'gh run list',
+  'gh repo view',
+  'git log',
+  'git show',
+  'git status',
+  'git diff',
+  'git blame',
+];
+
+export function neoCoordinatorNativeTools(concernId: string | null): string[] {
+  return [...(concernId ? ['AskUserQuestion'] : []), ...NEO_LOOKUP_TOOLS];
+}
+
+export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
+  return [
+    ...neoCoordinatorNativeTools(concernId).filter((tool) => tool !== 'Bash'),
+    ...NEO_LOOKUP_COMMANDS.map((command) => `Bash(${command}:*)`),
+    `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
+  ];
 }
 
 export function restrictNeoQuery(
@@ -54,12 +81,12 @@ export function restrictNeoQuery(
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
-  const nativeTools = neoCoordinatorNativeTools(concernId);
-  options.tools = nativeTools;
+  options.tools = neoCoordinatorNativeTools(concernId);
+  options.additionalDirectories = [homedir()];
   options.agents = {};
   delete options.agent;
   options.plugins = [];
   options.settingSources = [];
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
-  options.allowedTools = [...nativeTools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
+  options.allowedTools = neoCoordinatorAllowedTools(concernId);
 }

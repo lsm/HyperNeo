@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorNativeTools,
+  restrictNeoQuery,
+} from '../../../../src/lib/neo/session-policy.ts';
 
 const turns: { concernId: string | null }[] = [{ concernId: null }, { concernId: 'garden' }];
 
@@ -102,11 +106,8 @@ describe('current human work guidance', () => {
         prompt: neoPrompt(concernId),
         snapshot: false,
       });
-      expect(query.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
-      expect(query.allowedTools).toEqual([
-        ...(concernId ? ['AskUserQuestion'] : []),
-        'mcp__hyperneo-operations__invoke',
-      ]);
+      expect(query.tools).toEqual(neoCoordinatorNativeTools(concernId));
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
       expect(query.settingSources).toEqual([]);
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
