@@ -261,6 +261,12 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
+function composerTextarea(getByTestId: (id: string) => HTMLElement): HTMLTextAreaElement {
+  const textarea = getByTestId('task-session-chat-composer').querySelector('textarea');
+  if (!textarea) throw new Error('composer textarea not rendered');
+  return textarea;
+}
+
 function setupTaskWithActivity(taskOverrides: Partial<SpaceTask> = {}) {
   const task = makeTask({
     status: 'in_progress',
@@ -474,11 +480,11 @@ describe('SpaceTaskPane — composer', () => {
     cleanup();
   });
 
-  it.skip('sends a message when a task has node agent activity', async () => {
+  it('sends a message when a task has node agent activity', async () => {
     setupTaskWithActivity();
-    const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    fireEvent.input(getByPlaceholderText('Message coder...'), {
+    fireEvent.input(composerTextarea(getByTestId), {
       target: { value: 'Looks good to me' },
     });
     fireEvent.click(getByTestId('send-button'));
@@ -487,9 +493,7 @@ describe('SpaceTaskPane — composer', () => {
       expect(mockSendTaskMessage).toHaveBeenCalledWith(
         'task-1',
         'Looks good to me',
-        {
-          kind: 'node_agent',
-        },
+        { kind: 'node_agent', agentName: 'coder' },
         undefined,
         'immediate'
       )
@@ -497,14 +501,12 @@ describe('SpaceTaskPane — composer', () => {
     expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
   });
 
-  it.skip('shows send error text when sending fails', async () => {
+  it('shows send error text when sending fails', async () => {
     mockSendTaskMessage.mockRejectedValueOnce(new Error('Invalid transition'));
     setupTaskWithActivity();
-    const { getByPlaceholderText, getByText, getByTestId } = render(
-      <SpaceTaskPane taskId="task-1" />
-    );
+    const { getByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    fireEvent.input(getByPlaceholderText('Message coder...'), {
+    fireEvent.input(composerTextarea(getByTestId), {
       target: { value: 'Approved' },
     });
     fireEvent.click(getByTestId('send-button'));
@@ -554,16 +556,16 @@ describe('SpaceTaskPane — composer', () => {
     expect(error.getAttribute('role')).toBe('alert');
   });
 
-  it.skip('disables textarea while send is in flight and re-enables after completion', async () => {
+  it('disables textarea while send is in flight and re-enables after completion', async () => {
     let resolveSend: () => void;
     const sendPromise = new Promise<void>((resolve) => {
       resolveSend = resolve;
     });
     mockSendTaskMessage.mockReturnValueOnce(sendPromise);
     setupTaskWithActivity();
-    const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    const textarea = getByPlaceholderText('Message coder...') as HTMLTextAreaElement;
+    const textarea = composerTextarea(getByTestId) as HTMLTextAreaElement;
     fireEvent.input(textarea, { target: { value: 'Work in progress check' } });
     fireEvent.click(getByTestId('send-button'));
 
@@ -573,11 +575,11 @@ describe('SpaceTaskPane — composer', () => {
     await waitFor(() => expect(textarea.disabled).toBe(false));
   });
 
-  it.skip('clears draft after successful send', async () => {
+  it('clears draft after successful send', async () => {
     setupTaskWithActivity();
-    const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    const textarea = getByPlaceholderText('Message coder...') as HTMLTextAreaElement;
+    const textarea = composerTextarea(getByTestId) as HTMLTextAreaElement;
     fireEvent.input(textarea, { target: { value: 'Approve the PR' } });
     expect(textarea.value).toBe('Approve the PR');
 
@@ -587,9 +589,7 @@ describe('SpaceTaskPane — composer', () => {
       expect(mockSendTaskMessage).toHaveBeenCalledWith(
         'task-1',
         'Approve the PR',
-        {
-          kind: 'node_agent',
-        },
+        { kind: 'node_agent', agentName: 'coder' },
         undefined,
         'immediate'
       )
@@ -597,11 +597,11 @@ describe('SpaceTaskPane — composer', () => {
     await waitFor(() => expect(textarea.value).toBe(''));
   });
 
-  it.skip('submits message on Enter key (without Shift)', async () => {
+  it('submits message on Enter key (without Shift)', async () => {
     setupTaskWithActivity();
-    const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    const textarea = getByPlaceholderText('Message coder...');
+    const textarea = composerTextarea(getByTestId);
     fireEvent.input(textarea, { target: { value: 'Quick approve' } });
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -609,20 +609,18 @@ describe('SpaceTaskPane — composer', () => {
       expect(mockSendTaskMessage).toHaveBeenCalledWith(
         'task-1',
         'Quick approve',
-        {
-          kind: 'node_agent',
-        },
+        { kind: 'node_agent', agentName: 'coder' },
         undefined,
         'immediate'
       )
     );
   });
 
-  it.skip('does not submit on Shift+Enter (newline insertion)', () => {
+  it('does not submit on Shift+Enter (newline insertion)', () => {
     setupTaskWithActivity();
-    const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    const textarea = getByPlaceholderText('Message coder...');
+    const textarea = composerTextarea(getByTestId);
     fireEvent.input(textarea, { target: { value: 'line one' } });
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
@@ -640,14 +638,12 @@ describe('SpaceTaskPane — composer', () => {
     }
   });
 
-  it.skip('clears threadSendError when a new send succeeds', async () => {
+  it('clears threadSendError when a new send succeeds', async () => {
     mockSendTaskMessage.mockRejectedValueOnce(new Error('Temporary error'));
     setupTaskWithActivity();
-    const { getByPlaceholderText, getByText, queryByText, getByTestId } = render(
-      <SpaceTaskPane taskId="task-1" />
-    );
+    const { getByText, queryByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-    const textarea = getByPlaceholderText('Message coder...');
+    const textarea = composerTextarea(getByTestId);
 
     fireEvent.input(textarea, { target: { value: 'First try' } });
     fireEvent.click(getByTestId('send-button'));
