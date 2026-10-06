@@ -5,12 +5,15 @@ import {
   NeoRoutingLogRepository,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { classifyNeoRoute } from './route-classifier.ts';
 
 const STICKY_MS = 5 * 60_000;
 const STICKY_CHARS = 120;
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
+const CLASSIFY_FLOOR = 0.35;
+const CLASSIFY_CANDIDATES = 4;
 
 export interface NeoHolder {
   concernId: string;
@@ -22,7 +25,7 @@ export interface NeoHolder {
 export interface NeoRouteChoice {
   concernId: string;
   sessionId: string;
-  signal: 'sticky' | 'embedding';
+  signal: 'sticky' | 'embedding' | 'classifier';
   confidence: number;
 }
 
@@ -31,6 +34,7 @@ export interface NeoRouterDeps {
   latestRoute(): NeoRoute | null;
   recentAsks(concernId: string, limit: number): string[];
   embed(text: string): Promise<Float32Array | null>;
+  classify?(text: string, candidates: readonly NeoHolder[]): Promise<NeoHolder | null>;
   now(): number;
 }
 
@@ -128,8 +132,36 @@ export async function scoreNeoHolders(
   return scores;
 }
 
-export function embeddingRoute(scores: readonly Score[]): Routed {
-  return { choice: pickNeoHolder(scores) };
+export function embeddingExit(scores: readonly Score[]): { value: Score[] } | Exit {
+  const picked = pickNeoHolder(scores);
+  return picked ? { reason: { choice: picked } } : { value: [...scores] };
+}
+
+export function classifierCandidates(scores: readonly Score[]): NeoHolder[] {
+  return scores
+    .filter((score) => score.similarity >= CLASSIFY_FLOOR)
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, CLASSIFY_CANDIDATES)
+    .map((score) => score.holder);
+}
+
+export async function classifyNeoAsk(
+  text: string,
+  candidates: readonly NeoHolder[],
+  deps: NeoRouterDeps
+): Promise<Routed> {
+  if (!deps.classify || candidates.length === 0) return { choice: null };
+  const chosen = await deps.classify(text, candidates);
+  return {
+    choice: chosen
+      ? {
+          concernId: chosen.concernId,
+          sessionId: chosen.sessionId,
+          signal: 'classifier',
+          confidence: 0.6,
+        }
+      : null,
+  };
 }
 
 const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
@@ -140,7 +172,9 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe((deps: NeoRouterDeps) => deps.now(), 'deps', 'now')
   .pipe(stickyExit, ['route', 'holders', 'latest', 'now'], 'result:route')
   .pipe(scoreNeoHolders, ['text', 'route', 'deps'], 'scores')
-  .pipe(embeddingRoute, 'scores', 'route')
+  .pipe(embeddingExit, 'scores', 'result:route')
+  .pipe(classifierCandidates, 'route', 'candidates')
+  .pipe(classifyNeoAsk, ['text', 'candidates', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export async function chooseNeoRoute(
@@ -180,6 +214,7 @@ export function createNeoRouter(db: Database, repo: NeoRepository): NeoRouter {
         return null;
       }
     },
+    classify: classifyNeoRoute,
     now: () => Date.now(),
   };
   return (text) => chooseNeoRoute(text, deps);
