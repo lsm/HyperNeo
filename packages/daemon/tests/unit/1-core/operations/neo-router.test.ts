@@ -9,11 +9,13 @@ import {
   chooseNeoRoute,
   type NeoHolder,
   type NeoRouterDeps,
+  neoHolderProfile,
   pickNeoHolder,
   stickyNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import type { Database } from '../../../../src/storage/database.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
@@ -22,9 +24,8 @@ import {
 } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import type { Database } from '../../../../src/storage/database.ts';
-import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const drivers: NeoHolder = {
   concernId: 'drivers',
@@ -70,6 +71,18 @@ describe('stickyNeoRoute', () => {
     expect(
       stickyNeoRoute('yes', [drivers], route({ destination: 'main', concernId: null }), 2_000)
     ).toBeNull();
+  });
+});
+
+describe('neoHolderProfile', () => {
+  test('trims each recent ask so one long ask cannot swamp the profile', () => {
+    const profile = neoHolderProfile(
+      { concernId: 'drivers', sessionId: 's', title: 'Drivers', summary: 'Work adapters' },
+      [`${'z'.repeat(9_000)} end`, 'short ask']
+    );
+    expect(profile.split('\n')).toHaveLength(4);
+    expect(profile.split('\n')[2]).toHaveLength(300);
+    expect(profile).toContain('short ask');
   });
 });
 

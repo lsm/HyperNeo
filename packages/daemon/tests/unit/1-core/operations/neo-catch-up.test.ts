@@ -107,6 +107,26 @@ describe('renderNeoCatchUp with turn notes', () => {
   });
 });
 
+describe('renderNeoCatchUp with long asks', () => {
+  test('trims each ask and reply to both ends so a trailing question survives', () => {
+    const routes = [
+      {
+        ...entry(1, { ask: `https://example.com/post ${'x'.repeat(5_000)} how can we join?` }),
+        id: 1,
+        outcome: `${'y'.repeat(5_000)} end of reply`,
+        outcomeAt: at,
+        askSummary: null,
+        awaiting: null,
+      },
+    ];
+    const line = renderNeoCatchUp(routes, new Map()).split('\n')[1];
+    expect(line).toContain('"https://example.com/post');
+    expect(line).toContain('how can we join?"');
+    expect(line).toContain('end of reply');
+    expect(line.length).toBeLessThan(700);
+  });
+});
+
 describe('renderNeoCatchUp with many topics', () => {
   test('keeps the collapsed summary inside the budget', () => {
     const routes = Array.from({ length: 60 }, (_, n) => ({

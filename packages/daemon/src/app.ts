@@ -55,7 +55,7 @@ import { GitHubEventExtension } from './lib/external-events/github/index.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
-  markBuiltInProviderDisabled,
+  disableBuiltInProvidersWithoutEnabledRecord,
 } from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
@@ -531,24 +531,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons })
     );
 
-    for (const record of db.providers.listProviders()) {
-      if (record.kind === 'built_in' && record.isEnabled === false) {
-        markBuiltInProviderDisabled(record.providerId);
-      }
-    }
-
-    startupTimer.start('providers (register + credentials)');
-    const providerRegistry = initializeProviders();
-    await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
-    await applyStoredProviderCredentials(
-      providerRegistry.getAll(),
-      credentialManager,
-      db,
-      logError
-    );
-
-    startupTimer.start('provider sync (migrate / custom endpoints / registry)');
+    startupTimer.start('provider import');
     try {
       await migrateProvidersIfNeeded(db, credentialManager);
       await backfillDeepSeekProvider(db, credentialManager);
@@ -557,6 +541,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logError('[Daemon] Provider migration failed (non-fatal):', err);
     }
 
+    disableBuiltInProvidersWithoutEnabledRecord(db.providers.listProviders());
+
+    startupTimer.start('providers (register + credentials)');
+    const providerRegistry = initializeProviders();
+    await waitForOptionalProviderRegistration(providerRegistry);
+    await applyStoredProviderCredentials(
+      providerRegistry.getAll(),
+      credentialManager,
+      db,
+      logError
+    );
+
+    startupTimer.start('provider sync (custom endpoints / registry)');
     {
       const { syncCustomEndpointProviders } = await import('./lib/providers/factory.js');
       const { filterDisabledCustomEndpoints } = await import(

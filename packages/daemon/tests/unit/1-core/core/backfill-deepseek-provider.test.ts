@@ -156,3 +156,45 @@ describe('provider startup import gates', () => {
     );
   });
 });
+
+describe('migrateProvidersIfNeeded', () => {
+  let db: Database;
+  let dbPath: string;
+  const originalEnv = {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+  };
+
+  beforeEach(async () => {
+    dbPath = `/tmp/test-provider-import-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+    db = new Database(dbPath);
+    await db.initialize(createReactiveDatabase(db));
+  });
+
+  afterEach(() => {
+    db.close();
+    try {
+      unlinkSync(dbPath);
+    } catch {}
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('adds an Anthropic row for an inherited Claude token without storing it as an API key', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'inherited-oauth-token';
+    const credentials = {
+      storeApiKey: mock(async () => {}),
+      storeOAuthTokens: mock(async () => {}),
+    };
+
+    await migrateProvidersIfNeeded(db, credentials);
+
+    expect(db.providers.getProviderByProviderId('anthropic')?.isEnabled).toBe(true);
+    expect(credentials.storeApiKey).not.toHaveBeenCalledWith('anthropic', expect.anything());
+  });
+});
