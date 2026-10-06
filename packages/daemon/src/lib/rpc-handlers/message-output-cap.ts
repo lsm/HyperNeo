@@ -9,11 +9,17 @@ function capText(text: string, limit: number): Capped<string> {
     : { value: text, cut: 0 };
 }
 
+function largestCut(items: readonly Capped<unknown>[]): number {
+  let largest = 0;
+  for (const item of items) if (item.cut > largest) largest = item.cut;
+  return largest;
+}
+
 function capDeep(value: unknown, limit: number): Capped<unknown> {
   if (typeof value === 'string') return capText(value, limit);
   if (Array.isArray(value)) {
     const items = value.map((item) => capDeep(item, limit));
-    return { value: items.map((item) => item.value), cut: Math.max(0, ...items.map((i) => i.cut)) };
+    return { value: items.map((item) => item.value), cut: largestCut(items) };
   }
   if (value && typeof value === 'object') {
     const record = value as Json;
@@ -38,7 +44,7 @@ function capDeep(value: unknown, limit: number): Capped<unknown> {
     );
     return {
       value: Object.fromEntries(entries.map(([key, item]) => [key, item.value])),
-      cut: Math.max(0, ...entries.map(([, item]) => item.cut)),
+      cut: largestCut(entries.map(([, item]) => item)),
     };
   }
   return { value, cut: 0 };
@@ -70,7 +76,16 @@ export function capMessageOutput<T extends Json>(message: T, limit = MESSAGE_OUT
   return {
     ...message,
     ...(blockCut ? { message: { ...inner, content: blocks!.map((block) => block.value) } } : {}),
-    ...(structured?.cut ? { tool_use_result: structured.value } : {}),
+    ...(structured?.cut
+      ? {
+          tool_use_result:
+            structured.value &&
+            typeof structured.value === 'object' &&
+            !Array.isArray(structured.value)
+              ? { ...(structured.value as Json), output_capped: { chars: structured.cut } }
+              : structured.value,
+        }
+      : {}),
     output_capped: true,
   };
 }

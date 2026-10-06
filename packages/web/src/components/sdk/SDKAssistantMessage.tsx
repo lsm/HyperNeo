@@ -325,6 +325,8 @@ function ToolUseBlock({
         taskProgress={taskProgress}
         taskProgressMap={taskProgressMap}
         isRunning={isRunning}
+        messageUuid={messageUuid}
+        sessionId={sessionId}
       />
     );
   }

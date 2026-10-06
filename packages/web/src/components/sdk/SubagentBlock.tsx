@@ -18,6 +18,7 @@ import {
   type ContentBlock,
 } from '@hyperneo/shared/sdk/type-guards';
 import { TaskProgressLine } from './tools/TaskProgressLine.tsx';
+import { FullOutputNotice, useFullToolOutput } from './tools/FullOutputNotice.tsx';
 import { ToolResultCard } from './tools/index.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
@@ -101,6 +102,8 @@ interface SubagentBlockProps {
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   className?: string;
   isRunning?: boolean;
+  messageUuid?: string;
+  sessionId?: string;
 }
 
 function getSubagentIcon(subagentType: string) {
@@ -259,7 +262,6 @@ export function SubagentBlock({
   input,
   output,
   isError = false,
-  toolId: _toolId,
   nestedMessages = [],
   toolResultsMap,
   replacementStatusMap,
@@ -269,8 +271,13 @@ export function SubagentBlock({
   taskProgressMap,
   className,
   isRunning = false,
+  messageUuid,
+  sessionId,
+  toolId,
 }: SubagentBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const full = useFullToolOutput(output, undefined, sessionId, messageUuid, toolId);
+  output = full.output;
 
   const colors = getSubagentColors(input.subagent_type ?? 'general-purpose');
   const outputText = extractOutputText(output);
@@ -470,6 +477,9 @@ export function SubagentBlock({
 
           <div class="p-3">
             <div class="text-xs font-semibold text-fg-muted mb-2">Output</div>
+            <div class="mb-2">
+              <FullOutputNotice capped={full.capped} />
+            </div>
             {outputText ? (
               <div
                 class={cn(

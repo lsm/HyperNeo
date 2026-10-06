@@ -33,7 +33,7 @@ describe('capMessageOutput', () => {
           },
         ],
       },
-      tool_use_result: { stdout: 'x'.repeat(10), exitCode: 0 },
+      tool_use_result: { stdout: 'x'.repeat(10), exitCode: 0, output_capped: { chars: 40 } },
       output_capped: true,
     });
   });
@@ -79,7 +79,14 @@ describe('capMessageOutput', () => {
       type: 'image',
       file: { base64: '', type: 'image/png' },
       image_capped: { chars: 40 },
+      output_capped: { chars: 40 },
     });
+  });
+
+  test('handles very large result arrays without overflowing the call stack', () => {
+    const rows = Array.from({ length: 200_000 }, (_, index) => ({ id: index, name: 'row' }));
+    const message = { type: 'user', message: { content: [] }, tool_use_result: { rows } };
+    expect(() => capMessageOutput(message, 10)).not.toThrow();
   });
 
   test('returns small messages untouched', () => {

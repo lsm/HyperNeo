@@ -1682,6 +1682,27 @@ footer line 2`;
       expect(screen.getByText('Show full output')).toBeTruthy();
     });
 
+    it('offers the full image when only the structured Read output was trimmed', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="tool-3"
+          input={{ file_path: '/repo/shot.png' }}
+          output={{ type: 'tool_result', tool_use_id: 'tool-3', content: [] }}
+          structuredOutput={{
+            type: 'image',
+            file: { base64: '', type: 'image/png' },
+            image_capped: { chars: 900 * 1024 },
+            output_capped: { chars: 900 * 1024 },
+          }}
+          defaultExpanded={true}
+          messageUuid="msg-3"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.getByText('Show full output')).toBeTruthy();
+    });
+
     it('shows no notice for output that was not trimmed', () => {
       render(
         <ToolResultCard
