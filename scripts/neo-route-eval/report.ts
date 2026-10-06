@@ -11,7 +11,7 @@ const PRICES_PER_MTOK: Array<{ prefix: string; input: number; cached: number; ou
   { prefix: 'llm-glm-flash', input: 0.1191, cached: 0.0343, output: 0.417 },
   { prefix: 'llm-glm', input: 0.7447, cached: 0.1787, output: 3.2765 },
   { prefix: 'llm-luna', input: 0.2, cached: 0.02, output: 1.2 },
-  { prefix: 'llm-deepseek', input: 0.3, cached: 0.006, output: 1.2 },
+  { prefix: 'llm-deepseek', input: 0.15, cached: 0.003, output: 0.6 },
 ];
 
 const KINDS: CaseKind[] = [

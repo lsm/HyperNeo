@@ -1,7 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { type RouteBackend, sdkLlmBackend, systemOneBackend } from './backends.ts';
+import {
+  glmNativeBackend,
+  type RouteBackend,
+  sdkLlmBackend,
+  systemOneBackend,
+} from './backends.ts';
 import type { EvalCase, EvalResult } from './types.ts';
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -47,7 +52,13 @@ function pickBackend(): RouteBackend {
       values.shape === 'lean' ? 'lean' : 'deployed'
     );
   }
-  throw new Error('--backend must be systemone or sdk');
+  if (values.backend === 'glm-native') {
+    return glmNativeBackend(
+      values.model ?? 'glm-5-turbo',
+      values.prompt === 'message-only' ? 'message-only' : 'context'
+    );
+  }
+  throw new Error('--backend must be systemone, sdk or glm-native');
 }
 
 async function main(): Promise<void> {
