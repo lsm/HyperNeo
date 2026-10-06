@@ -28,13 +28,19 @@ A prototype that reads JSON-derived flags from a narrow table and loads only
 the displayed bodies ran the thread selection in 8 ms (5.7k messages) and
 90 ms (87k, a runaway task of 86k background-task events).
 
-Decision, replacing sections 2–4 for now:
+Decision. It replaces sections 2–4 for now, and defers section 5 (background
+backfill, `feed_projected_at`), the `delivery_job_errors` bullet of section 6
+and rollout steps 3–9 below:
 
 - `task_message_rows` holds one narrow row per task message: the columns the
   feeds filter on plus a `flags` bitmask computed from the message JSON with
-  the same SQL expressions the feeds use today.
+  the same SQL expressions the feeds use today. State held in side tables
+  (replacement edges, delivery jobs, agent labels) stays a live join on the
+  few rows a feed returns.
 - SQLite triggers on `sdk_messages` (insert, update of the displayed columns,
-  delete, including foreign-key cascades) keep it current, so no writer can
+  delete) keep it current. SQLite fires delete triggers for foreign-key
+  cascades even with `recursive_triggers` off, so a session delete clears its
+  rows (tested in #5788). No writer can
   bypass it and the flags match the legacy predicates by construction.
 - The thread and active-turn feeds keep their selection rules but read the
   flags and join `sdk_messages` only for the rows they return.
