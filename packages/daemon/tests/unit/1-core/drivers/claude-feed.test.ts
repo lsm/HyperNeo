@@ -98,6 +98,8 @@ describe('claudeTranscriptCwd', () => {
     expect(isTempCwd('/private/tmp/neo-route')).toBe(true);
     expect(isTempCwd(join(tmpdir(), 'probe'))).toBe(true);
     expect(isTempCwd('/Users/me/focus/neokai')).toBe(false);
+    expect(isTempCwd('/tmpwork')).toBe(false);
+    expect(isTempCwd('/tmp')).toBe(true);
   });
 });
 
