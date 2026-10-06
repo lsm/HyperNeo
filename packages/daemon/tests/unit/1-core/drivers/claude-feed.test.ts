@@ -166,6 +166,8 @@ describe('Claude transcript feed', () => {
       { id: 'u2', session: 'cli-2' },
     ]);
     expect(readWorkFeedOffsets(db).get(original)?.offset).toBeGreaterThan(0);
+    const longAgo = new Date(Date.now() - 120 * 24 * 60 * 60_000);
+    utimesSync(original, longAgo, longAgo);
     unlinkSync(resumed);
     await runClaudeFeed(queue, db, root, Date.now());
     expect(owners()).toEqual([{ id: 'u1', session: 'cli-1' }]);

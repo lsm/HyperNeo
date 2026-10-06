@@ -116,17 +116,33 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   db: BunDatabase,
   root: string,
   source: FeedSource<Meta>
-): number {
+): string[] {
   const known = readWorkFeedOffsets(db);
   const gone = vanishedFeedPaths(root, known);
   for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
-  if (source.sharesTurnsWithSiblings && gone.length > 0) {
-    forgetWorkFeedOffsets(
-      db,
-      [...known.keys()].filter((path) => path.startsWith(`${root}${sep}`) && !gone.includes(path))
-    );
-  }
-  return gone.length;
+  if (!source.sharesTurnsWithSiblings || gone.length === 0) return [];
+  const forgotten = [...known.keys()].filter(
+    (path) => path.startsWith(`${root}${sep}`) && !gone.includes(path)
+  );
+  forgetWorkFeedOffsets(db, forgotten);
+  return forgotten;
+}
+
+export function withKnownFeedFiles(
+  listed: readonly FeedFile[],
+  known: readonly string[]
+): FeedFile[] {
+  const seen = new Set(listed.map((file) => file.path));
+  const extra = known.flatMap((path) => {
+    if (seen.has(path)) return [];
+    try {
+      const stat = statSync(path);
+      return stat.isFile() ? [{ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) }] : [];
+    } catch {
+      return [];
+    }
+  });
+  return [...listed, ...extra].sort((a, b) => b.mtime - a.mtime);
 }
 
 const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));

@@ -16,6 +16,7 @@ import {
   feedWorkFiles,
   listFeedFiles,
   pruneVanishedFeeds,
+  withKnownFeedFiles,
 } from './work-feed.ts';
 
 export const WORK_FEED_CLAUDE = 'work.feed.claude';
@@ -159,8 +160,9 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
     'pruned'
   )
   .pipe(
-    (root: string, now: number) => listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
-    ['root', 'now'],
+    (root: string, now: number, pruned: string[]) =>
+      withKnownFeedFiles(listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH), pruned),
+    ['root', 'now', 'pruned'],
     'files'
   )
   .pipe(
