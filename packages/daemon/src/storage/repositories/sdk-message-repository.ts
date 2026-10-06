@@ -2434,9 +2434,9 @@ export class SDKMessageRepository {
 			${policy.joins}
 			WHERE message_search_fts MATCH ?
 			  AND (
-				msc.kind != 'message'
+				msc.kind = 'task'
 				OR (
-					1 = 1
+					msc.kind = 'message'
 					${policy.where}
 				)
 			  )`;

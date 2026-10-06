@@ -19,7 +19,10 @@ export interface WorkChatSnippet {
   text: string;
 }
 
+export type WorkChatKind = 'message' | 'task' | 'codex' | 'claude';
+
 export interface WorkChatMatch {
+  kind: WorkChatKind;
   sessionId: string | null;
   taskId: string | null;
   hits: number;
@@ -30,6 +33,7 @@ export interface WorkChatMatch {
 
 interface WorkChatHitRow {
   id: number;
+  kind: WorkChatKind;
   chat: string;
   sessionId: string | null;
   taskId: string | null;
@@ -124,7 +128,7 @@ export function vectorWorkChats(
   if (top.length === 0) return [];
   const rows = db
     .prepare(
-      `SELECT id, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
+      `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
          COALESCE(message_id, source_id) AS messageId, COALESCE(message_type, kind) AS role,
          timestamp AS at, body FROM message_search_content
         WHERE id IN (${top.map(() => '?').join(', ')})`
@@ -139,6 +143,7 @@ export function vectorWorkChats(
     if (!row) continue;
     const at = toTime(row.at);
     const chat = chats.get(row.chat) ?? {
+      kind: row.kind,
       sessionId: row.sessionId,
       taskId: row.taskId,
       hits: 0,
@@ -180,7 +185,7 @@ function keywordWorkChats(
           WHERE message_search_fts MATCH ? ORDER BY rowid DESC LIMIT ${MATCH_CAP}
        ),
        hits AS (
-         SELECT m.id, m.score, COALESCE(msc.task_id, msc.session_id) AS chat,
+         SELECT m.id, m.score, msc.kind, COALESCE(msc.task_id, msc.session_id) AS chat,
            msc.session_id AS sessionId, msc.task_id AS taskId,
            COALESCE(msc.message_id, msc.source_id) AS messageId,
            COALESCE(msc.message_type, msc.kind) AS role, msc.timestamp AS at
@@ -196,7 +201,7 @@ function keywordWorkChats(
            MIN(score) OVER (PARTITION BY chat) AS best
          FROM hits
        )
-       SELECT id, chat, sessionId, taskId, messageId, role, at, hits, lastHitAt FROM ranked
+       SELECT id, kind, chat, sessionId, taskId, messageId, role, at, hits, lastHitAt FROM ranked
         WHERE rn <= ${SNIPPETS_PER_CHAT}
         ORDER BY best, lastHitAt DESC, chat, rn
         LIMIT ?`
@@ -217,6 +222,7 @@ function keywordWorkChats(
   const chats = new Map<string, ChatCandidate>();
   for (const row of rows) {
     const chat = chats.get(row.chat) ?? {
+      kind: row.kind,
       sessionId: row.sessionId,
       taskId: row.taskId,
       hits: row.hits,

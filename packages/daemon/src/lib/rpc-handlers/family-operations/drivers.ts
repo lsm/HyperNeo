@@ -190,11 +190,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     lastSearch = { text, at: now, chats };
     return chats;
   };
+  const ownChats = (text: string) =>
+    searchChats(text).then((chats) =>
+      chats.filter((chat) => chat.kind === 'message' || chat.kind === 'task')
+    );
   const adapters = [
     createHyperneoAdapter({
       db,
       machine,
-      searchChats,
+      searchChats: ownChats,
       handoff: (sessionId, message, from) =>
         handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
@@ -213,7 +217,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     createSpaceAdapter({
       db,
       machine,
-      searchChats,
+      searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(),

@@ -57,6 +57,21 @@ describe('searchWorkChats', () => {
     });
   });
 
+  test('tags each chat with its kind so adapters can keep their own', () => {
+    insert('quiet', null, 'otter migration plan', 10);
+    db.prepare(
+      `INSERT INTO message_search_content
+         (kind, source_id, message_id, session_id, message_type, title, body, timestamp)
+       VALUES ('codex', 'r1:4', 'm-r1', 'thread-1', 'assistant', 'rollout', 'otter migration done', 20)`
+    ).run();
+    expect(
+      searchWorkChats(db, tables, 'otter', 10).map((chat) => [chat.kind, chat.sessionId])
+    ).toEqual([
+      ['codex', 'thread-1'],
+      ['message', 'quiet'],
+    ]);
+  });
+
   test('groups a task across its sessions and skips archived chats', () => {
     insert('w1', 't1', 'coder said 16px', 10);
     insert(null, 't1', 'task asks for 16px', 20);
@@ -74,6 +89,7 @@ describe('searchWorkChats', () => {
 describe('fuseWorkChats', () => {
   test('adds relevance and recency ranks, and breaks ties by the newest hit', () => {
     const chat = (sessionId: string, lastHitAt: number) => ({
+      kind: 'message' as const,
       sessionId,
       taskId: null,
       hits: 1,
@@ -136,6 +152,7 @@ describe('vectorWorkChats', () => {
 describe('fuseWorkChats with meaning matches', () => {
   test('keeps exact matches above semantic-only ones and lifts chats found both ways', () => {
     const chat = (sessionId: string, lastHitAt: number) => ({
+      kind: 'message' as const,
       sessionId,
       taskId: null,
       hits: 1,
