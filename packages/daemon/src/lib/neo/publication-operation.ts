@@ -17,7 +17,7 @@ const Draft = NeoPublicationSchema.omit({
   producerInput: true,
 });
 type Draft = z.infer<typeof Draft>;
-type Rejection = { accepted: false; reason: string };
+type Rejection = { accepted: false; reason: string; detail?: string };
 type Receipt = NeoPublicationAppendResult | Rejection;
 type Producer = {
   binding: NeoBinding;
@@ -97,20 +97,31 @@ export function requirePublicationAsk(
     : { reason: { accepted: false, reason: 'unknown_ask_origin' } };
 }
 
+export function publicationLinkProblem(
+  proof: Proof,
+  { link, exists, concernId, origin }: LinkEvidence
+): string | null {
+  const ref = `${link.kind} link "${link.id}"`;
+  if (!exists)
+    return `${ref} does not exist; link only Neo concern, work or consultation ids, never work.find refs or session ids`;
+  if (proof.binding.kind !== 'neo' && concernId !== proof.binding.concernId)
+    return `${ref} belongs to another concern`;
+  if (
+    link.kind !== 'concern' &&
+    (origin?.sessionId !== proof.ask.sessionId || origin.messageId !== proof.ask.messageId)
+  )
+    return `${ref} was not started for this ask; link only work or consultations this ask created`;
+  return null;
+}
+
 export function requirePublicationLinks(
   proof: Proof,
   evidence: readonly LinkEvidence[]
 ): { value: Proof } | { reason: Rejection } {
-  const valid = evidence.every(
-    ({ link, exists, concernId, origin }) =>
-      exists &&
-      (proof.binding.kind === 'neo' || concernId === proof.binding.concernId) &&
-      (link.kind === 'concern' ||
-        (origin?.sessionId === proof.ask.sessionId && origin.messageId === proof.ask.messageId))
-  );
-  return valid
-    ? { value: proof }
-    : { reason: { accepted: false, reason: 'invalid_scene_reference' } };
+  const problem = evidence.map((item) => publicationLinkProblem(proof, item)).find(Boolean);
+  return problem
+    ? { reason: { accepted: false, reason: 'invalid_scene_reference', detail: problem } }
+    : { value: proof };
 }
 
 export function requirePublicationLifetime(
@@ -234,7 +245,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: z.union([
-      z.object({ accepted: z.literal(false), reason: z.string() }),
+      z.object({ accepted: z.literal(false), reason: z.string(), detail: z.string().optional() }),
       z.object({
         accepted: z.literal(true),
         created: z.boolean(),

@@ -124,15 +124,18 @@ describe('direct human publication prompt', () => {
     expect(holder).toContain('you are a context holder');
     expect(delivered(null)).toContain('the current input is a human message in this conversation');
   });
-  test.each([null, 'research'])('links only inspected in-scope Neo ids for %s', (concernId) => {
-    const prompt = delivered(concernId);
-    expect(prompt).toContain(
-      'Link only concern, work or consultation ids you actually inspected for this answer'
-    );
-    expect(prompt).toContain('keep each label to the user');
-    expect(prompt).toContain('Never put a filesystem path, a private resource');
-    expect(NeoPublicationSchema.shape.links).toBeDefined();
-  });
+  test.each([null, 'research'])(
+    'links only in-scope Neo ids started for this ask for %s',
+    (concernId) => {
+      const prompt = delivered(concernId);
+      expect(prompt).toContain(
+        'Link only Neo concern ids, or work and consultation ids started for this ask'
+      );
+      expect(prompt).toContain('keep each label to the user');
+      expect(prompt).toContain('Never put a filesystem path, a private resource');
+      expect(NeoPublicationSchema.shape.links).toBeDefined();
+    }
+  );
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
