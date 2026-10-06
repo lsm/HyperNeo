@@ -3,8 +3,6 @@ import {
   isRunningUnderBun,
   resolveSDKCliPath,
 } from '../../packages/daemon/src/lib/agent/sdk-cli-resolver.ts';
-import { buildNeoRoutePrompt } from '../../packages/daemon/src/lib/neo/route-classifier.ts';
-import type { NeoHolder } from '../../packages/daemon/src/lib/neo/router.ts';
 import { AnthropicToCodexBridgeProvider } from '../../packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts';
 import { DeepSeekProvider } from '../../packages/daemon/src/lib/providers/deepseek-provider.ts';
 import { GlmProvider } from '../../packages/daemon/src/lib/providers/glm-provider.ts';
@@ -92,14 +90,21 @@ export function glmNativeBackend(model: string, prompt: LlmPrompt): RouteBackend
     if (!response.ok) throw new Error(`glm ${response.status}: ${await response.text()}`);
     const body = (await response.json()) as {
       model?: string;
-      choices: Array<{ message: { content?: string; reasoning_content?: string } }>;
+      choices: Array<{
+        finish_reason?: string;
+        message: { content?: string; reasoning_content?: string };
+      }>;
       usage?: {
         prompt_tokens?: number;
         completion_tokens?: number;
         prompt_tokens_details?: { cached_tokens?: number };
       };
     };
-    const message = body.choices[0]?.message ?? {};
+    const choice = body.choices[0];
+    const message = choice?.message ?? {};
+    if (choice?.finish_reason === 'length' && !message.content?.trim()) {
+      throw new Error(`glm ${model} hit max_tokens before answering`);
+    }
     const cached = body.usage?.prompt_tokens_details?.cached_tokens ?? 0;
     return {
       predicted: readRouteAnswer(message.content ?? '', evalCase),
@@ -126,21 +131,34 @@ export const MINIMAL_SYSTEM_PROMPT =
 const CODEX_ROUTE_MODEL = 'gpt-5.6-luna';
 const CODEX_REASONING_EFFORT = 'none';
 
-const INBOX_HOLDER: NeoHolder = {
-  concernId: INBOX_ID,
-  sessionId: 'inbox',
+const LEGACY_ASK_CHARS = 1_000;
+const LEGACY_SUMMARY_CHARS = 240;
+
+const LEGACY_INBOX_TOPIC = {
+  id: INBOX_ID,
   title: 'Inbox',
   summary: 'Self-contained one-off questions that need no continuing topic.',
 };
 
 export function messageOnlyPrompt(evalCase: EvalCase): string {
-  const holders: NeoHolder[] = evalCase.topics.map((topic) => ({
-    concernId: topic.id,
-    sessionId: topic.id,
-    title: topic.title,
-    summary: topic.summary,
-  }));
-  return buildNeoRoutePrompt(evalCase.message, [...holders, INBOX_HOLDER]);
+  const topics = [...evalCase.topics, LEGACY_INBOX_TOPIC]
+    .map(
+      (topic) =>
+        `- id: ${topic.id}\n  title: ${topic.title.slice(0, 120)}\n  summary: ${topic.summary.slice(0, LEGACY_SUMMARY_CHARS) || '(none)'}`
+    )
+    .join('\n');
+  return `Route a user's message to the topic that should answer it.
+
+Message:
+${evalCase.message.slice(0, LEGACY_ASK_CHARS)}
+
+Topics:
+${topics}
+
+Reply with exactly one id and nothing else:
+- a topic id if the message clearly continues that topic;
+- inbox (when listed) if it is a self-contained one-off question that needs no continuing topic;
+- main if it starts a new continuing topic, spans several topics, or you are unsure.`;
 }
 
 function ambientEnv(): Record<string, string | undefined> {
