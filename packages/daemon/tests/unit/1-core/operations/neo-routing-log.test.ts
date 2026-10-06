@@ -7,15 +7,15 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import type { Database } from '../../../../src/storage/database.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import type { Database } from '../../../../src/storage/database.ts';
-import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
@@ -106,6 +106,26 @@ describe('neo.message.send routing log', () => {
     expect(await send(root.sessionId, ask(6), 'still accepted')).toMatchObject({
       value: { ok: true, created: true },
     });
+  });
+
+  test('stores the answerer ask summary and waiting question, and profiles use the summary', async () => {
+    await send(holder.sessionId, ask(7), `https://example.com ${'x'.repeat(50)} can we join?`);
+    new NeoPublicationRepository(writer).append({
+      conversationId,
+      publicationId: ask(107),
+      askOrigin: { sessionId: holder.sessionId, messageId: ask(7) },
+      producerInput: { sessionId: holder.sessionId, messageId: ask(7) },
+      shortText: 'Yes, through the beta.',
+      fullText: 'Yes, through the beta.',
+      links: [],
+      askSummary: 'How can we join the Cloudflare git beta?',
+      awaiting: 'Want me to draft the signup note?',
+    });
+    expect(log.find(ask(7))).toMatchObject({
+      askSummary: 'How can we join the Cloudflare git beta?',
+      awaiting: 'Want me to draft the signup note?',
+    });
+    expect(log.recentAsks('research', 1)).toEqual(['How can we join the Cloudflare git beta?']);
   });
 
   test('fills the outcome from the first final reply to that ask', async () => {

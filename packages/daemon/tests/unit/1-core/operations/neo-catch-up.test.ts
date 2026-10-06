@@ -1,5 +1,5 @@
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { readNeoCatchUp, renderNeoCatchUp } from '../../../../src/lib/neo/catch-up.ts';
 import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 import {
@@ -73,12 +73,37 @@ describe('renderNeoCatchUp', () => {
       id: n + 1,
       outcome: null,
       outcomeAt: null,
+      askSummary: null,
+      awaiting: null,
     }));
     const text = renderNeoCatchUp(routes, new Map([['drivers', 'Neo driver epic']]));
     const lines = text.split('\n');
     expect(lines[1]).toMatch(/^- \d+ earlier: Neo driver epic ×20, youtube ×\d+$/);
     expect(lines.at(-1)).toContain('18:49 UTC, youtube');
     expect(text.length).toBeLessThanOrEqual(3_000);
+  });
+});
+
+describe('renderNeoCatchUp with turn notes', () => {
+  test('shows the answerer summary instead of the raw ask and marks a waiting question', () => {
+    const line = renderNeoCatchUp(
+      [
+        {
+          ...entry(1, { ask: 'https://example.com/post what is this, how can we join' }),
+          id: 1,
+          outcome: 'It is a git beta.',
+          outcomeAt: at,
+          askSummary: 'What is the Cloudflare git post and how to join?',
+          awaiting: 'Draft the signup note?',
+        },
+      ],
+      new Map()
+    ).split('\n')[1];
+    expect(line).toContain(
+      '"What is the Cloudflare git post and how to join?" → It is a git beta.'
+    );
+    expect(line).toContain('(waiting on the user: Draft the signup note?)');
+    expect(line).not.toContain('example.com');
   });
 });
 
@@ -89,6 +114,8 @@ describe('renderNeoCatchUp with many topics', () => {
       id: n + 1,
       outcome: null,
       outcomeAt: null,
+      askSummary: null,
+      awaiting: null,
     }));
     const titles = new Map(routes.map((route) => [route.concernId!, 't'.repeat(160)]));
     expect(renderNeoCatchUp(routes, titles).length).toBeLessThanOrEqual(3_000);

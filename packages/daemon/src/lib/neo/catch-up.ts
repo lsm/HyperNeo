@@ -1,9 +1,9 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   type NeoRoute,
   NeoRoutingLogRepository,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 
 const SHOWN_ROUTES = 12;
 const READ_ROUTES = 200;
@@ -18,7 +18,8 @@ function where(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
 function routeLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
   const at = new Date(route.askedAt).toISOString().slice(11, 16);
   const outcome = route.outcome ? ` → ${route.outcome}` : ' → (no reply yet)';
-  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${route.ask}"${outcome}`;
+  const awaiting = route.awaiting ? ` (waiting on the user: ${route.awaiting})` : '';
+  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${route.askSummary ?? route.ask}"${outcome}${awaiting}`;
 }
 
 function summarize(routes: readonly NeoRoute[], titles: ReadonlyMap<string, string>): string {
