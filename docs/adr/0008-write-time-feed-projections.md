@@ -199,7 +199,10 @@ One PR per rung (ADR 0004 ladder):
 7. Switch the thread feed and active turn behind a flag; shadow-compare on the
    tts copy.
 8. Switch the Timeline.
-9. Delete the legacy feed SQL.
+9. Delete the legacy feed SQL, gated on every task having `feed_projected_at`
+   set. Projecting a task is idempotent, so before the delete a straggler
+   (a failed batch, a task restored from backup) is projected on its first
+   subscribe instead of falling back to the legacy SQL.
 
 Steps 7 and 8 are judged by `space-task-feeds.ts`: under 10 ms per evaluation
 at 87k messages.
