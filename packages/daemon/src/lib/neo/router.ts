@@ -8,14 +8,16 @@ import {
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { classifyNeoRoute } from './route-classifier.ts';
 
-const STICKY_MS = 5 * 60_000;
-const STICKY_CHARS = 120;
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
 const PROFILE_ASK_CHARS = 300;
 const CLASSIFY_FLOOR = 0.35;
-const CLASSIFY_CANDIDATES = 4;
+const TOPIC_LIMIT = 15;
+const RECENT_TURNS = 20;
+const TURNS_CHARS = 3_000;
+const TURN_TEXT_CHARS = 300;
+const TOPIC_SUMMARY_CHARS = 160;
 export const NEO_INBOX_ID = 'inbox';
 export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
 const INBOX_CHOICE: NeoHolder = {
@@ -35,18 +37,20 @@ export interface NeoHolder {
 export interface NeoRouteChoice {
   concernId: string;
   sessionId: string;
-  signal: 'sticky' | 'embedding' | 'classifier';
+  signal: 'embedding' | 'classifier';
   confidence: number;
 }
 
+export type NeoRouteAnswer = NeoHolder | 'main' | null;
+
 export interface NeoRouterDeps {
   holders(): NeoHolder[];
-  latestRoute(): NeoRoute | null;
+  recentTurns(): NeoRoute[];
+  topicTurns(): NeoRoute[];
   recentAsks(concernId: string, limit: number): string[];
   embed(text: string): Promise<Float32Array | null>;
-  classify?(text: string, candidates: readonly NeoHolder[]): Promise<NeoHolder | null>;
+  classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteAnswer>;
   inbox?(): Promise<NeoHolder | null>;
-  now(): number;
 }
 
 const profileVectors = new Map<string, Float32Array>();
@@ -62,25 +66,6 @@ function cosine(left: Float32Array, right: Float32Array): number {
     rightSize += right[index] * right[index];
   }
   return leftSize === 0 || rightSize === 0 ? -1 : dot / Math.sqrt(leftSize * rightSize);
-}
-
-export function stickyNeoRoute(
-  text: string,
-  holders: readonly NeoHolder[],
-  latest: NeoRoute | null,
-  now: number
-): NeoRouteChoice | null {
-  if (!latest || latest.destination !== 'holder' || !latest.concernId) return null;
-  if (now - latest.askedAt > STICKY_MS || text.trim().length > STICKY_CHARS) return null;
-  const holder = holders.find((item) => item.concernId === latest.concernId);
-  return holder
-    ? {
-        concernId: holder.concernId,
-        sessionId: holder.sessionId,
-        signal: 'sticky',
-        confidence: 0.9,
-      }
-    : null;
 }
 
 export function pickNeoHolder(
@@ -103,18 +88,6 @@ type Exit = { reason: Routed };
 
 export function requireAskText(text: string): { value: string } | Exit {
   return text.trim() ? { value: text } : { reason: { choice: null } };
-}
-
-export function stickyExit(
-  text: string,
-  holders: readonly NeoHolder[],
-  latest: NeoRoute | null,
-  now: number
-): { value: NeoHolder[] } | Exit {
-  const sticky = stickyNeoRoute(text, holders, latest, now);
-  return sticky
-    ? { reason: { choice: sticky } }
-    : { value: holders.filter((holder) => holder.concernId !== NEO_INBOX_ID) };
 }
 
 export function neoHolderProfile(holder: NeoHolder, asks: readonly string[]): string {
@@ -147,30 +120,101 @@ export async function scoreNeoHolders(
   return scores;
 }
 
-export function embeddingExit(scores: readonly Score[]): { value: Score[] } | Exit {
-  const picked = pickNeoHolder(scores);
-  return picked ? { reason: { choice: picked } } : { value: [...scores] };
+function topicOf(route: NeoRoute): string {
+  return route.concernId ?? 'main';
 }
 
-export function classifierCandidates(scores: readonly Score[], withInbox: boolean): NeoHolder[] {
-  return [
-    ...scores
-      .filter((score) => score.similarity >= CLASSIFY_FLOOR)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, CLASSIFY_CANDIDATES)
-      .map((score) => score.holder),
-    ...(withInbox ? [INBOX_CHOICE] : []),
+export function neoTurnLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
+  const topic = topicOf(route);
+  const ask = neoExcerpt(route.askSummary ?? route.ask, TURN_TEXT_CHARS);
+  const answer = route.outcome ? neoExcerpt(route.outcome, TURN_TEXT_CHARS) : '(no reply yet)';
+  return `[${titles.get(topic) ?? topic}] you: "${ask}" → ${answer}`;
+}
+
+export function neoRouteCandidates(
+  holders: readonly NeoHolder[],
+  scores: readonly Score[],
+  recent: readonly NeoRoute[],
+  latest: readonly NeoRoute[]
+): NeoHolder[] {
+  if (holders.length <= TOPIC_LIMIT) return [...holders];
+  const keep = new Set(
+    [...recent, ...latest.filter((route) => route.awaiting)].flatMap((route) =>
+      route.concernId ? [route.concernId] : []
+    )
+  );
+  for (const score of [...scores].sort((a, b) => b.similarity - a.similarity)) {
+    if (keep.size >= TOPIC_LIMIT || score.similarity < CLASSIFY_FLOOR) break;
+    keep.add(score.holder.concernId);
+  }
+  return holders.filter((holder) => keep.has(holder.concernId)).slice(0, TOPIC_LIMIT);
+}
+
+export function requireRouteQuestion(
+  candidates: readonly NeoHolder[],
+  recent: readonly NeoRoute[]
+): { value: NeoHolder[] } | Exit {
+  return candidates.length > 0 || recent.length > 0
+    ? { value: [...candidates] }
+    : { reason: { choice: null } };
+}
+
+export function renderNeoRouteContext(
+  holders: readonly NeoHolder[],
+  candidates: readonly NeoHolder[],
+  recent: readonly NeoRoute[],
+  latest: readonly NeoRoute[],
+  withInbox: boolean
+): string {
+  const titles = new Map(holders.map((holder) => [holder.concernId, holder.title]));
+  const notes = (topic: string) => {
+    const route = latest.find((item) => topicOf(item) === topic);
+    if (!route) return [];
+    return [
+      `    last: ${neoTurnLine(route, titles)}`,
+      ...(route.awaiting
+        ? [`    WAITING ON YOU: "${neoExcerpt(route.awaiting, TURN_TEXT_CHARS)}"`]
+        : []),
+    ];
+  };
+  const topics = [
+    '- main: Neo itself, the default',
+    ...notes('main'),
+    ...candidates.flatMap((holder) => [
+      `- ${holder.concernId}: ${holder.title}${holder.summary ? ` (${neoExcerpt(holder.summary, TOPIC_SUMMARY_CHARS)})` : ''}`,
+      ...notes(holder.concernId),
+    ]),
+    ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
+  const turns: string[] = [];
+  let used = 0;
+  for (const route of recent) {
+    const line = `- ${neoTurnLine(route, titles)}`;
+    if (used + line.length + 1 > TURNS_CHARS) break;
+    turns.push(line);
+    used += line.length + 1;
+  }
+  return [
+    'Topics:',
+    ...topics,
+    '',
+    'Recent turns (newest first):',
+    ...(turns.length > 0 ? turns : ['(none)']),
+  ].join('\n');
 }
 
 export async function classifyNeoAsk(
   text: string,
   candidates: readonly NeoHolder[],
+  context: string,
+  scores: readonly Score[],
   deps: NeoRouterDeps
 ): Promise<Routed> {
-  if (!deps.classify || candidates.length === 0) return { choice: null };
-  const chosen = await deps.classify(text, candidates);
-  const holder = chosen?.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
+  const options = [...candidates, ...(deps.inbox ? [INBOX_CHOICE] : [])];
+  const chosen = deps.classify ? await deps.classify(text, options, context) : null;
+  if (chosen === 'main') return { choice: null };
+  if (!chosen) return { choice: pickNeoHolder(scores) };
+  const holder = chosen.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
   return {
     choice: holder
       ? {
@@ -186,15 +230,23 @@ export async function classifyNeoAsk(
 const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .input(['text', 'deps'])
   .pipe(requireAskText, 'text', 'result:route')
-  .pipe((deps: NeoRouterDeps) => deps.holders(), 'deps', 'holders')
-  .pipe((deps: NeoRouterDeps) => deps.latestRoute(), 'deps', 'latest')
-  .pipe((deps: NeoRouterDeps) => deps.now(), 'deps', 'now')
-  .pipe(stickyExit, ['route', 'holders', 'latest', 'now'], 'result:route')
-  .pipe(scoreNeoHolders, ['text', 'route', 'deps'], 'scores')
-  .pipe(embeddingExit, 'scores', 'result:route')
+  .pipe(
+    (deps: NeoRouterDeps) => deps.holders().filter((holder) => holder.concernId !== NEO_INBOX_ID),
+    'deps',
+    'holders'
+  )
+  .pipe((deps: NeoRouterDeps) => deps.recentTurns(), 'deps', 'recent')
+  .pipe((deps: NeoRouterDeps) => deps.topicTurns(), 'deps', 'latest')
+  .pipe(scoreNeoHolders, ['text', 'holders', 'deps'], 'scores')
+  .pipe(neoRouteCandidates, ['holders', 'scores', 'recent', 'latest'], 'candidates')
+  .pipe(requireRouteQuestion, ['candidates', 'recent'], 'result:route')
   .pipe((deps: NeoRouterDeps) => !!deps.inbox, 'deps', 'withInbox')
-  .pipe(classifierCandidates, ['route', 'withInbox'], 'candidates')
-  .pipe(classifyNeoAsk, ['text', 'candidates', 'deps'], 'route')
+  .pipe(
+    renderNeoRouteContext,
+    ['holders', 'candidates', 'recent', 'latest', 'withInbox'],
+    'context'
+  )
+  .pipe(classifyNeoAsk, ['text', 'candidates', 'context', 'scores', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export async function chooseNeoRoute(
@@ -228,7 +280,8 @@ export function createNeoRouter(
             ]
           : [];
       }),
-    latestRoute: () => log.latest(),
+    recentTurns: () => log.recent(RECENT_TURNS),
+    topicTurns: () => log.latestPerTopic(),
     recentAsks: (concernId, limit) => log.recentAsks(concernId, limit),
     embed: async (text) => {
       if (process.env.NODE_ENV === 'test') return null;
@@ -249,7 +302,6 @@ export function createNeoRouter(
           return { ...INBOX_CHOICE, sessionId };
         }
       : undefined,
-    now: () => Date.now(),
   };
   return (text) => chooseNeoRoute(text, deps);
 }

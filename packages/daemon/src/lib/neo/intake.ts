@@ -255,10 +255,7 @@ export function reuseLoggedRoute(
           ? {
               concernId: earlier.concernId,
               sessionId: earlier.targetSessionId,
-              signal:
-                earlier.signal === 'sticky' || earlier.signal === 'classifier'
-                  ? earlier.signal
-                  : 'embedding',
+              signal: earlier.signal === 'classifier' ? 'classifier' : 'embedding',
               confidence: earlier.confidence ?? 0,
             }
           : null,

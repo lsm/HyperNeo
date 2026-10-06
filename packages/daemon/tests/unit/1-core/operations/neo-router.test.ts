@@ -10,8 +10,9 @@ import {
   type NeoHolder,
   type NeoRouterDeps,
   neoHolderProfile,
+  neoRouteCandidates,
   pickNeoHolder,
-  stickyNeoRoute,
+  renderNeoRouteContext,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -57,23 +58,6 @@ const route = (fields: Partial<NeoRoute>): NeoRoute => ({
   ...fields,
 });
 
-describe('stickyNeoRoute', () => {
-  test('keeps a short follow-up with the holder that just answered', () => {
-    expect(stickyNeoRoute('yes, do it', [drivers], route({}), 61_000)).toMatchObject({
-      concernId: 'drivers',
-      signal: 'sticky',
-    });
-  });
-
-  test('lets go after five minutes, for long messages, and after main Neo', () => {
-    expect(stickyNeoRoute('yes', [drivers], route({}), 1_000 + 5 * 60_000 + 1)).toBeNull();
-    expect(stickyNeoRoute('x'.repeat(121), [drivers], route({}), 2_000)).toBeNull();
-    expect(
-      stickyNeoRoute('yes', [drivers], route({ destination: 'main', concernId: null }), 2_000)
-    ).toBeNull();
-  });
-});
-
 describe('neoHolderProfile', () => {
   test('trims each recent ask so one long ask cannot swamp the profile', () => {
     const profile = neoHolderProfile(
@@ -104,38 +88,115 @@ describe('pickNeoHolder', () => {
   });
 });
 
+describe('renderNeoRouteContext', () => {
+  test('lists main, topics with their last turn and waiting question, then recent turns', () => {
+    const pr = route({
+      id: 2,
+      destination: 'main',
+      concernId: null,
+      ask: 'is the font-size PR done?',
+      outcome: 'Still in review.',
+    });
+    const blog = route({
+      id: 1,
+      concernId: 'youtube',
+      ask: 'https://example.com long ask',
+      askSummary: 'What is the post?',
+      outcome: 'A git beta.',
+      awaiting: 'Draft a reply?',
+    });
+    const context = renderNeoRouteContext(
+      [drivers, youtube],
+      [drivers, youtube],
+      [pr, blog],
+      [pr, blog],
+      true
+    );
+    expect(context).toContain(
+      '- main: Neo itself, the default\n    last: [main] you: "is the font-size PR done?" → Still in review.'
+    );
+    expect(context).toContain(
+      '- youtube: YouTube (drivers)\n    last: [YouTube] you: "What is the post?" → A git beta.\n    WAITING ON YOU: "Draft a reply?"'
+    );
+    expect(context).toContain('- inbox: Self-contained one-off questions');
+    expect(context.split('Recent turns (newest first):\n')[1]).toBe(
+      '- [main] you: "is the font-size PR done?" → Still in review.\n- [YouTube] you: "What is the post?" → A git beta.'
+    );
+  });
+
+  test('keeps recent turns within the budget', () => {
+    const many = Array.from({ length: 40 }, (_, n) => route({ id: n, ask: 'q'.repeat(300) }));
+    const turns = renderNeoRouteContext([drivers], [drivers], many, [], false)
+      .split('Recent turns (newest first):\n')[1]
+      .split('\n');
+    expect(turns.length).toBeLessThan(40);
+    expect(turns.join('\n').length).toBeLessThanOrEqual(3_000);
+  });
+});
+
+describe('neoRouteCandidates', () => {
+  test('offers every topic when there are few, otherwise recent, waiting and close ones', () => {
+    expect(neoRouteCandidates([drivers, youtube], [], [], [])).toEqual([drivers, youtube]);
+    const many = Array.from({ length: 30 }, (_, n) => ({ ...drivers, concernId: `t${n}` }));
+    const picked = neoRouteCandidates(
+      many,
+      [
+        { holder: many[7], similarity: 0.5 },
+        { holder: many[8], similarity: 0.2 },
+      ],
+      [route({ concernId: 't3' })],
+      [route({ concernId: 't5', awaiting: 'Ship it?' }), route({ concernId: 't6' })]
+    );
+    expect(picked.map((holder) => holder.concernId)).toEqual(['t3', 't5', 't7']);
+  });
+});
+
 describe('chooseNeoRoute', () => {
   const vectors: Record<string, number[]> = {
     'restart the daemon after the driver merge': [1, 0, 0],
     'Neo driver epic\ndrivers': [0.95, 0.05, 0],
     'YouTube\ndrivers': [0, 1, 0],
   };
-  const deps = (latest: NeoRoute | null = null): NeoRouterDeps => ({
+  const deps = (recent: NeoRoute[] = []): NeoRouterDeps => ({
     holders: () => [drivers, youtube],
-    latestRoute: () => latest,
+    recentTurns: () => recent,
+    topicTurns: () => recent.slice(0, 1),
     recentAsks: () => [],
     embed: async (text) => (vectors[text] ? Float32Array.from(vectors[text]) : null),
-    now: () => 2_000,
   });
 
-  test('routes by meaning when nothing sticks', async () => {
+  test('falls back to a clear embedding match when no classifier answers', async () => {
     expect(await chooseNeoRoute('restart the daemon after the driver merge', deps())).toMatchObject(
-      {
-        concernId: 'drivers',
-        signal: 'embedding',
-      }
+      { concernId: 'drivers', signal: 'embedding' }
     );
+    expect(await chooseNeoRoute('unknown text', deps())).toBeNull();
   });
 
-  test('prefers stickiness and gives up without holders or vectors', async () => {
-    expect(
-      await chooseNeoRoute(
-        'ok',
-        deps(route({ concernId: 'youtube', targetSessionId: youtube.sessionId }))
-      )
-    ).toMatchObject({ concernId: 'youtube', signal: 'sticky' });
-    expect(await chooseNeoRoute('unknown text', deps())).toBeNull();
-    expect(await chooseNeoRoute('anything', { ...deps(), holders: () => [] })).toBeNull();
+  test('sends a follow-up to main when the classifier reads it as continuing main', async () => {
+    const recent = [route({ destination: 'main', concernId: null, ask: 'is PR 5650 done?' })];
+    const seen: string[] = [];
+    const choice = await chooseNeoRoute('how about 5060 now?', {
+      ...deps(recent),
+      classify: async (_text, _options, context) => {
+        seen.push(context);
+        return 'main';
+      },
+    });
+    expect(choice).toBeNull();
+    expect(seen[0]).toContain('[main] you: "is PR 5650 done?"');
+  });
+
+  test('skips the classifier when there are no topics and no history', async () => {
+    let asked = 0;
+    const choice = await chooseNeoRoute('anything', {
+      ...deps(),
+      holders: () => [],
+      classify: async () => {
+        asked += 1;
+        return 'main';
+      },
+    });
+    expect([choice, asked]).toEqual([null, 0]);
   });
 });
 
