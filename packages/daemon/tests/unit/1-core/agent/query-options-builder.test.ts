@@ -19,6 +19,10 @@ import {
   setModelsCache,
 } from '../../../../src/lib/model-service';
 import { neoPrompt } from '../../../../src/lib/neo/prompt';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorNativeTools,
+} from '../../../../src/lib/neo/session-policy';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -1921,8 +1925,8 @@ describe('QueryOptionsBuilder', () => {
 
   describe('tools configuration', () => {
     it.each([
-      ['neo', null, []],
-      ['concern', 'saas', ['AskUserQuestion']],
+      ['neo', null, neoCoordinatorNativeTools(null)],
+      ['concern', 'saas', neoCoordinatorNativeTools('saas')],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
       'uses the persisted %s binding for resumed prompts and native questions',
@@ -1957,10 +1961,10 @@ describe('QueryOptionsBuilder', () => {
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
           expect(options.maxTurns).toBe(Infinity);
-          expect(options.tools).toEqual(tools);
+          expect(options.tools).toEqual([...tools]);
           expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind !== 'neo');
           if (kind !== 'worker') {
-            expect(options.allowedTools).toEqual([...tools, 'mcp__hyperneo-operations__invoke']);
+            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.systemPrompt).toEqual({
               type: 'custom',

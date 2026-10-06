@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { NeoPublicationSchema } from '../../../../src/lib/neo/publication.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorNativeTools,
+  restrictNeoQuery,
+} from '../../../../src/lib/neo/session-policy.ts';
 
 const draft = { shortText: 'Draft only.', fullText: 'Detail behind it.', links: [] };
 function options(): Options {
@@ -38,12 +42,9 @@ describe('direct human publication prompt', () => {
       const operations = { type: 'stdio' as const, command: 'fixture-operations' };
       expect(query.model).toBe('fixture-model');
       expect(query.maxTurns).toBe(17);
-      expect(query.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
+      expect(query.tools).toEqual(neoCoordinatorNativeTools(concernId));
       expect(query.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(query.allowedTools).toEqual([
-        ...(concernId ? ['AskUserQuestion'] : []),
-        'mcp__hyperneo-operations__invoke',
-      ]);
+      expect(query.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
       expect(query.settingSources).toEqual([]);
       expect(query.plugins).toEqual([]);
       expect(query.agents).toEqual({});

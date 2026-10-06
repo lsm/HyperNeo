@@ -7,13 +7,70 @@ import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.
 import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorDeniedReads,
   neoCoordinatorNativeTools,
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
 
+const LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const LOOKUP_ALLOWED = [
+  'Read',
+  'Grep',
+  'Glob',
+  'WebSearch',
+  'WebFetch',
+  'Bash(cd:*)',
+  'Bash(gh pr view:*)',
+  'Bash(gh pr list:*)',
+  'Bash(gh pr checks:*)',
+  'Bash(gh issue view:*)',
+  'Bash(gh issue list:*)',
+  'Bash(gh run view:*)',
+  'Bash(gh run list:*)',
+  'Bash(gh repo view:*)',
+  'Bash(git log:*)',
+  'Bash(git status:*)',
+  'Bash(git blame:*)',
+  'mcp__hyperneo-operations__invoke',
+];
+
 describe('neoCoordinatorNativeTools', () => {
-  test.each([null, 'saas', 'family'])('selects native questions for %s', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual(concernId ? ['AskUserQuestion'] : []);
+  test.each([null, 'saas', 'family'])('selects questions and look-up tools for %s', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual([
+      ...(concernId ? ['AskUserQuestion'] : []),
+      ...LOOKUP_TOOLS,
+    ]);
+  });
+});
+
+describe('neoCoordinatorAllowedTools', () => {
+  test.each([null, 'saas'])('auto-approves only read-only commands for %s', (concernId) => {
+    expect(neoCoordinatorAllowedTools(concernId)).toEqual([
+      ...(concernId ? ['AskUserQuestion'] : []),
+      ...LOOKUP_ALLOWED,
+    ]);
+  });
+});
+
+describe('neoCoordinatorDeniedReads', () => {
+  test('blocks credentials, shell profiles, env files and the daemon data folder', () => {
+    expect(neoCoordinatorDeniedReads()).toEqual(
+      expect.arrayContaining([
+        'Read(~/.ssh/**)',
+        'Read(~/.claude/.credentials.json)',
+        'Read(~/.zshrc)',
+        'Read(~/**/.env)',
+      ])
+    );
+  });
+
+  test('restricted Neo queries carry the denials and the look-up guard first', () => {
+    const options: Options = { disallowedTools: ['Task'] };
+    restrictNeoQuery(options, 'saas');
+    expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
+    expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
   });
 });
 
@@ -72,12 +129,9 @@ describe('Neo world briefing delivery', () => {
       const prompt = (options.systemPrompt as { prompt: string }).prompt;
       expect(prompt).toContain(NEO_RESPONSE_FOCUS_BRIEFING);
       expect(prompt).not.toContain('Legacy stored coordinator wording');
-      expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
+      expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
       expect(options.mcpServers).toEqual({ 'hyperneo-operations': operations });
-      expect(options.allowedTools).toEqual([
-        ...(concernId ? ['AskUserQuestion'] : []),
-        'mcp__hyperneo-operations__invoke',
-      ]);
+      expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(concernId));
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBe(17);
@@ -144,7 +198,7 @@ describe('Neo world briefing delivery', () => {
     const prompt = (options.systemPrompt as { prompt: string }).prompt;
     expect(prompt).toContain('daemon.snapshot');
     expect(prompt).not.toContain('Ambient project');
-    expect(options.tools).toEqual(concernId ? ['AskUserQuestion'] : []);
+    expect(options.tools).toEqual(neoCoordinatorNativeTools(concernId));
   });
 
   test.each([null, 'saas'])(
@@ -186,5 +240,15 @@ describe('Neo world briefing delivery', () => {
     expect(holder).not.toContain('then end this input turn without waiting for the human');
     expect(holder).toContain('Do not call AskUserQuestion during a consultation');
     expect(holder).toContain('When the human speaks to you directly, answer normally');
+  });
+});
+
+describe('Neo look-up guidance', () => {
+  test.each([null, 'saas'])('tells %s to look things up itself and change nothing', (concernId) => {
+    const prompt = neoPrompt(concernId);
+    expect(prompt).toContain('Do a quick look-up yourself instead of proposing work');
+    expect(prompt).toContain('never change anything yourselves');
+    expect(prompt).toContain('Never tell the user you have no access');
+    expect(prompt).toContain('never put file contents into a fetched URL');
   });
 });

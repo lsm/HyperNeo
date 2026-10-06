@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
@@ -22,7 +22,9 @@ import {
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
+  neoCoordinatorAllowedTools,
   neoCoordinatorBinding,
+  neoCoordinatorNativeTools,
   neoCoordinatorRuntimePath,
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
@@ -187,8 +189,8 @@ describe('Neo MVP', () => {
     expect(created).toHaveLength(1);
     expect(created[0].config).toMatchObject({
       permissionMode: 'dontAsk',
-      sdkToolsPreset: [],
-      allowedTools: ['mcp__hyperneo-operations__invoke'],
+      sdkToolsPreset: neoCoordinatorNativeTools(null),
+      allowedTools: neoCoordinatorAllowedTools(null),
     });
     expect(created[0].workspacePath).toBeNull();
     expect(service.repo.listConcerns()).toEqual([]);
@@ -209,8 +211,8 @@ describe('Neo MVP', () => {
     const id = await service.open(concern.id);
     expect(await service.open(concern.id)).toBe(id);
     expect(created[0].config).toMatchObject({
-      sdkToolsPreset: ['AskUserQuestion'],
-      allowedTools: ['AskUserQuestion', 'mcp__hyperneo-operations__invoke'],
+      sdkToolsPreset: neoCoordinatorNativeTools(concern.id),
+      allowedTools: neoCoordinatorAllowedTools(concern.id),
     });
     expect(await invoke('neo.snapshot')).toMatchObject({
       value: { concerns: [{ context: concern.context }] },
@@ -1091,10 +1093,10 @@ describe('Neo MVP', () => {
     expect(snapshot.value.work.some((item) => item.id === withdrawn.id)).toBe(false);
   });
 
-  test('query restriction removes coding tools, plugins, settings and extra MCP servers', () => {
+  test('query restriction keeps only look-up tools and drops plugins, settings and extra MCP servers', () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };
     const options: Options = {
-      tools: ['Bash', 'Read'],
+      tools: ['Bash', 'Read', 'Edit', 'Write'],
       plugins: [{ type: 'local', path: '/plugin' }],
       settingSources: ['user', 'project'],
       mcpServers: { 'hyperneo-operations': operationServer, unsafe: { command: 'other' } },
@@ -1102,9 +1104,10 @@ describe('Neo MVP', () => {
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
     restrictNeoQuery(options, null, 'neo:runtime-test');
-    expect(options.tools).toEqual([]);
+    expect(options.tools).toEqual(['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash']);
+    expect(options.additionalDirectories).toEqual([homedir()]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
-    expect(options.allowedTools).toEqual(['mcp__hyperneo-operations__invoke']);
+    expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools(null));
     expect(options.plugins).toEqual([]);
     expect(options.settingSources).toEqual([]);
     expect(options.agent).toBeUndefined();

@@ -1,12 +1,14 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { neoFolderPath } from './folder.ts';
+import { NEO_LOOKUP_COMMANDS, neoLookUpGuard, neoSecretReadRules } from './look-up-guard.ts';
 import { neoPrompt } from './prompt.ts';
 import { existsSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 function sdkTranscriptsExist(cwd: string): boolean {
@@ -34,8 +36,21 @@ export function neoCoordinatorBinding(
   return row ?? null;
 }
 
-export function neoCoordinatorNativeTools(concernId: string | null): 'AskUserQuestion'[] {
-  return concernId ? ['AskUserQuestion'] : [];
+const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+export function neoCoordinatorDeniedReads(): string[] {
+  return neoSecretReadRules({ dataDir: getDataDir(), home: homedir() });
+}
+
+export function neoCoordinatorNativeTools(concernId: string | null): string[] {
+  return [...(concernId ? ['AskUserQuestion'] : []), ...NEO_LOOKUP_TOOLS];
+}
+
+export function neoCoordinatorAllowedTools(concernId: string | null): string[] {
+  return [
+    ...neoCoordinatorNativeTools(concernId).filter((tool) => tool !== 'Bash'),
+    ...NEO_LOOKUP_COMMANDS.map((command) => `Bash(${command}:*)`),
+    `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`,
+  ];
 }
 
 export function restrictNeoQuery(
@@ -54,12 +69,20 @@ export function restrictNeoQuery(
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
-  const nativeTools = neoCoordinatorNativeTools(concernId);
-  options.tools = nativeTools;
+  options.tools = neoCoordinatorNativeTools(concernId);
+  options.additionalDirectories = [homedir()];
   options.agents = {};
   delete options.agent;
   options.plugins = [];
   options.settingSources = [];
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
-  options.allowedTools = [...nativeTools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`];
+  options.allowedTools = neoCoordinatorAllowedTools(concernId);
+  options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
+  options.hooks = {
+    ...options.hooks,
+    PreToolUse: [
+      { hooks: [neoLookUpGuard({ home: homedir(), dataDir: getDataDir() })] },
+      ...(options.hooks?.PreToolUse ?? []),
+    ],
+  };
 }
