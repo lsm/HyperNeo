@@ -5,16 +5,75 @@ import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
 import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
+import { getDataDir } from '../../../../src/lib/data-dir.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorAllowedTools,
+  neoCoordinatorDeniedReads,
   neoCoordinatorNativeTools,
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
 
+const LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+const LOOKUP_ALLOWED = [
+  'Read',
+  'Grep',
+  'Glob',
+  'WebSearch',
+  'WebFetch',
+  'Bash(cd:*)',
+  'Bash(gh pr view:*)',
+  'Bash(gh pr list:*)',
+  'Bash(gh pr checks:*)',
+  'Bash(gh pr diff:*)',
+  'Bash(gh issue view:*)',
+  'Bash(gh issue list:*)',
+  'Bash(gh run view:*)',
+  'Bash(gh run list:*)',
+  'Bash(gh repo view:*)',
+  'Bash(git log:*)',
+  'Bash(git show:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git blame:*)',
+  'mcp__hyperneo-operations__invoke',
+];
+
 describe('neoCoordinatorNativeTools', () => {
-  test.each([null, 'saas', 'family'])('selects native questions for %s', (concernId) => {
-    expect(neoCoordinatorNativeTools(concernId)).toEqual(neoCoordinatorNativeTools(concernId));
+  test.each([null, 'saas', 'family'])('selects questions and look-up tools for %s', (concernId) => {
+    expect(neoCoordinatorNativeTools(concernId)).toEqual([
+      ...(concernId ? ['AskUserQuestion'] : []),
+      ...LOOKUP_TOOLS,
+    ]);
+  });
+});
+
+describe('neoCoordinatorAllowedTools', () => {
+  test.each([null, 'saas'])('auto-approves only read-only commands for %s', (concernId) => {
+    expect(neoCoordinatorAllowedTools(concernId)).toEqual([
+      ...(concernId ? ['AskUserQuestion'] : []),
+      ...LOOKUP_ALLOWED,
+    ]);
+  });
+});
+
+describe('neoCoordinatorDeniedReads', () => {
+  test('blocks credentials, shell profiles, env files and the daemon data folder', () => {
+    expect(neoCoordinatorDeniedReads()).toEqual(
+      expect.arrayContaining([
+        'Read(~/.ssh/**)',
+        'Read(~/.claude/.credentials.json)',
+        'Read(~/.zshrc)',
+        'Read(**/.env)',
+        `Read(/${getDataDir()}/**)`,
+      ])
+    );
+  });
+
+  test('restricted Neo queries carry the denials', () => {
+    const options: Options = { disallowedTools: ['Task'] };
+    restrictNeoQuery(options, 'saas');
+    expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
   });
 });
 
@@ -193,5 +252,6 @@ describe('Neo look-up guidance', () => {
     expect(prompt).toContain('Do a quick look-up yourself instead of proposing work');
     expect(prompt).toContain('never change anything yourselves');
     expect(prompt).toContain('Never tell the user you have no access');
+    expect(prompt).toContain('never put file contents into a fetched URL');
   });
 });
