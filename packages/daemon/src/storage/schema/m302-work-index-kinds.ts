@@ -78,7 +78,21 @@ export function widenMessageSearchKinds(db: Database): void {
   }
 }
 
+export function createFeedTurnIndex(db: Database): void {
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE name = 'message_search_content' AND type = 'table'"
+      )
+      .get()
+  )
+    return;
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_message_search_content_feed_turns
+    ON message_search_content(session_id, timestamp, id) WHERE kind IN ('codex', 'claude')`);
+}
+
 export function runMigration302(db: Database): void {
   widenMessageSearchKinds(db);
   createWorkFeedOffsetsTable(db);
+  createFeedTurnIndex(db);
 }
