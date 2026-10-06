@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
-import type { WorkChatMatch } from '../../../storage/work-chat-search.ts';
+import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
   createClaudeDesktopAdapter,
   readLiveClaudeSessions,
@@ -169,8 +169,11 @@ function spaceTaskControl(context: FamilyOperationContext): SpaceTaskControl {
 export function registerDriverOperations(context: FamilyOperationContext): OperationDefinition[] {
   const db = () => context.deps.db.getDatabase();
   const machine = hostname();
-  let lastSearch: { text: string; at: number; chats: Promise<readonly WorkChatMatch[]> } | null =
-    null;
+  const recentVectors = new Map<string, { at: number; semantic: ReturnType<typeof embedQuery> }>();
+  const recentSearches = new Map<
+    string,
+    { at: number; chats: Promise<readonly WorkChatMatch[]> }
+  >();
   const embedQuery = async (text: string) => {
     const embedder = context.deps.db.getEmbedder();
     if (!context.deps.db.getSDKMessageRepo().hasTurnVectors(embedder.model)) return undefined;
@@ -181,19 +184,36 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       return undefined;
     }
   };
-  const searchChats = (text: string): Promise<readonly WorkChatMatch[]> => {
+  const recent = <Value>(
+    cache: Map<string, { at: number } & Value>,
+    key: string,
+    make: () => Value
+  ): Value => {
     const now = Date.now();
-    if (lastSearch?.text === text && now - lastSearch.at < SEARCH_REUSE_MS) return lastSearch.chats;
-    const chats = embedQuery(text).then((semantic) =>
-      context.deps.db.getSDKMessageRepo().searchWorkChats(text, WORK_CHAT_LIMIT, semantic)
-    );
-    lastSearch = { text, at: now, chats };
-    return chats;
+    for (const [stale, entry] of cache) if (now - entry.at >= SEARCH_REUSE_MS) cache.delete(stale);
+    const found = cache.get(key);
+    if (found) return found;
+    const made = make();
+    cache.set(key, { ...made, at: now });
+    return made;
   };
-  const ownChats = (text: string) =>
-    searchChats(text).then((chats) =>
-      chats.filter((chat) => chat.kind === 'message' || chat.kind === 'task')
-    );
+  const searchChats = (
+    text: string,
+    kinds: readonly WorkChatKind[]
+  ): Promise<readonly WorkChatMatch[]> =>
+    recent<{ chats: Promise<readonly WorkChatMatch[]> }>(
+      recentSearches,
+      `${kinds.join(',')}:${text}`,
+      () => ({
+        chats: recent(recentVectors, text, () => ({ semantic: embedQuery(text) })).semantic.then(
+          (vectors) =>
+            context.deps.db
+              .getSDKMessageRepo()
+              .searchWorkChats(text, WORK_CHAT_LIMIT, vectors, kinds)
+        ),
+      })
+    ).chats;
+  const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({
       db,

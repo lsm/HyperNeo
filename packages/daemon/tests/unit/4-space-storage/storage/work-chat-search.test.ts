@@ -72,6 +72,20 @@ describe('searchWorkChats', () => {
     ]);
   });
 
+  test('filters by kind before the match cap, so a flood of other turns cannot hide a chat', () => {
+    const codex = db.prepare(
+      `INSERT INTO message_search_content
+         (kind, source_id, message_id, session_id, message_type, title, body, timestamp)
+       VALUES ('codex', ?, ?, ?, 'assistant', 'rollout', 'walrus deploy step', ?)`
+    );
+    insert('quiet', null, 'walrus deploy plan', 1);
+    for (let n = 0; n < 2_100; n++) codex.run(`r${n}`, `c${n}`, `thread-${n}`, 100 + n);
+    expect(
+      searchWorkChats(db, tables, 'walrus', 5, undefined, ['message']).map((chat) => chat.sessionId)
+    ).toEqual(['quiet']);
+    expect(searchWorkChats(db, tables, 'walrus', 5, undefined, ['codex'])).toHaveLength(5);
+  });
+
   test('groups a task across its sessions and skips archived chats', () => {
     insert('w1', 't1', 'coder said 16px', 10);
     insert(null, 't1', 'task asks for 16px', 20);
@@ -134,6 +148,16 @@ describe('vectorWorkChats', () => {
       'm',
       10
     );
+    expect(
+      vectorWorkChats(
+        db,
+        { sessions: false, spaceTasks: false },
+        Float32Array.from([1, 0, 0]),
+        'm',
+        10,
+        ['codex']
+      )
+    ).toEqual([]);
     expect(chats.map((chat) => [chat.sessionId, chat.hits, chat.lastHitAt])).toEqual([
       ['font-chat', 2, 20],
     ]);

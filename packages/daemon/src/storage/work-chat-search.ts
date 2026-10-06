@@ -20,6 +20,11 @@ export interface WorkChatSnippet {
 }
 
 export type WorkChatKind = 'message' | 'task' | 'codex' | 'claude';
+export const WORK_CHAT_KINDS: readonly WorkChatKind[] = ['message', 'task', 'codex', 'claude'];
+
+function kindFilter(column: string, kinds: readonly WorkChatKind[]): string {
+  return `${column} IN (${kinds.map((kind) => `'${kind}'`).join(', ')})`;
+}
 
 export interface WorkChatMatch {
   kind: WorkChatKind;
@@ -99,18 +104,19 @@ export function vectorWorkChats(
   tables: { sessions: boolean; spaceTasks: boolean },
   vector: Float32Array,
   model: string,
-  limit: number
+  limit: number,
+  kinds: readonly WorkChatKind[] = WORK_CHAT_KINDS
 ): ChatCandidate[] {
   const policy = messageSearchPolicy(tables);
   const scanned = db
     .prepare(
-      `SELECT v.content_id AS id, v.embedding FROM (
-         SELECT content_id, embedding FROM message_search_vectors
-          WHERE model = ? AND dimensions = ? ORDER BY content_id DESC LIMIT ${VECTOR_SCAN_TURNS}
-       ) v JOIN message_search_content msc ON msc.id = v.content_id
+      `SELECT v.content_id AS id, v.embedding FROM message_search_vectors v
+       JOIN message_search_content msc ON msc.id = v.content_id
        ${policy.joins}
-       WHERE COALESCE(msc.task_id, msc.session_id) IS NOT NULL
-         AND (msc.kind != 'message' OR (1 = 1 ${policy.where}))`
+       WHERE v.model = ? AND v.dimensions = ? AND ${kindFilter('msc.kind', kinds)}
+         AND COALESCE(msc.task_id, msc.session_id) IS NOT NULL
+         AND (msc.kind != 'message' OR (1 = 1 ${policy.where}))
+       ORDER BY v.content_id DESC LIMIT ${VECTOR_SCAN_TURNS}`
     )
     .all(model, vector.length) as Array<{ id: number; embedding: Uint8Array }>;
   const top = scanned
@@ -173,7 +179,8 @@ function keywordWorkChats(
   db: BunDatabase,
   tables: { sessions: boolean; spaceTasks: boolean },
   query: string,
-  limit: number
+  limit: number,
+  kinds: readonly WorkChatKind[]
 ): ChatCandidate[] {
   const ftsQuery = buildFtsQuery(query);
   if (!ftsQuery) return [];
@@ -181,8 +188,10 @@ function keywordWorkChats(
   const rows = db
     .prepare(
       `WITH matched AS (
-         SELECT rowid AS id, bm25(message_search_fts) AS score FROM message_search_fts
-          WHERE message_search_fts MATCH ? ORDER BY rowid DESC LIMIT ${MATCH_CAP}
+         SELECT message_search_fts.rowid AS id, bm25(message_search_fts) AS score
+           FROM message_search_fts JOIN message_search_content mk ON mk.id = message_search_fts.rowid
+          WHERE message_search_fts MATCH ? AND ${kindFilter('mk.kind', kinds)}
+          ORDER BY message_search_fts.rowid DESC LIMIT ${MATCH_CAP}
        ),
        hits AS (
          SELECT m.id, m.score, msc.kind, COALESCE(msc.task_id, msc.session_id) AS chat,
@@ -247,11 +256,12 @@ export function searchWorkChats(
   tables: { sessions: boolean; spaceTasks: boolean },
   query: string,
   limit: number,
-  semantic?: { vector: Float32Array; model: string }
+  semantic?: { vector: Float32Array; model: string },
+  kinds: readonly WorkChatKind[] = WORK_CHAT_KINDS
 ): WorkChatMatch[] {
-  const keyword = keywordWorkChats(db, tables, query, limit);
+  const keyword = keywordWorkChats(db, tables, query, limit, kinds);
   const similar = semantic
-    ? vectorWorkChats(db, tables, semantic.vector, semantic.model, limit)
+    ? vectorWorkChats(db, tables, semantic.vector, semantic.model, limit, kinds)
     : [];
   return fuseWorkChats(keyword, similar).slice(0, limit);
 }

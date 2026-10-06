@@ -31,7 +31,11 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import { createSQLiteAsciiPrefixRange } from '../sqlite-prefix-range.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
-import { searchWorkChats as queryWorkChats, type WorkChatMatch } from '../work-chat-search.ts';
+import {
+  searchWorkChats as queryWorkChats,
+  type WorkChatKind,
+  type WorkChatMatch,
+} from '../work-chat-search.ts';
 import {
   type DeliveryTransitionAction,
   deliveryTransitionRule,
@@ -2543,7 +2547,8 @@ export class SDKMessageRepository {
   searchWorkChats(
     query: string,
     limit: number,
-    semantic?: { vector: Float32Array; model: string }
+    semantic?: { vector: Float32Array; model: string },
+    kinds?: readonly WorkChatKind[]
   ): WorkChatMatch[] {
     if (!this.hasMessageSearchIndex()) return [];
     const tables = {
@@ -2551,7 +2556,7 @@ export class SDKMessageRepository {
       spaceTasks: this.tableExists('space_tasks'),
     };
     const vectors = semantic && this.tableExists('message_search_vectors') ? semantic : undefined;
-    return queryWorkChats(this.db, tables, query, limit, vectors);
+    return queryWorkChats(this.db, tables, query, limit, vectors, kinds);
   }
 }
 
