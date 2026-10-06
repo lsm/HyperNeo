@@ -29,9 +29,10 @@ Given the conversation so far and a new user message, pick one destination: a to
 
 Two input shapes:
 
-- **Message only** — today's classifier input: the new message plus each topic's title and
-  summary, rendered by the production `buildNeoRoutePrompt` (imported from
-  `packages/daemon/src/lib/neo/route-classifier.ts`, so it is byte-identical).
+- **Message only** — the classifier input before #5714: the new message plus each topic's title
+  and summary, rendered by the production `buildNeoRoutePrompt` as of `dev` 7939a6f1a. #5714
+  has since moved production to routing context; the harness keeps the pre-#5714 prompt as
+  this baseline (#5721).
 - **Context** — the #5708 layout, built by `scripts/neo-route-eval/context.ts`:
   1. topics: id, title, summary (240 chars), latest exchange (`you: ask → answer`), and a
      `WAITING: asked you "…"` line when the topic asked a question;
@@ -134,15 +135,15 @@ With the #5708 context (reasoning off or minimal):
 | GLiNER2.5-Decide (340M) | ai0, torch CUDA | 21% · 20% · 23% | 0 / 74 | 193 / 886 | $0 |
 | Laya-multilingual (322M) | ai0, torch CUDA | 14% · 21% · 0% | 0 / 74 | 48 / 123 | $0 |
 
-GLM through the Agent SDK, thinking on (what production does today):
+GLM through the Agent SDK, thinking on (the production path at the time of the eval):
 
 | candidate | runtime | all · synthetic · real | follow-ups → inbox | p50 / p95 ms | cost / 1k |
 |---|---|---|---|---|---|
 | GLM-5-Turbo | lean | 94% · 96% · 91% | 0 / 74 | 2255 / 3775 | $0.93 |
 | GLM-5-Turbo | deployed | 89% · 90% · 86% | 0 / 74 | 1942 / 3719 | $0.90 |
-| GLM-5.3-Flash | lean, `thinking: disabled` injected (ignored on 66 of 105) | 92% · 93% · 89% | 0 / 74 | — | — |
+| GLM-5.3-Flash | lean, `thinking: disabled` injected (ignored on 66 of 105) | 92% · 94% · 89% | 0 / 74 | — | — |
 
-Message only (today's input):
+Message only (the pre-#5714 input):
 
 | candidate | runtime | all · synthetic · real | follow-ups → inbox | p50 / p95 ms | cost / 1k |
 |---|---|---|---|---|---|
@@ -193,7 +194,8 @@ Per-kind accuracy for every run is in [`report.md`](report.md).
    - It still sends 7–9 follow-ups to the inbox.
    - It scores 0% on "thanks", 0–13% on new subjects and 33% on two waiting.
    - Kev-0.8B is fast (84 ms on MLX) but 63–64%.
-   - Builds agree: MLX, llama.cpp CUDA and llama.cpp CPU produce the same answers.
+   - The two llama.cpp builds (CUDA on ai0, CPU on tts) give identical answers on all 105 cases.
+     MLX bf16 differs from the quantized GGUFs on 9 of 105 for Kev-4B and 2 of 105 for Kev-0.8B.
 8. **GLiNER2.5-Decide and Laya-multilingual can't do this task zero-shot.**
    - GLiNER picks by position. Reversing the option order flipped its synthetic picks from the
      first-listed `pr-812` (70 of 105) to the newly first `main` (72 of 105).
