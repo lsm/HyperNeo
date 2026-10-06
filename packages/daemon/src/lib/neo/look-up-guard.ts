@@ -1,4 +1,5 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const NEO_LOOKUP_COMMANDS = [
@@ -29,6 +30,7 @@ const SECRET_DIRS = [
   '.docker',
   '.config',
   '.claude/projects',
+  'Library',
 ];
 const SECRET_FILES = [
   '.claude/.credentials.json',
@@ -171,8 +173,20 @@ function resolvePath(raw: string, scope: LookUpScope): string {
   return resolve(scope.cwd, expanded);
 }
 
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 export function isSecretPath(raw: string, scope: LookUpScope): boolean {
-  const path = resolvePath(raw, scope);
+  const literal = resolvePath(raw, scope);
+  return [literal, realPath(literal)].some((path) => secretAt(path, scope));
+}
+
+function secretAt(path: string, scope: LookUpScope): boolean {
   return (
     within(path, scope.dataDir) ||
     SECRET_DIRS.some((dir) => within(path, join(scope.home, dir))) ||
@@ -212,7 +226,8 @@ export function bashDenial(command: string, scope: LookUpScope): string | null {
       !NEO_LOOKUP_COMMANDS.some((prefix) => segment === prefix || segment.startsWith(`${prefix} `))
   );
   if (unknown !== undefined) return `"${unknown}" is not a read-only look-up command`;
-  const tokens = command.split(/\s+/).map((token) => token.replace(/^['"]|['"]$/g, ''));
+  if (command.includes('\\')) return 'backslash escapes are not allowed';
+  const tokens = command.replace(/'([^']*)'|"([^"]*)"/g, '$1$2').split(/\s+/);
   const secret = tokens
     .flatMap((token) => token.split(':'))
     .find(

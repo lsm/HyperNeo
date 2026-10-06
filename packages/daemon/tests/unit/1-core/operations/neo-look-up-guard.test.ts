@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import {
   bashDenial,
@@ -23,6 +26,8 @@ describe('isSecretPath', () => {
     '~/.claude/settings.local.json',
     '~/.claude/.credentials.json',
     '~/.git-credentials',
+    '~/Library/Keychains/login.keychain-db',
+    '~/Library/Application Support/Google/Chrome/Default/Cookies',
     '~/focus/app/.claude/settings.local.json',
     '~/focus/app/.claude/settings.json',
     '~/backups/id_ed25519',
@@ -53,6 +58,28 @@ describe('isSecretPath', () => {
   });
 });
 
+describe('isSecretPath through symlinks', () => {
+  test('follows a link that points at a secret', () => {
+    const home = mkdtempSync(join(tmpdir(), 'neo-guard-'));
+    try {
+      mkdirSync(join(home, '.ssh'));
+      writeFileSync(join(home, '.ssh', 'id_ed25519'), 'key');
+      mkdirSync(join(home, 'app'));
+      symlinkSync(join(home, '.ssh', 'id_ed25519'), join(home, 'app', 'notes.md'));
+      writeFileSync(join(home, 'app', 'README.md'), 'readme');
+      const linkScope = {
+        home: realpathSync(home),
+        dataDir: join(realpathSync(home), '.hyperneo'),
+        cwd: realpathSync(home),
+      };
+      expect(isSecretPath(join(linkScope.home, 'app', 'notes.md'), linkScope)).toBe(true);
+      expect(isSecretPath(join(linkScope.home, 'app', 'README.md'), linkScope)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('bashDenial', () => {
   test.each([
     'cd ~/focus/app && git log --oneline -5',
@@ -75,6 +102,9 @@ describe('bashDenial', () => {
     ['gh api repos/fictional/app -X POST', 'not a read-only'],
     ['git log && rm -rf ~/focus', 'not a read-only'],
     ['git show HEAD:.env', 'may hold secrets'],
+    ["git show HEAD:.e''nv", 'may hold secrets'],
+    ['git show HEAD:".env"', 'may hold secrets'],
+    ['git show HEAD:.e\\nv', 'backslash'],
     ['git diff --no-index ~/focus/app/.env* /dev/null', 'unquoted wildcards'],
     ['cd ~/focus/app && git diff --no-index [.]env /dev/null', 'unquoted wildcards'],
     ['git diff --no-index .{e,x}nv /dev/null', 'unquoted wildcards'],
