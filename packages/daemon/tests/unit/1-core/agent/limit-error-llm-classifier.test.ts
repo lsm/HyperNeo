@@ -36,9 +36,7 @@ function createDeps(replyText: string | Error): {
         providerModelId: 'cheap-model',
         sdkModelId: 'sdk-cheap-model',
       }),
-      applyEnvVarsToProcessForProvider: async () => ({}),
-      getEnvVarsForModel: async () => ({}),
-      restoreEnvVars: () => {},
+      getIsolatedEnvForModel: async () => ({}),
     },
     queryForTesting,
   };
@@ -92,10 +90,10 @@ describe('LimitErrorLlmClassifier', () => {
   it('prefers a provider that is not the excluded (errored) provider', async () => {
     const seenModels: string[] = [];
     const deps = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}').deps;
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenModels.push(`${providerId}/${modelId}`);
         return originalApply(providerId, modelId);
       },
@@ -195,7 +193,7 @@ describe('LimitErrorLlmClassifier', () => {
   it('continues past candidates whose availability probe rejects', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
@@ -207,7 +205,7 @@ describe('LimitErrorLlmClassifier', () => {
         return true;
       },
       getCheapTierModel: async () => 'cheap-model',
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
@@ -266,7 +264,7 @@ describe('LimitErrorLlmClassifier', () => {
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
     deps.providerService = {
       ...deps.providerService,
-      applyEnvVarsToProcessForProvider: async () => {
+      getIsolatedEnvForModel: async () => {
         await setupGate;
         return {};
       },
@@ -372,14 +370,14 @@ describe('LimitErrorLlmClassifier', () => {
   it('never selects the acp provider for the SDK classification query', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
         { id: 'acp', name: 'ACP', models: ['some-model'], available: true },
         { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
       ],
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
@@ -389,30 +387,23 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenProviders).toEqual(['glm']);
   });
 
-  it('restores the applied provider env before invoking the SDK query', async () => {
+  it('passes the provider env to the SDK query without touching process.env', async () => {
     const events: string[] = [];
     let lastQueryEnv: Record<string, string | undefined> | undefined;
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
     deps.providerService = {
       ...deps.providerService,
-      applyEnvVarsToProcessForProvider: async () => {
-        events.push('apply');
-        process.env.ANTHROPIC_BASE_URL = 'https://relay.example';
-        return { ANTHROPIC_BASE_URL: undefined };
-      },
-      getEnvVarsForModel: async () => ({ ANTHROPIC_BASE_URL: 'https://relay.example' }),
-      restoreEnvVars: (original: Record<string, string | undefined>) => {
-        events.push(`restore:${Object.keys(original).length}`);
-        for (const [key, value] of Object.entries(original)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
+      getIsolatedEnvForModel: async () => {
+        events.push('env');
+        return { ...process.env, ANTHROPIC_BASE_URL: 'https://relay.example' };
       },
     };
     deps.queryForTesting = ((params: {
       options?: { env?: Record<string, string | undefined> };
     }) => {
-      events.push(`query:${process.env.ANTHROPIC_BASE_URL ?? 'restored'}`);
+      events.push(
+        `query:${process.env.ANTHROPIC_BASE_URL === 'https://relay.example' ? 'leaked' : 'clean'}`
+      );
       lastQueryEnv = params.options?.env;
       return (async function* () {
         yield {
@@ -430,26 +421,22 @@ describe('LimitErrorLlmClassifier', () => {
     const assessment = await classifier.classify('relay routing wall');
 
     expect(assessment?.kind).toBe('rate_limit');
-    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
+    expect(events).toEqual(['env', 'query:clean']);
     expect(lastQueryEnv?.ANTHROPIC_BASE_URL).toBe('https://relay.example');
   });
 
-  it('frees the queue when provider env application stalls past the deadline', async () => {
-    const seenRestores: unknown[] = [];
+  it('frees the queue when building the provider env stalls past the deadline', async () => {
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    let applyCalls = 0;
+    let envCalls = 0;
     deps.providerService = {
       ...deps.providerService,
-      applyEnvVarsToProcessForProvider: (() => {
-        applyCalls += 1;
-        if (applyCalls === 1) {
+      getIsolatedEnvForModel: (() => {
+        envCalls += 1;
+        if (envCalls === 1) {
           return new Promise(() => {});
         }
         return Promise.resolve({});
-      }) as typeof deps.providerService.applyEnvVarsToProcessForProvider,
-      restoreEnvVars: (env: unknown) => {
-        seenRestores.push(env);
-      },
+      }) as typeof deps.providerService.getIsolatedEnvForModel,
     };
     const classifier = new LimitErrorLlmClassifier('s1', { ...deps, timeoutMs: 40 });
 
@@ -478,14 +465,14 @@ describe('LimitErrorLlmClassifier', () => {
   it('skips providers whose model probe returned an empty list', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
         { id: 'openrouter', name: 'OpenRouter', models: [], available: true },
         { id: 'glm', name: 'GLM', models: ['glm-4.6'], available: true },
       ],
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
@@ -500,14 +487,14 @@ describe('LimitErrorLlmClassifier', () => {
     const seenProviders: string[] = [];
     let queries = 0;
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
         { id: 'glm', name: 'GLM', models: ['glm-4.6'], available: true },
         { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-chat'], available: true },
       ],
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
@@ -545,7 +532,7 @@ describe('LimitErrorLlmClassifier', () => {
   it('skips available providers that expose no cheap-tier model', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
@@ -553,7 +540,7 @@ describe('LimitErrorLlmClassifier', () => {
         { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
       ],
       getCheapTierModel: async (id: string) => (id === 'glm' ? 'cheap-model' : null),
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
@@ -566,7 +553,7 @@ describe('LimitErrorLlmClassifier', () => {
   it('skips registry-unavailable providers and classifies via the next available one', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    const originalApply = deps.providerService.getIsolatedEnvForModel;
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
@@ -575,7 +562,7 @@ describe('LimitErrorLlmClassifier', () => {
         { id: 'deepseek', name: 'DeepSeek', models: ['some-model'], available: true },
       ],
       isProviderAvailable: async (id: string) => id === 'deepseek',
-      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+      getIsolatedEnvForModel: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
         return originalApply(providerId, modelId);
       },
