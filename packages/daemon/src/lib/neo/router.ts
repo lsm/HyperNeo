@@ -6,6 +6,7 @@ import {
   NeoRoutingLogRepository,
   neoExcerpt,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
+import { getProviderService } from '../provider-service.ts';
 import { classifyNeoRoute } from './route-classifier.ts';
 
 const MIN_SIMILARITY = 0.55;
@@ -32,6 +33,7 @@ export interface NeoHolder {
   sessionId: string;
   title: string;
   summary: string;
+  provider?: string;
 }
 
 export interface NeoRouteChoice {
@@ -44,7 +46,7 @@ export interface NeoRouteChoice {
 export type NeoRouteAnswer = NeoHolder | 'main' | null;
 
 export interface NeoRouterDeps {
-  holders(): NeoHolder[];
+  holders(): NeoHolder[] | Promise<NeoHolder[]>;
   recentTurns(): NeoRoute[];
   topicTurns(): NeoRoute[];
   recentAsks(concernId: string, limit: number): string[];
@@ -118,6 +120,13 @@ export async function scoreNeoHolders(
     if (vector) scores.push({ holder, similarity: cosine(message, vector) });
   }
   return scores;
+}
+
+export function runnableNeoHolders(
+  holders: readonly NeoHolder[],
+  available: ReadonlyMap<string, boolean>
+): NeoHolder[] {
+  return holders.filter((holder) => available.get(holder.provider ?? 'anthropic') !== false);
 }
 
 function topicOf(route: NeoRoute): string {
@@ -231,7 +240,8 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .input(['text', 'deps'])
   .pipe(requireAskText, 'text', 'result:route')
   .pipe(
-    (deps: NeoRouterDeps) => deps.holders().filter((holder) => holder.concernId !== NEO_INBOX_ID),
+    async (deps: NeoRouterDeps) =>
+      (await deps.holders()).filter((holder) => holder.concernId !== NEO_INBOX_ID),
     'deps',
     'holders'
   )
@@ -265,8 +275,8 @@ export function createNeoRouter(
 ): NeoRouter {
   const log = new NeoRoutingLogRepository(db.getDatabase());
   const deps: NeoRouterDeps = {
-    holders: () =>
-      repo.listConcerns().flatMap((concern) => {
+    holders: async () => {
+      const holders: NeoHolder[] = repo.listConcerns().flatMap((concern) => {
         const binding = repo.getBindingForConcern(concern.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
         return binding && session && session.status !== 'archived'
@@ -276,10 +286,28 @@ export function createNeoRouter(
                 sessionId: binding.sessionId,
                 title: concern.title,
                 summary: concern.summary,
+                provider: session.config.provider,
               },
             ]
           : [];
-      }),
+      });
+      if (process.env.NODE_ENV === 'test') return holders;
+      const providers = [...new Set(holders.map((holder) => holder.provider ?? 'anthropic'))];
+      const available = new Map(
+        await Promise.all(
+          providers.map(
+            async (provider) =>
+              [
+                provider,
+                await getProviderService()
+                  .isProviderAvailable(provider)
+                  .catch(() => false),
+              ] as const
+          )
+        )
+      );
+      return runnableNeoHolders(holders, available);
+    },
     recentTurns: () => log.recent(RECENT_TURNS),
     topicTurns: () => log.latestPerTopic(),
     recentAsks: (concernId, limit) => log.recentAsks(concernId, limit),
@@ -299,7 +327,13 @@ export function createNeoRouter(
             0
           );
           const sessionId = await openHolder(NEO_INBOX_ID);
-          return { ...INBOX_CHOICE, sessionId };
+          const provider = db.getSession(sessionId)?.config.provider ?? 'anthropic';
+          const runnable =
+            process.env.NODE_ENV === 'test' ||
+            (await getProviderService()
+              .isProviderAvailable(provider)
+              .catch(() => false));
+          return runnable ? { ...INBOX_CHOICE, sessionId } : null;
         }
       : undefined,
   };

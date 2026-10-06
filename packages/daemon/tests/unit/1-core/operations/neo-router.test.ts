@@ -13,6 +13,7 @@ import {
   neoRouteCandidates,
   pickNeoHolder,
   renderNeoRouteContext,
+  runnableNeoHolders,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -131,6 +132,26 @@ describe('renderNeoRouteContext', () => {
       .split('\n');
     expect(turns.length).toBeLessThan(40);
     expect(turns.join('\n').length).toBeLessThanOrEqual(3_000);
+  });
+});
+
+describe('runnableNeoHolders', () => {
+  test('drops holders whose provider cannot run, keeping unknown ones', () => {
+    const glm = { ...drivers, provider: 'glm' };
+    const opus = { ...youtube, provider: 'anthropic' };
+    const unset = { ...drivers, concernId: 'legacy' };
+    expect(
+      runnableNeoHolders(
+        [glm, opus, unset],
+        new Map([
+          ['glm', true],
+          ['anthropic', false],
+        ])
+      ).map((holder) => holder.concernId)
+    ).toEqual(['drivers']);
+    expect(runnableNeoHolders([glm], new Map()).map((holder) => holder.concernId)).toEqual([
+      'drivers',
+    ]);
   });
 });
 
