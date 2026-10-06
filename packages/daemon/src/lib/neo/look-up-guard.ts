@@ -202,11 +202,42 @@ function tooBroad(raw: string, scope: LookUpScope): boolean {
   return within(scope.home, path) || path === sep;
 }
 
+const SECRET_SAMPLES = [
+  '.env',
+  '.env.local',
+  'server.pem',
+  'deploy.key',
+  'id_rsa',
+  'id_ed25519',
+  '.npmrc',
+  '.netrc',
+  'secrets.json',
+  'credentials.yaml',
+];
+
+function globCouldMatchSecret(segment: string): boolean {
+  if (!/[*?[{]/.test(segment) || /^[*?]+$/.test(segment)) return false;
+  const source = segment
+    .replace(/[.+^$()|\\]/g, '\\$&')
+    .replace(/\{([^}]*)\}/g, (_match, options: string) => `(${options.split(',').join('|')})`)
+    .replace(/\*+/g, '.*')
+    .replace(/\?/g, '.');
+  try {
+    const glob = new RegExp(`^${source}$`);
+    return SECRET_SAMPLES.some((name) => glob.test(name));
+  } catch {
+    return true;
+  }
+}
+
 function patternNamesSecret(pattern: string): boolean {
   return pattern
     .split('/')
     .some(
-      (segment) => secretName(staticPrefix(segment)) || secretName(segment.replace(/[*?]/g, ''))
+      (segment) =>
+        secretName(staticPrefix(segment)) ||
+        secretName(segment.replace(/[*?]/g, '')) ||
+        globCouldMatchSecret(segment)
     );
 }
 
@@ -242,6 +273,7 @@ function secretArgument(words: readonly string[], dir: string, scope: LookUpScop
         (part) =>
           part &&
           (secretName(basename(part)) ||
+            patternNamesSecret(part) ||
             (/^[/~]/.test(part) && isSecretPath(part, here)) ||
             (existsSync(resolvePath(part, here)) && isSecretPath(part, here)))
       ) ?? null
