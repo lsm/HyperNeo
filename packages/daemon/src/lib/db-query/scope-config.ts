@@ -490,6 +490,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'global_settings',
   'daemon_config',
   'session_counters',
+  'task_message_rows',
   'providers',
   'provider_credentials',
   'task_group_events',

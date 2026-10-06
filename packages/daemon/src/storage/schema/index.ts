@@ -22,6 +22,7 @@ import { createSessionIncarnationTable } from './m290-session-incarnations.ts';
 import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
+import { createTaskMessageRows } from './task-message-rows.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -908,6 +909,7 @@ export function createTables(db: BunDatabase): void {
   runMigration260(db);
   createSessionCounters(db);
   backfillSessionCounters(db);
+  createTaskMessageRows(db);
 
   createIndexes(db);
 }

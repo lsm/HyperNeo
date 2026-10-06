@@ -1,19 +1,20 @@
-import { runMigration260 } from '../../../src/storage/schema/m260-direct-start-requests';
-import { runMigration258 } from '../../../src/storage/schema/m258-direct-process-ownership';
-import { runMigration257 } from '../../../src/storage/schema/m257-direct-outcome-job';
-import { runMigration256 } from '../../../src/storage/schema/m256-direct-finalization';
-import { runMigration255 } from '../../../src/storage/schema/m255-task-lifecycle-generation';
-import { runMigration253 } from '../../../src/storage/schema/m253-direct-kickoff-dispatches';
-import { runMigration254 } from '../../../src/storage/schema/m254-direct-stop-verification';
-import { runMigration252 } from '../../../src/storage/schema/m252-direct-kickoff-intents';
-import { runMigration251 } from '../../../src/storage/schema/m251-direct-session-provenance';
-import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-requests';
-import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
-import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
-import { createSessionCounters } from '../../../src/storage/schema/session-counters';
+import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
+import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-requests';
+import { runMigration251 } from '../../../src/storage/schema/m251-direct-session-provenance';
+import { runMigration252 } from '../../../src/storage/schema/m252-direct-kickoff-intents';
+import { runMigration253 } from '../../../src/storage/schema/m253-direct-kickoff-dispatches';
+import { runMigration254 } from '../../../src/storage/schema/m254-direct-stop-verification';
+import { runMigration255 } from '../../../src/storage/schema/m255-task-lifecycle-generation';
+import { runMigration256 } from '../../../src/storage/schema/m256-direct-finalization';
+import { runMigration257 } from '../../../src/storage/schema/m257-direct-outcome-job';
+import { runMigration258 } from '../../../src/storage/schema/m258-direct-process-ownership';
+import { runMigration260 } from '../../../src/storage/schema/m260-direct-start-requests';
 import { createSessionIncarnationTable } from '../../../src/storage/schema/m290-session-incarnations';
+import { createSessionCounters } from '../../../src/storage/schema/session-counters';
+import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
+import { createTaskMessageRows } from '../../../src/storage/schema/task-message-rows';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
@@ -698,6 +699,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_message_replacements(session_id, target_uuid)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
 		ON sdk_message_replacements(task_id, target_uuid)`);
+  createTaskMessageRows(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
