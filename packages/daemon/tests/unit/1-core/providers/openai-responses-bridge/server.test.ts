@@ -2973,7 +2973,7 @@ describe('openai-responses-bridge server', () => {
             },
             { type: 'function_call', call_id: 'c1', name: 'foo', arguments: '{}' },
             { type: 'function_call_output', call_id: 'c1', output: '{}' },
-            { type: 'reasoning', encrypted_content: 'enc' },
+            { type: 'reasoning', summary: [], encrypted_content: 'enc' },
           ],
         };
 
