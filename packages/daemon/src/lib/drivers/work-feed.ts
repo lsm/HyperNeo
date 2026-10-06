@@ -3,7 +3,7 @@ import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   dropWorkFeedSession,
-  forgetWorkFeedOffsets,
+  rereadWorkFeedPaths,
   readWorkFeedOffsets,
   saveWorkFeedChunk,
   type WorkFeedKind,
@@ -121,11 +121,20 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   const gone = vanishedFeedPaths(root, known);
   for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
   if (!source.sharesTurnsWithSiblings || gone.length === 0) return [];
-  const forgotten = [...known.keys()].filter(
+  const reread = [...known.keys()].filter(
     (path) => path.startsWith(`${root}${sep}`) && !gone.includes(path)
   );
-  forgetWorkFeedOffsets(db, forgotten);
-  return forgotten;
+  rereadWorkFeedPaths(db, reread);
+  return reread;
+}
+
+export function pendingFeedPaths(
+  root: string,
+  offsets: ReadonlyMap<string, WorkFeedOffset>
+): string[] {
+  return [...offsets].flatMap(([path, offset]) =>
+    offset.size === -1 && path.startsWith(`${root}${sep}`) ? [path] : []
+  );
 }
 
 export function withKnownFeedFiles(

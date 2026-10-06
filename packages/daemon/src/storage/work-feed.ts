@@ -78,11 +78,11 @@ export function dropWorkFeedSession(
   })();
 }
 
-export function forgetWorkFeedOffsets(db: BunDatabase, paths: readonly string[]): void {
+export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): void {
   if (paths.length === 0) return;
-  db.prepare('DELETE FROM work_feed_offsets WHERE path IN (SELECT value FROM json_each(?))').run(
-    JSON.stringify(paths)
-  );
+  db.prepare(
+    'UPDATE work_feed_offsets SET offset = 0, size = -1 WHERE path IN (SELECT value FROM json_each(?))'
+  ).run(JSON.stringify(paths));
 }
 
 export function purgeWorkFeedSessions(
