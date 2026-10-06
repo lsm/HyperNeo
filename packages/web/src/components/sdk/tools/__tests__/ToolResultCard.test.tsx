@@ -1661,6 +1661,27 @@ footer line 2`;
       expect(screen.getByText(/FULL TEXT/)).toBeTruthy();
     });
 
+    it('offers the full output on a trimmed Read too', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="tool-2"
+          input={{ file_path: '/repo/big.log' }}
+          output={{
+            type: 'tool_result',
+            tool_use_id: 'tool-2',
+            content: 'first lines',
+            output_capped: { chars: 300 * 1024 },
+          }}
+          defaultExpanded={true}
+          messageUuid="msg-2"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.getByText(/Showing the first 16 KB of 300 KB/)).toBeTruthy();
+      expect(screen.getByText('Show full output')).toBeTruthy();
+    });
+
     it('shows no notice for output that was not trimmed', () => {
       render(
         <ToolResultCard

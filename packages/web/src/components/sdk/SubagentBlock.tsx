@@ -569,7 +569,13 @@ function NestedMessageRenderer({
             input: unknown;
           };
           const resultData = toolResultsMap?.get(toolBlock.id) as
-            | { content: unknown; structuredOutput?: unknown; isOutputRemoved?: boolean }
+            | {
+                content: unknown;
+                structuredOutput?: unknown;
+                isOutputRemoved?: boolean;
+                messageUuid?: string;
+                sessionId?: string;
+              }
             | undefined;
           const taskNotification = taskNotificationsMap?.get(toolBlock.id);
           const taskProgress = taskProgressMap?.get(toolBlock.id);
@@ -587,6 +593,8 @@ function NestedMessageRenderer({
               }
               variant="default"
               isOutputRemoved={resultData?.isOutputRemoved || false}
+              messageUuid={resultData?.messageUuid}
+              sessionId={resultData?.sessionId}
               taskNotification={taskNotification}
               taskProgress={taskProgress}
               isRunning={isRunningTool}

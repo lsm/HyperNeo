@@ -18,6 +18,16 @@ function capDeep(value: unknown, limit: number): Capped<unknown> {
   if (value && typeof value === 'object') {
     const record = value as Json;
     const source = record.source as Json | undefined;
+    const file = record.file as Json | undefined;
+    if (typeof file?.base64 === 'string' && file.base64.length > limit)
+      return {
+        value: {
+          ...record,
+          file: { ...file, base64: '' },
+          image_capped: { chars: file.base64.length },
+        },
+        cut: file.base64.length,
+      };
     if (record.type === 'image' && typeof source?.data === 'string' && source.data.length > limit)
       return {
         value: { type: 'image', image_capped: { chars: source.data.length } },
@@ -43,15 +53,6 @@ function capBlock(block: unknown, limit: number): Capped<unknown> {
       ? {
           value: { ...record, content: content.value, output_capped: { chars: content.cut } },
           cut: content.cut,
-        }
-      : { value: block, cut: 0 };
-  }
-  if (record.type === 'tool_use') {
-    const input = capDeep(record.input, limit);
-    return input.cut
-      ? {
-          value: { ...record, input: input.value, input_capped: { chars: input.cut } },
-          cut: input.cut,
         }
       : { value: block, cut: 0 };
   }

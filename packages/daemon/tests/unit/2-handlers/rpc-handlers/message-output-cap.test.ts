@@ -59,27 +59,26 @@ describe('capMessageOutput', () => {
     ]);
   });
 
-  test('trims large tool inputs on assistant messages', () => {
+  test('leaves tool inputs whole so Write and Edit cards render correctly', () => {
     const message = {
       type: 'assistant',
       message: {
         content: [{ type: 'tool_use', id: 't1', name: 'Write', input: { content: big } }],
       },
     };
-    expect(capMessageOutput(message, 10) as unknown).toEqual({
-      type: 'assistant',
-      message: {
-        content: [
-          {
-            type: 'tool_use',
-            id: 't1',
-            name: 'Write',
-            input: { content: 'x'.repeat(10) },
-            input_capped: { chars: 40 },
-          },
-        ],
-      },
-      output_capped: true,
+    expect(capMessageOutput(message, 10)).toBe(message);
+  });
+
+  test('empties oversized Read image data instead of corrupting it', () => {
+    const message = {
+      type: 'user',
+      message: { content: [] },
+      tool_use_result: { type: 'image', file: { base64: big, type: 'image/png' } },
+    };
+    expect(capMessageOutput(message, 10).tool_use_result as unknown).toEqual({
+      type: 'image',
+      file: { base64: '', type: 'image/png' },
+      image_capped: { chars: 40 },
     });
   });
 

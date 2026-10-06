@@ -402,6 +402,19 @@ function ToolResultCardBody({
 
       {isExpanded && (
         <div class={cn('p-3 border-t bg-surface space-y-3', colors.border)}>
+          {capped && (
+            <div class="flex items-center gap-2 text-xs text-fg-muted">
+              <span>Showing the first 16 KB of {formatChars(capped.chars)}.</span>
+              <button
+                type="button"
+                onClick={capped.onShowFull}
+                disabled={capped.loading}
+                class="font-medium text-accent hover:underline disabled:opacity-50"
+              >
+                {capped.loading ? 'Loading…' : 'Show full output'}
+              </button>
+            </div>
+          )}
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
@@ -628,19 +641,6 @@ function ToolResultCardBody({
                       </button>
                     )}
                   </div>
-                  {capped && (
-                    <div class="mb-2 flex items-center gap-2 text-xs text-fg-muted">
-                      <span>Showing the first 16 KB of {formatChars(capped.chars)}.</span>
-                      <button
-                        type="button"
-                        onClick={capped.onShowFull}
-                        disabled={capped.loading}
-                        class="font-medium text-accent hover:underline disabled:opacity-50"
-                      >
-                        {capped.loading ? 'Loading…' : 'Show full output'}
-                      </button>
-                    </div>
-                  )}
                   {isOutputRemoved ? (
                     <div class="p-3 rounded border border-warning/40 bg-warning/10">
                       <div class="flex items-start gap-2">
