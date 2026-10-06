@@ -792,6 +792,22 @@ describe('NodeExecutionRepository', () => {
       expect(calls).toEqual([{ table: 'node_executions', scope: undefined }]);
     });
 
+    it('touchLastActivity scopes its change to the agent session so other task feeds skip it', () => {
+      const { repo: r, calls } = makeReactiveRepo();
+      const exec = r.create({
+        workflowRunId,
+        workflowNodeId: 'n-touch-scope',
+        agentName: 'coder',
+        agentId,
+        agentSessionId: 'session-touch-scope',
+      });
+      calls.length = 0;
+      r.touchLastActivity(exec.id, 1_700_000_000_000);
+      expect(calls).toEqual([
+        { table: 'node_executions', scope: { sessionId: 'session-touch-scope' } },
+      ]);
+    });
+
     it('update() notifies node_executions on a real change', () => {
       const { repo: r, calls } = makeReactiveRepo();
       const exec = createExecution();
