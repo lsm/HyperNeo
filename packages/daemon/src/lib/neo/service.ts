@@ -222,7 +222,7 @@ export class NeoService {
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
-    this.unsubscribe = events.subscribe(
+    const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
         const status = processingState?.status;
@@ -260,12 +260,31 @@ export class NeoService {
       },
       { subscriberName: 'neo-work-return' }
     );
+    const offDeleted = events.subscribe(
+      'session.deleted',
+      ({ sessionId }) => this.forgetSession(sessionId),
+      { subscriberName: 'neo-session-forget' }
+    );
+    this.unsubscribe = () => {
+      offUpdated();
+      offDeleted();
+    };
+  }
+
+  private forgetSession(sessionId: string): void {
+    this.processingStatus.delete(sessionId);
+    this.interruptedSessions.delete(sessionId);
+    const timer = this.replyRechecks.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.replyRechecks.delete(sessionId);
   }
 
   dispose() {
     this.unsubscribe();
     for (const timer of this.replyRechecks.values()) clearTimeout(timer);
     this.replyRechecks.clear();
+    this.processingStatus.clear();
+    this.interruptedSessions.clear();
   }
 
   private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
