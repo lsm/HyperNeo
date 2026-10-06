@@ -1,52 +1,51 @@
+import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import type { NeoHolder } from './router.ts';
+import type { NeoHolder, NeoRouteAnswer } from './router.ts';
 
 const log = new Logger('neo-route-classifier');
-const ASK_CHARS = 1_000;
-const SUMMARY_CHARS = 240;
+const ASK_CHARS = 2_000;
 const CLASSIFY_TIMEOUT_MS = 4_000;
 
-export function buildNeoRoutePrompt(text: string, candidates: readonly NeoHolder[]): string {
-  const topics = candidates
-    .map(
-      (holder) =>
-        `- id: ${holder.concernId}\n  title: ${holder.title.slice(0, 120)}\n  summary: ${holder.summary.slice(0, SUMMARY_CHARS) || '(none)'}`
-    )
-    .join('\n');
-  return `Route a user's message to the topic that should answer it.
+export function buildNeoRoutePrompt(
+  text: string,
+  candidates: readonly NeoHolder[],
+  context: string
+): string {
+  const ids = ['main', ...candidates.map((holder) => holder.concernId)].join(', ');
+  return `Route the user's new message in an ongoing conversation to whoever should answer it.
 
-Message:
-${text.slice(0, ASK_CHARS)}
+${context}
 
-Topics:
-${topics}
+New message:
+${neoExcerpt(text, ASK_CHARS)}
 
-Reply with exactly one id and nothing else:
-- a topic id if the message clearly continues that topic;
-- inbox (when listed) if it is a self-contained one-off question that needs no continuing topic;
-- main if it starts a new continuing topic, spans several topics, or you are unsure.`;
+Reply with exactly one of these ids and nothing else: ${ids}
+- If it continues a recent turn (a follow-up, "yes", "how about X now", a reference to an earlier thing), the topic of that turn; main if that turn was main.
+- If it answers a WAITING ON YOU question, that topic.
+- If it stands alone and clearly belongs to one topic, that topic.
+- inbox (when listed) only for a self-contained one-off question unrelated to the recent turns.
+- main for a new subject, when two topics are waiting and it could answer either, or when unsure.`;
 }
 
-export function readNeoRouteAnswer(
-  raw: string,
-  candidates: readonly NeoHolder[]
-): NeoHolder | null {
+export function readNeoRouteAnswer(raw: string, candidates: readonly NeoHolder[]): NeoRouteAnswer {
   const answer = raw
     .trim()
     .replace(/^[`"']+|[`"']+$/g, '')
     .trim();
+  if (answer === 'main') return 'main';
   return candidates.find((holder) => holder.concernId === answer) ?? null;
 }
 
 async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
+  context: string,
   abortController: AbortController
-): Promise<NeoHolder | null> {
+): Promise<NeoRouteAnswer> {
   const providers = getProviderService();
   let restore: Awaited<ReturnType<typeof providers.applyEnvVarsToProcessForProvider>> = {};
   try {
@@ -65,7 +64,7 @@ async function askNeoRouteModel(
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
     const run = query({
-      prompt: buildNeoRoutePrompt(text, candidates),
+      prompt: buildNeoRoutePrompt(text, candidates, context),
       options: {
         model: provider === 'glm' ? 'haiku' : config.modelId,
         maxTurns: 1,
@@ -105,9 +104,10 @@ async function askNeoRouteModel(
 export async function classifyNeoRoute(
   text: string,
   candidates: readonly NeoHolder[],
+  context: string,
   timeoutMs = CLASSIFY_TIMEOUT_MS
-): Promise<NeoHolder | null> {
-  if (candidates.length === 0 || process.env.NODE_ENV === 'test') return null;
+): Promise<NeoRouteAnswer> {
+  if (process.env.NODE_ENV === 'test') return null;
   const abortController = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
@@ -117,7 +117,10 @@ export async function classifyNeoRoute(
     }, timeoutMs);
   });
   try {
-    return await Promise.race([askNeoRouteModel(text, candidates, abortController), timeout]);
+    return await Promise.race([
+      askNeoRouteModel(text, candidates, context, abortController),
+      timeout,
+    ]);
   } finally {
     clearTimeout(timer);
   }

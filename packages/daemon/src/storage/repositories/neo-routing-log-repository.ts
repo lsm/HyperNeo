@@ -132,13 +132,22 @@ export class NeoRoutingLogRepository {
     );
   }
 
-  latest(): NeoRoute | null {
-    if (!this.ready()) return null;
-    return (
-      (this.db
-        .prepare(`SELECT ${columns} FROM neo_routing_log ORDER BY id DESC LIMIT 1`)
-        .get() as NeoRoute | null) ?? null
-    );
+  recent(limit: number): NeoRoute[] {
+    if (!this.ready()) return [];
+    return this.db
+      .prepare(`SELECT ${columns} FROM neo_routing_log ORDER BY id DESC LIMIT ?`)
+      .all(limit) as NeoRoute[];
+  }
+
+  latestPerTopic(): NeoRoute[] {
+    if (!this.ready()) return [];
+    return this.db
+      .prepare(
+        `SELECT ${columns} FROM neo_routing_log WHERE id IN (
+           SELECT MAX(id) FROM neo_routing_log GROUP BY COALESCE(concern_id, 'main'))
+         ORDER BY id DESC`
+      )
+      .all() as NeoRoute[];
   }
 
   recentAsks(concernId: string, limit: number): string[] {
