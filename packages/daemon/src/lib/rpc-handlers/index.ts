@@ -23,6 +23,12 @@ import {
   WORK_TURN_EMBED,
 } from '../drivers/turn-embedding.ts';
 import {
+  claudeProjectsRoot,
+  runClaudeFeed,
+  scheduleClaudeFeed,
+  WORK_FEED_CLAUDE,
+} from '../drivers/claude-feed.ts';
+import {
   codexSessionsRoot,
   runCodexFeed,
   scheduleCodexFeed,
@@ -1661,12 +1667,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
   );
+  deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => ({
+    ...(await runClaudeFeed(
+      deps.jobQueue,
+      deps.db.getDatabase(),
+      claudeProjectsRoot(),
+      Date.now()
+    )),
+  }));
   deps.jobProcessor.register(WORK_FEED_CODEX, async () => ({
     ...(await runCodexFeed(deps.jobQueue, deps.db.getDatabase(), codexSessionsRoot(), Date.now())),
   }));
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
     scheduleCodexFeed(deps.jobQueue);
+    scheduleClaudeFeed(deps.jobQueue);
     ensureNeoProject(deps.db.workspaceHistory);
   }
 

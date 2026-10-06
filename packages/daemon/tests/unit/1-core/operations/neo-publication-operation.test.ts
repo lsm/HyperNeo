@@ -320,10 +320,17 @@ describe('runtime-bound publication operation', () => {
         id: kind === 'unknown' ? 'missing' : 'work:1',
       };
       const result = await invoke({ ...draft, links: [link] }, caller(holder.sessionId, input));
+      const detail = {
+        unknown:
+          'work link "missing" does not exist; link only Neo concern, work or consultation ids, never work.find refs or session ids',
+        'foreign-ask':
+          'work link "work:1" was not started for this ask; link only work or consultations this ask created',
+        'foreign-concern': 'work link "work:1" belongs to another concern',
+      }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'
           ? { kind: 'failed', code: 'invalid_input' }
-          : { value: { accepted: false, reason: 'invalid_scene_reference' } }
+          : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
       );
       expect(ledger.list(conversationId)).toEqual([]);
       expect(notify).not.toHaveBeenCalled();
@@ -337,7 +344,11 @@ describe('runtime-bound publication operation', () => {
         { ...draft, links: [{ label: 'Other', kind: 'concern', id: 'b' }] },
         caller(holder.sessionId, 'holder-human')
       )
-    ).toEqual({ accepted: false, reason: 'invalid_scene_reference' });
+    ).toEqual({
+      accepted: false,
+      reason: 'invalid_scene_reference',
+      detail: 'concern link "b" belongs to another concern',
+    });
   });
 
   test.each(['pending', 'reported', 'failed', 'expired'] as const)(

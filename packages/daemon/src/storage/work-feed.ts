@@ -68,12 +68,31 @@ export function dropWorkFeedSession(
   kind: WorkFeedKind,
   sessionId: string,
   path: string
-): void {
-  db.transaction(() => {
-    db.prepare('DELETE FROM message_search_content WHERE kind = ? AND session_id = ?').run(
-      kind,
-      sessionId
-    );
+): number {
+  return db.transaction(() => {
+    const dropped = db
+      .prepare('DELETE FROM message_search_content WHERE kind = ? AND session_id = ?')
+      .run(kind, sessionId).changes;
     db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
+    return dropped;
   })();
+}
+
+export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): void {
+  if (paths.length === 0) return;
+  db.prepare(
+    'UPDATE work_feed_offsets SET offset = 0, size = -1 WHERE path IN (SELECT value FROM json_each(?))'
+  ).run(JSON.stringify(paths));
+}
+
+export function purgeWorkFeedSessions(
+  db: BunDatabase,
+  kind: WorkFeedKind,
+  sessionIds: readonly string[]
+): void {
+  if (sessionIds.length === 0) return;
+  db.prepare(
+    `DELETE FROM message_search_content
+      WHERE kind = ? AND session_id IN (SELECT value FROM json_each(?))`
+  ).run(kind, JSON.stringify(sessionIds));
 }

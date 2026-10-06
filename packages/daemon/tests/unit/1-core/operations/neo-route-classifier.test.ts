@@ -184,22 +184,25 @@ describe('chooseNeoRoute with a classifier', () => {
       })
     );
     expect(seen).toEqual(['drivers,youtube']);
-    expect(route).toMatchObject({ concernId: 'youtube', signal: 'classifier' });
+    expect(route.choice).toMatchObject({ concernId: 'youtube', signal: 'classifier' });
   });
 
-  test('stays with main Neo when the classifier says main or fails', async () => {
-    expect(
-      await chooseNeoRoute(
-        'which one?',
-        deps(async () => 'main')
+  test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {
+    const verdicts = ['main', null, 'timeout', 'failed'] as const;
+    const routes = await Promise.all(
+      verdicts.map((verdict) =>
+        chooseNeoRoute(
+          'which one?',
+          deps(async () => verdict)
+        )
       )
-    ).toBeNull();
-    expect(
-      await chooseNeoRoute(
-        'which one?',
-        deps(async () => null)
-      )
-    ).toBeNull();
+    );
+    expect(routes).toEqual([
+      { choice: null, fallback: 'classifier' },
+      { choice: null, fallback: 'classifier-unanswered' },
+      { choice: null, fallback: 'classifier-timeout' },
+      { choice: null, fallback: 'classifier-failed' },
+    ]);
   });
 });
 
@@ -231,7 +234,7 @@ describe('chooseNeoRoute with an inbox', () => {
     });
     expect(offered).toEqual([[NEO_INBOX_ID]]);
     expect(opened).toBe(1);
-    expect(route).toMatchObject({
+    expect(route.choice).toMatchObject({
       concernId: NEO_INBOX_ID,
       sessionId: 'neo:inbox',
       signal: 'classifier',
@@ -257,7 +260,7 @@ describe('chooseNeoRoute with an inbox', () => {
       },
       inboxRunnable: async () => false,
     });
-    expect([route, offered, opened]).toEqual([null, [['drivers']], 0]);
+    expect([route.choice, offered, opened]).toEqual([null, [['drivers']], 0]);
   });
 
   test('never matches the inbox by embedding', async () => {
@@ -272,6 +275,6 @@ describe('chooseNeoRoute with an inbox', () => {
         return Float32Array.from([1, 0]);
       },
     });
-    expect([route, embedded]).toEqual([null, []]);
+    expect([route.choice, embedded]).toEqual([null, []]);
   });
 });

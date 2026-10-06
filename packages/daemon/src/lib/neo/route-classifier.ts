@@ -8,7 +8,7 @@ import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { DEFAULT_NEO_ROUTE_TIMEOUT_MS } from '@hyperneo/shared';
-import type { NeoHolder, NeoRouteAnswer } from './router.ts';
+import type { NeoHolder, NeoRouteAnswer, NeoRouteVerdict } from './router.ts';
 
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 2_000;
@@ -142,7 +142,7 @@ async function askNeoRouteModel(
   context: string,
   abortController: AbortController,
   choice: NeoRouteModel | undefined
-): Promise<NeoRouteAnswer> {
+): Promise<NeoRouteVerdict> {
   const providers = getProviderService();
   let restore: Awaited<ReturnType<typeof providers.applyEnvVarsToProcessForProvider>> = {};
   try {
@@ -207,7 +207,7 @@ async function askNeoRouteModel(
     return null;
   } catch (error) {
     log.warn('Neo route classification failed:', error);
-    return null;
+    return 'failed';
   } finally {
     try {
       providers.restoreEnvVars(restore);
@@ -221,14 +221,14 @@ export async function classifyNeoRoute(
   context: string,
   choice?: NeoRouteModel,
   timeoutMs = DEFAULT_NEO_ROUTE_TIMEOUT_MS
-): Promise<NeoRouteAnswer> {
+): Promise<NeoRouteVerdict> {
   if (process.env.NODE_ENV === 'test') return null;
   const abortController = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolve) => {
+  const timeout = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => {
+      resolve('timeout');
       abortController.abort();
-      resolve(null);
     }, timeoutMs);
   });
   try {

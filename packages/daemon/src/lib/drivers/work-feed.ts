@@ -3,6 +3,7 @@ import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   dropWorkFeedSession,
+  rereadWorkFeedPaths,
   readWorkFeedOffsets,
   saveWorkFeedChunk,
   type WorkFeedKind,
@@ -23,6 +24,7 @@ export interface FeedFileMeta {
 export interface FeedSource<Meta extends FeedFileMeta> {
   kind: WorkFeedKind;
   sessionOf(path: string): string;
+  sharesTurnsWithSiblings?: boolean;
   meta(path: string, head: string): Meta | null;
   turns(lines: readonly string[], meta: Meta): WorkFeedTurn[];
 }
@@ -33,9 +35,9 @@ export interface FeedFile {
   mtime: number;
 }
 
-export function listFeedFiles(root: string, since: number): FeedFile[] {
+export function listFeedFiles(root: string, since: number, depth = FEED_DEPTH): FeedFile[] {
   const files: FeedFile[] = [];
-  const walk = (dir: string, depth: number) => {
+  const walk = (dir: string, level: number) => {
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -51,7 +53,7 @@ export function listFeedFiles(root: string, since: number): FeedFile[] {
         continue;
       }
       if (stat.isDirectory()) {
-        if (depth < FEED_DEPTH) walk(path, depth + 1);
+        if (level < depth) walk(path, level + 1);
       } else if (name.endsWith('.jsonl') && stat.mtimeMs >= since) {
         files.push({ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) });
       }
@@ -114,10 +116,45 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   db: BunDatabase,
   root: string,
   source: FeedSource<Meta>
-): number {
-  const gone = vanishedFeedPaths(root, readWorkFeedOffsets(db));
-  for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
-  return gone.length;
+): string[] {
+  const known = readWorkFeedOffsets(db);
+  const gone = vanishedFeedPaths(root, known);
+  const dropped = gone.reduce(
+    (rows, path) => rows + dropWorkFeedSession(db, source.kind, source.sessionOf(path), path),
+    0
+  );
+  if (!source.sharesTurnsWithSiblings || dropped === 0) return [];
+  const reread = [...known.keys()].filter(
+    (path) => path.startsWith(`${root}${sep}`) && !gone.includes(path)
+  );
+  rereadWorkFeedPaths(db, reread);
+  return reread;
+}
+
+export function pendingFeedPaths(
+  root: string,
+  offsets: ReadonlyMap<string, WorkFeedOffset>
+): string[] {
+  return [...offsets].flatMap(([path, offset]) =>
+    offset.size === -1 && path.startsWith(`${root}${sep}`) ? [path] : []
+  );
+}
+
+export function withKnownFeedFiles(
+  listed: readonly FeedFile[],
+  known: readonly string[]
+): FeedFile[] {
+  const seen = new Set(listed.map((file) => file.path));
+  const extra = known.flatMap((path) => {
+    if (seen.has(path)) return [];
+    try {
+      const stat = statSync(path);
+      return stat.isFile() ? [{ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) }] : [];
+    } catch {
+      return [];
+    }
+  });
+  return [...listed, ...extra].sort((a, b) => b.mtime - a.mtime);
 }
 
 const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
