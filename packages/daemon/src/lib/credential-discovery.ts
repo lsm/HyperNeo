@@ -206,7 +206,10 @@ async function importLegacyProviders(
     const apiKey =
       process.env[mapping.envVar] ||
       (mapping.altEnvVar ? process.env[mapping.altEnvVar] : undefined);
-    if (!apiKey) continue;
+    const inheritsClaudeToken =
+      mapping.providerId === 'anthropic' &&
+      !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN);
+    if (!apiKey && !inheritsClaudeToken) continue;
 
     const configJson =
       mapping.providerId === 'kimi' ? JSON.stringify({ region: 'china' }) : undefined;
@@ -222,6 +225,7 @@ async function importLegacyProviders(
       configJson,
     });
 
+    if (!apiKey) continue;
     try {
       await credentialManager.storeApiKey(mapping.providerId, apiKey);
     } catch {}
