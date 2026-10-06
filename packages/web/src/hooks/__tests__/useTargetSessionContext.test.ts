@@ -43,8 +43,24 @@ describe('resolveTargetSessionId', () => {
     },
   ];
 
-  it.skip('returns null for target without matching agent name', () => {
+  it('returns null for target without matching agent name', () => {
     const target = { id: 'task-agent', kind: 'node_agent' as const, label: 'Task Agent' };
+    expect(resolveTargetSessionId(target, members)).toBe(null);
+  });
+
+  it('never resolves a nameless target to a member that only lacks a node execution', () => {
+    const target = { id: 'task-agent', kind: 'node_agent' as const, label: 'Task Agent' };
+    const nameless: SpaceTaskActivityMember[] = [{ ...members[0], role: '' }];
+    expect(resolveTargetSessionId(target, nameless)).toBe(null);
+  });
+
+  it("does not match a named target to a different agent's slot", () => {
+    const target = {
+      id: 'node:n1:reviewer',
+      kind: 'node_agent' as const,
+      label: 'Reviewer',
+      agentName: 'reviewer',
+    };
     expect(resolveTargetSessionId(target, members)).toBe(null);
   });
 
@@ -543,20 +559,20 @@ describe('useTargetSessionContext', () => {
     },
   ];
 
-  it.skip('resolves target without agentName to null', async () => {
+  it('resolves target without agentName to null', async () => {
     const { result } = renderHook(() =>
       useTargetSessionContext({
         taskId: 'task-1',
         targets: [taskAgentTarget],
         selectedTarget: taskAgentTarget,
-        activityMembers: [],
+        activityMembers: members,
       })
     );
 
     await waitFor(() => {
-      expect(result.current.targetSessionId).toBe('task-sess-123');
+      expect(result.current.targetSessionId).toBeNull();
     });
-    expect(result.current.isStarted).toBe(true);
+    expect(result.current.isStarted).toBe(false);
   });
 
   it('resolves node_agent to member sessionId', async () => {
