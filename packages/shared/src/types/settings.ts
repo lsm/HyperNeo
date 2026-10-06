@@ -89,8 +89,11 @@ export interface VoiceSettings {
   allowPrivateNetwork?: boolean;
 }
 
+export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
+
 export interface NeoSettings {
   routeModel?: { provider: string; model: string };
+  routeTimeoutMs?: number;
 }
 
 export interface ExaSettings {

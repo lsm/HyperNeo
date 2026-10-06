@@ -69,10 +69,14 @@ describe('useNeo intake client', () => {
     render(<IntakeProbe />);
     fireEvent.click(screen.getByRole('button', { name: 'Send ask' }));
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'neo.message.send',
-        input: { sessionId: 'neo:root', requestId: expect.any(String), content: 'Project A?' },
-      })
+      expect(request).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'neo.message.send',
+          input: { sessionId: 'neo:root', requestId: expect.any(String), content: 'Project A?' },
+        },
+        { timeout: 90_000 }
+      )
     );
     expect(request.mock.calls.some((call) => call[0] === 'message.send')).toBe(false);
   });

@@ -2,6 +2,7 @@ import type { MessageHub, MessageImage } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
+export const NEO_SEND_TIMEOUT_MS = 90_000;
 
 export type NeoDraft = { sessionId: string; text: string; images?: readonly MessageImage[] };
 type Submission = NeoDraft & { requestId: string };
@@ -73,7 +74,7 @@ export const submitNeoDraft = (superpipe({})('neo-submit-draft') as PipelineAPI)
   .pipe((getHub: () => Promise<MessageHub>) => getHub(), 'getHub', 'hub')
   .pipe(
     (payload: ReturnType<typeof neoDraftPayload>, hub: MessageHub) =>
-      invokeOperation<unknown>(hub, 'neo.message.send', payload),
+      invokeOperation<unknown>(hub, 'neo.message.send', payload, { timeout: NEO_SEND_TIMEOUT_MS }),
     ['payload', 'hub'],
     'response'
   )

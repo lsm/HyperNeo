@@ -148,6 +148,7 @@ describe('Neo live durable intake', () => {
           content: 'Project A: **what is next?**',
         },
       },
+      { timeout: 90_000 },
     ]);
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(''));
     submit('Family: plan Sunday');

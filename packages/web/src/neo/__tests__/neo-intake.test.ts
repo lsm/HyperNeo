@@ -130,19 +130,23 @@ describe('Neo intake submission lifecycle', () => {
     const { client, request } = setup();
     const result = await client.send({ sessionId: 'neo:root', text: '', images: [image] });
     expect(result.ok).toBe(true);
-    expect(request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'neo.message.send',
-      input: {
-        sessionId: 'neo:root',
-        requestId: result.ok ? result.requestId : '',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', data: image.data, media_type: image.media_type },
-          },
-        ],
+    expect(request).toHaveBeenCalledWith(
+      'operation.invoke',
+      {
+        name: 'neo.message.send',
+        input: {
+          sessionId: 'neo:root',
+          requestId: result.ok ? result.requestId : '',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', data: image.data, media_type: image.media_type },
+            },
+          ],
+        },
       },
-    });
+      { timeout: 90_000 }
+    );
   });
   it('retains the same UUID after an uncertain transport failure', async () => {
     const { client, request } = setup();
