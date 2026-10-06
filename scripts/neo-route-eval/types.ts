@@ -69,6 +69,8 @@ export interface EvalResult {
   latencyMs: number;
   serverLatencyMs?: number;
   servedModel?: string;
+  thinkingBlocks?: number;
+  rawAnswer?: string;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;

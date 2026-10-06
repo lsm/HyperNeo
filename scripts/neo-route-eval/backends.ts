@@ -3,8 +3,6 @@ import {
   isRunningUnderBun,
   resolveSDKCliPath,
 } from '../../packages/daemon/src/lib/agent/sdk-cli-resolver.ts';
-import { buildNeoRoutePrompt } from '../../packages/daemon/src/lib/neo/route-classifier.ts';
-import type { NeoHolder } from '../../packages/daemon/src/lib/neo/router.ts';
 import { AnthropicToCodexBridgeProvider } from '../../packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts';
 import { DeepSeekProvider } from '../../packages/daemon/src/lib/providers/deepseek-provider.ts';
 import { GlmProvider } from '../../packages/daemon/src/lib/providers/glm-provider.ts';
@@ -22,6 +20,8 @@ export interface RouteOutcome {
   outputTokens?: number;
   serverLatencyMs?: number;
   servedModel?: string;
+  thinkingBlocks?: number;
+  rawAnswer?: string;
 }
 
 export type RouteBackend = (evalCase: EvalCase) => Promise<RouteOutcome>;
@@ -61,6 +61,63 @@ export function systemOneBackend(
 }
 
 export type LlmPrompt = 'message-only' | 'context';
+const GLM_NATIVE_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+const GLM_ALWAYS_THINKING = new Set(['glm-5.3-flash']);
+
+export function glmNativeBackend(model: string, prompt: LlmPrompt): RouteBackend {
+  const apiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+  if (!apiKey) throw new Error('GLM_API_KEY is not set');
+  return async (evalCase) => {
+    const response = await fetch(GLM_NATIVE_URL, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        max_tokens: GLM_ALWAYS_THINKING.has(model) ? 1024 : 32,
+        ...(GLM_ALWAYS_THINKING.has(model)
+          ? { thinking: { type: 'enabled' }, reasoning_effort: 'low' }
+          : { thinking: { type: 'disabled' } }),
+        messages: [
+          { role: 'system', content: MINIMAL_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content:
+              prompt === 'context' ? buildContextPrompt(evalCase) : messageOnlyPrompt(evalCase),
+          },
+        ],
+      }),
+    });
+    if (!response.ok) throw new Error(`glm ${response.status}: ${await response.text()}`);
+    const body = (await response.json()) as {
+      model?: string;
+      choices: Array<{
+        finish_reason?: string;
+        message: { content?: string; reasoning_content?: string };
+      }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+      };
+    };
+    const choice = body.choices[0];
+    const message = choice?.message ?? {};
+    if (choice?.finish_reason === 'length' && !message.content?.trim()) {
+      throw new Error(`glm ${model} hit max_tokens before answering`);
+    }
+    const cached = body.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    return {
+      predicted: readRouteAnswer(message.content ?? '', evalCase),
+      servedModel: body.model,
+      thinkingBlocks: message.reasoning_content ? 1 : 0,
+      rawAnswer: (message.content ?? '').trim().slice(0, 200),
+      inputTokens: (body.usage?.prompt_tokens ?? 0) - cached,
+      cachedInputTokens: cached,
+      outputTokens: body.usage?.completion_tokens ?? 0,
+    };
+  };
+}
+
 export type LlmProvider = 'anthropic' | 'glm' | 'glm-flash' | 'deepseek' | 'codex';
 
 const DEEPSEEK_ROUTE_MODEL = 'deepseek-flash';
@@ -74,21 +131,34 @@ export const MINIMAL_SYSTEM_PROMPT =
 const CODEX_ROUTE_MODEL = 'gpt-5.6-luna';
 const CODEX_REASONING_EFFORT = 'none';
 
-const INBOX_HOLDER: NeoHolder = {
-  concernId: INBOX_ID,
-  sessionId: 'inbox',
+const LEGACY_ASK_CHARS = 1_000;
+const LEGACY_SUMMARY_CHARS = 240;
+
+const LEGACY_INBOX_TOPIC = {
+  id: INBOX_ID,
   title: 'Inbox',
   summary: 'Self-contained one-off questions that need no continuing topic.',
 };
 
 export function messageOnlyPrompt(evalCase: EvalCase): string {
-  const holders: NeoHolder[] = evalCase.topics.map((topic) => ({
-    concernId: topic.id,
-    sessionId: topic.id,
-    title: topic.title,
-    summary: topic.summary,
-  }));
-  return buildNeoRoutePrompt(evalCase.message, [...holders, INBOX_HOLDER]);
+  const topics = [...evalCase.topics, LEGACY_INBOX_TOPIC]
+    .map(
+      (topic) =>
+        `- id: ${topic.id}\n  title: ${topic.title.slice(0, 120)}\n  summary: ${topic.summary.slice(0, LEGACY_SUMMARY_CHARS) || '(none)'}`
+    )
+    .join('\n');
+  return `Route a user's message to the topic that should answer it.
+
+Message:
+${evalCase.message.slice(0, LEGACY_ASK_CHARS)}
+
+Topics:
+${topics}
+
+Reply with exactly one id and nothing else:
+- a topic id if the message clearly continues that topic;
+- inbox (when listed) if it is a self-contained one-off question that needs no continuing topic;
+- main if it starts a new continuing topic, spans several topics, or you are unsure.`;
 }
 
 function ambientEnv(): Record<string, string | undefined> {
@@ -147,7 +217,10 @@ function withThinkingOff(env: Record<string, string>): Record<string, string> {
 
 async function providerEnv(provider: LlmProvider): Promise<Record<string, string | undefined>> {
   if (provider === 'glm') {
-    return { ...ambientEnv(), ...new GlmProvider().buildSdkConfig('glm-5-turbo').envVars };
+    return {
+      ...ambientEnv(),
+      ...withThinkingOff(new GlmProvider().buildSdkConfig('glm-5-turbo').envVars),
+    };
   }
   if (provider === 'glm-flash') {
     return {
@@ -203,11 +276,14 @@ export function sdkLlmBackend(
     });
     let raw = '';
     let servedModel: string | undefined;
+    let thinkingBlocks = 0;
     let outcome: Omit<RouteOutcome, 'predicted'> = {};
     for await (const message of run) {
       if (message.type === 'assistant') {
         servedModel = message.message.model;
-        raw += (message.message.content as Array<{ type: string; text?: string }>)
+        const blocks = message.message.content as Array<{ type: string; text?: string }>;
+        thinkingBlocks += blocks.filter((block) => block.type === 'thinking').length;
+        raw += blocks
           .filter((block) => block.type === 'text')
           .map((block) => block.text ?? '')
           .join(' ');
@@ -226,6 +302,12 @@ export function sdkLlmBackend(
         };
       }
     }
-    return { predicted: readRouteAnswer(raw, evalCase), servedModel, ...outcome };
+    return {
+      predicted: readRouteAnswer(raw, evalCase),
+      servedModel,
+      thinkingBlocks,
+      rawAnswer: raw.trim().slice(0, 200),
+      ...outcome,
+    };
   };
 }
