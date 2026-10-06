@@ -9,8 +9,21 @@ import { GlmProvider } from '../../packages/daemon/src/lib/providers/glm-provide
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  buildNeoRoutePrompt,
+  neoRouteHttpCall,
+  readNeoRouteAnswer,
+  readNeoRouteStream,
+} from '../../packages/daemon/src/lib/neo/route-classifier.ts';
+import {
+  NEO_INBOX_ID,
+  NEO_INBOX_SUMMARY,
+  type NeoHolder,
+  renderNeoRouteContext,
+} from '../../packages/daemon/src/lib/neo/router.ts';
+import type { NeoRoute } from '../../packages/daemon/src/storage/repositories/neo-routing-log-repository.ts';
 import { buildContextPrompt, buildRouteRequest, INBOX_ID, readRouteAnswer } from './context.ts';
-import type { EvalCase, SystemOneRequest, SystemOneResponse } from './types.ts';
+import type { EvalCase, EvalTurn, SystemOneRequest, SystemOneResponse } from './types.ts';
 
 export interface RouteOutcome {
   predicted: string;
@@ -22,6 +35,8 @@ export interface RouteOutcome {
   servedModel?: string;
   thinkingBlocks?: number;
   rawAnswer?: string;
+  unparsed?: boolean;
+  stopReason?: string;
 }
 
 export type RouteBackend = (evalCase: EvalCase) => Promise<RouteOutcome>;
@@ -114,6 +129,118 @@ export function glmNativeBackend(model: string, prompt: LlmPrompt): RouteBackend
       inputTokens: (body.usage?.prompt_tokens ?? 0) - cached,
       cachedInputTokens: cached,
       outputTokens: body.usage?.completion_tokens ?? 0,
+    };
+  };
+}
+
+function toNeoRoute(turn: EvalTurn, index: number, awaiting: string | null): NeoRoute {
+  return {
+    id: index,
+    messageId: `turn-${index}`,
+    conversationId: 'eval',
+    askedAt: Date.parse(turn.at),
+    ask: turn.ask,
+    destination: turn.topic === 'main' ? 'main' : 'holder',
+    targetSessionId: turn.topic === 'main' ? null : turn.topic,
+    concernId: turn.topic === 'main' ? null : turn.topic,
+    signal: 'eval',
+    confidence: null,
+    outcome: turn.answer,
+    outcomeAt: Date.parse(turn.at),
+    askSummary: null,
+    awaiting,
+  };
+}
+
+export function productionRoutePrompt(evalCase: EvalCase): {
+  prompt: string;
+  options: NeoHolder[];
+} {
+  const holders: NeoHolder[] = evalCase.topics.map((topic) => ({
+    concernId: topic.id,
+    sessionId: topic.id,
+    title: topic.title,
+    summary: topic.summary,
+  }));
+  const waiting = new Map(evalCase.topics.map((topic) => [topic.id, topic.waiting ?? null]));
+  const routes = evalCase.turns.map((turn, index) =>
+    toNeoRoute(turn, index, waiting.get(turn.topic) ?? null)
+  );
+  const recent = [...routes].reverse();
+  const latest = [...new Set(recent.map((route) => route.concernId ?? 'main'))].map(
+    (topic) => recent.find((route) => (route.concernId ?? 'main') === topic) as NeoRoute
+  );
+  const context = renderNeoRouteContext(holders, holders, recent, latest, true);
+  const options = [
+    ...holders,
+    { concernId: NEO_INBOX_ID, sessionId: '', title: 'Inbox', summary: NEO_INBOX_SUMMARY },
+  ];
+  return { prompt: buildNeoRoutePrompt(evalCase.message, options, context), options };
+}
+
+export function productionDirectBackend(
+  baseUrl: string,
+  model: string,
+  apiKeyEnv: string
+): RouteBackend {
+  const apiKey = process.env[apiKeyEnv];
+  if (!apiKey) throw new Error(`${apiKeyEnv} is not set`);
+  return async (evalCase) => {
+    const { prompt, options } = productionRoutePrompt(evalCase);
+    const call = neoRouteHttpCall(baseUrl, model, { ANTHROPIC_AUTH_TOKEN: apiKey }, prompt, {
+      type: 'disabled',
+    });
+    if (!call) throw new Error(`${baseUrl} is not a direct-call host`);
+    const response = await fetch(call.url, {
+      method: 'POST',
+      headers: call.headers,
+      body: JSON.stringify(call.body),
+    });
+    if (!response.ok) throw new Error(`${model} ${response.status}: ${await response.text()}`);
+    const stream = await response.text();
+    const events = stream
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line.slice(5)) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      });
+    const thinkingBlocks = events.filter(
+      (event) =>
+        event.type === 'content_block_start' &&
+        (event.content_block as { type?: string } | undefined)?.type === 'thinking'
+    ).length;
+    const delta = events.find((event) => event.type === 'message_delta') as
+      | {
+          delta?: { stop_reason?: string };
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number;
+          };
+        }
+      | undefined;
+    const start = events.find((event) => event.type === 'message_start') as
+      | { message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number } } }
+      | undefined;
+    const raw = readNeoRouteStream(stream);
+    const answer = readNeoRouteAnswer(raw, options);
+    return {
+      predicted: answer === null || answer === 'main' ? 'main' : answer.concernId,
+      servedModel: model,
+      thinkingBlocks,
+      rawAnswer: raw.trim().slice(0, 200),
+      unparsed: answer === null,
+      stopReason: delta?.delta?.stop_reason,
+      inputTokens: delta?.usage?.input_tokens || start?.message?.usage?.input_tokens,
+      cachedInputTokens:
+        delta?.usage?.cache_read_input_tokens ??
+        start?.message?.usage?.cache_read_input_tokens ??
+        0,
+      outputTokens: delta?.usage?.output_tokens,
     };
   };
 }

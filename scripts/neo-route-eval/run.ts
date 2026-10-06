@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   glmNativeBackend,
+  productionDirectBackend,
   type RouteBackend,
   sdkLlmBackend,
   systemOneBackend,
@@ -24,6 +25,8 @@ const { values } = parseArgs({
     warmup: { type: 'string', default: '2' },
     limit: { type: 'string' },
     'reverse-options': { type: 'boolean', default: false },
+    'base-url': { type: 'string' },
+    'key-env': { type: 'string' },
   },
 });
 
@@ -58,7 +61,13 @@ function pickBackend(): RouteBackend {
       values.prompt === 'message-only' ? 'message-only' : 'context'
     );
   }
-  throw new Error('--backend must be systemone, sdk or glm-native');
+  if (values.backend === 'prod-direct') {
+    if (!values['base-url'] || !values.model || !values['key-env']) {
+      throw new Error('prod-direct needs --base-url, --model and --key-env');
+    }
+    return productionDirectBackend(values['base-url'], values.model, values['key-env']);
+  }
+  throw new Error('--backend must be systemone, sdk, glm-native or prod-direct');
 }
 
 async function main(): Promise<void> {
