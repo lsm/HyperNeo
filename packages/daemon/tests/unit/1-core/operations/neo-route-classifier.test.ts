@@ -211,6 +211,28 @@ describe('chooseNeoRoute with an inbox', () => {
     });
   });
 
+  test('does not offer an inbox that cannot run', async () => {
+    const offered: string[][] = [];
+    let opened = 0;
+    const route = await chooseNeoRoute('what time is it in Tokyo?', {
+      holders: () => [drivers],
+      recentTurns: () => [turn({ destination: 'main', concernId: null, awaiting: null })],
+      topicTurns: () => [],
+      recentAsks: () => [],
+      embed: async () => null,
+      classify: async (_text, options) => {
+        offered.push(options.map((holder) => holder.concernId));
+        return 'main';
+      },
+      inbox: async () => {
+        opened += 1;
+        return inboxHolder;
+      },
+      inboxRunnable: async () => false,
+    });
+    expect([route, offered, opened]).toEqual([null, [['drivers']], 0]);
+  });
+
   test('never matches the inbox by embedding', async () => {
     const embedded: string[] = [];
     const route = await chooseNeoRoute('anything', {

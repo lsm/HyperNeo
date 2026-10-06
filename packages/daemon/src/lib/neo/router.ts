@@ -53,6 +53,7 @@ export interface NeoRouterDeps {
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteAnswer>;
   inbox?(): Promise<NeoHolder | null>;
+  inboxRunnable?(): Promise<boolean>;
 }
 
 const profileVectors = new Map<string, Float32Array>();
@@ -217,9 +218,10 @@ export async function classifyNeoAsk(
   candidates: readonly NeoHolder[],
   context: string,
   scores: readonly Score[],
+  withInbox: boolean,
   deps: NeoRouterDeps
 ): Promise<Routed> {
-  const options = [...candidates, ...(deps.inbox ? [INBOX_CHOICE] : [])];
+  const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
   const chosen = deps.classify ? await deps.classify(text, options, context) : null;
   if (chosen === 'main') return { choice: null };
   if (!chosen) return { choice: pickNeoHolder(scores) };
@@ -250,13 +252,17 @@ const runNeoRoute = (superpipe({})('neo-route') as PipelineAPI)
   .pipe(scoreNeoHolders, ['text', 'holders', 'deps'], 'scores')
   .pipe(neoRouteCandidates, ['holders', 'scores', 'recent', 'latest'], 'candidates')
   .pipe(requireRouteQuestion, ['candidates', 'recent'], 'result:route')
-  .pipe((deps: NeoRouterDeps) => !!deps.inbox, 'deps', 'withInbox')
+  .pipe(
+    async (deps: NeoRouterDeps) => !!deps.inbox && (await deps.inboxRunnable?.()) !== false,
+    'deps',
+    'withInbox'
+  )
   .pipe(
     renderNeoRouteContext,
     ['holders', 'candidates', 'recent', 'latest', 'withInbox'],
     'context'
   )
-  .pipe(classifyNeoAsk, ['text', 'candidates', 'context', 'scores', 'deps'], 'route')
+  .pipe(classifyNeoAsk, ['text', 'candidates', 'context', 'scores', 'withInbox', 'deps'], 'route')
   .endAsync('route') as (text: string, deps: NeoRouterDeps) => Promise<Routed>;
 
 export async function chooseNeoRoute(
@@ -327,15 +333,18 @@ export function createNeoRouter(
             0
           );
           const sessionId = await openHolder(NEO_INBOX_ID);
-          const provider = db.getSession(sessionId)?.config.provider ?? 'anthropic';
-          const runnable =
-            process.env.NODE_ENV === 'test' ||
-            (await getProviderService()
-              .isProviderAvailable(provider)
-              .catch(() => false));
-          return runnable ? { ...INBOX_CHOICE, sessionId } : null;
+          return { ...INBOX_CHOICE, sessionId };
         }
       : undefined,
+    inboxRunnable: async () => {
+      if (process.env.NODE_ENV === 'test') return true;
+      const binding = repo.getBindingForConcern(NEO_INBOX_ID) ?? repo.getBindingForConcern(null);
+      const provider =
+        (binding ? db.getSession(binding.sessionId)?.config.provider : undefined) ?? 'anthropic';
+      return getProviderService()
+        .isProviderAvailable(provider)
+        .catch(() => false);
+    },
   };
   return (text) => chooseNeoRoute(text, deps);
 }
