@@ -521,247 +521,257 @@ export class ProviderService {
     );
   }
 
+  async getIsolatedEnvForModel(providerId: string, modelId: string): Promise<NodeJS.ProcessEnv> {
+    const preserve = providerId === 'anthropic';
+    const providerEnvVars = await this.getEnvVarsForModel(modelId, providerId);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    this.clearProviderRoutingEnvVars({ preserveUserSettings: preserve }, env);
+    this.applyEnvVars(providerEnvVars, { preserveApiKey: preserve }, env);
+    return { ...env, ...providerEnvVars };
+  }
+
   private applyEnvVars(
     envVars: ProviderEnvVars,
-    options: { preserveApiKey?: boolean } = {}
+    options: { preserveApiKey?: boolean } = {},
+    env: NodeJS.ProcessEnv = process.env
   ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
 
     if (envVars.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
-      original.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      original.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
       if (envVars.CLAUDE_CODE_OAUTH_TOKEN === '') {
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        delete env.CLAUDE_CODE_OAUTH_TOKEN;
       } else {
-        process.env.CLAUDE_CODE_OAUTH_TOKEN = envVars.CLAUDE_CODE_OAUTH_TOKEN;
+        env.CLAUDE_CODE_OAUTH_TOKEN = envVars.CLAUDE_CODE_OAUTH_TOKEN;
       }
     }
     if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
-      original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
-      process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
+      original.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
+      env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
     }
     if (envVars.ANTHROPIC_API_KEY !== undefined) {
       if (envVars.ANTHROPIC_API_KEY === '') {
-        original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-        process.env.ANTHROPIC_API_KEY = '';
+        original.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
+        env.ANTHROPIC_API_KEY = '';
       } else if (options.preserveApiKey) {
-        original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-        process.env.ANTHROPIC_API_KEY = envVars.ANTHROPIC_API_KEY;
+        original.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
+        env.ANTHROPIC_API_KEY = envVars.ANTHROPIC_API_KEY;
       } else {
-        original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
-        process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
+        original.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
+        env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
       }
     }
     if (envVars.ANTHROPIC_BASE_URL !== undefined) {
-      original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
-      process.env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
+      original.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
+      env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
     }
     if (envVars.ANTHROPIC_MODEL !== undefined) {
-      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
-      process.env.ANTHROPIC_MODEL = envVars.ANTHROPIC_MODEL;
+      original.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL;
+      env.ANTHROPIC_MODEL = envVars.ANTHROPIC_MODEL;
     }
     if (envVars.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
-      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
-      process.env.CLAUDE_CODE_SUBAGENT_MODEL = envVars.CLAUDE_CODE_SUBAGENT_MODEL;
+      original.CLAUDE_CODE_SUBAGENT_MODEL = env.CLAUDE_CODE_SUBAGENT_MODEL;
+      env.CLAUDE_CODE_SUBAGENT_MODEL = envVars.CLAUDE_CODE_SUBAGENT_MODEL;
     }
     if (envVars.ENABLE_TOOL_SEARCH !== undefined) {
-      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
-      process.env.ENABLE_TOOL_SEARCH = envVars.ENABLE_TOOL_SEARCH;
+      original.ENABLE_TOOL_SEARCH = env.ENABLE_TOOL_SEARCH;
+      env.ENABLE_TOOL_SEARCH = envVars.ENABLE_TOOL_SEARCH;
     }
     if (envVars.API_TIMEOUT_MS !== undefined) {
-      original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
-      process.env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
+      original.API_TIMEOUT_MS = env.API_TIMEOUT_MS;
+      env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
     }
     if (envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
       original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-        process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-      process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+      env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
         envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
     }
     if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
-      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
-        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+        delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       } else {
-        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+        env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
     if (envVars.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
-      original.ANTHROPIC_CUSTOM_HEADERS = process.env.ANTHROPIC_CUSTOM_HEADERS;
+      original.ANTHROPIC_CUSTOM_HEADERS = env.ANTHROPIC_CUSTOM_HEADERS;
       if (envVars.ANTHROPIC_CUSTOM_HEADERS === '') {
-        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+        delete env.ANTHROPIC_CUSTOM_HEADERS;
       } else {
-        process.env.ANTHROPIC_CUSTOM_HEADERS = envVars.ANTHROPIC_CUSTOM_HEADERS;
+        env.ANTHROPIC_CUSTOM_HEADERS = envVars.ANTHROPIC_CUSTOM_HEADERS;
       }
     }
     if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
+      original.ANTHROPIC_DEFAULT_SONNET_MODEL = env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+      env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
     }
     if (envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL;
     }
     if (envVars.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
+      original.ANTHROPIC_DEFAULT_OPUS_MODEL = env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+      env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
     }
 
-    this.saveClearDaemonPortEnvVars(original);
+    this.saveClearDaemonPortEnvVars(original, env);
 
     return original;
   }
 
   private clearProviderRoutingEnvVars(
-    options: { preserveUserSettings?: boolean } = {}
+    options: { preserveUserSettings?: boolean } = {},
+    env: NodeJS.ProcessEnv = process.env
   ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
     let changed = false;
 
     const clear = (key: keyof OriginalEnvVars): void => {
-      original[key] = process.env[key];
-      if (process.env[key] !== undefined) {
-        delete process.env[key];
+      original[key] = env[key];
+      if (env[key] !== undefined) {
+        delete env[key];
         changed = true;
       }
     };
 
     clear('ANTHROPIC_AUTH_TOKEN');
 
-    if (process.env.ANTHROPIC_MODEL !== undefined) {
-      original.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
+    if (env.ANTHROPIC_MODEL !== undefined) {
+      original.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredAnthropicModel === undefined ||
-        process.env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
+        env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
       ) {
-        delete process.env.ANTHROPIC_MODEL;
+        delete env.ANTHROPIC_MODEL;
       }
     }
 
-    if (process.env.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
-      original.CLAUDE_CODE_SUBAGENT_MODEL = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+    if (env.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
+      original.CLAUDE_CODE_SUBAGENT_MODEL = env.CLAUDE_CODE_SUBAGENT_MODEL;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredSubagentModel === undefined ||
-        process.env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
+        env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
       ) {
-        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+        delete env.CLAUDE_CODE_SUBAGENT_MODEL;
       }
     }
-    if (process.env.ENABLE_TOOL_SEARCH !== undefined) {
-      original.ENABLE_TOOL_SEARCH = process.env.ENABLE_TOOL_SEARCH;
+    if (env.ENABLE_TOOL_SEARCH !== undefined) {
+      original.ENABLE_TOOL_SEARCH = env.ENABLE_TOOL_SEARCH;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredToolSearch === undefined ||
-        process.env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
+        env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
       ) {
-        delete process.env.ENABLE_TOOL_SEARCH;
+        delete env.ENABLE_TOOL_SEARCH;
       }
     }
 
-    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
-      original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+    if (env.ANTHROPIC_BASE_URL !== undefined) {
+      original.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
       changed = true;
       if (
-        !isLocalDevProxyUrl(process.env.ANTHROPIC_BASE_URL) &&
+        !isLocalDevProxyUrl(env.ANTHROPIC_BASE_URL) &&
         (!options.preserveUserSettings ||
           userConfiguredBaseUrl === undefined ||
-          process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl)
+          env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl)
       ) {
-        delete process.env.ANTHROPIC_BASE_URL;
+        delete env.ANTHROPIC_BASE_URL;
       }
     }
 
-    if (process.env.API_TIMEOUT_MS !== undefined) {
-      original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
+    if (env.API_TIMEOUT_MS !== undefined) {
+      original.API_TIMEOUT_MS = env.API_TIMEOUT_MS;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredApiTimeout === undefined ||
-        process.env.API_TIMEOUT_MS !== userConfiguredApiTimeout
+        env.API_TIMEOUT_MS !== userConfiguredApiTimeout
       ) {
-        delete process.env.API_TIMEOUT_MS;
+        delete env.API_TIMEOUT_MS;
       }
     }
 
-    if (process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+    if (env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
       original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-        process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredDisableNonEssentialTraffic === undefined ||
-        process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !==
-          userConfiguredDisableNonEssentialTraffic
+        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== userConfiguredDisableNonEssentialTraffic
       ) {
-        delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+        delete env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       }
     }
 
-    if (process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
-      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    if (env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
+      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredAutoCompactWindow === undefined ||
-        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
+        env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
       ) {
-        delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+        delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
 
-    if (process.env.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
-      original.ANTHROPIC_CUSTOM_HEADERS = process.env.ANTHROPIC_CUSTOM_HEADERS;
+    if (env.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
+      original.ANTHROPIC_CUSTOM_HEADERS = env.ANTHROPIC_CUSTOM_HEADERS;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredCustomHeaders === undefined ||
-        process.env.ANTHROPIC_CUSTOM_HEADERS !== userConfiguredCustomHeaders
+        env.ANTHROPIC_CUSTOM_HEADERS !== userConfiguredCustomHeaders
       ) {
-        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+        delete env.ANTHROPIC_CUSTOM_HEADERS;
       }
     }
 
-    if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+    if (env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+      original.ANTHROPIC_DEFAULT_SONNET_MODEL = env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredDefaultSonnetModel === undefined ||
-        process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
       ) {
-        delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+        delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       }
     }
 
-    if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+    if (env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredDefaultHaikuModel === undefined ||
-        process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
       ) {
-        delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+        delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       }
     }
 
-    if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+    if (env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+      original.ANTHROPIC_DEFAULT_OPUS_MODEL = env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       changed = true;
       if (
         !options.preserveUserSettings ||
         userConfiguredDefaultOpusModel === undefined ||
-        process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
       ) {
-        delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+        delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       }
     }
 
-    this.saveClearDaemonPortEnvVars(original);
+    this.saveClearDaemonPortEnvVars(original, env);
     changed =
       changed ||
       original.PORT !== undefined ||
@@ -771,13 +781,16 @@ export class ProviderService {
     return changed ? original : {};
   }
 
-  private saveClearDaemonPortEnvVars(original: OriginalEnvVars): void {
-    original.PORT = process.env.PORT;
-    delete process.env.PORT;
-    original.HYPERNEO_PORT = process.env.HYPERNEO_PORT;
-    delete process.env.HYPERNEO_PORT;
-    original.NEOKAI_PORT = process.env.NEOKAI_PORT;
-    delete process.env.NEOKAI_PORT;
+  private saveClearDaemonPortEnvVars(
+    original: OriginalEnvVars,
+    env: NodeJS.ProcessEnv = process.env
+  ): void {
+    original.PORT = env.PORT;
+    delete env.PORT;
+    original.HYPERNEO_PORT = env.HYPERNEO_PORT;
+    delete env.HYPERNEO_PORT;
+    original.NEOKAI_PORT = env.NEOKAI_PORT;
+    delete env.NEOKAI_PORT;
   }
 
   restoreEnvVars(original: OriginalEnvVars): void {
