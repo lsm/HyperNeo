@@ -12,7 +12,7 @@ import type { NeoHolder, NeoRouteAnswer, NeoRouteVerdict } from './router.ts';
 
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 2_000;
-const ANSWER_TOKENS = 32;
+const ANSWER_TOKENS = 512;
 const ANTHROPIC_VERSION = '2023-06-01';
 let leanCwd: string | undefined;
 

@@ -68,7 +68,7 @@ describe('neoRouteHttpCall', () => {
       },
       body: {
         model: 'deepseek-v4-flash',
-        max_tokens: 32,
+        max_tokens: 512,
         stream: true,
         messages: [{ role: 'user', content: 'route this' }],
         thinking: { type: 'disabled' },
@@ -86,7 +86,7 @@ describe('neoRouteHttpCall', () => {
     );
     expect(call?.headers['x-api-key']).toBe('key');
     expect(call?.body).toMatchObject({
-      max_tokens: 16_032,
+      max_tokens: 16_512,
       thinking: { type: 'enabled', budget_tokens: 16_000 },
     });
     expect(
