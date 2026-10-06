@@ -192,7 +192,7 @@ describe('direct human publication prompt', () => {
     expect(root).toContain('consult its holder before giving the substantive answer');
     expect(root).toContain('Ask clarification questions in ordinary conversational text');
     expect(root).toContain('Do not ask for that permission again');
-    expect(holder).toContain('context holder (分身) for concern "research"');
+    expect(holder).toContain('context holder for concern "research"');
     expect(holder).toContain('Use the consultationId from that request, not a work id');
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
     expect(holder).toContain('Do not call AskUserQuestion during a consultation');

@@ -24,7 +24,10 @@ describe('Neo reply language guidance', () => {
     const holder = neoPrompt('mixed-name-concern');
     expect(root).toContain('Native question cards are not available to root Neo');
     expect(root).toContain('A new message is NOT a new concern');
-    expect(holder).toContain('You are the context holder (分身)');
+    expect(holder).toContain('You are the context holder for concern');
+    expect(holder).toContain('never mention concerns, topics, holders, the inbox or your role');
+    expect(holder).toContain("Reply in the language of the user's latest message.");
+    expect(holder).not.toContain('分身');
     expect(holder).toContain('You cannot consult other holders');
     for (const prompt of [root, holder]) {
       expect(prompt).toContain('Respond to the current input, not the whole visible backlog');
