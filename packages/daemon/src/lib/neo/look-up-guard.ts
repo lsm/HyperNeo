@@ -36,7 +36,8 @@ const SECRET_FILES = [
   '.profile',
 ];
 const SECRET_NAMES = ['.env', '.env.*', '*.pem', '*.key'];
-const UNSAFE_SHELL = /[<>`]|\$\(|--output\b/;
+const UNSAFE_SHELL = /[<>`$\n\r]|(?<!&)&(?!&)|--output\b/;
+const SECRET_SAMPLES = ['.env', '.env.local', 'server.pem', 'deploy.key'];
 const ALWAYS_ALLOWED = new Set(['WebSearch', 'WebFetch', 'AskUserQuestion']);
 
 export interface LookUpScope {
@@ -45,13 +46,43 @@ export interface LookUpScope {
   cwd: string;
 }
 
-export function neoSecretReadRules(scope: Pick<LookUpScope, 'dataDir'>): string[] {
+export function neoSecretReadRules(scope: Pick<LookUpScope, 'dataDir' | 'home'>): string[] {
   return [
     ...SECRET_DIRS.map((dir) => `~/${dir}/**`),
     ...SECRET_FILES.map((file) => `~/${file}`),
     ...SECRET_NAMES.map((name) => `~/**/${name}`),
-    `/${scope.dataDir}/**`,
+    dataDirRule(scope.dataDir, scope.home),
   ].map((path) => `Read(${path})`);
+}
+
+function dataDirRule(dataDir: string, home: string): string {
+  const rel = relative(home, dataDir);
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel}/**` : `/${dataDir}/**`;
+}
+
+function globMatches(glob: string, name: string): boolean {
+  const body = glob
+    .replace(/^(\*\*\/)+/, '')
+    .split('/')
+    .pop()!
+    .replace(/[.+^$()|\\]/g, '\\$&')
+    .replace(/\{([^}]*)\}/g, (_match, options: string) => `(${options.split(',').join('|')})`)
+    .replace(/\*+/g, '.*')
+    .replace(/\?/g, '.');
+  return new RegExp(`^${body}$`).test(name);
+}
+
+function grepDenial(input: Record<string, unknown>): string | null {
+  if (input.output_mode !== 'content') return null;
+  const glob = typeof input.glob === 'string' ? input.glob : '';
+  if (!glob)
+    return typeof input.type === 'string'
+      ? null
+      : 'show matching lines only with a glob or type filter';
+  if (glob.startsWith('!')) return 'show matching lines only with an including glob';
+  return SECRET_SAMPLES.some((name) => globMatches(glob, name))
+    ? 'that glob can match secret files'
+    : null;
 }
 
 function within(path: string, root: string): boolean {
@@ -89,7 +120,8 @@ function staticPrefix(pattern: string): string {
 }
 
 export function bashDenial(command: string, scope: LookUpScope): string | null {
-  if (UNSAFE_SHELL.test(command)) return 'redirects, substitutions and --output are not allowed';
+  if (UNSAFE_SHELL.test(command))
+    return 'redirects, variables, substitutions, background jobs, line breaks and --output are not allowed';
   const segments = command.split(/&&|\|\||;|\|/).map((segment) => segment.trim());
   const unknown = segments.find(
     (segment) =>
@@ -120,9 +152,8 @@ export function neoLookUpDenial(
     const pattern = staticPrefix(text('pattern'));
     if (isSecretPath(root, scope) || tooBroad(root, scope))
       return 'search inside a project folder, not home or a secrets folder';
-    return tool === 'Glob' && pattern && isSecretPath(pattern, scope)
-      ? 'that pattern points at secrets'
-      : null;
+    if (tool === 'Grep') return grepDenial(input);
+    return pattern && isSecretPath(pattern, scope) ? 'that pattern points at secrets' : null;
   }
   if (tool === 'Bash') return bashDenial(text('command'), scope);
   return `${tool} is not a look-up tool`;

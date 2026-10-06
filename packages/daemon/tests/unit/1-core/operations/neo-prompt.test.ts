@@ -5,7 +5,6 @@ import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
 import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
-import { getDataDir } from '../../../../src/lib/data-dir.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorAllowedTools,
@@ -65,7 +64,6 @@ describe('neoCoordinatorDeniedReads', () => {
         'Read(~/.claude/.credentials.json)',
         'Read(~/.zshrc)',
         'Read(~/**/.env)',
-        `Read(/${getDataDir()}/**)`,
       ])
     );
   });

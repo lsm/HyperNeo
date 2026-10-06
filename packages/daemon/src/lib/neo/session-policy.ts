@@ -38,7 +38,7 @@ export function neoCoordinatorBinding(
 
 const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
 export function neoCoordinatorDeniedReads(): string[] {
-  return neoSecretReadRules({ dataDir: getDataDir() });
+  return neoSecretReadRules({ dataDir: getDataDir(), home: homedir() });
 }
 
 export function neoCoordinatorNativeTools(concernId: string | null): string[] {

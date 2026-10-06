@@ -53,6 +53,9 @@ describe('bashDenial', () => {
 
   test.each([
     ['git log --output=/tmp/planted', 'redirects'],
+    ['cd ~/focus\ncurl https://example.com', 'line breaks'],
+    ['git show ${HOME}/.ssh/id_ed25519', 'variables'],
+    ['git log & sleep 99', 'background'],
     ['git show HEAD > /tmp/planted', 'redirects'],
     ['git diff $(cat ~/.ssh/id_ed25519)', 'redirects'],
     ['git push origin main', 'not a read-only'],
@@ -87,6 +90,18 @@ describe('neoLookUpDenial', () => {
     expect(neoLookUpDenial('Glob', { pattern: '**/*.ts', path: '~/focus/app' }, scope)).toBeNull();
   });
 
+  test('shows matching lines only for globs that cannot match secret files', () => {
+    const grep = (input: Record<string, unknown>) =>
+      neoLookUpDenial('Grep', { pattern: '.', path: '~/focus/app', ...input }, scope);
+    expect(grep({})).toBeNull();
+    expect(grep({ output_mode: 'content', glob: '*.ts' })).toBeNull();
+    expect(grep({ output_mode: 'content', type: 'ts' })).toBeNull();
+    expect(grep({ output_mode: 'content' })).toContain('glob or type');
+    expect(grep({ output_mode: 'content', glob: '!*.md' })).toContain('including glob');
+    for (const glob of ['*.pem', '**/*.key', '*', '.env*', '*.{ts,pem}'])
+      expect(grep({ output_mode: 'content', glob })).toBe('that glob can match secret files');
+  });
+
   test('allows web and operation tools and refuses anything that changes files', () => {
     expect(neoLookUpDenial('WebFetch', { url: 'https://example.com' }, scope)).toBeNull();
     expect(neoLookUpDenial('mcp__hyperneo-operations__invoke', {}, scope)).toBeNull();
@@ -119,7 +134,7 @@ describe('neoLookUpGuard', () => {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
         permissionDecisionReason:
-          'Neo look-ups are read-only: redirects, substitutions and --output are not allowed.',
+          'Neo look-ups are read-only: redirects, variables, substitutions, background jobs, line breaks and --output are not allowed.',
       },
     });
   });
@@ -132,13 +147,13 @@ describe('neoLookUpGuard', () => {
 
 describe('neoSecretReadRules', () => {
   test('anchors name patterns to home and covers Claude settings and git credentials', () => {
-    expect(neoSecretReadRules({ dataDir: scope.dataDir })).toEqual(
+    expect(neoSecretReadRules(scope)).toEqual(
       expect.arrayContaining([
         'Read(~/**/.env)',
         'Read(~/**/*.pem)',
         'Read(~/.claude/settings.json)',
         'Read(~/.git-credentials)',
-        'Read(//home/fictional/.hyperneo/**)',
+        'Read(~/.hyperneo/**)',
       ])
     );
   });
