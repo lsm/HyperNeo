@@ -141,9 +141,12 @@ Compact and Minimal never display tool inputs or outputs, so the daemon need
 not send them. Add a named query `messages.bySession.compact`, sharing the SQL
 of `messages.bySession`, whose `mapRow` thins each row:
 
-- `tool_use`: keep `id`, `name`, `parent_tool_use_id` and the fields
-  `ToolSummary` reads (`file_path`, `path`, `command`, `pattern`,
-  `description`, `url`, `query`); drop the rest. Keep `TodoWrite` and
+- `tool_use`: keep `id`, `name`, `parent_tool_use_id` and the input fields
+  the tool registry's summary extractors read, derived from
+  `tools/tool-registry.ts` rather than hand-listed (today `file_path`, `path`,
+  `notebook_path`, `command`, `pattern`, `description`, `url`, `query`,
+  `task_id`, `shell_id`, `bash_id`, `server`, `uri`, `message_prefix`); drop the
+  rest. A test fails when an extractor reads a field the list lacks. Keep `TodoWrite` and
   `AskUserQuestion` inputs whole, because the session inspector and resolved
   questions read them.
 - `tool_result`: keep `tool_use_id`, `is_error` and the first line of an error;
