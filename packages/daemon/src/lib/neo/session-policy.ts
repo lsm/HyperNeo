@@ -41,7 +41,8 @@ export function neoCoordinatorNativeTools(concernId: string | null): 'AskUserQue
 export function restrictNeoQuery(
   options: Options,
   concernId: string | null = null,
-  sessionId?: string
+  sessionId?: string,
+  catchUp = ''
 ): void {
   if (sessionId) {
     options.cwd = neoCoordinatorRuntimePath(sessionId);
@@ -49,7 +50,7 @@ export function restrictNeoQuery(
   }
   options.systemPrompt = {
     type: 'custom',
-    prompt: neoPrompt(concernId),
+    prompt: catchUp ? `${neoPrompt(concernId)}\n\n${catchUp}` : neoPrompt(concernId),
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];

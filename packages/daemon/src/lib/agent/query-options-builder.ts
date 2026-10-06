@@ -71,6 +71,7 @@ import {
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
+import { readNeoCatchUp } from '../neo/catch-up.ts';
 import { neoCoordinatorBinding, restrictNeoQuery } from '../neo/session-policy.ts';
 
 const log = new Logger('QueryOptionsBuilder');
@@ -562,7 +563,11 @@ export class QueryOptionsBuilder {
     }
 
     const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
-    if (neoBinding) restrictNeoQuery(queryOptions, neoBinding.concernId, this.ctx.session.id);
+    if (neoBinding) {
+      const catchUp =
+        neoBinding.kind === 'neo' && this.ctx.db ? readNeoCatchUp(this.ctx.db.getDatabase()) : '';
+      restrictNeoQuery(queryOptions, neoBinding.concernId, this.ctx.session.id, catchUp);
+    }
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
