@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -12,18 +11,16 @@ import {
   type FeedSource,
   feedWorkFiles,
   listFeedFiles,
+  pruneVanishedFeeds,
 } from './work-feed.ts';
 
 export const WORK_FEED_CODEX = 'work.feed.codex';
 const FEED_INTERVAL_MS = 60_000;
 const FEED_WINDOW_MS = 90 * 24 * 60 * 60_000;
+const ROLLOUT_ID_CHARS = 36;
 
 export function codexSessionsRoot(): string {
   return join(homedir(), '.codex', 'sessions');
-}
-
-export function hasCodexSessions(): boolean {
-  return existsSync(codexSessionsRoot());
 }
 
 export interface CodexRolloutMeta {
@@ -109,6 +106,7 @@ export function scheduleCodexFeed(queue: JobQueueRepository): void {
 
 export const codexFeedSource: FeedSource<CodexRolloutMeta & FeedFileMeta> = {
   kind: 'codex',
+  sessionOf: (path) => basename(path, '.jsonl').slice(-ROLLOUT_ID_CHARS),
   meta: (_path, head) => {
     const meta = codexRolloutMeta(head.split('\n', 1)[0]);
     return meta && !meta.subagent
@@ -121,13 +119,18 @@ export const codexFeedSource: FeedSource<CodexRolloutMeta & FeedFileMeta> = {
 export function feedCodexFiles(
   db: BunDatabase,
   files: readonly FeedFile[]
-): { files: number; turns: number } {
+): Promise<{ files: number; turns: number }> {
   return feedWorkFiles(db, files, codexFeedSource);
 }
 
 export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
   .input(['queue', 'db', 'root', 'now'])
   .pipe(scheduleCodexFeed, 'queue')
+  .pipe(
+    (db: BunDatabase, root: string) => pruneVanishedFeeds(db, root, codexFeedSource),
+    ['db', 'root'],
+    'pruned'
+  )
   .pipe(
     (root: string, now: number) => listFeedFiles(root, now - FEED_WINDOW_MS),
     ['root', 'now'],
@@ -139,9 +142,9 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
     'changed'
   )
   .pipe(feedCodexFiles, ['db', 'changed'], 'result')
-  .end('result') as (
+  .endAsync('result') as (
   queue: JobQueueRepository,
   db: BunDatabase,
   root: string,
   now: number
-) => { files: number; turns: number };
+) => Promise<{ files: number; turns: number }>;

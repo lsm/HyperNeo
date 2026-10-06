@@ -1,7 +1,8 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
+  dropWorkFeedSession,
   readWorkFeedOffsets,
   saveWorkFeedChunk,
   type WorkFeedKind,
@@ -21,6 +22,7 @@ export interface FeedFileMeta {
 
 export interface FeedSource<Meta extends FeedFileMeta> {
   kind: WorkFeedKind;
+  sessionOf(path: string): string;
   meta(path: string, head: string): Meta | null;
   turns(lines: readonly string[], meta: Meta): WorkFeedTurn[];
 }
@@ -100,12 +102,32 @@ export function readFeedHead(path: string): string {
   return readBytes(path, 0, HEAD_BYTES).toString('utf8');
 }
 
-export function feedWorkFiles<Meta extends FeedFileMeta>(
+export function vanishedFeedPaths(
+  root: string,
+  offsets: ReadonlyMap<string, WorkFeedOffset>,
+  exists: (path: string) => boolean = existsSync
+): string[] {
+  return [...offsets.keys()].filter((path) => path.startsWith(`${root}${sep}`) && !exists(path));
+}
+
+export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
+  db: BunDatabase,
+  root: string,
+  source: FeedSource<Meta>
+): number {
+  const gone = vanishedFeedPaths(root, readWorkFeedOffsets(db));
+  for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
+  return gone.length;
+}
+
+const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+export async function feedWorkFiles<Meta extends FeedFileMeta>(
   db: BunDatabase,
   files: readonly FeedFile[],
   source: FeedSource<Meta>,
   budgetMs = FEED_BUDGET_MS
-): { files: number; turns: number } {
+): Promise<{ files: number; turns: number }> {
   const started = Date.now();
   const offsets = readWorkFeedOffsets(db);
   let done = 0;
@@ -126,6 +148,7 @@ export function feedWorkFiles<Meta extends FeedFileMeta>(
         mtime: file.mtime,
       });
       turns += found.length;
+      await yieldToLoop();
       if (next >= file.size || next === from || Date.now() - started >= budgetMs) break;
       from = next;
     }

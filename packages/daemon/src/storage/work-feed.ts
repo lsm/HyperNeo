@@ -62,3 +62,18 @@ export function saveWorkFeedChunk(
     mark.run(path, offset.offset, offset.size, offset.mtime);
   })();
 }
+
+export function dropWorkFeedSession(
+  db: BunDatabase,
+  kind: WorkFeedKind,
+  sessionId: string,
+  path: string
+): void {
+  db.transaction(() => {
+    db.prepare('DELETE FROM message_search_content WHERE kind = ? AND session_id = ?').run(
+      kind,
+      sessionId
+    );
+    db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
+  })();
+}
