@@ -379,6 +379,7 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.message.send',
       'neo.publication.publish',
+      'neo.route.correct',
       'neo.publication.read',
       'neo.conversation.asks.read',
       'neo.draft.recover',
