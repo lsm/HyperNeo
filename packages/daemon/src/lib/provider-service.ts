@@ -616,7 +616,7 @@ export class ProviderService {
       env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
     }
 
-    this.saveClearDaemonPortEnvVars(original);
+    this.saveClearDaemonPortEnvVars(original, env);
 
     return original;
   }

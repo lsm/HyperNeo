@@ -2290,6 +2290,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_BASE_URL = 'original-url';
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_MODEL = 'stale-model';
+      process.env.PORT = '8399';
 
       const [glm, again] = await Promise.all([
         service.getIsolatedEnvForModel('glm', 'glm-4'),
@@ -2302,6 +2303,8 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_BASE_URL).toBe('original-url');
       expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
       expect(process.env.ANTHROPIC_MODEL).toBe('stale-model');
+      expect(process.env.PORT).toBe('8399');
+      expect(glm.PORT).toBeUndefined();
     });
   });
 
