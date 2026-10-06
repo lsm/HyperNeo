@@ -120,6 +120,38 @@ describe('fuseWorkChats', () => {
 });
 
 describe('vectorWorkChats', () => {
+  test('scans the newest turns of each kind, so a flood of another kind cannot hide a chat', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
+      message_id TEXT, session_id TEXT, task_id TEXT, message_type TEXT, body TEXT, timestamp INTEGER)`);
+    db.exec('CREATE INDEX idx_kind ON message_search_content(kind, id)');
+    runMigration297(db);
+    const insert = db.prepare(
+      `INSERT INTO message_search_content (kind, source_id, message_id, session_id, message_type, body, timestamp)
+       VALUES (?, ?, ?, ?, 'assistant', 'some turn text here', ?)`
+    );
+    const vector = db.prepare(`INSERT INTO message_search_vectors VALUES (?, 'm', 2, ?, 1)`);
+    const blob = (values: number[]) => new Uint8Array(Float32Array.from(values).buffer);
+    db.transaction(() => {
+      insert.run('message', 'old', 'm-old', 'quiet', 1);
+      vector.run(1, blob([1, 0]));
+      for (let n = 0; n < 10_050; n++) {
+        const { lastInsertRowid } = insert.run('codex', `c${n}`, `c${n}`, `thread-${n}`, 10 + n);
+        vector.run(Number(lastInsertRowid), blob([0, 1]));
+      }
+    })();
+    const found = vectorWorkChats(
+      db,
+      { sessions: false, spaceTasks: false },
+      Float32Array.from([1, 0]),
+      'm',
+      5,
+      ['message']
+    );
+    expect(found.map((chat) => chat.sessionId)).toEqual(['quiet']);
+    db.close();
+  });
+
   test('finds chats by meaning, newest vectors only, tagged semantic', () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,

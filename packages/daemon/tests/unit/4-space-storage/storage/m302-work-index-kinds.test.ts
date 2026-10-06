@@ -58,11 +58,12 @@ describe('runMigration302', () => {
     expect(
       db
         .prepare(
-          "SELECT name FROM sqlite_master WHERE name IN ('idx_message_search_content_feed_turns', 'idx_message_search_content_session_turns', 'work_feed_offsets') ORDER BY name"
+          "SELECT name FROM sqlite_master WHERE name IN ('idx_message_search_content_feed_turns', 'idx_message_search_content_kind', 'idx_message_search_content_session_turns', 'work_feed_offsets') ORDER BY name"
         )
         .all()
     ).toEqual([
       { name: 'idx_message_search_content_feed_turns' },
+      { name: 'idx_message_search_content_kind' },
       { name: 'idx_message_search_content_session_turns' },
       { name: 'work_feed_offsets' },
     ]);

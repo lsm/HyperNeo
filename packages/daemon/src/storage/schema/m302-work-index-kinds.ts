@@ -89,6 +89,8 @@ export function createFeedTurnIndex(db: Database): void {
     return;
   db.exec(`CREATE INDEX IF NOT EXISTS idx_message_search_content_feed_turns
     ON message_search_content(session_id, timestamp, id) WHERE kind IN ('codex', 'claude')`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_message_search_content_kind
+    ON message_search_content(kind, id)`);
 }
 
 export function runMigration302(db: Database): void {

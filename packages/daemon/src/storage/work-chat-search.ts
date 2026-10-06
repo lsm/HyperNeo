@@ -108,17 +108,19 @@ export function vectorWorkChats(
   kinds: readonly WorkChatKind[] = WORK_CHAT_KINDS
 ): ChatCandidate[] {
   const policy = messageSearchPolicy(tables);
-  const scanned = db
-    .prepare(
-      `SELECT v.content_id AS id, v.embedding FROM message_search_vectors v
-       JOIN message_search_content msc ON msc.id = v.content_id
-       ${policy.joins}
-       WHERE v.model = ? AND v.dimensions = ? AND ${kindFilter('msc.kind', kinds)}
-         AND COALESCE(msc.task_id, msc.session_id) IS NOT NULL
-         AND (msc.kind != 'message' OR (1 = 1 ${policy.where}))
-       ORDER BY v.content_id DESC LIMIT ${VECTOR_SCAN_TURNS}`
-    )
-    .all(model, vector.length) as Array<{ id: number; embedding: Uint8Array }>;
+  const scan = db.prepare(
+    `SELECT v.content_id AS id, v.embedding FROM (
+       SELECT id FROM message_search_content WHERE kind = ? ORDER BY id DESC LIMIT ${VECTOR_SCAN_TURNS}
+     ) newest JOIN message_search_content msc ON msc.id = newest.id
+     JOIN message_search_vectors v ON v.content_id = newest.id
+     ${policy.joins}
+     WHERE v.model = ? AND v.dimensions = ?
+       AND COALESCE(msc.task_id, msc.session_id) IS NOT NULL
+       AND (msc.kind != 'message' OR (1 = 1 ${policy.where}))`
+  );
+  const scanned = kinds.flatMap(
+    (kind) => scan.all(kind, model, vector.length) as Array<{ id: number; embedding: Uint8Array }>
+  );
   const top = scanned
     .map((row) => {
       const stored = new Float32Array(
