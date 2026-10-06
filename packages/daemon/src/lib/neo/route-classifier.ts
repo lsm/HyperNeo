@@ -5,7 +5,7 @@ import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repositor
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { Logger } from '../logger.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { DEFAULT_NEO_ROUTE_TIMEOUT_MS } from '@hyperneo/shared';
 import {
@@ -186,21 +186,12 @@ async function askNeoRouteModel(
   choice: NeoRouteModel | undefined
 ): Promise<NeoRouteVerdict> {
   const providers = getProviderService();
-  let restore: Awaited<ReturnType<typeof providers.applyEnvVarsToProcessForProvider>> = {};
   try {
     const provider = choice?.provider ?? (await providers.getDefaultProvider());
     const title = choice ? null : await providers.getTitleGenerationConfig(provider);
     const requested = choice?.model ?? title?.modelId;
     if (!requested) return null;
-    restore = await providers.applyEnvVarsToProcessForProvider(provider, requested);
-    const env = mergeProviderEnvVars(
-      (await providers.getEnvVarsForModel(requested, provider)) as Record<
-        string,
-        string | undefined
-      >
-    );
-    providers.restoreEnvVars(restore);
-    restore = {};
+    const env = await providers.getIsolatedEnvForModel(provider, requested);
     const config = neoRouteEndpoint(title, requested, env);
     const prompt = buildNeoRoutePrompt(text, candidates, context);
     const thinking: RouteThinking =
@@ -250,10 +241,6 @@ async function askNeoRouteModel(
   } catch (error) {
     log.warn('Neo route classification failed:', error);
     return 'failed';
-  } finally {
-    try {
-      providers.restoreEnvVars(restore);
-    } catch {}
   }
 }
 
