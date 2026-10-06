@@ -93,15 +93,13 @@ describe('bashDenial on a real home', () => {
         dataDir: join(root, '.hyperneo'),
         cwd: join(root, '.hyperneo', 'neo'),
       };
-      expect(
-        bashDenial('cd ~ && git diff --no-index .config/gh/hosts.yml /dev/null', home)
-      ).toContain('may hold secrets');
-      expect(
-        bashDenial('cd ~/focus && git diff --no-index ../.config/gh/hosts.yml /dev/null', home)
-      ).toContain('may hold secrets');
-      expect(
-        bashDenial('cd ~/focus/app && git diff --no-index README.md /dev/null', home)
-      ).toBeNull();
+      expect(bashDenial('cd ~ && git blame .config/gh/hosts.yml', home)).toContain(
+        'may hold secrets'
+      );
+      expect(bashDenial('cd ~/focus && git blame ../.config/gh/hosts.yml', home)).toContain(
+        'may hold secrets'
+      );
+      expect(bashDenial('cd ~/focus/app && git blame README.md', home)).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -115,7 +113,9 @@ describe('bashDenial', () => {
     "gh pr list --json number --jq '.[0].number'",
     "gh pr list --json number --jq '.[] | .number'",
     "git log --grep='a && b' --oneline",
-    'git diff main...HEAD -- src',
+    'git log main...HEAD --oneline -- src',
+    'git log --grep=token --oneline -5',
+    'git log --stat --author=fictional -- src/lib',
     'gh run list --limit 3 | gh pr checks 12',
   ])('allows read-only look-up %s', (command) => {
     expect(bashDenial(command, scope)).toBeNull();
@@ -131,16 +131,23 @@ describe('bashDenial', () => {
     ['git push origin main', 'not a read-only'],
     ['gh api repos/fictional/app -X POST', 'not a read-only'],
     ['git log && rm -rf ~/focus', 'not a read-only'],
-    ['git show HEAD:.env', 'may hold secrets'],
-    ["git log -p -- '*.env'", 'may hold secrets'],
-    ["git diff -- '.env*'", 'may hold secrets'],
-    ["git log -p -- '**/id_*'", 'may hold secrets'],
-    ["git show HEAD:.e''nv", 'may hold secrets'],
-    ['git show HEAD:".env"', 'may hold secrets'],
-    ['git show HEAD:.e\\nv', 'backslash'],
-    ['git diff --no-index ~/focus/app/.env* /dev/null', 'unquoted wildcards'],
-    ['cd ~/focus/app && git diff --no-index [.]env /dev/null', 'unquoted wildcards'],
-    ['git diff --no-index .{e,x}nv /dev/null', 'unquoted wildcards'],
+    ['git blame .env', 'may hold secrets'],
+    ['git show HEAD', 'not a read-only'],
+    ['git diff main', 'not a read-only'],
+    ['gh pr diff 12', 'not a read-only'],
+    ['git log -p', 'commit metadata'],
+    ['git log --patch --oneline', 'commit metadata'],
+    ['git log -L 1,5:src/a.ts', 'commit metadata'],
+    ['gh run view 9 --log-failed', 'run logs'],
+    ["git log --oneline -- '*.env'", 'may hold secrets'],
+    ["git log -- '.env*'", 'may hold secrets'],
+    ["git log --stat -- '**/id_*'", 'may hold secrets'],
+    ["git blame .e''nv", 'may hold secrets'],
+    ['git blame ".env"', 'may hold secrets'],
+    ['git blame .e\\nv', 'backslash'],
+    ['git blame ~/focus/app/.env*', 'unquoted wildcards'],
+    ['cd ~/focus/app && git blame [.]env', 'unquoted wildcards'],
+    ['git blame .{e,x}nv', 'unquoted wildcards'],
     ['cd ~/.aws && git status', 'may hold secrets'],
   ])('refuses %s', (command, reason) => {
     expect(bashDenial(command, scope)).toContain(reason);

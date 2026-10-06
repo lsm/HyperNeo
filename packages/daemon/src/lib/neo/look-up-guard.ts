@@ -7,16 +7,13 @@ export const NEO_LOOKUP_COMMANDS = [
   'gh pr view',
   'gh pr list',
   'gh pr checks',
-  'gh pr diff',
   'gh issue view',
   'gh issue list',
   'gh run view',
   'gh run list',
   'gh repo view',
   'git log',
-  'git show',
   'git status',
-  'git diff',
   'git blame',
 ];
 
@@ -264,10 +261,25 @@ function shellWords(segment: string): string[] {
     .filter(Boolean);
 }
 
+const LOG_FLAG =
+  /^(--oneline|--stat|--shortstat|--name-only|--name-status|--graph|--decorate|--all|--no-merges|--merges|--reverse|--first-parent|-\d+|-n|--max-count(=\d+)?|--(since|until|after|before|author|committer|grep|format|pretty|date)=.*)$/;
+
+function metadataOnlyDenial(words: readonly string[]): string | null {
+  if (words[0] === 'git' && words[1] === 'log') {
+    const options = words.slice(2, words.includes('--') ? words.indexOf('--') : undefined);
+    const flag = options.find((word) => word.startsWith('-') && !LOG_FLAG.test(word));
+    return flag ? `git log ${flag} can print file contents; use commit metadata flags only` : null;
+  }
+  if (words[0] === 'gh' && words[1] === 'run' && words.some((word) => word.startsWith('--log')))
+    return 'run logs are not allowed';
+  return null;
+}
+
 function secretArgument(words: readonly string[], dir: string, scope: LookUpScope): string | null {
   const here = { ...scope, cwd: dir };
   return (
     words
+      .filter((word) => !word.startsWith('-'))
       .flatMap((word) => word.split(':'))
       .find(
         (part) =>
@@ -300,6 +312,8 @@ export function bashDenial(command: string, scope: LookUpScope): string | null {
       if (isSecretPath(dir, scope)) return `"${words[1] ?? '~'}" may hold secrets`;
       continue;
     }
+    const metadata = metadataOnlyDenial(words);
+    if (metadata) return metadata;
     const secret = secretArgument(words.slice(1), dir, scope);
     if (secret) return `"${secret}" may hold secrets`;
   }
