@@ -1,5 +1,5 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const NEO_LOOKUP_COMMANDS = [
@@ -215,26 +215,63 @@ function staticPrefix(pattern: string): string {
   return cut < 0 ? pattern : pattern.slice(0, cut);
 }
 
+function shellSegments(command: string): string[] {
+  const masked = command.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
+  const segments: string[] = [];
+  let start = 0;
+  for (const operator of masked.matchAll(/&&|\|\||;|\|/g)) {
+    segments.push(command.slice(start, operator.index));
+    start = (operator.index ?? 0) + operator[0].length;
+  }
+  return [...segments, command.slice(start)].map((segment) => segment.trim());
+}
+
+function shellWords(segment: string): string[] {
+  return segment
+    .replace(/'([^']*)'|"([^"]*)"/g, '$1$2')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function secretArgument(words: readonly string[], dir: string, scope: LookUpScope): string | null {
+  const here = { ...scope, cwd: dir };
+  return (
+    words
+      .flatMap((word) => word.split(':'))
+      .find(
+        (part) =>
+          part &&
+          (secretName(basename(part)) ||
+            (/^[/~]/.test(part) && isSecretPath(part, here)) ||
+            (existsSync(resolvePath(part, here)) && isSecretPath(part, here)))
+      ) ?? null
+  );
+}
+
 export function bashDenial(command: string, scope: LookUpScope): string | null {
   if (UNSAFE_SHELL.test(command))
     return 'redirects, variables, substitutions, background jobs, line breaks and --output are not allowed';
   if (/[*?[\]{}]/.test(command.replace(/'[^']*'|"[^"]*"/g, '')))
     return 'unquoted wildcards are not allowed';
-  const segments = command.split(/&&|\|\||;|\|/).map((segment) => segment.trim());
+  if (command.includes('\\')) return 'backslash escapes are not allowed';
+  const segments = shellSegments(command);
   const unknown = segments.find(
     (segment) =>
       !NEO_LOOKUP_COMMANDS.some((prefix) => segment === prefix || segment.startsWith(`${prefix} `))
   );
   if (unknown !== undefined) return `"${unknown}" is not a read-only look-up command`;
-  if (command.includes('\\')) return 'backslash escapes are not allowed';
-  const tokens = command.replace(/'([^']*)'|"([^"]*)"/g, '$1$2').split(/\s+/);
-  const secret = tokens
-    .flatMap((token) => token.split(':'))
-    .find(
-      (part) =>
-        part && (secretName(basename(part)) || (/^[/~]/.test(part) && isSecretPath(part, scope)))
-    );
-  return secret ? `"${secret}" may hold secrets` : null;
+  let dir = scope.cwd;
+  for (const segment of segments) {
+    const words = shellWords(segment);
+    if (words[0] === 'cd') {
+      dir = resolvePath(words[1] ?? '~', { ...scope, cwd: dir });
+      if (isSecretPath(dir, scope)) return `"${words[1] ?? '~'}" may hold secrets`;
+      continue;
+    }
+    const secret = secretArgument(words.slice(1), dir, scope);
+    if (secret) return `"${secret}" may hold secrets`;
+  }
+  return null;
 }
 
 export function neoLookUpDenial(

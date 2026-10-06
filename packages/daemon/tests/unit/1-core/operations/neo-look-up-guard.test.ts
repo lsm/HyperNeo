@@ -80,11 +80,41 @@ describe('isSecretPath through symlinks', () => {
   });
 });
 
+describe('bashDenial on a real home', () => {
+  test('resolves relative arguments against the cd target', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'neo-guard-home-')));
+    try {
+      mkdirSync(join(root, '.config', 'gh'), { recursive: true });
+      writeFileSync(join(root, '.config', 'gh', 'hosts.yml'), 'token');
+      mkdirSync(join(root, 'focus', 'app'), { recursive: true });
+      writeFileSync(join(root, 'focus', 'app', 'README.md'), 'readme');
+      const home = {
+        home: root,
+        dataDir: join(root, '.hyperneo'),
+        cwd: join(root, '.hyperneo', 'neo'),
+      };
+      expect(
+        bashDenial('cd ~ && git diff --no-index .config/gh/hosts.yml /dev/null', home)
+      ).toContain('may hold secrets');
+      expect(
+        bashDenial('cd ~/focus && git diff --no-index ../.config/gh/hosts.yml /dev/null', home)
+      ).toContain('may hold secrets');
+      expect(
+        bashDenial('cd ~/focus/app && git diff --no-index README.md /dev/null', home)
+      ).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('bashDenial', () => {
   test.each([
     'cd ~/focus/app && git log --oneline -5',
     'gh pr view 5739 --repo fictional/app --json state,mergedAt',
     "gh pr list --json number --jq '.[0].number'",
+    "gh pr list --json number --jq '.[] | .number'",
+    "git log --grep='a && b' --oneline",
     'git diff main...HEAD -- src',
     'gh run list --limit 3 | gh pr checks 12',
   ])('allows read-only look-up %s', (command) => {
