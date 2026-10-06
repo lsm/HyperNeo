@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { capMessageOutput } from '../../../../src/lib/rpc-handlers/message-output-cap';
 
-const big = 'x'.repeat(40);
+const big = 'x'.repeat(400);
 
 describe('capMessageOutput', () => {
   test('trims tool output and marks how long it was', () => {
@@ -23,17 +23,17 @@ describe('capMessageOutput', () => {
             type: 'tool_result',
             tool_use_id: 't1',
             content: 'x'.repeat(10),
-            output_capped: { chars: 40 },
+            output_capped: { chars: 400 },
           },
           {
             type: 'tool_result',
             tool_use_id: 't2',
-            content: [{ type: 'text', text: 'x'.repeat(10) }],
-            output_capped: { chars: 40 },
+            content: [{ type: 'text', text: 'x'.repeat(6) }],
+            output_capped: { chars: 404 },
           },
         ],
       },
-      tool_use_result: { stdout: 'x'.repeat(10), exitCode: 0, output_capped: { chars: 40 } },
+      tool_use_result: { stdout: 'x'.repeat(10), exitCode: 0, output_capped: { chars: 400 } },
       output_capped: true,
     });
   });
@@ -55,7 +55,7 @@ describe('capMessageOutput', () => {
     };
     const capped = capMessageOutput(message, 10) as typeof message;
     expect(capped.message.content[0].content as unknown).toEqual([
-      { type: 'image', image_capped: { chars: 40 } },
+      { type: 'image', image_capped: { chars: 400 } },
     ]);
   });
 
@@ -78,15 +78,31 @@ describe('capMessageOutput', () => {
     expect(capMessageOutput(message, 10).tool_use_result as unknown).toEqual({
       type: 'image',
       file: { base64: '', type: 'image/png' },
-      image_capped: { chars: 40 },
-      output_capped: { chars: 40 },
+      image_capped: { chars: 400 },
+      output_capped: { chars: 400 },
     });
   });
 
-  test('handles very large result arrays without overflowing the call stack', () => {
+  test('budgets the whole output, so many small rows are trimmed too', () => {
     const rows = Array.from({ length: 200_000 }, (_, index) => ({ id: index, name: 'row' }));
     const message = { type: 'user', message: { content: [] }, tool_use_result: { rows } };
-    expect(() => capMessageOutput(message, 10)).not.toThrow();
+    const capped = capMessageOutput(message, 1000).tool_use_result as {
+      rows: unknown[];
+      output_capped: { chars: number };
+    };
+    expect(capped.rows.length).toBeLessThan(1000);
+    expect(capped.output_capped.chars).toBeGreaterThan(1_000_000);
+  });
+
+  test('reports the total size across every trimmed part', () => {
+    const message = {
+      type: 'user',
+      message: { content: [] },
+      tool_use_result: { stdout: big, stderr: big },
+    };
+    expect(
+      (capMessageOutput(message, 10).tool_use_result as { output_capped: unknown }).output_capped
+    ).toEqual({ chars: 800 });
   });
 
   test('returns small messages untouched', () => {

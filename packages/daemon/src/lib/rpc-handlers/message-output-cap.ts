@@ -1,68 +1,112 @@
 export const MESSAGE_OUTPUT_CAP_CHARS = 16 * 1024;
+const WHOLE_STRING_CHARS = 64;
 
 type Json = Record<string, unknown>;
-type Capped<T> = { value: T; cut: number };
+type Budget = { left: number };
+type Capped<T> = { value: T; total: number; dropped: boolean };
 
-function capText(text: string, limit: number): Capped<string> {
-  return text.length > limit
-    ? { value: text.slice(0, limit), cut: text.length }
-    : { value: text, cut: 0 };
+function sizeOf(value: unknown): number {
+  if (typeof value === 'string') return value.length;
+  if (value === null || typeof value !== 'object') return String(value).length;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 0;
+  }
 }
 
-function largestCut(items: readonly Capped<unknown>[]): number {
-  let largest = 0;
-  for (const item of items) if (item.cut > largest) largest = item.cut;
-  return largest;
+function dropImage(record: Json, budget: Budget): Capped<unknown> | null {
+  const file = record.file as Json | undefined;
+  const source = record.source as Json | undefined;
+  if (typeof file?.base64 === 'string' && file.base64.length > budget.left)
+    return {
+      value: {
+        ...record,
+        file: { ...file, base64: '' },
+        image_capped: { chars: file.base64.length },
+      },
+      total: file.base64.length,
+      dropped: true,
+    };
+  if (
+    record.type === 'image' &&
+    typeof source?.data === 'string' &&
+    source.data.length > budget.left
+  )
+    return {
+      value: { type: 'image', image_capped: { chars: source.data.length } },
+      total: source.data.length,
+      dropped: true,
+    };
+  return null;
 }
 
-function capDeep(value: unknown, limit: number): Capped<unknown> {
-  if (typeof value === 'string') return capText(value, limit);
+function capDeep(value: unknown, budget: Budget): Capped<unknown> {
+  if (typeof value === 'string') {
+    if (value.length <= WHOLE_STRING_CHARS) {
+      budget.left -= value.length;
+      return { value, total: value.length, dropped: false };
+    }
+    const kept = Math.max(0, Math.min(value.length, budget.left));
+    budget.left -= kept;
+    return { value: value.slice(0, kept), total: value.length, dropped: kept < value.length };
+  }
   if (Array.isArray(value)) {
-    const items = value.map((item) => capDeep(item, limit));
-    return { value: items.map((item) => item.value), cut: largestCut(items) };
+    const items: unknown[] = [];
+    let total = 0;
+    let dropped = false;
+    for (let index = 0; index < value.length; index++) {
+      if (budget.left <= 0) {
+        total += sizeOf(value.slice(index));
+        dropped = true;
+        break;
+      }
+      const item = capDeep(value[index], budget);
+      items.push(item.value);
+      total += item.total;
+      dropped ||= item.dropped;
+    }
+    return { value: items, total, dropped };
   }
   if (value && typeof value === 'object') {
-    const record = value as Json;
-    const source = record.source as Json | undefined;
-    const file = record.file as Json | undefined;
-    if (typeof file?.base64 === 'string' && file.base64.length > limit)
-      return {
-        value: {
-          ...record,
-          file: { ...file, base64: '' },
-          image_capped: { chars: file.base64.length },
-        },
-        cut: file.base64.length,
-      };
-    if (record.type === 'image' && typeof source?.data === 'string' && source.data.length > limit)
-      return {
-        value: { type: 'image', image_capped: { chars: source.data.length } },
-        cut: source.data.length,
-      };
-    const entries = Object.entries(value as Json).map(
-      ([key, item]) => [key, capDeep(item, limit)] as const
-    );
-    return {
-      value: Object.fromEntries(entries.map(([key, item]) => [key, item.value])),
-      cut: largestCut(entries.map(([, item]) => item)),
-    };
+    const image = dropImage(value as Json, budget);
+    if (image) return image;
+    const result: Json = {};
+    let total = 0;
+    let dropped = false;
+    for (const [key, item] of Object.entries(value as Json)) {
+      const capped = capDeep(item, budget);
+      result[key] = capped.value;
+      total += capped.total;
+      dropped ||= capped.dropped;
+    }
+    return { value: result, total, dropped };
   }
-  return { value, cut: 0 };
+  return { value, total: 0, dropped: false };
+}
+
+function capWithin(value: unknown, limit: number): Capped<unknown> {
+  return capDeep(value, { left: limit });
 }
 
 function capBlock(block: unknown, limit: number): Capped<unknown> {
-  if (!block || typeof block !== 'object') return { value: block, cut: 0 };
+  if (!block || typeof block !== 'object' || (block as Json).type !== 'tool_result')
+    return { value: block, total: 0, dropped: false };
   const record = block as Json;
-  if (record.type === 'tool_result') {
-    const content = capDeep(record.content, limit);
-    return content.cut
-      ? {
-          value: { ...record, content: content.value, output_capped: { chars: content.cut } },
-          cut: content.cut,
-        }
-      : { value: block, cut: 0 };
-  }
-  return { value: block, cut: 0 };
+  const content = capWithin(record.content, limit);
+  return content.dropped
+    ? {
+        value: { ...record, content: content.value, output_capped: { chars: content.total } },
+        total: content.total,
+        dropped: true,
+      }
+    : { value: block, total: content.total, dropped: false };
+}
+
+function markStructured(capped: Capped<unknown>): unknown {
+  return capped.value && typeof capped.value === 'object' && !Array.isArray(capped.value)
+    ? { ...(capped.value as Json), output_capped: { chars: capped.total } }
+    : capped.value;
 }
 
 export function capMessageOutput<T extends Json>(message: T, limit = MESSAGE_OUTPUT_CAP_CHARS): T {
@@ -70,22 +114,16 @@ export function capMessageOutput<T extends Json>(message: T, limit = MESSAGE_OUT
   const blocks = Array.isArray(inner?.content)
     ? (inner.content as unknown[]).map((block) => capBlock(block, limit))
     : null;
-  const structured = 'tool_use_result' in message ? capDeep(message.tool_use_result, limit) : null;
-  const blockCut = blocks?.some((block) => block.cut) ?? false;
-  if (!blockCut && !structured?.cut) return message;
+  const structured =
+    'tool_use_result' in message ? capWithin(message.tool_use_result, limit) : null;
+  const blockDropped = blocks?.some((block) => block.dropped) ?? false;
+  if (!blockDropped && !structured?.dropped) return message;
   return {
     ...message,
-    ...(blockCut ? { message: { ...inner, content: blocks!.map((block) => block.value) } } : {}),
-    ...(structured?.cut
-      ? {
-          tool_use_result:
-            structured.value &&
-            typeof structured.value === 'object' &&
-            !Array.isArray(structured.value)
-              ? { ...(structured.value as Json), output_capped: { chars: structured.cut } }
-              : structured.value,
-        }
+    ...(blockDropped
+      ? { message: { ...inner, content: blocks!.map((block) => block.value) } }
       : {}),
+    ...(structured?.dropped ? { tool_use_result: markStructured(structured) } : {}),
     output_capped: true,
   };
 }

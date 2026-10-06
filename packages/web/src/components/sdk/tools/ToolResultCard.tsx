@@ -104,7 +104,7 @@ export function ToolResultCard(props: ToolResultCardProps) {
       {...props}
       output={output}
       structuredOutput={structuredOutput}
-      capped={capped}
+      capped={props.isOutputRemoved ? undefined : capped}
     />
   );
 }
