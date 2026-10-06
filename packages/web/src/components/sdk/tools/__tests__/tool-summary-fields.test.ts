@@ -1,33 +1,8 @@
 import { TOOL_SUMMARY_INPUT_FIELDS, WHOLE_INPUT_TOOLS } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { getToolConfig } from '../tool-registry.ts';
+import { REGISTERED_TOOL_NAMES, getToolConfig } from '../tool-registry.ts';
 
-const TOOL_NAMES = [
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'Read',
-  'NotebookEdit',
-  'Glob',
-  'Grep',
-  'Bash',
-  'BashOutput',
-  'KillShell',
-  'Task',
-  'Agent',
-  'TaskOutput',
-  'TaskStop',
-  'WebFetch',
-  'WebSearch',
-  'ListMcpResourcesTool',
-  'ReadMcpResourceTool',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'TimeMachine',
-  'Thinking',
-  'mcp__server__tool',
-  'UnregisteredTool',
-];
+const TOOL_NAMES = [...REGISTERED_TOOL_NAMES, 'mcp__server__tool', 'UnregisteredTool'];
 
 function readFields(toolName: string): string[] {
   const read = new Set<string>();
