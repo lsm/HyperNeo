@@ -1,10 +1,11 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import {
   type NeoRoute,
   NeoRoutingLogRepository,
+  neoExcerpt,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { classifyNeoRoute } from './route-classifier.ts';
 
 const STICKY_MS = 5 * 60_000;
@@ -12,6 +13,7 @@ const STICKY_CHARS = 120;
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
 const PROFILE_ASKS = 8;
+const PROFILE_ASK_CHARS = 300;
 const CLASSIFY_FLOOR = 0.35;
 const CLASSIFY_CANDIDATES = 4;
 export const NEO_INBOX_ID = 'inbox';
@@ -116,7 +118,9 @@ export function stickyExit(
 }
 
 export function neoHolderProfile(holder: NeoHolder, asks: readonly string[]): string {
-  return [holder.title, holder.summary, ...asks].filter(Boolean).join('\n');
+  return [holder.title, holder.summary, ...asks.map((ask) => neoExcerpt(ask, PROFILE_ASK_CHARS))]
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function profileVector(profile: string, deps: NeoRouterDeps): Promise<Float32Array | null> {

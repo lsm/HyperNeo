@@ -7,15 +7,18 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import type { Database } from '../../../../src/storage/database.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
+import {
+  NeoRoutingLogRepository,
+  neoExcerpt,
+} from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import type { Database } from '../../../../src/storage/database.ts';
-import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
@@ -93,7 +96,7 @@ describe('neo.message.send routing log', () => {
       confidence: 1,
       outcome: null,
     });
-    expect(rows[1].ask).toBe(`${'x'.repeat(300)}…`);
+    expect(rows[1].ask).toBe('x'.repeat(400));
     expect(log.listAfter(rows[0].id, 10).map((row) => row.messageId)).toEqual([ask(2)]);
   });
 
@@ -130,5 +133,17 @@ describe('neo.message.send routing log', () => {
     expect(log.listAfter(0, 10)[0]).toMatchObject({
       outcome: 'It announces Artifacts in open beta.',
     });
+  });
+});
+
+describe('neoExcerpt', () => {
+  test('keeps short text whole and keeps both ends of long text', () => {
+    expect(neoExcerpt('  what is\nthis?  ', 300)).toBe('what is this?');
+    const long = `${'a'.repeat(20_000)} so what is the question?`;
+    const kept = neoExcerpt(long, 10_000);
+    expect(kept).toHaveLength(10_000);
+    expect(kept.startsWith('aaaa')).toBe(true);
+    expect(kept.endsWith('so what is the question?')).toBe(true);
+    expect(kept).toContain('…');
   });
 });
