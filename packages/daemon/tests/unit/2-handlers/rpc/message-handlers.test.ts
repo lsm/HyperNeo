@@ -757,6 +757,32 @@ describe('Message RPC Handlers', () => {
       );
     });
 
+    test('trims oversized tool output before sending it', async () => {
+      const handler = messageHubData.handlers.get('message.sdkMessages');
+      sessionManagerData.agentSessionData.mocks.getSDKMessages.mockReturnValueOnce({
+        messages: [
+          {
+            type: 'user',
+            uuid: 'u1',
+            message: {
+              content: [{ type: 'tool_result', tool_use_id: 't1', content: 'y'.repeat(20_000) }],
+            },
+          },
+        ],
+        hasMore: false,
+      });
+
+      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
+        sdkMessages: Array<{
+          message: { content: Array<{ content: string; output_capped: unknown }> };
+        }>;
+      };
+
+      const block = result.sdkMessages[0].message.content[0];
+      expect(block.content).toHaveLength(16 * 1024);
+      expect(block.output_capped).toEqual({ chars: 20_000 });
+    });
+
     test('throws error when session not found', async () => {
       const handler = messageHubData.handlers.get('message.sdkMessages');
       expect(handler).toBeDefined();
@@ -766,6 +792,31 @@ describe('Message RPC Handlers', () => {
       await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
         'Session not found'
       );
+    });
+  });
+
+  describe('message.sdkMessage', () => {
+    test('returns one message in full for "show full output"', async () => {
+      const sqlite = new BunDatabase(':memory:');
+      sqlite.exec('CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, sdk_message TEXT)');
+      const full = { type: 'user', uuid: 'u1', message: { content: 'z'.repeat(20_000) } };
+      sqlite
+        .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
+        .run('session-123', 'u1', JSON.stringify(full));
+      const db = { getDbPath: () => ':memory:', getDatabase: () => sqlite } as unknown as Database;
+      messageHubData = createMockMessageHub();
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      try {
+        const handler = messageHubData.handlers.get('message.sdkMessage');
+        expect(await handler!({ sessionId: 'session-123', messageUuid: 'u1' }, {})).toEqual({
+          sdkMessage: full,
+        });
+        await expect(
+          handler!({ sessionId: 'session-123', messageUuid: 'missing' }, {})
+        ).rejects.toThrow('Message not found');
+      } finally {
+        sqlite.close();
+      }
     });
   });
 

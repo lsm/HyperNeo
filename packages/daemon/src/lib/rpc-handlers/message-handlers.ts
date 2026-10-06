@@ -19,6 +19,11 @@ import { SDKMessageRepository } from '../../storage/repositories/sdk-message-rep
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { capMessageOutput } from './message-output-cap.ts';
+
+function capSdkMessage<T>(message: T): T {
+  return capMessageOutput(message as unknown as Record<string, unknown>) as unknown as T;
+}
 
 export function setupMessageHandlers(
   messageHub: MessageHub,
@@ -138,9 +143,11 @@ export function setupMessageHandlers(
           sinceRowid
         );
         return {
-          sdkMessages,
+          sdkMessages: sdkMessages.map(capSdkMessage),
           hasMore,
-          backgroundTaskMessages: sdkMessageRepo.getBackgroundTaskMessages(targetSessionId),
+          backgroundTaskMessages: sdkMessageRepo
+            .getBackgroundTaskMessages(targetSessionId)
+            .map(capSdkMessage),
         };
       }
       throw new Error('Session not found');
@@ -154,10 +161,25 @@ export function setupMessageHandlers(
       sinceRowid
     );
     return {
-      sdkMessages,
+      sdkMessages: sdkMessages.map(capSdkMessage),
       hasMore,
-      backgroundTaskMessages: agentSession.getBackgroundTaskMessages(),
+      backgroundTaskMessages: agentSession.getBackgroundTaskMessages().map(capSdkMessage),
     };
+  });
+
+  messageHub.onRequest('message.sdkMessage', async (data) => {
+    const { sessionId: targetSessionId, messageUuid } = data as {
+      sessionId: string;
+      messageUuid: string;
+    };
+    if (!targetSessionId || !messageUuid) throw new Error('sessionId and messageUuid are required');
+    if (!db) throw new Error('Message store unavailable');
+    const row = db
+      .getDatabase()
+      .prepare('SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1')
+      .get(targetSessionId, messageUuid) as { sdk_message: string } | null;
+    if (!row) throw new Error('Message not found');
+    return { sdkMessage: JSON.parse(row.sdk_message) };
   });
 
   messageHub.onRequest('message.count', async (data) => {

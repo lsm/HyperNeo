@@ -19,6 +19,12 @@ import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 import { ReadImagePreview } from './ReadImagePreview.tsx';
+import {
+  cappedOutputChars,
+  formatChars,
+  type FullToolOutput,
+  loadFullToolOutput,
+} from './full-tool-output.ts';
 
 const imageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
@@ -90,7 +96,41 @@ function structuredPatchToDiff(
     .join('\n');
 }
 
-export function ToolResultCard({
+interface CappedOutput {
+  chars: number;
+  loading: boolean;
+  onShowFull: () => void;
+}
+
+export function ToolResultCard(props: ToolResultCardProps) {
+  const [full, setFull] = useState<FullToolOutput | null>(null);
+  const [loading, setLoading] = useState(false);
+  const chars = full ? null : cappedOutputChars(props.output);
+  const { sessionId, messageUuid, toolId } = props;
+  const onShowFull = async () => {
+    if (!sessionId || !messageUuid) return;
+    setLoading(true);
+    try {
+      setFull(await loadFullToolOutput(sessionId, messageUuid, toolId));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load the full output');
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <ToolResultCardBody
+      {...props}
+      output={full?.output ?? props.output}
+      structuredOutput={full ? full.structuredOutput : props.structuredOutput}
+      capped={
+        chars !== null && sessionId && messageUuid ? { chars, loading, onShowFull } : undefined
+      }
+    />
+  );
+}
+
+function ToolResultCardBody({
   toolName,
   toolId,
   input,
@@ -107,7 +147,8 @@ export function ToolResultCard({
   isRunning = false,
   taskNotification,
   taskProgress,
-}: ToolResultCardProps) {
+  capped,
+}: ToolResultCardProps & { capped?: CappedOutput }) {
   const taskStatus = taskNotification?.status;
   const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
   const notificationIsSuccess = taskStatus === 'completed';
@@ -587,6 +628,19 @@ export function ToolResultCard({
                       </button>
                     )}
                   </div>
+                  {capped && (
+                    <div class="mb-2 flex items-center gap-2 text-xs text-fg-muted">
+                      <span>Showing the first 16 KB of {formatChars(capped.chars)}.</span>
+                      <button
+                        type="button"
+                        onClick={capped.onShowFull}
+                        disabled={capped.loading}
+                        class="font-medium text-accent hover:underline disabled:opacity-50"
+                      >
+                        {capped.loading ? 'Loading…' : 'Show full output'}
+                      </button>
+                    </div>
+                  )}
                   {isOutputRemoved ? (
                     <div class="p-3 rounded border border-warning/40 bg-warning/10">
                       <div class="flex items-start gap-2">

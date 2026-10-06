@@ -7,6 +7,7 @@ import type {
   LiveQueryUnsubscribeResponse,
   MessageHub,
 } from '@hyperneo/shared';
+import { capMessageOutput } from './message-output-cap.ts';
 import {
   createEventMessage,
   ErrorCode,
@@ -141,7 +142,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     const parsed = JSON.parse(content) as Record<string, unknown>;
     const turnId = turnUserMessageId ?? String(id);
     content = JSON.stringify({
-      ...parsed,
+      ...capMessageOutput(parsed),
       _taskMeta: {
         authorRole: role,
         authorLabel: label,
@@ -3142,7 +3143,7 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
     }
   }
 
-  return { ...parsed, ...extras };
+  return { ...capMessageOutput(parsed), ...extras };
 }
 
 function buildTaskScopeFilter(
