@@ -39,7 +39,7 @@ export interface NeoHolder {
 export interface NeoRouteChoice {
   concernId: string;
   sessionId: string;
-  signal: 'embedding' | 'classifier';
+  signal: NeoRouteSignal;
   confidence: number;
 }
 
@@ -60,6 +60,11 @@ export interface NeoRouteDecision {
 }
 export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'failed';
 const CLASSIFIER_CONFIDENCE = 0.6;
+export type NeoRouteSignal = 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
+
+export function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
+  return basis ? `classifier:${basis}` : 'classifier';
+}
 
 export interface NeoRouterDeps {
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
@@ -244,7 +249,7 @@ export async function classifyNeoAsk(
   const chosen = decided
     ? decided.decision
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
-  if (chosen === 'main') return { choice: null, fallback: 'classifier' };
+  if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen || chosen === 'timeout' || chosen === 'failed')
     return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
   const holder = chosen.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
@@ -253,7 +258,7 @@ export async function classifyNeoAsk(
       ? {
           concernId: holder.concernId,
           sessionId: holder.sessionId,
-          signal: 'classifier',
+          signal: classifierSignal(decided?.basis),
           confidence: decided?.confidence ?? CLASSIFIER_CONFIDENCE,
         }
       : null,

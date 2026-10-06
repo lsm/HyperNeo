@@ -212,12 +212,16 @@ describe('chooseNeoRoute with a classifier', () => {
       'yes',
       deps(async () => ({ decision: youtube, confidence: 0.91, basis: 'answers_waiting' }))
     );
-    expect(route.choice).toMatchObject({ concernId: 'youtube', confidence: 0.91 });
+    expect(route.choice).toMatchObject({
+      concernId: 'youtube',
+      confidence: 0.91,
+      signal: 'classifier:answers_waiting',
+    });
     const main = await chooseNeoRoute(
       'new thing',
       deps(async () => ({ decision: 'main', confidence: 0.7, basis: 'new_subject' }))
     );
-    expect(main).toEqual({ choice: null, fallback: 'classifier' });
+    expect(main).toEqual({ choice: null, fallback: 'classifier:new_subject' });
   });
 
   test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {

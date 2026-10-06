@@ -11,7 +11,7 @@ import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoRouteChoice, NeoRouted, NeoRouter } from './router.ts';
+import type { NeoRouteChoice, NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
 
 const Input = z
   .object({
@@ -257,7 +257,9 @@ export function reuseLoggedRoute(
           ? {
               concernId: earlier.concernId,
               sessionId: earlier.targetSessionId,
-              signal: earlier.signal === 'classifier' ? 'classifier' : 'embedding',
+              signal: earlier.signal.startsWith('classifier')
+                ? (earlier.signal as NeoRouteSignal)
+                : 'embedding',
               confidence: earlier.confidence ?? 0,
             }
           : null,
