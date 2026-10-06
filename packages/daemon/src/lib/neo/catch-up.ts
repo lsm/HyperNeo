@@ -1,14 +1,16 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   type NeoRoute,
   NeoRoutingLogRepository,
+  neoExcerpt,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 
 const SHOWN_ROUTES = 12;
 const READ_ROUTES = 200;
 const CATCH_UP_CHARS = 3_000;
 const SUMMARY_CHARS = 400;
+const LINE_TEXT_CHARS = 300;
 
 function where(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
   if (route.concernId) return titles.get(route.concernId) ?? route.concernId;
@@ -17,8 +19,11 @@ function where(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
 
 function routeLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
   const at = new Date(route.askedAt).toISOString().slice(11, 16);
-  const outcome = route.outcome ? ` → ${route.outcome}` : ' → (no reply yet)';
-  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${route.ask}"${outcome}`;
+  const outcome = route.outcome
+    ? ` → ${neoExcerpt(route.outcome, LINE_TEXT_CHARS)}`
+    : ' → (no reply yet)';
+  const ask = neoExcerpt(route.ask, LINE_TEXT_CHARS);
+  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${ask}"${outcome}`;
 }
 
 function summarize(routes: readonly NeoRoute[], titles: ReadonlyMap<string, string>): string {

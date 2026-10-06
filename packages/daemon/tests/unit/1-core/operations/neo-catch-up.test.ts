@@ -1,5 +1,5 @@
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { readNeoCatchUp, renderNeoCatchUp } from '../../../../src/lib/neo/catch-up.ts';
 import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 import {
@@ -79,6 +79,24 @@ describe('renderNeoCatchUp', () => {
     expect(lines[1]).toMatch(/^- \d+ earlier: Neo driver epic ×20, youtube ×\d+$/);
     expect(lines.at(-1)).toContain('18:49 UTC, youtube');
     expect(text.length).toBeLessThanOrEqual(3_000);
+  });
+});
+
+describe('renderNeoCatchUp with long asks', () => {
+  test('trims each ask and reply to both ends so a trailing question survives', () => {
+    const routes = [
+      {
+        ...entry(1, { ask: `https://example.com/post ${'x'.repeat(5_000)} how can we join?` }),
+        id: 1,
+        outcome: `${'y'.repeat(5_000)} end of reply`,
+        outcomeAt: at,
+      },
+    ];
+    const line = renderNeoCatchUp(routes, new Map()).split('\n')[1];
+    expect(line).toContain('"https://example.com/post');
+    expect(line).toContain('how can we join?"');
+    expect(line).toContain('end of reply');
+    expect(line.length).toBeLessThan(700);
   });
 });
 

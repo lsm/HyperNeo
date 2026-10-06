@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-const TEXT_CHARS = 300;
+const TEXT_CHARS = 10_000;
 
 export type NeoRouteDestination = 'main' | 'holder' | 'new';
 
@@ -25,9 +25,15 @@ const columns = `id, message_id AS messageId, conversation_id AS conversationId,
   asked_at AS askedAt, ask, destination, target_session_id AS targetSessionId,
   concern_id AS concernId, signal, confidence, outcome, outcome_at AS outcomeAt`;
 
-function clip(text: string): string {
+export function neoExcerpt(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > TEXT_CHARS ? `${flat.slice(0, TEXT_CHARS)}…` : flat;
+  if (flat.length <= max) return flat;
+  const head = Math.ceil((max - 1) / 2);
+  return `${flat.slice(0, head)}…${flat.slice(flat.length - (max - 1 - head))}`;
+}
+
+function clip(text: string): string {
+  return neoExcerpt(text, TEXT_CHARS);
 }
 
 export class NeoRoutingLogRepository {
