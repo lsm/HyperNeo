@@ -192,8 +192,6 @@ Named queries (`NAMED_QUERY_REGISTRY`, `live-query-handlers.ts:4138`):
 | `spaceTaskMessages.byTask.compact` | `[taskId, limit ≤ 100]` (limit defaults to 100) | task must exist; limit integer 1–100 | useSpaceTaskMessages.ts |
 | `spaceTaskActivity.byTask` | `[taskId]` | task must exist | TaskActivityPanel |
 | `spaceTaskActiveTurn.byTask` | `[taskId]` | task must exist | task views |
-| `actorMessages.byTask` | `[taskId]` | task must exist | useActorMessageProjections.ts |
-| `actorMessages.byWorkflowRun` | `[runId, runId, runId]` | all three params must be the same run id; run must exist | useActorMessageProjections.ts |
 | `taskMilestones.byTask` | `[taskId]` | task must exist | useTaskMilestones.ts |
 | `nodeExecutions.byRun` | `[runId]` | none (no existence check) | run detail views |
 | `mcpServers.global` | `[]` | none | app-mcp-store.ts |

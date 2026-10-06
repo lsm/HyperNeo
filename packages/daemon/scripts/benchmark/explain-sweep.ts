@@ -100,7 +100,6 @@ const queries: Array<{ name: string; sql: string; params: unknown[] }> = [
   },
   { name: 'sessions.list', sql: getSql('sessions.list'), params: [0] },
   { name: 'spaceSessions.bySpace', sql: getSql('spaceSessions.bySpace'), params: [spaceId] },
-  { name: 'actorMessages.byTask', sql: getSql('actorMessages.byTask'), params: [taskId] },
   { name: 'spaceTaskMessages.byTask', sql: getSql('spaceTaskMessages.byTask'), params: [taskId] },
   {
     name: 'spaceTaskMessages.byTask.compact',

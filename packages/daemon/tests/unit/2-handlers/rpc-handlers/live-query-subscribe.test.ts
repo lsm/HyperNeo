@@ -262,17 +262,6 @@ function insertMcpServer(db: BunDatabase, id: string, name: string, enabled = tr
   );
 }
 
-function insertWorkflowRun(db: BunDatabase, runId: string) {
-  const now = Date.now();
-  db.exec(
-    `INSERT OR IGNORE INTO space_workflow_runs (
-			id, space_id, workflow_id, title, description, status, config, created_at, updated_at
-		) VALUES (
-			'${runId}', 'space-test-1', 'workflow-test-1', 'Test Run', '', 'in_progress', '{}', ${now}, ${now}
-		)`
-  );
-}
-
 function insertSpaceTask(db: BunDatabase, id: string, spaceId: string = 'space-test-1') {
   const now = Date.now();
   db.exec(
@@ -388,7 +377,6 @@ describe('setupLiveQueryHandlers', () => {
     'spaceTaskMessages.byTask',
     'spaceTaskMessages.byTask.compact',
     'spaceTaskActiveTurn.byTask',
-    'actorMessages.byTask',
     'taskMilestones.byTask',
   ])('subscribe %s: rejects an existing task without Space ownership', async (queryName) => {
     db.exec('CREATE TEMP TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT)');
@@ -451,27 +439,6 @@ describe('setupLiveQueryHandlers', () => {
         subscriptionId: 'sub-legacy',
       })
     ).resolves.toBeDefined();
-  });
-
-  test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
-    insertWorkflowRun(db, 'workflow-run-valid');
-    await expect(
-      setup.callHandler('liveQuery.subscribe', {
-        queryName: 'actorMessages.byWorkflowRun',
-        params: ['workflow-run-valid', 'workflow-run-other', 'workflow-run-valid'],
-        subscriptionId: 'sub-actor-run',
-      })
-    ).rejects.toThrow('requires matching workflow run ids');
-  });
-
-  test('subscribe actorMessages.byWorkflowRun: nonexistent run rejected', async () => {
-    await expect(
-      setup.callHandler('liveQuery.subscribe', {
-        queryName: 'actorMessages.byWorkflowRun',
-        params: ['workflow-run-missing', 'workflow-run-missing', 'workflow-run-missing'],
-        subscriptionId: 'sub-actor-run-missing',
-      })
-    ).rejects.toThrow('Unauthorized');
   });
 
   test('subscribe sessionGroupMessages.byGroup: nonexistent group rejected', async () => {
