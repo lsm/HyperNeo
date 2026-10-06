@@ -151,6 +151,20 @@ describe('readNeoRouteDecision', () => {
     ).toEqual({ decision: 'main', confidence: 1, basis: null });
   });
 
+  test('keeps the rule when the model explains its basis after it', () => {
+    expect(
+      readNeoRouteDecision(
+        '{"choice":"youtube","confidence":0.9,"basis":"continues_turn: a follow-up to the last turn"}',
+        [youtube]
+      )
+    ).toEqual({ decision: youtube, confidence: 0.9, basis: 'continues_turn' });
+    expect(readNeoRouteDecision('{"choice":"main","basis":"one_offish"}', [youtube])).toEqual({
+      decision: 'main',
+      confidence: null,
+      basis: null,
+    });
+  });
+
   test('still accepts a bare id, and rejects an id that was not offered', () => {
     expect(readNeoRouteDecision(' `drivers` ', [drivers, youtube])).toEqual({
       decision: drivers,
