@@ -664,6 +664,7 @@ describe('DatabaseCore', () => {
       let listingAtWrite: string[] = [];
       dbCore = new DatabaseCore(dbPath);
       const internals = dbCore as unknown as Record<string, unknown>;
+      internals.tryFastCopy = () => false;
       const originalVacuumInto = internals.tryVacuumInto as (path: string) => boolean;
       internals.tryVacuumInto = (backupPath: string) => {
         listingAtWrite = readdirSync(backupDir)
@@ -768,6 +769,7 @@ describe('DatabaseCore', () => {
       utimesSync(join(backupDir, undeletable), now - 270, now - 270);
 
       dbCore = new DatabaseCore(dbPath);
+      (dbCore as unknown as { tryFastCopy: () => boolean }).tryFastCopy = () => false;
       await dbCore.initialize();
 
       const remainingDbs = readdirSync(backupDir).filter(
