@@ -4,7 +4,9 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -67,6 +69,7 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   folderExists: (folder: string) => boolean;
+  searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
 }
 
 export interface CodexThreadDetail {
@@ -181,10 +184,21 @@ function codexStatus(thread: CodexThreadRow, now: number): WorkStatus {
   return now - thread.updatedAt < RECENT_MS ? 'running' : 'done';
 }
 
+export function matchCodexThreads(
+  chats: readonly WorkChatMatch[]
+): ReadonlyMap<string, WorkChatMatch> {
+  return new Map(
+    chats.flatMap((chat) =>
+      chat.kind === 'codex' && chat.sessionId ? [[chat.sessionId, chat] as const] : []
+    )
+  );
+}
+
 export function buildCodexGroups(
   snapshot: CodexSnapshot,
   query: FindQuery,
-  deps: Omit<CodexDesktopAdapterDeps, 'statePath'>
+  deps: Omit<CodexDesktopAdapterDeps, 'statePath'>,
+  matched: ReadonlyMap<string, WorkChatMatch> = new Map()
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   const now = deps.now();
@@ -199,16 +213,27 @@ export function buildCodexGroups(
           (thread) =>
             codexProjectFolder(thread.folder, snapshot.roots, deps.worktreesDir) === place.folder
         )
-        .filter((thread) => placeMatches || thread.title.toLowerCase().includes(text ?? ''))
-        .slice(0, THREADS_PER_PLACE)
-        .map((thread) => ({
-          ref: { adapter: 'codex-desktop', id: thread.id },
-          title: thread.title,
-          place: where,
-          status: codexStatus(thread, now),
-          lastActivityAt: thread.updatedAt,
-          link: `codex://threads/${thread.id}`,
-        }));
+        .filter(
+          (thread) =>
+            placeMatches ||
+            matched.has(thread.id) ||
+            thread.title.toLowerCase().includes(text ?? '')
+        )
+        .map((thread) =>
+          withChatEvidence(
+            {
+              ref: { adapter: 'codex-desktop', id: thread.id },
+              title: thread.title,
+              place: where,
+              status: codexStatus(thread, now),
+              lastActivityAt: thread.updatedAt,
+              link: `codex://threads/${thread.id}`,
+            },
+            matched.get(thread.id)
+          )
+        )
+        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+        .slice(0, THREADS_PER_PLACE);
       if (!placeMatches && work.length === 0) return [];
       return [
         {
@@ -228,11 +253,16 @@ export function loadCodexSnapshot(query: FindQuery, deps: CodexDesktopAdapterDep
 }
 
 const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
-  .input(['query', 'deps'])
+  .input(['query', 'deps', 'chats'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadCodexSnapshot, ['query', 'deps'], 'snapshot')
-  .pipe(buildCodexGroups, ['snapshot', 'query', 'deps'], 'groups')
-  .end('groups') as (query: FindQuery, deps: CodexDesktopAdapterDeps) => PlaceGroup[];
+  .pipe(matchCodexThreads, 'chats', 'matched')
+  .pipe(buildCodexGroups, ['snapshot', 'query', 'deps', 'matched'], 'groups')
+  .end('groups') as (
+  query: FindQuery,
+  deps: CodexDesktopAdapterDeps,
+  chats: readonly WorkChatMatch[]
+) => PlaceGroup[];
 
 export function readCodexThread(statePath: string, id: string): CodexThreadDetail | null {
   return withCodexState(statePath, (db) => {
@@ -564,7 +594,12 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
   return {
     id: 'codex-desktop',
     capabilities: ['find', 'start', 'send', 'status', 'stop'],
-    find: (query) => runCodexFind(query, deps),
+    find: async (query) =>
+      runCodexFind(
+        query,
+        deps,
+        query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
+      ),
     start: (request) => runCodexStart(request, deps),
     send: (ref, message) => runCodexSend(ref, message, deps),
     status: (ref) => runCodexStatus(ref, deps),

@@ -98,6 +98,52 @@ describe('codex-desktop adapter against a Codex state database', () => {
     });
   }
 
+  test('finds a thread by what was said in it and shows the matching snippet', async () => {
+    const searched: string[] = [];
+    const found = await createCodexDesktopAdapter({
+      statePath,
+      worktreesDir: '/codex/worktrees',
+      machine: 'laptop',
+      now: () => NOW,
+      spawn: unusedSpawn,
+      appServer: () => Promise.reject(new Error('not used')),
+      folderExists: () => true,
+      searchChats: async (text) => {
+        searched.push(text);
+        return [
+          {
+            kind: 'codex',
+            sessionId: 't2',
+            taskId: null,
+            hits: 3,
+            lastHitAt: NOW - 3_600_000,
+            score: 100.05,
+            snippets: [
+              {
+                match: 'exact',
+                messageId: 'm9',
+                sessionId: 't2',
+                role: 'assistant',
+                at: NOW,
+                text: 'moved the otter loader',
+              },
+            ],
+          },
+        ];
+      },
+    }).find({ text: 'otter', includeClosed: false, limit: 20 });
+    expect(searched).toEqual(['otter']);
+    expect(found.flatMap((group) => group.work)).toMatchObject([
+      {
+        ref: { adapter: 'codex-desktop', id: 't2' },
+        hits: 3,
+        snippets: [
+          { text: 'moved the otter loader', handle: { sessionId: 't2', messageId: 'm9' } },
+        ],
+      },
+    ]);
+  });
+
   test('lists Codex projects with their open threads, worktrees folded into the project', async () => {
     const groups = await adapter().find({ includeClosed: false, limit: 20 });
     expect(

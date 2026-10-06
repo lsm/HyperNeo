@@ -31,6 +31,11 @@ function toTurn(row: WorkTurnRow): WorkTurn {
   };
 }
 
+const TURN_SCOPES = [
+  `kind = 'message' AND session_id = ?`,
+  `kind IN ('codex', 'claude') AND session_id = ?`,
+];
+
 export function readWorkTurns(
   db: BunDatabase,
   sessionId: string,
@@ -38,7 +43,21 @@ export function readWorkTurns(
   before: number,
   after: number
 ): WorkTurn[] | null {
-  const scope = `kind = 'message' AND session_id = ?`;
+  for (const scope of TURN_SCOPES) {
+    const turns = readScopedTurns(db, scope, sessionId, around, before, after);
+    if (turns) return turns;
+  }
+  return null;
+}
+
+function readScopedTurns(
+  db: BunDatabase,
+  scope: string,
+  sessionId: string,
+  around: string | undefined,
+  before: number,
+  after: number
+): WorkTurn[] | null {
   if (!around) {
     const rows = db
       .prepare(
