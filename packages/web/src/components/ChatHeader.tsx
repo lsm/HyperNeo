@@ -1,4 +1,4 @@
-import type { Session, SessionFeatures } from '@hyperneo/shared';
+import type { ChatDisplayMode, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { sessionStore } from '../lib/session-store.ts';
 import { conversationTitle } from '../lib/session-sidebar-status.ts';
@@ -11,6 +11,7 @@ import { CloneIcon } from './icons/CloneIcon.tsx';
 import { MoveSessionDialog, movableSession, moveSession } from './MoveSessionDialog.tsx';
 import { sessions } from '../lib/state.ts';
 import { useState } from 'preact/hooks';
+import { nextChatDisplayMode } from './sdk/chat-display-mode.ts';
 
 export interface ChatHeaderProps {
   session: Session | null;
@@ -26,6 +27,8 @@ export interface ChatHeaderProps {
   titleOverride?: string;
   onBack?: () => void;
   onReturnToParent?: () => void;
+  displayMode?: ChatDisplayMode;
+  onDisplayModeChange?: (mode: ChatDisplayMode) => void;
 }
 
 export function ChatHeader({
@@ -42,6 +45,8 @@ export function ChatHeader({
   titleOverride,
   onBack,
   onReturnToParent,
+  displayMode,
+  onDisplayModeChange,
 }: ChatHeaderProps) {
   const returnedAt = session?.metadata.clone?.returnedAt;
   const isChild = !!session?.parentSessionId && !session.id.startsWith('neo:');
@@ -166,6 +171,28 @@ export function ChatHeader({
         />
         {session && moving && (
           <MoveSessionDialog session={session} isOpen onClose={() => setMoving(false)} />
+        )}
+        {displayMode && onDisplayModeChange && (
+          <IconButton
+            title={displayMode === 'full' ? 'Hide tool details' : 'Show tool details'}
+            data-testid="display-mode-btn"
+            aria-pressed={displayMode === 'full'}
+            onClick={() => onDisplayModeChange(nextChatDisplayMode(displayMode))}
+            class={cn('flex-shrink-0 text-fg-muted', displayMode === 'full' && 'bg-fill text-fg')}
+          >
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={1.9}
+                d={
+                  displayMode === 'full'
+                    ? 'M4 6h16M4 10h16M4 14h16M4 18h16'
+                    : 'M4 7h16M4 12h10M4 17h16'
+                }
+              />
+            </svg>
+          </IconButton>
         )}
         {inspectorAvailable && (
           <IconButton

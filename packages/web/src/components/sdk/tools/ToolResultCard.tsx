@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
@@ -20,6 +20,7 @@ import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 import { ReadImagePreview } from './ReadImagePreview.tsx';
 import { type CappedOutput, FullOutputNotice, useFullToolOutput } from './FullOutputNotice.tsx';
+import { useFoldedActivity } from '../chat-display-mode.ts';
 
 const imageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
@@ -143,9 +144,11 @@ function ToolResultCardBody({
 
   const colors = getToolColors(toolName);
   const displayName = getToolDisplayName(toolName);
+  const folded = useFoldedActivity();
   const shouldExpand =
-    defaultExpanded !== undefined ? defaultExpanded : shouldExpandByDefault(toolName);
+    defaultExpanded !== undefined ? defaultExpanded : !folded && shouldExpandByDefault(toolName);
   const [isExpanded, setIsExpanded] = useState(shouldExpand);
+  useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
   const [deleting, setDeleting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const customRenderer = hasCustomRenderer(toolName) ? getCustomRenderer(toolName) : null;

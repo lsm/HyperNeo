@@ -1,6 +1,6 @@
 import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
-import type { SettingSource } from './types/settings.ts';
+import type { ChatDisplayMode, SettingSource } from './types/settings.ts';
 import type { DeclarativeToolGuard } from './types/space.ts';
 
 export type {
@@ -232,6 +232,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
   temperature: number;
 
   autoScroll?: boolean;
+
+  chatDisplayMode?: ChatDisplayMode;
 
   coordinatorMode?: boolean;
 

@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/preact';
 import { ToolResultCard } from '../ToolResultCard.tsx';
+import { ChatDisplayModeContext } from '../../chat-display-mode.ts';
 
 const mockRequest = vi.fn();
 const mockGetHub = vi.fn();
@@ -1717,5 +1718,39 @@ footer line 2`;
       );
       expect(screen.queryByText('Show full output')).toBeNull();
     });
+  });
+});
+
+describe('ToolResultCard in compact display mode', () => {
+  it('folds a card that opens by default, and opens it on click', () => {
+    const { container, getByRole } = render(
+      <ChatDisplayModeContext.Provider value="compact">
+        <ToolResultCard
+          toolName="Thinking"
+          toolId="think-1"
+          input={{}}
+          output="Ship the switch"
+          isError
+        />
+      </ChatDisplayModeContext.Provider>
+    );
+    expect(container.textContent).not.toContain('Ship the switch');
+    fireEvent.click(getByRole('button'));
+    expect(container.textContent).toContain('Ship the switch');
+  });
+
+  it('keeps the card open in full mode', () => {
+    const { container } = render(
+      <ChatDisplayModeContext.Provider value="full">
+        <ToolResultCard
+          toolName="Thinking"
+          toolId="think-1"
+          input={{}}
+          output="Ship the switch"
+          isError
+        />
+      </ChatDisplayModeContext.Provider>
+    );
+    expect(container.textContent).toContain('Ship the switch');
   });
 });

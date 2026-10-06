@@ -47,6 +47,28 @@ describe('ChatHeader', () => {
     sessionStore.activeSessionId.value = null;
   });
 
+  describe('Display mode toggle', () => {
+    it('switches a compact chat to full', () => {
+      const onDisplayModeChange = vi.fn();
+      const { getByTestId } = render(
+        <ChatHeader
+          {...defaultProps}
+          displayMode="compact"
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      );
+      const toggle = getByTestId('display-mode-btn');
+      expect(toggle.getAttribute('title')).toBe('Show tool details');
+      fireEvent.click(toggle);
+      expect(onDisplayModeChange).toHaveBeenCalledWith('full');
+    });
+
+    it('hides the toggle without a handler', () => {
+      const { queryByTestId } = render(<ChatHeader {...defaultProps} />);
+      expect(queryByTestId('display-mode-btn')).toBeNull();
+    });
+  });
+
   describe('Basic Rendering', () => {
     it('should render session title', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);

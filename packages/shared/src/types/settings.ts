@@ -105,6 +105,8 @@ export interface ExaSettings {
 
 export const VOICE_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
+export type ChatDisplayMode = 'full' | 'compact' | 'minimal';
+
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   settingSources: SettingSource[];
 
@@ -113,6 +115,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   thinkingLevel?: ThinkingLevel;
 
   autoScroll?: boolean;
+
+  chatDisplayMode?: ChatDisplayMode;
 
   githubPollingInterval?: number;
 
@@ -145,6 +149,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   model: 'sonnet',
   showArchived: false,
   autoScroll: true,
+  chatDisplayMode: 'compact',
   githubPollingInterval: 120,
   voice: {
     enabled: false,

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { ThinkingBlock } from '../ThinkingBlock';
+import { ChatDisplayModeContext } from '../chat-display-mode';
 
 describe('ThinkingBlock', () => {
   describe('Basic Rendering', () => {
@@ -308,5 +309,18 @@ describe('ThinkingBlock', () => {
 
       expect(container.querySelector('.running-shimmer')).toBeNull();
     });
+  });
+});
+
+describe('ThinkingBlock in compact display mode', () => {
+  it('shows only the header until clicked', () => {
+    const { container, getByRole } = render(
+      <ChatDisplayModeContext.Provider value="compact">
+        <ThinkingBlock content="Weighing both options" />
+      </ChatDisplayModeContext.Provider>
+    );
+    expect(container.textContent).not.toContain('Weighing both options');
+    fireEvent.click(getByRole('button'));
+    expect(container.textContent).toContain('Weighing both options');
   });
 });
