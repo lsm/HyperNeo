@@ -4,7 +4,7 @@ import {
   neoRouteEndpoint,
   neoRouteTimeoutMs,
   neoRouteHttpCall,
-  readNeoRouteAnswer,
+  readNeoRouteDecision,
   readNeoRouteStream,
 } from '../../../../src/lib/neo/route-classifier.ts';
 import {
@@ -38,8 +38,9 @@ describe('buildNeoRoutePrompt', () => {
     expect(prompt.indexOf('Topics:')).toBeLessThan(
       prompt.indexOf('New message:\nhow about 5060 now?')
     );
-    expect(prompt).toContain('exactly one of these ids and nothing else: main, drivers, youtube');
-    expect(prompt).toContain('If it answers a WAITING ON YOU question, that topic.');
+    expect(prompt).toContain('Reply with one JSON object and nothing else');
+    expect(prompt).toContain('choice is one of: main, drivers, youtube');
+    expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
   });
 
   test('keeps the end of a long message where the question usually is', () => {
@@ -135,11 +136,30 @@ describe('readNeoRouteStream', () => {
   });
 });
 
-describe('readNeoRouteAnswer', () => {
-  test('accepts main or a listed id, and nothing else', () => {
-    expect(readNeoRouteAnswer(' `drivers` ', [drivers, youtube])).toBe(drivers);
-    expect(readNeoRouteAnswer('"main"', [drivers, youtube])).toBe('main');
-    expect(readNeoRouteAnswer('garden', [drivers])).toBeNull();
+describe('readNeoRouteDecision', () => {
+  test('reads a JSON choice with its confidence and basis', () => {
+    expect(
+      readNeoRouteDecision(
+        '{"type":"choice","choice":"youtube","confidence":0.82,"basis":"answers_waiting"}',
+        [drivers, youtube]
+      )
+    ).toEqual({ decision: youtube, confidence: 0.82, basis: 'answers_waiting' });
+    expect(
+      readNeoRouteDecision('```json\n{"choice":"main","confidence":3,"basis":"guess"}\n```', [
+        drivers,
+      ])
+    ).toEqual({ decision: 'main', confidence: 1, basis: null });
+  });
+
+  test('still accepts a bare id, and rejects an id that was not offered', () => {
+    expect(readNeoRouteDecision(' `drivers` ', [drivers, youtube])).toEqual({
+      decision: drivers,
+      confidence: null,
+      basis: null,
+    });
+    expect(readNeoRouteDecision('{"choice":"garden"}', [drivers])).toBeNull();
+    expect(readNeoRouteDecision('garden', [drivers])).toBeNull();
+    expect(readNeoRouteDecision('', [drivers])).toBeNull();
   });
 });
 
@@ -185,6 +205,23 @@ describe('chooseNeoRoute with a classifier', () => {
     );
     expect(seen).toEqual(['drivers,youtube']);
     expect(route.choice).toMatchObject({ concernId: 'youtube', signal: 'classifier' });
+  });
+
+  test('records the confidence the classifier gave with its decision', async () => {
+    const route = await chooseNeoRoute(
+      'yes',
+      deps(async () => ({ decision: youtube, confidence: 0.91, basis: 'answers_waiting' }))
+    );
+    expect(route.choice).toMatchObject({
+      concernId: 'youtube',
+      confidence: 0.91,
+      signal: 'classifier:answers_waiting',
+    });
+    const main = await chooseNeoRoute(
+      'new thing',
+      deps(async () => ({ decision: 'main', confidence: 0.7, basis: 'new_subject' }))
+    );
+    expect(main).toEqual({ choice: null, fallback: 'classifier:new_subject' });
   });
 
   test('stays with main Neo and records why when the classifier says main or gives no answer', async () => {

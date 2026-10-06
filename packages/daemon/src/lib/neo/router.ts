@@ -39,12 +39,32 @@ export interface NeoHolder {
 export interface NeoRouteChoice {
   concernId: string;
   sessionId: string;
-  signal: 'embedding' | 'classifier';
+  signal: NeoRouteSignal;
   confidence: number;
 }
 
 export type NeoRouteAnswer = NeoHolder | 'main' | null;
-export type NeoRouteVerdict = NeoRouteAnswer | 'timeout' | 'failed';
+export const NEO_ROUTE_BASES = [
+  'continues_turn',
+  'answers_waiting',
+  'matches_topic',
+  'one_off',
+  'new_subject',
+  'unsure',
+] as const;
+export type NeoRouteBasis = (typeof NEO_ROUTE_BASES)[number];
+export interface NeoRouteDecision {
+  decision: NeoHolder | 'main';
+  confidence: number | null;
+  basis: NeoRouteBasis | null;
+}
+export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'failed';
+const CLASSIFIER_CONFIDENCE = 0.6;
+export type NeoRouteSignal = 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
+
+export function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
+  return basis ? `classifier:${basis}` : 'classifier';
+}
 
 export interface NeoRouterDeps {
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
@@ -224,8 +244,12 @@ export async function classifyNeoAsk(
   deps: NeoRouterDeps
 ): Promise<Routed> {
   const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
-  const chosen = deps.classify ? await deps.classify(text, options, context) : null;
-  if (chosen === 'main') return { choice: null, fallback: 'classifier' };
+  const verdict = deps.classify ? await deps.classify(text, options, context) : null;
+  const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
+  const chosen = decided
+    ? decided.decision
+    : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
+  if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen || chosen === 'timeout' || chosen === 'failed')
     return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
   const holder = chosen.concernId === NEO_INBOX_ID ? await deps.inbox?.() : chosen;
@@ -234,8 +258,8 @@ export async function classifyNeoAsk(
       ? {
           concernId: holder.concernId,
           sessionId: holder.sessionId,
-          signal: 'classifier',
-          confidence: 0.6,
+          signal: classifierSignal(decided?.basis),
+          confidence: decided?.confidence ?? CLASSIFIER_CONFIDENCE,
         }
       : null,
     fallback: holder ? undefined : 'inbox-unavailable',
