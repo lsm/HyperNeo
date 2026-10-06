@@ -880,32 +880,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			`);
     }
 
-    function envelopeHandoffPayload(
-      uuid: string,
-      sender: string,
-      body: string,
-      taskLabel?: string,
-      replyLine?: string
-    ): Record<string, unknown> {
-      return {
-        type: 'user',
-        uuid,
-        isSynthetic: true,
-        inputKind: 'task',
-        message: {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `─── Message from ${sender}${taskLabel ?? ''} ───\n\n${body}\n\n─── Reply ───\nTo reply, use: ${
-                replyLine ?? `send_message with target "@${sender}"`
-              }`,
-            },
-          ],
-        },
-      };
-    }
-
     function insertWorkflowRun(id: string): void {
       db.exec(`
 				INSERT INTO space_workflow_runs (
