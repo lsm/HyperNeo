@@ -23,6 +23,8 @@ describe('isSecretPath', () => {
     '~/.claude/settings.local.json',
     '~/.claude/.credentials.json',
     '~/.git-credentials',
+    '~/focus/app/.claude/settings.local.json',
+    '~/focus/app/.claude/settings.json',
     '~/backups/id_ed25519',
     '~/focus/app/serviceAccount.json',
     '~/focus/app/config/secrets.yaml',
@@ -55,6 +57,7 @@ describe('bashDenial', () => {
   test.each([
     'cd ~/focus/app && git log --oneline -5',
     'gh pr view 5739 --repo fictional/app --json state,mergedAt',
+    "gh pr list --json number --jq '.[0].number'",
     'git diff main...HEAD -- src',
     'gh run list --limit 3 | gh pr checks 12',
   ])('allows read-only look-up %s', (command) => {
@@ -72,6 +75,9 @@ describe('bashDenial', () => {
     ['gh api repos/fictional/app -X POST', 'not a read-only'],
     ['git log && rm -rf ~/focus', 'not a read-only'],
     ['git show HEAD:.env', 'may hold secrets'],
+    ['git diff --no-index ~/focus/app/.env* /dev/null', 'unquoted wildcards'],
+    ['cd ~/focus/app && git diff --no-index [.]env /dev/null', 'unquoted wildcards'],
+    ['git diff --no-index .{e,x}nv /dev/null', 'unquoted wildcards'],
     ['cd ~/.aws && git status', 'may hold secrets'],
   ])('refuses %s', (command, reason) => {
     expect(bashDenial(command, scope)).toContain(reason);

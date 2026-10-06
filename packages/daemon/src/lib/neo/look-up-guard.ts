@@ -116,7 +116,7 @@ export interface LookUpScope {
 export function neoSecretReadRules(scope: Pick<LookUpScope, 'dataDir' | 'home'>): string[] {
   return [
     ...SECRET_DIRS.map((dir) => `~/${dir}/**`),
-    ...SECRET_FILES.map((file) => `~/${file}`),
+    ...SECRET_FILES.flatMap((file) => [`~/${file}`, `~/**/${file}`]),
     ...SECRET_NAMES.map((name) => `~/**/${name}`),
     dataDirRule(scope.dataDir, scope.home),
   ].map((path) => `Read(${path})`);
@@ -176,7 +176,9 @@ export function isSecretPath(raw: string, scope: LookUpScope): boolean {
   return (
     within(path, scope.dataDir) ||
     SECRET_DIRS.some((dir) => within(path, join(scope.home, dir))) ||
-    SECRET_FILES.some((file) => path === join(scope.home, file)) ||
+    SECRET_FILES.some(
+      (file) => path === join(scope.home, file) || path.endsWith(`${sep}${file}`)
+    ) ||
     secretName(basename(path))
   );
 }
@@ -202,6 +204,8 @@ function staticPrefix(pattern: string): string {
 export function bashDenial(command: string, scope: LookUpScope): string | null {
   if (UNSAFE_SHELL.test(command))
     return 'redirects, variables, substitutions, background jobs, line breaks and --output are not allowed';
+  if (/[*?[\]{}]/.test(command.replace(/'[^']*'|"[^"]*"/g, '')))
+    return 'unquoted wildcards are not allowed';
   const segments = command.split(/&&|\|\||;|\|/).map((segment) => segment.trim());
   const unknown = segments.find(
     (segment) =>
