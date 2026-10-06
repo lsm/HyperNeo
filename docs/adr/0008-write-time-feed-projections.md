@@ -7,6 +7,45 @@ LiveQuery stays the subscription mechanism, but a live feed must read a
 projection maintained at write time, not re-derive its rows from raw history on
 every change. Tracks #5571.
 
+## Amendment: flags before a full projection (2026-10-06)
+
+Measured after the cheap fixes (#5765, #5767), on the live tts database:
+
+| feed | per write |
+| --- | --- |
+| `taskMilestones.byTask` (Timeline), 3k / 87k messages | 48 / 250 ms, was 1,220 / 1,434 ms |
+| `spaceTaskMessages.byTask.compact`, busiest active task (5.7k) | 345 ms |
+| `spaceTaskActiveTurn.byTask`, same task | 93 ms |
+
+The `delivery_job_errors` status predicate is dropped: tts has 423
+`message_delivery` jobs in total. Profiling the thread feed found the cost is
+not the history scan itself (15 ms for 5.7k rows) but JSON parsing of every
+row, repeated across the summary, selection and active-session steps, plus
+carrying every `sdk_message` body through the ranking sorts. The 100-turn
+window bounds nothing on a task whose turns are long.
+
+A prototype that reads JSON-derived flags from a narrow table and loads only
+the displayed bodies ran the thread selection in 8 ms (5.7k messages) and
+90 ms (87k, a runaway task of 86k background-task events).
+
+Decision, replacing sections 2–4 for now:
+
+- `task_message_rows` holds one narrow row per task message: the columns the
+  feeds filter on plus a `flags` bitmask computed from the message JSON with
+  the same SQL expressions the feeds use today.
+- SQLite triggers on `sdk_messages` (insert, update of the displayed columns,
+  delete, including foreign-key cascades) keep it current, so no writer can
+  bypass it and the flags match the legacy predicates by construction.
+- The thread and active-turn feeds keep their selection rules but read the
+  flags and join `sdk_messages` only for the rows they return.
+- Existing tasks are projected on their first subscribe, which is idempotent;
+  there is no global backfill job.
+- The full projection (per-row display state, row-key events) stays the
+  direction if tasks routinely reach tens of thousands of messages.
+
+Rollout: (1) table and triggers, #5788; (2) thread feed reads it, with
+per-task projection on subscribe; (3) active turn reads it.
+
 ## Context
 
 ### Measured cost
