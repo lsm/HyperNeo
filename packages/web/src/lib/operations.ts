@@ -4,9 +4,12 @@ import type { MessageHub, SpaceTask } from '@hyperneo/shared';
 export function invokeOperation<T>(
   hub: MessageHub,
   name: OperationName,
-  input?: unknown
+  input?: unknown,
+  options?: { timeout?: number }
 ): Promise<T> {
-  return hub.request<T>('operation.invoke', { name, input });
+  return options
+    ? hub.request<T>('operation.invoke', { name, input }, options)
+    : hub.request<T>('operation.invoke', { name, input });
 }
 
 const TRANSITION_REJECTION_MESSAGES: Record<string, string> = {
