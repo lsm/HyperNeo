@@ -4,6 +4,7 @@ import {
   createSpaceAdapter,
   spaceAgentWorkStatus,
   spaceTaskWorkStatus,
+  spaceWorkRefForSession,
 } from '../../../../src/lib/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
@@ -242,5 +243,23 @@ describe('space adapter against the space tables', () => {
       ok: false,
       reason: 'not_found',
     });
+  });
+});
+
+describe('spaceWorkRefForSession', () => {
+  test('names the one task or agent that owns a session, and nothing when unclear', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE space_long_horizon_agents (id TEXT, session_id TEXT);
+      CREATE TABLE space_tasks (id TEXT, task_agent_session_id TEXT, workflow_run_id TEXT);
+      CREATE TABLE node_executions (workflow_run_id TEXT, agent_session_id TEXT);
+      INSERT INTO space_long_horizon_agents VALUES ('ops', 's-agent');
+      INSERT INTO space_tasks VALUES ('t1', 's-task', NULL), ('t2', NULL, 'run-2'), ('t3', 's-both', NULL);
+      INSERT INTO node_executions VALUES ('run-2', 's-node'), ('run-2', 's-both');`);
+    expect(spaceWorkRefForSession(db, 's-agent')).toEqual({ adapter: 'space', id: 'agent:ops' });
+    expect(spaceWorkRefForSession(db, 's-task')).toEqual({ adapter: 'space', id: 't1' });
+    expect(spaceWorkRefForSession(db, 's-node')).toEqual({ adapter: 'space', id: 't2' });
+    expect(spaceWorkRefForSession(db, 's-both')).toBeNull();
+    expect(spaceWorkRefForSession(db, 'ordinary')).toBeNull();
+    db.close();
   });
 });

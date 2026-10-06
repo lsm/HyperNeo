@@ -353,18 +353,28 @@ describe('Neo existing Space-agent handoff operation', () => {
     });
     expect(service.repo.listWork()).toEqual([]);
   });
+  test('a bare Space agent session id is proposed as a send to that agent', async () => {
+    const reply = (await invoke({ ...input, targetAgent: undefined })) as {
+      value: { ok: boolean; work: { id: string } };
+    };
+    expect(reply.value.ok).toBe(true);
+    expect(service.driverTargets.get(reply.value.work.id)).toEqual({
+      verb: 'send',
+      ref: { adapter: 'space', id: 'agent:manager-A' },
+    });
+  });
+
   test('explicit target selection remains required and ordinary scope ownership is unchanged', async () => {
     expect(await invoke({ ...input, targetSessionId: undefined })).toMatchObject({
       kind: 'completed',
       value: { ok: false },
     });
-    expect(await invoke({ ...input, targetAgent: undefined })).toMatchObject({
-      kind: 'completed',
-      value: { ok: false, reason: 'target_owned_context' },
-    });
     expect(
       await invoke({ ...input, targetSessionId: 'holder', targetAgent: undefined })
-    ).toMatchObject({ kind: 'completed', value: { ok: false, reason: 'target_owned_context' } });
+    ).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: expect.stringMatching(/^target_owned_context: .*work\.find/) },
+    });
     expect(service.repo.listWork()).toEqual([]);
     expect(
       await proposed({ ...input, targetSessionId: 'ordinary', targetAgent: undefined })
