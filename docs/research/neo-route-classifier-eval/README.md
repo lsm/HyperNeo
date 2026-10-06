@@ -12,6 +12,7 @@ follow-up to a PR question, sent to the inbox).
   official price table added in #5721 (DeepSeek off-peak). Until #5721 merges, `dev`'s
   `report.ts` still prices DeepSeek at peak and produces DeepSeek costs twice as high.
 - [`results/`](results/) — raw per-route logs, one JSON line per case
+- [`production-path.md`](production-path.md) — follow-up on 2026-10-06: the production prompt and call, whether GLM reasoning can be turned off, the answer cap, and structured JSON answers
 - Harness: [`scripts/neo-route-eval/`](../../../scripts/neo-route-eval/) (#5717, #5721)
 
 ## Methodology
@@ -226,6 +227,10 @@ Per-kind accuracy for every run is in [`report.md`](report.md).
 5. Not yet a decision model. Kev-4B's speed and real-ask accuracy make a Kev fine-tuned on the
    routing log the next experiment (`kev.train`). The harness's `/v1/systemone` client already
    speaks the request format of Kev, llama.cpp, hosted Jev and Cloudflare Clef.
+
+**Update (2026-10-06).** On the production path with structured JSON answers, glm-4.7 reached
+95% and is now the recommended routing model on the GLM subscription. See
+[`production-path.md`](production-path.md).
 
 ## Caveats
 

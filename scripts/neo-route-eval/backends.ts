@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import {
   buildNeoRoutePrompt,
   neoRouteHttpCall,
-  readNeoRouteAnswer,
   readNeoRouteStream,
 } from '../../packages/daemon/src/lib/neo/route-classifier.ts';
 import {
@@ -37,6 +36,7 @@ export interface RouteOutcome {
   rawAnswer?: string;
   unparsed?: boolean;
   stopReason?: string;
+  basis?: string;
 }
 
 export type RouteBackend = (evalCase: EvalCase) => Promise<RouteOutcome>;
@@ -178,6 +178,33 @@ export function productionRoutePrompt(evalCase: EvalCase): {
   return { prompt: buildNeoRoutePrompt(evalCase.message, options, context), options };
 }
 
+export function readRouteReply(
+  raw: string,
+  ids: readonly string[]
+): { id: string | null; confidence?: number; basis?: string } {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  let object: Record<string, unknown> | null = null;
+  if (start >= 0 && end > start) {
+    try {
+      object = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+    } catch {
+      object = null;
+    }
+  }
+  const candidate = object
+    ? String(object.choice ?? '').trim()
+    : raw
+        .trim()
+        .replace(/^[`"']+|[`"']+$/g, '')
+        .trim();
+  return {
+    id: candidate === 'main' || ids.includes(candidate) ? candidate : null,
+    ...(typeof object?.confidence === 'number' ? { confidence: object.confidence } : {}),
+    ...(typeof object?.basis === 'string' ? { basis: object.basis } : {}),
+  };
+}
+
 export function productionDirectBackend(
   baseUrl: string,
   model: string,
@@ -227,13 +254,18 @@ export function productionDirectBackend(
       | { message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number } } }
       | undefined;
     const raw = readNeoRouteStream(stream);
-    const answer = readNeoRouteAnswer(raw, options);
+    const reply = readRouteReply(
+      raw,
+      options.map((option) => option.concernId)
+    );
     return {
-      predicted: answer === null || answer === 'main' ? 'main' : answer.concernId,
+      predicted: reply.id ?? 'main',
+      confidence: reply.confidence,
+      basis: reply.basis,
       servedModel: model,
       thinkingBlocks,
       rawAnswer: raw.trim().slice(0, 200),
-      unparsed: answer === null,
+      unparsed: reply.id === null,
       stopReason: delta?.delta?.stop_reason,
       inputTokens: delta?.usage?.input_tokens || start?.message?.usage?.input_tokens,
       cachedInputTokens:

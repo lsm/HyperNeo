@@ -76,3 +76,16 @@ Option-order checks (`--reverse-options`, logs not kept): GLiNER's synthetic pic
 - **The Codex bridge needs its credentials loaded first.** It must be started after
   `isAvailable()`, which loads them; otherwise it starts with no auth and every upstream call
   returns 401.
+
+## Production-path runs (2026-10-06)
+
+| file | command (on tts) |
+|---|---|
+| `tts-prod-<model>.jsonl` | `bun scripts/neo-route-eval/run.ts --backend prod-direct --base-url https://open.bigmodel.cn/api/anthropic --model <glm-…> --key-env GLM_API_KEY --cases synthetic,real --warmup 0 --out $R/tts-prod-<model>.jsonl` (DeepSeek: `https://api.deepseek.com/anthropic`, `DEEPSEEK_API_KEY`) |
+| `tts-prod-<model>-cold.jsonl` | five separate processes of the same command with `--cases synthetic --limit 1`, appended |
+
+`prod-direct` builds each case's prompt with `renderNeoRouteContext` and `buildNeoRoutePrompt`,
+and sends it with `neoRouteHttpCall`, so it matches what production sends; it can't run the
+embedding fallback. Each log line also records `thinkingBlocks`, `stopReason` and `unparsed`.
+The thinking-off, cap and JSON experiments in [`production-path.md`](production-path.md) ran
+from one-off probe scripts; only their summary counts were kept.

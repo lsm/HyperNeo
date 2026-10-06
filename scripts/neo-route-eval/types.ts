@@ -73,6 +73,7 @@ export interface EvalResult {
   rawAnswer?: string;
   unparsed?: boolean;
   stopReason?: string;
+  basis?: string;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
