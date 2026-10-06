@@ -15,7 +15,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
 import { findInModels } from '../model-service.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
@@ -42,9 +42,7 @@ type TitleGenerationProviderService = Pick<
   | 'isProviderAvailable'
   | 'getTitleGenerationConfig'
   | 'getTitleGenerationModels'
-  | 'applyEnvVarsToProcessForProvider'
-  | 'getEnvVarsForModel'
-  | 'restoreEnvVars'
+  | 'getIsolatedEnvForModel'
 >;
 
 function isAssistantMessageWithContent(
@@ -1060,84 +1058,70 @@ export class SessionLifecycle {
       return null;
     }
 
-    let originalEnv = await providerService.applyEnvVarsToProcessForProvider(
+    const prompt = buildTitleGenerationPrompt(messageText);
+
+    const cliPath = resolveSDKCliPath();
+
+    const mergedEnv = await providerService.getIsolatedEnvForModel(
       provider,
       titleModels.providerModelId
     );
 
-    try {
-      const prompt = buildTitleGenerationPrompt(messageText);
+    const agentQuery = query({
+      prompt,
+      options: {
+        model: titleModels.sdkModelId,
+        maxTurns: 1,
+        permissionMode: 'acceptEdits',
+        allowDangerouslySkipPermissions: false,
+        mcpServers: {},
+        settingSources: [],
+        tools: [],
+        pathToClaudeCodeExecutable: cliPath,
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+        env: mergedEnv,
+        thinking:
+          provider === 'kimi'
+            ? KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId)
+            : { type: 'disabled' },
+      },
+    });
 
-      const providerEnvVars = await providerService.getEnvVarsForModel(
-        titleModels.providerModelId,
-        provider
-      );
+    let title = '';
 
-      const cliPath = resolveSDKCliPath();
+    for await (const message of agentQuery) {
+      if (isAssistantMessageWithContent(message)) {
+        const textBlocks = message.message.content.filter(
+          (b: { type: string }) => b.type === 'text'
+        ) as Array<{ text?: string }>;
+        title = textBlocks
+          .map((b) => b.text ?? '')
+          .join(' ')
+          .trim();
 
-      const mergedEnv = buildSdkQueryEnv(providerEnvVars);
-
-      providerService.restoreEnvVars(originalEnv);
-      originalEnv = {};
-
-      const agentQuery = query({
-        prompt,
-        options: {
-          model: titleModels.sdkModelId,
-          maxTurns: 1,
-          permissionMode: 'acceptEdits',
-          allowDangerouslySkipPermissions: false,
-          mcpServers: {},
-          settingSources: [],
-          tools: [],
-          pathToClaudeCodeExecutable: cliPath,
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-          env: mergedEnv,
-          thinking:
-            provider === 'kimi'
-              ? KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId)
-              : { type: 'disabled' },
-        },
-      });
-
-      let title = '';
-
-      for await (const message of agentQuery) {
-        if (isAssistantMessageWithContent(message)) {
-          const textBlocks = message.message.content.filter(
-            (b: { type: string }) => b.type === 'text'
-          ) as Array<{ text?: string }>;
-          title = textBlocks
-            .map((b) => b.text ?? '')
-            .join(' ')
-            .trim();
-
-          if (title) {
-            break;
-          }
+        if (title) {
+          break;
         }
       }
-
-      if (!title) {
-        throw new Error('No text content in SDK response');
-      }
-
-      title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
-
-      while (
-        (title.startsWith('"') && title.endsWith('"')) ||
-        (title.startsWith("'") && title.endsWith("'"))
-      ) {
-        title = title.slice(1, -1).trim();
-      }
-
-      title = title.replace(/`/g, '');
-
-      return title;
-    } finally {
-      providerService.restoreEnvVars(originalEnv);
     }
+
+    if (!title) {
+      throw new Error('No text content in SDK response');
+    }
+
+    title = title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+
+    while (
+      (title.startsWith('"') && title.endsWith('"')) ||
+      (title.startsWith("'") && title.endsWith("'"))
+    ) {
+      title = title.slice(1, -1).trim();
+    }
+
+    title = title.replace(/`/g, '');
+
+    return title;
   }
 
   private async getValidatedModelId(
@@ -1224,8 +1208,4 @@ export function generateBranchName(title: string, sessionId: string): string {
   const shortId = sessionId.substring(0, 8);
 
   return `session/${slug}-${shortId}`;
-}
-
-function buildSdkQueryEnv(providerEnvVars: Record<string, string | undefined>): NodeJS.ProcessEnv {
-  return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
 }

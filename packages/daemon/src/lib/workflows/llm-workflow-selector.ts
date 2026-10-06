@@ -3,7 +3,7 @@ import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { Logger } from '../logger.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 
 const log = new Logger('llm-workflow-selector');
@@ -47,20 +47,9 @@ export async function selectWorkflowWithLlmDefault(
 
   const prompt = buildSelectionPrompt(task, workflows);
 
-  let originalEnv: Awaited<ReturnType<typeof providerService.applyEnvVarsToProcessForProvider>>;
-  try {
-    originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
-  } catch (err) {
-    log.warn('Failed to apply provider env vars for workflow selection:', err);
-    return null;
-  }
-
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const providerEnvVars = await providerService.getEnvVarsForModel(modelId, provider);
-    const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
-    providerService.restoreEnvVars(originalEnv);
-    originalEnv = {};
+    const mergedEnv = await providerService.getIsolatedEnvForModel(provider, modelId);
     const cliPath = resolveSDKCliPath();
 
     const agentQuery = query({
@@ -109,10 +98,6 @@ export async function selectWorkflowWithLlmDefault(
   } catch (err) {
     log.warn('LLM workflow selection failed:', err);
     return null;
-  } finally {
-    try {
-      providerService.restoreEnvVars(originalEnv);
-    } catch {}
   }
 }
 
