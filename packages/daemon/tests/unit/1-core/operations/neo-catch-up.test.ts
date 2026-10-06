@@ -40,11 +40,13 @@ describe('readNeoCatchUp', () => {
     expect(readNeoCatchUp(db)).toBe('');
   });
 
-  test('digests each holder-routed ask once, even when main Neo answers late', () => {
+  test('shows holder asks until main Neo answers a later ask, and survives a retried build', () => {
     log.record(entry(1, { destination: 'main', concernId: null, ask: 'before' }));
     log.record(entry(2, { ask: 'old holder ask' }));
-    expect(readNeoCatchUp(db)).toContain('"old holder ask"');
     log.record(entry(3, { destination: 'main', concernId: null }));
+    expect(readNeoCatchUp(db)).toContain('"old holder ask"');
+    expect(readNeoCatchUp(db)).toContain('"old holder ask"');
+    log.recordOutcome('m3', 'Answered.', at);
     log.record(entry(4, { ask: 'restart the iMac daemon?' }));
     log.recordOutcome('m4', 'Pull dev and restart it.', at);
     log.record(entry(5, { destination: 'new', concernId: null, ask: 'cloudflare post' }));
@@ -57,10 +59,10 @@ describe('readNeoCatchUp', () => {
     expect(text).toContain('18:25 UTC, a new topic: "cloudflare post" → (no reply yet)');
     expect(text).not.toContain('old holder ask');
     expect(text).not.toContain('"now"');
+    log.recordOutcome('m6', 'Answered now.', at);
     expect(readNeoCatchUp(db)).toBe('');
     log.recordOutcome('m5', 'It announces Artifacts.', at);
     expect(readNeoCatchUp(db)).toContain('"cloudflare post" → It announces Artifacts.');
-    expect(readNeoCatchUp(db)).toBe('');
   });
 });
 

@@ -71,23 +71,10 @@ export function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
   );
 }
 
-export function markNeoCatchUpDigested(
-  catchUp: string,
-  routes: readonly NeoRoute[],
-  db: BunDatabase
-): string {
-  new NeoRoutingLogRepository(db).markDigested(
-    routes.map((route) => route.id),
-    Date.now()
-  );
-  return catchUp;
-}
-
 export const readNeoCatchUp = (superpipe({})('neo-catch-up') as PipelineAPI)
   .input(['db'])
   .pipe(loadNeoCatchUpRoutes, 'db', 'routes')
   .pipe(requireMissedRoutes, 'routes', 'result:catchUp')
   .pipe(loadNeoConcernTitles, 'db', 'titles')
   .pipe(renderNeoCatchUp, ['catchUp', 'titles'], 'catchUp')
-  .pipe(markNeoCatchUpDigested, ['catchUp', 'routes', 'db'], 'catchUp')
   .end('catchUp') as (db: BunDatabase) => string;

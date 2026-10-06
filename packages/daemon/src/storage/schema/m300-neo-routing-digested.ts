@@ -12,6 +12,8 @@ export function addNeoRoutingDigestedColumn(db: Database): void {
   );
   if (!columns.has('digested_at'))
     db.exec('ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER');
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_routing_log_undigested ON neo_routing_log(id)
+    WHERE digested_at IS NULL AND destination != 'main'`);
 }
 
 export function runMigration300(db: Database): void {
