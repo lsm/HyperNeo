@@ -71,6 +71,9 @@ export interface EvalResult {
   servedModel?: string;
   thinkingBlocks?: number;
   rawAnswer?: string;
+  unparsed?: boolean;
+  stopReason?: string;
+  basis?: string;
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
