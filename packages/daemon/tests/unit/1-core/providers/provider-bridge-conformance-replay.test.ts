@@ -1155,7 +1155,7 @@ describe.skipIf(!isBun)(
       expect(caps.calls).toBe(1);
     });
 
-    it('omits the include array entirely when thinking is disabled', async () => {
+    it('sends the lowest reasoning effort when thinking is disabled', async () => {
       const caps = await captureUpstreamRequest(
         { apiKey: 'sk-test', source: 'api_key' },
         {
@@ -1163,6 +1163,16 @@ describe.skipIf(!isBun)(
           messages: [{ role: 'user', content: 'hi' }],
           thinking: { type: 'disabled' },
         }
+      );
+      expect(caps.body.reasoning).toEqual({ effort: 'low' });
+      expect(caps.body.include).toContain('reasoning.encrypted_content');
+      expect(caps.calls).toBe(1);
+    });
+
+    it('omits reasoning and the include array when thinking is absent', async () => {
+      const caps = await captureUpstreamRequest(
+        { apiKey: 'sk-test', source: 'api_key' },
+        { model: 'gpt-5.3-codex', messages: [{ role: 'user', content: 'hi' }] }
       );
       expect(caps.body.include).toBeUndefined();
       expect(caps.body.reasoning).toBeUndefined();
