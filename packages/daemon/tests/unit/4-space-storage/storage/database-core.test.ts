@@ -376,11 +376,38 @@ describe('DatabaseCore', () => {
       };
       await dbCore.initialize();
       expect(listBackups()).toHaveLength(4);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(listBackups()).toHaveLength(4);
 
       await internals.rotateBackupsInBackground(backupDir, 3);
       const kept = listBackups();
       expect(kept).toHaveLength(3);
       expect(kept).not.toContain('daemon-2026-06-01T00-00-00-000Z.db');
+    });
+
+    it('prunes backups left past retention by an earlier run when the next backup starts', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 5; i++) {
+        const old = join(backupDir, `daemon-2026-07-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(old, 'old');
+        utimesSync(old, now - (6 - i) * 60, now - (6 - i) * 60);
+      }
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+      raw.close();
+
+      dbCore = new DatabaseCore(dbPath);
+      (dbCore as unknown as { tryFastCopy: (path: string) => boolean }).tryFastCopy = (path) => {
+        copyFileSync(dbPath, path);
+        return true;
+      };
+      await dbCore.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(listBackups()).toHaveLength(4);
+      expect(listBackups()).not.toContain('daemon-2026-07-01T00-00-00-000Z.db');
     });
 
     it('should create a valid backup that includes data committed to the WAL', async () => {
