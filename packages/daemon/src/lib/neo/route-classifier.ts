@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
@@ -9,6 +12,79 @@ import type { NeoHolder, NeoRouteAnswer } from './router.ts';
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 2_000;
 const CLASSIFY_TIMEOUT_MS = 4_000;
+const ANSWER_TOKENS = 32;
+const ANTHROPIC_VERSION = '2023-06-01';
+let leanCwd: string | undefined;
+
+type RouteThinking = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' } | undefined;
+
+export interface NeoRouteHttpCall {
+  url: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+}
+
+export function neoRouteHttpCall(
+  baseUrl: string,
+  modelId: string,
+  env: Record<string, string | undefined>,
+  prompt: string,
+  thinking: RouteThinking
+): NeoRouteHttpCall | null {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return null;
+  }
+  if (host === 'anthropic.com' || host.endsWith('.anthropic.com')) return null;
+  const custom = Object.fromEntries(
+    (env.ANTHROPIC_CUSTOM_HEADERS ?? '').split('\n').flatMap((line) => {
+      const at = line.indexOf(':');
+      return at > 0 ? [[line.slice(0, at).trim(), line.slice(at + 1).trim()]] : [];
+    })
+  );
+  const auth: Record<string, string> = env.ANTHROPIC_AUTH_TOKEN
+    ? { authorization: `Bearer ${env.ANTHROPIC_AUTH_TOKEN}` }
+    : env.ANTHROPIC_API_KEY
+      ? { 'x-api-key': env.ANTHROPIC_API_KEY }
+      : {};
+  return {
+    url: `${baseUrl.replace(/\/+$/, '')}/v1/messages`,
+    headers: {
+      ...custom,
+      ...auth,
+      'content-type': 'application/json',
+      'anthropic-version': ANTHROPIC_VERSION,
+    },
+    body: {
+      model: modelId,
+      max_tokens: ANSWER_TOKENS + (thinking?.type === 'enabled' ? thinking.budgetTokens : 0),
+      stream: true,
+      messages: [{ role: 'user', content: prompt }],
+      ...(thinking?.type === 'enabled'
+        ? { thinking: { type: 'enabled', budget_tokens: thinking.budgetTokens } }
+        : thinking
+          ? { thinking: { type: 'disabled' } }
+          : {}),
+    },
+  };
+}
+
+export function readNeoRouteStream(stream: string): string {
+  return stream
+    .split('\n')
+    .flatMap((line) => {
+      if (!line.startsWith('data:')) return [];
+      try {
+        const event = JSON.parse(line.slice(5)) as { delta?: { type?: string; text?: string } };
+        return event.delta?.type === 'text_delta' && event.delta.text ? [event.delta.text] : [];
+      } catch {
+        return [];
+      }
+    })
+    .join('');
+}
 
 export function buildNeoRoutePrompt(
   text: string,
@@ -61,11 +137,29 @@ async function askNeoRouteModel(
     );
     providers.restoreEnvVars(restore);
     restore = {};
+    const prompt = buildNeoRoutePrompt(text, candidates, context);
+    const thinking: RouteThinking =
+      provider === 'kimi'
+        ? KimiProvider.resolveKimiTitleThinkingConfig(config.modelId)
+        : { type: 'disabled' };
+    const call = neoRouteHttpCall(config.baseUrl, config.modelId, env, prompt, thinking);
+    if (call) {
+      const response = await fetch(call.url, {
+        method: 'POST',
+        headers: call.headers,
+        body: JSON.stringify(call.body),
+        signal: abortController.signal,
+      });
+      if (!response.ok) throw new Error(`route model returned ${response.status}`);
+      return readNeoRouteAnswer(readNeoRouteStream(await response.text()), candidates);
+    }
+    leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
     const run = query({
-      prompt: buildNeoRoutePrompt(text, candidates, context),
+      prompt,
       options: {
+        cwd: leanCwd,
         model: provider === 'glm' ? 'haiku' : config.modelId,
         maxTurns: 1,
         mcpServers: {},
@@ -74,12 +168,9 @@ async function askNeoRouteModel(
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
-        env,
+        env: { ...env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
         abortController,
-        thinking:
-          provider === 'kimi'
-            ? KimiProvider.resolveKimiTitleThinkingConfig(config.modelId)
-            : { type: 'disabled' },
+        thinking,
       },
     });
     for await (const message of run) {
