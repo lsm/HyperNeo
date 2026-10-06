@@ -291,7 +291,8 @@ export function createNeoRouter(
         return null;
       }
     },
-    classify: classifyNeoRoute,
+    classify: (text, options, context) =>
+      classifyNeoRoute(text, options, context, db.getGlobalSettings().neo?.routeModel),
     inbox: openHolder
       ? async () => {
           repo.saveConcern(

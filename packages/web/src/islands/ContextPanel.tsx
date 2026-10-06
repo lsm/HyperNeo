@@ -45,6 +45,7 @@ const SETTINGS_SECTIONS: Array<{
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   { id: 'exa', label: 'Exa Search', icon: 'search', accent: 'text-cat-teal bg-cat-teal/15' },
+  { id: 'neo', label: 'Neo', icon: 'swap', accent: 'text-accent-soft bg-accent/15' },
   {
     id: 'app-mcp-servers',
     label: 'MCP Servers',

@@ -41,6 +41,9 @@ const ProvidersSettings = lazy(() =>
     default: m.ProvidersSettings,
   }))
 );
+const NeoSettings = lazy(() =>
+  import('../components/settings/NeoSettings.tsx').then((m) => ({ default: m.NeoSettings }))
+);
 const VoiceSettings = lazy(() =>
   import('../components/settings/VoiceSettings.tsx').then((m) => ({ default: m.VoiceSettings }))
 );
@@ -446,6 +449,7 @@ export default function MainContent() {
                 {settingsSection === 'providers' && <ProvidersSettings />}
                 {settingsSection === 'voice' && <VoiceSettings />}
                 {settingsSection === 'exa' && <ExaSettings />}
+                {settingsSection === 'neo' && <NeoSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
                 {settingsSection === 'remote-daemons' && <RemoteDaemonsSettings />}
                 {settingsSection === 'skills' && <SkillsRegistry />}
