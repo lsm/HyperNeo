@@ -4,6 +4,8 @@ export type CustomEndpointType = 'openai-chat' | 'anthropic-messages' | 'ollama-
 
 export const DEFAULT_CUSTOM_ENDPOINT_TYPE: CustomEndpointType = 'openai-chat';
 
+export type ThinkingOffEffort = 'none' | 'minimal' | 'low';
+
 export interface CustomEndpointModelCapabilities {
   streaming: boolean;
   toolUse: boolean;
@@ -14,6 +16,7 @@ export interface CustomEndpointModelCapabilities {
   autoCompactPercent?: number;
   streamUsage: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
+  thinkingOffEffort?: ThinkingOffEffort;
 }
 
 export interface CustomEndpointModel {

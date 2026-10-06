@@ -158,6 +158,7 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
       'maxContextTokens',
       'autoCompactPercent',
       'chatTemplateKwargs',
+      'thinkingOffEffort',
     ];
     for (const k of keys) {
       if (m.resolved[k] !== baseDefaults[k]) {

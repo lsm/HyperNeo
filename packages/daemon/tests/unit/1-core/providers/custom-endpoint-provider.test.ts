@@ -829,6 +829,23 @@ describe('CustomEndpointProvider', () => {
     });
   });
 
+  describe('thinkingOffEffort', () => {
+    it('forwards the thinking-off effort into the bridge config when declared on a model', async () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(
+        {
+          ...baseConfig,
+          models: [{ id: 'gpt-5.1', capabilities: { thinking: true, thinkingOffEffort: 'none' } }],
+          defaultModelId: 'gpt-5.1',
+        },
+        { bridgeFactory: fake.factory }
+      );
+      await p.ensureBridgeStarted('gpt-5.1');
+      p.buildSdkConfig('gpt-5.1');
+      expect(fake.configs[0].thinkingOffEffort).toBe('none');
+    });
+  });
+
   describe('chatTemplateKwargs', () => {
     it('forwards chatTemplateKwargs into the bridge config when declared on a model', async () => {
       const fake = makeFakeBridge();
