@@ -1,0 +1,170 @@
+import { homedir, tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { readWorkFeedOffsets, type WorkFeedTurn } from '../../storage/work-feed.ts';
+import {
+  changedFeedFiles,
+  type FeedFile,
+  type FeedFileMeta,
+  type FeedSource,
+  feedWorkFiles,
+  listFeedFiles,
+  pruneVanishedFeeds,
+} from './work-feed.ts';
+
+export const WORK_FEED_CLAUDE = 'work.feed.claude';
+const FEED_INTERVAL_MS = 60_000;
+const FEED_WINDOW_MS = 90 * 24 * 60 * 60_000;
+const TRANSCRIPT_DEPTH = 2;
+const INJECTED_PREFIXES = ['<', 'This session is being continued', 'Another Claude session'];
+const TEMP_ROOTS = [tmpdir(), '/tmp/', '/private/tmp/', '/var/folders/', '/private/var/folders/'];
+
+type Block = { type?: string; text?: string };
+type TranscriptLine = {
+  type?: string;
+  uuid?: string;
+  timestamp?: string;
+  isMeta?: boolean;
+  isSidechain?: boolean;
+  cwd?: string;
+  message?: { content?: unknown };
+};
+
+export function claudeProjectsRoot(): string {
+  return join(homedir(), '.claude', 'projects');
+}
+
+export function claudeTranscriptCwd(head: string): string {
+  for (const line of head.split('\n')) {
+    try {
+      const cwd = (JSON.parse(line) as TranscriptLine).cwd;
+      if (cwd) return cwd;
+    } catch {}
+  }
+  return '';
+}
+
+export function claudeProjectTitle(cwd: string): string {
+  return basename(cwd.split('/.claude/worktrees/')[0]);
+}
+
+export function isTempCwd(cwd: string): boolean {
+  return TEMP_ROOTS.some((root) => cwd === root.replace(/\/$/, '') || cwd.startsWith(root));
+}
+
+function spokenText(content: unknown, role: 'user' | 'assistant'): string {
+  const blocks: Block[] =
+    typeof content === 'string'
+      ? [{ type: 'text', text: content }]
+      : Array.isArray(content)
+        ? (content as Block[])
+        : [];
+  return blocks
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => (block.text ?? '').trim())
+    .filter(
+      (text) =>
+        text &&
+        (role === 'assistant' || !INJECTED_PREFIXES.some((prefix) => text.startsWith(prefix)))
+    )
+    .join('\n');
+}
+
+export function claudeTranscriptTurns(lines: readonly string[], sessionId: string): WorkFeedTurn[] {
+  return lines.flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as TranscriptLine;
+      const role = record.type;
+      if ((role !== 'user' && role !== 'assistant') || record.isMeta || record.isSidechain)
+        return [];
+      const text = spokenText(record.message?.content, role);
+      const at = Date.parse(record.timestamp ?? '');
+      if (!text || !record.uuid || !Number.isFinite(at)) return [];
+      return [
+        {
+          sourceId: record.uuid,
+          messageId: record.uuid,
+          sessionId,
+          role,
+          text,
+          at,
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function readHyperneoSdkSessions(db: BunDatabase): Set<string> {
+  try {
+    return new Set(
+      (
+        db
+          .prepare('SELECT sdk_session_id AS id FROM sessions WHERE sdk_session_id IS NOT NULL')
+          .all() as Array<{ id: string }>
+      ).map((row) => row.id)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export function claudeFeedSource(hyperneo: ReadonlySet<string>): FeedSource<FeedFileMeta> {
+  return {
+    kind: 'claude',
+    sessionOf: (path) => basename(path, '.jsonl'),
+    meta: (path, head) => {
+      const sessionId = basename(path, '.jsonl');
+      const cwd = claudeTranscriptCwd(head);
+      return hyperneo.has(sessionId) || isTempCwd(cwd)
+        ? null
+        : { sessionId, title: claudeProjectTitle(cwd) };
+    },
+    turns: (lines, meta) => claudeTranscriptTurns(lines, meta.sessionId),
+  };
+}
+
+export function scheduleClaudeFeed(queue: JobQueueRepository): void {
+  queue.enqueueUniquePending({
+    queue: WORK_FEED_CLAUDE,
+    payload: { scope: 'claude' },
+    matchPayload: { scope: 'claude' },
+    activeStatuses: ['pending'],
+    runAt: Date.now() + FEED_INTERVAL_MS,
+  });
+}
+
+export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
+  .input(['queue', 'db', 'root', 'now'])
+  .pipe(scheduleClaudeFeed, 'queue')
+  .pipe(
+    (db: BunDatabase, root: string) =>
+      pruneVanishedFeeds(db, root, claudeFeedSource(readHyperneoSdkSessions(db))),
+    ['db', 'root'],
+    'pruned'
+  )
+  .pipe(
+    (root: string, now: number) => listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
+    ['root', 'now'],
+    'files'
+  )
+  .pipe(
+    (db: BunDatabase, files: FeedFile[]) => changedFeedFiles(files, readWorkFeedOffsets(db)),
+    ['db', 'files'],
+    'changed'
+  )
+  .pipe(
+    (db: BunDatabase, changed: FeedFile[]) =>
+      feedWorkFiles(db, changed, claudeFeedSource(readHyperneoSdkSessions(db))),
+    ['db', 'changed'],
+    'result'
+  )
+  .endAsync('result') as (
+  queue: JobQueueRepository,
+  db: BunDatabase,
+  root: string,
+  now: number
+) => Promise<{ files: number; turns: number }>;

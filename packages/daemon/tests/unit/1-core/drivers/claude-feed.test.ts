@@ -1,0 +1,138 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  claudeFeedSource,
+  claudeProjectTitle,
+  claudeTranscriptCwd,
+  claudeTranscriptTurns,
+  isTempCwd,
+  readHyperneoSdkSessions,
+} from '../../../../src/lib/drivers/claude-feed';
+import { feedWorkFiles, listFeedFiles } from '../../../../src/lib/drivers/work-feed';
+import { createWorkFeedOffsetsTable } from '../../../../src/storage/schema/m302-work-index-kinds';
+import { Database } from '../../../../src/storage/sqlite-compat';
+
+const at = '2026-10-06T05:00:00.000Z';
+const line = (fields: Record<string, unknown>) =>
+  JSON.stringify({ timestamp: at, cwd: '/Users/me/focus/neokai', ...fields });
+
+describe('claudeTranscriptTurns', () => {
+  test('keeps what the user typed and what Claude wrote, nothing injected', () => {
+    const turns = claudeTranscriptTurns(
+      [
+        line({ type: 'user', uuid: 'u1', message: { content: 'fix the heron bug' } }),
+        line({
+          type: 'user',
+          uuid: 'u2',
+          message: { content: '<ci-monitor-event>noise</ci-monitor-event>' },
+        }),
+        line({ type: 'user', uuid: 'u3', isMeta: true, message: { content: 'meta' } }),
+        line({
+          type: 'user',
+          uuid: 'u4',
+          message: { content: [{ type: 'tool_result', content: 'x' }] },
+        }),
+        line({
+          type: 'user',
+          uuid: 'u5',
+          message: { content: 'This session is being continued from…' },
+        }),
+        line({
+          type: 'assistant',
+          uuid: 'a1',
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'hm' },
+              { type: 'text', text: 'Fixed the heron bug.' },
+              { type: 'tool_use' },
+            ],
+          },
+        }),
+        line({
+          type: 'assistant',
+          uuid: 'a2',
+          isSidechain: true,
+          message: { content: [{ type: 'text', text: 'side' }] },
+        }),
+        line({ type: 'custom-title', customTitle: 'x' }),
+      ],
+      's1'
+    );
+    expect(turns.map((turn) => [turn.sourceId, turn.sessionId, turn.role, turn.text])).toEqual([
+      ['u1', 's1', 'user', 'fix the heron bug'],
+      ['a1', 's1', 'assistant', 'Fixed the heron bug.'],
+    ]);
+  });
+});
+
+describe('claudeTranscriptCwd', () => {
+  test('reads the cwd, titles worktrees by repo, and spots temp dirs', () => {
+    expect(claudeTranscriptCwd(`{"type":"custom-title"}\n${line({ type: 'user' })}`)).toBe(
+      '/Users/me/focus/neokai'
+    );
+    expect(claudeProjectTitle('/Users/me/focus/neokai/.claude/worktrees/brave-x')).toBe('neokai');
+    expect(isTempCwd('/private/tmp/neo-route')).toBe(true);
+    expect(isTempCwd(join(tmpdir(), 'probe'))).toBe(true);
+    expect(isTempCwd('/Users/me/focus/neokai')).toBe(false);
+  });
+});
+
+describe('Claude transcript feed', () => {
+  let root: string;
+  let db: Database;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'claude-feed-'));
+    db = new Database(':memory:');
+    db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
+      message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER,
+      message_type TEXT, title TEXT, body TEXT, timestamp INTEGER, UNIQUE (kind, source_id))`);
+    db.exec('CREATE TABLE sessions (id TEXT, sdk_session_id TEXT)');
+    db.exec("INSERT INTO sessions VALUES ('hn-1', 'sdk-hyperneo')");
+    createWorkFeedOffsetsTable(db);
+  });
+  afterEach(() => {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("skips HyperNeo's own sessions, temp dirs and subagent folders, and never duplicates a resumed turn", async () => {
+    const project = join(root, '-Users-me-focus-neokai');
+    mkdirSync(join(project, 'cli-1', 'subagents'), { recursive: true });
+    const said = line({ type: 'user', uuid: 'u1', message: { content: 'plan the heron rollout' } });
+    writeFileSync(join(project, 'cli-1.jsonl'), `${said}\n`);
+    writeFileSync(
+      join(project, 'cli-2.jsonl'),
+      `${said}\n${line({ type: 'user', uuid: 'u2', message: { content: 'resume it' } })}\n`
+    );
+    writeFileSync(
+      join(project, 'sdk-hyperneo.jsonl'),
+      `${line({ type: 'user', uuid: 'h1', message: { content: 'internal' } })}\n`
+    );
+    writeFileSync(
+      join(project, 'probe.jsonl'),
+      `${line({ type: 'user', uuid: 'p1', cwd: '/private/tmp/x', message: { content: 'probe' } })}\n`
+    );
+    writeFileSync(
+      join(project, 'cli-1', 'subagents', 'agent-1.jsonl'),
+      `${line({ type: 'user', uuid: 's1', message: { content: 'sub' } })}\n`
+    );
+    const files = listFeedFiles(root, 0, 2);
+    expect(files.map((file) => file.path.split('/').pop()).sort()).toEqual([
+      'cli-1.jsonl',
+      'cli-2.jsonl',
+      'probe.jsonl',
+      'sdk-hyperneo.jsonl',
+    ]);
+    await feedWorkFiles(db, files, claudeFeedSource(readHyperneoSdkSessions(db)));
+    expect(
+      db
+        .prepare('SELECT source_id AS id, title FROM message_search_content ORDER BY source_id')
+        .all()
+    ).toEqual([
+      { id: 'u1', title: 'neokai' },
+      { id: 'u2', title: 'neokai' },
+    ]);
+  });
+});

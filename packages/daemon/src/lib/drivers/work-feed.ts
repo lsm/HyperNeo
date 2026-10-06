@@ -33,9 +33,9 @@ export interface FeedFile {
   mtime: number;
 }
 
-export function listFeedFiles(root: string, since: number): FeedFile[] {
+export function listFeedFiles(root: string, since: number, depth = FEED_DEPTH): FeedFile[] {
   const files: FeedFile[] = [];
-  const walk = (dir: string, depth: number) => {
+  const walk = (dir: string, level: number) => {
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -51,7 +51,7 @@ export function listFeedFiles(root: string, since: number): FeedFile[] {
         continue;
       }
       if (stat.isDirectory()) {
-        if (depth < FEED_DEPTH) walk(path, depth + 1);
+        if (level < depth) walk(path, level + 1);
       } else if (name.endsWith('.jsonl') && stat.mtimeMs >= since) {
         files.push({ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) });
       }
