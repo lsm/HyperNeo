@@ -4,8 +4,11 @@ import { join } from 'node:path';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
   createClaudeDesktopAdapter,
+  readClaudeDesktopRecords,
   readLiveClaudeSessions,
+  type ClaudeRecordCache,
 } from '../../drivers/claude-desktop-adapter.ts';
+import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
 import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
@@ -55,14 +58,38 @@ function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessio
   };
 }
 
-function claudeDesktopAdapters(): WorkAdapter[] {
-  const sessionsDir = join(
-    homedir(),
-    'Library',
-    'Application Support',
-    'Claude',
-    'claude-code-sessions'
-  );
+const CLAUDE_DESKTOP_SESSIONS = join(
+  homedir(),
+  'Library',
+  'Application Support',
+  'Claude',
+  'claude-code-sessions'
+);
+
+function claudeCodeAdapters(
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+): WorkAdapter[] {
+  if (!existsSync(join(homedir(), '.claude', 'projects'))) return [];
+  const cache: ClaudeRecordCache = new Map();
+  return [
+    createClaudeCodeAdapter({
+      machine: hostname(),
+      searchChats: (text) => searchChats(text, ['claude']),
+      desktopSessions: async () =>
+        new Set(
+          (existsSync(CLAUDE_DESKTOP_SESSIONS)
+            ? await readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
+            : []
+          ).flatMap((record) => record.cliSessionId ?? [])
+        ),
+    }),
+  ];
+}
+
+function claudeDesktopAdapters(
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+): WorkAdapter[] {
+  const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
   return [
     createClaudeDesktopAdapter({
@@ -75,6 +102,7 @@ function claudeDesktopAdapters(): WorkAdapter[] {
       newId: () => crypto.randomUUID(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
+      searchChats: (text) => searchChats(text, ['claude']),
     }),
   ];
 }
@@ -244,7 +272,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       tasks: spaceTaskControl(context),
     }),
     ...codexDesktopAdapters(searchChats),
-    ...claudeDesktopAdapters(),
+    ...claudeDesktopAdapters(searchChats),
+    ...claudeCodeAdapters(searchChats),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
   const readTurns = (
