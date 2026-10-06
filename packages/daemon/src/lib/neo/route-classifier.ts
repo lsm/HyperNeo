@@ -7,7 +7,13 @@ import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import type { NeoHolder, NeoRouteAnswer, NeoRouteVerdict } from './router.ts';
+import {
+  NEO_ROUTE_BASES,
+  type NeoHolder,
+  type NeoRouteBasis,
+  type NeoRouteDecision,
+  type NeoRouteVerdict,
+} from './router.ts';
 
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 2_000;
@@ -113,21 +119,57 @@ ${context}
 New message:
 ${neoExcerpt(text, ASK_CHARS)}
 
-Reply with exactly one of these ids and nothing else: ${ids}
-- If it continues a recent turn (a follow-up, "yes", "how about X now", a reference to an earlier thing), the topic of that turn; main if that turn was main.
-- If it answers a WAITING ON YOU question, that topic.
-- If it stands alone and clearly belongs to one topic, that topic.
-- inbox (when listed) only for a self-contained one-off question unrelated to the recent turns.
-- main for a new subject, when two topics are waiting and it could answer either, or when unsure.`;
+Reply with one JSON object and nothing else:
+{"type":"choice","choice":"<id>","confidence":<0 to 1>,"basis":"<basis>"}
+choice is one of: ${ids}
+Pick choice and basis by the first rule that applies:
+- continues_turn: it continues a recent turn (a follow-up, "yes", "how about X now", a reference to an earlier thing); choose that turn's topic, or main if that turn was main.
+- answers_waiting: it answers a WAITING ON YOU question; choose that topic.
+- matches_topic: it stands alone and clearly belongs to one topic; choose that topic.
+- one_off: a self-contained one-off question unrelated to the recent turns; choose inbox (when listed).
+- new_subject: it starts a new subject; choose main.
+- unsure: two topics are waiting and it could answer either, or you are unsure; choose main.
+confidence is how sure you are of choice.`;
 }
 
-export function readNeoRouteAnswer(raw: string, candidates: readonly NeoHolder[]): NeoRouteAnswer {
-  const answer = raw
+function plainRouteId(raw: string): string {
+  return raw
     .trim()
     .replace(/^[`"']+|[`"']+$/g, '')
     .trim();
-  if (answer === 'main') return 'main';
-  return candidates.find((holder) => holder.concernId === answer) ?? null;
+}
+
+function routeObject(raw: string): Record<string, unknown> | null {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw.slice(start, end + 1));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readNeoRouteDecision(
+  raw: string,
+  candidates: readonly NeoHolder[]
+): NeoRouteDecision | null {
+  const object = routeObject(raw);
+  const id = object
+    ? typeof object.choice === 'string'
+      ? object.choice.trim()
+      : ''
+    : plainRouteId(raw);
+  const decision =
+    id === 'main' ? 'main' : (candidates.find((holder) => holder.concernId === id) ?? null);
+  if (!decision) return null;
+  const confidence =
+    typeof object?.confidence === 'number' && Number.isFinite(object.confidence)
+      ? Math.min(1, Math.max(0, object.confidence))
+      : null;
+  const basis = NEO_ROUTE_BASES.find((name) => name === object?.basis) ?? null;
+  return { decision, confidence, basis: basis as NeoRouteBasis | null };
 }
 
 async function askNeoRouteModel(
@@ -168,7 +210,7 @@ async function askNeoRouteModel(
         signal: abortController.signal,
       });
       if (!response.ok) throw new Error(`route model returned ${response.status}`);
-      return readNeoRouteAnswer(readNeoRouteStream(await response.text()), candidates);
+      return readNeoRouteDecision(readNeoRouteStream(await response.text()), candidates);
     }
     leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -196,7 +238,7 @@ async function askNeoRouteModel(
         .filter((block) => block.type === 'text')
         .map((block) => block.text ?? '')
         .join(' ');
-      if (raw.trim()) return readNeoRouteAnswer(raw, candidates);
+      if (raw.trim()) return readNeoRouteDecision(raw, candidates);
     }
     return null;
   } catch (error) {

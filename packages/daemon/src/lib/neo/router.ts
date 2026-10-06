@@ -44,7 +44,22 @@ export interface NeoRouteChoice {
 }
 
 export type NeoRouteAnswer = NeoHolder | 'main' | null;
-export type NeoRouteVerdict = NeoRouteAnswer | 'timeout' | 'failed';
+export const NEO_ROUTE_BASES = [
+  'continues_turn',
+  'answers_waiting',
+  'matches_topic',
+  'one_off',
+  'new_subject',
+  'unsure',
+] as const;
+export type NeoRouteBasis = (typeof NEO_ROUTE_BASES)[number];
+export interface NeoRouteDecision {
+  decision: NeoHolder | 'main';
+  confidence: number | null;
+  basis: NeoRouteBasis | null;
+}
+export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'failed';
+const CLASSIFIER_CONFIDENCE = 0.6;
 
 export interface NeoRouterDeps {
   holders(): NeoHolder[] | Promise<NeoHolder[]>;
@@ -224,7 +239,11 @@ export async function classifyNeoAsk(
   deps: NeoRouterDeps
 ): Promise<Routed> {
   const options = [...candidates, ...(withInbox ? [INBOX_CHOICE] : [])];
-  const chosen = deps.classify ? await deps.classify(text, options, context) : null;
+  const verdict = deps.classify ? await deps.classify(text, options, context) : null;
+  const decided = verdict && typeof verdict === 'object' && 'decision' in verdict ? verdict : null;
+  const chosen = decided
+    ? decided.decision
+    : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
   if (chosen === 'main') return { choice: null, fallback: 'classifier' };
   if (!chosen || chosen === 'timeout' || chosen === 'failed')
     return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
@@ -235,7 +254,7 @@ export async function classifyNeoAsk(
           concernId: holder.concernId,
           sessionId: holder.sessionId,
           signal: 'classifier',
-          confidence: 0.6,
+          confidence: decided?.confidence ?? CLASSIFIER_CONFIDENCE,
         }
       : null,
     fallback: holder ? undefined : 'inbox-unavailable',
