@@ -1,5 +1,6 @@
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { useFoldedActivity } from './chat-display-mode.ts';
 
 interface ThinkingBlockProps {
   content: string;
@@ -30,6 +31,8 @@ export function ThinkingBlock({
   const [isExpanded, setIsExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
+  const folded = useFoldedActivity();
+  const [open, setOpen] = useState(false);
 
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
@@ -42,7 +45,7 @@ export function ThinkingBlock({
       const scrollHeight = contentRef.current.scrollHeight;
       setNeedsTruncation(scrollHeight > previewMaxHeight);
     }
-  }, [content, previewMaxHeight]);
+  }, [content, previewMaxHeight, folded, open]);
 
   const charCount = content.length;
 
@@ -62,7 +65,22 @@ export function ThinkingBlock({
       )}
       data-testid="thinking-block"
     >
-      <div class={cn('flex items-center gap-2 px-3 py-2', colors.bg)}>
+      <div
+        class={cn('flex items-center gap-2 px-3 py-2', colors.bg, folded && 'cursor-pointer')}
+        role={folded ? 'button' : undefined}
+        tabIndex={folded ? 0 : undefined}
+        aria-expanded={folded ? open : undefined}
+        onClick={folded ? () => setOpen(!open) : undefined}
+        onKeyDown={
+          folded
+            ? (event: KeyboardEvent) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                setOpen(!open);
+              }
+            : undefined
+        }
+      >
         <svg
           class={cn('w-4 h-4 flex-shrink-0', colors.iconColor)}
           fill="none"
@@ -80,76 +98,78 @@ export function ThinkingBlock({
         <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
       </div>
 
-      <div class={cn('relative border-t', colors.border)}>
-        <div
-          class={cn(
-            'p-3 bg-surface',
-            !compact && !isExpanded && needsTruncation && 'overflow-hidden'
-          )}
-          style={
-            !compact && !isExpanded && needsTruncation
-              ? { maxHeight: `${previewMaxHeight + 24}px` }
-              : {}
-          }
-        >
-          <pre
-            ref={contentRef}
-            class={cn(
-              'text-sm font-mono',
-              colors.text,
-              compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
-            )}
-          >
-            {content}
-          </pre>
-        </div>
-
-        {!compact && needsTruncation && !isExpanded && (
+      {(!folded || open) && (
+        <div class={cn('relative border-t', colors.border)}>
           <div
-            class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
-            aria-hidden="true"
-          />
-        )}
-
-        {!compact && needsTruncation && (
-          <div class={cn('flex justify-center py-2 border-t bg-surface', colors.border)}>
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
+            class={cn(
+              'p-3 bg-surface',
+              !compact && !isExpanded && needsTruncation && 'overflow-hidden'
+            )}
+            style={
+              !compact && !isExpanded && needsTruncation
+                ? { maxHeight: `${previewMaxHeight + 24}px` }
+                : {}
+            }
+          >
+            <pre
+              ref={contentRef}
               class={cn(
-                'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                'hover:bg-warning/15 dark:hover:bg-amber-900/40',
-                colors.text
+                'text-sm font-mono',
+                colors.text,
+                compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
               )}
             >
-              {isExpanded ? (
-                <>
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 15l7-7 7 7"
-                    />
-                  </svg>
-                  Show less
-                </>
-              ) : (
-                <>
-                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
-                  Show more
-                </>
-              )}
-            </button>
+              {content}
+            </pre>
           </div>
-        )}
-      </div>
+
+          {!compact && needsTruncation && !isExpanded && (
+            <div
+              class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
+              aria-hidden="true"
+            />
+          )}
+
+          {!compact && needsTruncation && (
+            <div class={cn('flex justify-center py-2 border-t bg-surface', colors.border)}>
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                class={cn(
+                  'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
+                  'hover:bg-warning/15 dark:hover:bg-amber-900/40',
+                  colors.text
+                )}
+              >
+                {isExpanded ? (
+                  <>
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 15l7-7 7 7"
+                      />
+                    </svg>
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                    Show more
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {isRunning && <div class="running-shimmer" aria-hidden="true" />}
     </div>

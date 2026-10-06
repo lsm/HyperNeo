@@ -1,5 +1,6 @@
 import type {
   AgentProcessingState,
+  ChatDisplayMode,
   ChatMessage,
   MessageDeliveryMode,
   MessageImage,
@@ -26,6 +27,10 @@ import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
+import {
+  ChatDisplayModeContext,
+  resolveChatDisplayMode,
+} from '../components/sdk/chat-display-mode.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import {
@@ -61,7 +66,7 @@ import { sessionStore, type SessionStore } from '../lib/session-store.ts';
 import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
 import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
-import { connectionState } from '../lib/state.ts';
+import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils';
 import type { StructuredError } from '../types/error.ts';
@@ -311,6 +316,7 @@ export default function ChatContainer({
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [displayMode, setDisplayMode] = useState<ChatDisplayMode>('compact');
   const [coordinatorMode, setCoordinatorMode] = useState(true);
   const [sandboxEnabled, setSandboxEnabled] = useState(true);
   const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
@@ -418,6 +424,9 @@ export default function ChatContainer({
     if (info?.config.autoScroll !== undefined) {
       setAutoScroll(info.config.autoScroll);
     }
+    setDisplayMode(
+      resolveChatDisplayMode(info?.config.chatDisplayMode, globalSettings.value?.chatDisplayMode)
+    );
     if (info?.config.coordinatorMode !== undefined) {
       setCoordinatorMode(info.config.coordinatorMode);
     }
@@ -936,6 +945,20 @@ export default function ChatContainer({
     [sessionId]
   );
 
+  const handleDisplayModeChange = useCallback(
+    async (mode: ChatDisplayMode) => {
+      const previous = displayMode;
+      setDisplayMode(mode);
+      try {
+        await updateSession(sessionId, { config: { chatDisplayMode: mode } });
+      } catch {
+        setDisplayMode(previous);
+        toast.error('Failed to save display mode');
+      }
+    },
+    [sessionId, displayMode]
+  );
+
   const retryAttempts = store.retryAttempts.value;
 
   const retryStatusMessage = useMemo(() => {
@@ -1290,6 +1313,8 @@ export default function ChatContainer({
             : undefined
         }
         titleOverride={titleOverride}
+        displayMode={displayMode}
+        onDisplayModeChange={handleDisplayModeChange}
       />
 
       <div class="flex-1 relative min-h-0">
@@ -1366,43 +1391,45 @@ export default function ChatContainer({
                 </div>
               )}
 
-              {messages.map((msg, idx) => (
-                <div
-                  key={msg.uuid || `msg-${idx}`}
-                  data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
-                  class="scroll-mt-20"
-                >
-                  <SDKMessageRenderer
-                    message={msg}
-                    toolResultsMap={maps.toolResultsMap}
-                    toolInputsMap={maps.toolInputsMap}
-                    subagentMessagesMap={maps.subagentMessagesMap}
-                    taskNotificationsMap={maps.taskNotificationsMap}
-                    taskProgressMap={maps.taskProgressMap}
-                    foldableToolUseIds={maps.foldableToolUseIds}
-                    completedHookUuids={maps.completedHookUuids}
-                    runningToolUseIds={
-                      msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined
-                    }
-                    replacementStatusMap={maps.replacementStatusMap}
-                    sessionInfo={
-                      msg.uuid
-                        ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
-                        : undefined
-                    }
-                    sessionId={sessionId}
-                    resolvedQuestions={allResolvedQuestions}
-                    pendingQuestion={isRecovering ? null : pendingQuestion}
-                    onRewind={isRecovering ? undefined : handleRewindClick}
-                    rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
-                    onQuestionResolved={handleQuestionResolved}
-                    replacementStatus={
-                      msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
-                    }
-                    isLiveTail={idx === messages.length - 1}
-                  />
-                </div>
-              ))}
+              <ChatDisplayModeContext.Provider value={displayMode}>
+                {messages.map((msg, idx) => (
+                  <div
+                    key={msg.uuid || `msg-${idx}`}
+                    data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
+                    class="scroll-mt-20"
+                  >
+                    <SDKMessageRenderer
+                      message={msg}
+                      toolResultsMap={maps.toolResultsMap}
+                      toolInputsMap={maps.toolInputsMap}
+                      subagentMessagesMap={maps.subagentMessagesMap}
+                      taskNotificationsMap={maps.taskNotificationsMap}
+                      taskProgressMap={maps.taskProgressMap}
+                      foldableToolUseIds={maps.foldableToolUseIds}
+                      completedHookUuids={maps.completedHookUuids}
+                      runningToolUseIds={
+                        msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined
+                      }
+                      replacementStatusMap={maps.replacementStatusMap}
+                      sessionInfo={
+                        msg.uuid
+                          ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+                          : undefined
+                      }
+                      sessionId={sessionId}
+                      resolvedQuestions={allResolvedQuestions}
+                      pendingQuestion={isRecovering ? null : pendingQuestion}
+                      onRewind={isRecovering ? undefined : handleRewindClick}
+                      rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
+                      onQuestionResolved={handleQuestionResolved}
+                      replacementStatus={
+                        msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
+                      }
+                      isLiveTail={idx === messages.length - 1}
+                    />
+                  </div>
+                ))}
+              </ChatDisplayModeContext.Provider>
             </ContentContainer>
           )}
 

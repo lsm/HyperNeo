@@ -2,8 +2,14 @@ import { useEffect, useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { resolveChatDisplayMode } from '../sdk/chat-display-mode.ts';
 import { FORM_CHECKBOX_CLASS } from '../ui/FormField.tsx';
-import type { PermissionMode, ThinkingLevel, SettingSource } from '@hyperneo/shared';
+import type {
+  ChatDisplayMode,
+  PermissionMode,
+  ThinkingLevel,
+  SettingSource,
+} from '@hyperneo/shared';
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
 import {
   SettingsSection,
@@ -26,6 +32,11 @@ const PERMISSION_MODE_OPTIONS = [
   { value: 'delegate', label: 'Delegate' },
 ];
 
+const CHAT_DISPLAY_MODE_OPTIONS = [
+  { value: 'compact', label: 'Compact' },
+  { value: 'full', label: 'Full' },
+];
+
 const THINKING_LEVEL_OPTIONS = [
   { value: 'off', label: 'Off' },
   { value: 'think8k', label: 'Think 8k' },
@@ -41,6 +52,9 @@ export function GeneralSettings() {
     settings?.permissionMode ?? 'default'
   );
   const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
+  const [localDisplayMode, setLocalDisplayMode] = useState<ChatDisplayMode>(
+    resolveChatDisplayMode(undefined, settings?.chatDisplayMode)
+  );
   const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
     String(settings?.githubPollingInterval ?? 120)
   );
@@ -58,6 +72,7 @@ export function GeneralSettings() {
       setLocalModel(settings.model ?? 'sonnet');
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalAutoScroll(settings.autoScroll ?? true);
+      setLocalDisplayMode(resolveChatDisplayMode(undefined, settings.chatDisplayMode));
       setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
@@ -100,6 +115,20 @@ export function GeneralSettings() {
     } catch {
       toast.error('Failed to update auto-scroll setting');
       setLocalAutoScroll(settings?.autoScroll ?? true);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDisplayModeChange = async (value: string) => {
+    const mode = value as ChatDisplayMode;
+    setLocalDisplayMode(mode);
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ chatDisplayMode: mode });
+    } catch {
+      toast.error('Failed to update default chat view');
+      setLocalDisplayMode(resolveChatDisplayMode(undefined, settings?.chatDisplayMode));
     } finally {
       setIsUpdating(false);
     }
@@ -234,6 +263,18 @@ export function GeneralSettings() {
             onBlur={handleGitHubPollingIntervalBlur}
             disabled={isUpdating}
             class="w-24 rounded-md border border-line bg-surface px-2.5 py-1 text-[13px] text-fg-soft focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          label="Default chat view"
+          description="Compact shows one line per tool call; each chat can override it"
+        >
+          <SettingsSelect
+            value={localDisplayMode}
+            onChange={handleDisplayModeChange}
+            options={CHAT_DISPLAY_MODE_OPTIONS}
+            disabled={isUpdating}
           />
         </SettingsRow>
 

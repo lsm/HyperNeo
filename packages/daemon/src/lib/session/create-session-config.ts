@@ -40,6 +40,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   includePartialMessages: 'carried',
   enableFileCheckpointing: 'carried',
   queryMode: 'carried',
+  chatDisplayMode: 'carried',
   workerOperations: 'carried',
 
   cwd: 'rejected',
