@@ -13,7 +13,7 @@ import {
   customProviderIdFor,
   isCustomEndpointProviderId,
 } from './custom-endpoint-provider.js';
-import type { CustomEndpointConfig } from '@hyperneo/shared';
+import type { CustomEndpointConfig, ProviderRecord } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { bumpProviderCatalogEpoch } from './catalog-epoch.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
@@ -33,6 +33,32 @@ export function markBuiltInProviderDisabled(providerId: string): void {
 
 export function markBuiltInProviderEnabled(providerId: string): void {
   disabledBuiltInProviderIds.delete(providerId);
+}
+
+const BUILT_IN_PROVIDER_IDS = [
+  'anthropic',
+  'glm',
+  'kimi',
+  'minimax',
+  'deepseek',
+  'openrouter',
+  'opencode',
+  'ollama',
+  'ollama-cloud',
+  'anthropic-codex',
+  'acp',
+  'anthropic-copilot',
+];
+
+export function disableBuiltInProvidersWithoutEnabledRecord(records: ProviderRecord[]): void {
+  const enabledIds = new Set(
+    records
+      .filter((record) => record.kind === 'built_in' && record.isEnabled !== false)
+      .map((record) => record.providerId)
+  );
+  for (const providerId of BUILT_IN_PROVIDER_IDS) {
+    if (!enabledIds.has(providerId)) markBuiltInProviderDisabled(providerId);
+  }
 }
 
 const CORE_PROVIDER_IDS = ['anthropic'];
@@ -137,6 +163,7 @@ export async function registerBuiltInProvider(
       registry.register(new AnthropicToCodexBridgeProvider());
       break;
     case 'anthropic-copilot':
+      markBuiltInProviderEnabled(providerId);
       await waitForOptionalProviderRegistration(registry, true);
       break;
     case 'acp':
