@@ -352,6 +352,84 @@ describe('DatabaseCore', () => {
       expect(listBackups()).toHaveLength(1);
     });
 
+    it('rotates old backups after a clone backup instead of during startup', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const old = join(backupDir, `daemon-2026-06-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(old, 'old');
+        utimesSync(old, now - (4 - i) * 60, now - (4 - i) * 60);
+      }
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+      raw.close();
+
+      dbCore = new DatabaseCore(dbPath);
+      const internals = dbCore as unknown as {
+        tryFastCopy: (path: string) => boolean;
+        rotateBackupsInBackground: (dir: string, keep: number) => Promise<void>;
+      };
+      internals.tryFastCopy = (path) => {
+        copyFileSync(dbPath, path);
+        return true;
+      };
+      await dbCore.initialize();
+      expect(listBackups()).toHaveLength(4);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(listBackups()).toHaveLength(4);
+
+      await internals.rotateBackupsInBackground(backupDir, 3);
+      const kept = listBackups();
+      expect(kept).toHaveLength(3);
+      expect(kept).not.toContain('daemon-2026-06-01T00-00-00-000Z.db');
+    });
+
+    it('prunes backups left past retention by an earlier run when the next backup starts', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 5; i++) {
+        const old = join(backupDir, `daemon-2026-07-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(old, 'old');
+        utimesSync(old, now - (6 - i) * 60, now - (6 - i) * 60);
+      }
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+      raw.close();
+
+      dbCore = new DatabaseCore(dbPath);
+      (dbCore as unknown as { tryFastCopy: (path: string) => boolean }).tryFastCopy = (path) => {
+        copyFileSync(dbPath, path);
+        return true;
+      };
+      await dbCore.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(listBackups()).toHaveLength(4);
+      expect(listBackups()).not.toContain('daemon-2026-07-01T00-00-00-000Z.db');
+    });
+
+    it('keeps the pinned new backup when rotating even if older files look newer', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      const names = [1, 2, 3, 4].map((day) => `daemon-2026-08-0${day}T00-00-00-000Z.db`);
+      for (const [i, name] of names.entries()) {
+        writeFileSync(join(backupDir, name), name);
+        utimesSync(join(backupDir, name), now - i * 60, now - i * 60);
+      }
+      const pinned = join(backupDir, names[3]);
+      dbCore = new DatabaseCore(dbPath);
+      await (
+        dbCore as unknown as {
+          rotateBackupsInBackground: (dir: string, keep: number, pinned?: string) => Promise<void>;
+        }
+      ).rotateBackupsInBackground(backupDir, 3, pinned);
+
+      expect(listBackups().sort()).toEqual([names[0], names[1], names[3]]);
+    });
+
     it('should create a valid backup that includes data committed to the WAL', async () => {
       const raw = new RawDatabase(dbPath);
       seedWalData(raw);
@@ -593,7 +671,7 @@ describe('DatabaseCore', () => {
       expect(errors).toHaveLength(1);
     });
 
-    it('should free room for a new backup before writing it', async () => {
+    it('should free room before a full-copy backup', async () => {
       const backupDir = join(testDir, 'backups', 'test.db');
       mkdirSync(backupDir, { recursive: true });
       const now = Date.now() / 1000;
@@ -606,12 +684,13 @@ describe('DatabaseCore', () => {
       let listingAtWrite: string[] = [];
       dbCore = new DatabaseCore(dbPath);
       const internals = dbCore as unknown as Record<string, unknown>;
-      const originalWriteBackup = internals.writeBackup as (path: string) => string | null;
-      internals.writeBackup = (backupPath: string) => {
+      internals.tryFastCopy = () => false;
+      const originalVacuumInto = internals.tryVacuumInto as (path: string) => boolean;
+      internals.tryVacuumInto = (backupPath: string) => {
         listingAtWrite = readdirSync(backupDir)
           .filter((f) => f.endsWith('.db'))
           .sort();
-        return originalWriteBackup.call(dbCore, backupPath);
+        return originalVacuumInto.call(dbCore, backupPath);
       };
 
       await dbCore.initialize();
@@ -710,6 +789,7 @@ describe('DatabaseCore', () => {
       utimesSync(join(backupDir, undeletable), now - 270, now - 270);
 
       dbCore = new DatabaseCore(dbPath);
+      (dbCore as unknown as { tryFastCopy: () => boolean }).tryFastCopy = () => false;
       await dbCore.initialize();
 
       const remainingDbs = readdirSync(backupDir).filter(
