@@ -82,6 +82,7 @@ export type OpenAIResponsesBridgeConfig = {
 
 type ResponsesReasoningItem = {
   type: 'reasoning';
+  summary: [];
   encrypted_content: string;
 };
 
@@ -1054,7 +1055,11 @@ async function streamResponsesToAnthropic({
         const encrypted =
           typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
         if (encrypted) {
-          responseReasoningItems.push({ type: 'reasoning', encrypted_content: encrypted });
+          responseReasoningItems.push({
+            type: 'reasoning',
+            summary: [],
+            encrypted_content: encrypted,
+          });
         }
         const summary = record.summary;
         if (Array.isArray(summary) && !streamedThinking) {

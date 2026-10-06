@@ -959,14 +959,16 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
             type: 'response.completed',
             response: {
               id: 'r',
-              output: [{ type: 'reasoning', encrypted_content: 'ENC_SECRET_123' }],
+              output: [{ type: 'reasoning', summary: [], encrypted_content: 'ENC_SECRET_123' }],
               usage: {},
             },
           },
         ]),
         { onReasoningItems: (items) => void (captured = items) }
       );
-      expect(captured).toEqual([{ type: 'reasoning', encrypted_content: 'ENC_SECRET_123' }]);
+      expect(captured).toEqual([
+        { type: 'reasoning', summary: [], encrypted_content: 'ENC_SECRET_123' },
+      ]);
     });
   });
 
