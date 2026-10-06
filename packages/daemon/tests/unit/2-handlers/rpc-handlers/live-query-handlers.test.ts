@@ -1229,6 +1229,22 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(assistRow!.turnUserMessageId).toBe('anchor');
     });
 
+    test('taskMilestones.byTask finds external deliveries by task index, not a scan', () => {
+      const real = new BunDatabase(':memory:');
+      createTables(real);
+      runMigrations(real, () => {});
+      const entry = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!;
+      const plan = real
+        .prepare(`EXPLAIN QUERY PLAN ${entry.sql}`)
+        .all('milestone-plan-task') as Array<{
+        detail: string;
+      }>;
+      real.close();
+      const details = plan.map((row) => row.detail).join('\n');
+      expect(details).toContain('idx_space_external_event_deliveries_task');
+      expect(details).not.toMatch(/SCAN d\b/);
+    });
+
     test('task feeds resolve the shutdown boundary in one materialized pass', () => {
       const taskId = insertSpaceTask({ id: 'shutdown-plan-task', status: 'in_progress' });
       for (const name of [

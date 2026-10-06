@@ -822,6 +822,10 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_external_event_deliveries_key
 		ON space_external_event_deliveries(delivery_key)
 	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_task
+		ON space_external_event_deliveries(task_id)
+	`);
 
   db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
