@@ -134,14 +134,58 @@ reply lengths were not truncated:
 - **`basis` was often missing** (it appeared on 20–32 of 105 replies). A missing basis is
   recorded as plain `classifier`.
 
-Only the summary counts of this run were kept, not per-route logs.
+Only the summary counts of this run were kept. Section 5 repeats it on the shipped code with
+per-route logs.
+
+## 5. JSON answers on the shipped code, with per-route logs
+
+The section 4 run repeated on dev `5f08d12`, the code that shipped: #5762's prompt and parser, the
+512-token cap and the direct streamed call, through `prod-direct`, with no warm-up. Raw logs:
+`results/tts-json-<model>.jsonl`. Each line holds the parsed `confidence` and `basis`. In real
+rows, the model's explanation after the basis rule is removed, because it paraphrases the
+user's messages.
+
+| model | correct (all · synthetic · real) | follow-ups → inbox | parsed | with confidence | basis exact · rule + explanation · none | empty | reasoned | output tokens p50 / p95 / max | p50 / p95 / max ms | calls > 4 s · > 15 s | cost / 1k |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| glm-4.7 | 100 / 105 (95%) · 97% · 91% | 0 / 74 | 105 | 105 | 25 · 63 · 17 | 0 | 31 | 45 / 111 / 207 | 2132 / 5718 / 28210 | 15 · 1 | $0.42 |
+| glm-5-turbo | 97 / 105 (92%) · 91% · 94% | 0 / 74 | 105 | 105 | 20 · 67 · 18 | 0 | 30 | 48 / 114 / 327 | 2255 / 5799 / 11770 | 14 · 0 | $0.83 |
+| GLM-5.3-Flash | 101 / 105 (96%) · 96% · 97% | 0 / 74 | 105 | 105 | 19 · 72 · 14 | 0 | 31 | 46 / 107 / 261 | 2242 / 7734 / 13963 | 18 · 0 | $0.10 |
+| DeepSeek Flash | 91 / 105 (87%) · 83% · 94% | 1 / 74 | 105 | 105 | 23 · 50 · 32 | 0 | 0 | 48 / 91 / 128 | 1088 / 1393 / 1547 | 0 · 0 | $0.06 |
+
+| model | follow up | second last | waiting yes | two waiting | one off | new subject | thanks | long dictated | mixed language | real |
+|---|---|---|---|---|---|---|---|---|---|---|
+| glm-4.7 | 100% | 100% | 100% | 83% | 100% | 88% | 100% | 100% | 100% | 91% |
+| glm-5-turbo | 100% | 100% | 100% | 33% | 100% | 75% | 100% | 100% | 100% | 94% |
+| GLM-5.3-Flash | 100% | 100% | 100% | 83% | 100% | 88% | 100% | 83% | 100% | 97% |
+| DeepSeek Flash | 100% | 100% | 100% | 33% | 100% | 25% | 83% | 83% | 100% | 94% |
+
+| model | mean confidence, correct | mean confidence, wrong | routes under 0.6 | wrong among them |
+|---|---|---|---|---|
+| glm-4.7 | 0.86 | 0.57 | 7 | 1 |
+| glm-5-turbo | 0.88 | 0.64 | 6 | 3 |
+| GLM-5.3-Flash | 0.86 | 0.86 | 6 | 0 |
+| DeepSeek Flash | 0.85 | 0.73 | 8 | 2 |
+
+- **Section 4 holds on the shipped code.** Every reply parsed, none came back empty, and the
+  largest reply was 327 tokens, inside the 512 cap. glm-4.7 scored 95% again; GLM-5.3-Flash
+  96%; DeepSeek Flash 87%.
+- **One glm-4.7 call took 28 s,** over the 15 s default timeout. Production would have fallen
+  back to the embedding pick for that route. 15 of 105 glm-4.7 calls took over 4 s.
+- **Most `basis` values were lost.** Only 19–25 of 105 replies gave the bare rule; 50–72 wrote
+  the rule followed by an explanation (`"continues_turn: …"`), which the exact-match parser
+  dropped. #5771 / #5772 accept a rule followed by an explanation. The remaining 14–32 gave
+  prose with no rule.
+- **Confidence separates right from wrong on glm-4.7** (0.86 against 0.57) but not on
+  GLM-5.3-Flash. Under 0.6 is too rare (6–8 routes) to act on yet.
+- **The recommendation stands:** glm-4.7 on the subscription. GLM-5.3-Flash matches it on
+  accuracy but always reasons and has the slowest p95.
 
 ## Recommendation
 
 Use **glm-4.7** as the routing model on the GLM subscription, in Settings → Neo → Routing model:
 
 - it is covered by the subscription;
-- it scored 95% with JSON answers;
+- it scored 95% with JSON answers, twice (sections 4 and 5);
 - Zhipu documents a thinking-off switch for it.
 
 Any reasoning that leaks through is absorbed by the 512-token cap and the 15 s timeout.
