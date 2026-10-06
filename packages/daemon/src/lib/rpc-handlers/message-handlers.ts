@@ -19,11 +19,7 @@ import { SDKMessageRepository } from '../../storage/repositories/sdk-message-rep
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
-import { capMessageOutput } from './message-output-cap.ts';
-
-function capSdkMessage<T>(message: T): T {
-  return capMessageOutput(message as unknown as Record<string, unknown>) as unknown as T;
-}
+import { capSdkMessage } from './message-output-cap.ts';
 
 export function setupMessageHandlers(
   messageHub: MessageHub,

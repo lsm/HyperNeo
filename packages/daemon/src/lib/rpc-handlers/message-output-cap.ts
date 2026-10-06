@@ -1,5 +1,15 @@
 export const MESSAGE_OUTPUT_CAP_CHARS = 16 * 1024;
 const WHOLE_STRING_CHARS = 64;
+const SMALL_FIELDS_AFTER_BUDGET = 64;
+
+function isSmallField(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'string' && value.length <= WHOLE_STRING_CHARS)
+  );
+}
 
 type Json = Record<string, unknown>;
 type Budget = { left: number };
@@ -74,7 +84,18 @@ function capDeep(value: unknown, budget: Budget): Capped<unknown> {
     const result: Json = {};
     let total = 0;
     let dropped = false;
+    let keptAfterBudget = 0;
     for (const [key, item] of Object.entries(value as Json)) {
+      if (budget.left <= 0) {
+        if (isSmallField(item) && keptAfterBudget < SMALL_FIELDS_AFTER_BUDGET) {
+          result[key] = item;
+          keptAfterBudget++;
+        } else {
+          total += sizeOf(item);
+          dropped = true;
+        }
+        continue;
+      }
       const capped = capDeep(item, budget);
       result[key] = capped.value;
       total += capped.total;
@@ -126,4 +147,8 @@ export function capMessageOutput<T extends Json>(message: T, limit = MESSAGE_OUT
     ...(structured?.dropped ? { tool_use_result: markStructured(structured) } : {}),
     output_capped: true,
   };
+}
+
+export function capSdkMessage<T>(message: T): T {
+  return capMessageOutput(message as unknown as Json) as unknown as T;
 }

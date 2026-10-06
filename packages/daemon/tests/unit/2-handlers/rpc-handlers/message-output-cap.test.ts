@@ -94,6 +94,24 @@ describe('capMessageOutput', () => {
     expect(capped.output_capped.chars).toBeGreaterThan(1_000_000);
   });
 
+  test('bounds wide objects but keeps small status fields', () => {
+    const statuses = Object.fromEntries(
+      Array.from({ length: 50_000 }, (_, index) => [`job-${index}`, 'ok'])
+    );
+    const message = {
+      type: 'user',
+      message: { content: [] },
+      tool_use_result: { stdout: big, exitCode: 1, interrupted: false, statuses },
+    };
+    const capped = capMessageOutput(message, 10).tool_use_result as unknown as {
+      exitCode: number;
+      interrupted: boolean;
+      statuses?: Record<string, string>;
+    };
+    expect([capped.exitCode, capped.interrupted]).toEqual([1, false]);
+    expect(Object.keys(capped.statuses ?? {}).length).toBeLessThan(100);
+  });
+
   test('reports the total size across every trimmed part', () => {
     const message = {
       type: 'user',
