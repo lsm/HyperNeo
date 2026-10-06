@@ -19,13 +19,25 @@ export const NEO_LOOKUP_COMMANDS = [
   'git blame',
 ];
 
-const SECRET_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.config'];
+const SECRET_DIRS = [
+  '.ssh',
+  '.aws',
+  '.azure',
+  '.gcloud',
+  '.gnupg',
+  '.kube',
+  '.docker',
+  '.config',
+  '.claude/projects',
+];
 const SECRET_FILES = [
   '.claude/.credentials.json',
   '.claude/settings.json',
   '.claude/settings.local.json',
   '.claude.json',
   '.git-credentials',
+  '.bash_history',
+  '.zsh_history',
   '.netrc',
   '.npmrc',
   '.zshrc',
@@ -153,7 +165,9 @@ export function neoLookUpDenial(
     if (isSecretPath(root, scope) || tooBroad(root, scope))
       return 'search inside a project folder, not home or a secrets folder';
     if (tool === 'Grep') return grepDenial(input);
-    return pattern && isSecretPath(pattern, scope) ? 'that pattern points at secrets' : null;
+    return pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) })
+      ? 'that pattern points at secrets'
+      : null;
   }
   if (tool === 'Bash') return bashDenial(text('command'), scope);
   return `${tool} is not a look-up tool`;

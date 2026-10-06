@@ -23,6 +23,9 @@ describe('isSecretPath', () => {
     '~/.claude/settings.local.json',
     '~/.claude/.credentials.json',
     '~/.git-credentials',
+    '~/.claude/projects/-Users-fictional-app/session.jsonl',
+    '~/.zsh_history',
+    '~/.azure/accessTokens.json',
     '~/.zshrc',
     '~/focus/app/.env',
     '~/focus/app/.env.local',
@@ -88,6 +91,11 @@ describe('neoLookUpDenial', () => {
       neoLookUpDenial('Glob', { pattern: '/home/fictional/.ssh/*', path: '~/focus/app' }, scope)
     ).toBe('that pattern points at secrets');
     expect(neoLookUpDenial('Glob', { pattern: '**/*.ts', path: '~/focus/app' }, scope)).toBeNull();
+    for (const pattern of ['src/**/*.ts', 'package.json', 'docs/*.md'])
+      expect(neoLookUpDenial('Glob', { pattern, path: '~/focus/app' }, scope)).toBeNull();
+    expect(neoLookUpDenial('Glob', { pattern: '.env*', path: '~/focus/app' }, scope)).toBe(
+      'that pattern points at secrets'
+    );
   });
 
   test('shows matching lines only for globs that cannot match secret files', () => {
