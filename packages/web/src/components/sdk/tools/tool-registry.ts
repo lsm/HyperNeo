@@ -254,6 +254,9 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
   },
 };
 
+/** @public */
+export const REGISTERED_TOOL_NAMES: readonly string[] = Object.keys(defaultToolConfigs);
+
 const customToolConfigs: Map<string, ToolConfig> = new Map();
 
 export function getCategoryColors(category: ToolCategory) {
