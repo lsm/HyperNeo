@@ -1619,4 +1619,103 @@ footer line 2`;
       expect(removedLines).toBe(1);
     });
   });
+
+  describe('ToolResultCard trimmed output', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockGetHub.mockResolvedValue({ request: mockRequest });
+    });
+
+    it('loads the full output when the user asks for it', async () => {
+      mockRequest.mockResolvedValue({
+        sdkMessage: {
+          type: 'user',
+          message: {
+            content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'FULL TEXT' }],
+          },
+        },
+      });
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="tool-1"
+          input={{ command: 'cat big.log' }}
+          output={{
+            type: 'tool_result',
+            tool_use_id: 'tool-1',
+            content: 'TRIMMED',
+            output_capped: { chars: 2 * 1024 * 1024 },
+          }}
+          defaultExpanded={true}
+          messageUuid="msg-1"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.getByText(/Showing the first 16 KB of 2\.0 MB/)).toBeTruthy();
+      fireEvent.click(screen.getByText('Show full output'));
+      await waitFor(() => expect(screen.queryByText('Show full output')).toBeNull());
+      expect(mockRequest).toHaveBeenCalledWith('message.sdkMessage', {
+        sessionId: 'session-1',
+        messageUuid: 'msg-1',
+      });
+      expect(screen.getByText(/FULL TEXT/)).toBeTruthy();
+    });
+
+    it('offers the full output on a trimmed Read too', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="tool-2"
+          input={{ file_path: '/repo/big.log' }}
+          output={{
+            type: 'tool_result',
+            tool_use_id: 'tool-2',
+            content: 'first lines',
+            output_capped: { chars: 300 * 1024 },
+          }}
+          defaultExpanded={true}
+          messageUuid="msg-2"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.getByText(/Showing the first 16 KB of 300 KB/)).toBeTruthy();
+      expect(screen.getByText('Show full output')).toBeTruthy();
+    });
+
+    it('offers the full image when only the structured Read output was trimmed', () => {
+      render(
+        <ToolResultCard
+          toolName="Read"
+          toolId="tool-3"
+          input={{ file_path: '/repo/shot.png' }}
+          output={{ type: 'tool_result', tool_use_id: 'tool-3', content: [] }}
+          structuredOutput={{
+            type: 'image',
+            file: { base64: '', type: 'image/png' },
+            data_capped: { chars: 900 * 1024 },
+            output_capped: { chars: 900 * 1024 },
+          }}
+          defaultExpanded={true}
+          messageUuid="msg-3"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.getByText('Show full output')).toBeTruthy();
+    });
+
+    it('shows no notice for output that was not trimmed', () => {
+      render(
+        <ToolResultCard
+          toolName="Bash"
+          toolId="tool-1"
+          input={{ command: 'ls' }}
+          output={{ type: 'tool_result', tool_use_id: 'tool-1', content: 'small' }}
+          defaultExpanded={true}
+          messageUuid="msg-1"
+          sessionId="session-1"
+        />
+      );
+      expect(screen.queryByText('Show full output')).toBeNull();
+    });
+  });
 });

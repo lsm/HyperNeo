@@ -19,6 +19,7 @@ import { SDKMessageRepository } from '../../storage/repositories/sdk-message-rep
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { capSdkMessage } from './message-output-cap.ts';
 
 export function setupMessageHandlers(
   messageHub: MessageHub,
@@ -138,9 +139,11 @@ export function setupMessageHandlers(
           sinceRowid
         );
         return {
-          sdkMessages,
+          sdkMessages: sdkMessages.map(capSdkMessage),
           hasMore,
-          backgroundTaskMessages: sdkMessageRepo.getBackgroundTaskMessages(targetSessionId),
+          backgroundTaskMessages: sdkMessageRepo
+            .getBackgroundTaskMessages(targetSessionId)
+            .map(capSdkMessage),
         };
       }
       throw new Error('Session not found');
@@ -154,10 +157,26 @@ export function setupMessageHandlers(
       sinceRowid
     );
     return {
-      sdkMessages,
+      sdkMessages: sdkMessages.map(capSdkMessage),
       hasMore,
-      backgroundTaskMessages: agentSession.getBackgroundTaskMessages(),
+      backgroundTaskMessages: agentSession.getBackgroundTaskMessages().map(capSdkMessage),
     };
+  });
+
+  messageHub.onRequest('message.sdkMessage', async (data) => {
+    const { sessionId: targetSessionId, messageUuid } = data as {
+      sessionId: string;
+      messageUuid: string;
+    };
+    if (!targetSessionId || !messageUuid) throw new Error('sessionId and messageUuid are required');
+    if (!db) throw new Error('Message store unavailable');
+    if (!db.getSession(targetSessionId)) throw new Error('Session not found');
+    const sdkMessage = new SDKMessageRepository(db.getDatabase()).getMessageByUuid(
+      targetSessionId,
+      messageUuid
+    );
+    if (!sdkMessage) throw new Error('Message not found');
+    return { sdkMessage };
   });
 
   messageHub.onRequest('message.count', async (data) => {

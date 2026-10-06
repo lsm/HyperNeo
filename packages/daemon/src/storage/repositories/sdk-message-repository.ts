@@ -1125,6 +1125,13 @@ export class SDKMessageRepository {
     });
   }
 
+  getMessageByUuid(sessionId: string, messageUuid: string): SDKMessage | null {
+    const row = this.db
+      .prepare('SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1')
+      .get(sessionId, messageUuid) as { sdk_message: string } | null;
+    return row ? (JSON.parse(row.sdk_message) as SDKMessage) : null;
+  }
+
   getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
     const rows = this.db
       .prepare(

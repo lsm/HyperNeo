@@ -245,6 +245,28 @@ describe('SubagentBlock', () => {
       expect(container.textContent).toContain('Search for test files');
     });
 
+    it('offers the full output when the subagent result was trimmed', () => {
+      const input = createAgentInput('Explore', 'Find files', 'Search for test files');
+      const output = {
+        type: 'tool_result',
+        tool_use_id: 'toolu_task123',
+        content: 'partial report',
+        output_capped: { chars: 64 * 1024 },
+      };
+      const { container } = render(
+        <SubagentBlock
+          input={input}
+          output={output}
+          toolId="toolu_task123"
+          messageUuid="msg-1"
+          sessionId="session-1"
+        />
+      );
+      fireEvent.click(container.querySelector('button')!);
+      expect(container.textContent).toContain('Showing the first 16 KB of 64 KB');
+      expect(container.textContent).toContain('Show full output');
+    });
+
     it('should show output section when expanded', async () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const output = 'Found 5 test files in the project.';

@@ -19,6 +19,7 @@ import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 import { ReadImagePreview } from './ReadImagePreview.tsx';
+import { type CappedOutput, FullOutputNotice, useFullToolOutput } from './FullOutputNotice.tsx';
 
 const imageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
@@ -90,7 +91,25 @@ function structuredPatchToDiff(
     .join('\n');
 }
 
-export function ToolResultCard({
+export function ToolResultCard(props: ToolResultCardProps) {
+  const { output, structuredOutput, capped } = useFullToolOutput(
+    props.output,
+    props.structuredOutput,
+    props.sessionId,
+    props.messageUuid,
+    props.toolId
+  );
+  return (
+    <ToolResultCardBody
+      {...props}
+      output={output}
+      structuredOutput={structuredOutput}
+      capped={props.isOutputRemoved ? undefined : capped}
+    />
+  );
+}
+
+function ToolResultCardBody({
   toolName,
   toolId,
   input,
@@ -107,7 +126,8 @@ export function ToolResultCard({
   isRunning = false,
   taskNotification,
   taskProgress,
-}: ToolResultCardProps) {
+  capped,
+}: ToolResultCardProps & { capped?: CappedOutput }) {
   const taskStatus = taskNotification?.status;
   const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
   const notificationIsSuccess = taskStatus === 'completed';
@@ -361,6 +381,7 @@ export function ToolResultCard({
 
       {isExpanded && (
         <div class={cn('p-3 border-t bg-surface space-y-3', colors.border)}>
+          <FullOutputNotice capped={capped} />
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (

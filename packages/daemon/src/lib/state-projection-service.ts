@@ -1,4 +1,5 @@
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
+import { capSdkMessage } from './rpc-handlers/message-output-cap.ts';
 import type { SessionManager } from './session-manager.ts';
 import type { AuthManager } from './auth-manager.ts';
 import type { SettingsManager } from './settings-manager.ts';
@@ -392,7 +393,7 @@ export class StateProjectionService {
           undefined,
           since
         );
-        return { sdkMessages, hasMore, timestamp: Date.now() };
+        return { sdkMessages: sdkMessages.map(capSdkMessage), hasMore, timestamp: Date.now() };
       }
       throw new Error('Session not found');
     }
@@ -400,7 +401,7 @@ export class StateProjectionService {
     const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(100, undefined, since);
 
     return {
-      sdkMessages,
+      sdkMessages: sdkMessages.map(capSdkMessage),
       hasMore,
       timestamp: Date.now(),
     };
