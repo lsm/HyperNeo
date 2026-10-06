@@ -174,7 +174,10 @@ export function readNeoRouteDecision(
     typeof object?.confidence === 'number' && Number.isFinite(object.confidence)
       ? Math.min(1, Math.max(0, object.confidence))
       : null;
-  const basis = NEO_ROUTE_BASES.find((name) => name === object?.basis) ?? null;
+  const stated = typeof object?.basis === 'string' ? object.basis.trim() : '';
+  const basis =
+    NEO_ROUTE_BASES.find((name) => stated === name || new RegExp(`^${name}\\b`).test(stated)) ??
+    null;
   return { decision, confidence, basis: basis as NeoRouteBasis | null };
 }
 
