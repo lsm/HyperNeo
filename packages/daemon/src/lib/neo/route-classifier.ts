@@ -16,6 +16,7 @@ const ANSWER_TOKENS = 32;
 const ANTHROPIC_VERSION = '2023-06-01';
 let leanCwd: string | undefined;
 
+export type NeoRouteModel = { provider: string; model: string };
 type RouteThinking = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' } | undefined;
 
 export interface NeoRouteHttpCall {
@@ -71,6 +72,19 @@ export function neoRouteHttpCall(
   };
 }
 
+export function neoRouteEndpoint(
+  title: { modelId: string; baseUrl: string } | null,
+  requested: string,
+  env: Record<string, string | undefined>
+): { modelId: string; baseUrl: string } {
+  return (
+    title ?? {
+      modelId: env.ANTHROPIC_MODEL || requested,
+      baseUrl: env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+    }
+  );
+}
+
 export function readNeoRouteStream(stream: string): string {
   return stream
     .split('\n')
@@ -120,23 +134,26 @@ async function askNeoRouteModel(
   text: string,
   candidates: readonly NeoHolder[],
   context: string,
-  abortController: AbortController
+  abortController: AbortController,
+  choice: NeoRouteModel | undefined
 ): Promise<NeoRouteAnswer> {
   const providers = getProviderService();
   let restore: Awaited<ReturnType<typeof providers.applyEnvVarsToProcessForProvider>> = {};
   try {
-    const provider = await providers.getDefaultProvider();
-    const config = await providers.getTitleGenerationConfig(provider);
-    if (!config) return null;
-    restore = await providers.applyEnvVarsToProcessForProvider(provider, config.modelId);
+    const provider = choice?.provider ?? (await providers.getDefaultProvider());
+    const title = choice ? null : await providers.getTitleGenerationConfig(provider);
+    const requested = choice?.model ?? title?.modelId;
+    if (!requested) return null;
+    restore = await providers.applyEnvVarsToProcessForProvider(provider, requested);
     const env = mergeProviderEnvVars(
-      (await providers.getEnvVarsForModel(config.modelId, provider)) as Record<
+      (await providers.getEnvVarsForModel(requested, provider)) as Record<
         string,
         string | undefined
       >
     );
     providers.restoreEnvVars(restore);
     restore = {};
+    const config = neoRouteEndpoint(title, requested, env);
     const prompt = buildNeoRoutePrompt(text, candidates, context);
     const thinking: RouteThinking =
       provider === 'kimi'
@@ -196,6 +213,7 @@ export async function classifyNeoRoute(
   text: string,
   candidates: readonly NeoHolder[],
   context: string,
+  choice?: NeoRouteModel,
   timeoutMs = CLASSIFY_TIMEOUT_MS
 ): Promise<NeoRouteAnswer> {
   if (process.env.NODE_ENV === 'test') return null;
@@ -209,7 +227,7 @@ export async function classifyNeoRoute(
   });
   try {
     return await Promise.race([
-      askNeoRouteModel(text, candidates, context, abortController),
+      askNeoRouteModel(text, candidates, context, abortController, choice),
       timeout,
     ]);
   } finally {

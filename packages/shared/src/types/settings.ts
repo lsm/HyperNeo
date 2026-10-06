@@ -89,6 +89,10 @@ export interface VoiceSettings {
   allowPrivateNetwork?: boolean;
 }
 
+export interface NeoSettings {
+  routeModel?: { provider: string; model: string };
+}
+
 export interface ExaSettings {
   enabled: boolean;
   apiKey?: string;
@@ -124,6 +128,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   voice?: VoiceSettings;
 
   exa?: ExaSettings;
+
+  neo?: NeoSettings;
 }
 
 export interface SessionSettings extends GlobalSettings {

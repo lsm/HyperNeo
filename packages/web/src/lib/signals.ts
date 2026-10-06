@@ -104,6 +104,7 @@ export type SettingsSection =
   | 'providers'
   | 'voice'
   | 'exa'
+  | 'neo'
   | 'app-mcp-servers'
   | 'remote-daemons'
   | 'skills'

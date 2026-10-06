@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildNeoRoutePrompt,
+  neoRouteEndpoint,
   neoRouteHttpCall,
   readNeoRouteAnswer,
   readNeoRouteStream,
@@ -91,6 +92,22 @@ describe('neoRouteHttpCall', () => {
       neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, 'p', undefined)
     ).toBeNull();
     expect(neoRouteHttpCall('not a url', 'm', {}, 'p', undefined)).toBeNull();
+  });
+});
+
+describe('neoRouteEndpoint', () => {
+  test('uses the title model by default and the configured model from its provider env', () => {
+    const title = { modelId: 'glm-4.7-air', baseUrl: 'https://open.bigmodel.cn/api/anthropic' };
+    expect(neoRouteEndpoint(title, 'glm-4.7-air', {})).toBe(title);
+    expect(
+      neoRouteEndpoint(null, 'deepseek-v4-flash', {
+        ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+      })
+    ).toEqual({ modelId: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com/anthropic' });
+    expect(neoRouteEndpoint(null, 'claude-haiku-4-5', { ANTHROPIC_MODEL: '' })).toEqual({
+      modelId: 'claude-haiku-4-5',
+      baseUrl: 'https://api.anthropic.com',
+    });
   });
 });
 
