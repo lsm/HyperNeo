@@ -306,34 +306,16 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
           ? { providerModelId: 'glm-5-turbo', sdkModelId: 'default' }
           : { providerModelId: sessionModelId, sdkModelId: sessionModelId }
       ),
-      applyEnvVarsToProcessForProvider: mock(async (provider: string) => {
-        const original = {
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-        };
-        if (provider === 'glm') {
-          process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5-turbo';
-          process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-5-turbo';
-          process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-5-turbo';
-        }
-        return original;
-      }),
-      getEnvVarsForModel: mock(async (_modelId: string, provider: string) =>
-        provider === 'glm'
+      getIsolatedEnvForModel: mock(async (provider: string) => ({
+        ...process.env,
+        ...(provider === 'glm'
           ? {
               ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5-turbo',
               ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5-turbo',
               ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5-turbo',
             }
-          : {}
-      ),
-      restoreEnvVars: mock((original) => {
-        for (const [key, value] of Object.entries(original)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
-      }),
+          : {}),
+      })),
     };
 
     config = {
@@ -419,33 +401,19 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
   });
 
-  it('restores the applied provider env before invoking the SDK query', async () => {
-    const events: string[] = [];
-    mockTitleProviderService.applyEnvVarsToProcessForProvider = mock(async () => {
-      events.push('apply');
-      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5-turbo';
-      return { ANTHROPIC_DEFAULT_HAIKU_MODEL: undefined };
-    });
-    mockTitleProviderService.restoreEnvVars = mock((original) => {
-      events.push(`restore:${Object.keys(original).length}`);
-      for (const [key, value] of Object.entries(original)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    });
+  it('passes the provider env to the SDK query without touching process.env', async () => {
+    const before = { ...process.env };
     config.titleGenerationQueryForTesting = (params) => {
       const opts = params.options ?? {};
-      if ('thinking' in opts) {
-        lastTitleQueryOptions = opts;
-        events.push(`query:${process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? 'restored'}`);
-      }
+      if ('thinking' in opts) lastTitleQueryOptions = opts;
+      expect(process.env).toEqual(before);
       return makeQueryMock(mockSdkMessages);
     };
 
     const title = await generateTitleWithSdkForTest('glm', 'glm-5.1');
 
     expect(title).toBe('My Generated Title');
-    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
+    expect(process.env).toEqual(before);
     const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
   });

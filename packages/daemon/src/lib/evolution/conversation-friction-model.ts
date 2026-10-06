@@ -1,7 +1,7 @@
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { getAvailableModels } from '../model-service.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
@@ -56,56 +56,49 @@ export async function analyzeConversationWithModel(
 ): Promise<ConversationFrictionAnalysis> {
   const providerService = getProviderService();
   const { provider, modelId } = await resolveConversationFrictionModel(input, spaceRepo);
-  let originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
-  try {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
-    const providerEnvVars = (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
-      string,
-      string | undefined
-    >;
-    const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
-    const mergedEnv = mergeProviderEnvVars(providerEnvVars);
-    providerService.restoreEnvVars(originalEnv);
-    originalEnv = {};
-    const agentQuery = query({
-      prompt: buildConversationFrictionPrompt(input),
-      options: {
-        model: sdkModelId,
-        maxTurns: 1,
-        permissionMode: 'acceptEdits',
-        allowDangerouslySkipPermissions: false,
-        mcpServers: {},
-        settingSources: [],
-        tools: [],
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-        settings: withSdkTranscriptRetention(),
-        env: mergedEnv,
-        thinking:
-          provider === 'kimi'
-            ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)
-            : { type: 'disabled' },
-      },
-    });
-    let raw = '';
-    for await (const message of agentQuery) {
-      if (isSDKAssistantMessage(message)) {
-        const textBlocks = message.message.content.filter(
-          (block: { type: string }) => block.type === 'text'
-        ) as Array<{ text?: string }>;
-        raw = textBlocks
-          .map((block) => block.text ?? '')
-          .join('\n')
-          .trim();
-        if (raw) break;
-      }
+  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
+  const providerEnvVars = (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
+    string,
+    string | undefined
+  >;
+  const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
+  const mergedEnv = await providerService.getIsolatedEnvForModel(provider, modelId);
+  const agentQuery = query({
+    prompt: buildConversationFrictionPrompt(input),
+    options: {
+      model: sdkModelId,
+      maxTurns: 1,
+      permissionMode: 'acceptEdits',
+      allowDangerouslySkipPermissions: false,
+      mcpServers: {},
+      settingSources: [],
+      tools: [],
+      pathToClaudeCodeExecutable: resolveSDKCliPath(),
+      executable: isRunningUnderBun() ? 'bun' : undefined,
+      settings: withSdkTranscriptRetention(),
+      env: mergedEnv,
+      thinking:
+        provider === 'kimi'
+          ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)
+          : { type: 'disabled' },
+    },
+  });
+  let raw = '';
+  for await (const message of agentQuery) {
+    if (isSDKAssistantMessage(message)) {
+      const textBlocks = message.message.content.filter(
+        (block: { type: string }) => block.type === 'text'
+      ) as Array<{ text?: string }>;
+      raw = textBlocks
+        .map((block) => block.text ?? '')
+        .join('\n')
+        .trim();
+      if (raw) break;
     }
-    if (!raw) throw new Error('Conversation friction analyzer returned no text');
-    return parseConversationFrictionJson(raw);
-  } finally {
-    providerService.restoreEnvVars(originalEnv);
   }
+  if (!raw) throw new Error('Conversation friction analyzer returned no text');
+  return parseConversationFrictionJson(raw);
 }
 
 async function resolveConversationFrictionModel(

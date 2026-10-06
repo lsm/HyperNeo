@@ -7,7 +7,9 @@ let lastQueryEnv: Record<string, string | undefined> | undefined;
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: (params: { options?: { env?: Record<string, string | undefined> } }) => {
-    events.push(`query:${process.env.ANTHROPIC_BASE_URL ?? 'restored'}`);
+    events.push(
+      `query:${process.env.ANTHROPIC_BASE_URL === 'https://relay.example' ? 'leaked' : 'clean'}`
+    );
     lastQueryEnv = params.options?.env;
     return (async function* () {
       yield {
@@ -25,18 +27,9 @@ const stubProviderService = {
     baseUrl: 'https://relay.example',
     apiVersion: 'v1',
   }),
-  applyEnvVarsToProcessForProvider: async () => {
-    events.push('apply');
-    process.env.ANTHROPIC_BASE_URL = 'https://relay.example';
-    return { ANTHROPIC_BASE_URL: undefined };
-  },
-  getEnvVarsForModel: async () => ({ ANTHROPIC_BASE_URL: 'https://relay.example' }),
-  restoreEnvVars: (original: Record<string, string | undefined>) => {
-    events.push(`restore:${Object.keys(original).length}`);
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+  getIsolatedEnvForModel: async () => {
+    events.push('env');
+    return { ...process.env, ANTHROPIC_BASE_URL: 'https://relay.example' };
   },
 };
 
@@ -46,7 +39,7 @@ mock.module('../../../../src/lib/provider-service.ts', () => ({
 }));
 
 describe('selectWorkflowWithLlmDefault provider env release', () => {
-  it('restores the applied provider env before invoking the SDK query', async () => {
+  it('passes the provider env to the SDK query without touching process.env', async () => {
     const { selectWorkflowWithLlmDefault } = await import(
       '../../../../src/lib/workflows/llm-workflow-selector'
     );
@@ -62,7 +55,7 @@ describe('selectWorkflowWithLlmDefault provider env release', () => {
     const selected = await selectWorkflowWithLlmDefault(task, workflows);
 
     expect(selected).toBe('wf-two');
-    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
+    expect(events).toEqual(['env', 'query:clean']);
     expect(lastQueryEnv?.ANTHROPIC_BASE_URL).toBe('https://relay.example');
   });
 });

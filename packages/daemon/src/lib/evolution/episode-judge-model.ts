@@ -2,7 +2,7 @@ import type { EvolutionScope } from '@hyperneo/shared';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { Logger } from '../logger.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { getAvailableModels } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
@@ -68,7 +68,6 @@ export async function judgeEpisodeWithModel(
   const providerService = getProviderService();
   const { provider, modelId } = await resolveEpisodeJudgeModel(input, spaceRepo);
   const prompt = buildEpisodeJudgePrompt(input);
-  let originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
@@ -77,9 +76,7 @@ export async function judgeEpisodeWithModel(
       string | undefined
     >;
     const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
-    const mergedEnv = mergeProviderEnvVars(providerEnvVars);
-    providerService.restoreEnvVars(originalEnv);
-    originalEnv = {};
+    const mergedEnv = await providerService.getIsolatedEnvForModel(provider, modelId);
     const agentQuery = query({
       prompt,
       options: {
@@ -118,7 +115,5 @@ export async function judgeEpisodeWithModel(
   } catch (err) {
     log.warn('Episode judge model call failed:', err);
     throw err;
-  } finally {
-    providerService.restoreEnvVars(originalEnv);
   }
 }
