@@ -412,6 +412,19 @@ export function requireTaskMessenger(
     : { value: task };
 }
 
+export function spaceWorkRefForSession(db: BunDatabase, sessionId: string): WorkRef | null {
+  const rows = db
+    .prepare(
+      `SELECT ?2 || id AS id FROM space_long_horizon_agents WHERE session_id = ?1
+       UNION SELECT id FROM space_tasks WHERE task_agent_session_id = ?1
+       UNION SELECT t.id FROM space_tasks t
+         JOIN node_executions n ON n.workflow_run_id = t.workflow_run_id
+        WHERE n.agent_session_id = ?1`
+    )
+    .all(sessionId, AGENT_REF) as Array<{ id: string }>;
+  return rows.length === 1 ? { adapter: 'space', id: rows[0].id } : null;
+}
+
 export function readActiveNode(db: BunDatabase, taskId: string): SpaceTaskNode | null {
   const row = db
     .prepare(

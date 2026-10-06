@@ -170,19 +170,29 @@ describe('Neo existing chat work', () => {
     ['archived', 'target_session_not_active'],
     ['root', 'target_owned_context'],
     ['holder', 'target_owned_context'],
-    ['manager', 'target_owned_context'],
   ])(
     'proposal refuses %s before storing a work or inventing another executor',
     async (target, reason) => {
       const before = resources();
       expect(await invoke('neo.work.propose', input('A', target), source('ask-A'))).toMatchObject({
-        value: { ok: false, reason },
+        value: { ok: false, reason: expect.stringMatching(new RegExp(`^${reason}`)) },
       });
       expect(service.repo.listWork()).toEqual([]);
       expect(resources()).toBe(before);
       expect(createSession).not.toHaveBeenCalled();
     }
   );
+
+  test('proposal to a Space agent session id becomes a send to that agent', async () => {
+    const reply = (await invoke('neo.work.propose', input('A', 'manager'), source('ask-A'))) as {
+      value: { ok: boolean; work: { id: string } };
+    };
+    expect(reply.value.ok).toBe(true);
+    expect(service.driverTargets.get(reply.value.work.id)).toEqual({
+      verb: 'send',
+      ref: { adapter: 'space', id: 'agent:manager-a' },
+    });
+  });
 
   test('target admission keeps scope-owned runtime integrity without inventing working modes', () => {
     const target = { id: 'A', targetSessionId: 'project' };

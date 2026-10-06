@@ -198,7 +198,7 @@ export function createFindWorkOperation(deps: FindWorkDeps) {
   return defineOperation({
     name: 'work.find',
     description:
-      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId.',
+      'Find open work and the places it lives, on this daemon and every attached daemon. Returns places (project folders, Spaces) most recent first, each with its open sessions, threads, tasks or Space agents; a place is returned even when nothing in it is open, so this is also the project list. With text, it matches place names, work titles and message content. includeClosed adds ended and archived work. A daemon or adapter that cannot answer is listed under unreachable instead of failing the search. The reply is size-bounded: more is true when places or work were left out, so narrow with text, folder or spaceId. Snippet handles are for work.read only; to send or propose work, use the item ref.',
     inputSchema: FindWorkInputSchema,
     resultSchema: FindWorkResultSchema,
     policy: { safetyClass: 'read' },

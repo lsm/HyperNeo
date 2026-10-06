@@ -45,7 +45,8 @@ import {
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
 import { NeoDriverTargetSchema, type NeoDriverTarget } from './driver-work.ts';
-import { WorkStatusSchema } from '../drivers/types.ts';
+import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
+import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 
 const Concern = z.object({
@@ -254,6 +255,25 @@ export function requireNeoExecutionChoice(
             'Choose targetSessionId explicitly: use the exact existing chat ID to reuse it, or null for genuinely self-contained scratch work. An instruction mentioning a chat does not bind its execution target. Inspect operations.describe for neo.work.propose, then retry.',
         },
       };
+}
+
+export function adoptOwnedNeoTarget<
+  Input extends { targetSessionId?: string | null; targetAgent?: unknown; work?: NeoDriverTarget },
+>(input: Input, owned: { ref: WorkRef | null }): Input {
+  return owned.ref && input.targetSessionId && !input.work && !input.targetAgent
+    ? { ...input, targetSessionId: undefined, work: { verb: 'send', ref: owned.ref } }
+    : input;
+}
+
+const OWNED_TARGET_HINT =
+  'target_owned_context: this session belongs to Neo itself or to Space work with no single owner. To continue Space work, propose with work {verb:"send", ref} using the ref of the task or agent from work.find; snippet session ids are only for work.read.';
+
+export function explainOwnedNeoTarget<T>(
+  gate: { value: T } | { reason: { reason: string } }
+): { value: T } | { reason: { reason: string } } {
+  return 'reason' in gate && gate.reason.reason === 'target_owned_context'
+    ? { reason: { ok: false, reason: OWNED_TARGET_HINT } as Rejection }
+    : gate;
 }
 
 export function requireNeoWorkCancellation(
@@ -577,6 +597,17 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(requireNeoExecutionChoice, ['input', 'admission'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Propose>) => ({
+        ref:
+          input.targetSessionId && !input.work && !input.targetAgent
+            ? spaceWorkRefForSession(service.db.getDatabase(), input.targetSessionId)
+            : null,
+      }),
+      'input',
+      'owned'
+    )
+    .pipe(adoptOwnedNeoTarget, ['input', 'owned'], 'input')
+    .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         input.concernId && !service.repo.getConcern(input.concernId)
           ? { reason: { ok: false, reason: 'Concern not found.' } }
@@ -625,9 +656,11 @@ export function createNeoOperations(service: NeoService) {
         { session }: { session: ReturnType<typeof inventory.readSession> },
         { owner }: { owner: NeoAgentWorkOwner | null }
       ) =>
-        target.agent
-          ? requireNeoAgentWorkSession(target, session, owner)
-          : requireNeoWorkTargetSession(target, session),
+        explainOwnedNeoTarget(
+          target.agent
+            ? requireNeoAgentWorkSession(target, session, owner)
+            : requireNeoWorkTargetSession(target, session)
+        ),
       ['candidate', 'targetSession', 'targetOwner'],
       'result:admission'
     )
@@ -643,9 +676,11 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
-        target.agent
-          ? requireNeoAgentWorkBinding(target, binding)
-          : requireNeoWorkTargetBinding(target, binding),
+        explainOwnedNeoTarget(
+          target.agent
+            ? requireNeoAgentWorkBinding(target, binding)
+            : requireNeoWorkTargetBinding(target, binding)
+        ),
       ['admission', 'targetBinding'],
       'result:admission'
     )
@@ -801,7 +836,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions; other Space/task/workflow-owned and Neo-bound sessions remain protected. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
+        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
