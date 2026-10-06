@@ -15,8 +15,8 @@ export class NodeExecutionRepository {
     private reactiveDb?: ReactiveDatabase
   ) {}
 
-  private notify(): void {
-    this.reactiveDb?.notifyChange('node_executions');
+  private notify(sessionId?: string | null): void {
+    this.reactiveDb?.notifyChange('node_executions', sessionId ? { sessionId } : undefined);
   }
 
   create(params: CreateNodeExecutionParams): NodeExecution {
@@ -249,8 +249,12 @@ export class NodeExecutionRepository {
   }
 
   touchLastActivity(id: string, at: number = Date.now()): void {
-    this.db.prepare(`UPDATE node_executions SET last_activity_at = ? WHERE id = ?`).run(at, id);
-    this.notify();
+    const touched = this.db
+      .prepare(
+        `UPDATE node_executions SET last_activity_at = ? WHERE id = ? RETURNING agent_session_id`
+      )
+      .get(at, id) as { agent_session_id: string | null } | null;
+    this.notify(touched?.agent_session_id);
   }
 
   delete(id: string): boolean {
