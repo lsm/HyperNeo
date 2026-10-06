@@ -64,16 +64,18 @@ describe('neoCoordinatorDeniedReads', () => {
         'Read(~/.ssh/**)',
         'Read(~/.claude/.credentials.json)',
         'Read(~/.zshrc)',
-        'Read(**/.env)',
+        'Read(~/**/.env)',
         `Read(/${getDataDir()}/**)`,
       ])
     );
   });
 
-  test('restricted Neo queries carry the denials', () => {
+  test('restricted Neo queries carry the denials and the look-up guard first', () => {
     const options: Options = { disallowedTools: ['Task'] };
     restrictNeoQuery(options, 'saas');
     expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
+    expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
   });
 });
 

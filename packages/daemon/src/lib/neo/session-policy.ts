@@ -5,6 +5,7 @@ import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { neoFolderPath } from './folder.ts';
+import { NEO_LOOKUP_COMMANDS, neoLookUpGuard, neoSecretReadRules } from './look-up-guard.ts';
 import { neoPrompt } from './prompt.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -36,49 +37,8 @@ export function neoCoordinatorBinding(
 }
 
 const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
-const NEO_LOOKUP_COMMANDS = [
-  'cd',
-  'gh pr view',
-  'gh pr list',
-  'gh pr checks',
-  'gh pr diff',
-  'gh issue view',
-  'gh issue list',
-  'gh run view',
-  'gh run list',
-  'gh repo view',
-  'git log',
-  'git show',
-  'git status',
-  'git diff',
-  'git blame',
-];
-
-const NEO_SECRET_PATHS = [
-  '~/.ssh/**',
-  '~/.aws/**',
-  '~/.gnupg/**',
-  '~/.kube/**',
-  '~/.docker/**',
-  '~/.config/**',
-  '~/.claude/.credentials.json',
-  '~/.claude.json',
-  '~/.netrc',
-  '~/.npmrc',
-  '~/.zshrc',
-  '~/.zshenv',
-  '~/.zprofile',
-  '~/.bashrc',
-  '~/.bash_profile',
-  '~/.profile',
-  '**/.env',
-  '**/.env.*',
-  '**/*.pem',
-  '**/*.key',
-];
-
 export function neoCoordinatorDeniedReads(): string[] {
-  return [...NEO_SECRET_PATHS, `/${getDataDir()}/**`].map((path) => `Read(${path})`);
+  return neoSecretReadRules({ dataDir: getDataDir() });
 }
 
 export function neoCoordinatorNativeTools(concernId: string | null): string[] {
@@ -118,4 +78,11 @@ export function restrictNeoQuery(
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
   options.allowedTools = neoCoordinatorAllowedTools(concernId);
   options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
+  options.hooks = {
+    ...options.hooks,
+    PreToolUse: [
+      { hooks: [neoLookUpGuard({ home: homedir(), dataDir: getDataDir() })] },
+      ...(options.hooks?.PreToolUse ?? []),
+    ],
+  };
 }
