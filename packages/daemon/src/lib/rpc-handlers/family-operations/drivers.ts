@@ -79,7 +79,9 @@ function claudeDesktopAdapters(): WorkAdapter[] {
   ];
 }
 
-function codexDesktopAdapters(): WorkAdapter[] {
+function codexDesktopAdapters(
+  searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>
+): WorkAdapter[] {
   const codexHome = join(homedir(), '.codex');
   const statePath = join(codexHome, 'state_5.sqlite');
   if (!existsSync(statePath)) return [];
@@ -93,6 +95,7 @@ function codexDesktopAdapters(): WorkAdapter[] {
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
       folderExists: existsSync,
+      searchChats: (text) => searchChats(text, ['codex']),
     }),
   ];
 }
@@ -240,7 +243,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
-    ...codexDesktopAdapters(),
+    ...codexDesktopAdapters(searchChats),
     ...claudeDesktopAdapters(),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
