@@ -48,6 +48,16 @@ describe('Neo holder sessions', () => {
     });
   });
 
+  test("start on main Neo's model and provider, not the global default", async () => {
+    const root = await service.open(null);
+    const base = createTestSession(root);
+    db.updateSession(root, { config: { ...base.config, model: 'glm-5.3[1m]', provider: 'glm' } });
+    await service.open('garden');
+    expect(createSession.mock.calls[1][0]).toMatchObject({
+      config: { model: 'glm-5.3[1m]', provider: 'glm' },
+    });
+  });
+
   test('cannot use the clone return path into Neo', () => {
     const holder = { id: 'neo:holder', parentSessionId: 'neo:root' } as Session;
     const result = loadClone(
