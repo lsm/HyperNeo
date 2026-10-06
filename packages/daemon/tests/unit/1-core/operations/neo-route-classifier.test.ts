@@ -41,6 +41,7 @@ describe('buildNeoRoutePrompt', () => {
     expect(prompt).toContain('Reply with one JSON object and nothing else');
     expect(prompt).toContain('choice is one of: main, drivers, youtube');
     expect(prompt).toContain('answers_waiting: it answers a WAITING ON YOU question');
+    expect(prompt).toContain('basis is the name of the rule below, exactly as written');
   });
 
   test('keeps the end of a long message where the question usually is', () => {
