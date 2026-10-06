@@ -27,6 +27,7 @@ ${topics}
 
 Reply with exactly one id and nothing else:
 - a topic id if the message clearly continues that topic;
+- inbox (when listed) if it is a self-contained one-off question that needs no continuing topic;
 - main if it starts a new continuing topic, spans several topics, or you are unsure.`;
 }
 

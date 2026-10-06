@@ -3,7 +3,7 @@ import {
   buildNeoRoutePrompt,
   readNeoRouteAnswer,
 } from '../../../../src/lib/neo/route-classifier.ts';
-import { chooseNeoRoute, type NeoHolder } from '../../../../src/lib/neo/router.ts';
+import { chooseNeoRoute, type NeoHolder, NEO_INBOX_ID } from '../../../../src/lib/neo/router.ts';
 
 const drivers: NeoHolder = {
   concernId: 'drivers',
@@ -76,5 +76,55 @@ describe('chooseNeoRoute with a classifier', () => {
         deps(async () => null)
       )
     ).toBeNull();
+  });
+});
+
+describe('chooseNeoRoute with an inbox', () => {
+  test('offers the inbox to the classifier and opens it only when chosen', async () => {
+    let opened = 0;
+    const offered: string[][] = [];
+    const route = await chooseNeoRoute('what time is it in Tokyo?', {
+      holders: () => [],
+      latestRoute: () => null,
+      recentAsks: () => [],
+      embed: async () => null,
+      classify: async (_text, candidates) => {
+        offered.push(candidates.map((holder) => holder.concernId));
+        return candidates.find((holder) => holder.concernId === NEO_INBOX_ID) ?? null;
+      },
+      inbox: async () => {
+        opened += 1;
+        return { concernId: NEO_INBOX_ID, sessionId: 'neo:inbox', title: 'Inbox', summary: '' };
+      },
+      now: () => 0,
+    });
+    expect(offered).toEqual([[NEO_INBOX_ID]]);
+    expect(opened).toBe(1);
+    expect(route).toMatchObject({
+      concernId: NEO_INBOX_ID,
+      sessionId: 'neo:inbox',
+      signal: 'classifier',
+    });
+  });
+
+  test('never matches the inbox by embedding', async () => {
+    const inboxHolder = {
+      concernId: NEO_INBOX_ID,
+      sessionId: 'neo:inbox',
+      title: 'Inbox',
+      summary: '',
+    };
+    const embedded: string[] = [];
+    const route = await chooseNeoRoute('anything', {
+      holders: () => [inboxHolder],
+      latestRoute: () => null,
+      recentAsks: () => [],
+      embed: async (text) => {
+        embedded.push(text);
+        return Float32Array.from([1, 0]);
+      },
+      now: () => 0,
+    });
+    expect([route, embedded]).toEqual([null, []]);
   });
 });

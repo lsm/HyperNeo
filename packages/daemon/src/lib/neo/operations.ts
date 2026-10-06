@@ -737,7 +737,7 @@ export function createNeoOperations(service: NeoService) {
       service.db,
       service.repo,
       service.notifyChanged,
-      createNeoRouter(service.db, service.repo)
+      createNeoRouter(service.db, service.repo, (concernId) => service.open(concernId))
     ),
     createNeoPublicationOperation(service.publish),
     createNeoPublicationReadOperation(service.repo, service.publications),
