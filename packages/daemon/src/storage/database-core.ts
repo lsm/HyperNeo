@@ -202,7 +202,7 @@ export class DatabaseCore {
       return;
     }
     const rotation = setTimeout(() => {
-      void this.rotateBackupsInBackground(backupDir, MIGRATION_BACKUP_RETENTION);
+      void this.rotateBackupsInBackground(backupDir, MIGRATION_BACKUP_RETENTION, backupPath);
     }, MIGRATION_BACKUP_ROTATION_DELAY_MS);
     rotation.unref?.();
   }
@@ -323,8 +323,12 @@ export class DatabaseCore {
     this.sweepOrphanBackupWals(backupDir);
   }
 
-  private async rotateBackupsInBackground(backupDir: string, keepCount: number): Promise<void> {
-    for (const path of this.backupsBeyondRetention(backupDir, keepCount)) {
+  private async rotateBackupsInBackground(
+    backupDir: string,
+    keepCount: number,
+    pinned?: string
+  ): Promise<void> {
+    for (const path of this.backupsBeyondRetention(backupDir, keepCount, pinned)) {
       try {
         await unlink(path);
       } catch {}
@@ -332,7 +336,7 @@ export class DatabaseCore {
     this.sweepOrphanBackupWals(backupDir);
   }
 
-  private backupsBeyondRetention(backupDir: string, keepCount: number): string[] {
+  private backupsBeyondRetention(backupDir: string, keepCount: number, pinned?: string): string[] {
     try {
       const entries = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
       const staleCutoff = Date.now() - MIGRATION_BACKUP_TEMP_STALE_MS;
@@ -344,15 +348,23 @@ export class DatabaseCore {
           unlinkSync(path);
         } catch {}
       }
-      return entries
+      const ranked = entries
         .filter((f) => f.endsWith('.db'))
-        .map((f) => ({
-          path: join(backupDir, f),
-          mtime: statSync(join(backupDir, f)).mtime.getTime(),
-        }))
+        .flatMap((f) => {
+          const path = join(backupDir, f);
+          try {
+            return [{ path, mtime: statSync(path).mtime.getTime() }];
+          } catch {
+            return [];
+          }
+        })
         .sort((a, b) => b.mtime - a.mtime)
-        .slice(keepCount)
         .map((f) => f.path);
+      const ordered =
+        pinned && ranked.includes(pinned)
+          ? [pinned, ...ranked.filter((path) => path !== pinned)]
+          : ranked;
+      return ordered.slice(keepCount);
     } catch {
       return [];
     }

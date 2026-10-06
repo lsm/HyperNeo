@@ -410,6 +410,26 @@ describe('DatabaseCore', () => {
       expect(listBackups()).not.toContain('daemon-2026-07-01T00-00-00-000Z.db');
     });
 
+    it('keeps the pinned new backup when rotating even if older files look newer', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      const names = [1, 2, 3, 4].map((day) => `daemon-2026-08-0${day}T00-00-00-000Z.db`);
+      for (const [i, name] of names.entries()) {
+        writeFileSync(join(backupDir, name), name);
+        utimesSync(join(backupDir, name), now - i * 60, now - i * 60);
+      }
+      const pinned = join(backupDir, names[3]);
+      dbCore = new DatabaseCore(dbPath);
+      await (
+        dbCore as unknown as {
+          rotateBackupsInBackground: (dir: string, keep: number, pinned?: string) => Promise<void>;
+        }
+      ).rotateBackupsInBackground(backupDir, 3, pinned);
+
+      expect(listBackups().sort()).toEqual([names[0], names[1], names[3]]);
+    });
+
     it('should create a valid backup that includes data committed to the WAL', async () => {
       const raw = new RawDatabase(dbPath);
       seedWalData(raw);
