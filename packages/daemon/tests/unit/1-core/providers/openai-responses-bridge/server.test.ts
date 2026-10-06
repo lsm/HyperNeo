@@ -4141,6 +4141,48 @@ describe('openai-responses-bridge server', () => {
     ]);
   });
 
+  it.skipIf(!isBun)('maps disabled thinking to the lowest reasoning effort', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    server = await createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        ...models,
+        {
+          id: 'gpt-5.6-luna',
+          display_name: 'GPT-5.6 Luna',
+          created_at: '2026-07-09T00:00:00Z',
+          context_window: 400000,
+        },
+      ],
+      fetchImpl: async (_url, init) => {
+        captured.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+    for (const model of ['gpt-5.6-luna', 'gpt-5.3-codex']) {
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32,
+          messages: [{ role: 'user', content: 'Reply with main.' }],
+          thinking: { type: 'disabled' },
+        }),
+      });
+      expect(resp.status).toBe(200);
+    }
+    expect(captured.map((body) => body.reasoning)).toEqual([{ effort: 'none' }, { effort: 'low' }]);
+  });
+
   it.skipIf(!isBun)('maps think32k to xhigh on GPT-5.6 models that support it', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = await createOpenAIResponsesBridgeServer({

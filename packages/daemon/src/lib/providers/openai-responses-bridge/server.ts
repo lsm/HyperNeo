@@ -136,7 +136,7 @@ type ResponsesRequest = {
   stream: true;
   parallel_tool_calls?: false;
   reasoning?: {
-    effort: 'low' | 'medium' | 'high' | 'xhigh';
+    effort: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
     summary?: 'auto' | 'concise' | 'detailed';
   };
   include?: string[];
@@ -538,6 +538,7 @@ function mapThinkingToReasoningEffort(
   thinking: AnthropicRequest['thinking'],
   model?: string
 ): ResponsesRequest['reasoning'] {
+  if (thinking?.type === 'disabled') return { effort: model?.endsWith('-codex') ? 'low' : 'none' };
   if (!thinking || thinking.type !== 'enabled') return undefined;
   const tokens = thinking.budget_tokens;
   if (tokens <= 8000) return { effort: 'low', summary: 'auto' };

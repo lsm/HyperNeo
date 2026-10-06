@@ -67,7 +67,10 @@ export type AnthropicRequest = {
   max_tokens?: number;
   stream?: boolean;
   tool_choice?: ToolChoice;
-  thinking?: { type: 'enabled'; budget_tokens: number } | { type: 'adaptive' };
+  thinking?:
+    | { type: 'enabled'; budget_tokens: number }
+    | { type: 'adaptive' }
+    | { type: 'disabled' };
 };
 
 export function extractSystemText(system: AnthropicRequest['system'] | undefined): string {

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildNeoRoutePrompt,
+  neoRouteHttpCall,
   readNeoRouteAnswer,
+  readNeoRouteStream,
 } from '../../../../src/lib/neo/route-classifier.ts';
 import {
   chooseNeoRoute,
@@ -41,6 +43,68 @@ describe('buildNeoRoutePrompt', () => {
   test('keeps the end of a long message where the question usually is', () => {
     const prompt = buildNeoRoutePrompt(`${'x'.repeat(5_000)} so which PR?`, [drivers], '');
     expect(prompt).toContain('so which PR?');
+  });
+});
+
+describe('neoRouteHttpCall', () => {
+  test('calls a third-party endpoint directly with thinking off and a tiny answer budget', () => {
+    expect(
+      neoRouteHttpCall(
+        'https://api.deepseek.com/anthropic/',
+        'deepseek-v4-flash',
+        { ANTHROPIC_AUTH_TOKEN: 'tok', ANTHROPIC_CUSTOM_HEADERS: 'X-Team: neo\nbad line' },
+        'route this',
+        { type: 'disabled' }
+      )
+    ).toEqual({
+      url: 'https://api.deepseek.com/anthropic/v1/messages',
+      headers: {
+        'X-Team': 'neo',
+        authorization: 'Bearer tok',
+        'content-type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      },
+      body: {
+        model: 'deepseek-v4-flash',
+        max_tokens: 32,
+        stream: true,
+        messages: [{ role: 'user', content: 'route this' }],
+        thinking: { type: 'disabled' },
+      },
+    });
+  });
+
+  test('keeps a required thinking budget, uses an API key, and leaves Anthropic to the SDK', () => {
+    const call = neoRouteHttpCall(
+      'http://127.0.0.1:4000',
+      'kimi-k2.7',
+      { ANTHROPIC_API_KEY: 'key' },
+      'p',
+      { type: 'enabled', budgetTokens: 16_000 }
+    );
+    expect(call?.headers['x-api-key']).toBe('key');
+    expect(call?.body).toMatchObject({
+      max_tokens: 16_032,
+      thinking: { type: 'enabled', budget_tokens: 16_000 },
+    });
+    expect(
+      neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, 'p', undefined)
+    ).toBeNull();
+    expect(neoRouteHttpCall('not a url', 'm', {}, 'p', undefined)).toBeNull();
+  });
+});
+
+describe('readNeoRouteStream', () => {
+  test('joins the text deltas of a streamed answer', () => {
+    const stream = [
+      'event: message_start',
+      'data: {"type":"message_start"}',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"you"}}',
+      'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"tube"}}',
+      'data: not json',
+    ].join('\n');
+    expect(readNeoRouteStream(stream)).toBe('youtube');
   });
 });
 
