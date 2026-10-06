@@ -947,14 +947,16 @@ export default function ChatContainer({
 
   const handleDisplayModeChange = useCallback(
     async (mode: ChatDisplayMode) => {
+      const previous = displayMode;
       setDisplayMode(mode);
       try {
         await updateSession(sessionId, { config: { chatDisplayMode: mode } });
       } catch {
+        setDisplayMode(previous);
         toast.error('Failed to save display mode');
       }
     },
-    [sessionId]
+    [sessionId, displayMode]
   );
 
   const retryAttempts = store.retryAttempts.value;

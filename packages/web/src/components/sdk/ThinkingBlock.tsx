@@ -68,8 +68,18 @@ export function ThinkingBlock({
       <div
         class={cn('flex items-center gap-2 px-3 py-2', colors.bg, folded && 'cursor-pointer')}
         role={folded ? 'button' : undefined}
+        tabIndex={folded ? 0 : undefined}
         aria-expanded={folded ? open : undefined}
         onClick={folded ? () => setOpen(!open) : undefined}
+        onKeyDown={
+          folded
+            ? (event: KeyboardEvent) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                setOpen(!open);
+              }
+            : undefined
+        }
       >
         <svg
           class={cn('w-4 h-4 flex-shrink-0', colors.iconColor)}

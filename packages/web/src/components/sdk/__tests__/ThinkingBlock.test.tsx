@@ -313,6 +313,18 @@ describe('ThinkingBlock', () => {
 });
 
 describe('ThinkingBlock in compact display mode', () => {
+  it('opens from the keyboard', () => {
+    const { container, getByRole } = render(
+      <ChatDisplayModeContext.Provider value="compact">
+        <ThinkingBlock content="Weighing both options" />
+      </ChatDisplayModeContext.Provider>
+    );
+    const header = getByRole('button');
+    expect(header.getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(header, { key: 'Enter' });
+    expect(container.textContent).toContain('Weighing both options');
+  });
+
   it('shows only the header until clicked', () => {
     const { container, getByRole } = render(
       <ChatDisplayModeContext.Provider value="compact">
