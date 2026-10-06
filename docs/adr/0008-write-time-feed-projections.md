@@ -28,9 +28,12 @@ A prototype that reads JSON-derived flags from a narrow table and loads only
 the displayed bodies ran the thread selection in 8 ms (5.7k messages) and
 90 ms (87k, a runaway task of 86k background-task events).
 
-Decision. It replaces sections 2–4 for now, and defers section 5 (background
-backfill, `feed_projected_at`), the `delivery_job_errors` bullet of section 6
-and rollout steps 3–9 below:
+Decision. It replaces sections 2–4 for now, defers section 5 (background
+backfill, `feed_projected_at`) and rollout steps 3–9 below, and drops the
+`delivery_job_errors` status predicate from section 6 (that bullet's task
+index shipped in #5765). Section 1's 10 ms budget holds for tasks up to about
+10k messages; a runaway task above that may exceed it until the full
+projection lands:
 
 - `task_message_rows` holds one narrow row per task message: the columns the
   feeds filter on plus a `flags` bitmask computed from the message JSON with
