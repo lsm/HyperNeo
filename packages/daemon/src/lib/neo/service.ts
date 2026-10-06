@@ -311,9 +311,10 @@ export class NeoService {
     if (!this.db.getSession(binding.sessionId)) {
       const nativeTools = neoCoordinatorNativeTools(concernId);
       const root = concernId ? this.repo.getBindingForConcern(null)?.sessionId : undefined;
+      const rootSession = root ? this.db.getSession(root) : null;
       await this.sessions.createSession({
         sessionId: binding.sessionId,
-        parentSessionId: root && this.db.getSession(root) ? root : undefined,
+        parentSessionId: rootSession ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
         workspacePath: null,
         config: {
@@ -322,6 +323,9 @@ export class NeoService {
           permissionMode: 'dontAsk',
           allowedTools: [...nativeTools, 'mcp__hyperneo-operations__invoke'],
           maxTurns: 32,
+          ...(rootSession?.config.model
+            ? { model: rootSession.config.model, provider: rootSession.config.provider }
+            : {}),
         },
       });
     }
