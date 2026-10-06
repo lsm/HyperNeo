@@ -141,6 +141,31 @@ describe('task message rows', () => {
     db.prepare('DELETE FROM sdk_messages WHERE id = ?').run('gone');
     expect(flagsOf('gone')).toBeUndefined();
   });
+
+  test('drops rows when a session delete cascades to its messages', () => {
+    const cascading = new Database(':memory:');
+    cascading.exec('PRAGMA foreign_keys = ON');
+    cascading.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
+    cascading.exec(
+      SDK_MESSAGES.replace(
+        'sdk_uuid TEXT\n)',
+        'sdk_uuid TEXT,\n  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n)'
+      )
+    );
+    runMigration304(cascading);
+    cascading.exec("INSERT INTO sessions VALUES ('session-1')");
+    cascading
+      .prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, task_id)
+         VALUES ('m1', 'session-1', 'assistant', '{}', '2026-10-06T10:00:00.000Z', 'task-1')`
+      )
+      .run();
+    cascading.exec("DELETE FROM sessions WHERE id = 'session-1'");
+    expect(cascading.prepare('SELECT COUNT(*) AS n FROM task_message_rows').get()).toEqual({
+      n: 0,
+    });
+    cascading.close();
+  });
 });
 
 describe('runMigration304', () => {
