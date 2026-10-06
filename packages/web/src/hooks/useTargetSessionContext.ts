@@ -58,6 +58,7 @@ export function resolveTargetSessionId(
     if (target.nodeExecutionId && m.nodeExecution?.nodeExecutionId === target.nodeExecutionId) {
       return true;
     }
+    if (!target.agentName) return false;
     const nameMatches =
       normalizeTargetName(m.role) === normalizeTargetName(target.agentName) ||
       normalizeTargetName(m.nodeExecution?.agentName) === normalizeTargetName(target.agentName);
