@@ -119,8 +119,11 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
 ): string[] {
   const known = readWorkFeedOffsets(db);
   const gone = vanishedFeedPaths(root, known);
-  for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
-  if (!source.sharesTurnsWithSiblings || gone.length === 0) return [];
+  const dropped = gone.reduce(
+    (rows, path) => rows + dropWorkFeedSession(db, source.kind, source.sessionOf(path), path),
+    0
+  );
+  if (!source.sharesTurnsWithSiblings || dropped === 0) return [];
   const reread = [...known.keys()].filter(
     (path) => path.startsWith(`${root}${sep}`) && !gone.includes(path)
   );

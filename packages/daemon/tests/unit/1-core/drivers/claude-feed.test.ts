@@ -95,6 +95,7 @@ describe('claudeTranscriptCwd', () => {
       '/Users/me/focus/neokai'
     );
     expect(claudeProjectTitle('/Users/me/focus/neokai/.claude/worktrees/brave-x')).toBe('neokai');
+    expect(claudeProjectTitle('C:\\Users\\me\\neokai\\.claude\\worktrees\\brave-x')).toBe('neokai');
     expect(isTempCwd('/private/tmp/neo-route')).toBe(true);
     expect(isTempCwd(join(tmpdir(), 'probe'))).toBe(true);
     expect(isTempCwd('/Users/me/focus/neokai')).toBe(false);
@@ -139,6 +140,10 @@ describe('Claude transcript feed', () => {
       `${line({ type: 'user', uuid: 'p1', cwd: '/private/tmp/x', message: { content: 'probe' } })}\n`
     );
     writeFileSync(
+      join(project, 'notes.jsonl'),
+      `${JSON.stringify({ type: 'user', uuid: 'n1', timestamp: at, message: { content: 'x' } })}\n`
+    );
+    writeFileSync(
       join(project, 'cli-1', 'subagents', 'agent-1.jsonl'),
       `${line({ type: 'user', uuid: 's1', message: { content: 'sub' } })}\n`
     );
@@ -146,6 +151,7 @@ describe('Claude transcript feed', () => {
     expect(files.map((file) => file.path.split('/').pop()).sort()).toEqual([
       'cli-1.jsonl',
       'cli-2.jsonl',
+      'notes.jsonl',
       'probe.jsonl',
       'sdk-hyperneo.jsonl',
     ]);
@@ -231,5 +237,24 @@ describe('Claude transcript feed', () => {
     expect(
       db.prepare('SELECT source_id AS id, session_id AS session FROM message_search_content').all()
     ).toEqual([{ id: 'u1', session: 'cli-1' }]);
+  });
+
+  test('deleting a transcript that was never indexed leaves the others alone', async () => {
+    const project = join(root, '-Users-me-focus-neokai');
+    mkdirSync(project, { recursive: true });
+    const probe = join(project, 'probe.jsonl');
+    writeFileSync(
+      join(project, 'cli-1.jsonl'),
+      `${line({ type: 'user', uuid: 'u1', message: { content: 'plan the heron rollout' } })}\n`
+    );
+    writeFileSync(
+      probe,
+      `${line({ type: 'user', uuid: 'p1', cwd: '/private/tmp/x', message: { content: 'probe' } })}\n`
+    );
+    const queue = { enqueueUniquePending: () => {} } as never;
+    await runClaudeFeed(queue, db, root, Date.now());
+    unlinkSync(probe);
+    expect(pruneVanishedFeeds(db, root, claudeFeedSource(new Set()))).toEqual([]);
+    expect(pendingFeedPaths(root, readWorkFeedOffsets(db))).toEqual([]);
   });
 });
