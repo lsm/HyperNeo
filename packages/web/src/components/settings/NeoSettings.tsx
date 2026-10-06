@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { ModelInfo } from '@hyperneo/shared';
+import {
+  DEFAULT_NEO_ROUTE_TIMEOUT_MS,
+  type ModelInfo,
+  type NeoSettings as NeoSettingsValue,
+} from '@hyperneo/shared';
 import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -33,6 +37,18 @@ export function neoRouteModelOptions(
     : options;
 }
 
+const ROUTE_TIMEOUT_SECONDS = [5, 10, 15, 20, 30, 60];
+
+export function neoRouteTimeoutOptions(currentMs: number): Array<{ value: string; label: string }> {
+  const seconds = ROUTE_TIMEOUT_SECONDS.includes(currentMs / 1000)
+    ? ROUTE_TIMEOUT_SECONDS
+    : [...ROUTE_TIMEOUT_SECONDS, currentMs / 1000].sort((a, b) => a - b);
+  return seconds.map((value) => ({
+    value: String(value * 1000),
+    label: value * 1000 === DEFAULT_NEO_ROUTE_TIMEOUT_MS ? `${value} s (default)` : `${value} s`,
+  }));
+}
+
 export function NeoSettings() {
   const routeModel = globalSettings.value?.neo?.routeModel;
   const current = routeModel ? neoRouteModelChoice(routeModel.provider, routeModel.model) : '';
@@ -57,22 +73,25 @@ export function NeoSettings() {
     };
   }, [isConnected]);
 
-  const save = async (choice: string) => {
-    const at = choice.indexOf('|');
+  const timeoutMs = globalSettings.value?.neo?.routeTimeoutMs ?? DEFAULT_NEO_ROUTE_TIMEOUT_MS;
+
+  const saveNeo = async (patch: Partial<NeoSettingsValue>) => {
     setSaving(true);
     try {
-      await updateGlobalSettings({
-        neo: {
-          ...globalSettings.value?.neo,
-          routeModel:
-            at > 0 ? { provider: choice.slice(0, at), model: choice.slice(at + 1) } : undefined,
-        },
-      });
+      await updateGlobalSettings({ neo: { ...globalSettings.value?.neo, ...patch } });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to save the Neo routing model');
+      toast.error(error instanceof Error ? error.message : 'Failed to save Neo settings');
     } finally {
       setSaving(false);
     }
+  };
+
+  const save = (choice: string) => {
+    const at = choice.indexOf('|');
+    return saveNeo({
+      routeModel:
+        at > 0 ? { provider: choice.slice(0, at), model: choice.slice(at + 1) } : undefined,
+    });
   };
 
   return (
@@ -86,6 +105,18 @@ export function NeoSettings() {
           value={current}
           onChange={(choice) => void save(choice)}
           options={neoRouteModelOptions(models, current)}
+          disabled={saving}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label="Routing timeout"
+        description="How long Neo waits for the routing model. If it takes longer, the message is routed by topic similarity instead, which can pick the wrong topic."
+        layout="stacked"
+      >
+        <SettingsSelect
+          value={String(timeoutMs)}
+          onChange={(value) => void saveNeo({ routeTimeoutMs: Number(value) })}
+          options={neoRouteTimeoutOptions(timeoutMs)}
           disabled={saving}
         />
       </SettingsRow>

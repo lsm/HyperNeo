@@ -7,7 +7,7 @@ import {
   neoExcerpt,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { getProviderService } from '../provider-service.ts';
-import { classifyNeoRoute } from './route-classifier.ts';
+import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
 
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
@@ -325,8 +325,16 @@ export function createNeoRouter(
         return null;
       }
     },
-    classify: (text, options, context) =>
-      classifyNeoRoute(text, options, context, db.getGlobalSettings().neo?.routeModel),
+    classify: (text, options, context) => {
+      const neo = db.getGlobalSettings().neo;
+      return classifyNeoRoute(
+        text,
+        options,
+        context,
+        neo?.routeModel,
+        neoRouteTimeoutMs(neo?.routeTimeoutMs)
+      );
+    },
     inbox: openHolder
       ? async () => {
           repo.saveConcern(
