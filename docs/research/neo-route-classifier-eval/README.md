@@ -8,7 +8,9 @@ follow-up to a PR question, sent to the inbox).
 - [Methodology](#methodology) · [Results](#results) · [Findings](#findings) ·
   [Conclusions](#conclusions) · [Caveats](#caveats)
 - [`runs.md`](runs.md) — every run: machine, runtime, model build and exact command
-- [`report.md`](report.md) — the generated tables for all 26 runs
+- [`report.md`](report.md) — the generated tables for all 26 runs, from `report.ts` with the
+  official price table added in #5721 (DeepSeek off-peak). Until #5721 merges, `dev`'s
+  `report.ts` still prices DeepSeek at peak and produces DeepSeek costs twice as high.
 - [`results/`](results/) — raw per-route logs, one JSON line per case
 - Harness: [`scripts/neo-route-eval/`](../../../scripts/neo-route-eval/) (#5717, #5721)
 
