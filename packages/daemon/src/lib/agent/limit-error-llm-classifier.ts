@@ -1,4 +1,4 @@
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { Logger } from '../logger.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.ts';
@@ -13,9 +13,7 @@ type ClassifierProviderService = Pick<
   | 'isProviderAvailable'
   | 'getCheapTierModel'
   | 'getTitleGenerationModels'
-  | 'applyEnvVarsToProcessForProvider'
-  | 'getEnvVarsForModel'
-  | 'restoreEnvVars'
+  | 'getIsolatedEnvForModel'
 >;
 
 export interface LlmLimitAssessment {
@@ -243,76 +241,56 @@ export class LimitErrorLlmClassifier {
         deadline
       );
       if (!models) return null;
-      const providerService = this.deps.providerService;
-      const applyTask = providerService.applyEnvVarsToProcessForProvider(
-        providerId,
-        models.providerModelId
+      const mergedEnv = await raceWithDeadline(
+        this.deps.providerService.getIsolatedEnvForModel(providerId, models.providerModelId),
+        deadline
       );
-      let originalEnv = await raceWithDeadline(applyTask, deadline);
-      if (!originalEnv) {
-        applyTask.then(
-          (lateEnv) => providerService.restoreEnvVars(lateEnv),
-          () => {}
-        );
-        return null;
-      }
-      try {
-        const providerEnvVars = await raceWithDeadline(
-          providerService.getEnvVarsForModel(models.providerModelId, providerId),
-          deadline
-        );
-        if (!providerEnvVars) return null;
-        const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string>);
-        providerService.restoreEnvVars(originalEnv);
-        originalEnv = {};
-        const query =
-          this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
-        const agentQuery = query({
-          prompt: buildPrompt(rawText, now),
-          options: {
-            model: models.sdkModelId,
-            maxTurns: 1,
-            permissionMode: 'acceptEdits',
-            allowDangerouslySkipPermissions: false,
-            mcpServers: {},
-            settingSources: [],
-            tools: [],
-            pathToClaudeCodeExecutable: resolveSDKCliPath(),
-            executable: isRunningUnderBun() ? 'bun' : undefined,
-            settings: withSdkTranscriptRetention(),
-            env: mergedEnv,
-            thinking:
-              providerId === 'kimi'
-                ? KimiProvider.resolveKimiTitleThinkingConfig(models.providerModelId)
-                : { type: 'disabled' },
-            abortController,
-          },
-        });
+      if (!mergedEnv) return null;
+      const query =
+        this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
+      const agentQuery = query({
+        prompt: buildPrompt(rawText, now),
+        options: {
+          model: models.sdkModelId,
+          maxTurns: 1,
+          permissionMode: 'acceptEdits',
+          allowDangerouslySkipPermissions: false,
+          mcpServers: {},
+          settingSources: [],
+          tools: [],
+          pathToClaudeCodeExecutable: resolveSDKCliPath(),
+          executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
+          env: mergedEnv,
+          thinking:
+            providerId === 'kimi'
+              ? KimiProvider.resolveKimiTitleThinkingConfig(models.providerModelId)
+              : { type: 'disabled' },
+          abortController,
+        },
+      });
 
-        let reply = '';
-        for await (const message of agentQuery) {
-          const assistant = message as {
-            type: string;
-            message?: { content?: Array<{ type: string; text?: string }> };
-          };
-          if (assistant.type !== 'assistant' || !assistant.message) continue;
-          const text = (assistant.message.content ?? [])
-            .filter((block) => block.type === 'text')
-            .map((block) => block.text ?? '')
-            .join(' ')
-            .trim();
-          if (text) {
-            reply = text;
-            break;
-          }
+      let reply = '';
+      for await (const message of agentQuery) {
+        const assistant = message as {
+          type: string;
+          message?: { content?: Array<{ type: string; text?: string }> };
+        };
+        if (assistant.type !== 'assistant' || !assistant.message) continue;
+        const text = (assistant.message.content ?? [])
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text ?? '')
+          .join(' ')
+          .trim();
+        if (text) {
+          reply = text;
+          break;
         }
-        if (!reply) return null;
-        const payload = extractJsonObject(reply);
-        if (!payload) return null;
-        return parseAssessment(payload);
-      } finally {
-        providerService.restoreEnvVars(originalEnv);
       }
+      if (!reply) return null;
+      const payload = extractJsonObject(reply);
+      if (!payload) return null;
+      return parseAssessment(payload);
     } catch (error) {
       this.logger.warn('LLM limit classification failed:', error);
       return null;
