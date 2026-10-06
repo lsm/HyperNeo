@@ -22,6 +22,13 @@ import {
   scheduleTurnEmbedding,
   WORK_TURN_EMBED,
 } from '../drivers/turn-embedding.ts';
+import {
+  codexSessionsRoot,
+  hasCodexSessions,
+  runCodexFeed,
+  scheduleCodexFeed,
+  WORK_FEED_CODEX,
+} from '../drivers/codex-feed.ts';
 import { ensureNeoProject } from '../neo/folder.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
@@ -1655,8 +1662,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
     runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
   );
+  deps.jobProcessor.register(WORK_FEED_CODEX, async () => ({
+    ...runCodexFeed(deps.jobQueue, deps.db.getDatabase(), codexSessionsRoot(), Date.now()),
+  }));
   if (process.env.NODE_ENV !== 'test') {
     scheduleTurnEmbedding(deps.jobQueue);
+    if (hasCodexSessions()) scheduleCodexFeed(deps.jobQueue);
     ensureNeoProject(deps.db.workspaceHistory);
   }
 

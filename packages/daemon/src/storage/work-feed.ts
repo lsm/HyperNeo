@@ -1,0 +1,64 @@
+import type { Database as BunDatabase } from './sqlite-compat.ts';
+
+const BODY_CHARS = 16_000;
+
+export type WorkFeedKind = 'codex' | 'claude';
+
+export interface WorkFeedTurn {
+  sourceId: string;
+  messageId: string;
+  sessionId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  at: number;
+}
+
+export interface WorkFeedOffset {
+  offset: number;
+  size: number;
+  mtime: number;
+}
+
+export function readWorkFeedOffsets(db: BunDatabase): Map<string, WorkFeedOffset> {
+  return new Map(
+    (
+      db.prepare('SELECT path, offset, size, mtime FROM work_feed_offsets').all() as Array<
+        WorkFeedOffset & { path: string }
+      >
+    ).map(({ path, ...offset }) => [path, offset])
+  );
+}
+
+export function saveWorkFeedChunk(
+  db: BunDatabase,
+  kind: WorkFeedKind,
+  title: string,
+  turns: readonly WorkFeedTurn[],
+  path: string,
+  offset: WorkFeedOffset
+): void {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO message_search_content
+       (kind, source_id, message_id, session_id, message_type, title, body, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const mark = db.prepare(
+    `INSERT INTO work_feed_offsets (path, offset, size, mtime) VALUES (?, ?, ?, ?)
+     ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, size = excluded.size,
+       mtime = excluded.mtime`
+  );
+  db.transaction(() => {
+    for (const turn of turns)
+      insert.run(
+        kind,
+        turn.sourceId,
+        turn.messageId,
+        turn.sessionId,
+        turn.role,
+        title,
+        turn.text.slice(0, BODY_CHARS),
+        turn.at
+      );
+    mark.run(path, offset.offset, offset.size, offset.mtime);
+  })();
+}
