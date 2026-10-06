@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
-import { globalSettings } from '../../lib/state.ts';
+import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager';
@@ -39,13 +39,23 @@ export function NeoSettings() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [saving, setSaving] = useState(false);
 
+  const isConnected = connectionState.value === 'connected';
   useEffect(() => {
+    if (!isConnected) return;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
+    let live = true;
     (hub.request('models.list', { useCache: true }) as Promise<{ models: RawModelEntry[] }>)
-      .then((response) => setModels(mapRawModelsToModelInfos(response.models)))
-      .catch(() => setModels([]));
-  }, []);
+      .then((response) => {
+        if (live) setModels(mapRawModelsToModelInfos(response.models));
+      })
+      .catch(() => {
+        if (live) setModels([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [isConnected]);
 
   const save = async (choice: string) => {
     const at = choice.indexOf('|');
