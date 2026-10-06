@@ -323,7 +323,7 @@ export class NeoService {
           permissionMode: 'dontAsk',
           allowedTools: [...nativeTools, 'mcp__hyperneo-operations__invoke'],
           maxTurns: 32,
-          ...(rootSession?.config.model
+          ...(rootSession?.config?.model
             ? { model: rootSession.config.model, provider: rootSession.config.provider }
             : {}),
         },
