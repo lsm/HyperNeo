@@ -1,3 +1,4 @@
+import type { ThinkingOffEffort } from '@hyperneo/shared';
 import {
   type AnthropicContentBlockImage,
   type AnthropicContentBlockText,
@@ -48,6 +49,7 @@ export type OpenAIChatBridgeConfig = {
   modelContextWindow?: number;
   streamUsageSupported?: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
+  thinkingOffEffort?: ThinkingOffEffort;
 };
 
 type OpenAIChatTextPart = { type: 'text'; text: string };
@@ -88,7 +90,7 @@ type OpenAIChatRequest = {
   max_tokens?: number;
   stream: true;
   stream_options?: { include_usage: boolean };
-  reasoning_effort?: 'low' | 'medium' | 'high';
+  reasoning_effort?: ThinkingOffEffort | 'medium' | 'high';
   chat_template_kwargs?: Record<string, unknown>;
 };
 
@@ -274,7 +276,8 @@ function buildChatRequest(
   visionSupported: boolean,
   thinkingSupported: boolean,
   streamUsageSupported = false,
-  chatTemplateKwargs?: Record<string, unknown>
+  chatTemplateKwargs?: Record<string, unknown>,
+  thinkingOffEffort?: ThinkingOffEffort
 ): OpenAIChatRequest {
   const request: OpenAIChatRequest = {
     model,
@@ -292,7 +295,7 @@ function buildChatRequest(
     if (choice) request.tool_choice = choice;
   }
   if (thinkingSupported) {
-    const effort = thinkingToReasoningEffort(body.thinking);
+    const effort = thinkingToReasoningEffort(body.thinking, thinkingOffEffort);
     if (effort) request.reasoning_effort = effort;
   }
   if (chatTemplateKwargs) {
@@ -302,9 +305,11 @@ function buildChatRequest(
 }
 
 function thinkingToReasoningEffort(
-  thinking: AnthropicRequest['thinking']
-): 'low' | 'medium' | 'high' | undefined {
+  thinking: AnthropicRequest['thinking'],
+  thinkingOffEffort?: ThinkingOffEffort
+): OpenAIChatRequest['reasoning_effort'] {
   if (!thinking) return undefined;
+  if (thinking.type === 'disabled') return thinkingOffEffort;
   if (thinking.type === 'adaptive') return 'medium';
   if (thinking.type === 'enabled') {
     const budget = thinking.budget_tokens;
@@ -665,6 +670,7 @@ export async function createOpenAIChatBridgeServer(
   const thinkingSupported = config.thinkingSupported ?? false;
   const streamUsageSupported = config.streamUsageSupported ?? false;
   const chatTemplateKwargs = config.chatTemplateKwargs;
+  const thinkingOffEffort = config.thinkingOffEffort;
   const modelContextWindow = config.modelContextWindow;
 
   const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
@@ -742,7 +748,8 @@ export async function createOpenAIChatBridgeServer(
         visionSupported,
         thinkingSupported,
         streamUsageSupported,
-        chatTemplateKwargs
+        chatTemplateKwargs,
+        thinkingOffEffort
       );
       const inputTokens = estimateAnthropicInputTokens(body);
 

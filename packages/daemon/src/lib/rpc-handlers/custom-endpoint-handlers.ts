@@ -155,6 +155,12 @@ export function validateCustomEndpoint(
         `Custom endpoint '${config.id}': model '${model.id}' autoCompactPercent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`
       );
     }
+    const off = model.capabilities?.thinkingOffEffort;
+    if (off !== undefined && off !== 'none' && off !== 'minimal' && off !== 'low') {
+      throw new Error(
+        `Custom endpoint '${config.id}': model '${model.id}' thinkingOffEffort must be none, minimal or low`
+      );
+    }
     seen.add(model.id);
   }
   if (config.defaultModelId && !seen.has(config.defaultModelId)) {

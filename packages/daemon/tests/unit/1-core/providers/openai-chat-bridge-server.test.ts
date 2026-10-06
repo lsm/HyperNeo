@@ -869,6 +869,21 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(map({ type: 'enabled', budget_tokens: 0 })).toBeUndefined();
     });
 
+    it('sends the configured effort when thinking is disabled, and nothing otherwise', () => {
+      const map = _openAIChatBridgeTesting.thinkingToReasoningEffort;
+      expect(map({ type: 'disabled' })).toBeUndefined();
+      expect(map({ type: 'disabled' }, 'none')).toBe('none');
+      expect(map({ type: 'disabled' }, 'minimal')).toBe('minimal');
+      const build = _openAIChatBridgeTesting.buildChatRequest;
+      const body = { model: 'm', max_tokens: 10, messages: [], thinking: { type: 'disabled' } };
+      expect(
+        build(body as never, 'm', true, false, true, false, undefined, 'low').reasoning_effort
+      ).toBe('low');
+      expect(
+        build(body as never, 'm', true, false, false, false, undefined, 'low')
+      ).not.toHaveProperty('reasoning_effort');
+    });
+
     it.skipIf(!isBun)('forwards reasoning_effort when thinkingSupported=true', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {

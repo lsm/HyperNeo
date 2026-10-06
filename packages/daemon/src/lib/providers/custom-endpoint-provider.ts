@@ -362,6 +362,7 @@ export class CustomEndpointProvider implements Provider {
       params.caps.thinking,
       params.caps.streamUsage,
       JSON.stringify(params.caps.chatTemplateKwargs ?? {}),
+      params.caps.thinkingOffEffort ?? '',
     ].join(' ');
   }
 
@@ -452,6 +453,7 @@ export class CustomEndpointProvider implements Provider {
           streamUsageSupported: caps.streamUsage,
           modelContextWindow: caps.maxContextTokens,
           ...(caps.chatTemplateKwargs ? { chatTemplateKwargs: caps.chatTemplateKwargs } : {}),
+          ...(caps.thinkingOffEffort ? { thinkingOffEffort: caps.thinkingOffEffort } : {}),
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }
