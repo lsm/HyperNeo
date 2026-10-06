@@ -101,7 +101,8 @@ describe('capMessageOutput', () => {
       tool_use_result: { stdout: big, stderr: big },
     };
     expect(
-      (capMessageOutput(message, 10).tool_use_result as { output_capped: unknown }).output_capped
+      (capMessageOutput(message, 10).tool_use_result as unknown as { output_capped: unknown })
+        .output_capped
     ).toEqual({ chars: 800 });
   });
 
