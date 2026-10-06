@@ -49,7 +49,62 @@ const SECRET_FILES = [
 ];
 const SECRET_NAMES = ['.env', '.env.*', '*.pem', '*.key'];
 const UNSAFE_SHELL = /[<>`$\n\r]|(?<!&)&(?!&)|--output\b/;
-const SECRET_SAMPLES = ['.env', '.env.local', 'server.pem', 'deploy.key'];
+const CONTENT_EXTENSIONS = [
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'md',
+  'mdx',
+  'txt',
+  'py',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'swift',
+  'c',
+  'h',
+  'cc',
+  'cpp',
+  'hpp',
+  'cs',
+  'rb',
+  'php',
+  'css',
+  'scss',
+  'html',
+  'sql',
+  'sh',
+  'vue',
+  'svelte',
+];
+const CONTENT_TYPES = [
+  'ts',
+  'js',
+  'md',
+  'markdown',
+  'txt',
+  'py',
+  'go',
+  'rust',
+  'java',
+  'kotlin',
+  'swift',
+  'c',
+  'cpp',
+  'csharp',
+  'ruby',
+  'php',
+  'css',
+  'html',
+  'sql',
+  'sh',
+  'vue',
+  'svelte',
+];
 const ALWAYS_ALLOWED = new Set(['WebSearch', 'WebFetch', 'AskUserQuestion']);
 
 export interface LookUpScope {
@@ -72,29 +127,24 @@ function dataDirRule(dataDir: string, home: string): string {
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `~/${rel}/**` : `/${dataDir}/**`;
 }
 
-function globMatches(glob: string, name: string): boolean {
-  const body = glob
-    .replace(/^(\*\*\/)+/, '')
-    .split('/')
-    .pop()!
-    .replace(/[.+^$()|\\]/g, '\\$&')
-    .replace(/\{([^}]*)\}/g, (_match, options: string) => `(${options.split(',').join('|')})`)
-    .replace(/\*+/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${body}$`).test(name);
+function contentGlobExtensions(glob: string): string[] | null {
+  const match = /^(?:\*\*\/)?\*\.(?:\{([a-z0-9,]+)\}|([a-z0-9]+))$/.exec(glob);
+  return match ? (match[1] ?? match[2]).split(',') : null;
 }
 
 function grepDenial(input: Record<string, unknown>): string | null {
   if (input.output_mode !== 'content') return null;
   const glob = typeof input.glob === 'string' ? input.glob : '';
-  if (!glob)
-    return typeof input.type === 'string'
+  const type = typeof input.type === 'string' ? input.type : '';
+  if (glob) {
+    const extensions = contentGlobExtensions(glob);
+    return extensions?.every((extension) => CONTENT_EXTENSIONS.includes(extension))
       ? null
-      : 'show matching lines only with a glob or type filter';
-  if (glob.startsWith('!')) return 'show matching lines only with an including glob';
-  return SECRET_SAMPLES.some((name) => globMatches(glob, name))
-    ? 'that glob can match secret files'
-    : null;
+      : 'show matching lines only for code and docs, with a glob like *.ts or *.{ts,md}';
+  }
+  return CONTENT_TYPES.includes(type)
+    ? null
+    : 'show matching lines only for code and docs, with a glob like *.ts or a type like ts';
 }
 
 function within(path: string, root: string): boolean {
@@ -103,7 +153,17 @@ function within(path: string, root: string): boolean {
 }
 
 function secretName(name: string): boolean {
-  return name === '.env' || name.startsWith('.env.') || /\.(pem|key)$/.test(name);
+  const lower = name.toLowerCase();
+  return (
+    lower === '.env' ||
+    lower.startsWith('.env.') ||
+    /\.(pem|key|p12|pfx|jks|keystore|ppk|asc|gpg|kdbx|tfstate|tfvars)$/.test(lower) ||
+    /^id_(rsa|dsa|ecdsa|ed25519)$/.test(lower) ||
+    ['.npmrc', '.netrc', '.pypirc', '.git-credentials', '.htpasswd', '.pgpass'].includes(lower) ||
+    /(secret|credential|service-?account|token)[^.]*(\.(json|ya?ml|ini|conf|cfg|toml|txt|xml|properties))?$/.test(
+      lower
+    )
+  );
 }
 
 function resolvePath(raw: string, scope: LookUpScope): string {

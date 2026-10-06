@@ -23,6 +23,10 @@ describe('isSecretPath', () => {
     '~/.claude/settings.local.json',
     '~/.claude/.credentials.json',
     '~/.git-credentials',
+    '~/backups/id_ed25519',
+    '~/focus/app/serviceAccount.json',
+    '~/focus/app/config/secrets.yaml',
+    '~/focus/app/.npmrc',
     '~/.claude/projects/-Users-fictional-app/session.jsonl',
     '~/.zsh_history',
     '~/.azure/accessTokens.json',
@@ -36,12 +40,15 @@ describe('isSecretPath', () => {
     expect(isSecretPath(path, scope)).toBe(true);
   });
 
-  test.each(['~/focus/app/README.md', '~/focus/app/src/env.ts', '/home/fictional/notes.md'])(
-    'lets %s through',
-    (path) => {
-      expect(isSecretPath(path, scope)).toBe(false);
-    }
-  );
+  test.each([
+    '~/focus/app/README.md',
+    '~/focus/app/src/env.ts',
+    '~/focus/app/src/lib/credential-discovery.ts',
+    '~/focus/app/src/token.ts',
+    '/home/fictional/notes.md',
+  ])('lets %s through', (path) => {
+    expect(isSecretPath(path, scope)).toBe(false);
+  });
 });
 
 describe('bashDenial', () => {
@@ -98,16 +105,28 @@ describe('neoLookUpDenial', () => {
     );
   });
 
-  test('shows matching lines only for globs that cannot match secret files', () => {
+  test('shows matching lines only for code and docs', () => {
     const grep = (input: Record<string, unknown>) =>
       neoLookUpDenial('Grep', { pattern: '.', path: '~/focus/app', ...input }, scope);
     expect(grep({})).toBeNull();
-    expect(grep({ output_mode: 'content', glob: '*.ts' })).toBeNull();
-    expect(grep({ output_mode: 'content', type: 'ts' })).toBeNull();
-    expect(grep({ output_mode: 'content' })).toContain('glob or type');
-    expect(grep({ output_mode: 'content', glob: '!*.md' })).toContain('including glob');
-    for (const glob of ['*.pem', '**/*.key', '*', '.env*', '*.{ts,pem}'])
-      expect(grep({ output_mode: 'content', glob })).toBe('that glob can match secret files');
+    for (const allowed of [
+      { glob: '*.ts' },
+      { glob: '**/*.md' },
+      { glob: '*.{ts,tsx}' },
+      { type: 'ts' },
+    ])
+      expect(grep({ output_mode: 'content', ...allowed })).toBeNull();
+    for (const refused of [
+      {},
+      { glob: '*' },
+      { glob: '*.pem' },
+      { glob: '[!x]*' },
+      { glob: '!*.md' },
+      { glob: '*.{ts,json}' },
+      { glob: 'src/**/*.ts' },
+      { type: 'json' },
+    ])
+      expect(grep({ output_mode: 'content', ...refused })).toContain('code and docs');
   });
 
   test('allows web and operation tools and refuses anything that changes files', () => {
