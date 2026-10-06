@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { runMigration304 } from '../../../../src/storage/schema/m304-task-message-rows';
+import { ensureTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const SDK_MESSAGES = `CREATE TABLE sdk_messages (
@@ -178,5 +179,29 @@ describe('runMigration304', () => {
         .get()
     ).toEqual({ n: 0 });
     empty.close();
+  });
+});
+
+describe('ensureTaskMessageRows', () => {
+  test('projects a task whose messages predate the triggers, once', () => {
+    const db = new Database(':memory:');
+    db.exec(SDK_MESSAGES);
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, task_id)
+       VALUES (?, 'session-1', 'assistant', ?, '2026-10-06T10:00:00.000Z', ?)`
+    );
+    insert.run('old', JSON.stringify(assistant({ type: 'text', text: 'hi' })), 'task-1');
+    insert.run('other', JSON.stringify(assistant({ type: 'text', text: 'hi' })), 'task-2');
+    runMigration304(db);
+    insert.run('new', JSON.stringify(assistant({ type: 'thinking', thinking: 'hm' })), 'task-1');
+
+    ensureTaskMessageRows(db, 'task-1');
+    ensureTaskMessageRows(db, 'task-1');
+
+    expect(db.prepare('SELECT id, flags FROM task_message_rows ORDER BY id').all()).toEqual([
+      { id: 'new', flags: VALID_JSON | THINKING },
+      { id: 'old', flags: VALID_JSON | TEXT },
+    ]);
+    db.close();
   });
 });
