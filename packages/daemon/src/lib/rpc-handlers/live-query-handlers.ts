@@ -3456,6 +3456,8 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 
 NAMED_QUERY_REGISTRY.set('messages.bySession.compact', {
   ...NAMED_QUERY_REGISTRY.get('messages.bySession')!,
+  sql: `${MESSAGES_BY_SESSION_SQL}
+-- thin feed: its own engine entry, so metadata is not shared`,
   mapRow: mapThinMessageRow,
 });
 

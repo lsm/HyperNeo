@@ -10,11 +10,11 @@ function isRecord(value: unknown): value is Json {
 
 function summaryInput(input: unknown): Json {
   if (!isRecord(input)) return {};
+  const [firstField] = Object.keys(input);
   const kept: Json = {};
-  for (const field of TOOL_SUMMARY_INPUT_FIELDS) {
+  for (const field of [firstField, ...TOOL_SUMMARY_INPUT_FIELDS]) {
     const value = input[field];
-    if (value === undefined) continue;
-    kept[field] = typeof value === 'string' ? value.slice(0, SUMMARY_FIELD_CHARS) : value;
+    if (typeof value === 'string') kept[field] = value.slice(0, SUMMARY_FIELD_CHARS);
   }
   return kept;
 }

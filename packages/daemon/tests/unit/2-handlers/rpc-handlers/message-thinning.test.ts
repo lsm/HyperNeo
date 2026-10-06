@@ -55,6 +55,25 @@ describe('thinMessage', () => {
     });
   });
 
+  test('keeps the first string field for unknown tools and drops non-string values', () => {
+    const thinned = thinMessage({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'n',
+            name: 'NewTool',
+            input: { target: 'api', query: { big: 'x'.repeat(9000) } },
+          },
+        ],
+      },
+    });
+    expect((thinned.message as { content: Array<{ input: unknown }> }).content[0].input).toEqual({
+      target: 'api',
+    });
+  });
+
   test('cuts long summary fields and leaves messages without content alone', () => {
     const thinned = thinMessage({
       type: 'assistant',

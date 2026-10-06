@@ -162,11 +162,16 @@ function createMockHub() {
   return {
     hub,
     sentMessages,
-    subscribe: (sessionId: string, limit = 100) => {
+    subscribe: (
+      sessionId: string,
+      limit = 100,
+      queryName = 'messages.bySession',
+      subscriptionId = 'sub-1'
+    ) => {
       const handler = handlers.get('liveQuery.subscribe');
       if (!handler) throw new Error('liveQuery.subscribe handler not registered');
       return handler(
-        { queryName: 'messages.bySession', params: [sessionId, limit], subscriptionId: 'sub-1' },
+        { queryName, params: [sessionId, limit], subscriptionId },
         { clientId: 'client-1', sessionId: 'global' }
       );
     },
@@ -565,6 +570,39 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 2);
     expect(rows.map((r) => r.id)).toEqual(['visible']);
+  });
+
+  test('keeps full background task metadata when a thin feed subscribed first', () => {
+    insertSdkMessage(db, {
+      id: 'started',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'task_started',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'task_started',
+        uuid: 'started-uuid',
+        session_id: 's1',
+        task_id: 'task-1',
+      },
+      timestamp: '2024-01-01 00:00:02',
+    });
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const setup = createMockHub();
+    const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+
+    setup.subscribe('s1', 2, 'messages.bySession.compact', 'thin');
+    setup.subscribe('s1', 2, 'messages.bySession', 'full');
+    const [thin, full] = setup.sentMessages.map(
+      (sent) =>
+        sent.message.data.metadata as { backgroundTaskMessages: Array<{ thinned?: boolean }> }
+    );
+
+    expect(thin.backgroundTaskMessages.map((row) => row.thinned)).toEqual([true]);
+    expect(full.backgroundTaskMessages.map((row) => row.thinned)).toEqual([undefined]);
+    cleanup();
+    engine.dispose();
   });
 
   test('includes background task metadata in LiveQuery metadata outside the transcript rows', () => {
