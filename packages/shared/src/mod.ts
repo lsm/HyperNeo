@@ -63,3 +63,4 @@ export type {
   StructuredLogSource,
   StructuredLogSubscriber,
 } from './logger.ts';
+export * from './tool-summary-fields.ts';

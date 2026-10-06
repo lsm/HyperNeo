@@ -356,6 +356,66 @@ describe('setupLiveQueryHandlers', () => {
     ).rejects.toThrow('expects 0 parameter(s), got 1');
   });
 
+  test('subscribe messages.bySession.compact: sends thinned tool calls and thinking', async () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+       VALUES (?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run('session-thin', 'Thin', now, now);
+    const assistant = {
+      type: 'assistant',
+      uuid: 'a-1',
+      message: {
+        content: [
+          { type: 'thinking', thinking: 'weighing it', signature: 'sig' },
+          {
+            type: 'tool_use',
+            id: 't-1',
+            name: 'Write',
+            input: { file_path: 'a.ts', content: 'x'.repeat(5000) },
+          },
+        ],
+      },
+    };
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+       VALUES ('row-1', 'session-thin', 'assistant', ?, ?)`
+    ).run(JSON.stringify(assistant), now);
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'messages.bySession.compact',
+      params: ['session-thin', 50],
+      subscriptionId: 'sub-thin',
+    });
+
+    const [row] = setup.sentMessages[0].message.data.rows as Array<{
+      message: { content: unknown[] };
+    }>;
+    expect(row.message.content).toEqual([
+      { type: 'thinking', thinking: '', thinking_chars: 11 },
+      {
+        type: 'tool_use',
+        id: 't-1',
+        name: 'Write',
+        input: { file_path: 'a.ts' },
+        input_thinned: true,
+      },
+    ]);
+  });
+
+  test.each(['messages.bySession', 'messages.bySession.compact'])(
+    'subscribe %s: rejects an unknown session',
+    async (queryName) => {
+      await expect(
+        setup.callHandler('liveQuery.subscribe', {
+          queryName,
+          params: ['no-such-session', 50],
+          subscriptionId: 'sub-unknown',
+        })
+      ).rejects.toThrow('Unauthorized: session "no-such-session" not found');
+    }
+  );
+
   test('subscribe messages.bySession: rejects a window above the server cap', async () => {
     const now = new Date().toISOString();
     db.prepare(

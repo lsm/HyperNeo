@@ -8,6 +8,7 @@ import type {
   MessageHub,
 } from '@hyperneo/shared';
 import { capMessageOutput } from './message-output-cap.ts';
+import { thinMessage } from './message-thinning.ts';
 import {
   createEventMessage,
   ErrorCode,
@@ -3104,6 +3105,17 @@ ORDER BY timestamp ASC, rowid ASC
 `.trim();
 
 function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+  return mapMessageRowAs(row, capMessageOutput);
+}
+
+function mapThinMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+  return mapMessageRowAs(row, thinMessage);
+}
+
+function mapMessageRowAs(
+  row: Record<string, unknown>,
+  shape: (message: Record<string, unknown>) => Record<string, unknown>
+): Record<string, unknown> {
   const contentRaw = row.content;
   let parsed: Record<string, unknown> = {};
   if (typeof contentRaw === 'string') {
@@ -3143,7 +3155,7 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
     }
   }
 
-  return { ...capMessageOutput(parsed), ...extras };
+  return { ...shape(parsed), ...extras };
 }
 
 function buildTaskScopeFilter(
@@ -3442,6 +3454,13 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   ],
 ]);
 
+NAMED_QUERY_REGISTRY.set('messages.bySession.compact', {
+  ...NAMED_QUERY_REGISTRY.get('messages.bySession')!,
+  mapRow: mapThinMessageRow,
+});
+
+const MESSAGE_FEED_QUERIES = new Set(['messages.bySession', 'messages.bySession.compact']);
+
 const log = new Logger('live-query-handlers');
 
 export function setupLiveQueryHandlers(
@@ -3456,28 +3475,32 @@ export function setupLiveQueryHandlers(
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
   const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
 
-  const messagesBySessionBase = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
   const stmtBackgroundTaskMetadata = db.prepare(BACKGROUND_TASK_METADATA_SQL);
-  activeRegistry.set('messages.bySession', {
-    ...messagesBySessionBase,
-    metadataScopeFilter: mayChangeBackgroundTaskMetadata,
-    mapResult: (_rawRows, params) => {
-      const sessionId = params[0];
-      if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-      const rows = stmtBackgroundTaskMetadata.all(
-        sessionId,
-        sessionId,
-        sessionId,
-        sessionId,
-        sessionId,
-        sessionId,
-        sessionId
-      ) as Record<string, unknown>[];
-      return {
-        backgroundTaskMessages: rows.map(mapMessageRow).reverse(),
-      };
-    },
-  });
+  for (const [queryName, mapRow] of [
+    ['messages.bySession', mapMessageRow],
+    ['messages.bySession.compact', mapThinMessageRow],
+  ] as const) {
+    activeRegistry.set(queryName, {
+      ...NAMED_QUERY_REGISTRY.get(queryName)!,
+      metadataScopeFilter: mayChangeBackgroundTaskMetadata,
+      mapResult: (_rawRows, params) => {
+        const sessionId = params[0];
+        if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
+        const rows = stmtBackgroundTaskMetadata.all(
+          sessionId,
+          sessionId,
+          sessionId,
+          sessionId,
+          sessionId,
+          sessionId,
+          sessionId
+        ) as Record<string, unknown>[];
+        return {
+          backgroundTaskMessages: rows.map(mapRow).reverse(),
+        };
+      },
+    });
+  }
 
   activeRegistry.set('sessions.list', {
     ...sessionsListBase,
@@ -3582,10 +3605,10 @@ export function setupLiveQueryHandlers(
       if (!stmtSpace.get(spaceId)) {
         throw new Error(`Unauthorized: space "${spaceId}" not found`);
       }
-    } else if (queryName === 'messages.bySession') {
+    } else if (MESSAGE_FEED_QUERIES.has(queryName)) {
       const targetSessionId = params[0] as string;
       if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
-        throw new Error('Unauthorized: messages.bySession requires a non-empty sessionId');
+        throw new Error(`Unauthorized: ${queryName} requires a non-empty sessionId`);
       }
       if (!stmtSession.get(targetSessionId)) {
         throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
@@ -3598,7 +3621,7 @@ export function setupLiveQueryHandlers(
         limit > MAX_MESSAGES_BY_SESSION_WINDOW
       ) {
         throw new Error(
-          `Unauthorized: messages.bySession limit must be an integer in [1, ${MAX_MESSAGES_BY_SESSION_WINDOW}], got ${String(limit)}`
+          `Unauthorized: ${queryName} limit must be an integer in [1, ${MAX_MESSAGES_BY_SESSION_WINDOW}], got ${String(limit)}`
         );
       }
     }
@@ -3641,22 +3664,21 @@ export function setupLiveQueryHandlers(
       sql,
       params,
       (diff: QueryDiff<Record<string, unknown>>) => {
-        const deliveryTrace =
-          queryName === 'messages.bySession'
-            ? {
-                clientId,
-                subscriptionId,
-                queryName,
-                sessionId: params[0],
-                phase: diff.type,
-                version: diff.version,
-                rowCount: diff.rows.length,
-                rowIds: diff.type === 'snapshot' ? diff.rows.map((row) => row.id) : undefined,
-                addedIds: diff.added?.map((row) => row.id),
-                removedIds: diff.removed?.map((row) => row.id),
-                updatedIds: diff.updated?.map((row) => row.id),
-              }
-            : undefined;
+        const deliveryTrace = MESSAGE_FEED_QUERIES.has(queryName)
+          ? {
+              clientId,
+              subscriptionId,
+              queryName,
+              sessionId: params[0],
+              phase: diff.type,
+              version: diff.version,
+              rowCount: diff.rows.length,
+              rowIds: diff.type === 'snapshot' ? diff.rows.map((row) => row.id) : undefined,
+              addedIds: diff.added?.map((row) => row.id),
+              removedIds: diff.removed?.map((row) => row.id),
+              updatedIds: diff.updated?.map((row) => row.id),
+            }
+          : undefined;
         if (deliveryTrace) log.debugWithMetadata(deliveryTrace, 'liveQuery.emitted');
         const router = messageHub.getRouter();
         if (!router) {
