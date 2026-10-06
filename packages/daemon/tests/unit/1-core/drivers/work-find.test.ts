@@ -33,6 +33,7 @@ function group(machine: string, folder: string, adapter: string, at: number): Pl
 }
 
 const chat = (sessionId: string | null, taskId: string | null = null): WorkChatMatch => ({
+  kind: taskId ? 'task' : 'message',
   sessionId,
   taskId,
   hits: 1,

@@ -5554,6 +5554,19 @@ describe('SDKMessageRepository', () => {
       expect(result.results[0].snippet).toContain('<mark>alpha</mark>');
     });
 
+    it('leaves Codex and Claude Code turns to work.find', () => {
+      createSearchIndex();
+      repository.saveSDKMessage('session-1', createUserMessage('harbor marker'));
+      db.exec(`INSERT INTO message_search_content
+        (kind, source_id, session_id, message_type, title, body, timestamp)
+        VALUES ('codex', 'r1:1', 'thread-1', 'user', 'rollout', 'harbor marker', 1),
+               ('claude', 'c1', 'cli-1', 'user', 'transcript', 'harbor marker', 1)`);
+
+      const result = searchAfterFlush({ query: 'harbor' });
+
+      expect(result.results.map((row) => row.sessionId)).toEqual(['session-1']);
+    });
+
     it('ignores search terms shorter than three characters', () => {
       createSearchIndex();
       repository.saveSDKMessage('session-1', createUserMessage('ui marker'));

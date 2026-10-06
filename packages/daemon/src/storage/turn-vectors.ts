@@ -2,7 +2,7 @@ import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIN_TURN_CHARS = 20;
 const TURN_EMBED_CHARS = 2_000;
-const ELIGIBLE_TURN = `kind = 'message' AND message_type IN ('user', 'assistant')
+const ELIGIBLE_TURN = `kind IN ('message', 'codex', 'claude') AND message_type IN ('user', 'assistant')
   AND length(body) >= ${MIN_TURN_CHARS}`;
 
 export interface PendingTurn {

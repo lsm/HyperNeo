@@ -57,6 +57,35 @@ describe('searchWorkChats', () => {
     });
   });
 
+  test('tags each chat with its kind so adapters can keep their own', () => {
+    insert('quiet', null, 'otter migration plan', 10);
+    db.prepare(
+      `INSERT INTO message_search_content
+         (kind, source_id, message_id, session_id, message_type, title, body, timestamp)
+       VALUES ('codex', 'r1:4', 'm-r1', 'thread-1', 'assistant', 'rollout', 'otter migration done', 20)`
+    ).run();
+    expect(
+      searchWorkChats(db, tables, 'otter', 10).map((chat) => [chat.kind, chat.sessionId])
+    ).toEqual([
+      ['codex', 'thread-1'],
+      ['message', 'quiet'],
+    ]);
+  });
+
+  test('filters by kind before the match cap, so a flood of other turns cannot hide a chat', () => {
+    const codex = db.prepare(
+      `INSERT INTO message_search_content
+         (kind, source_id, message_id, session_id, message_type, title, body, timestamp)
+       VALUES ('codex', ?, ?, ?, 'assistant', 'rollout', 'walrus deploy step', ?)`
+    );
+    insert('quiet', null, 'walrus deploy plan', 1);
+    for (let n = 0; n < 2_100; n++) codex.run(`r${n}`, `c${n}`, `thread-${n}`, 100 + n);
+    expect(
+      searchWorkChats(db, tables, 'walrus', 5, undefined, ['message']).map((chat) => chat.sessionId)
+    ).toEqual(['quiet']);
+    expect(searchWorkChats(db, tables, 'walrus', 5, undefined, ['codex'])).toHaveLength(5);
+  });
+
   test('groups a task across its sessions and skips archived chats', () => {
     insert('w1', 't1', 'coder said 16px', 10);
     insert(null, 't1', 'task asks for 16px', 20);
@@ -74,6 +103,7 @@ describe('searchWorkChats', () => {
 describe('fuseWorkChats', () => {
   test('adds relevance and recency ranks, and breaks ties by the newest hit', () => {
     const chat = (sessionId: string, lastHitAt: number) => ({
+      kind: 'message' as const,
       sessionId,
       taskId: null,
       hits: 1,
@@ -90,6 +120,38 @@ describe('fuseWorkChats', () => {
 });
 
 describe('vectorWorkChats', () => {
+  test('scans the newest turns of each kind, so a flood of another kind cannot hide a chat', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
+      message_id TEXT, session_id TEXT, task_id TEXT, message_type TEXT, body TEXT, timestamp INTEGER)`);
+    db.exec('CREATE INDEX idx_kind ON message_search_content(kind, id)');
+    runMigration297(db);
+    const insert = db.prepare(
+      `INSERT INTO message_search_content (kind, source_id, message_id, session_id, message_type, body, timestamp)
+       VALUES (?, ?, ?, ?, 'assistant', 'some turn text here', ?)`
+    );
+    const vector = db.prepare(`INSERT INTO message_search_vectors VALUES (?, 'm', 2, ?, 1)`);
+    const blob = (values: number[]) => new Uint8Array(Float32Array.from(values).buffer);
+    db.transaction(() => {
+      insert.run('message', 'old', 'm-old', 'quiet', 1);
+      vector.run(1, blob([1, 0]));
+      for (let n = 0; n < 10_050; n++) {
+        const { lastInsertRowid } = insert.run('codex', `c${n}`, `c${n}`, `thread-${n}`, 10 + n);
+        vector.run(Number(lastInsertRowid), blob([0, 1]));
+      }
+    })();
+    const found = vectorWorkChats(
+      db,
+      { sessions: false, spaceTasks: false },
+      Float32Array.from([1, 0]),
+      'm',
+      5,
+      ['message']
+    );
+    expect(found.map((chat) => chat.sessionId)).toEqual(['quiet']);
+    db.close();
+  });
+
   test('finds chats by meaning, newest vectors only, tagged semantic', () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
@@ -118,6 +180,16 @@ describe('vectorWorkChats', () => {
       'm',
       10
     );
+    expect(
+      vectorWorkChats(
+        db,
+        { sessions: false, spaceTasks: false },
+        Float32Array.from([1, 0, 0]),
+        'm',
+        10,
+        ['codex']
+      )
+    ).toEqual([]);
     expect(chats.map((chat) => [chat.sessionId, chat.hits, chat.lastHitAt])).toEqual([
       ['font-chat', 2, 20],
     ]);
@@ -136,6 +208,7 @@ describe('vectorWorkChats', () => {
 describe('fuseWorkChats with meaning matches', () => {
   test('keeps exact matches above semantic-only ones and lifts chats found both ways', () => {
     const chat = (sessionId: string, lastHitAt: number) => ({
+      kind: 'message' as const,
       sessionId,
       taskId: null,
       hits: 1,

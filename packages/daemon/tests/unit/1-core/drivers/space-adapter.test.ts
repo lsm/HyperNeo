@@ -10,6 +10,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
 
 const chat = (sessionId: string | null, taskId: string | null = null): WorkChatMatch => ({
+  kind: taskId ? 'task' : 'message',
   sessionId,
   taskId,
   hits: 1,
