@@ -133,7 +133,7 @@ function contentGlobExtensions(glob: string): string[] | null {
 }
 
 function grepDenial(input: Record<string, unknown>): string | null {
-  if (input.output_mode !== 'content') return null;
+  if (input.output_mode === 'files_with_matches' || input.output_mode === 'count') return null;
   const glob = typeof input.glob === 'string' ? input.glob : '';
   const type = typeof input.type === 'string' ? input.type : '';
   if (glob) {
@@ -186,6 +186,14 @@ function tooBroad(raw: string, scope: LookUpScope): boolean {
   return within(scope.home, path) || path === sep;
 }
 
+function patternNamesSecret(pattern: string): boolean {
+  return pattern
+    .split('/')
+    .some(
+      (segment) => secretName(staticPrefix(segment)) || secretName(segment.replace(/[*?]/g, ''))
+    );
+}
+
 function staticPrefix(pattern: string): string {
   const cut = pattern.search(/[*?[{]/);
   return cut < 0 ? pattern : pattern.slice(0, cut);
@@ -225,7 +233,8 @@ export function neoLookUpDenial(
     if (isSecretPath(root, scope) || tooBroad(root, scope))
       return 'search inside a project folder, not home or a secrets folder';
     if (tool === 'Grep') return grepDenial(input);
-    return pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) })
+    return patternNamesSecret(text('pattern')) ||
+      (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }))
       ? 'that pattern points at secrets'
       : null;
   }

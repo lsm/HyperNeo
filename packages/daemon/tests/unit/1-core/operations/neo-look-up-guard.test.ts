@@ -87,7 +87,13 @@ describe('neoLookUpDenial', () => {
   });
 
   test('searches only inside a project folder', () => {
-    expect(neoLookUpDenial('Grep', { pattern: 'TODO', path: '~/focus/app' }, scope)).toBeNull();
+    expect(
+      neoLookUpDenial(
+        'Grep',
+        { pattern: 'TODO', path: '~/focus/app', output_mode: 'files_with_matches' },
+        scope
+      )
+    ).toBeNull();
     for (const path of ['/home/fictional', '/home', '/', '~/.aws']) {
       expect(neoLookUpDenial('Grep', { pattern: 'secret', path }, scope)).toContain(
         'project folder'
@@ -103,12 +109,18 @@ describe('neoLookUpDenial', () => {
     expect(neoLookUpDenial('Glob', { pattern: '.env*', path: '~/focus/app' }, scope)).toBe(
       'that pattern points at secrets'
     );
+    for (const pattern of ['**/.env*', 'src/**/.env', '**/*.pem', '**/id_rsa'])
+      expect(neoLookUpDenial('Glob', { pattern, path: '~/focus/app' }, scope)).toBe(
+        'that pattern points at secrets'
+      );
   });
 
   test('shows matching lines only for code and docs', () => {
     const grep = (input: Record<string, unknown>) =>
       neoLookUpDenial('Grep', { pattern: '.', path: '~/focus/app', ...input }, scope);
-    expect(grep({})).toBeNull();
+    expect(grep({ output_mode: 'files_with_matches' })).toBeNull();
+    expect(grep({ output_mode: 'count' })).toBeNull();
+    expect(grep({})).toContain('code and docs');
     for (const allowed of [
       { glob: '*.ts' },
       { glob: '**/*.md' },
