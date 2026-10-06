@@ -3,7 +3,11 @@ import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { readWorkFeedOffsets, type WorkFeedTurn } from '../../storage/work-feed.ts';
+import {
+  purgeWorkFeedSessions,
+  readWorkFeedOffsets,
+  type WorkFeedTurn,
+} from '../../storage/work-feed.ts';
 import {
   changedFeedFiles,
   type FeedFile,
@@ -116,6 +120,7 @@ export function claudeFeedSource(hyperneo: ReadonlySet<string>): FeedSource<Feed
   return {
     kind: 'claude',
     sessionOf: (path) => basename(path, '.jsonl'),
+    sharesTurnsWithSiblings: true,
     meta: (path, head) => {
       const sessionId = basename(path, '.jsonl');
       const cwd = claudeTranscriptCwd(head);
@@ -140,10 +145,17 @@ export function scheduleClaudeFeed(queue: JobQueueRepository): void {
 export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   .input(['queue', 'db', 'root', 'now'])
   .pipe(scheduleClaudeFeed, 'queue')
+  .pipe(readHyperneoSdkSessions, 'db', 'hyperneo')
   .pipe(
-    (db: BunDatabase, root: string) =>
-      pruneVanishedFeeds(db, root, claudeFeedSource(readHyperneoSdkSessions(db))),
-    ['db', 'root'],
+    (db: BunDatabase, hyperneo: ReadonlySet<string>) =>
+      purgeWorkFeedSessions(db, 'claude', [...hyperneo]),
+    ['db', 'hyperneo'],
+    'purged'
+  )
+  .pipe(
+    (db: BunDatabase, root: string, hyperneo: ReadonlySet<string>) =>
+      pruneVanishedFeeds(db, root, claudeFeedSource(hyperneo)),
+    ['db', 'root', 'hyperneo'],
     'pruned'
   )
   .pipe(
@@ -157,9 +169,9 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
     'changed'
   )
   .pipe(
-    (db: BunDatabase, changed: FeedFile[]) =>
-      feedWorkFiles(db, changed, claudeFeedSource(readHyperneoSdkSessions(db))),
-    ['db', 'changed'],
+    (db: BunDatabase, changed: FeedFile[], hyperneo: ReadonlySet<string>) =>
+      feedWorkFiles(db, changed, claudeFeedSource(hyperneo)),
+    ['db', 'changed', 'hyperneo'],
     'result'
   )
   .endAsync('result') as (

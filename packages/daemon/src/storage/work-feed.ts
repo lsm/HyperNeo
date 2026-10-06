@@ -77,3 +77,22 @@ export function dropWorkFeedSession(
     db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
   })();
 }
+
+export function forgetWorkFeedOffsets(db: BunDatabase, paths: readonly string[]): void {
+  if (paths.length === 0) return;
+  db.prepare('DELETE FROM work_feed_offsets WHERE path IN (SELECT value FROM json_each(?))').run(
+    JSON.stringify(paths)
+  );
+}
+
+export function purgeWorkFeedSessions(
+  db: BunDatabase,
+  kind: WorkFeedKind,
+  sessionIds: readonly string[]
+): void {
+  if (sessionIds.length === 0) return;
+  db.prepare(
+    `DELETE FROM message_search_content
+      WHERE kind = ? AND session_id IN (SELECT value FROM json_each(?))`
+  ).run(kind, JSON.stringify(sessionIds));
+}

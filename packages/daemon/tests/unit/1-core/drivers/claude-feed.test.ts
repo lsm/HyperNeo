@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,10 +9,12 @@ import {
   claudeTranscriptTurns,
   isTempCwd,
   readHyperneoSdkSessions,
+  runClaudeFeed,
 } from '../../../../src/lib/drivers/claude-feed';
 import { feedWorkFiles, listFeedFiles } from '../../../../src/lib/drivers/work-feed';
 import { createWorkFeedOffsetsTable } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { readWorkFeedOffsets } from '../../../../src/storage/work-feed';
 
 const at = '2026-10-06T05:00:00.000Z';
 const line = (fields: Record<string, unknown>) =>
@@ -134,5 +136,51 @@ describe('Claude transcript feed', () => {
       { id: 'u1', title: 'neokai' },
       { id: 'u2', title: 'neokai' },
     ]);
+  });
+
+  test('a deleted resumed copy gives its shared turns back to the surviving transcript', async () => {
+    const project = join(root, '-Users-me-focus-neokai');
+    mkdirSync(project, { recursive: true });
+    const said = line({ type: 'user', uuid: 'u1', message: { content: 'plan the heron rollout' } });
+    const original = join(project, 'cli-1.jsonl');
+    const resumed = join(project, 'cli-2.jsonl');
+    writeFileSync(original, `${said}\n`);
+    writeFileSync(
+      resumed,
+      `${said}\n${line({ type: 'user', uuid: 'u2', message: { content: 'resume it' } })}\n`
+    );
+    const earlier = new Date(Date.now() - 60_000);
+    utimesSync(original, earlier, earlier);
+    const queue = { enqueueUniquePending: () => {} } as never;
+    await runClaudeFeed(queue, db, root, Date.now());
+    const owners = () =>
+      db
+        .prepare(
+          'SELECT source_id AS id, session_id AS session FROM message_search_content ORDER BY id'
+        )
+        .all();
+    expect(owners()).toEqual([
+      { id: 'u1', session: 'cli-2' },
+      { id: 'u2', session: 'cli-2' },
+    ]);
+    expect(readWorkFeedOffsets(db).get(original)?.offset).toBeGreaterThan(0);
+    unlinkSync(resumed);
+    await runClaudeFeed(queue, db, root, Date.now());
+    expect(owners()).toEqual([{ id: 'u1', session: 'cli-1' }]);
+  });
+
+  test('purges a session once HyperNeo knows it as its own', async () => {
+    const project = join(root, '-Users-me-focus-neokai');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(
+      join(project, 'late-sdk.jsonl'),
+      `${line({ type: 'user', uuid: 'l1', message: { content: 'internal' } })}\n`
+    );
+    const queue = { enqueueUniquePending: () => {} } as never;
+    await runClaudeFeed(queue, db, root, Date.now());
+    expect(db.prepare('SELECT COUNT(*) AS n FROM message_search_content').get()).toEqual({ n: 1 });
+    db.exec("INSERT INTO sessions VALUES ('hn-2', 'late-sdk')");
+    await runClaudeFeed(queue, db, root, Date.now());
+    expect(db.prepare('SELECT COUNT(*) AS n FROM message_search_content').get()).toEqual({ n: 0 });
   });
 });

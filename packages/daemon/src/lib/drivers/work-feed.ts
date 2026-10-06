@@ -1,8 +1,9 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import {
   dropWorkFeedSession,
+  forgetWorkFeedOffsets,
   readWorkFeedOffsets,
   saveWorkFeedChunk,
   type WorkFeedKind,
@@ -23,6 +24,7 @@ export interface FeedFileMeta {
 export interface FeedSource<Meta extends FeedFileMeta> {
   kind: WorkFeedKind;
   sessionOf(path: string): string;
+  sharesTurnsWithSiblings?: boolean;
   meta(path: string, head: string): Meta | null;
   turns(lines: readonly string[], meta: Meta): WorkFeedTurn[];
 }
@@ -115,8 +117,16 @@ export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   root: string,
   source: FeedSource<Meta>
 ): number {
-  const gone = vanishedFeedPaths(root, readWorkFeedOffsets(db));
+  const known = readWorkFeedOffsets(db);
+  const gone = vanishedFeedPaths(root, known);
   for (const path of gone) dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
+  if (source.sharesTurnsWithSiblings) {
+    const folders = new Set(gone.map((path) => dirname(path)));
+    forgetWorkFeedOffsets(
+      db,
+      [...known.keys()].filter((path) => folders.has(dirname(path)) && !gone.includes(path))
+    );
+  }
   return gone.length;
 }
 
