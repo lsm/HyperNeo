@@ -68,6 +68,7 @@ export const HELPER_SCHEMA_TABLES = [
   'sdk_message_replacements',
   'sdk_messages',
   'session_counters',
+  'task_message_rows',
   'session_incarnations',
   'sessions',
   'space_agent_core_memory',
