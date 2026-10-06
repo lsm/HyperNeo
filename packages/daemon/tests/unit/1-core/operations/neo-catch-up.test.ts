@@ -80,6 +80,19 @@ describe('renderNeoCatchUp', () => {
   });
 });
 
+describe('renderNeoCatchUp with many topics', () => {
+  test('keeps the collapsed summary inside the budget', () => {
+    const routes = Array.from({ length: 60 }, (_, n) => ({
+      ...entry(n, { concernId: `topic-${n}`, ask: 'y'.repeat(300) }),
+      id: n + 1,
+      outcome: null,
+      outcomeAt: null,
+    }));
+    const titles = new Map(routes.map((route) => [route.concernId!, 't'.repeat(160)]));
+    expect(renderNeoCatchUp(routes, titles).length).toBeLessThanOrEqual(3_000);
+  });
+});
+
 describe('restrictNeoQuery', () => {
   test('appends the catch-up only when there is one', () => {
     const plain: Options = {};
