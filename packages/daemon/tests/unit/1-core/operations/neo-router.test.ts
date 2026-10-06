@@ -52,6 +52,8 @@ const route = (fields: Partial<NeoRoute>): NeoRoute => ({
   confidence: 0.8,
   outcome: null,
   outcomeAt: null,
+  askSummary: null,
+  awaiting: null,
   ...fields,
 });
 

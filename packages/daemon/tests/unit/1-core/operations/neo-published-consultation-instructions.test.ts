@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoPublicationSchema } from '../../../../src/lib/neo/publication.ts';
 
 const item = Object.freeze({
@@ -33,7 +33,7 @@ describe('published consultation request instructions', () => {
     expect(guidance).toContain('shortText, fullText and labelled Neo scene links together');
     expect(guidance).toContain('current reasoning pass');
     expect(guidance).toContain(
-      'neo.publication.publish {publicationId,shortText,fullText,links} once'
+      'neo.publication.publish {publicationId,shortText,fullText,links,askSummary,awaiting?} once'
     );
     expect(guidance).toContain('do not supply or invent either');
     expect(guidance).toContain('Do not execute work');

@@ -22,8 +22,11 @@ function routeLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string
   const outcome = route.outcome
     ? ` → ${neoExcerpt(route.outcome, LINE_TEXT_CHARS)}`
     : ' → (no reply yet)';
-  const ask = neoExcerpt(route.ask, LINE_TEXT_CHARS);
-  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${ask}"${outcome}`;
+  const ask = neoExcerpt(route.askSummary ?? route.ask, LINE_TEXT_CHARS);
+  const awaiting = route.awaiting
+    ? ` (waiting on the user: ${neoExcerpt(route.awaiting, LINE_TEXT_CHARS)})`
+    : '';
+  return `- ${at} UTC, ${where(route, titles)} (ask ${route.messageId}): "${ask}"${outcome}${awaiting}`;
 }
 
 function summarize(routes: readonly NeoRoute[], titles: ReadonlyMap<string, string>): string {

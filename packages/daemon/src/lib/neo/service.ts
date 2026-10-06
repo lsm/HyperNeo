@@ -173,6 +173,8 @@ export class NeoService {
           publication.publicationId !== input.publicationId ||
           publication.shortText !== input.shortText ||
           publication.fullText !== input.fullText ||
+          publication.askSummary !== input.askSummary ||
+          publication.awaiting !== input.awaiting ||
           JSON.stringify(publication.links) !== JSON.stringify(input.links)
         )
           return { accepted: false, reason: 'publication_conflict' };

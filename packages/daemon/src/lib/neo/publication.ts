@@ -28,6 +28,8 @@ export const NeoPublicationSchema = z
       )
       .max(16),
     interim: z.literal(true).optional(),
+    askSummary: text(300).optional(),
+    awaiting: text(500).optional(),
   })
   .strict();
 

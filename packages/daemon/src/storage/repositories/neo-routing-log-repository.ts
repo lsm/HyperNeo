@@ -17,13 +17,24 @@ export interface NeoRoute {
   confidence: number | null;
   outcome: string | null;
   outcomeAt: number | null;
+  askSummary: string | null;
+  awaiting: string | null;
 }
 
-export type NeoRouteEntry = Omit<NeoRoute, 'id' | 'outcome' | 'outcomeAt'>;
+export type NeoRouteEntry = Omit<
+  NeoRoute,
+  'id' | 'outcome' | 'outcomeAt' | 'askSummary' | 'awaiting'
+>;
+
+export interface NeoTurnNotes {
+  askSummary?: string;
+  awaiting?: string;
+}
 
 const columns = `id, message_id AS messageId, conversation_id AS conversationId,
   asked_at AS askedAt, ask, destination, target_session_id AS targetSessionId,
-  concern_id AS concernId, signal, confidence, outcome, outcome_at AS outcomeAt`;
+  concern_id AS concernId, signal, confidence, outcome, outcome_at AS outcomeAt,
+  ask_summary AS askSummary, awaiting`;
 
 export function neoExcerpt(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -69,14 +80,21 @@ export class NeoRoutingLogRepository {
       );
   }
 
-  recordOutcome(messageId: string, outcome: string, at: number): void {
+  recordOutcome(messageId: string, outcome: string, at: number, notes: NeoTurnNotes = {}): void {
     if (!this.ready()) return;
     const answered = this.db
       .prepare(
-        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?, digested_at = NULL
+        `UPDATE neo_routing_log SET outcome = ?, outcome_at = ?, digested_at = NULL,
+           ask_summary = ?, awaiting = ?
           WHERE message_id = ? AND outcome IS NULL RETURNING id, destination`
       )
-      .get(clip(outcome), at, messageId) as { id: number; destination: string } | null;
+      .get(
+        clip(outcome),
+        at,
+        notes.askSummary ? clip(notes.askSummary) : null,
+        notes.awaiting ? clip(notes.awaiting) : null,
+        messageId
+      ) as { id: number; destination: string } | null;
     if (answered?.destination !== 'main') return;
     this.db
       .prepare(
@@ -127,7 +145,10 @@ export class NeoRoutingLogRepository {
     if (!this.ready()) return [];
     return (
       this.db
-        .prepare(`SELECT ask FROM neo_routing_log WHERE concern_id = ? ORDER BY id DESC LIMIT ?`)
+        .prepare(
+          `SELECT COALESCE(ask_summary, ask) AS ask FROM neo_routing_log
+            WHERE concern_id = ? ORDER BY id DESC LIMIT ?`
+        )
         .all(concernId, limit) as Array<{ ask: string }>
     ).map((row) => row.ask);
   }
