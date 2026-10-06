@@ -406,6 +406,34 @@ describe('NeoService direct reply fallback wiring', () => {
       messageUuid: neoNudgeMessageId(askB),
     }).length > 0;
 
+  test('forgets a deleted session: its pending recheck never nudges and no state is kept', async () => {
+    stallNewestAsk();
+    vi.useFakeTimers();
+    try {
+      await events.publish('session.updated', {
+        sessionId: holder,
+        processingState: { status: 'interrupted' },
+      });
+      await idle();
+      await events.publish('session.deleted', { sessionId: root });
+      await events.publish('session.deleted', { sessionId: holder });
+      await vi.advanceTimersByTimeAsync(21_000);
+      expect(nudgeQueued()).toBe(false);
+      const state = service as unknown as {
+        processingStatus: Map<string, string>;
+        interruptedSessions: Set<string>;
+        replyRechecks: Map<string, unknown>;
+      };
+      expect([
+        state.processingStatus.size,
+        state.interruptedSessions.size,
+        state.replyRechecks.size,
+      ]).toEqual([0, 0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test.each([
     ['nudges a stalled turn once it stays idle', [], true],
     ['never nudges a turn the human stopped', ['processing', 'interrupted'], false],
