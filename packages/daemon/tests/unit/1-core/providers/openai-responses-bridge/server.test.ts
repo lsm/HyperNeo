@@ -2973,7 +2973,7 @@ describe('openai-responses-bridge server', () => {
             },
             { type: 'function_call', call_id: 'c1', name: 'foo', arguments: '{}' },
             { type: 'function_call_output', call_id: 'c1', output: '{}' },
-            { type: 'reasoning', encrypted_content: 'enc' },
+            { type: 'reasoning', summary: [], encrypted_content: 'enc' },
           ],
         };
 
@@ -3156,7 +3156,9 @@ describe('openai-responses-bridge server', () => {
       expect(textDeltaEvents(events).join('')).toBe('recovered');
 
       expect(capturedInputs.length).toBe(3);
-      expect(capturedInputs[1]!.some((i) => i.type === 'reasoning')).toBe(true);
+      expect(capturedInputs[1]!.filter((i) => i.type === 'reasoning')).toEqual([
+        { type: 'reasoning', summary: [], encrypted_content: 'enc_cached' },
+      ]);
       expect(capturedInputs[2]!.some((i) => i.type === 'reasoning')).toBe(false);
     }
   );
@@ -3585,7 +3587,9 @@ describe('openai-responses-bridge server', () => {
     });
 
     await readSSEEvents(anthropicStream);
-    expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_123' }]]);
+    expect(reasoningCalls).toEqual([
+      [{ type: 'reasoning', summary: [], encrypted_content: 'ENC_123' }],
+    ]);
   });
 
   it('treats an encrypted-reasoning-only stream as non-productive (retried, no cache)', async () => {
@@ -3665,7 +3669,9 @@ describe('openai-responses-bridge server', () => {
     const events = await readSSEEvents(anthropicStream);
     expect(events.find((event) => event.event === 'error')).toBeUndefined();
     expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
-    expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_INCOMPLETE' }]]);
+    expect(reasoningCalls).toEqual([
+      [{ type: 'reasoning', summary: [], encrypted_content: 'ENC_INCOMPLETE' }],
+    ]);
   });
 
   it('records the response id for a completed tool call in an incomplete turn (direct)', async () => {
