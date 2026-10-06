@@ -125,4 +125,15 @@ export class NeoRoutingLogRepository {
         .all(concernId, limit) as Array<{ ask: string }>
     ).map((row) => row.ask);
   }
+
+  correct(messageId: string, concernId: string, targetSessionId: string): void {
+    if (!this.ready()) return;
+    this.db
+      .prepare(
+        `UPDATE neo_routing_log SET destination = 'holder', concern_id = ?,
+           target_session_id = ?, signal = 'corrected', confidence = 1
+          WHERE message_id = ?`
+      )
+      .run(concernId, targetSessionId, messageId);
+  }
 }
