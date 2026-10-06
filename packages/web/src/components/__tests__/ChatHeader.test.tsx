@@ -59,6 +59,7 @@ describe('ChatHeader', () => {
       );
       const toggle = getByTestId('display-mode-btn');
       expect(toggle.getAttribute('title')).toBe('Show tool details');
+      expect(toggle.getAttribute('aria-pressed')).toBe('false');
       fireEvent.click(toggle);
       expect(onDisplayModeChange).toHaveBeenCalledWith('full');
     });

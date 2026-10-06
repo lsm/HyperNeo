@@ -12,6 +12,7 @@ export interface IconButtonProps {
   title?: string;
   type?: 'button' | 'submit' | 'reset';
   'data-testid'?: string;
+  'aria-pressed'?: boolean;
 }
 
 export function IconButton({
@@ -25,6 +26,7 @@ export function IconButton({
   title,
   type = 'button',
   'data-testid': testId,
+  'aria-pressed': pressed,
 }: IconButtonProps) {
   const baseStyles =
     'inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed';
@@ -52,6 +54,7 @@ export function IconButton({
       title={title}
       data-testid={testId}
       aria-label={title}
+      aria-pressed={pressed}
       class={cn(baseStyles, variants[variant], sizes[size], activeStyles, className)}
     >
       {children}

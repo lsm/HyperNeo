@@ -45,7 +45,7 @@ export function ThinkingBlock({
       const scrollHeight = contentRef.current.scrollHeight;
       setNeedsTruncation(scrollHeight > previewMaxHeight);
     }
-  }, [content, previewMaxHeight]);
+  }, [content, previewMaxHeight, folded, open]);
 
   const charCount = content.length;
 
