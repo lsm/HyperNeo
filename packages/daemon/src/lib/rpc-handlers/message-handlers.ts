@@ -170,12 +170,13 @@ export function setupMessageHandlers(
     };
     if (!targetSessionId || !messageUuid) throw new Error('sessionId and messageUuid are required');
     if (!db) throw new Error('Message store unavailable');
-    const row = db
-      .getDatabase()
-      .prepare('SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1')
-      .get(targetSessionId, messageUuid) as { sdk_message: string } | null;
-    if (!row) throw new Error('Message not found');
-    return { sdkMessage: JSON.parse(row.sdk_message) };
+    if (!db.getSession(targetSessionId)) throw new Error('Session not found');
+    const sdkMessage = new SDKMessageRepository(db.getDatabase()).getMessageByUuid(
+      targetSessionId,
+      messageUuid
+    );
+    if (!sdkMessage) throw new Error('Message not found');
+    return { sdkMessage };
   });
 
   messageHub.onRequest('message.count', async (data) => {

@@ -55,7 +55,7 @@ describe('capMessageOutput', () => {
     };
     const capped = capMessageOutput(message, 10) as typeof message;
     expect(capped.message.content[0].content as unknown).toEqual([
-      { type: 'image', image_capped: { chars: 400 } },
+      { type: 'image', data_capped: { chars: 400 } },
     ]);
   });
 
@@ -78,7 +78,7 @@ describe('capMessageOutput', () => {
     expect(capMessageOutput(message, 10).tool_use_result as unknown).toEqual({
       type: 'image',
       file: { base64: '', type: 'image/png' },
-      image_capped: { chars: 400 },
+      data_capped: { chars: 400 },
       output_capped: { chars: 400 },
     });
   });

@@ -803,11 +803,18 @@ describe('Message RPC Handlers', () => {
       sqlite
         .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
         .run('session-123', 'u1', JSON.stringify(full));
-      const db = { getDbPath: () => ':memory:', getDatabase: () => sqlite } as unknown as Database;
+      const db = {
+        getDbPath: () => ':memory:',
+        getDatabase: () => sqlite,
+        getSession: (id: string) => (id === 'session-123' ? { id } : null),
+      } as unknown as Database;
       messageHubData = createMockMessageHub();
       setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
       try {
         const handler = messageHubData.handlers.get('message.sdkMessage');
+        await expect(handler!({ sessionId: 'other', messageUuid: 'u1' }, {})).rejects.toThrow(
+          'Session not found'
+        );
         expect(await handler!({ sessionId: 'session-123', messageUuid: 'u1' }, {})).toEqual({
           sdkMessage: full,
         });

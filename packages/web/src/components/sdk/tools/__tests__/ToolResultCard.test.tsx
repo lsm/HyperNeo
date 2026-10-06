@@ -1692,7 +1692,7 @@ footer line 2`;
           structuredOutput={{
             type: 'image',
             file: { base64: '', type: 'image/png' },
-            image_capped: { chars: 900 * 1024 },
+            data_capped: { chars: 900 * 1024 },
             output_capped: { chars: 900 * 1024 },
           }}
           defaultExpanded={true}

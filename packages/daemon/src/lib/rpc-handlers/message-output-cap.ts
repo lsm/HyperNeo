@@ -25,7 +25,7 @@ function sizeOf(value: unknown): number {
   }
 }
 
-function dropImage(record: Json, budget: Budget): Capped<unknown> | null {
+function dropBinary(record: Json, budget: Budget): Capped<unknown> | null {
   const file = record.file as Json | undefined;
   const source = record.source as Json | undefined;
   if (typeof file?.base64 === 'string' && file.base64.length > budget.left)
@@ -33,7 +33,7 @@ function dropImage(record: Json, budget: Budget): Capped<unknown> | null {
       value: {
         ...record,
         file: { ...file, base64: '' },
-        image_capped: { chars: file.base64.length },
+        data_capped: { chars: file.base64.length },
       },
       total: file.base64.length,
       dropped: true,
@@ -44,7 +44,7 @@ function dropImage(record: Json, budget: Budget): Capped<unknown> | null {
     source.data.length > budget.left
   )
     return {
-      value: { type: 'image', image_capped: { chars: source.data.length } },
+      value: { type: 'image', data_capped: { chars: source.data.length } },
       total: source.data.length,
       dropped: true,
     };
@@ -79,7 +79,7 @@ function capDeep(value: unknown, budget: Budget): Capped<unknown> {
     return { value: items, total, dropped };
   }
   if (value && typeof value === 'object') {
-    const image = dropImage(value as Json, budget);
+    const image = dropBinary(value as Json, budget);
     if (image) return image;
     const result: Json = {};
     let total = 0;
