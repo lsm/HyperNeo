@@ -3,7 +3,9 @@ import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { withChatEvidence } from './places.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -57,6 +59,7 @@ export interface ClaudeDesktopAdapterDeps {
   newId: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -162,12 +165,25 @@ function toClaudeWork(
   };
 }
 
+export function matchClaudeSessions(
+  chats: readonly WorkChatMatch[]
+): ReadonlyMap<string, WorkChatMatch> {
+  return new Map(
+    chats.flatMap((chat) =>
+      chat.kind === 'claude' && chat.sessionId ? [[chat.sessionId, chat] as const] : []
+    )
+  );
+}
+
 export function buildClaudeDesktopGroups(
   records: readonly ClaudeDesktopRecord[],
   liveSessions: readonly ClaudeLiveSession[],
   query: FindQuery,
-  deps: Pick<ClaudeDesktopAdapterDeps, 'machine'>
+  deps: Pick<ClaudeDesktopAdapterDeps, 'machine'>,
+  matched: ReadonlyMap<string, WorkChatMatch> = new Map()
 ): PlaceGroup[] {
+  const hit = (record: ClaudeDesktopRecord) =>
+    record.cliSessionId ? matched.get(record.cliSessionId) : undefined;
   const text = query.text?.toLowerCase();
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const folders = [...new Set(records.flatMap((record) => folderOf(record) ?? []))];
@@ -182,9 +198,13 @@ export function buildClaudeDesktopGroups(
       const place = { machine: deps.machine, folder, name };
       const work: WorkSummary[] = inFolder
         .filter((record) => query.includeClosed || !record.isArchived)
-        .filter((record) => placeMatches || record.title.toLowerCase().includes(text ?? ''))
-        .slice(0, SESSIONS_PER_PLACE)
-        .map((record) => toClaudeWork(record, live, deps.machine));
+        .filter(
+          (record) =>
+            placeMatches || !!hit(record) || record.title.toLowerCase().includes(text ?? '')
+        )
+        .map((record) => withChatEvidence(toClaudeWork(record, live, deps.machine), hit(record)))
+        .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+        .slice(0, SESSIONS_PER_PLACE);
       if (!placeMatches && work.length === 0) return [];
       return [
         {
@@ -242,15 +262,17 @@ export function reuseLiveSessions(
 }
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)
-  .input(['query', 'deps', 'cache'])
+  .input(['query', 'deps', 'cache', 'chats'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(buildClaudeDesktopGroups, ['records', 'liveSessions', 'query', 'deps'], 'groups')
+  .pipe(matchClaudeSessions, 'chats', 'matched')
+  .pipe(buildClaudeDesktopGroups, ['records', 'liveSessions', 'query', 'deps', 'matched'], 'groups')
   .endAsync('groups') as (
   query: FindQuery,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  chats: readonly WorkChatMatch[]
 ) => Promise<PlaceGroup[]>;
 
 export function claudeTranscriptPath(
@@ -621,7 +643,13 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   return {
     id: 'claude-desktop',
     capabilities: ['find', 'start', 'send', 'status'],
-    find: (query) => runClaudeDesktopFind(query, reused, cache),
+    find: async (query) =>
+      runClaudeDesktopFind(
+        query,
+        reused,
+        cache,
+        query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
+      ),
     start: (request) => runClaudeDesktopStart(request, deps),
     send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
     status: (ref) => runClaudeDesktopStatus(ref, reused, cache),
