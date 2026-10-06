@@ -143,7 +143,7 @@ of `messages.bySession`, whose `mapRow` thins each row:
 
 - `tool_use`: keep `id`, `name`, `parent_tool_use_id` and the input fields
   the tool registry's summary extractors read, derived from
-  `tools/tool-registry.ts` rather than hand-listed (today `file_path`, `path`,
+  `tools/tool-registry.ts` rather than hand-listed (today `file_path`,
   `notebook_path`, `command`, `pattern`, `description`, `url`, `query`,
   `task_id`, `shell_id`, `bash_id`, `server`, `uri`, `message_prefix`); drop the
   rest. A test fails when an extractor reads a field the list lacks. Keep `TodoWrite` and
