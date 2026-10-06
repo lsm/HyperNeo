@@ -328,9 +328,12 @@ Before running schema migrations the daemon always writes a backup into
 database size. A backup is only attempted when a migration is actually pending, so plain
 daemon restarts create no backups. Backups are namespaced per database file, so several
 databases sharing one directory (for example the per-worktree development pattern) never
-prune each other's snapshots; within a namespace the 3 most recent backups are kept, room
-for the next backup is freed before it is written (retaining the two newest known-good
-backups meanwhile), and WAL sidecar files are pruned with their backups. Releases before
+prune each other's snapshots; within a namespace the 3 most recent backups are kept, and WAL
+sidecar files are pruned with their backups. A clone backup (`fs-copy`) takes no space up
+front, so the oldest backup is deleted two minutes after startup, asynchronously: on APFS,
+deleting a large backup that has drifted from the live database can block for over a minute.
+A full-copy backup (`vacuum-into`, `checkpoint-copy`) frees room before it is written
+(retaining the two newest known-good backups meanwhile). Releases before
 this layout stored backups flat in `backups/` — those are not auto-pruned; remove them
 manually after upgrading.
 

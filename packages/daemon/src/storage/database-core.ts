@@ -8,6 +8,7 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger.ts';
 import { runMessageSearchMerge } from '../lib/message-search-merge.ts';
@@ -23,6 +24,7 @@ import { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
+const MIGRATION_BACKUP_ROTATION_DELAY_MS = 2 * 60 * 1000;
 const MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES = 3;
 const MESSAGE_SEARCH_MERGE_INTERVAL_MS = 30_000;
 
@@ -185,21 +187,28 @@ export class DatabaseCore {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = join(backupDir, `daemon-${timestamp}.db`);
 
-    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION - 1);
-
     const startedAt = Date.now();
-    const strategy = this.writeBackup(backupPath);
+    const strategy = this.writeBackup(backupPath, () =>
+      this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION - 1)
+    );
     if (strategy === null) return;
 
     this.logger.info(
       `[Database] Migration backup created via ${strategy} in ${Date.now() - startedAt}ms: ${backupPath}`
     );
-    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
+    if (strategy !== 'fs-copy') {
+      this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
+      return;
+    }
+    const rotation = setTimeout(() => {
+      void this.rotateBackupsInBackground(backupDir, MIGRATION_BACKUP_RETENTION);
+    }, MIGRATION_BACKUP_ROTATION_DELAY_MS);
+    rotation.unref?.();
   }
 
-  private writeBackup(backupPath: string): string | null {
+  private writeBackup(backupPath: string, freeRoom: () => void): string | null {
     const tempDb = `${backupPath}.tmp`;
-    const strategy = this.writeBackupTo(tempDb);
+    const strategy = this.writeBackupTo(tempDb, freeRoom);
     if (strategy === null) {
       this.removePartialBackup(tempDb);
       return null;
@@ -217,7 +226,7 @@ export class DatabaseCore {
     }
   }
 
-  private writeBackupTo(tempDb: string): string | null {
+  private writeBackupTo(tempDb: string, freeRoom: () => void): string | null {
     if (this.tryFastCopy(tempDb)) {
       if (this.copyWalSidecar(tempDb)) {
         return 'fs-copy';
@@ -227,6 +236,7 @@ export class DatabaseCore {
         return null;
       }
     }
+    freeRoom();
     if (this.tryVacuumInto(tempDb)) return 'vacuum-into';
     if (!this.removePartialBackup(tempDb)) {
       this.logger.error('Failed to create migration backup: partial artifacts remain');
@@ -304,20 +314,27 @@ export class DatabaseCore {
   }
 
   private cleanupOldBackups(backupDir: string, keepCount: number): void {
+    for (const path of this.backupsBeyondRetention(backupDir, keepCount)) {
+      try {
+        unlinkSync(path);
+      } catch {}
+    }
+    this.sweepOrphanBackupWals(backupDir);
+  }
+
+  private async rotateBackupsInBackground(backupDir: string, keepCount: number): Promise<void> {
+    for (const path of this.backupsBeyondRetention(backupDir, keepCount)) {
+      try {
+        await unlink(path);
+      } catch {}
+    }
+    this.sweepOrphanBackupWals(backupDir);
+  }
+
+  private backupsBeyondRetention(backupDir: string, keepCount: number): string[] {
     try {
       const entries = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
-      const databases = entries
-        .filter((f) => f.endsWith('.db'))
-        .map((f) => ({
-          name: f,
-          path: join(backupDir, f),
-          mtime: statSync(join(backupDir, f)).mtime.getTime(),
-        }))
-        .sort((a, b) => b.mtime - a.mtime);
-
-      const kept = new Set(databases.slice(0, keepCount).map((f) => f.name));
       const staleCutoff = Date.now() - MIGRATION_BACKUP_TEMP_STALE_MS;
-
       for (const name of entries) {
         if (!name.endsWith('.tmp') && !name.endsWith('.tmp-wal')) continue;
         const path = join(backupDir, name);
@@ -326,15 +343,27 @@ export class DatabaseCore {
           unlinkSync(path);
         } catch {}
       }
-      for (const file of databases.slice(keepCount)) {
-        try {
-          unlinkSync(file.path);
-        } catch {}
-      }
-      for (const name of entries) {
-        if (!name.endsWith('.db-wal')) continue;
+      return entries
+        .filter((f) => f.endsWith('.db'))
+        .map((f) => ({
+          path: join(backupDir, f),
+          mtime: statSync(join(backupDir, f)).mtime.getTime(),
+        }))
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(keepCount)
+        .map((f) => f.path);
+    } catch {
+      return [];
+    }
+  }
+
+  private sweepOrphanBackupWals(backupDir: string): void {
+    try {
+      const staleCutoff = Date.now() - MIGRATION_BACKUP_TEMP_STALE_MS;
+      for (const name of readdirSync(backupDir)) {
+        if (!name.startsWith('daemon-') || !name.endsWith('.db-wal')) continue;
         const base = name.slice(0, -'-wal'.length);
-        if (kept.has(base) || existsSync(join(backupDir, base))) continue;
+        if (existsSync(join(backupDir, base))) continue;
         const path = join(backupDir, name);
         try {
           if (statSync(path).mtime.getTime() > staleCutoff) continue;
