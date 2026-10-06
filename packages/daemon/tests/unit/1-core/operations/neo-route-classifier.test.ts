@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildNeoRoutePrompt,
   neoRouteEndpoint,
+  neoRouteTimeoutMs,
   neoRouteHttpCall,
   readNeoRouteDecision,
   readNeoRouteStream,
@@ -93,6 +94,15 @@ describe('neoRouteHttpCall', () => {
       neoRouteHttpCall('https://api.anthropic.com', 'claude-haiku-4-5', {}, 'p', undefined)
     ).toBeNull();
     expect(neoRouteHttpCall('not a url', 'm', {}, 'p', undefined)).toBeNull();
+  });
+});
+
+describe('neoRouteTimeoutMs', () => {
+  it('uses the saved timeout and falls back to 15 s when unset or invalid', () => {
+    expect(neoRouteTimeoutMs(30_000)).toBe(30_000);
+    expect(neoRouteTimeoutMs(undefined)).toBe(15_000);
+    expect(neoRouteTimeoutMs(0)).toBe(15_000);
+    expect(neoRouteTimeoutMs(Number.NaN)).toBe(15_000);
   });
 });
 

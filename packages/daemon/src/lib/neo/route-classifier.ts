@@ -7,6 +7,7 @@ import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts
 import { Logger } from '../logger.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { DEFAULT_NEO_ROUTE_TIMEOUT_MS } from '@hyperneo/shared';
 import {
   NEO_ROUTE_BASES,
   type NeoHolder,
@@ -17,7 +18,6 @@ import {
 
 const log = new Logger('neo-route-classifier');
 const ASK_CHARS = 2_000;
-const CLASSIFY_TIMEOUT_MS = 4_000;
 const ANSWER_TOKENS = 512;
 const ANTHROPIC_VERSION = '2023-06-01';
 let leanCwd: string | undefined;
@@ -76,6 +76,12 @@ export function neoRouteHttpCall(
           : {}),
     },
   };
+}
+
+export function neoRouteTimeoutMs(setting: number | undefined): number {
+  return typeof setting === 'number' && Number.isFinite(setting) && setting > 0
+    ? setting
+    : DEFAULT_NEO_ROUTE_TIMEOUT_MS;
 }
 
 export function neoRouteEndpoint(
@@ -256,7 +262,7 @@ export async function classifyNeoRoute(
   candidates: readonly NeoHolder[],
   context: string,
   choice?: NeoRouteModel,
-  timeoutMs = CLASSIFY_TIMEOUT_MS
+  timeoutMs = DEFAULT_NEO_ROUTE_TIMEOUT_MS
 ): Promise<NeoRouteVerdict> {
   if (process.env.NODE_ENV === 'test') return null;
   const abortController = new AbortController();
