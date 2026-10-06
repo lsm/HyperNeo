@@ -4,9 +4,24 @@ import {
   disableBuiltInProvidersWithoutEnabledRecord,
   ensureBuiltInProviderRegistered,
   initializeProviders,
+  registerBuiltInProvider,
   resetProviderFactory,
+  setCopilotProviderModuleImporter,
+  waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type * as CopilotModule from '../../../../src/lib/providers/anthropic-copilot/index';
+
+class StubCopilotProvider {
+  readonly id = 'anthropic-copilot' as const;
+}
+
+function installStubCopilotModule(): void {
+  setCopilotProviderModuleImporter(
+    async () =>
+      ({ AnthropicToCopilotBridgeProvider: StubCopilotProvider }) as unknown as typeof CopilotModule
+  );
+}
 
 function record(providerId: string, overrides: Partial<ProviderRecord> = {}): ProviderRecord {
   return {
@@ -58,5 +73,25 @@ describe('disableBuiltInProvidersWithoutEnabledRecord', () => {
     await ensureBuiltInProviderRegistered('anthropic');
 
     expect(getProviderRegistry().has('anthropic')).toBe(true);
+  });
+
+  it('registers no built-in provider when there are no rows', async () => {
+    installStubCopilotModule();
+    disableBuiltInProvidersWithoutEnabledRecord([]);
+
+    const registry = initializeProviders();
+    await waitForOptionalProviderRegistration(registry, true);
+
+    expect(registry.getAll().map((provider) => provider.id)).toEqual([]);
+  });
+
+  it('lets a login register a rowless Copilot provider', async () => {
+    installStubCopilotModule();
+    disableBuiltInProvidersWithoutEnabledRecord([]);
+    const registry = initializeProviders();
+
+    await registerBuiltInProvider(registry, 'anthropic-copilot');
+
+    expect(registry.has('anthropic-copilot')).toBe(true);
   });
 });

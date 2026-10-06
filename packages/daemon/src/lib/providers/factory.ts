@@ -163,6 +163,7 @@ export async function registerBuiltInProvider(
       registry.register(new AnthropicToCodexBridgeProvider());
       break;
     case 'anthropic-copilot':
+      markBuiltInProviderEnabled(providerId);
       await waitForOptionalProviderRegistration(registry, true);
       break;
     case 'acp':
