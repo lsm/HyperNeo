@@ -276,23 +276,29 @@ describe('describeNeoDriverScenes', () => {
     link: 'codex://threads/t1',
   };
 
-  it('names where queued work went and raises it when it needs the user', () => {
+  it('names where queued work went, raises it when it needs the user and settles it when it ends', () => {
     const scenes = classifyNeoScenes([
       { kind: 'work', ...work('w', 'queued', 1) },
       { kind: 'work', ...work('r', 'queued', 2) },
-      { kind: 'work', ...work('done', 'reported', 3) },
+      { kind: 'work', ...work('f', 'queued', 3) },
+      { kind: 'work', ...work('s', 'queued', 4) },
+      { kind: 'work', ...work('done', 'reported', 5) },
     ] as NeoBoardReceipt[]);
     const described = describeNeoDriverScenes(
       scenes,
       new Map([
         ['w', driver],
         ['r', { ...driver, workId: 'r', status: 'running' }],
+        ['f', { ...driver, workId: 'f', status: 'done' }],
+        ['s', { ...driver, workId: 's', status: 'stopped' }],
         ['done', { ...driver, workId: 'done', status: 'done' }],
       ])
     );
     expect(described.map((scene) => [scene.ref.id, scene.group, scene.label])).toEqual([
       ['w', 'attention', 'Needs you in Codex Desktop on laptop'],
       ['r', 'running', 'Running in Codex Desktop on laptop'],
+      ['f', 'outcomes', 'Finished in Codex Desktop on laptop'],
+      ['s', 'outcomes', 'Stopped in Codex Desktop on laptop'],
       ['done', 'outcomes', 'Response ready'],
     ]);
   });
