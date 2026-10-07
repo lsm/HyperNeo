@@ -246,6 +246,14 @@ export function requireNeoExecutionChoice(
         reason: 'Choose either work (a work.find place or ref) or targetSessionId, not both.',
       },
     };
+  if (input.work?.verb === 'start' && !input.work.place.folder && !input.work.place.spaceId)
+    return {
+      reason: {
+        ok: false,
+        reason:
+          'Start new work in a project folder or a Space, not a place without a folder. If none clearly fits, ask the human where the work belongs.',
+      },
+    };
   return caller.source !== 'mcp' || input.targetSessionId || input.work
     ? { value: caller }
     : {

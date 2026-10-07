@@ -44,6 +44,25 @@ describe('requireNeoExecutionChoice', () => {
       requireNeoExecutionChoice({ work: sendTarget, targetSessionId: 's1' }, neo)
     ).toMatchObject({ reason: { ok: false } });
   });
+
+  test('refuses a start in a place with no folder or Space before a card exists', () => {
+    const chats = { machine: 'laptop', name: 'Chats' };
+    expect(
+      requireNeoExecutionChoice({ work: { verb: 'start', adapter: 'hyperneo', place: chats } }, neo)
+    ).toMatchObject({
+      reason: {
+        ok: false,
+        reason: expect.stringContaining('ask the human where the work belongs'),
+      },
+    });
+    expect(
+      requireNeoExecutionChoice(
+        { work: { verb: 'start', adapter: 'space', place: { ...chats, spaceId: 'sp1' } } },
+        neo
+      )
+    ).toEqual({ value: neo });
+    expect(requireNeoExecutionChoice({ work: startTarget }, neo)).toEqual({ value: neo });
+  });
 });
 
 describe('driverWorkCall', () => {
