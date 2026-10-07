@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { restoreNeoImages } from './neo-attachments.ts';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
@@ -441,10 +442,12 @@ export function NeoLive() {
               onRetryPublic={retryPublicConversation}
               onProgress={setReplyProgress}
               pendingAsks={neo.pendingAsks}
-              onRetryAsk={(requestId) => void neo.retrySend(requestId)}
+              onRetryAsk={(requestId) => void neo.retrySend(requestId)?.catch(() => undefined)}
               onEditAsk={(requestId) => {
                 const failed = neo.discardSend(requestId);
-                if (failed) writeDraft(failed.text);
+                if (!failed) return;
+                writeDraft(failed.text);
+                restoreNeoImages(failed.sessionId, failed.images ?? []);
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;

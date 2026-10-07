@@ -220,10 +220,13 @@ describe('Neo live durable intake', () => {
     request.mockImplementation(async (_method: string, { name }: { name: string }) =>
       name === 'neo.message.send' ? { ok: false, reason: 'Neo is busy.' } : snapshot()
     );
+    await attach('photo.png', 'photo', 'image/png');
     submit('Try this later');
     expect((input as HTMLTextAreaElement).value).toBe('');
+    expect(screen.queryByRole('button', { name: 'Remove photo.png' })).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe('Try this later'));
+    expect(screen.getByRole('button', { name: 'Remove Photo 1' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Not sent/ })).toBeNull();
   });
 
