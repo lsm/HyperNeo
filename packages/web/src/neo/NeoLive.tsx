@@ -62,6 +62,10 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
+  const loadedScope = useRef<string | null>(null);
+  if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
+  const conversationLoaded =
+    loadedScope.current === sceneScope && publicConversation?.status !== 'unavailable';
   useEffect(() => setChat(null), [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
@@ -566,7 +570,8 @@ export function NeoLive() {
             reply={
               replyProgress ??
               (connected &&
-              publicConversation?.status === 'ready' &&
+              publicConversation &&
+              conversationLoaded &&
               neo.store.agentState.value.status !== 'waiting_for_input' &&
               !neo.store.error.value &&
               !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
