@@ -60,6 +60,7 @@ import { runMigration301 } from './m301-neo-routing-turn-notes.ts';
 import { runMigration302 } from './m302-work-index-kinds.ts';
 import { runMigration303 } from './m303-external-delivery-task-index.ts';
 import { runMigration304 } from './m304-task-message-rows.ts';
+import { runMigration305 } from './m305-task-message-artifact-keys.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -684,6 +685,7 @@ export function runMigrations(
   run(migrationMarkerKey(302), () => runMigration302(db));
   run(migrationMarkerKey(303), () => runMigration303(db));
   run(migrationMarkerKey(304), () => runMigration304(db));
+  run(migrationMarkerKey(305), () => runMigration305(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

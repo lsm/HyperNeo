@@ -1727,86 +1727,16 @@ export const SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT = 3;
 
 const SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT = 100;
 
-const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
+const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_keys AS MATERIALIZED (
   SELECT
-    sm.id AS id,
-    sm.session_id AS sessionId,
-    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
-    sm.rowid AS insOrder,
-    json_extract(b.value, '$.name') AS toolName,
-    json_extract(b.value, '$.input.file_path') AS filePath
-  FROM target_task tt
-  JOIN sdk_messages sm INDEXED BY idx_sdk_messages_task_assistant ON sm.task_id = tt.id
-  CROSS JOIN json_each(
-    CASE
-      WHEN json_valid(sm.sdk_message)
-        AND json_type(sm.sdk_message, '$.message.content') = 'array'
-      THEN sm.sdk_message
-    END,
-    '$.message.content'
-  ) b
-  WHERE sm.message_type = 'assistant'
-    AND instr(sm.sdk_message, 'tool_use') > 0
-    AND CASE
-      WHEN json_valid(b.value) THEN CASE
-        WHEN json_type(b.value) = 'object' THEN 1
-        ELSE 0
-      END
-      ELSE 0
-    END
-    AND json_type(b.value, '$.id') = 'text'
-    AND json_extract(b.value, '$.type') = 'tool_use'
-    AND (
-      json_extract(b.value, '$.name') NOT IN ('Write', 'Edit', 'MultiEdit')
-      OR CASE
-        WHEN json_extract(b.value, '$.name') = 'Write' THEN
-          json_type(b.value, '$.input.file_path') = 'text'
-          AND json_type(b.value, '$.input.content') = 'text'
-        WHEN json_extract(b.value, '$.name') = 'Edit' THEN
-          json_type(b.value, '$.input.file_path') = 'text'
-          AND json_type(b.value, '$.input.old_string') = 'text'
-          AND json_type(b.value, '$.input.new_string') = 'text'
-        ELSE
-          json_type(b.value, '$.input.file_path') = 'text'
-          AND EXISTS (
-            SELECT 1 FROM (
-              SELECT me.value AS editValue
-              FROM json_each(b.value, '$.input.edits') me
-              WHERE CASE
-                WHEN json_valid(me.value) THEN CASE
-                  WHEN json_type(me.value) = 'object' THEN 1
-                  ELSE 0
-                END
-                ELSE 0
-              END
-              ORDER BY me.key
-              LIMIT 1
-            ) firstEdit
-            WHERE json_type(firstEdit.editValue, '$.old_string') = 'text'
-              AND json_type(firstEdit.editValue, '$.new_string') = 'text'
-          )
-      END
-    )
-    AND (
-      json_extract(b.value, '$.name') != 'TodoWrite'
-      OR (
-        json_type(b.value, '$.input.todos') = 'array'
-        AND NOT EXISTS (
-          SELECT 1 FROM json_each(b.value, '$.input.todos') te
-          WHERE CASE
-            WHEN json_valid(te.value) THEN CASE
-              WHEN json_type(te.value) = 'object' THEN CASE
-                WHEN json_type(te.value, '$.content') = 'text'
-                  THEN json_type(te.value, '$.status') != 'text'
-                ELSE 1
-              END
-              ELSE 1
-            END
-            ELSE 1
-          END
-        )
-      )
-    )
+    tm.id AS id,
+    tm.session_id AS sessionId,
+    tm.created_at AS createdAt,
+    tm.seq AS insOrder,
+    k.value AS artifactKey
+  FROM task_message_rows tm, json_each(tm.artifact_keys) k
+  WHERE tm.task_id = (SELECT id FROM target_task)
+    AND tm.artifact_keys IS NOT NULL
 ),
 artifact_state_rows AS (
   SELECT id FROM (
@@ -1820,11 +1750,10 @@ artifact_state_rows AS (
           createdAt,
           insOrder,
           ROW_NUMBER() OVER (
-            PARTITION BY filePath ORDER BY createdAt DESC, insOrder DESC
+            PARTITION BY artifactKey ORDER BY createdAt DESC, insOrder DESC
           ) AS pathRank
-        FROM artifact_tool_blocks
-        WHERE toolName IN ('Write', 'Edit', 'MultiEdit')
-          AND filePath IS NOT NULL
+        FROM artifact_keys
+        WHERE artifactKey LIKE 'file:%'
       ) WHERE pathRank = 1
       UNION
       SELECT id, createdAt, insOrder FROM (
@@ -1835,8 +1764,8 @@ artifact_state_rows AS (
           ROW_NUMBER() OVER (
             PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC
           ) AS sessionRank
-        FROM artifact_tool_blocks
-        WHERE toolName = 'TodoWrite'
+        FROM artifact_keys
+        WHERE artifactKey = 'todo'
       ) WHERE sessionRank = 1
     )
   ) WHERE pinRank <= ${SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT}
