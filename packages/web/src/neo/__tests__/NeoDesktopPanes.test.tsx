@@ -206,6 +206,17 @@ describe('Neo desktop panes', () => {
     });
     expect(line().textContent).toContain('Neo is working on a reply…');
     act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'loading' },
+      };
+    });
+    expect(line().hidden).toBe(true);
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'ready' },
+      };
       model.value.store.agentState.value = { status: 'waiting_for_input' } as never;
     });
     expect(line().hidden).toBe(true);

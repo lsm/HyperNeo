@@ -21,7 +21,7 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
+import { NEO_QUICK_CHOICE_LABEL, type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 
@@ -566,10 +566,10 @@ export function NeoLive() {
             reply={
               replyProgress ??
               (connected &&
-              publicConversation &&
+              publicConversation?.status === 'ready' &&
               neo.store.agentState.value.status !== 'waiting_for_input' &&
               !neo.store.error.value &&
-              !scenes?.attention.some((scene) => scene.label === 'A quick choice') &&
+              !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
               neoAwaitingReply(publicConversation.entries)
                 ? 'Neo is working on a reply…'
                 : null)
