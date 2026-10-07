@@ -901,12 +901,12 @@ export class TaskAgentManager {
             return result.path;
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
+            const ownFolder = ownsSpace ? explicitTaskWorkspace(task) : undefined;
+            if (err instanceof WorkspaceNotGitRepositoryError && ownFolder) return ownFolder;
             log.warn(
               `TaskAgentManager: failed to create worktree for workflow task ${task.id}; failing the spawn instead of falling back to the space workspace: ${detail}`
             );
             const message = `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`;
-            const ownFolder = ownsSpace ? explicitTaskWorkspace(task) : undefined;
-            if (err instanceof WorkspaceNotGitRepositoryError && ownFolder) return ownFolder;
             if (err instanceof WorkspaceNotGitRepositoryError) {
               throw new PermanentSpawnError(message);
             }

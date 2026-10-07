@@ -233,7 +233,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
         expectedCreateCalled: true,
         expectedCachedPath: undefined,
-        expectedWarning: 'failed to create worktree',
+        expectedWarning: '',
       },
       {
         name: 'explicit task workspace is honored without a manager',
