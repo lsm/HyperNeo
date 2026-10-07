@@ -8,7 +8,7 @@ import type {
   LiveQueryDeltaEvent,
   LiveQueryErrorEvent,
 } from '@hyperneo/shared';
-import type { ChatMessage } from '@hyperneo/shared';
+import type { ChatDisplayMode, ChatMessage } from '@hyperneo/shared';
 import { Logger, MessageHubResponseError } from '@hyperneo/shared';
 import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
@@ -17,10 +17,11 @@ import {
   isHardUnavailable,
   type SessionLoadErrorKind,
 } from './session-load-error';
-import { connectionState } from './state';
+import { connectionState, globalSettings } from './state';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
+import { resolveChatDisplayMode } from '../components/sdk/chat-display-mode.ts';
 
 const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
@@ -143,8 +144,26 @@ export function mergeSnapshotIntoTranscript(
   return descendants.length === 0 ? merged : insertByTimestampRowid(merged, descendants);
 }
 
+type MessageQuery = 'messages.bySession' | 'messages.bySession.compact';
+
+function messageQueryFor(mode: ChatDisplayMode): MessageQuery {
+  return mode === 'full' ? 'messages.bySession' : 'messages.bySession.compact';
+}
+
+function withoutThinnedMark(message: ChatMessage): ChatMessage {
+  const { thinned: _mark, ...rest } = message as ChatMessage & { thinned?: boolean };
+  return rest as ChatMessage;
+}
+
+function isThinned(message: ChatMessage): boolean {
+  return (message as { thinned?: boolean }).thinned === true;
+}
+
 export class SessionStore {
-  constructor() {
+  private readonly followDisplayMode: boolean;
+
+  constructor(options: { followDisplayMode?: boolean } = {}) {
+    this.followDisplayMode = options.followDisplayMode ?? false;
     activeStores.add(this);
   }
 
@@ -245,6 +264,47 @@ export class SessionStore {
   private resyncMessages: (() => void) | null = null;
 
   private messagesResyncPending = false;
+
+  private messageQuery: MessageQuery = 'messages.bySession';
+
+  setMessageDetail(mode: ChatDisplayMode): void {
+    if (!this.followDisplayMode) return;
+    const query = messageQueryFor(mode);
+    if (query === this.messageQuery) return;
+    this.messageQuery = query;
+    this.resyncMessages?.();
+  }
+
+  async hydrateMessages(uuids: string[]): Promise<void> {
+    const sessionId = this.activeSessionId.value;
+    const wanted = new Set(uuids);
+    const thinned = this.sdkMessages.value.filter(
+      (message) => message.uuid && wanted.has(message.uuid) && isThinned(message)
+    );
+    if (!sessionId || thinned.length === 0) return;
+    const hub = await connectionManager.getHub();
+    const full = await Promise.all(
+      thinned.map((message) =>
+        hub
+          .request<{ sdkMessage: ChatMessage }>('message.sdkMessage', {
+            sessionId,
+            messageUuid: message.uuid,
+            capped: true,
+          })
+          .then(({ sdkMessage }) =>
+            withoutThinnedMark({ ...message, ...sdkMessage } as ChatMessage)
+          )
+          .catch(() => null)
+      )
+    );
+    const byUuid = new Map(
+      full.filter((message): message is ChatMessage => !!message).map((m) => [m.uuid, m])
+    );
+    if (this.activeSessionId.value !== sessionId || byUuid.size === 0) return;
+    this.sdkMessages.value = this.sdkMessages.value.map((message) =>
+      message.uuid && byUuid.has(message.uuid) ? byUuid.get(message.uuid)! : message
+    );
+  }
 
   select(sessionId: string | null): Promise<void> {
     if (this.destroyed) {
@@ -360,6 +420,15 @@ export class SessionStore {
 
       await this.fetchInitialSessionState(hub, sessionId);
 
+      this.messageQuery = this.followDisplayMode
+        ? messageQueryFor(
+            resolveChatDisplayMode(
+              this.sessionState.value?.sessionInfo?.config?.chatDisplayMode,
+              globalSettings.value?.chatDisplayMode
+            )
+          )
+        : 'messages.bySession';
+
       await this.subscribeToMessagesLiveQuery(hub, sessionId);
     } catch (err) {
       logger.error('Failed to start subscriptions:', err);
@@ -438,7 +507,7 @@ export class SessionStore {
       awaitingSnapshot = true;
       hub
         .request('liveQuery.subscribe', {
-          queryName: 'messages.bySession',
+          queryName: this.messageQuery,
           params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
           subscriptionId,
         })
@@ -458,7 +527,7 @@ export class SessionStore {
         if (event.phase === 'delta') {
           hub
             .request('liveQuery.subscribe', {
-              queryName: 'messages.bySession',
+              queryName: this.messageQuery,
               params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
               subscriptionId,
             })
@@ -498,7 +567,7 @@ export class SessionStore {
 
     try {
       await hub.request('liveQuery.subscribe', {
-        queryName: 'messages.bySession',
+        queryName: this.messageQuery,
         params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
         subscriptionId,
       });
@@ -896,7 +965,7 @@ export class SessionStore {
       if (this.activeMessagesSubscriptionId !== subscriptionId) return false;
       try {
         await hub.request('liveQuery.subscribe', {
-          queryName: 'messages.bySession',
+          queryName: this.messageQuery,
           params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
           subscriptionId,
         });
@@ -1071,7 +1140,7 @@ export function applyOptimisticSessionInfo(
   }
 }
 
-export const sessionStore = new SessionStore();
+export const sessionStore = new SessionStore({ followDisplayMode: true });
 
 export async function refreshAllSessionStores(): Promise<void> {
   await Promise.all([...activeStores].map((store) => store.recover().catch(() => {})));

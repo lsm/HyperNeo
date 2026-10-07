@@ -192,7 +192,7 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     });
 
     const resubscribe = hub.subscribeCalls[1];
-    expect(resubscribe.queryName).toBe('messages.bySession');
+    expect(resubscribe.queryName).toBe('messages.bySession.compact');
     expect(resubscribe.subscriptionId).toBe(subId);
     expect(resubscribe.params).toEqual(hub.subscribeCalls[0].params);
   });

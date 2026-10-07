@@ -20,6 +20,7 @@ import {
 import { TaskProgressLine } from './tools/TaskProgressLine.tsx';
 import { FullOutputNotice, useFullToolOutput } from './tools/FullOutputNotice.tsx';
 import { ToolResultCard } from './tools/index.ts';
+import { useHydrateMessages } from './chat-display-mode.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import {
@@ -276,6 +277,7 @@ export function SubagentBlock({
   toolId,
 }: SubagentBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const hydrate = useHydrateMessages();
   const full = useFullToolOutput(output, undefined, sessionId, messageUuid, toolId);
   output = full.output;
 
@@ -359,7 +361,13 @@ export function SubagentBlock({
       )}
     >
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => {
+          if (!isExpanded)
+            hydrate(
+              nestedMessages.flatMap((message) => (message.uuid ? [message.uuid as string] : []))
+            );
+          setIsExpanded(!isExpanded);
+        }}
         class={cn(
           'w-full flex items-center justify-between p-3 transition-colors',
           'hover:bg-opacity-80 dark:hover:bg-opacity-80'

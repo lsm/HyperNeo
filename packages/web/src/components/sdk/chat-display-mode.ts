@@ -21,3 +21,9 @@ export function resolveChatDisplayMode(
 export function nextChatDisplayMode(mode: ChatDisplayMode): ChatDisplayMode {
   return OFFERED_MODES[(OFFERED_MODES.indexOf(mode) + 1) % OFFERED_MODES.length];
 }
+
+export const MessageHydrationContext = createContext<(uuids: string[]) => void>(() => {});
+
+export function useHydrateMessages(): (uuids: string[]) => void {
+  return useContext(MessageHydrationContext);
+}

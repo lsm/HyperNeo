@@ -26,6 +26,7 @@ import { Tooltip } from '../ui/Tooltip.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
+import { useHydrateMessages } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
@@ -67,6 +68,7 @@ export function SDKAssistantMessage({
   const { message: apiMessage } = message;
   const contentBlocks = apiMessage.content as ContentBlock[];
   const hasError = 'error' in message && message.error !== undefined;
+  const hydrate = useHydrateMessages();
 
   const getTextContent = (): string => {
     return contentBlocks
@@ -219,6 +221,7 @@ export function SDKAssistantMessage({
         return (
           <ToolUseBlock
             key={`tool-${idx}`}
+            assistantUuid={message.uuid}
             block={block}
             toolResult={toolResult}
             nestedMessages={nestedMessages}
@@ -244,6 +247,8 @@ export function SDKAssistantMessage({
           content={block.thinking}
           isRunning={!!isRunning}
           estimatedTokens={estimatedThinkingTokens}
+          thinnedChars={(block as { thinking_chars?: number }).thinking_chars}
+          onOpen={() => message.uuid && hydrate([message.uuid])}
         />
       ))}
 
@@ -260,6 +265,7 @@ export function SDKAssistantMessage({
 }
 
 function ToolUseBlock({
+  assistantUuid,
   block,
   toolResult,
   nestedMessages,
@@ -276,6 +282,7 @@ function ToolUseBlock({
   isRunning,
   flattenSubagentTools = false,
 }: {
+  assistantUuid?: string;
   block: Extract<ContentBlock, { type: 'tool_use' }>;
   toolResult?: unknown;
   nestedMessages?: SDKMessage[];
@@ -309,6 +316,9 @@ function ToolUseBlock({
   const messageUuid = resultData?.messageUuid;
   const sessionId = resultData?.sessionId || propSessionId;
   const isOutputRemoved = resultData?.isOutputRemoved || false;
+  const hydrate = useHydrateMessages();
+  const loadFull = () =>
+    hydrate([assistantUuid, messageUuid].filter((uuid): uuid is string => !!uuid));
 
   if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
     return (
@@ -381,6 +391,7 @@ function ToolUseBlock({
             taskNotification={taskNotification}
             taskProgress={taskProgress}
             isRunning={isRunning}
+            onExpand={loadFull}
           />
         </div>
       );
@@ -443,6 +454,7 @@ function ToolUseBlock({
       taskNotification={taskNotification}
       taskProgress={taskProgress}
       isRunning={isRunning}
+      onExpand={loadFull}
     />
   );
 }
