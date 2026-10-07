@@ -147,6 +147,7 @@ test('pure admission rejects a competing workflow without changing lifecycle fie
         attempt,
         active: attempt,
         space: spaces.getSpace(spaceId),
+        worktreePath: null,
         session: sessions.getSession('worker'),
         selected: true,
         stopRequested: false,

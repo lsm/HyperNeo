@@ -1,6 +1,6 @@
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
+import { directTaskWorkspace } from './direct-task-workspace.ts';
 import { AgentSession } from '../agent/agent-session.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import type { Database } from '../../storage/database.ts';
@@ -17,6 +17,7 @@ export interface DirectSessionPreparationDependencies {
   >;
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
   getSpace: (spaceId: string) => Space | null;
+  getTaskWorktreePath: (spaceId: string, taskId: string) => string | null;
   db: Pick<Database, 'getSession' | 'createSession'>;
   sessionManager: Pick<
     SessionManager,
@@ -24,7 +25,7 @@ export interface DirectSessionPreparationDependencies {
   >;
   defaultModel: string;
 }
-interface DirectPreparation {
+export interface DirectPreparation {
   attempt: DirectTaskAttempt;
   task: SpaceTask;
   workspacePath: string;
@@ -41,7 +42,8 @@ export function requireReservedDirectTask(
   selected: boolean,
   task: SpaceTask | null,
   space: Space | null,
-  stopRequested = false
+  stopRequested = false,
+  worktreePath: string | null = null
 ): { value: DirectPreparation } | { reason: PreparationFailure } {
   return attempt &&
     attempt.phase === 'reserved' &&
@@ -55,7 +57,7 @@ export function requireReservedDirectTask(
     !task.archivedAt &&
     !task.workflowRunId &&
     space?.id === task.spaceId
-    ? { value: { attempt, task, workspacePath: resolveTaskWorkspace(space, task) } }
+    ? { value: { attempt, task, workspacePath: directTaskWorkspace(space, task, worktreePath) } }
     : { reason: 'direct_attempt_unavailable' };
 }
 
@@ -81,6 +83,7 @@ export function readPreparation(
   attempts: DirectSessionPreparationDependencies['attempts'],
   tasks: DirectSessionPreparationDependencies['tasks'],
   getSpace: DirectSessionPreparationDependencies['getSpace'],
+  getTaskWorktreePath: DirectSessionPreparationDependencies['getTaskWorktreePath'],
   attemptId: string
 ) {
   const attempt = attempts.get(attemptId);
@@ -91,7 +94,8 @@ export function readPreparation(
     !!attempt && attempts.isSelected(attempt.taskId),
     task,
     task?.spaceId ? getSpace(task.spaceId) : null,
-    !!attempt && attempts.isStopRequested(attempt.id, attempt.sessionId)
+    !!attempt && attempts.isStopRequested(attempt.id, attempt.sessionId),
+    task ? getTaskWorktreePath(task.spaceId, task.id) : null
   );
 }
 
@@ -99,12 +103,19 @@ export async function prepareDormantSession(
   attempts: DirectSessionPreparationDependencies['attempts'],
   tasks: DirectSessionPreparationDependencies['tasks'],
   getSpace: DirectSessionPreparationDependencies['getSpace'],
+  getTaskWorktreePath: DirectSessionPreparationDependencies['getTaskWorktreePath'],
   db: DirectSessionPreparationDependencies['db'],
   sessionManager: DirectSessionPreparationDependencies['sessionManager'],
   defaultModel: string,
   candidate: DirectPreparation
 ): Promise<{ value: PreparedDirectSession } | { reason: PreparationFailure }> {
-  const admission = readPreparation(attempts, tasks, getSpace, candidate.attempt.id);
+  const admission = readPreparation(
+    attempts,
+    tasks,
+    getSpace,
+    getTaskWorktreePath,
+    candidate.attempt.id
+  );
   if ('reason' in admission) return admission;
   const id = candidate.attempt.sessionId;
   const existing = db.getSession(id);
@@ -126,7 +137,13 @@ export async function prepareDormantSession(
   const cached = sessionManager.getCachedSession(id);
   const session = await sessionManager.getSessionForControl(id);
   if (!session) return { reason: 'direct_session_unavailable' };
-  const current = readPreparation(attempts, tasks, getSpace, candidate.attempt.id);
+  const current = readPreparation(
+    attempts,
+    tasks,
+    getSpace,
+    getTaskWorktreePath,
+    candidate.attempt.id
+  );
   const persisted = db.getSession(id);
   const valid =
     persisted !== null &&
@@ -161,11 +178,24 @@ export function createDormantDirectSessionPreparer(
 ) {
   return (superpipe({ ...dependencies })('prepare-dormant-direct-session') as PipelineAPI)
     .input('attemptId')
-    .pipe(readPreparation, ['attempts', 'tasks', 'getSpace', 'attemptId'], 'result:prepared')
+    .pipe(
+      readPreparation,
+      ['attempts', 'tasks', 'getSpace', 'getTaskWorktreePath', 'attemptId'],
+      'result:prepared'
+    )
     .pipe((candidate: DirectPreparation) => candidate, 'prepared', 'candidate')
     .pipe(
       prepareDormantSession,
-      ['attempts', 'tasks', 'getSpace', 'db', 'sessionManager', 'defaultModel', 'candidate'],
+      [
+        'attempts',
+        'tasks',
+        'getSpace',
+        'getTaskWorktreePath',
+        'db',
+        'sessionManager',
+        'defaultModel',
+        'candidate',
+      ],
       'result:prepared'
     )
     .endAsync('prepared') as (

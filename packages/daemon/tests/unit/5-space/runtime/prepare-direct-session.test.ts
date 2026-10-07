@@ -24,6 +24,7 @@ let load: ReturnType<typeof mock>;
 let cleanup: ReturnType<typeof mock>;
 let persist: ReturnType<typeof mock>;
 let unregister: ReturnType<typeof mock>;
+const worktrees = new Map<string, string>();
 function makeAgent(row: Session) {
   return {
     getSessionData: () => row,
@@ -36,6 +37,7 @@ function preparer() {
     attempts,
     tasks,
     getSpace: (id) => spaces.getSpace(id),
+    getTaskWorktreePath: (_spaceId, taskId) => worktrees.get(taskId) ?? null,
     defaultModel: 'test-model',
     db: { getSession: (id) => records.get(id) ?? null, createSession: persist },
     sessionManager: {
@@ -67,7 +69,10 @@ beforeEach(() => {
     if (cached === expected) cached = null;
   });
 });
-afterEach(() => sql.close());
+afterEach(() => {
+  sql.close();
+  worktrees.clear();
+});
 
 test('factory is inert; a claim survives crash before create and retries reuse its row/object', async () => {
   const prepare = preparer();
@@ -215,4 +220,11 @@ test('stop between pipeline admission and create prevents late object constructi
   expect(await preparer()('attempt')).toBe('direct_attempt_unavailable');
   expect(persist).not.toHaveBeenCalled();
   expect(load).not.toHaveBeenCalled();
+});
+
+test('a task with a worktree prepares its session in the worktree, not the checkout', async () => {
+  worktrees.set(task.id, '/worktrees/space/task-1');
+  const prepared = await preparer()('attempt');
+  expect(prepared).toHaveProperty('session');
+  expect(persist.mock.calls[0][0]).toMatchObject({ workspacePath: '/worktrees/space/task-1' });
 });

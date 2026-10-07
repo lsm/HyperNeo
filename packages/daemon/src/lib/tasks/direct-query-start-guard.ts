@@ -21,7 +21,7 @@ import {
   type DirectTaskQueryState,
 } from './direct-task-query-admission.ts';
 import { matchesDirectPreparedSession } from './prepare-direct-session.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
+import { directTaskWorkspace, readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 
 type BoundStart = Pick<
   DirectTaskWorkerIdentity,
@@ -74,7 +74,7 @@ function requireBoundStart(
     !state.space
   )
     return { reason: null };
-  const workspacePath = resolveTaskWorkspace(state.space, evidence.task);
+  const workspacePath = directTaskWorkspace(state.space, evidence.task, state.worktreePath);
   if (
     !matchesDirectPreparedSession(session, {
       attempt: evidence.attempt,
@@ -122,6 +122,7 @@ export function createDirectQueryStartGuard(
       getActiveAttempt: (id: string) => attempts.getActive(id),
       getSpace: (id: string) => spaces.getSpace(id),
       isStopRequested: (id: string, sid: string) => attempts.isStopRequested(id, sid),
+      getTaskWorktreePath: readDirectTaskWorktreePath(db),
     })('guard-direct-query-start') as PipelineAPI
   )
     .input(['sessionId', 'session', 'expected'])
@@ -131,7 +132,11 @@ export function createDirectQueryStartGuard(
       'evidence'
     )
     .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:start')
-    .pipe(loadDirectTaskQueryState, ['start', 'getSpace', 'isStopRequested'], 'queryState')
+    .pipe(
+      loadDirectTaskQueryState,
+      ['start', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
+      'queryState'
+    )
     .pipe(
       requireRunningDirectTaskQuery,
       ['start', 'start', 'evidence', 'queryState'],

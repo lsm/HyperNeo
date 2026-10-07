@@ -1,3 +1,4 @@
+import { readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
@@ -116,6 +117,7 @@ export function createDirectKickoffReconciler(db: Database) {
     getActiveAttempt: (id: string) => attempts.getActive(id),
     getSpace: (id: string) => spaces.getSpace(id),
     isStopRequested: (id: string, sessionId: string) => attempts.isStopRequested(id, sessionId),
+    getTaskWorktreePath: readDirectTaskWorktreePath(db),
   };
   const reconcile = (superpipe(dependencies)('reconcile-direct-task-kickoff') as PipelineAPI)
     .input('input')
@@ -126,7 +128,11 @@ export function createDirectKickoffReconciler(db: Database) {
       'evidence'
     )
     .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:dispatch')
-    .pipe(loadDirectTaskQueryState, ['dispatch', 'getSpace', 'isStopRequested'], 'queryState')
+    .pipe(
+      loadDirectTaskQueryState,
+      ['dispatch', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
+      'queryState'
+    )
     .pipe(
       requireRunningDirectTaskQuery,
       ['input', 'dispatch', 'evidence', 'queryState'],
