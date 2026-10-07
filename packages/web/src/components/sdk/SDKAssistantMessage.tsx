@@ -284,6 +284,24 @@ function subagentReplyText(output: unknown): string {
     .join('\n\n');
 }
 
+const BACKGROUND_STATUS: Record<SDKTaskNotificationMessage['status'], string> = {
+  completed: 'Finished in the background',
+  failed: 'Failed in the background',
+  stopped: 'Stopped in the background',
+};
+
+function backgroundSubagentReply(
+  input: AgentInput,
+  replyText: string,
+  notification: SDKTaskNotificationMessage | undefined
+): { status: string; text: string } | null {
+  const launched = /^Async agent launched successfully/.test(replyText);
+  if (!input.run_in_background && !launched && !notification) return null;
+  return notification
+    ? { status: BACKGROUND_STATUS[notification.status], text: notification.summary }
+    : { status: 'Running in the background…', text: '' };
+}
+
 function ToolUseBlock({
   assistantUuid,
   block,
@@ -345,6 +363,23 @@ function ToolUseBlock({
   useEffect(() => {
     if (minimal && isSubagent && !reply && messageUuid) hydrate([messageUuid]);
   }, [minimal, isSubagent, reply, messageUuid, hydrate]);
+
+  const background =
+    minimal && isSubagent
+      ? backgroundSubagentReply(block.input as unknown as AgentInput, reply, taskNotification)
+      : null;
+  if (background) {
+    return (
+      <div class="border-l-2 border-line pl-3" data-testid="subagent-reply">
+        <div class="text-xs text-fg-muted mb-1">
+          {(block.input as unknown as AgentInput).description} · {background.status}
+        </div>
+        {background.text && (
+          <MarkdownRenderer content={background.text} class="dark:prose-invert" />
+        )}
+      </div>
+    );
+  }
 
   if (minimal && isSubagent) {
     if (!reply) return null;

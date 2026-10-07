@@ -1143,6 +1143,53 @@ describe('SDKAssistantMessage in minimal display mode', () => {
     expect(hydrate).toHaveBeenCalledWith(['r-1']);
   });
 
+  it('shows a background subagent as running, then its finished summary, not the launch notice', async () => {
+    const toolResultsMap = new Map([
+      [
+        'toolu_task123',
+        {
+          content: {
+            type: 'tool_result',
+            tool_use_id: 'toolu_task123',
+            content: [{ type: 'text', text: 'Async agent launched successfully. agentId: a1' }],
+          },
+        },
+      ],
+    ]);
+    const view = inMinimal(
+      <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
+    );
+    const reply = () => view.getByTestId('subagent-reply').textContent ?? '';
+    expect(reply()).toContain('Running in the background…');
+    expect(reply()).not.toContain('Async agent launched');
+    view.unmount();
+    const notifications = new Map([
+      [
+        'toolu_task123',
+        {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'a1',
+          tool_use_id: 'toolu_task123',
+          status: 'completed',
+          output_file: '/tmp/a1.output',
+          summary: 'Audit found no deadlock.',
+        },
+      ],
+    ]);
+    const done = inMinimal(
+      <SDKAssistantMessage
+        message={createTaskToolMessage()}
+        toolResultsMap={toolResultsMap}
+        taskNotificationsMap={notifications as never}
+      />
+    );
+    expect(done.getByTestId('subagent-reply').textContent).toContain('Finished in the background');
+    await waitFor(() =>
+      expect(done.getByTestId('subagent-reply').textContent).toContain('Audit found no deadlock.')
+    );
+  });
+
   it("shows a subagent's final reply under its description", async () => {
     const toolResultsMap = new Map([
       [
