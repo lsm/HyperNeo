@@ -3,12 +3,17 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoPublicEntry } from './public-conversation.ts';
 
 export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index];
-    if (entry.kind === 'ask') return true;
-    if (entry.kind === 'publication' && !entry.publication.interim) return false;
-  }
-  return false;
+  const origin = (value: { sessionId: string; messageId: string }) =>
+    `${value.sessionId}\n${value.messageId}`;
+  const latest = entries.findLast((entry) => entry.kind === 'ask');
+  if (latest?.kind !== 'ask') return false;
+  const asked = origin(latest.ask.askOrigin);
+  return !entries.some(
+    (entry) =>
+      entry.kind === 'publication' &&
+      !entry.publication.interim &&
+      origin(entry.publication.askOrigin) === asked
+  );
 }
 
 export type NeoProcessingActivity = { label: string; messageId: string | null } | 'inactive';

@@ -200,7 +200,13 @@ describe('Neo desktop panes', () => {
         ...model.value,
         viewPublicConversation: {
           ...model.value.viewPublicConversation!,
-          entries: [{ key: 'ask', kind: 'ask' } as never],
+          entries: [
+            {
+              key: 'ask',
+              kind: 'ask',
+              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
+            } as never,
+          ],
         },
       };
     });
