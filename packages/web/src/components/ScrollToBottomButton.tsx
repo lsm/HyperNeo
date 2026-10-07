@@ -1,13 +1,11 @@
 export interface ScrollToBottomButtonProps {
   onClick: () => void;
   bottomClass?: string;
-  autoScroll?: boolean;
 }
 
 export function ScrollToBottomButton({
   onClick,
   bottomClass = 'bottom-36',
-  autoScroll = false,
 }: ScrollToBottomButtonProps) {
   return (
     <div
@@ -15,15 +13,9 @@ export function ScrollToBottomButton({
       data-bottom-class={bottomClass}
     >
       <div class="relative w-10 h-10 animate-slideIn">
-        {autoScroll && (
-          <div
-            class="absolute -inset-[2px] rounded-full animate-spin"
-            style="background: conic-gradient(from 0deg, #3b82f6, #8b5cf6, #06b6d4, #3b82f6); animation-duration: 2s;"
-          />
-        )}
         <button
           onClick={onClick}
-          class={`relative w-10 h-10 rounded-full bg-surface-raised hover:bg-fill-strong text-fg-soft hover:text-fg shadow-lg border ${autoScroll ? 'border-transparent' : 'border-line-strong'} flex items-center justify-center transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
+          class={`relative w-10 h-10 rounded-full bg-surface-raised hover:bg-fill-strong text-fg-soft hover:text-fg shadow-lg border border-line-strong flex items-center justify-center transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
           title="Scroll to bottom"
           aria-label="Scroll to bottom"
         >

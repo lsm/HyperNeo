@@ -16,7 +16,6 @@ vi.mock('../../lib/connection-manager', () => ({
 
 describe('SessionStatusBar', () => {
   const mockOnModelSwitch = vi.fn(() => Promise.resolve());
-  const mockOnAutoScrollChange = vi.fn(() => {});
 
   const mockModelInfo: ModelInfo = {
     id: 'sonnet',
@@ -74,14 +73,11 @@ describe('SessionStatusBar', () => {
     modelSwitching: false,
     modelLoading: false,
     onModelSwitch: mockOnModelSwitch,
-    autoScroll: true,
-    onAutoScrollChange: mockOnAutoScrollChange,
   };
 
   beforeEach(() => {
     cleanup();
     mockOnModelSwitch.mockClear();
-    mockOnAutoScrollChange.mockClear();
     mockGetHubIfConnected.mockReturnValue(null);
   });
 
@@ -104,11 +100,10 @@ describe('SessionStatusBar', () => {
       expect(modelButton).toBeTruthy();
     });
 
-    it('should render auto-scroll toggle', () => {
+    it('no longer renders an auto-scroll toggle', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      const buttons = container.querySelectorAll('.control-btn');
-      expect(buttons.length).toBeGreaterThan(0);
+      expect(container.querySelector('[title^="Auto-scroll"]')).toBeNull();
     });
 
     it('should render context usage bar', () => {
@@ -243,52 +238,6 @@ describe('SessionStatusBar', () => {
 
       const spinner = container.querySelector('[class*="animate-spin"]');
       expect(spinner).toBeTruthy();
-    });
-  });
-
-  describe('Auto-Scroll Toggle', () => {
-    it('should show enabled state when autoScroll is true', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={true} />);
-
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const autoScrollButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
-      );
-      expect(autoScrollButton?.className).toContain('border-success');
-    });
-
-    it('should show disabled state when autoScroll is false', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={false} />);
-
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const autoScrollButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
-      );
-      expect(autoScrollButton?.className).toContain('border-line-strong/80');
-    });
-
-    it('should call onAutoScrollChange when clicked', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={true} />);
-
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const autoScrollButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
-      )!;
-      fireEvent.click(autoScrollButton);
-
-      expect(mockOnAutoScrollChange).toHaveBeenCalledWith(false);
-    });
-
-    it('should toggle autoScroll value', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={false} />);
-
-      const buttons = Array.from(container.querySelectorAll('.control-btn'));
-      const autoScrollButton = buttons.find(
-        (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
-      )!;
-      fireEvent.click(autoScrollButton);
-
-      expect(mockOnAutoScrollChange).toHaveBeenCalledWith(true);
     });
   });
 

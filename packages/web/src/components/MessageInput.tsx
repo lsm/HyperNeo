@@ -181,8 +181,6 @@ interface MessageInputProps {
     deliveryMode?: MessageDeliveryMode
   ) => Promise<void | boolean>;
   disabled?: boolean;
-  autoScroll?: boolean;
-  onAutoScrollChange?: (autoScroll: boolean) => void;
   onOpenTools?: () => void;
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   placeholder?: string;
@@ -208,8 +206,6 @@ export default function MessageInput({
   sessionType,
   onSend,
   disabled,
-  autoScroll,
-  onAutoScrollChange,
   onOpenTools,
   coordinatorMode = false,
   coordinatorSwitching = false,
@@ -1269,8 +1265,6 @@ export default function MessageInput({
               modelSwitching={modelSwitching}
               modelLoading={modelLoading}
               onModelSwitch={handleModelSwitch}
-              autoScroll={autoScroll ?? true}
-              onAutoScrollChange={(enabled) => onAutoScrollChange?.(enabled)}
               onOpenTools={() => onOpenTools?.()}
               onAttachFile={openFilePicker}
               coordinatorMode={coordinatorMode}

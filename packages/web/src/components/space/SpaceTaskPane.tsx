@@ -205,7 +205,6 @@ export function SpaceTaskPane({
   const [targetLocked, setTargetLocked] = useState(false);
   const [hasComposerDraft, setHasComposerDraft] = useState(false);
   const [visibleTargetName, setVisibleTargetName] = useState<string | null>(null);
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [threadScroller, setThreadScroller] = useState<HTMLDivElement | null>(null);
   const [taskComposerElement, setTaskComposerElement] = useState<HTMLDivElement | null>(null);
@@ -244,7 +243,6 @@ export function SpaceTaskPane({
     setTargetLocked(false);
     setHasComposerDraft(false);
     setVisibleTargetName(null);
-    setAutoScrollEnabled(true);
     setShowScrollButton(false);
     setThreadScroller(null);
     scrollToBottomRef.current = null;
@@ -988,7 +986,6 @@ export function SpaceTaskPane({
 
   const handleScrollToBottom = useCallback(() => {
     scrollToBottomRef.current?.(true);
-    setAutoScrollEnabled(true);
   }, []);
 
   const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
@@ -1407,7 +1404,6 @@ export function SpaceTaskPane({
                   overlayTaskReadonly={!taskAgentsLive}
                   cooldownBannerMembers={cooldownBannerMembers}
                   authErrorBannerMembers={authErrorBannerMembers}
-                  autoScrollEnabled={autoScrollEnabled}
                   onShowScrollButtonChange={setShowScrollButton}
                   onScrollToBottomChange={(scrollToBottom) => {
                     scrollToBottomRef.current = scrollToBottom;
@@ -1455,7 +1451,6 @@ export function SpaceTaskPane({
               <ScrollToBottomButton
                 onClick={handleScrollToBottom}
                 bottomClass="bottom-[var(--task-composer-offset)]"
-                autoScroll={autoScrollEnabled}
               />
             )}
 
@@ -1492,12 +1487,10 @@ export function SpaceTaskPane({
                   selectedTargetId={selectedTarget?.id ?? null}
                   canSend={canSendThreadMessage}
                   isSending={sendingThread}
-                  autoScroll={autoScrollEnabled}
                   errorMessage={threadSendError}
                   activityMembers={activityMembers}
                   defaultAgentModels={defaultAgentModels}
                   taskId={task.id}
-                  onAutoScrollChange={setAutoScrollEnabled}
                   onTargetSelect={(targetId) => {
                     setSelectedTargetId(targetId);
                     setTargetLocked(true);

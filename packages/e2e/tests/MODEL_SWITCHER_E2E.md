@@ -25,7 +25,7 @@ Tests the complete user interaction flow with the model switcher:
 - [x] Open dropdown menu when clicked
 - [x] Show current model with checkmark in dropdown
 - [x] Close dropdown when clicking outside
-- [x] Be positioned between attachment and auto-scroll buttons
+- [x] Be positioned next to the attachment button
 
 #### Model Switching
 
