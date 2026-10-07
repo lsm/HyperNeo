@@ -1,6 +1,6 @@
 # Chat Display Modes
 
-Status: proposed design, 2026-10-06. Follows the 16 KB tool-output cap (#5775).
+Status: implemented 2026-10-07 (#5790, #5792, #5798, #5800). Follows the 16 KB tool-output cap (#5775).
 
 ## Problem
 
@@ -181,8 +181,10 @@ One PR each:
 5. Server thinning: `messages.bySession.compact` and paging by mode.
 6. Space task thread on the shared switch.
 
-## Open questions
+## Decisions
 
-- Default mode for new sessions: Compact (suggested) or Full.
-- Should Minimal show a subagent's own final reply, or only count it?
-- Should a turn that failed open in Compact automatically, in Minimal?
+- Default mode for new sessions: Compact.
+- Minimal shows a subagent's own final reply under its description.
+- A failed turn opens in Minimal by default; a turn waiting for an answer or a retry stays live.
+- The Space task thread keeps its single condensed view (step 6 dropped); an agent's own chat has the switch.
+- Only stores that render `ChatContainer` follow the mode; Neo's own stores keep the full feed because they read tool results.
