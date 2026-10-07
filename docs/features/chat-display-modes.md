@@ -1,6 +1,6 @@
 # Chat Display Modes
 
-Status: proposed design, 2026-10-06. Follows the 16 KB tool-output cap (#5775).
+Status: implemented 2026-10-07 (#5790, #5792, #5798, #5800). Follows the 16 KB tool-output cap (#5775).
 
 ## Problem
 
@@ -120,8 +120,8 @@ needs-you item. A turn starts at a user message and ends at its `result`
 message. Durations come from row timestamps (`mapMessageRow` already sets
 `timestamp`). Tool status comes from the existing maps (`toolResultsMap`,
 `taskNotificationsMap`, `runningToolUseIds`). Neo's `completedConversation` and
-the Space thread's `MinimalThreadFeed` already build turns. This function
-replaces both with one tested implementation.
+the Space thread's `MinimalThreadFeed` build turns their own way from their own
+feeds and were left as they are; only `ChatContainer` uses `buildChatTurns`.
 
 ### 2. Rendering
 
@@ -165,24 +165,19 @@ This keeps a long session's snapshot to tens of KB instead of megabytes.
 Every chat surface mounts `ChatContainer` (`SpaceAgentChat`, `SpaceIsland`,
 `AgentOverlayChat`, `NeoSessionPane`, `MainContent`), so they inherit the modes.
 The Space task thread already offers compact and minimal views from its own
-queries. It adopts the same switch and the same names, and its existing `full`
-variant becomes the third mode. Neo's conversation stays Minimal by design.
+queries and keeps its own single condensed view; it does not take the switch.
+Neo's conversation stays Minimal by design.
 
 ## Rollout
 
-One PR each:
+As shipped: #5790 (mode setting, header switch, Compact), #5792 (server
+thinning), #5798 (`buildChatTurns`, Minimal), #5800 (chat stores follow the
+mode and load full messages on demand).
 
-1. `buildChatTurns` with tests, built from fixtures of real sessions; wire Neo
-   and `MinimalThreadFeed` to it.
-2. Mode setting and per-session override, and the header switch, still
-   rendering Full.
-3. Compact rendering: `ToolRow`, `ThinkingStatus`, `ToolRun`, peek.
-4. Minimal rendering: `TurnStatusLine`, show steps.
-5. Server thinning: `messages.bySession.compact` and paging by mode.
-6. Space task thread on the shared switch.
+## Decisions
 
-## Open questions
-
-- Default mode for new sessions: Compact (suggested) or Full.
-- Should Minimal show a subagent's own final reply, or only count it?
-- Should a turn that failed open in Compact automatically, in Minimal?
+- Default mode for new sessions: Compact.
+- Minimal shows a subagent's own final reply under its description.
+- A failed turn opens in Minimal by default; a turn waiting for an answer or a retry stays live.
+- The Space task thread keeps its single condensed view (step 6 dropped); an agent's own chat has the switch.
+- Only stores that render `ChatContainer` follow the mode; Neo's own stores keep the full feed because they read tool results.
