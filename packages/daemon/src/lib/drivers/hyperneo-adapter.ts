@@ -341,7 +341,9 @@ export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDe
   if (place.machine !== deps.machine) {
     return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
   }
-  if (!place.folder) return { value: deps.neoFolder() };
+  if (!place.folder) {
+    return { reason: reject('invalid_place', 'Start new work in a project folder or a Space.') };
+  }
   return deps.folderExists(place.folder)
     ? { value: place.folder }
     : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
