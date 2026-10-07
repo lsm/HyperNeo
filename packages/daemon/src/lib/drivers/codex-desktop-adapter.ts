@@ -1,5 +1,5 @@
 import { open } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -69,6 +69,8 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   folderExists: (folder: string) => boolean;
+  gitRoot: (folder: string) => Promise<string | null>;
+  newId: () => string;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
 }
 
@@ -492,6 +494,24 @@ export function startedThreadId(started: unknown): string | null {
   return typeof id === 'string' && id ? id : null;
 }
 
+export async function prepareCodexWorkFolder(
+  folder: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<string>> {
+  const repo = await deps.gitRoot(folder).catch(() => null);
+  if (!repo) return { ok: true, value: folder };
+  const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
+  const proc = deps.spawn(['git', 'worktree', 'add', '--detach', worktree, 'HEAD'], {
+    cwd: repo,
+    stdout: 'ignore',
+    stderr: 'pipe',
+  });
+  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  return code === 0
+    ? { ok: true, value: join(worktree, relative(repo, folder)) }
+    : reject('not_delivered', `Could not create a worktree in ${repo}: ${stderr.trim()}`);
+}
+
 export async function startCodexThread(
   folder: string,
   request: StartRequest,
@@ -508,7 +528,9 @@ export async function startCodexThread(
   }
   let threadId: string | null = null;
   try {
-    threadId = startedThreadId(await server.call('thread/start', { cwd: folder }));
+    const cwd = await prepareCodexWorkFolder(folder, deps);
+    if (!cwd.ok) return cwd;
+    threadId = startedThreadId(await server.call('thread/start', { cwd: cwd.value }));
     if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
     await server.call('thread/name/set', { threadId, name: request.title });
     await server.call('turn/start', {

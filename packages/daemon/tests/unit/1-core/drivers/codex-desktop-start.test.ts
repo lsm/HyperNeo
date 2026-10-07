@@ -10,16 +10,29 @@ const user = { from: 'user', caller: { source: 'rpc' as const } };
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
 const request = { place, title: 'Bigger font', message: 'Raise the body font to 16px.' };
 
-function adapter(server: Partial<CodexAppServer> | Error, folders = ['/focus/dolmen']) {
+function adapter(
+  server: Partial<CodexAppServer> | Error,
+  folders = ['/focus/dolmen'],
+  git: { root?: string; exit?: number } = {}
+) {
   const calls: Array<[string, Record<string, unknown>]> = [];
+  const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
     statePath: '/codex/state.sqlite',
     worktreesDir: '/codex/worktrees',
     machine: 'laptop',
     now: () => NOW,
-    spawn: () => {
-      throw new Error('not used');
+    spawn: (args, options) => {
+      spawned.push({ args, cwd: options?.cwd });
+      const code = git.exit ?? 0;
+      return {
+        stdout: null,
+        stderr: new Response(code ? 'fatal: already exists' : '').body,
+        exited: Promise.resolve(code),
+        exitCode: code,
+        kill: () => {},
+      };
     },
     appServer: async () => {
       if (server instanceof Error) throw server;
@@ -34,8 +47,10 @@ function adapter(server: Partial<CodexAppServer> | Error, folders = ['/focus/dol
       };
     },
     folderExists: (folder) => folders.includes(folder),
+    gitRoot: async () => git.root ?? null,
+    newId: () => 'abcd1234-0000',
   });
-  return { instance, calls, closed: () => closed };
+  return { instance, calls, spawned, closed: () => closed };
 }
 
 describe('startedThreadId', () => {
@@ -71,6 +86,36 @@ describe('codex-desktop start', () => {
         { threadId: 'th1', input: [{ type: 'text', text: 'Raise the body font to 16px.' }] },
       ],
     ]);
+    expect(closed()).toBe(true);
+  });
+
+  test('starts a thread in a git repo in its own detached worktree', async () => {
+    const { instance, calls, spawned } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen'],
+      { root: '/focus/dolmen' }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({ ok: true, value: { place } });
+    expect(spawned).toEqual([
+      {
+        args: ['git', 'worktree', 'add', '--detach', '/codex/worktrees/abcd1234/dolmen', 'HEAD'],
+        cwd: '/focus/dolmen',
+      },
+    ]);
+    expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
+  });
+
+  test('does not start a thread when the worktree cannot be created', async () => {
+    const { instance, calls, closed } = adapter({}, ['/focus/dolmen'], {
+      root: '/focus/dolmen',
+      exit: 128,
+    });
+    expect(await instance.start?.(request, user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'Could not create a worktree in /focus/dolmen: fatal: already exists',
+    });
+    expect(calls).toEqual([]);
     expect(closed()).toBe(true);
   });
 

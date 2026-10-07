@@ -32,6 +32,7 @@ import type { OperationCaller, OperationDefinition } from '../../operations/regi
 import { neoFolder } from '../../neo/folder.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurns } from '../../../storage/work-turns.ts';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -123,6 +124,8 @@ function codexDesktopAdapters(
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
       folderExists: existsSync,
+      gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
+      newId: () => crypto.randomUUID(),
       searchChats: (text) => searchChats(text, ['codex']),
     }),
   ];
