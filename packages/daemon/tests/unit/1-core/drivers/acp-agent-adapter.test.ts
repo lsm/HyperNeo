@@ -129,7 +129,7 @@ describe('ACP agent helpers', () => {
     expect(await copilotSessionFolder('../s1', state)).toBeNull();
   });
 
-  test('reuseAcpSessionList reuses one listing for a minute and retries after a failure', async () => {
+  test('reuseAcpSessionList reuses one listing, failed or not, for a minute', async () => {
     let now = 0;
     let calls = 0;
     let fail = true;
@@ -142,12 +142,12 @@ describe('ACP agent helpers', () => {
       () => now
     );
     await expect(list()).rejects.toThrow('agent down');
+    await expect(list()).rejects.toThrow('agent down');
+    expect(calls).toBe(1);
     fail = false;
-    await list();
+    now = 60_000;
+    expect(await list()).toHaveLength(1);
     await list();
     expect(calls).toBe(2);
-    now = 60_000;
-    await list();
-    expect(calls).toBe(3);
   });
 });

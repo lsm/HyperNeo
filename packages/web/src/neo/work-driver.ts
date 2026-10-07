@@ -5,6 +5,8 @@ const apps: Record<string, string> = {
   space: 'a Space',
   'codex-desktop': 'Codex Desktop',
   'claude-desktop': 'Claude Code Desktop',
+  'copilot-cli': 'GitHub Copilot',
+  opencode: 'OpenCode',
 };
 
 export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
@@ -19,6 +21,6 @@ export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
 export function neoWorkDriverLink(driver: NeoWorkDriverReceipt | undefined): string | null {
   const link = driver?.link;
   if (!link || [...link].some((char) => char <= ' ' || char === '\\')) return null;
-  if (/^(codex|claude):\/\//.test(link)) return link;
+  if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
   return !driver.daemon && /^\/(?!\/)/.test(link) ? link : null;
 }

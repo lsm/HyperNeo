@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { AcpClient } from '../acp/acp-client.ts';
+import { buildAcpSafeEnv } from '../acp/acp-command.ts';
 import { isTempCwd } from './claude-feed.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import type { FindQuery, PlaceGroup, WorkAdapter, WorkStatus, WorkSummary } from './types.ts';
@@ -12,7 +13,8 @@ const SESSIONS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
 const LIST_REUSE_MS = 60_000;
 const LIST_PAGES = 10;
-const LIST_TIMEOUT_MS = 20_000;
+const LIST_TIMEOUT_MS = 10_000;
+const LIST_OVERALL_TIMEOUT_MS = 15_000;
 const TITLE_LIMIT = 80;
 const HEAD_BYTES = 8192;
 
@@ -102,38 +104,57 @@ export function acpSessionTitle(title: string | null | undefined): string {
   return flat.slice(0, TITLE_LIMIT) || 'Untitled session';
 }
 
+async function readAcpSessionPages(
+  client: AcpClient,
+  agent: Pick<AcpAgentSpec, 'sessionFolder'>,
+  cwd: string
+): Promise<AcpAgentSession[]> {
+  await client.initialize();
+  if (!client.canListSessions()) return [];
+  const sessions: AcpAgentSession[] = [];
+  let cursor: string | null | undefined;
+  for (let page = 0; page < LIST_PAGES; page++) {
+    const result = await client.listSessions(cursor ? { cursor } : {});
+    for (const session of result.sessions)
+      sessions.push({
+        sessionId: session.sessionId,
+        cwd:
+          (session.cwd === cwd ? await agent.sessionFolder?.(session.sessionId) : null) ??
+          session.cwd,
+        title: acpSessionTitle(session.title),
+        updatedAt: session.updatedAt ? Date.parse(session.updatedAt) || 0 : 0,
+      });
+    cursor = result.nextCursor;
+    if (!cursor) break;
+  }
+  return sessions;
+}
+
 export async function listAcpAgentSessions(
   command: string,
   agent: Pick<AcpAgentSpec, 'args' | 'sessionFolder'>,
-  cwd = homedir()
-) {
+  cwd = homedir(),
+  overallTimeoutMs = LIST_OVERALL_TIMEOUT_MS
+): Promise<AcpAgentSession[]> {
   const client = new AcpClient({
     command,
     args: [...agent.args],
     cwd,
+    env: buildAcpSafeEnv(),
+    replaceEnv: true,
     requestTimeoutMs: LIST_TIMEOUT_MS,
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Listing sessions timed out after ${overallTimeoutMs}ms`)),
+      overallTimeoutMs
+    );
+  });
   try {
-    await client.initialize();
-    if (!client.canListSessions()) return [];
-    const sessions: AcpAgentSession[] = [];
-    let cursor: string | null | undefined;
-    for (let page = 0; page < LIST_PAGES; page++) {
-      const result = await client.listSessions(cursor ? { cursor } : {});
-      for (const session of result.sessions)
-        sessions.push({
-          sessionId: session.sessionId,
-          cwd:
-            (session.cwd === cwd ? await agent.sessionFolder?.(session.sessionId) : null) ??
-            session.cwd,
-          title: acpSessionTitle(session.title),
-          updatedAt: session.updatedAt ? Date.parse(session.updatedAt) || 0 : 0,
-        });
-      cursor = result.nextCursor;
-      if (!cursor) break;
-    }
-    return sessions;
+    return await Promise.race([readAcpSessionPages(client, agent, cwd), timedOut]);
   } finally {
+    clearTimeout(timer);
     await client.close();
   }
 }
@@ -145,12 +166,8 @@ export function reuseAcpSessionList(
   let last: { at: number; sessions: Promise<readonly AcpAgentSession[]> } | null = null;
   return () => {
     if (last && now() - last.at < LIST_REUSE_MS) return last.sessions;
-    const sessions = list().catch((error: unknown) => {
-      last = null;
-      throw error;
-    });
-    last = { at: now(), sessions };
-    return sessions;
+    last = { at: now(), sessions: list() };
+    return last.sessions;
   };
 }
 
