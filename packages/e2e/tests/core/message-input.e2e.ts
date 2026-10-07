@@ -35,7 +35,7 @@ test.describe('Message Input Processing State', () => {
     await plusButton.click();
     await page.waitForTimeout(200);
 
-    const menu = page.locator('div:has(> button:has-text("Auto-scroll"))').first();
+    const menu = page.locator('div:has(> button:has-text("Tools"))').first();
     await expect(menu).toBeVisible();
 
     await page.click('[data-testid="stop-button"]');
@@ -179,7 +179,7 @@ test.describe('Message Input Processing State', () => {
     await plusButton.click();
     await page.waitForTimeout(200);
 
-    const menu = page.locator('div:has(> button:has-text("Auto-scroll"))').first();
+    const menu = page.locator('div:has(> button:has-text("Tools"))').first();
     await expect(menu).toBeVisible();
 
     await page.keyboard.press('Escape');

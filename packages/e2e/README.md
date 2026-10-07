@@ -72,7 +72,6 @@ tests/
 │   ├── message-input.e2e.ts
 │   ├── context-features.e2e.ts
 │   ├── persistence.e2e.ts
-│   ├── scroll-behavior.e2e.ts
 │   └── interrupt-button.e2e.ts
 │
 ├── features/       # Secondary features

@@ -142,12 +142,10 @@ test.describe('Settings Modal - Global Settings', () => {
     await expect(page.locator('select').nth(1)).toBeVisible();
   });
 
-  test('should show Auto Scroll toggle', async ({ page }) => {
+  test('should not show an Auto-scroll toggle', async ({ page }) => {
     await openSettingsModal(page);
 
-    await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
-
-    await expect(page.locator('button[role="switch"]').first()).toBeVisible();
+    await expect(page.getByText('Auto-scroll', { exact: true })).toHaveCount(0);
   });
 
   test('should show Permission Mode selection', async ({ page }) => {
@@ -168,7 +166,6 @@ test.describe('Settings Modal - Global Settings', () => {
     await expect(page.locator('text=Default Model')).toBeVisible();
     await expect(page.locator('text=Permission Mode')).toBeVisible();
     await expect(page.locator('text=Default Thinking Level')).toBeVisible();
-    await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
     await expect(page.getByText('Show Archived Sessions', { exact: true })).toBeVisible();
   });
 
@@ -216,17 +213,16 @@ test.describe('Settings Modal - Global Tools Settings', () => {
     await expect(page.locator('text=Default Model')).toBeVisible();
     await expect(page.locator('text=Permission Mode')).toBeVisible();
     await expect(page.locator('text=Default Thinking Level')).toBeVisible();
-    await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
     await expect(page.getByText('Show Archived Sessions', { exact: true })).toBeVisible();
   });
 
   test('should have toggle switches for boolean settings', async ({ page }) => {
     await openSettingsModal(page);
 
-    const autoScrollToggle = page.locator('button[role="switch"]').first();
-    await expect(autoScrollToggle).toBeVisible();
+    const toggle = page.locator('button[role="switch"]').first();
+    await expect(toggle).toBeVisible();
 
-    await expect(autoScrollToggle).toHaveAttribute('aria-checked');
+    await expect(toggle).toHaveAttribute('aria-checked');
   });
 });
 
@@ -265,19 +261,22 @@ test.describe('Settings Modal - Settings Persistence', () => {
     }
   });
 
-  test('should toggle auto-scroll setting and update', async ({ page }) => {
+  test('should toggle Show Archived Sessions and update', async ({ page }) => {
     await openSettingsModal(page);
 
-    const autoScrollToggle = page.locator('button[role="switch"]').first();
-    const initialChecked = await autoScrollToggle.getAttribute('aria-checked');
+    const archivedToggle = page
+      .locator('div', { has: page.getByText('Show Archived Sessions', { exact: true }) })
+      .locator('button[role="switch"]')
+      .last();
+    const initialChecked = await archivedToggle.getAttribute('aria-checked');
 
-    await autoScrollToggle.click();
+    await archivedToggle.click();
     await page.waitForTimeout(500);
 
-    const newChecked = await autoScrollToggle.getAttribute('aria-checked');
+    const newChecked = await archivedToggle.getAttribute('aria-checked');
     expect(newChecked).not.toBe(initialChecked);
 
-    await autoScrollToggle.click();
+    await archivedToggle.click();
     await page.waitForTimeout(500);
   });
 });
