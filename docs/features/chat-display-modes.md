@@ -120,8 +120,8 @@ needs-you item. A turn starts at a user message and ends at its `result`
 message. Durations come from row timestamps (`mapMessageRow` already sets
 `timestamp`). Tool status comes from the existing maps (`toolResultsMap`,
 `taskNotificationsMap`, `runningToolUseIds`). Neo's `completedConversation` and
-the Space thread's `MinimalThreadFeed` already build turns. This function
-replaces both with one tested implementation.
+the Space thread's `MinimalThreadFeed` build turns their own way from their own
+feeds and were left as they are; only `ChatContainer` uses `buildChatTurns`.
 
 ### 2. Rendering
 
@@ -165,21 +165,14 @@ This keeps a long session's snapshot to tens of KB instead of megabytes.
 Every chat surface mounts `ChatContainer` (`SpaceAgentChat`, `SpaceIsland`,
 `AgentOverlayChat`, `NeoSessionPane`, `MainContent`), so they inherit the modes.
 The Space task thread already offers compact and minimal views from its own
-queries. It adopts the same switch and the same names, and its existing `full`
-variant becomes the third mode. Neo's conversation stays Minimal by design.
+queries and keeps its own single condensed view; it does not take the switch.
+Neo's conversation stays Minimal by design.
 
 ## Rollout
 
-One PR each:
-
-1. `buildChatTurns` with tests, built from fixtures of real sessions; wire Neo
-   and `MinimalThreadFeed` to it.
-2. Mode setting and per-session override, and the header switch, still
-   rendering Full.
-3. Compact rendering: `ToolRow`, `ThinkingStatus`, `ToolRun`, peek.
-4. Minimal rendering: `TurnStatusLine`, show steps.
-5. Server thinning: `messages.bySession.compact` and paging by mode.
-6. Space task thread on the shared switch.
+As shipped: #5790 (mode setting, header switch, Compact), #5792 (server
+thinning), #5798 (`buildChatTurns`, Minimal), #5800 (chat stores follow the
+mode and load full messages on demand).
 
 ## Decisions
 
