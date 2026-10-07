@@ -108,6 +108,7 @@ function mount() {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
     send: vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'fictional-send' }),
+    sendRequestId: vi.fn(() => null),
   });
   seams.useNeo.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model, store };
@@ -137,14 +138,44 @@ describe('NeoLive ordinary edit reload capture', () => {
     expect(read()).toBeNull();
   });
 
+  it('retires the captured version when a failed send is accepted on Retry', async () => {
+    const view = mount();
+    const failed = {
+      requestId: 'retry-1',
+      sessionId: root,
+      text: 'Retry me',
+      images: [],
+      createdAt: '2026-10-07T13:58:00.000Z',
+      state: 'failed' as const,
+      reason: 'Busy',
+    };
+    act(() => {
+      view.model.value = {
+        ...view.model.value,
+        send: vi.fn().mockResolvedValue({ ok: false, reason: 'Busy' }),
+        sendRequestId: vi.fn(() => 'retry-1'),
+        retrySend: vi.fn().mockResolvedValue({ ok: true }),
+      } as never;
+    });
+    type('Retry me');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(view.model.value.send).toHaveBeenCalledTimes(1));
+    expect(read()).toMatchObject({ text: 'Retry me' });
+    act(() => {
+      view.model.value = { ...view.model.value, pendingAsks: [failed] } as never;
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(read()).toBeNull());
+  });
+
   it('retires the captured version only after accepted Send', async () => {
     const view = mount();
     type('Accepted edit');
     expect(read()).toMatchObject({ text: 'Accepted edit' });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-    await waitFor(() => expect(value()).toBe(''));
+    expect(value()).toBe('');
     expect(view.model.value.send).toHaveBeenCalledTimes(1);
-    expect(read()).toBeNull();
+    await waitFor(() => expect(read()).toBeNull());
   });
 
   it.each([false, true])(

@@ -130,6 +130,7 @@ function mount() {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
     send: vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'fictional-send' }),
+    sendRequestId: vi.fn(() => null),
   });
   seams.useNeo.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model, store };
@@ -208,8 +209,10 @@ describe('Neo real composer draft recovery', () => {
       await act(async () => {
         releases.get(order[1])!();
       });
-      await waitFor(() => expect(value()).toBe(''));
-      expect(persisted.get(root)).toBe(concurrent ? 'Concurrent overlapping draft' : '');
+      expect(value()).toBe('');
+      await waitFor(() =>
+        expect(persisted.get(root)).toBe(concurrent ? 'Concurrent overlapping draft' : '')
+      );
       view.unmount();
       mount();
       await waitFor(() => expect(value()).toBe(concurrent ? 'Concurrent overlapping draft' : ''));
@@ -366,7 +369,7 @@ describe('Neo real composer draft recovery', () => {
     type('Edited accepted submission');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
-    expect(value()).toBe('Edited accepted submission');
+    expect(value()).toBe('');
     await act(async () => {
       release();
     });

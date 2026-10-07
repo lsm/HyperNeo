@@ -144,6 +144,7 @@ test('invalid identity stops the pipeline before Space and stop-request lookups'
     getActiveAttempt: () => null,
     getSpace,
     isStopRequested,
+    getTaskWorktreePath: () => null,
   });
   expect(resolve(input)).toBeNull();
   expect(getSpace).not.toHaveBeenCalled();
@@ -160,7 +161,7 @@ test('pure running gate rejects a mismatched Space and returns explicit null rej
   );
   const identity = requireDirectTaskWorkerIdentity(input.sessionId, evidence);
   if ('reason' in identity) throw new Error('Expected persisted identity');
-  const state = { space: spaces.getSpace(spaceId), stopRequested: false };
+  const state = { space: spaces.getSpace(spaceId), stopRequested: false, worktreePath: null };
   expect(requireRunningDirectTaskQuery(input, identity.value, evidence, state)).toEqual({
     value: identity.value,
   });

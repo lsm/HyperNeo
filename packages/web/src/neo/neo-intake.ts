@@ -98,8 +98,65 @@ function sameDraft(submission: Submission, draft: NeoDraft): boolean {
   );
 }
 
-export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
+export type NeoPendingAsk = {
+  requestId: string;
+  sessionId: string;
+  text: string;
+  images: readonly MessageImage[];
+  createdAt: string;
+  state: 'sending' | 'accepted' | 'failed';
+  reason?: string;
+};
+
+export function createNeoIntakeClient(
+  getHub: () => Promise<MessageHub>,
+  onPending: (asks: readonly NeoPendingAsk[]) => void = () => {}
+) {
   const pending = new Map<string, Set<PendingSubmission>>();
+  const shown = new Map<string, NeoPendingAsk>();
+  function show(submission: Submission, state: NeoPendingAsk['state'], reason?: string) {
+    shown.set(submission.requestId, {
+      requestId: submission.requestId,
+      sessionId: submission.sessionId,
+      text: submission.text,
+      images: submission.images ?? [],
+      createdAt: shown.get(submission.requestId)?.createdAt ?? new Date().toISOString(),
+      state,
+      ...(reason ? { reason } : {}),
+    });
+    onPending([...shown.values()]);
+  }
+  function find(requestId: string) {
+    for (const entries of pending.values())
+      for (const entry of entries) if (entry.submission.requestId === requestId) return entry;
+    return undefined;
+  }
+  function fly(entry: PendingSubmission): Promise<IntakeReceipt> {
+    if (entry.flight) return entry.flight;
+    const entries = pending.get(entry.submission.sessionId);
+    show(entry.submission, 'sending');
+    const flight = submitNeoDraft(entry.submission, getHub)
+      .then(
+        (receipt) => {
+          if (receipt.ok) {
+            entries?.delete(entry);
+            if (entries && !entries.size && pending.get(entry.submission.sessionId) === entries)
+              pending.delete(entry.submission.sessionId);
+            show(entry.submission, 'accepted');
+          } else show(entry.submission, 'failed', receipt.reason);
+          return receipt;
+        },
+        (error: unknown) => {
+          show(entry.submission, 'failed', NEO_UNCONFIRMED_RECEIPT);
+          throw error;
+        }
+      )
+      .finally(() => {
+        if (entry.flight === flight) entry.flight = undefined;
+      });
+    entry.flight = flight;
+    return flight;
+  }
   function send(draft: NeoDraft): Promise<IntakeReceipt> {
     const admission = admitNeoDraft(draft);
     if ('reason' in admission) return Promise.resolve(admission.reason);
@@ -116,22 +173,36 @@ export function createNeoIntakeClient(getHub: () => Promise<MessageHub>) {
       entries.add(entry);
       pending.set(draft.sessionId, entries);
     }
-    if (entry.flight) return entry.flight;
-    const current = entry;
-    const flight = submitNeoDraft(current.submission, getHub)
-      .then((receipt) => {
-        if (receipt.ok) {
-          entries.delete(current);
-          if (!entries.size && pending.get(current.submission.sessionId) === entries)
-            pending.delete(current.submission.sessionId);
-        }
-        return receipt;
-      })
-      .finally(() => {
-        if (current.flight === flight) current.flight = undefined;
-      });
-    current.flight = flight;
-    return flight;
+    return fly(entry);
   }
-  return { send };
+  function retry(requestId: string): Promise<IntakeReceipt> | null {
+    const entry = find(requestId);
+    return entry ? fly(entry) : null;
+  }
+  function discard(requestId: string): NeoDraft | null {
+    const entry = find(requestId);
+    if (!entry || entry.flight) return null;
+    pending.get(entry.submission.sessionId)?.delete(entry);
+    shown.delete(requestId);
+    onPending([...shown.values()]);
+    const { sessionId, text, images } = entry.submission;
+    return { sessionId, text, images };
+  }
+  function settle(delivered: ReadonlySet<string>) {
+    let changed = false;
+    for (const [requestId, ask] of shown)
+      if (ask.state === 'accepted' && delivered.has(requestId)) {
+        shown.delete(requestId);
+        changed = true;
+      }
+    if (changed) onPending([...shown.values()]);
+  }
+  function requestIdFor(draft: NeoDraft): string | null {
+    const entries = pending.get(draft.sessionId);
+    return (
+      [...(entries ?? [])].find((item) => sameDraft(item.submission, draft))?.submission
+        .requestId ?? null
+    );
+  }
+  return { send, retry, discard, settle, requestIdFor };
 }

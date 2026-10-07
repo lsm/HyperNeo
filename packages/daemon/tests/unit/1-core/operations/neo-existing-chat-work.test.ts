@@ -221,10 +221,14 @@ describe('Neo existing chat work', () => {
     expect(await invoke('neo.work.propose', input(), source('ask-A'))).toMatchObject({
       value: { work },
     });
-    for (const target of ['ordinary', null])
-      expect(await invoke('neo.work.propose', input('A', target), source('ask-A'))).toMatchObject({
+    expect(await invoke('neo.work.propose', input('A', 'ordinary'), source('ask-A'))).toMatchObject(
+      {
         value: { ok: false, reason: 'This request key belongs to another execution target.' },
-      });
+      }
+    );
+    expect(await invoke('neo.work.propose', input('A', null), source('ask-A'))).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('no standalone scratch session') },
+    });
     expect(await invoke('neo.work.propose', input(), source('ask-B'))).toMatchObject({
       value: { ok: false, reason: 'This request key belongs to another input.' },
     });
@@ -232,20 +236,21 @@ describe('Neo existing chat work', () => {
     expect(jobs('project')).toEqual([]);
   });
 
-  test('implicit MCP scratch proposals reject before storage while explicit choices and local-human compatibility survive', async () => {
+  test('MCP proposals without a target reject before storage while local-human compatibility survives', async () => {
     const { targetSessionId: _target, ...withoutTarget } = input();
-    expect(requireNeoExecutionChoice(withoutTarget, source('ask-A'))).toMatchObject({
-      reason: { ok: false, reason: expect.stringContaining('Choose targetSessionId explicitly') },
-    });
-    expect(requireNeoExecutionChoice({ targetSessionId: null }, source('ask-A'))).toMatchObject({
-      value: { sessionId: 'root' },
-    });
+    for (const choice of [{}, { targetSessionId: null }])
+      expect(requireNeoExecutionChoice(choice, source('ask-A'))).toMatchObject({
+        reason: {
+          ok: false,
+          reason: expect.stringContaining('ask the human where the work belongs'),
+        },
+      });
     expect(
       requireNeoExecutionChoice({ targetSessionId: 'project' }, source('ask-A'))
     ).toMatchObject({ value: { sessionId: 'root' } });
     expect(requireNeoExecutionChoice(withoutTarget, human)).toEqual({ value: human });
     expect(await invoke('neo.work.propose', withoutTarget, source('ask-A'))).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('Choose targetSessionId explicitly') },
+      value: { ok: false, reason: expect.stringContaining('Choose where the work runs') },
     });
     expect(service.repo.listWork()).toEqual([]);
     expect(await invoke('neo.work.propose', withoutTarget)).toMatchObject({

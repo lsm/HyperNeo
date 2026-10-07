@@ -1,3 +1,4 @@
+import { readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 import { availableTaskSlots } from './capacity.ts';
 import { readDirectStartRequest } from './direct-start-request.ts';
 import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
@@ -39,6 +40,7 @@ export interface DirectAttemptActivationEvidence {
   stopRequested: boolean;
   kickoff: MailboxEntry | null;
   dependencies: Array<SpaceTask | null>;
+  worktreePath: string | null;
 }
 
 export function requireDirectActivation(
@@ -49,7 +51,15 @@ export function requireDirectActivation(
   | { value: { attempt: DirectTaskAttempt; task: SpaceTask } }
   | { reason: DirectAttemptActivationResult } {
   const { attempt, active, task, space, session, selected, stopRequested, dependencies } = evidence;
-  const prepared = requireReservedDirectTask(attempt, active, selected, task, space, stopRequested);
+  const prepared = requireReservedDirectTask(
+    attempt,
+    active,
+    selected,
+    task,
+    space,
+    stopRequested,
+    evidence.worktreePath
+  );
   const identity = requireDirectTaskWorkerIdentity(input.sessionId, {
     session,
     task,
@@ -124,6 +134,7 @@ export function activateDirectAttemptAtomically(
           stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
           kickoff: readDirectKickoffIntent(db, input.attemptId),
           dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
+          worktreePath: task ? readDirectTaskWorktreePath(db)(task.spaceId, task.id) : null,
         },
         Date.now()
       );

@@ -1,5 +1,5 @@
 import { matchesDirectPreparedSession } from './prepare-direct-session.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
+import { directTaskWorkspace, readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 import type { Space } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -23,10 +23,12 @@ export interface DirectTaskQueryAdmissionInput {
 export interface DirectTaskQueryLookups extends DirectTaskWorkerLookups {
   getSpace: (spaceId: string) => Space | null;
   isStopRequested: (attemptId: string, sessionId: string) => boolean;
+  getTaskWorktreePath: (spaceId: string, taskId: string) => string | null;
 }
 export interface DirectTaskQueryState {
   space: Space | null;
   stopRequested: boolean;
+  worktreePath: string | null;
 }
 
 export function directQuerySessionId(input: DirectTaskQueryAdmissionInput): string {
@@ -36,11 +38,13 @@ export function directQuerySessionId(input: DirectTaskQueryAdmissionInput): stri
 export function loadDirectTaskQueryState(
   identity: DirectTaskWorkerIdentity,
   getSpace: DirectTaskQueryLookups['getSpace'],
-  isStopRequested: DirectTaskQueryLookups['isStopRequested']
+  isStopRequested: DirectTaskQueryLookups['isStopRequested'],
+  getTaskWorktreePath: DirectTaskQueryLookups['getTaskWorktreePath']
 ): DirectTaskQueryState {
   return {
     space: getSpace(identity.spaceId),
     stopRequested: isStopRequested(identity.attemptId, identity.sessionId),
+    worktreePath: getTaskWorktreePath(identity.spaceId, identity.taskId),
   };
 }
 
@@ -67,7 +71,7 @@ export function requireRunningDirectTaskQuery(
     !matchesDirectPreparedSession(evidence.session, {
       attempt: evidence.attempt,
       task: evidence.task,
-      workspacePath: resolveTaskWorkspace(state.space, evidence.task),
+      workspacePath: directTaskWorkspace(state.space, evidence.task, state.worktreePath),
     }) ||
     state.stopRequested
   )
@@ -85,7 +89,11 @@ export function createDirectTaskQueryAdmission(lookups: DirectTaskQueryLookups) 
       'evidence'
     )
     .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:identity')
-    .pipe(loadDirectTaskQueryState, ['identity', 'getSpace', 'isStopRequested'], 'queryState')
+    .pipe(
+      loadDirectTaskQueryState,
+      ['identity', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
+      'queryState'
+    )
     .pipe(
       requireRunningDirectTaskQuery,
       ['input', 'identity', 'evidence', 'queryState'],
@@ -105,5 +113,6 @@ export function createDatabaseDirectTaskQueryAdmission(db: Database) {
     getActiveAttempt: (id) => attempts.getActive(id),
     getSpace: (id) => spaces.getSpace(id),
     isStopRequested: (attemptId, sessionId) => attempts.isStopRequested(attemptId, sessionId),
+    getTaskWorktreePath: readDirectTaskWorktreePath(db),
   });
 }

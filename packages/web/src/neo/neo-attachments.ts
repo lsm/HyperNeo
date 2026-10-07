@@ -67,6 +67,30 @@ export function attachmentMessage(draft: string, files: NeoAttachment[]) {
   return [draft.trim() || (files.length ? 'Attached files' : ''), ...documents].join('\n\n');
 }
 
+export function restoreNeoImages(sessionId: string, images: readonly MessageImage[]): boolean {
+  if (!images.length) return true;
+  const current = drafts.peek()[sessionId] ?? { files: [], reading: 0 };
+  const size = [
+    ...current.files.map((file) => (file.kind === 'image' ? file.image : null)),
+    ...images,
+  ].reduce((total, image) => total + (image?.data.length ?? 0), 0);
+  if (current.files.length + images.length > 6 || size > 8 * 1024 * 1024) return false;
+  const restored = images.map(
+    (image, index): NeoAttachment => ({
+      id: generateUUID(),
+      name: `Photo ${current.files.length + index + 1}`,
+      size: Math.floor((image.data.length * 3) / 4),
+      kind: 'image',
+      image,
+    })
+  );
+  drafts.value = {
+    ...drafts.peek(),
+    [sessionId]: { ...current, files: [...current.files, ...restored] },
+  };
+  return true;
+}
+
 export function useNeoAttachments(sessionId: string | null) {
   const state = (sessionId && drafts.value[sessionId]) || { files: [], reading: 0 };
   function update(change: (current: typeof state) => typeof state) {

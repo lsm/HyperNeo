@@ -44,6 +44,25 @@ describe('requireNeoExecutionChoice', () => {
       requireNeoExecutionChoice({ work: sendTarget, targetSessionId: 's1' }, neo)
     ).toMatchObject({ reason: { ok: false } });
   });
+
+  test('refuses a start in a place with no folder or Space before a card exists', () => {
+    const chats = { machine: 'laptop', name: 'Chats' };
+    expect(
+      requireNeoExecutionChoice({ work: { verb: 'start', adapter: 'hyperneo', place: chats } }, neo)
+    ).toMatchObject({
+      reason: {
+        ok: false,
+        reason: expect.stringContaining('ask the human where the work belongs'),
+      },
+    });
+    expect(
+      requireNeoExecutionChoice(
+        { work: { verb: 'start', adapter: 'space', place: { ...chats, spaceId: 'sp1' } } },
+        neo
+      )
+    ).toEqual({ value: neo });
+    expect(requireNeoExecutionChoice({ work: startTarget }, neo)).toEqual({ value: neo });
+  });
 });
 
 describe('driverWorkCall', () => {
@@ -526,8 +545,8 @@ describe('neo.work.propose with a drivers target', () => {
         value: { ok: true },
       });
       expect(await propose({ work: sendTarget })).toMatchObject({ value: { ok: true } });
-      expect(await propose({ targetSessionId: null })).toMatchObject({
-        value: { ok: false, reason: 'This request key belongs to another execution target.' },
+      expect(await propose({ targetSessionId: 'other' })).toMatchObject({
+        value: { ok: false },
       });
       expect(await propose({ work: startTarget })).toMatchObject({ value: { ok: false } });
     } finally {
