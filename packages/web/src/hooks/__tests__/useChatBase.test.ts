@@ -932,15 +932,6 @@ describe('useChatBase', () => {
       );
     });
 
-    it('follows by scroll position whatever autoScrollEnabled says', () => {
-      const options = createDefaultOptions({ autoScrollEnabled: false });
-      renderHook(() => useChatBase(options));
-
-      expect(mockUseAutoScroll).toHaveBeenCalledWith(
-        expect.not.objectContaining({ enabled: expect.anything() })
-      );
-    });
-
     it('should pass nearBottomThreshold option to useAutoScroll', () => {
       const options = createDefaultOptions({ nearBottomThreshold: 100 });
       renderHook(() => useChatBase(options));

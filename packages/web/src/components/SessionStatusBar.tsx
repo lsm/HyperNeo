@@ -86,8 +86,6 @@ interface SessionStatusBarProps {
   modelSwitching: boolean;
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
-  autoScroll: boolean;
-  onAutoScrollChange: (enabled: boolean) => void;
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   coordinatorSwitching?: boolean;
@@ -107,8 +105,6 @@ export default function SessionStatusBar({
   modelSwitching,
   modelLoading,
   onModelSwitch,
-  autoScroll,
-  onAutoScrollChange,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
@@ -203,10 +199,6 @@ export default function SessionStatusBar({
     currentModelInfo?.provider,
     currentModelInfo?.thinkingModes
   );
-
-  const handleAutoScrollToggle = useCallback(() => {
-    onAutoScrollChange(!autoScroll);
-  }, [autoScroll, onAutoScrollChange]);
 
   const handleModelSwitch = useCallback(
     async (model: ModelInfo) => {
@@ -461,34 +453,6 @@ export default function SessionStatusBar({
             )}
           </div>
         )}
-
-        <Tooltip
-          content={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
-          position="top"
-          delay={300}
-        >
-          <button
-            class={`${glassControlButtonBaseClass} ${
-              autoScroll ? 'border-2 border-success' : 'border border-line-strong/80'
-            }`}
-            onClick={handleAutoScrollToggle}
-            title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
-          >
-            <svg
-              class={`w-4 h-4 transition-colors ${autoScroll ? 'text-success' : 'text-fg-faint'}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 14l-7 7m0 0l-7-7m7 7V3"
-              />
-            </svg>
-          </button>
-        </Tooltip>
 
         <div class="h-6 w-px bg-fg-faint" />
 

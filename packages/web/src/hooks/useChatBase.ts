@@ -18,8 +18,6 @@ export interface UseChatBaseOptions<T = ChatMessage> {
 
   messages?: Signal<T[]>;
 
-  autoScrollEnabled?: boolean;
-
   nearBottomThreshold?: number;
 
   persistDraft?: boolean;

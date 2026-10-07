@@ -8,8 +8,6 @@ describe('InputActionsMenu', () => {
     isOpen: false,
     onToggle: vi.fn(() => {}),
     onClose: vi.fn(() => {}),
-    autoScroll: true,
-    onAutoScrollChange: vi.fn(() => {}),
     onOpenTools: vi.fn(() => {}),
     onAttachFile: vi.fn(() => {}),
   };
@@ -17,7 +15,6 @@ describe('InputActionsMenu', () => {
   beforeEach(() => {
     defaultProps.onToggle.mockClear();
     defaultProps.onClose.mockClear();
-    defaultProps.onAutoScrollChange.mockClear();
     defaultProps.onOpenTools.mockClear();
     defaultProps.onAttachFile.mockClear();
   });
@@ -79,10 +76,9 @@ describe('InputActionsMenu', () => {
   });
 
   describe('Menu Items', () => {
-    it('should show auto-scroll toggle in menu', () => {
+    it('no longer offers an auto-scroll toggle', () => {
       const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
-      const text = container.textContent;
-      expect(text).toContain('Auto-scroll');
+      expect(container.textContent).not.toContain('Auto-scroll');
     });
 
     it('should show tools option in menu', () => {
@@ -95,47 +91,6 @@ describe('InputActionsMenu', () => {
       const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
       const text = container.textContent;
       expect(text).toContain('Attach image');
-    });
-  });
-
-  describe('Auto-scroll Toggle', () => {
-    it('should show checkmark when auto-scroll is enabled', () => {
-      const { container } = render(
-        <InputActionsMenu {...defaultProps} isOpen={true} autoScroll={true} />
-      );
-      const checkmarks = container.querySelectorAll('svg');
-      expect(checkmarks.length).toBeGreaterThan(3);
-    });
-
-    it('should not show checkmark when auto-scroll is disabled', () => {
-      const { container } = render(
-        <InputActionsMenu {...defaultProps} isOpen={true} autoScroll={false} />
-      );
-      const text = container.textContent;
-      expect(text).toContain('Auto-scroll');
-    });
-
-    it('should call onAutoScrollChange and close menu on click', () => {
-      const onAutoScrollChange = vi.fn(() => {});
-      const onClose = vi.fn(() => {});
-      const { container } = render(
-        <InputActionsMenu
-          {...defaultProps}
-          isOpen={true}
-          autoScroll={true}
-          onAutoScrollChange={onAutoScrollChange}
-          onClose={onClose}
-        />
-      );
-
-      const buttons = container.querySelectorAll('button');
-      const autoScrollButton = Array.from(buttons).find((b) =>
-        b.textContent?.includes('Auto-scroll')
-      );
-      autoScrollButton?.click();
-
-      expect(onAutoScrollChange).toHaveBeenCalledWith(false);
-      expect(onClose).toHaveBeenCalled();
     });
   });
 

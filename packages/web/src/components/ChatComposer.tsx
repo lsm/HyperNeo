@@ -31,7 +31,6 @@ export interface ChatComposerProps {
   availableModels: ModelInfo[];
   modelSwitching: boolean;
   modelLoading: boolean;
-  autoScroll: boolean;
   coordinatorMode: boolean;
   coordinatorSwitching: boolean;
   sandboxEnabled: boolean;
@@ -40,7 +39,6 @@ export interface ChatComposerProps {
   isConnected: boolean;
   isRecovering?: boolean;
   onModelSwitch: (model: ModelInfo) => void;
-  onAutoScrollChange: (enabled: boolean) => void;
   onCoordinatorModeChange: (enabled: boolean) => void;
   onSandboxModeChange: (enabled: boolean) => void;
   onSend: (
@@ -80,7 +78,6 @@ export function ChatComposer({
   availableModels,
   modelSwitching,
   modelLoading,
-  autoScroll,
   coordinatorMode,
   coordinatorSwitching,
   sandboxEnabled,
@@ -89,7 +86,6 @@ export function ChatComposer({
   isConnected,
   isRecovering,
   onModelSwitch,
-  onAutoScrollChange,
   onCoordinatorModeChange,
   onSandboxModeChange,
   onSend,
@@ -136,8 +132,6 @@ export function ChatComposer({
           modelSwitching={modelSwitching}
           modelLoading={modelLoading}
           onModelSwitch={onModelSwitch}
-          autoScroll={autoScroll}
-          onAutoScrollChange={onAutoScrollChange}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}
@@ -183,8 +177,6 @@ export function ChatComposer({
                 coordinatorSwitching ||
                 sandboxSwitching
               }
-              autoScroll={autoScroll}
-              onAutoScrollChange={onAutoScrollChange}
               onOpenTools={onOpenTools}
               agentMentionCandidates={agentMentionCandidates}
               placeholder={inputPlaceholder}

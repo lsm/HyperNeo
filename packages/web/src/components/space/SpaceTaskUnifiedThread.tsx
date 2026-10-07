@@ -33,7 +33,6 @@ interface SpaceTaskUnifiedThreadProps {
   overlayTaskReadonly?: boolean;
   cooldownBannerMembers?: CooldownBannerMember[];
   authErrorBannerMembers?: AuthErrorBannerMember[];
-  autoScrollEnabled?: boolean;
   onShowScrollButtonChange?: (showScrollButton: boolean) => void;
   onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
   onScrollerChange?: (scroller: HTMLDivElement | null) => void;

@@ -19,12 +19,10 @@ interface TaskSessionChatComposerProps {
   canSend: boolean;
   isSending: boolean;
   isProcessing?: boolean;
-  autoScroll: boolean;
   errorMessage?: string | null;
   activityMembers: SpaceTaskActivityMember[];
   defaultAgentModels?: Map<string, string>;
   taskId: string;
-  onAutoScrollChange: (enabled: boolean) => void;
   onTargetSelect: (targetId: string) => void;
   onDraftActiveChange?: (hasDraft: boolean) => void;
   onComposerRef?: Ref<HTMLDivElement>;
@@ -81,12 +79,10 @@ export function TaskSessionChatComposer({
   canSend,
   isSending,
   isProcessing: _isProcessingProp,
-  autoScroll,
   errorMessage,
   activityMembers,
   defaultAgentModels,
   taskId,
-  onAutoScrollChange,
   onTargetSelect,
   onDraftActiveChange,
   onComposerRef,
@@ -242,7 +238,6 @@ export function TaskSessionChatComposer({
         modelSwitching={modelSwitching}
         modelLoading={modelLoading}
         contextUsage={contextInfo ?? undefined}
-        autoScroll={autoScroll}
         coordinatorMode={false}
         coordinatorSwitching={false}
         sandboxEnabled={false}
@@ -250,7 +245,6 @@ export function TaskSessionChatComposer({
         isWaitingForInput={!canSend || isSending}
         isConnected={true}
         onModelSwitch={switchModel}
-        onAutoScrollChange={onAutoScrollChange}
         onCoordinatorModeChange={() => {}}
         onSandboxModeChange={() => {}}
         onSend={handleSend}

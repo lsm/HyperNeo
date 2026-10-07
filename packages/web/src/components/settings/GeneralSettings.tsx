@@ -52,7 +52,6 @@ export function GeneralSettings() {
   const [localPermissionMode, setLocalPermissionMode] = useState<PermissionMode>(
     settings?.permissionMode ?? 'default'
   );
-  const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
   const [localDisplayMode, setLocalDisplayMode] = useState<ChatDisplayMode>(
     resolveChatDisplayMode(undefined, settings?.chatDisplayMode)
   );
@@ -72,7 +71,6 @@ export function GeneralSettings() {
     if (settings) {
       setLocalModel(settings.model ?? 'sonnet');
       setLocalPermissionMode(settings.permissionMode ?? 'default');
-      setLocalAutoScroll(settings.autoScroll ?? true);
       setLocalDisplayMode(resolveChatDisplayMode(undefined, settings.chatDisplayMode));
       setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
@@ -103,19 +101,6 @@ export function GeneralSettings() {
     } catch {
       toast.error('Failed to update permission mode');
       setLocalPermissionMode(settings?.permissionMode ?? 'default');
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  const handleAutoScrollChange = async (value: boolean) => {
-    setLocalAutoScroll(value);
-    setIsUpdating(true);
-    try {
-      await updateGlobalSettings({ autoScroll: value });
-    } catch {
-      toast.error('Failed to update auto-scroll setting');
-      setLocalAutoScroll(settings?.autoScroll ?? true);
     } finally {
       setIsUpdating(false);
     }
@@ -275,14 +260,6 @@ export function GeneralSettings() {
             value={localDisplayMode}
             onChange={handleDisplayModeChange}
             options={CHAT_DISPLAY_MODE_OPTIONS}
-            disabled={isUpdating}
-          />
-        </SettingsRow>
-
-        <SettingsRow label="Auto-scroll" description="Auto-scroll to new messages">
-          <SettingsToggle
-            checked={localAutoScroll}
-            onChange={handleAutoScrollChange}
             disabled={isUpdating}
           />
         </SettingsRow>

@@ -318,7 +318,6 @@ export default function ChatContainer({
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
   const [displayMode, setDisplayMode] = useState<ChatDisplayMode>('compact');
   const [coordinatorMode, setCoordinatorMode] = useState(true);
   const [sandboxEnabled, setSandboxEnabled] = useState(true);
@@ -424,9 +423,6 @@ export default function ChatContainer({
   useSignalEffect(() => {
     const info = store.sessionInfo.value;
     setSession(info);
-    if (info?.config.autoScroll !== undefined) {
-      setAutoScroll(info.config.autoScroll);
-    }
     setDisplayMode(
       resolveChatDisplayMode(info?.config.chatDisplayMode, globalSettings.value?.chatDisplayMode)
     );
@@ -931,21 +927,6 @@ export default function ChatContainer({
       onSendOverride,
       store,
     ]
-  );
-
-  const handleAutoScrollChange = useCallback(
-    async (newAutoScroll: boolean) => {
-      setAutoScroll(newAutoScroll);
-      try {
-        await updateSession(sessionId, {
-          config: { autoScroll: newAutoScroll },
-        });
-      } catch {
-        setAutoScroll(!newAutoScroll);
-        toast.error('Failed to save auto-scroll setting');
-      }
-    },
-    [sessionId]
   );
 
   const [turnExpansion, setTurnExpansion] = useState<Record<string, boolean>>({});
@@ -1490,9 +1471,7 @@ export default function ChatContainer({
           <div ref={messagesEndRef} />
         </div>
 
-        {showScrollButton && (
-          <ScrollToBottomButton onClick={() => scrollToBottom(true)} autoScroll={autoScroll} />
-        )}
+        {showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
       </div>
 
       <ChatComposer
@@ -1515,7 +1494,6 @@ export default function ChatContainer({
         availableModels={availableModels}
         modelSwitching={modelSwitching}
         modelLoading={modelLoading}
-        autoScroll={autoScroll}
         coordinatorMode={coordinatorMode}
         coordinatorSwitching={coordinatorSwitching}
         sandboxEnabled={sandboxEnabled}
@@ -1524,7 +1502,6 @@ export default function ChatContainer({
         isConnected={isConnected}
         isRecovering={isRecovering}
         onModelSwitch={handleModelSwitchWithConfirmation}
-        onAutoScrollChange={handleAutoScrollChange}
         onCoordinatorModeChange={handleCoordinatorModeChange}
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}

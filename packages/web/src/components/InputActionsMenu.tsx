@@ -15,8 +15,6 @@ export interface InputActionsMenuProps {
   modelSwitching?: boolean;
   modelLoading?: boolean;
   onModelSwitch?: (model: ModelInfo) => void;
-  autoScroll: boolean;
-  onAutoScrollChange: (enabled: boolean) => void;
   onOpenTools: () => void;
   onAttachFile: () => void;
   coordinatorMode?: boolean;
@@ -40,8 +38,6 @@ export function InputActionsMenu({
   modelSwitching,
   modelLoading: _modelLoading,
   onModelSwitch: _onModelSwitch,
-  autoScroll,
-  onAutoScrollChange,
   onOpenTools,
   onAttachFile,
   coordinatorMode = false,
@@ -59,11 +55,6 @@ export function InputActionsMenu({
   const buttonRef = externalButtonRef || internalButtonRef;
 
   useClickOutside(menuRef, onClose, isOpen, [buttonRef]);
-
-  const handleAutoScrollToggle = () => {
-    onAutoScrollChange(!autoScroll);
-    onClose();
-  };
 
   const handleCoordinatorToggle = () => {
     onCoordinatorModeChange?.(!coordinatorMode);
@@ -122,44 +113,6 @@ export function InputActionsMenu({
           ref={menuRef}
           class="absolute bottom-full left-0 mb-2 bg-surface-raised border border-line-strong rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50"
         >
-          <button
-            type="button"
-            onClick={handleAutoScrollToggle}
-            class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-fg-soft hover:bg-fill-strong/50"
-          >
-            <span class="flex items-center gap-3">
-              <svg
-                class={cn('w-5 h-5', autoScroll ? 'text-accent' : 'text-fg-muted')}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M19 14l-7 7m0 0l-7-7m7 7V3"
-                />
-              </svg>
-              <span class="text-sm">Auto-scroll</span>
-            </span>
-            {autoScroll && (
-              <svg
-                class="w-4 h-4 text-accent"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2.5}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            )}
-          </button>
-
           {features.coordinator && (
             <button
               type="button"
