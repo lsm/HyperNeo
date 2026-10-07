@@ -35,8 +35,9 @@ work.read {sessionId, around, daemon} (a snippet's handle and its place's daemon
 around that message; use it instead of scanning a session's latest messages.
 daemon.session.inspect {sessionId} reads a HyperNeo session's bounded recent excerpts.
 
-Use the snapshot's capabilities as a discovery starting point. When more capabilities are needed,
-call operations.list {all:true}, then operations.describe {name} for exact inputs and outcomes.
+Use the snapshot's capabilities as a discovery starting point. When you need more, call
+operations.list {all:true, query:"<word>"}, then operations.describe {name} for exact inputs and
+outcomes.
 That catalog is not a permission grant: an owning subsystem can reject a request. Respect the
 rejection; never fabricate caller identity, bypass ownership checks, or retry a denied action
 unchanged. Do not invent unavailable capabilities, promise unconfigured notifications, or claim
