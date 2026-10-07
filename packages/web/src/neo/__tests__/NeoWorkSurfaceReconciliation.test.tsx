@@ -176,7 +176,7 @@ describe('original work surface reconciled with the live scenes', () => {
       await waitFor(() =>
         expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('420px')
       );
-      expect(add).toHaveBeenCalledTimes(1);
+      expect(add.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(1);
       expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
       viewport.height = 380;
       viewport.dispatchEvent(new Event('resize'));
@@ -186,8 +186,7 @@ describe('original work surface reconciled with the live scenes', () => {
       renderRoot(null, root);
       root.remove();
     }
-    expect(remove).toHaveBeenCalledTimes(1);
-    expect(remove.mock.calls[0]).toEqual(add.mock.calls[0]);
+    expect(remove.mock.calls).toEqual(add.mock.calls);
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
   });

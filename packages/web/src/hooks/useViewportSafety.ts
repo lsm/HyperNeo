@@ -37,6 +37,10 @@ function resetDocumentScroll(): void {
   window.scrollTo({ left: 0, top: 0, behavior: 'instant' });
 }
 
+function resetDocumentPan(vv: VisualViewport): void {
+  if (window.scrollY > 0 || vv.offsetTop > 0) resetDocumentScroll();
+}
+
 export function useViewportSafety(): void {
   useEffect(() => {
     const vv = window.visualViewport;
@@ -68,9 +72,11 @@ export function useViewportSafety(): void {
         savedBottomBarHeight =
           document.documentElement.style.getPropertyValue('--bottom-bar-height');
         document.documentElement.style.setProperty('--bottom-bar-height', '0px');
+        resetDocumentPan(vv);
       } else if (kbVisible && keyboardOpen) {
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
         updateKeyboardHeight(vv);
+        resetDocumentPan(vv);
       } else if (!kbVisible && keyboardOpen) {
         keyboardOpen = false;
         document.documentElement.classList.remove('keyboard-open');
@@ -105,11 +111,17 @@ export function useViewportSafety(): void {
       document.documentElement.style.setProperty('--bottom-bar-height', '0px');
     }
 
+    const handleScroll = () => {
+      if (keyboardOpen && !isZoomed(vv)) resetDocumentPan(vv);
+    };
+
     vv.addEventListener('resize', handleResize);
+    vv.addEventListener('scroll', handleScroll);
     window.addEventListener('resize', handleResize);
 
     return () => {
       vv.removeEventListener('resize', handleResize);
+      vv.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
 
       document.documentElement.classList.remove('keyboard-open');
