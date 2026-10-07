@@ -565,7 +565,12 @@ export function NeoLive() {
             enabled={connected && conversationReady}
             reply={
               replyProgress ??
-              (publicConversation && neoAwaitingReply(publicConversation.entries)
+              (connected &&
+              publicConversation &&
+              neo.store.agentState.value.status !== 'waiting_for_input' &&
+              !neo.store.error.value &&
+              !scenes?.attention.some((scene) => scene.label === 'A quick choice') &&
+              neoAwaitingReply(publicConversation.entries)
                 ? 'Neo is working on a reply…'
                 : null)
             }
