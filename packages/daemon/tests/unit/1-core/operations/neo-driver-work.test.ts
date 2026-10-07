@@ -526,8 +526,8 @@ describe('neo.work.propose with a drivers target', () => {
         value: { ok: true },
       });
       expect(await propose({ work: sendTarget })).toMatchObject({ value: { ok: true } });
-      expect(await propose({ targetSessionId: null })).toMatchObject({
-        value: { ok: false, reason: 'This request key belongs to another execution target.' },
+      expect(await propose({ targetSessionId: 'other' })).toMatchObject({
+        value: { ok: false },
       });
       expect(await propose({ work: startTarget })).toMatchObject({ value: { ok: false } });
     } finally {

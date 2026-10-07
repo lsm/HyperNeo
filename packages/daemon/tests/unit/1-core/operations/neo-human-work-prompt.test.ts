@@ -71,10 +71,10 @@ describe('current human work guidance', () => {
 
   test.each(turns)('retains target and publication boundaries in $concernId', (turn) => {
     const prompt = neoPrompt(turn.concernId);
-    expect(prompt).toContain('Every MCP proposal must explicitly choose targetSessionId or work');
-    expect(prompt).toContain(
-      'Without work, targetSessionId null is only for genuinely self-contained scratch work'
-    );
+    expect(prompt).toContain('Every proposal must choose targetSessionId or work');
+    expect(prompt).toContain('there is no standalone scratch session');
+    expect(prompt).toContain('ask the human where the work belongs before proposing');
+    expect(prompt).toContain('Keep one initiative together');
     expect(prompt).toContain(
       'verify the returned targetSessionId matches your intended chat or agent'
     );

@@ -342,7 +342,6 @@ describe('Neo existing Space-agent handoff operation', () => {
     expect(service.repo.getWork(legacy.id)).toEqual(legacy);
   });
   test.each([
-    { ...input, targetSessionId: null },
     { ...input, targetSessionId: 'ordinary' },
     { ...input, targetAgent: { ...agent, spaceId: ' \n' } },
     { ...input, targetAgent: { ...agent, sessionId: 'other' } },
@@ -380,13 +379,13 @@ describe('Neo existing Space-agent handoff operation', () => {
       await proposed({ ...input, targetSessionId: 'ordinary', targetAgent: undefined })
     ).toMatchObject({ targetSessionId: 'ordinary' });
     expect(
-      await proposed({
+      await invoke({
         ...input,
         requestKey: 'scratch',
         targetSessionId: null,
         targetAgent: undefined,
       })
-    ).toMatchObject({ targetSessionId: null });
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
   });
   test('only current live bound root/holder inputs can reserve a native proposal', async () => {
     for (const source of [

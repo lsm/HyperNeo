@@ -246,13 +246,13 @@ export function requireNeoExecutionChoice(
         reason: 'Choose either work (a work.find place or ref) or targetSessionId, not both.',
       },
     };
-  return caller.source !== 'mcp' || input.targetSessionId !== undefined || input.work
+  return caller.source !== 'mcp' || input.targetSessionId || input.work
     ? { value: caller }
     : {
         reason: {
           ok: false,
           reason:
-            'Choose targetSessionId explicitly: use the exact existing chat ID to reuse it, or null for genuinely self-contained scratch work. An instruction mentioning a chat does not bind its execution target. Inspect operations.describe for neo.work.propose, then retry.',
+            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
         },
       };
 }
@@ -836,7 +836,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. MCP proposals must explicitly choose targetSessionId: an exact ordinary project/non-project chat, an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot, or null for self-contained scratch work. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. Local-human RPC retains omitted-target scratch compatibility. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Local-human RPC retains omitted-target compatibility. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

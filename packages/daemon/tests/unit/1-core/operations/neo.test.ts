@@ -5,14 +5,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
-import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
+import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
-import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
-import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
-import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
-import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
-import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import {
@@ -80,14 +75,10 @@ describe('Neo MVP', () => {
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
 
-  beforeEach(() => {
-    sqlite = new SQLite(':memory:');
-    createNeoTables(sqlite);
-    runMigration279(sqlite);
-    runMigration280(sqlite);
-    runMigration282(sqlite);
-    runMigration283(sqlite);
-    runMigration285(sqlite);
+  beforeEach(async () => {
+    const real = await createTestDb();
+    sqlite = real.getDatabase();
+    real.createSession(createTestSession('ordinary'));
     created = [];
     active = new Set();
     jobs = [];
@@ -478,7 +469,7 @@ describe('Neo MVP', () => {
         input: {
           requestKey: 'first',
           concernId: scope,
-          targetSessionId: null,
+          targetSessionId: 'ordinary',
           title: 'Draft an agenda',
           instruction: 'Draft only.',
           originMessageId: 'forged',
@@ -496,6 +487,7 @@ describe('Neo MVP', () => {
             originMessageId: 'ask-A',
             status: 'proposed',
             sessionId: null,
+            targetSessionId: 'ordinary',
           },
         });
         expect(JSON.parse((await handler(first)(request)).content[0].text)).toEqual(receipt);
@@ -529,9 +521,28 @@ describe('Neo MVP', () => {
             ]),
           },
         });
+        expect(
+          JSON.parse(
+            (
+              await handler(next)({
+                ...request,
+                input: { ...request.input, targetSessionId: null },
+              })
+            ).content[0].text
+          )
+        ).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('no standalone scratch session'),
+        });
         await service.start(receipt.work.id);
-        terminal = true;
-        await service.reconcile(receipt.work.id);
+        expect(created).toHaveLength(1);
+        expect(
+          await invoke(
+            'neo.work.report',
+            { id: receipt.work.id, status: 'reported', report: 'Agenda drafted' },
+            { source: 'mcp', sessionId: 'ordinary' }
+          )
+        ).toMatchObject({ value: { accepted: true } });
         if (scope) {
           const review = service.consultations.get(`neo-work:${receipt.work.id}:review`)!;
           expect(review.originMessageId).toBeNull();
@@ -570,7 +581,7 @@ describe('Neo MVP', () => {
           requestKey: 'one',
           title: 'Draft only',
           instruction: 'Draft only',
-          targetSessionId: null,
+          targetSessionId: 'ordinary',
         },
         caller
       )

@@ -219,9 +219,11 @@ describe('hyperneo adapter start and stop', () => {
     expect(handed).toEqual(['new: make it larger']);
   });
 
-  test('start puts work with no folder in the Neo project', async () => {
-    await adapter().start?.({ place: place(), title: 'essay', message: 'write it' }, from);
-    expect(events).toEqual(['create /data/Neo', 'announce new']);
+  test('start refuses work with no folder instead of using the Neo folder', async () => {
+    expect(
+      await adapter().start?.({ place: place(), title: 'essay', message: 'write it' }, from)
+    ).toMatchObject({ ok: false, reason: 'invalid_place' });
+    expect(events).toEqual([]);
   });
 
   test('start refuses a Space, another machine or a missing folder', async () => {
