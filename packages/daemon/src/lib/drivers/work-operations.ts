@@ -35,6 +35,7 @@ export interface WorkVerbDeps {
 
 const MessageSchema = z.string().trim().min(1).max(20_000);
 const REMOTE_START_TIMEOUT_MS = 360_000;
+const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(500).optional();
 
 export const StartWorkInputSchema = z.object({
@@ -168,7 +169,7 @@ export async function sendWork(
   deps: WorkVerbDeps
 ): Promise<SendResult> {
   if ('local' in route) return route.local(input.ref, input.message, { from, caller });
-  return forwardWork(
+  const result = await forwardWork(
     route.daemon,
     'work.send',
     {
@@ -177,8 +178,14 @@ export async function sendWork(
       from: qualifyRemoteOrigin(from, deps.daemonName),
     },
     SendWorkResultSchema,
-    deps.remote
+    deps.remote,
+    REMOTE_SEND_TIMEOUT_MS
   );
+  if (result.ok || result.reason !== 'unreachable') return result;
+  return {
+    ...result,
+    detail: `${result.detail} The message may still have been delivered; check work.status before sending it again.`,
+  };
 }
 
 export function routeStatus(input: RefInput, deps: WorkVerbDeps): Gate<Route<'status'>> {

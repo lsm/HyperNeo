@@ -216,6 +216,23 @@ describe('work verb operations', () => {
     );
   });
 
+  test('gives a remote send time to relay and warns it may have been delivered', async () => {
+    const timeouts: unknown[] = [];
+    const result = await call(
+      'work.send',
+      { ref: { adapter: 'claude-desktop', id: 's1', daemon: 'laptop' }, message: 'm' },
+      async (_daemonId, _name, _input, options) => {
+        timeouts.push(options);
+        throw new Error('Request timeout');
+      }
+    );
+    expect(timeouts).toEqual([{ timeoutMs: 180_000 }]);
+    expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect((result as { detail: string }).detail).toContain(
+      'check work.status before sending it again'
+    );
+  });
+
   test('lets only Neo or the user change work on another daemon', async () => {
     let forwarded = 0;
     const invoke = async () => {
@@ -254,7 +271,8 @@ describe('work verb operations', () => {
     expect(await call('work.send', { ref, message: 'hi' }, async () => ({ nope: 1 }))).toEqual({
       ok: false,
       reason: 'unreachable',
-      detail: 'laptop sent an unusable reply.',
+      detail:
+        'laptop sent an unusable reply. The message may still have been delivered; check work.status before sending it again.',
     });
   });
 });
