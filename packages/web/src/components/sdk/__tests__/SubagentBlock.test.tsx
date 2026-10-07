@@ -1,8 +1,9 @@
 // @ts-nocheck
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SubagentBlock } from '../SubagentBlock';
+import { MessageHydrationContext } from '../chat-display-mode';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import type { UUID } from 'crypto';
@@ -1229,5 +1230,35 @@ describe('SubagentBlock', () => {
 
       expect(container.textContent).toContain('Read');
     });
+  });
+});
+
+describe('SubagentBlock loading thinned messages', () => {
+  it('loads its own messages on open and a nested card on expand', () => {
+    const hydrate = vi.fn();
+    const nested = createNestedToolUseMessage();
+    const toolResultsMap = new Map([
+      [
+        'toolu_nested123',
+        { content: { type: 'tool_result', content: '' }, messageUuid: 'nested-result' },
+      ],
+    ]);
+    const { getAllByRole } = render(
+      <MessageHydrationContext.Provider value={hydrate}>
+        <SubagentBlock
+          assistantUuid="parent-assistant"
+          messageUuid="parent-result"
+          input={createAgentInput('Explore', 'Find files', 'Search')}
+          toolId="toolu_task123"
+          nestedMessages={[nested]}
+          toolResultsMap={toolResultsMap}
+        />
+      </MessageHydrationContext.Provider>
+    );
+    fireEvent.click(getAllByRole('button')[0]);
+    expect(hydrate).toHaveBeenCalledWith(['parent-assistant', 'parent-result', nested.uuid]);
+
+    fireEvent.click(getAllByRole('button')[1]);
+    expect(hydrate).toHaveBeenLastCalledWith([nested.uuid, 'nested-result']);
   });
 });

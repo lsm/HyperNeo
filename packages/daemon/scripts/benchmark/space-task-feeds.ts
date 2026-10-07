@@ -9,7 +9,6 @@ const FEEDS = [
   { name: 'spaceTaskActivity.byTask', shown: 'task thread' },
   { name: 'spaceTaskActiveTurn.byTask', shown: 'task thread' },
   { name: 'taskMilestones.byTask', shown: 'Timeline tab' },
-  { name: 'actorMessages.byTask', shown: 'not mounted' },
 ];
 const WRITES = Number(process.env.BENCH_WRITES ?? 5);
 const SETTLE_MS = 400;

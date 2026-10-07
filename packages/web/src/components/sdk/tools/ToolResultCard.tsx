@@ -123,6 +123,7 @@ function ToolResultCardBody({
   sessionId,
   isOutputRemoved = false,
   disableExpand = false,
+  onExpand,
   className,
   isRunning = false,
   taskNotification,
@@ -304,7 +305,11 @@ function ToolResultCardBody({
       )}
     >
       <button
-        onClick={() => !disableExpand && setIsExpanded(!isExpanded)}
+        onClick={() => {
+          if (disableExpand) return;
+          if (!isExpanded) onExpand?.();
+          setIsExpanded(!isExpanded);
+        }}
         class={cn(
           'w-full flex items-center justify-between p-3 transition-colors',
           'hover:bg-opacity-80 dark:hover:bg-opacity-80'

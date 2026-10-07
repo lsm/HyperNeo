@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
-const TASK_MESSAGE_FLAG = {
+export const TASK_MESSAGE_FLAG = {
   text: 1,
   thinking: 2,
   toolUse: 4,
@@ -67,11 +67,13 @@ const TASK_MESSAGE_ROW_SELECT = `SELECT
     ${MESSAGE_FLAGS}
   FROM sdk_messages sm`;
 
-const UPSERT_ROW = `INSERT OR REPLACE INTO task_message_rows (
+const INSERT_ROWS = `INSERT OR REPLACE INTO task_message_rows (
     id, task_id, session_id, seq, created_at, message_type, message_subtype, json_subtype,
     send_status, is_renderable, is_terminal, parent_tool_use_id, turn_index, sdk_uuid, flags
   )
-  ${TASK_MESSAGE_ROW_SELECT}
+  ${TASK_MESSAGE_ROW_SELECT}`;
+
+const UPSERT_ROW = `${INSERT_ROWS}
   WHERE sm.rowid = NEW.rowid AND sm.task_id IS NOT NULL;`;
 
 export function createTaskMessageRows(db: BunDatabase): void {
@@ -117,4 +119,16 @@ export function createTaskMessageRows(db: BunDatabase): void {
       DELETE FROM task_message_rows WHERE id = OLD.id;
     END
   `);
+}
+
+export function ensureTaskMessageRows(db: BunDatabase, taskId: string): void {
+  const counts = db
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM sdk_messages WHERE task_id = ?1) AS messages,
+        (SELECT COUNT(*) FROM task_message_rows WHERE task_id = ?1) AS projected`
+    )
+    .get(taskId) as { messages: number; projected: number };
+  if (counts.messages === counts.projected) return;
+  db.prepare(`${INSERT_ROWS} WHERE sm.task_id = ?`).run(taskId);
 }

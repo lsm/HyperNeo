@@ -29,6 +29,7 @@ import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import {
   ChatDisplayModeContext,
+  MessageHydrationContext,
   resolveChatDisplayMode,
 } from '../components/sdk/chat-display-mode.ts';
 import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
@@ -967,6 +968,16 @@ export default function ChatContainer({
     };
   };
 
+  useEffect(() => {
+    store.setMessageDetail(displayMode);
+  }, [store, displayMode]);
+  const hydrateMessages = useCallback(
+    (uuids: string[]) => {
+      store.hydrateMessages(uuids).catch(() => {});
+    },
+    [store]
+  );
+
   const handleDisplayModeChange = useCallback(
     async (mode: ChatDisplayMode) => {
       const previous = displayMode;
@@ -1413,64 +1424,66 @@ export default function ChatContainer({
                 </div>
               )}
 
-              {messages.map((msg, idx) => {
-                const turn = turnAt?.[idx];
-                const view = turn ? turnView(turn) : null;
-                return (
-                  <ChatDisplayModeContext.Provider
-                    key={msg.uuid || `msg-${idx}`}
-                    value={view ? (view.expanded ? 'compact' : 'minimal') : displayMode}
-                  >
-                    <div
-                      data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
-                      class="scroll-mt-20"
+              <MessageHydrationContext.Provider value={hydrateMessages}>
+                {messages.map((msg, idx) => {
+                  const turn = turnAt?.[idx];
+                  const view = turn ? turnView(turn) : null;
+                  return (
+                    <ChatDisplayModeContext.Provider
+                      key={msg.uuid || `msg-${idx}`}
+                      value={view ? (view.expanded ? 'compact' : 'minimal') : displayMode}
                     >
-                      <SDKMessageRenderer
-                        message={msg}
-                        toolResultsMap={maps.toolResultsMap}
-                        toolInputsMap={maps.toolInputsMap}
-                        subagentMessagesMap={maps.subagentMessagesMap}
-                        taskNotificationsMap={maps.taskNotificationsMap}
-                        taskProgressMap={maps.taskProgressMap}
-                        foldableToolUseIds={maps.foldableToolUseIds}
-                        completedHookUuids={maps.completedHookUuids}
-                        runningToolUseIds={
-                          msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined
-                        }
-                        replacementStatusMap={maps.replacementStatusMap}
-                        sessionInfo={
-                          msg.uuid
-                            ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
-                            : undefined
-                        }
-                        sessionId={sessionId}
-                        resolvedQuestions={allResolvedQuestions}
-                        pendingQuestion={isRecovering ? null : pendingQuestion}
-                        onRewind={isRecovering ? undefined : handleRewindClick}
-                        rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
-                        onQuestionResolved={handleQuestionResolved}
-                        replacementStatus={
-                          msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
-                        }
-                        isLiveTail={idx === messages.length - 1}
-                      />
-                    </div>
-                    {view && turnAt?.[idx + 1] !== turn && (
-                      <TurnStatusLine
-                        turn={view.turn}
-                        currentAction={turnAction}
-                        expanded={view.expanded}
-                        onToggle={() =>
-                          setTurnExpansion((previous) => ({
-                            ...previous,
-                            [view.turn.key]: !view.expanded,
-                          }))
-                        }
-                      />
-                    )}
-                  </ChatDisplayModeContext.Provider>
-                );
-              })}
+                      <div
+                        data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
+                        class="scroll-mt-20"
+                      >
+                        <SDKMessageRenderer
+                          message={msg}
+                          toolResultsMap={maps.toolResultsMap}
+                          toolInputsMap={maps.toolInputsMap}
+                          subagentMessagesMap={maps.subagentMessagesMap}
+                          taskNotificationsMap={maps.taskNotificationsMap}
+                          taskProgressMap={maps.taskProgressMap}
+                          foldableToolUseIds={maps.foldableToolUseIds}
+                          completedHookUuids={maps.completedHookUuids}
+                          runningToolUseIds={
+                            msg.uuid ? maps.runningToolUseIdsByMessageUuid.get(msg.uuid) : undefined
+                          }
+                          replacementStatusMap={maps.replacementStatusMap}
+                          sessionInfo={
+                            msg.uuid
+                              ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+                              : undefined
+                          }
+                          sessionId={sessionId}
+                          resolvedQuestions={allResolvedQuestions}
+                          pendingQuestion={isRecovering ? null : pendingQuestion}
+                          onRewind={isRecovering ? undefined : handleRewindClick}
+                          rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
+                          onQuestionResolved={handleQuestionResolved}
+                          replacementStatus={
+                            msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
+                          }
+                          isLiveTail={idx === messages.length - 1}
+                        />
+                      </div>
+                      {view && turnAt?.[idx + 1] !== turn && (
+                        <TurnStatusLine
+                          turn={view.turn}
+                          currentAction={turnAction}
+                          expanded={view.expanded}
+                          onToggle={() =>
+                            setTurnExpansion((previous) => ({
+                              ...previous,
+                              [view.turn.key]: !view.expanded,
+                            }))
+                          }
+                        />
+                      )}
+                    </ChatDisplayModeContext.Provider>
+                  );
+                })}
+              </MessageHydrationContext.Provider>
             </ContentContainer>
           )}
 

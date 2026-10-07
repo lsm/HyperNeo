@@ -338,7 +338,10 @@ export function isThinkingBlock(
 export function hasRenderableThinking(
   block: ThinkingContentBlock,
 ): boolean {
-  return typeof block.thinking === "string" && block.thinking.trim().length > 0;
+  return (
+    (typeof block.thinking === "string" && block.thinking.trim().length > 0) ||
+    Number((block as { thinking_chars?: unknown }).thinking_chars) > 0
+  );
 }
 
 /** @public */

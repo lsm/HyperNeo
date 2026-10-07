@@ -821,6 +821,21 @@ describe('Message RPC Handlers', () => {
         await expect(
           handler!({ sessionId: 'session-123', messageUuid: 'missing' }, {})
         ).rejects.toThrow('Message not found');
+        const result = {
+          type: 'user',
+          uuid: 'u2',
+          message: {
+            content: [{ type: 'tool_result', tool_use_id: 't', content: 'y'.repeat(20_000) }],
+          },
+        };
+        sqlite
+          .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
+          .run('session-123', 'u2', JSON.stringify(result));
+        const capped = (await handler!(
+          { sessionId: 'session-123', messageUuid: 'u2', capped: true },
+          {}
+        )) as { sdkMessage: { message: { content: Array<{ content: string }> } } };
+        expect(capped.sdkMessage.message.content[0].content.length).toBe(16 * 1024);
       } finally {
         sqlite.close();
       }

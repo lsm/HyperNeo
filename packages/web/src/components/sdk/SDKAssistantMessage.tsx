@@ -26,7 +26,7 @@ import { Tooltip } from '../ui/Tooltip.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
-import { useChatDisplayMode } from './chat-display-mode.ts';
+import { useChatDisplayMode, useHydrateMessages } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
@@ -69,6 +69,7 @@ export function SDKAssistantMessage({
   const contentBlocks = apiMessage.content as ContentBlock[];
   const hasError = 'error' in message && message.error !== undefined;
   const minimal = useChatDisplayMode() === 'minimal';
+  const hydrate = useHydrateMessages();
 
   const getTextContent = (): string => {
     return contentBlocks
@@ -225,6 +226,7 @@ export function SDKAssistantMessage({
         return (
           <ToolUseBlock
             key={`tool-${idx}`}
+            assistantUuid={message.uuid}
             block={block}
             toolResult={toolResult}
             nestedMessages={nestedMessages}
@@ -250,6 +252,8 @@ export function SDKAssistantMessage({
           content={block.thinking}
           isRunning={!!isRunning}
           estimatedTokens={estimatedThinkingTokens}
+          thinnedChars={(block as { thinking_chars?: number }).thinking_chars}
+          onOpen={() => message.uuid && hydrate([message.uuid])}
         />
       ))}
 
@@ -281,6 +285,7 @@ function subagentReplyText(output: unknown): string {
 }
 
 function ToolUseBlock({
+  assistantUuid,
   block,
   toolResult,
   nestedMessages,
@@ -297,6 +302,7 @@ function ToolUseBlock({
   isRunning,
   flattenSubagentTools = false,
 }: {
+  assistantUuid?: string;
   block: Extract<ContentBlock, { type: 'tool_use' }>;
   toolResult?: unknown;
   nestedMessages?: SDKMessage[];
@@ -331,9 +337,16 @@ function ToolUseBlock({
   const sessionId = resultData?.sessionId || propSessionId;
   const isOutputRemoved = resultData?.isOutputRemoved || false;
   const minimal = useChatDisplayMode() === 'minimal';
+  const hydrate = useHydrateMessages();
+  const loadFull = () =>
+    hydrate([assistantUuid, messageUuid].filter((uuid): uuid is string => !!uuid));
+  const isSubagent = block.name === 'Task' || block.name === 'Agent';
+  const reply = minimal && isSubagent ? subagentReplyText(content).trim() : '';
+  useEffect(() => {
+    if (minimal && isSubagent && !reply && messageUuid) hydrate([messageUuid]);
+  }, [minimal, isSubagent, reply, messageUuid, hydrate]);
 
-  if (minimal && (block.name === 'Task' || block.name === 'Agent')) {
-    const reply = subagentReplyText(content).trim();
+  if (minimal && isSubagent) {
     if (!reply) return null;
     return (
       <div class="border-l-2 border-line pl-3" data-testid="subagent-reply">
@@ -348,6 +361,7 @@ function ToolUseBlock({
   if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
     return (
       <SubagentBlock
+        assistantUuid={assistantUuid}
         input={block.input as unknown as AgentInput}
         output={content}
         isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
@@ -416,6 +430,7 @@ function ToolUseBlock({
             taskNotification={taskNotification}
             taskProgress={taskProgress}
             isRunning={isRunning}
+            onExpand={loadFull}
           />
         </div>
       );
@@ -478,6 +493,7 @@ function ToolUseBlock({
       taskNotification={taskNotification}
       taskProgress={taskProgress}
       isRunning={isRunning}
+      onExpand={loadFull}
     />
   );
 }

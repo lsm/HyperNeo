@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
 import { ThinkingBlock } from '../ThinkingBlock';
@@ -334,5 +334,20 @@ describe('ThinkingBlock in compact display mode', () => {
     expect(container.textContent).not.toContain('Weighing both options');
     fireEvent.click(getByRole('button'));
     expect(container.textContent).toContain('Weighing both options');
+  });
+});
+
+describe('ThinkingBlock with thinned content', () => {
+  it('shows its size, asks for the full text on open, and waits for it', () => {
+    const onOpen = vi.fn();
+    const { container, getByRole } = render(
+      <ChatDisplayModeContext.Provider value="compact">
+        <ThinkingBlock content="" thinnedChars={1200} onOpen={onOpen} />
+      </ChatDisplayModeContext.Provider>
+    );
+    expect(container.textContent).toContain('1,200 characters');
+    fireEvent.click(getByRole('button'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Loading…');
   });
 });

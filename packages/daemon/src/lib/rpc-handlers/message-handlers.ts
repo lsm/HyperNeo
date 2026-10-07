@@ -164,9 +164,14 @@ export function setupMessageHandlers(
   });
 
   messageHub.onRequest('message.sdkMessage', async (data) => {
-    const { sessionId: targetSessionId, messageUuid } = data as {
+    const {
+      sessionId: targetSessionId,
+      messageUuid,
+      capped,
+    } = data as {
       sessionId: string;
       messageUuid: string;
+      capped?: boolean;
     };
     if (!targetSessionId || !messageUuid) throw new Error('sessionId and messageUuid are required');
     if (!db) throw new Error('Message store unavailable');
@@ -176,7 +181,7 @@ export function setupMessageHandlers(
       messageUuid
     );
     if (!sdkMessage) throw new Error('Message not found');
-    return { sdkMessage };
+    return { sdkMessage: capped ? capSdkMessage(sdkMessage) : sdkMessage };
   });
 
   messageHub.onRequest('message.count', async (data) => {

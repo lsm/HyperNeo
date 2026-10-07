@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
-import { ChatDisplayModeContext } from '../chat-display-mode';
+import { ChatDisplayModeContext, MessageHydrationContext } from '../chat-display-mode';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 import type { PendingUserQuestion, ResolvedQuestion } from '@hyperneo/shared';
@@ -1123,6 +1123,24 @@ describe('SDKAssistantMessage in minimal display mode', () => {
   it('renders nothing for a tool-only message', () => {
     const { container } = inMinimal(<SDKAssistantMessage message={createToolUseMessage()} />);
     expect(container.innerHTML).toBe('');
+  });
+
+  it('loads a thinned subagent result to show its reply', () => {
+    const hydrate = vi.fn();
+    const toolResultsMap = new Map([
+      [
+        'toolu_task123',
+        { content: { type: 'tool_result', content: '', output_thinned: true }, messageUuid: 'r-1' },
+      ],
+    ]);
+    render(
+      <MessageHydrationContext.Provider value={hydrate}>
+        <ChatDisplayModeContext.Provider value="minimal">
+          <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
+        </ChatDisplayModeContext.Provider>
+      </MessageHydrationContext.Provider>
+    );
+    expect(hydrate).toHaveBeenCalledWith(['r-1']);
   });
 
   it("shows a subagent's final reply under its description", async () => {
