@@ -93,6 +93,15 @@ export function promoteNeoQuestionScenes(
   return scenes.map((scene) => promoteNeoQuestionScene(scene, questions.get(scene.ref.id)));
 }
 
+const driverSceneGroups: Partial<
+  Record<NonNullable<NeoWorkDriverReceipt['status']>, NeoSceneGroup>
+> = {
+  needs_you: 'attention',
+  done: 'outcomes',
+  failed: 'outcomes',
+  stopped: 'outcomes',
+};
+
 export function describeNeoDriverScenes(
   scenes: readonly NeoScene[],
   drivers: NeoSceneDrivers
@@ -102,7 +111,7 @@ export function describeNeoDriverScenes(
     if (scene.receipt.kind !== 'work' || scene.receipt.status !== 'queued' || !driver) return scene;
     return {
       ...scene,
-      group: driver.status === 'needs_you' ? 'attention' : scene.group,
+      group: (driver.status && driverSceneGroups[driver.status]) || scene.group,
       label: neoWorkDriverLabel(driver),
     };
   });
