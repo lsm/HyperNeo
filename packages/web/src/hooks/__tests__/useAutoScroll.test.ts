@@ -3,7 +3,7 @@
 import { renderHook, act } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 
-import { useAutoScroll } from '../useAutoScroll.ts';
+import { followAfterScroll, useAutoScroll } from '../useAutoScroll.ts';
 
 function createMockRefs() {
   const scrollIntoViewMock = vi.fn(function (this: HTMLDivElement, options?: ScrollToOptions) {
@@ -392,8 +392,10 @@ describe('useAutoScroll', () => {
       const baselineScroll = containerRef.current!.scrollTop;
 
       rerender({ messageCount: 55, loadingOlder: true });
+      containerRef.current!.scrollHeight = 1500;
 
       rerender({ messageCount: 55, loadingOlder: false });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
       expect(containerRef.current!.scrollTop).toBe(baselineScroll);
     });
 
@@ -418,8 +420,10 @@ describe('useAutoScroll', () => {
       const baselineScroll = containerRef.current!.scrollTop;
 
       rerender({ messageCount: 200, loadingOlder: true });
+      containerRef.current!.scrollHeight = 1500;
 
       rerender({ messageCount: 250, loadingOlder: false });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
       expect(containerRef.current!.scrollTop).toBe(baselineScroll);
     });
 
@@ -1023,157 +1027,207 @@ describe('useAutoScroll', () => {
     });
   });
 
-  describe('bounded settle-scroll (refresh / cold-mount)', () => {
-    it('should keep re-pinning to the bottom across the settle window as content grows', () => {
-      vi.useFakeTimers();
+  describe('following by scroll position', () => {
+    it('lands once while paused without arming the follow for later', () => {
       const { containerRef, endRef } = createMockRefs();
-
-      const { rerender } = renderHook(
-        ({ messageCount, isInitialLoad }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad,
-          }),
-        { initialProps: { messageCount: 0, isInitialLoad: true } }
-      );
-
-      rerender({ messageCount: 5, isInitialLoad: true });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      containerRef.current!.scrollHeight = 1500;
-
-      act(() => {
-        vi.advanceTimersByTime(500);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1500);
-
-      containerRef.current!.scrollHeight = 9999;
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1500);
-      vi.useRealTimers();
-    });
-
-    it('should cancel the settle when the user scrolls away during the window', () => {
-      vi.useFakeTimers();
-      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
-
-      const { rerender } = renderHook(
-        ({ messageCount }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad: false,
-          }),
-        { initialProps: { messageCount: 0 } }
-      );
-
-      rerender({ messageCount: 5 });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      const wheelCalls = addEventListenerMock.mock.calls.filter((c) => c[0] === 'wheel');
-      expect(wheelCalls.length).toBeGreaterThan(0);
-      const wheelHandler = wheelCalls[wheelCalls.length - 1][1] as () => void;
-      act(() => {
-        wheelHandler();
-      });
-
-      containerRef.current!.scrollHeight = 1500;
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-      vi.useRealTimers();
-    });
-
-    it('should cancel an in-flight settle when enabled flips false mid-settle', () => {
-      vi.useFakeTimers();
-      const { containerRef, endRef } = createMockRefs();
-
       const { rerender } = renderHook(
         ({ messageCount, enabled }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled,
-            messageCount,
-            isInitialLoad: false,
-          }),
-        { initialProps: { messageCount: 0, enabled: true } }
+          useAutoScroll({ containerRef, endRef, messageCount, enabled }),
+        { initialProps: { messageCount: 0, enabled: false } }
       );
-
-      rerender({ messageCount: 5, enabled: true });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      containerRef.current!.scrollHeight = 1500;
       rerender({ messageCount: 5, enabled: false });
-
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
       expect(containerRef.current!.scrollTop).toBe(1000);
-      vi.useRealTimers();
+      containerRef.current!.scrollTop = 200;
+      rerender({ messageCount: 5, enabled: true });
+      expect(containerRef.current!.scrollTop).toBe(200);
     });
 
-    it('should cancel an in-flight settle when loadingOlder flips true mid-settle', () => {
-      vi.useFakeTimers();
+    it('keeps a deep link paused from an empty mount through the jump', () => {
       const { containerRef, endRef } = createMockRefs();
-
+      containerRef.current!.scrollTop = 500;
       const { rerender } = renderHook(
-        ({ messageCount, loadingOlder }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad: false,
-            loadingOlder,
-          }),
-        { initialProps: { messageCount: 0, loadingOlder: false } }
+        ({ messageCount, enabled, isInitialLoad }) =>
+          useAutoScroll({ containerRef, endRef, messageCount, enabled, isInitialLoad }),
+        { initialProps: { messageCount: 0, enabled: false, isInitialLoad: true } }
       );
+      rerender({ messageCount: 5, enabled: false, isInitialLoad: true });
+      containerRef.current!.scrollTop = 100;
+      rerender({ messageCount: 5, enabled: true, isInitialLoad: false });
+      rerender({ messageCount: 6, enabled: true, isInitialLoad: false });
+      expect(containerRef.current!.scrollTop).toBe(100);
+    });
 
-      rerender({ messageCount: 5, loadingOlder: false });
-      expect(containerRef.current!.scrollTop).toBe(1000);
+    it('does not snap back to the bottom when a search jump ends', () => {
+      const { containerRef, endRef } = createMockRefs();
+      const { rerender } = renderHook(
+        ({ enabled }) => useAutoScroll({ containerRef, endRef, messageCount: 5, enabled }),
+        { initialProps: { enabled: true } }
+      );
+      rerender({ enabled: false });
+      containerRef.current!.scrollTop = 200;
+      rerender({ enabled: true });
+      expect(containerRef.current!.scrollTop).toBe(200);
+    });
 
-      rerender({ messageCount: 5, loadingOlder: true });
+    it('shows the scroll button when far from the bottom, even while paused', () => {
+      const { containerRef, endRef } = createMockRefs();
+      const { result } = renderHook(() =>
+        useAutoScroll({ containerRef, endRef, messageCount: 0, enabled: false })
+      );
+      expect(result.current.showScrollButton).toBe(true);
+    });
 
-      containerRef.current!.scrollHeight = 1500;
-      rerender({ messageCount: 5, loadingOlder: false });
-
+    it('keeps a scrolled-up reader in place when content reloads', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      const { rerender } = renderHook(
+        ({ messageCount }) => useAutoScroll({ containerRef, endRef, messageCount }),
+        { initialProps: { messageCount: 5 } }
+      );
+      containerRef.current!.scrollTop = 100;
       act(() => {
-        vi.advanceTimersByTime(600);
+        handler(addEventListenerMock, 'wheel')();
+        handler(addEventListenerMock, 'scroll')();
       });
-      expect(containerRef.current!.scrollTop).toBe(1000);
+      rerender({ messageCount: 0 });
+      rerender({ messageCount: 6 });
+      expect(containerRef.current!.scrollTop).toBe(100);
+    });
+
+    it('keeps waiting for a scroll container that mounts late', async () => {
+      vi.useFakeTimers();
+      const { containerRef: mounted, endRef, addEventListenerMock } = createMockRefs();
+      const containerRef = { current: null } as RefObject<HTMLDivElement>;
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 0 }));
+      await vi.advanceTimersByTimeAsync(200);
+      containerRef.current = mounted.current;
+      await vi.advanceTimersByTimeAsync(50);
+      expect(addEventListenerMock).toHaveBeenCalledWith('scroll', expect.any(Function), {
+        passive: true,
+      });
       vi.useRealTimers();
     });
 
-    it('should register wheel/touch/keydown gesture listeners to cancel the settle', () => {
+    it('keeps following when layout, not the user, moves the position up', () => {
       const { containerRef, endRef, addEventListenerMock } = createMockRefs();
-
-      renderHook(() =>
-        useAutoScroll({
-          containerRef,
-          endRef,
-          enabled: true,
-          messageCount: 5,
-        })
-      );
-
-      const registered = addEventListenerMock.mock.calls.map((c) => c[0]);
-      expect(registered).toEqual(
-        expect.arrayContaining(['wheel', 'touchstart', 'touchmove', 'keydown'])
-      );
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 600;
+      container.scrollHeight = 1300;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(1300);
     });
+
+    it('stops following on an unmarked scroll up with no layout change, like a scrollbar drag', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 400;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        container.scrollHeight = 1200;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(400);
+    });
+
+    it('does not resume following from a resize that leaves the size unchanged', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 350;
+      act(() => {
+        handler(addEventListenerMock, 'wheel')();
+        handler(addEventListenerMock, 'scroll')();
+      });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
+      act(() => {
+        container.scrollHeight = 1200;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(350);
+    });
+
+    it('keeps a smooth scroll to the bottom gliding while content grows', () => {
+      const { containerRef, endRef, scrollToMock } = createMockRefs();
+      const { result } = renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 0;
+      scrollToMock.mockImplementation(() => {});
+      act(() => result.current.scrollToBottom(true));
+      act(() => {
+        container.scrollHeight = 1500;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(scrollToMock).toHaveBeenLastCalledWith({ top: 1500, behavior: 'smooth' });
+      expect(container.scrollTop).toBe(0);
+    });
+
+    it('stops following when an unmarked scroll jumps far up, like find-in-page', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      act(() => {
+        container.scrollHeight = 2000;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      container.scrollTop = 100;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        container.scrollHeight = 2400;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(100);
+    });
+
+    function handler(addEventListenerMock: ReturnType<typeof vi.fn>, event: string) {
+      const call = addEventListenerMock.mock.calls.findLast(([type]) => type === event);
+      const listener = call?.[1] as (event: Event) => void;
+      return () => listener(new Event(event));
+    }
+    const scrollHandler = (mock: ReturnType<typeof vi.fn>) => handler(mock, 'scroll');
+
+    it('stops following when the user scrolls up a little, and resumes at the bottom', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      const grow = (height: number) =>
+        act(() => {
+          container.scrollHeight = height;
+          resizeObserverInstances.at(-1)!.triggerResize();
+        });
+
+      grow(1200);
+      expect(container.scrollTop).toBe(1200);
+
+      container.scrollTop = 1200 - 500 - 50;
+      act(() => {
+        handler(addEventListenerMock, 'wheel')();
+        scrollHandler(addEventListenerMock)();
+      });
+      grow(1400);
+      expect(container.scrollTop).toBe(650);
+
+      container.scrollTop = 1400 - 500;
+      act(() => scrollHandler(addEventListenerMock)());
+      grow(1600);
+      expect(container.scrollTop).toBe(1600);
+    });
+  });
+});
+
+describe('followAfterScroll', () => {
+  it('drops following when the reader scrolls up off the bottom', () => {
+    expect(followAfterScroll(true, true, true, 50, 200)).toBe(false);
+    expect(followAfterScroll(true, true, true, 0, 200)).toBe(true);
+  });
+
+  it('resumes when the reader scrolls near the bottom, and ignores layout-driven scrolls', () => {
+    expect(followAfterScroll(false, true, false, 150, 200)).toBe(true);
+    expect(followAfterScroll(false, true, false, 900, 200)).toBe(false);
+    expect(followAfterScroll(true, false, true, 900, 200)).toBe(true);
+    expect(followAfterScroll(false, false, false, 0, 200)).toBe(false);
   });
 });

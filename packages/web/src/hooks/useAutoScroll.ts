@@ -1,12 +1,15 @@
 import type { RefObject } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
-const SETTLE_REPIN_DELAYS = [120, 260, 420];
+const AT_BOTTOM_PX = 4;
+const USER_SCROLL_WINDOW_MS = 600;
+const SMOOTH_SCROLL_MS = 1000;
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ']);
 
 export interface UseAutoScrollOptions {
   containerRef: RefObject<HTMLDivElement>;
   endRef: RefObject<HTMLDivElement>;
-  enabled: boolean;
+  enabled?: boolean;
   messageCount: number;
   isInitialLoad?: boolean;
   loadingOlder?: boolean;
@@ -20,10 +23,22 @@ export interface UseAutoScrollResult {
   isNearBottom: boolean;
 }
 
+export function followAfterScroll(
+  following: boolean,
+  readerScrolling: boolean,
+  scrolledUp: boolean,
+  distanceFromBottom: number,
+  nearBottomThreshold: number
+): boolean {
+  if (!readerScrolling) return following;
+  if (scrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
+  return following || distanceFromBottom < nearBottomThreshold;
+}
+
 export function useAutoScroll({
   containerRef,
   endRef,
-  enabled,
+  enabled = true,
   messageCount,
   isInitialLoad = false,
   loadingOlder = false,
@@ -32,269 +47,154 @@ export function useAutoScroll({
 }: UseAutoScrollOptions): UseAutoScrollResult {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [isNearBottom, setIsNearBottom] = useState(true);
-  const prevMessageCountRef = useRef<number>(0);
-  const hasScrolledOnMountRef = useRef(false);
-  const lastScrollHeightRef = useRef<number>(0);
-  const isNearBottomRef = useRef<boolean>(true);
-  const enabledRef = useRef<boolean>(enabled);
-  const loadingOlderRef = useRef<boolean>(loadingOlder);
-  const deferredScrollRafRef = useRef<number | null>(null);
-  const settleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const settleRafsRef = useRef<number[]>([]);
-  const userInterruptedSettleRef = useRef(false);
-  useLayoutEffect(() => {
-    enabledRef.current = enabled;
-  }, [enabled]);
-  useLayoutEffect(() => {
-    loadingOlderRef.current = loadingOlder;
-  }, [loadingOlder]);
+  const followingRef = useRef(true);
+  const landedRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  const smoothUntilRef = useRef(0);
+  const pausedRef = useRef(!enabled || loadingOlder);
+  pausedRef.current = !enabled || loadingOlder;
+
+  const pin = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (performance.now() < smoothUntilRef.current) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+    lastScrollTopRef.current = container.scrollTop;
+  }, [containerRef]);
 
   const scrollToBottom = useCallback(
     (smooth = false) => {
+      followingRef.current = true;
+      smoothUntilRef.current = smooth ? performance.now() + SMOOTH_SCROLL_MS : 0;
       const container = containerRef.current;
-      if (container) {
-        if (smooth) {
-          container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-        } else {
-          container.scrollTop = container.scrollHeight;
-        }
+      if (!container) {
+        endRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant', block: 'end' });
         return;
       }
-
-      endRef.current?.scrollIntoView({
-        behavior: smooth ? 'smooth' : 'instant',
-        block: 'end',
-      });
+      pin();
     },
-    [containerRef, endRef]
+    [containerRef, endRef, pin]
   );
 
-  const scrollToBottomAfterLayout = useCallback(() => {
-    if (deferredScrollRafRef.current !== null) {
-      cancelAnimationFrame(deferredScrollRafRef.current);
-    }
-
-    deferredScrollRafRef.current = requestAnimationFrame(() => {
-      deferredScrollRafRef.current = null;
-      if (enabledRef.current && !loadingOlderRef.current) {
-        scrollToBottom();
-      }
-    });
-  }, [scrollToBottom]);
-
-  const cancelSettleScroll = useCallback(() => {
-    for (const timer of settleTimersRef.current) {
-      clearTimeout(timer);
-    }
-    for (const raf of settleRafsRef.current) {
-      cancelAnimationFrame(raf);
-    }
-    settleTimersRef.current = [];
-    settleRafsRef.current = [];
-  }, []);
-
-  const runSettleScroll = useCallback(() => {
-    cancelSettleScroll();
-    userInterruptedSettleRef.current = false;
-
-    const repin = () => {
-      if (userInterruptedSettleRef.current) return;
-      const raf = requestAnimationFrame(() => {
-        if (userInterruptedSettleRef.current) return;
-        if (enabledRef.current && !loadingOlderRef.current) {
-          scrollToBottom();
-        }
-      });
-      settleRafsRef.current.push(raf);
-    };
-
-    scrollToBottom();
-    repin();
-
-    for (const delay of SETTLE_REPIN_DELAYS) {
-      settleTimersRef.current.push(setTimeout(repin, delay));
-    }
-  }, [cancelSettleScroll, scrollToBottom]);
-
+  const hasContent = messageCount > 0;
   useEffect(() => {
-    let container = containerRef.current;
+    const setup = (container: HTMLDivElement) => {
+      let lastUserInputAt = Number.NEGATIVE_INFINITY;
+      let pointerDown = false;
+      let lastSize = '';
+      const markInput = () => {
+        lastUserInputAt = performance.now();
+      };
+      const onKey = (event: KeyboardEvent) => {
+        if (SCROLL_KEYS.has(event.key)) markInput();
+      };
+      const onPointerDown = () => {
+        pointerDown = true;
+        markInput();
+      };
+      const onPointerUp = () => {
+        pointerDown = false;
+        markInput();
+      };
+      const onScroll = (event?: Event) => {
+        const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+        const size = `${container.scrollHeight}:${container.clientHeight}`;
+        const userInput =
+          pointerDown || performance.now() - lastUserInputAt < USER_SCROLL_WINDOW_MS;
+        const readerScrolling = !!event && (userInput || (size === lastSize && !pausedRef.current));
+        lastSize = size;
+        if (distance < AT_BOTTOM_PX) smoothUntilRef.current = 0;
+        followingRef.current = followAfterScroll(
+          followingRef.current,
+          readerScrolling,
+          container.scrollTop < lastScrollTopRef.current - 1,
+          distance,
+          nearBottomThreshold
+        );
+        lastScrollTopRef.current = container.scrollTop;
+        setIsNearBottom(distance < nearBottomThreshold);
+        setShowScrollButton(distance >= nearBottomThreshold);
+      };
+      const follow = () => {
+        if (followingRef.current && !pausedRef.current) pin();
+        onScroll();
+      };
+      if (!landedRef.current && !pausedRef.current)
+        followingRef.current =
+          container.scrollHeight - container.scrollTop - container.clientHeight <
+          nearBottomThreshold;
+      lastScrollTopRef.current = container.scrollTop;
+      onScroll();
+      container.addEventListener('scroll', onScroll, { passive: true });
+      container.addEventListener('wheel', markInput, { passive: true });
+      container.addEventListener('touchmove', markInput, { passive: true });
+      container.addEventListener('keydown', onKey, { passive: true });
+      container.addEventListener('pointerdown', onPointerDown, { passive: true });
+      window.addEventListener('pointerup', onPointerUp, { passive: true });
+      const observer = new ResizeObserver(follow);
+      observer.observe(container);
+      const content = endRef.current?.parentElement;
+      if (content && content !== container) observer.observe(content);
+      const observeChildren = () => {
+        for (const child of Array.from(container.children ?? [])) observer.observe(child);
+      };
+      observeChildren();
+      const children = container instanceof Element ? new MutationObserver(observeChildren) : null;
+      children?.observe(container, { childList: true });
+      return () => {
+        container.removeEventListener('scroll', onScroll);
+        container.removeEventListener('wheel', markInput);
+        container.removeEventListener('touchmove', markInput);
+        container.removeEventListener('keydown', onKey);
+        container.removeEventListener('pointerdown', onPointerDown);
+        window.removeEventListener('pointerup', onPointerUp);
+        children?.disconnect();
+        observer.disconnect();
+      };
+    };
+    const container = containerRef.current;
+    if (container) return setup(container);
     let teardown: (() => void) | undefined;
-
-    if (!container) {
-      const timeoutId = setTimeout(() => {
-        container = containerRef.current;
-        if (container) {
-          teardown = setupScrollDetection(container);
-        }
-      }, 50);
-      return () => {
-        clearTimeout(timeoutId);
-        teardown?.();
-      };
-    }
-
-    function setupScrollDetection(container: HTMLDivElement) {
-      const handleScroll = () => {
-        const { scrollTop, scrollHeight, clientHeight } = container;
-        const nearBottom = scrollHeight - scrollTop - clientHeight < nearBottomThreshold;
-        isNearBottomRef.current = nearBottom;
-        lastScrollHeightRef.current = scrollHeight;
-        setIsNearBottom(nearBottom);
-        setShowScrollButton(!nearBottom);
-      };
-
-      handleScroll();
-
-      container.addEventListener('scroll', handleScroll, { passive: true });
-
-      let rafId: number;
-      const resizeObserver = new ResizeObserver(() => {
-        cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(() => {
-          const prevScrollHeight = lastScrollHeightRef.current;
-          const grew = container.scrollHeight > prevScrollHeight;
-          if (
-            grew &&
-            isNearBottomRef.current &&
-            !loadingOlderRef.current &&
-            (enabledRef.current || !hasScrolledOnMountRef.current)
-          ) {
-            container.scrollTop = container.scrollHeight;
-          }
-          handleScroll();
-        });
-      });
-      resizeObserver.observe(container);
-      const contentWrapper = endRef.current?.parentElement;
-      if (contentWrapper && contentWrapper !== container) {
-        resizeObserver.observe(contentWrapper);
-      }
-
-      const cancelSettleOnGesture = () => {
-        userInterruptedSettleRef.current = true;
-        cancelSettleScroll();
-      };
-      const cancelSettleOnKey = (e: KeyboardEvent) => {
-        if (
-          e.key === 'PageUp' ||
-          e.key === 'PageDown' ||
-          e.key === 'ArrowUp' ||
-          e.key === 'ArrowDown' ||
-          e.key === 'Home' ||
-          e.key === 'End'
-        ) {
-          cancelSettleOnGesture();
-        }
-      };
-      container.addEventListener('wheel', cancelSettleOnGesture, { passive: true });
-      container.addEventListener('touchstart', cancelSettleOnGesture, { passive: true });
-      container.addEventListener('touchmove', cancelSettleOnGesture, { passive: true });
-      container.addEventListener('keydown', cancelSettleOnKey, { passive: true });
-
-      return () => {
-        cancelAnimationFrame(rafId);
-        container.removeEventListener('scroll', handleScroll);
-        container.removeEventListener('wheel', cancelSettleOnGesture);
-        container.removeEventListener('touchstart', cancelSettleOnGesture);
-        container.removeEventListener('touchmove', cancelSettleOnGesture);
-        container.removeEventListener('keydown', cancelSettleOnKey);
-        resizeObserver.disconnect();
-      };
-    }
-
-    teardown = setupScrollDetection(container);
+    const retry = setInterval(() => {
+      if (!containerRef.current) return;
+      clearInterval(retry);
+      teardown = setup(containerRef.current);
+    }, 50);
     return () => {
+      clearInterval(retry);
       teardown?.();
     };
-  }, [nearBottomThreshold, messageCount, endRef]);
+  }, [containerRef, endRef, nearBottomThreshold, pin, hasContent]);
 
-  const prevLoadingOlderRef = useRef(loadingOlder);
   useLayoutEffect(() => {
-    if (prevLoadingOlderRef.current && !loadingOlder) {
-      prevMessageCountRef.current = messageCount;
-    }
-    prevLoadingOlderRef.current = loadingOlder;
-  }, [loadingOlder, messageCount]);
-
-  const prevResetKeyRef = useRef<string | null | undefined>(resetKey);
-  useLayoutEffect(() => {
-    if (prevResetKeyRef.current !== resetKey) {
-      prevResetKeyRef.current = resetKey;
-      hasScrolledOnMountRef.current = false;
-      prevMessageCountRef.current = 0;
-      isNearBottomRef.current = true;
-      lastScrollHeightRef.current = containerRef.current?.scrollHeight ?? 0;
-    }
+    followingRef.current = true;
+    landedRef.current = false;
+    lastScrollTopRef.current = 0;
   }, [resetKey]);
 
   useLayoutEffect(() => {
-    const hasNewContent = messageCount > prevMessageCountRef.current;
-
-    if (loadingOlder) {
-      prevMessageCountRef.current = messageCount;
-      return;
-    }
-
-    if (messageCount === 0) {
-      prevMessageCountRef.current = 0;
-      return;
-    }
-
-    if (!hasScrolledOnMountRef.current && messageCount > 0) {
-      hasScrolledOnMountRef.current = true;
-      prevMessageCountRef.current = messageCount;
-      isNearBottomRef.current = true;
-      if (enabled || !isInitialLoad) {
-        if (enabled) {
-          runSettleScroll();
-        } else {
-          scrollToBottom();
-        }
-      }
-      return;
-    }
-
-    if (enabled && hasNewContent) {
-      scrollToBottom();
-      scrollToBottomAfterLayout();
-    }
-
-    prevMessageCountRef.current = messageCount;
-  }, [
-    messageCount,
-    isInitialLoad,
-    loadingOlder,
-    enabled,
-    resetKey,
-    scrollToBottom,
-    scrollToBottomAfterLayout,
-    runSettleScroll,
-  ]);
-
-  useEffect(() => {
-    if (isInitialLoad) {
-      hasScrolledOnMountRef.current = false;
-    }
-  }, [isInitialLoad]);
+    if (!enabled || loadingOlder) followingRef.current = false;
+  }, [enabled, loadingOlder]);
 
   useLayoutEffect(() => {
-    if (!enabled || loadingOlder) {
-      cancelSettleScroll();
+    if (!hasContent) return;
+    if (loadingOlder) return;
+    if (!landedRef.current) {
+      landedRef.current = true;
+      if (pausedRef.current && isInitialLoad) return;
+      if (!pausedRef.current) followingRef.current = true;
+    } else if (!followingRef.current || pausedRef.current) {
+      return;
     }
-  }, [enabled, loadingOlder, cancelSettleScroll]);
+    pin();
+    const frame = requestAnimationFrame(() => {
+      if (followingRef.current && !pausedRef.current) pin();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messageCount, hasContent, resetKey, enabled, loadingOlder, pin]);
 
-  useEffect(() => {
-    return () => {
-      if (deferredScrollRafRef.current !== null) {
-        cancelAnimationFrame(deferredScrollRafRef.current);
-      }
-      cancelSettleScroll();
-    };
-  }, [cancelSettleScroll]);
-
-  return {
-    showScrollButton,
-    scrollToBottom,
-    isNearBottom,
-  };
+  return { showScrollButton, scrollToBottom, isNearBottom };
 }

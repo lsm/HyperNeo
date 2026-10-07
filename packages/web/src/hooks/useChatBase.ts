@@ -68,7 +68,6 @@ export function useChatBase<T = ChatMessage>(options: UseChatBaseOptions<T>): Us
     chatId,
     sendMessage: sendMessageFn,
     messages,
-    autoScrollEnabled = true,
     nearBottomThreshold = 200,
     persistDraft = false,
     loadDraft,
@@ -91,7 +90,6 @@ export function useChatBase<T = ChatMessage>(options: UseChatBaseOptions<T>): Us
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef: messagesContainerRef,
     endRef: messagesEndRef,
-    enabled: autoScrollEnabled,
     messageCount,
     nearBottomThreshold,
   });
