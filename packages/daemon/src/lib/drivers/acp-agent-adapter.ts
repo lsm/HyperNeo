@@ -22,6 +22,7 @@ export interface AcpAgentSpec {
   bin: string;
   args: readonly string[];
   sessionFolder?: (sessionId: string) => Promise<string | null>;
+  app?: { path: string; link: (session: AcpAgentSession) => string };
 }
 
 export async function copilotSessionFolder(
@@ -51,8 +52,21 @@ export const ACP_AGENTS: readonly AcpAgentSpec[] = [
     bin: 'copilot',
     args: ['--acp'],
     sessionFolder: (sessionId) => copilotSessionFolder(sessionId),
+    app: {
+      path: '/Applications/GitHub Copilot.app',
+      link: (session) => `ghapp://sessions/${encodeURIComponent(session.sessionId)}`,
+    },
   },
-  { id: 'opencode', name: 'OpenCode', bin: 'opencode', args: ['acp'] },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    bin: 'opencode',
+    args: ['acp'],
+    app: {
+      path: '/Applications/OpenCode.app',
+      link: (session) => `opencode://open-project?directory=${encodeURIComponent(session.cwd)}`,
+    },
+  },
 ];
 
 export interface AcpAgentSession {
@@ -69,6 +83,7 @@ export interface AcpAgentAdapterDeps {
   listSessions: () => Promise<readonly AcpAgentSession[]>;
   ownSessions: () => ReadonlySet<string>;
   projectFolder: (folder: string) => string;
+  link?: (session: AcpAgentSession) => string;
 }
 
 export function gitWorktreeProject(folder: string): string {
@@ -186,6 +201,7 @@ export function buildAcpAgentGroups(
         place,
         status: acpStatus(session, now),
         lastActivityAt: session.updatedAt,
+        ...(deps.link ? { link: deps.link(session) } : {}),
       }));
     if (!placeMatches && work.length === 0) return [];
     return [

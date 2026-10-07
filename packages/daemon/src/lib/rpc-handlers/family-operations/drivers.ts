@@ -143,6 +143,7 @@ function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[]
         listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
         ownSessions,
         projectFolder: gitWorktreeProject,
+        ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
       }),
     ];
   });
