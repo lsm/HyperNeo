@@ -2,6 +2,8 @@ import type { RefObject } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 const AT_BOTTOM_PX = 4;
+const USER_SCROLL_WINDOW_MS = 600;
+const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ']);
 
 export interface UseAutoScrollOptions {
   containerRef: RefObject<HTMLDivElement>;
@@ -22,11 +24,11 @@ export interface UseAutoScrollResult {
 
 export function followAfterScroll(
   following: boolean,
-  scrolledUp: boolean,
+  userScrolledUp: boolean,
   distanceFromBottom: number,
   nearBottomThreshold: number
 ): boolean {
-  if (scrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
+  if (userScrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
   return following || distanceFromBottom < nearBottomThreshold;
 }
 
@@ -72,11 +74,29 @@ export function useAutoScroll({
   const hasContent = messageCount > 0;
   useEffect(() => {
     const setup = (container: HTMLDivElement) => {
+      let lastUserInputAt = Number.NEGATIVE_INFINITY;
+      let pointerDown = false;
+      const markInput = () => {
+        lastUserInputAt = performance.now();
+      };
+      const onKey = (event: KeyboardEvent) => {
+        if (SCROLL_KEYS.has(event.key)) markInput();
+      };
+      const onPointerDown = () => {
+        pointerDown = true;
+        markInput();
+      };
+      const onPointerUp = () => {
+        pointerDown = false;
+        markInput();
+      };
       const onScroll = () => {
         const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+        const userScrolling =
+          pointerDown || performance.now() - lastUserInputAt < USER_SCROLL_WINDOW_MS;
         followingRef.current = followAfterScroll(
           followingRef.current,
-          container.scrollTop < lastScrollTopRef.current - 1,
+          userScrolling && container.scrollTop < lastScrollTopRef.current - 1,
           distance,
           nearBottomThreshold
         );
@@ -93,23 +113,42 @@ export function useAutoScroll({
       lastScrollTopRef.current = container.scrollTop;
       onScroll();
       container.addEventListener('scroll', onScroll, { passive: true });
+      container.addEventListener('wheel', markInput, { passive: true });
+      container.addEventListener('touchmove', markInput, { passive: true });
+      container.addEventListener('keydown', onKey, { passive: true });
+      container.addEventListener('pointerdown', onPointerDown, { passive: true });
+      window.addEventListener('pointerup', onPointerUp, { passive: true });
       const observer = new ResizeObserver(follow);
       observer.observe(container);
       const content = endRef.current?.parentElement;
       if (content && content !== container) observer.observe(content);
+      const observeChildren = () => {
+        for (const child of Array.from(container.children ?? [])) observer.observe(child);
+      };
+      observeChildren();
+      const children = container instanceof Element ? new MutationObserver(observeChildren) : null;
+      children?.observe(container, { childList: true });
       return () => {
         container.removeEventListener('scroll', onScroll);
+        container.removeEventListener('wheel', markInput);
+        container.removeEventListener('touchmove', markInput);
+        container.removeEventListener('keydown', onKey);
+        container.removeEventListener('pointerdown', onPointerDown);
+        window.removeEventListener('pointerup', onPointerUp);
+        children?.disconnect();
         observer.disconnect();
       };
     };
     const container = containerRef.current;
     if (container) return setup(container);
     let teardown: (() => void) | undefined;
-    const retry = setTimeout(() => {
-      if (containerRef.current) teardown = setup(containerRef.current);
+    const retry = setInterval(() => {
+      if (!containerRef.current) return;
+      clearInterval(retry);
+      teardown = setup(containerRef.current);
     }, 50);
     return () => {
-      clearTimeout(retry);
+      clearInterval(retry);
       teardown?.();
     };
   }, [containerRef, endRef, nearBottomThreshold, pin, hasContent]);

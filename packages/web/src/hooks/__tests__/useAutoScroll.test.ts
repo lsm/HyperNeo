@@ -1024,10 +1024,38 @@ describe('useAutoScroll', () => {
   });
 
   describe('following by scroll position', () => {
-    function scrollHandler(addEventListenerMock: ReturnType<typeof vi.fn>) {
-      const call = addEventListenerMock.mock.calls.findLast(([type]) => type === 'scroll');
+    it('keeps waiting for a scroll container that mounts late', async () => {
+      vi.useFakeTimers();
+      const { containerRef: mounted, endRef, addEventListenerMock } = createMockRefs();
+      const containerRef = { current: null } as RefObject<HTMLDivElement>;
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 0 }));
+      await vi.advanceTimersByTimeAsync(200);
+      containerRef.current = mounted.current;
+      await vi.advanceTimersByTimeAsync(50);
+      expect(addEventListenerMock).toHaveBeenCalledWith('scroll', expect.any(Function), {
+        passive: true,
+      });
+      vi.useRealTimers();
+    });
+
+    it('keeps following when layout, not the user, moves the position up', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 300;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        container.scrollHeight = 1300;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(1300);
+    });
+
+    function handler(addEventListenerMock: ReturnType<typeof vi.fn>, event: string) {
+      const call = addEventListenerMock.mock.calls.findLast(([type]) => type === event);
       return call?.[1] as () => void;
     }
+    const scrollHandler = (mock: ReturnType<typeof vi.fn>) => handler(mock, 'scroll');
 
     it('stops following when the user scrolls up a little, and resumes at the bottom', () => {
       const { containerRef, endRef, addEventListenerMock } = createMockRefs();
@@ -1043,7 +1071,10 @@ describe('useAutoScroll', () => {
       expect(container.scrollTop).toBe(1200);
 
       container.scrollTop = 1200 - 500 - 50;
-      act(() => scrollHandler(addEventListenerMock)());
+      act(() => {
+        handler(addEventListenerMock, 'wheel')();
+        scrollHandler(addEventListenerMock)();
+      });
       grow(1400);
       expect(container.scrollTop).toBe(650);
 
