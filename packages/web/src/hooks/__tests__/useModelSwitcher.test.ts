@@ -13,6 +13,7 @@ import {
   filterModelsBySearch,
   isDefinitiveAuthFailure,
   useFilteredModelsForPicker,
+  findDefaultModel,
 } from '../useModelSwitcher.ts';
 
 const mockGetHubIfConnected = vi.fn();
@@ -1842,5 +1843,23 @@ describe('useFilteredModelsForPicker', () => {
     );
 
     expect(result.current.map((model) => model.id)).toEqual(['claude-sonnet']);
+  });
+});
+
+describe('findDefaultModel', () => {
+  const model = (id: string, provider: string, alias?: string) => ({
+    id,
+    provider,
+    alias,
+    name: id,
+  });
+  const models = [model('claude-opus-4', 'anthropic', 'opus'), model('opus', 'custom:local')];
+
+  it('resolves by id or alias within the saved provider, never by substring', () => {
+    expect(findDefaultModel(models, 'opus', 'anthropic')?.id).toBe('claude-opus-4');
+    expect(findDefaultModel(models, 'opus', 'custom:local')?.provider).toBe('custom:local');
+    expect(findDefaultModel(models, 'opus', undefined)?.provider).toBe('custom:local');
+    expect(findDefaultModel(models, 'claude', undefined)).toBeNull();
+    expect(findDefaultModel(models, undefined, 'anthropic')).toBeNull();
   });
 });

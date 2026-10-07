@@ -19,12 +19,6 @@ import {
   SettingsToggle,
 } from './SettingsSection.tsx';
 
-const MODEL_OPTIONS = [
-  { value: 'sonnet', label: 'Claude Sonnet 4' },
-  { value: 'opus', label: 'Claude Opus 4' },
-  { value: 'haiku', label: 'Claude Haiku 3.5' },
-];
-
 const PERMISSION_MODE_OPTIONS = [
   { value: 'default', label: 'Default' },
   { value: 'acceptEdits', label: 'Accept Edits' },
@@ -48,7 +42,6 @@ const THINKING_LEVEL_OPTIONS = [
 
 export function GeneralSettings() {
   const settings = globalSettings.value;
-  const [localModel, setLocalModel] = useState(settings?.model ?? 'sonnet');
   const [localPermissionMode, setLocalPermissionMode] = useState<PermissionMode>(
     settings?.permissionMode ?? 'default'
   );
@@ -70,7 +63,6 @@ export function GeneralSettings() {
 
   useEffect(() => {
     if (settings) {
-      setLocalModel(settings.model ?? 'sonnet');
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalAutoScroll(settings.autoScroll ?? true);
       setLocalDisplayMode(resolveChatDisplayMode(undefined, settings.chatDisplayMode));
@@ -80,19 +72,6 @@ export function GeneralSettings() {
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
     }
   }, [settings]);
-
-  const handleModelChange = async (value: string) => {
-    setLocalModel(value);
-    setIsUpdating(true);
-    try {
-      await updateGlobalSettings({ model: value });
-    } catch {
-      toast.error('Failed to update model setting');
-      setLocalModel(settings?.model ?? 'sonnet');
-    } finally {
-      setIsUpdating(false);
-    }
-  };
 
   const handlePermissionModeChange = async (value: string) => {
     const mode = value as PermissionMode;
@@ -220,15 +199,6 @@ export function GeneralSettings() {
   return (
     <SettingsSection title="General">
       <SettingsGroup>
-        <SettingsRow label="Default Model" description="Model for new sessions">
-          <SettingsSelect
-            value={localModel}
-            onChange={handleModelChange}
-            options={MODEL_OPTIONS}
-            disabled={isUpdating}
-          />
-        </SettingsRow>
-
         <SettingsRow label="Permission Mode" description="How Claude asks for permissions">
           <SettingsSelect
             value={localPermissionMode}

@@ -38,6 +38,8 @@ vi.mock('../../../lib/connection-manager', () => ({
 }));
 
 import { ModelsSettings } from '../ModelsSettings.tsx';
+import { globalSettings } from '../../../lib/state.ts';
+import { updateGlobalSettings } from '../../../lib/api-helpers.ts';
 
 describe('ModelsSettings — load failure surfacing', () => {
   beforeEach(() => {
@@ -405,5 +407,42 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
+  });
+});
+
+describe('ModelsSettings — default model', () => {
+  beforeEach(() => {
+    cleanup();
+    mockConnectionState.value = 'connected';
+    mockGetHubIfConnected.mockReset().mockReturnValue({ request: mockRequest });
+    mockRequest.mockReset().mockResolvedValue({
+      models: [
+        { id: 'opus', display_name: 'Claude Opus', description: '', provider: 'anthropic' },
+        { id: 'kimi-k3', display_name: 'Kimi K3', description: '', provider: 'kimi' },
+      ],
+    });
+    mockListProviderAuthStatus.mockReset().mockResolvedValue({ providers: [] });
+    (globalSettings as { value: unknown }).value = { model: 'opus', modelProvider: 'anthropic' };
+  });
+
+  afterEach(() => {
+    (globalSettings as { value: unknown }).value = null;
+    cleanup();
+  });
+
+  it('shows the saved default and saves a new one with its provider', async () => {
+    render(<ModelsSettings />);
+    await screen.findByText(/^Claude Opus · /);
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Kimi K3' }));
+    await waitFor(() =>
+      expect(updateGlobalSettings).toHaveBeenCalledWith({ model: 'kimi-k3', modelProvider: 'kimi' })
+    );
+  });
+
+  it('says when the saved default is not available', async () => {
+    (globalSettings as { value: unknown }).value = { model: 'gone', modelProvider: 'anthropic' };
+    render(<ModelsSettings />);
+    expect(await screen.findByText('gone (not available)')).toBeTruthy();
   });
 });

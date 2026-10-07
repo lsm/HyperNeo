@@ -12,6 +12,7 @@ import {
   mapRawModelsToModelInfos,
   PROVIDER_LABELS,
   getProviderLabel,
+  findDefaultModel,
 } from '../../hooks/useModelSwitcher.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Spinner } from '../ui/Spinner';
@@ -464,6 +465,7 @@ export function ModelsSettings() {
   const pendingForceRefreshRef = useRef(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDefaultModal, setShowDefaultModal] = useState(false);
 
   const [overrideModal, setOverrideModal] = useState<{
     open: boolean;
@@ -617,6 +619,18 @@ export function ModelsSettings() {
     await saveFallbackModels(newModels);
   };
 
+  const handleDefaultModel = async (model: ModelInfo) => {
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ model: model.id, modelProvider: model.provider });
+      setShowDefaultModal(false);
+    } catch {
+      toast.error('Failed to update the default model');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleAdd = async (model: ModelInfo) => {
     if (fallbackModels.some((m) => m.model === model.id && m.provider === model.provider)) {
       toast.error('Model is already in the fallback chain');
@@ -675,6 +689,7 @@ export function ModelsSettings() {
   const filteredModels = filterModelsForPicker(availableModels, providerAuthStatuses, undefined);
   const groupedModels = groupModelsByProvider(filteredModels);
   const overrideEntries = Object.entries(modelFallbackMap);
+  const defaultModel = findDefaultModel(availableModels, settings?.model, settings?.modelProvider);
 
   return (
     <SettingsSection
@@ -734,6 +749,33 @@ export function ModelsSettings() {
         </div>
       )}
       <div class="space-y-3">
+        <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
+          <div>
+            <h4 class="text-[13px] font-semibold text-fg">Default Model</h4>
+            <p class="text-xs text-fg-faint mt-0.5">
+              Used for new sessions that don&apos;t choose a model.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            {defaultModel && <ProviderLogo provider={defaultModel.provider} class="h-4 w-4" />}
+            <span class="flex-1 truncate text-sm text-fg-soft">
+              {loading
+                ? 'Loading models...'
+                : defaultModel
+                  ? `${defaultModel.name} · ${PROVIDER_LABELS[defaultModel.provider] || getProviderLabel(defaultModel.provider)}`
+                  : `${settings?.model ?? 'None'} (not available)`}
+            </span>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowDefaultModal(true)}
+              disabled={loading || isUpdating}
+            >
+              Change
+            </Button>
+          </div>
+        </div>
+
         <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
           <div>
             <h4 class="text-[13px] font-semibold text-fg">Default Fallback Chain</h4>
@@ -857,6 +899,19 @@ export function ModelsSettings() {
           </button>
         </div>
       </div>
+
+      {showDefaultModal && (
+        <ModelPickerModal
+          title="Default Model"
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          excludeModels={
+            defaultModel ? [{ model: defaultModel.id, provider: defaultModel.provider }] : []
+          }
+          onSelect={handleDefaultModel}
+          onClose={() => setShowDefaultModal(false)}
+        />
+      )}
 
       {showAddModal && (
         <ModelPickerModal

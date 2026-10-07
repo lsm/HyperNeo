@@ -386,3 +386,15 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     reload: loadModelInfo,
   };
 }
+
+export function findDefaultModel(
+  models: readonly ModelInfo[],
+  model: string | undefined,
+  provider: string | undefined
+): ModelInfo | null {
+  if (!model) return null;
+  const candidates = provider ? models.filter((m) => m.provider === provider) : models;
+  return (
+    candidates.find((m) => m.id === model) ?? candidates.find((m) => m.alias === model) ?? null
+  );
+}
