@@ -21,7 +21,12 @@ import {
   assertQueuedTaskRetryTransition,
 } from './transitions.ts';
 import { buildCustomAgentTaskMessage } from '../agents/custom-agent.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
+import {
+  directTaskWorkspace,
+  ensureDirectTaskWorktree,
+  readDirectTaskWorktreePath,
+} from './direct-task-workspace.ts';
+import { SpaceWorktreeManager } from '../workspaces/worktree-manager.ts';
 import {
   readPreparation,
   prepareDormantSession,
@@ -193,6 +198,7 @@ export function claimDirectStart(
             requireRunningDirectTaskQuery(identity.value, identity.value, evidence, {
               space,
               stopRequested: false,
+              worktreePath: task ? readDirectTaskWorktreePath(db)(task.spaceId, task.id) : null,
             })
         )
           return unavailable;
@@ -278,7 +284,11 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession, input: Dire
           task,
           space,
           reviewFeedback: input.reviewRejection?.reason,
-          workspacePath: resolveTaskWorkspace(space, task),
+          workspacePath: directTaskWorkspace(
+            space,
+            task,
+            readDirectTaskWorktreePath(db)(space.id, task.id)
+          ),
         }),
       },
       parent_tool_use_id: null,
@@ -321,6 +331,9 @@ export function createDirectTaskStarter(dependencies: {
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
+      getTaskWorktreePath: readDirectTaskWorktreePath(db),
+      worktrees: new SpaceWorktreeManager(db),
+      sessionExists: (id: string) => !!sessionDb.getSession(id),
     })('start-direct-task') as PipelineAPI
   )
     .input('input')
@@ -330,11 +343,30 @@ export function createDirectTaskStarter(dependencies: {
       'result:start'
     )
     .pipe((attempt: DirectTaskAttempt) => attempt.id, 'start', 'attemptId')
-    .pipe(readPreparation, ['attempts', 'tasks', 'getSpace', 'attemptId'], 'preparation')
+    .pipe(
+      readPreparation,
+      ['attempts', 'tasks', 'getSpace', 'getTaskWorktreePath', 'attemptId'],
+      'preparation'
+    )
+    .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')
+    .pipe(
+      ensureDirectTaskWorktree,
+      ['start', 'worktrees', 'getTaskWorktreePath', 'sessionExists'],
+      'preparation'
+    )
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')
     .pipe(
       prepareDormantSession,
-      ['attempts', 'tasks', 'getSpace', 'sessionDb', 'sessionManager', 'defaultModel', 'start'],
+      [
+        'attempts',
+        'tasks',
+        'getSpace',
+        'getTaskWorktreePath',
+        'sessionDb',
+        'sessionManager',
+        'defaultModel',
+        'start',
+      ],
       'preparation'
     )
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')

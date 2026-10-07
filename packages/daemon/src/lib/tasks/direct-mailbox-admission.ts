@@ -19,7 +19,7 @@ import {
   requireRunningDirectTaskQuery,
   type DirectTaskQueryState,
 } from './direct-task-query-admission.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
+import { directTaskWorkspace, readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 
 export type DirectMailboxAdmission = 'admit' | 'settled' | 'blocked';
 interface BoundMailbox {
@@ -78,7 +78,7 @@ function requireBoundMailbox(
   if (!settled && mailboxEntryExpired(entry, now)) return { reason: null };
   const fingerprint = canonicalJson({
     identity,
-    workspacePath: resolveTaskWorkspace(state.space, evidence.task),
+    workspacePath: directTaskWorkspace(state.space, evidence.task, state.worktreePath),
     entry,
     frozen,
   });
@@ -109,6 +109,7 @@ export function captureDirectMailboxAdmission(
       getActiveAttempt: (id: string) => attempts.getActive(id),
       getSpace: (id: string) => spaces.getSpace(id),
       isStopRequested: (id: string, sid: string) => attempts.isStopRequested(id, sid),
+      getTaskWorktreePath: readDirectTaskWorktreePath(db),
     })('admit-direct-mailbox-delivery') as PipelineAPI
   )
     .input('expected')
@@ -118,7 +119,11 @@ export function captureDirectMailboxAdmission(
       'evidence'
     )
     .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:admission')
-    .pipe(loadDirectTaskQueryState, ['admission', 'getSpace', 'isStopRequested'], 'queryState')
+    .pipe(
+      loadDirectTaskQueryState,
+      ['admission', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
+      'queryState'
+    )
     .pipe(
       requireRunningDirectTaskQuery,
       ['admission', 'admission', 'evidence', 'queryState'],
