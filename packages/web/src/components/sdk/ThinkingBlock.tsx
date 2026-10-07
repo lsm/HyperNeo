@@ -8,6 +8,8 @@ interface ThinkingBlockProps {
   compact?: boolean;
   isRunning?: boolean;
   estimatedTokens?: number;
+  thinnedChars?: number;
+  onOpen?: () => void;
 }
 
 const PREVIEW_LINE_COUNT = 6;
@@ -27,6 +29,8 @@ export function ThinkingBlock({
   compact = false,
   isRunning = false,
   estimatedTokens,
+  thinnedChars = 0,
+  onOpen,
 }: ThinkingBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
@@ -36,10 +40,6 @@ export function ThinkingBlock({
 
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    return null;
-  }
-
   useLayoutEffect(() => {
     if (contentRef.current) {
       const scrollHeight = contentRef.current.scrollHeight;
@@ -47,7 +47,16 @@ export function ThinkingBlock({
     }
   }, [content, previewMaxHeight, folded, open]);
 
-  const charCount = content.length;
+  const hasText = typeof content === 'string' && content.trim().length > 0;
+  if (!hasText && thinnedChars <= 0) {
+    return null;
+  }
+
+  const charCount = hasText ? content.length : thinnedChars;
+  const toggleOpen = () => {
+    if (!open) onOpen?.();
+    setOpen(!open);
+  };
 
   const statsText =
     estimatedTokens !== undefined
@@ -70,13 +79,13 @@ export function ThinkingBlock({
         role={folded ? 'button' : undefined}
         tabIndex={folded ? 0 : undefined}
         aria-expanded={folded ? open : undefined}
-        onClick={folded ? () => setOpen(!open) : undefined}
+        onClick={folded ? toggleOpen : undefined}
         onKeyDown={
           folded
             ? (event: KeyboardEvent) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
-                setOpen(!open);
+                toggleOpen();
               }
             : undefined
         }
@@ -119,7 +128,7 @@ export function ThinkingBlock({
                 compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
               )}
             >
-              {content}
+              {hasText ? content : 'Loading…'}
             </pre>
           </div>
 

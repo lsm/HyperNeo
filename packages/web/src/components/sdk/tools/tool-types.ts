@@ -88,6 +88,7 @@ export interface ToolResultCardProps {
   sessionId?: string;
   isOutputRemoved?: boolean;
   disableExpand?: boolean;
+  onExpand?: () => void;
   isRunning?: boolean;
   taskNotification?: {
     status: 'completed' | 'failed' | 'stopped';

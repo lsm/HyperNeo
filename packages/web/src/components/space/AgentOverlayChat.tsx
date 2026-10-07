@@ -32,7 +32,7 @@ export function AgentOverlayChat({
 
   const storeRef = useRef<SessionStore | null>(null);
   if (storeRef.current === null) {
-    storeRef.current = new SessionStore();
+    storeRef.current = new SessionStore({ followDisplayMode: true });
   }
   useEffect(() => {
     const store = storeRef.current;

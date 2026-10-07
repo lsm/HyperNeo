@@ -17,7 +17,7 @@ export function NeoSessionPane({
   const pane = useRef<HTMLElement>(null);
   const opener = useRef(document.activeElement as HTMLElement | null);
   const store = useRef<SessionStore | null>(null);
-  if (store.current === null) store.current = new SessionStore();
+  if (store.current === null) store.current = new SessionStore({ followDisplayMode: true });
   useEffect(() => {
     const owned = store.current;
     return () => {

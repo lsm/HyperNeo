@@ -1754,3 +1754,22 @@ describe('ToolResultCard in compact display mode', () => {
     expect(container.textContent).toContain('Ship the switch');
   });
 });
+
+describe('ToolResultCard onExpand', () => {
+  it('fires when the card opens, not when it closes', () => {
+    const onExpand = vi.fn();
+    const { getAllByRole } = render(
+      <ToolResultCard
+        toolName="Bash"
+        toolId="bash-1"
+        input={{ command: 'ls' }}
+        output=""
+        onExpand={onExpand}
+      />
+    );
+    const header = getAllByRole('button')[0];
+    fireEvent.click(header);
+    fireEvent.click(header);
+    expect(onExpand).toHaveBeenCalledTimes(1);
+  });
+});
