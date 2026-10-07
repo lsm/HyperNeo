@@ -13,16 +13,6 @@ export function neoFolder(): string {
   return folder;
 }
 
-export function neoTaskFolderName(title: string, sessionId: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/, '');
-  return `${slug || 'task'}-${sessionId.slice(0, 8)}`;
-}
-
 export function ensureNeoProject(
   history: Pick<WorkspaceHistoryRepository, 'get' | 'upsert'>,
   folder: () => string = neoFolder

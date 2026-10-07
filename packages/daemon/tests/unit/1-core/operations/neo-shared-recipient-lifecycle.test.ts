@@ -362,20 +362,4 @@ describe('NeoService shared recipient lifecycle', () => {
     expect(captureResources()).toBe(before);
     expectNoExecution();
   });
-
-  test('null targets preserve dedicated-worker terminal inference and interruption', async () => {
-    const completed = queue('complete', null);
-    saveLaterResponse(completed);
-    await service.reconcile(completed.id);
-    expect(service.repo.getWork(completed.id)).toMatchObject({
-      status: 'reported',
-      report: 'Unrelated answer B',
-    });
-    const running = queue('running', null);
-    await service.cancel(running.id);
-    expect(service.repo.getWork(running.id)?.status).toBe('cancelled');
-    expect(getSessionAsync.mock.calls).toEqual([['dedicated']]);
-    expect(interrupt.mock.calls).toEqual([[{ skipDeferredReplay: true }]]);
-    expect(createSession).not.toHaveBeenCalled();
-  });
 });

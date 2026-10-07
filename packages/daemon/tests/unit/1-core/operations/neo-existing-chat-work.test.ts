@@ -236,7 +236,7 @@ describe('Neo existing chat work', () => {
     expect(jobs('project')).toEqual([]);
   });
 
-  test('MCP proposals without a target reject before storage while local-human compatibility survives', async () => {
+  test('proposals without a target reject before storage from Neo and the human alike', async () => {
     const { targetSessionId: _target, ...withoutTarget } = input();
     for (const choice of [{}, { targetSessionId: null }])
       expect(requireNeoExecutionChoice(choice, source('ask-A'))).toMatchObject({
@@ -248,14 +248,17 @@ describe('Neo existing chat work', () => {
     expect(
       requireNeoExecutionChoice({ targetSessionId: 'project' }, source('ask-A'))
     ).toMatchObject({ value: { sessionId: 'root' } });
-    expect(requireNeoExecutionChoice(withoutTarget, human)).toEqual({ value: human });
+    expect(requireNeoExecutionChoice(withoutTarget, human)).toMatchObject({
+      reason: { ok: false },
+    });
     expect(await invoke('neo.work.propose', withoutTarget, source('ask-A'))).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('Choose where the work runs') },
     });
     expect(service.repo.listWork()).toEqual([]);
     expect(await invoke('neo.work.propose', withoutTarget)).toMatchObject({
-      value: { ok: true, work: { targetSessionId: null, status: 'proposed' } },
+      value: { ok: false },
     });
+    expect(service.repo.listWork()).toEqual([]);
     expect(jobs('project')).toEqual([]);
     expect(createSession).not.toHaveBeenCalled();
   });
