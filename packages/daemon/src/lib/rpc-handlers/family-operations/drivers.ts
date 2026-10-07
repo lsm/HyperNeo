@@ -33,15 +33,29 @@ import { neoFolder } from '../../neo/folder.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { readWorkTurns } from '../../../storage/work-turns.ts';
+import type { SessionManager } from '../../session/session-manager.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
 
+export async function createDriverSession(
+  sessionManager: Pick<SessionManager, 'createSession' | 'getWorktreeManager'>,
+  workspacePath: string,
+  title: string
+): Promise<string> {
+  const { isGitRepo } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  return sessionManager.createSession({
+    workspacePath,
+    title,
+    worktreeMode: isGitRepo ? 'worktree' : 'direct',
+  });
+}
+
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus } = context.deps;
   return {
-    create: (workspacePath, title) => sessionManager.createSession({ workspacePath, title }),
+    create: (workspacePath, title) => createDriverSession(sessionManager, workspacePath, title),
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
     },
