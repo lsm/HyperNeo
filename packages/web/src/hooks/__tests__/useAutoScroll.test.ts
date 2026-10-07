@@ -1120,6 +1120,51 @@ describe('useAutoScroll', () => {
       expect(container.scrollTop).toBe(1300);
     });
 
+    it('stops following on an unmarked scroll up with no layout change, like a scrollbar drag', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 400;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        container.scrollHeight = 1200;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(400);
+    });
+
+    it('does not resume following from a resize that leaves the size unchanged', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 350;
+      act(() => {
+        handler(addEventListenerMock, 'wheel')();
+        handler(addEventListenerMock, 'scroll')();
+      });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
+      act(() => {
+        container.scrollHeight = 1200;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(350);
+    });
+
+    it('keeps a smooth scroll to the bottom gliding while content grows', () => {
+      const { containerRef, endRef, scrollToMock } = createMockRefs();
+      const { result } = renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      container.scrollTop = 0;
+      scrollToMock.mockImplementation(() => {});
+      act(() => result.current.scrollToBottom(true));
+      act(() => {
+        container.scrollHeight = 1500;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(scrollToMock).toHaveBeenLastCalledWith({ top: 1500, behavior: 'smooth' });
+      expect(container.scrollTop).toBe(0);
+    });
+
     it('stops following when an unmarked scroll jumps far up, like find-in-page', () => {
       const { containerRef, endRef, addEventListenerMock } = createMockRefs();
       renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
@@ -1139,7 +1184,8 @@ describe('useAutoScroll', () => {
 
     function handler(addEventListenerMock: ReturnType<typeof vi.fn>, event: string) {
       const call = addEventListenerMock.mock.calls.findLast(([type]) => type === event);
-      return call?.[1] as () => void;
+      const listener = call?.[1] as (event: Event) => void;
+      return () => listener(new Event(event));
     }
     const scrollHandler = (mock: ReturnType<typeof vi.fn>) => handler(mock, 'scroll');
 
@@ -1173,20 +1219,15 @@ describe('useAutoScroll', () => {
 });
 
 describe('followAfterScroll', () => {
-  it('drops following when the user scrolls up off the bottom', () => {
-    expect(followAfterScroll(true, true, 50, 50, 200, 500)).toBe(false);
-    expect(followAfterScroll(true, true, 50, 0, 200, 500)).toBe(true);
+  it('drops following when the reader scrolls up off the bottom', () => {
+    expect(followAfterScroll(true, true, true, 50, 200)).toBe(false);
+    expect(followAfterScroll(true, true, true, 0, 200)).toBe(true);
   });
 
-  it('resumes when the user scrolls near the bottom, and ignores layout-driven scrolls', () => {
-    expect(followAfterScroll(false, true, 0, 150, 200, 500)).toBe(true);
-    expect(followAfterScroll(false, true, 0, 900, 200, 500)).toBe(false);
-    expect(followAfterScroll(true, false, 200, 900, 200, 500)).toBe(true);
-    expect(followAfterScroll(false, false, 0, 0, 200, 500)).toBe(false);
-  });
-
-  it('drops following on an unmarked jump of more than a viewport off the bottom', () => {
-    expect(followAfterScroll(true, false, 900, 900, 200, 500)).toBe(false);
-    expect(followAfterScroll(true, false, 900, 0, 200, 500)).toBe(true);
+  it('resumes when the reader scrolls near the bottom, and ignores layout-driven scrolls', () => {
+    expect(followAfterScroll(false, true, false, 150, 200)).toBe(true);
+    expect(followAfterScroll(false, true, false, 900, 200)).toBe(false);
+    expect(followAfterScroll(true, false, true, 900, 200)).toBe(true);
+    expect(followAfterScroll(false, false, false, 0, 200)).toBe(false);
   });
 });

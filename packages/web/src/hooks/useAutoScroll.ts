@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preac
 
 const AT_BOTTOM_PX = 4;
 const USER_SCROLL_WINDOW_MS = 600;
+const SMOOTH_SCROLL_MS = 1000;
 const SCROLL_KEYS = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' ']);
 
 export interface UseAutoScrollOptions {
@@ -24,15 +25,13 @@ export interface UseAutoScrollResult {
 
 export function followAfterScroll(
   following: boolean,
-  userScrolling: boolean,
-  scrolledUpBy: number,
+  readerScrolling: boolean,
+  scrolledUp: boolean,
   distanceFromBottom: number,
-  nearBottomThreshold: number,
-  viewportHeight: number
+  nearBottomThreshold: number
 ): boolean {
-  const offBottom = distanceFromBottom >= nearBottomThreshold;
-  if (!userScrolling) return following && !(scrolledUpBy > viewportHeight && offBottom);
-  if (scrolledUpBy > 1) return distanceFromBottom < AT_BOTTOM_PX;
+  if (!readerScrolling) return following;
+  if (scrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
   return following || distanceFromBottom < nearBottomThreshold;
 }
 
@@ -51,12 +50,17 @@ export function useAutoScroll({
   const followingRef = useRef(true);
   const landedRef = useRef(false);
   const lastScrollTopRef = useRef(0);
+  const smoothUntilRef = useRef(0);
   const pausedRef = useRef(!enabled || loadingOlder);
   pausedRef.current = !enabled || loadingOlder;
 
   const pin = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
+    if (performance.now() < smoothUntilRef.current) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      return;
+    }
     container.scrollTop = container.scrollHeight;
     lastScrollTopRef.current = container.scrollTop;
   }, [containerRef]);
@@ -64,13 +68,13 @@ export function useAutoScroll({
   const scrollToBottom = useCallback(
     (smooth = false) => {
       followingRef.current = true;
+      smoothUntilRef.current = smooth ? performance.now() + SMOOTH_SCROLL_MS : 0;
       const container = containerRef.current;
       if (!container) {
         endRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant', block: 'end' });
         return;
       }
-      if (smooth) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-      else pin();
+      pin();
     },
     [containerRef, endRef, pin]
   );
@@ -80,6 +84,7 @@ export function useAutoScroll({
     const setup = (container: HTMLDivElement) => {
       let lastUserInputAt = Number.NEGATIVE_INFINITY;
       let pointerDown = false;
+      let lastSize = '';
       const markInput = () => {
         lastUserInputAt = performance.now();
       };
@@ -94,17 +99,20 @@ export function useAutoScroll({
         pointerDown = false;
         markInput();
       };
-      const onScroll = () => {
+      const onScroll = (event?: Event) => {
         const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
-        const userScrolling =
+        const size = `${container.scrollHeight}:${container.clientHeight}`;
+        const userInput =
           pointerDown || performance.now() - lastUserInputAt < USER_SCROLL_WINDOW_MS;
+        const readerScrolling = !!event && (userInput || (size === lastSize && !pausedRef.current));
+        lastSize = size;
+        if (distance < AT_BOTTOM_PX) smoothUntilRef.current = 0;
         followingRef.current = followAfterScroll(
           followingRef.current,
-          userScrolling,
-          lastScrollTopRef.current - container.scrollTop,
+          readerScrolling,
+          container.scrollTop < lastScrollTopRef.current - 1,
           distance,
-          nearBottomThreshold,
-          container.clientHeight
+          nearBottomThreshold
         );
         lastScrollTopRef.current = container.scrollTop;
         setIsNearBottom(distance < nearBottomThreshold);
