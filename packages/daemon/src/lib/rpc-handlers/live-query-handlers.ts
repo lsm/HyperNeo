@@ -1772,193 +1772,10 @@ artifact_state_rows AS (
 ),
 `;
 
-function spaceTaskConvBaseCte(admitArtifactState: boolean): string {
-  return `
-WITH target_task AS (
-  SELECT *
-  FROM space_tasks
-  WHERE id = ?
-),
-${ACTIVE_DELIVERY_RETRYING_CTE},
-github_events AS (
-  SELECT
-    ge.id AS id,
-    NULL AS sessionId,
-    'github' AS kind,
-    'github' AS role,
-    'GitHub' AS label,
-    NULL AS nodeExecutionId,
-    tt.id AS taskId,
-    tt.title AS taskTitle,
-    'github_pr_activity' AS messageType,
-    json_object(
-      'type', 'user',
-      'uuid', ge.id,
-      'message', json_object(
-        'role', 'user',
-        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
-      )
-    ) AS content,
-    'system' AS origin,
-    'delivered' AS deliveryState,
-    ge.occurred_at AS createdAt,
-    NULL AS parentToolUseId,
-    1 AS isRenderable,
-    0 AS isTerminal,
-    NULL AS turnIndex,
-    ge.rowid AS insOrder
-  FROM target_task tt
-  JOIN space_github_events ge ON ge.task_id = tt.id
-  WHERE ge.state IN ('routed', 'delivered')
-),
-session_node_exec AS (
-  SELECT tt.id AS task_id, ne.agent_session_id AS session_id, ne.id AS node_execution_id,
-         ne.agent_id, ne.agent_name,
-         ROW_NUMBER() OVER (
-           PARTITION BY tt.id, ne.agent_session_id
-           ORDER BY
-             CASE ne.status
-               WHEN 'in_progress' THEN 0
-               WHEN 'waiting_rebind' THEN 1
-               WHEN 'blocked' THEN 2
-               WHEN 'pending' THEN 3
-               ELSE 4
-             END,
-             ne.updated_at DESC,
-             ne.created_at DESC,
-             ne.id DESC
-         ) AS rn
-  FROM target_task tt
-  JOIN node_executions ne
-    ON ne.workflow_run_id = tt.workflow_run_id
-   AND ne.agent_session_id IS NOT NULL
-),
--- Recent conversation-turn window (#2338): the last N distinct
--- conversation_turn_index values for this task. Pushed into the sdk_messages
--- scan so the per-segment selection runs over a small set (this is what brings
--- the compact feed under 100ms on 40k+ message tasks).
-recent_turns AS (
-  SELECT COALESCE(MIN(conversation_turn_index), 0) AS minTurn
-  FROM (
-    SELECT DISTINCT conversation_turn_index
-    FROM sdk_messages
-    WHERE task_id = (SELECT id FROM target_task)
-      AND conversation_turn_index IS NOT NULL
-    ORDER BY conversation_turn_index DESC
-    LIMIT ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
-  )
-),
-${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
-${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
-  SELECT
-    sm.id AS id,
-    sm.session_id AS sessionId,
-    CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
-      ELSE 'node_agent'
-    END AS kind,
-    CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
-      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
-    END AS role,
-    CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
-      ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
-    END AS label,
-    sne.node_execution_id AS nodeExecutionId,
-    tt.id AS taskId,
-    tt.title AS taskTitle,
-    sm.message_type AS messageType,
-    sm.sdk_message AS content,
-    sm.origin AS origin,
-    ${SPACE_TASK_DELIVERY_STATE_CASE}
-    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
-    sm.parent_tool_use_id AS parentToolUseId,
-    sm.is_renderable AS isRenderable,
-    sm.is_terminal AS isTerminal,
-    sm.conversation_turn_index AS turnIndex,
-    sm.rowid AS insOrder
-  FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
-  LEFT JOIN active_delivery_retrying adr
-    ON adr.message_uuid = sm.sdk_uuid
-   AND adr.session_id = sm.session_id
-  CROSS JOIN recent_turns rt
-  LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
-  LEFT JOIN session_node_exec sne
-    ON sne.task_id = tt.id
-   AND sne.session_id = sm.session_id
-   AND sne.rn = 1
-  LEFT JOIN space_long_horizon_agents sa
-    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
-  WHERE (
-    sm.conversation_turn_index >= rt.minTurn
-    OR (
-      -- Task #862 (review P2): include active nonterminal user rows
-      -- (deferred/enqueued/submitted) independently of the recent-turn cutoff.
-      -- A message queued to a dormant agent whose last turn index is old would
-      -- otherwise be dropped from the compact feed until it settles, defeating
-      -- the delivery-state UI for exactly the long multi-agent case it exists for.
-      sm.message_type = 'user'
-      AND COALESCE(sm.send_status, 'consumed') NOT IN ('consumed', 'failed')
-    )
-    OR (
-      sm.message_type = 'hyperneo_action'
-      AND COALESCE(
-        CASE
-          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.resolved')
-        END,
-        1
-      ) = 0
-    )
-    ${admitArtifactState ? 'OR sm.id IN (SELECT id FROM artifact_state_rows)' : ''}
-  )
-    AND (
-      sm.message_type != 'system'
-      OR sm.message_subtype_norm != 'informational'
-      OR NOT json_valid(sm.sdk_message)
-      OR COALESCE(
-        CASE
-          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
-        END,
-        ''
-      ) != 'info'
-    )
-    ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
-),
-joined AS (
-  SELECT * FROM github_events
-  UNION ALL
-  SELECT
-    id,
-    sessionId,
-    kind,
-    role,
-    label,
-    nodeExecutionId,
-    taskId,
-    taskTitle,
-    messageType,
-    content,
-    origin,
-    deliveryState,
-    createdAt,
-    parentToolUseId,
-    isRenderable,
-    isTerminal,
-    turnIndex,
-    insOrder
-  FROM sdk_rows
-)
-  `.trim();
-}
-
 const HOOK_SUBTYPES = `('hook_started', 'hook_progress', 'hook_response')`;
 
-const SPACE_TASK_FLAG_ROWS_BASE_CTE = `
+function spaceTaskFlagRowsBaseCte(admitArtifactState: boolean): string {
+  return `
 WITH target_task AS (
   SELECT *
   FROM space_tasks
@@ -2087,7 +1904,7 @@ task_shutdown_boundaries AS MATERIALIZED (
   )
   WHERE rn = 1
 ),
-${SPACE_TASK_CONV_ARTIFACT_STATE_CTES}sdk_rows AS (
+${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
   SELECT
     tm.id AS id,
     tm.session_id AS sessionId,
@@ -2130,7 +1947,7 @@ ${SPACE_TASK_CONV_ARTIFACT_STATE_CTES}sdk_rows AS (
       AND COALESCE(tm.send_status, 'consumed') NOT IN ('consumed', 'failed')
     )
     OR (tm.message_type = 'hyperneo_action' AND tm.flags & ${TASK_MESSAGE_FLAG.unresolvedAction})
-    OR tm.id IN (SELECT id FROM artifact_state_rows)
+    ${admitArtifactState ? 'OR tm.id IN (SELECT id FROM artifact_state_rows)' : ''}
   )
     AND (
       tm.message_type != 'system'
@@ -2163,9 +1980,10 @@ joined AS MATERIALIZED (
   UNION ALL
   SELECT * FROM sdk_rows
 )`.trim();
+}
 
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
-${SPACE_TASK_FLAG_ROWS_BASE_CTE},
+${spaceTaskFlagRowsBaseCte(true)},
 feed AS MATERIALIZED (
   SELECT
     COALESCE(-githubRowid, insOrder) AS k,
@@ -2352,29 +2170,8 @@ ORDER BY j.createdAt ASC, j.insOrder ASC, j.kind ASC, j.id ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
-${spaceTaskConvBaseCte(false)},
-active_turn AS (
-  -- The active roster turn per session = the conversation turn holding the
-  -- session's most recent AGENT/operational row, and only when that row is not
-  -- a terminal result (the agent is still working). The candidate set mirrors
-  -- what the roster can render as activity — assistant + result + the operational
-  -- system rows the roster has entry renderers for (api_retry, hook_started /
-  -- hook_progress / hook_response) — so:
-  --   - a sidecar (hyperneo_action / task_notification / github) after a result
-  --     can't reopen the turn: it's not a candidate, so the result stays the
-  --     most-recent candidate → closed (round-3 P2#5);
-  --   - a retry-only turn (api_retry before any assistant row) is active
-  --     (round-8);
-  --   - a hook-only turn (a long SessionStart/Setup hook before any assistant
-  --     row) is active so hook_entries can surface it;
-  --   - a turn where the agent emitted a result then CONTINUED (no new user
-  --     anchor — e.g. across an SDK tool_use result) stays active, because the
-  --     continuing assistant row is the most-recent candidate and is
-  --     non-terminal (NOT "turn has no result", which wrongly hid this);
-  --   - a failed user-only turn (markEnqueuedMessageFailed) has no candidate,
-  --     so the prior turn's most-recent candidate decides — an idle session
-  --     (last candidate = result) stays closed.
-  -- Queued user rows are filtered upstream by the sdk_rows send_status gate.
+${spaceTaskFlagRowsBaseCte(false)},
+active_turn AS MATERIALIZED (
   SELECT c.sessionId AS sessionId, c.turnIndex AS turnIndex
   FROM (
     SELECT
@@ -2388,21 +2185,12 @@ active_turn AS (
         j.messageType IN ('assistant', 'result')
         OR (
           j.messageType = 'system'
-          AND json_valid(j.content)
-          AND json_extract(j.content, '$.subtype') IN (
-            'api_retry', 'hook_started', 'hook_progress', 'hook_response'
-          )
+          AND COALESCE(j.jsonSubtype, '') IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
         )
       )
   ) c
   WHERE c.rn = 1
     AND c.isTerminal = 0
-    -- The candidate must sit in the session's LATEST conversation turn (the turn
-    -- of its most-recent row of any kind). Without this, a newer turn with no
-    -- candidate — e.g. a failed-user-only turn (markEnqueuedMessageFailed) after
-    -- an older turn that ended without a result — leaves the older non-terminal
-    -- candidate as rn=1 and an idle session wrongly reappears in the roster
-    -- under its previous turn (#2338).
     AND c.turnIndex = (
       SELECT j2.turnIndex
       FROM joined j2
@@ -2411,12 +2199,13 @@ active_turn AS (
       LIMIT 1
     )
 ),
-active_rows AS (
-  SELECT j.*
+active_rows AS MATERIALIZED (
+  SELECT j.*, sm.sdk_message AS content
   FROM joined j
   JOIN active_turn at
     ON at.sessionId = j.sessionId
    AND at.turnIndex = j.turnIndex
+  JOIN sdk_messages sm ON sm.id = j.id
 ),
 -- One row per assistant content block (tool_use / non-empty text / thinking).
 assistant_entries AS (
@@ -3631,6 +3420,11 @@ export function setupLiveQueryHandlers(
             `Unauthorized: spaceTaskMessages.byTask.compact limit must be an integer in [1, ${MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW}], got ${String(limit)}`
           );
         }
+      }
+      if (
+        queryName === 'spaceTaskMessages.byTask.compact' ||
+        queryName === 'spaceTaskActiveTurn.byTask'
+      ) {
         ensureTaskMessageRows(db, taskId);
       }
     } else if (
