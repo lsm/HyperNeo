@@ -1,6 +1,7 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  neoAwaitingReply,
   projectNeoProcessingActivity,
   scopeNeoProcessingAsk,
   scopeNeoProcessingStatus,
@@ -298,5 +299,32 @@ describe('projectNeoProcessingActivity', () => {
       visible
     );
     expect(result).not.toBeInstanceOf(Promise);
+  });
+});
+
+describe('neoAwaitingReply', () => {
+  const ask = (messageId: string) =>
+    ({
+      kind: 'ask',
+      key: messageId,
+      ask: { askOrigin: { sessionId: 'holder', messageId } },
+    }) as never;
+  const reply = (messageId: string, interim?: true) =>
+    ({
+      kind: 'publication',
+      key: `reply-${messageId}`,
+      publication: { interim, askOrigin: { sessionId: 'holder', messageId } },
+    }) as never;
+
+  it('waits until the newest ask has its own final reply', () => {
+    expect(neoAwaitingReply([ask('A')])).toBe(true);
+    expect(neoAwaitingReply([ask('A'), reply('A', true)])).toBe(true);
+    expect(neoAwaitingReply([ask('A'), reply('A')])).toBe(false);
+    expect(neoAwaitingReply([])).toBe(false);
+  });
+
+  it('keeps waiting for a newer ask when an earlier ask is answered after it', () => {
+    expect(neoAwaitingReply([ask('A'), reply('A', true), ask('B'), reply('A')])).toBe(true);
+    expect(neoAwaitingReply([ask('A'), ask('B'), reply('A'), reply('B')])).toBe(false);
   });
 });

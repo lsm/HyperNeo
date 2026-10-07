@@ -82,9 +82,11 @@ export function promoteNeoQuestionScene(
   if (work.kind !== 'work' || !question) return scene;
   return 'value' in requireNeoQuestionWork(work, work.sessionId ?? null, true) &&
     'value' in requireNeoQuestionOrigin(question, work)
-    ? { ...scene, group: 'attention', label: 'A quick choice' }
+    ? { ...scene, group: 'attention', label: NEO_QUICK_CHOICE_LABEL }
     : scene;
 }
+
+export const NEO_QUICK_CHOICE_LABEL = 'A quick choice';
 
 export function promoteNeoQuestionScenes(
   scenes: readonly NeoScene[],

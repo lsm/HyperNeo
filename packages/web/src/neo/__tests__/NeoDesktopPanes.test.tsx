@@ -67,7 +67,7 @@ const work = (id: string, status: NeoWork['status']): NeoWork => ({
   createdAt: 1,
   updatedAt: 1,
 });
-function mount(publicMode = true) {
+function mount(publicMode = true, status = 'ready') {
   const snapshot = {
     ok: true,
     sessionId: root,
@@ -77,7 +77,7 @@ function mount(publicMode = true) {
   };
   const publicView = {
     conversationId: root.slice(4),
-    status: 'ready',
+    status,
     entries: [] as { key: string }[],
     hasEarlier: false,
     hasMore: false,
@@ -190,6 +190,79 @@ describe('Neo desktop panes', () => {
     });
     expect(main.scrollTop).toBe(2000);
     expect(chat.scrollTop).toBe(50);
+  });
+
+  it('hides the working line until the conversation has loaded once', () => {
+    const { container, model } = mount(true, 'loading');
+    const line = () => container.querySelector<HTMLElement>('.neo-activity')!;
+    const withAsk = (status: string) => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          status,
+          entries: [
+            {
+              key: 'ask',
+              kind: 'ask',
+              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
+            } as never,
+          ],
+        },
+      };
+    };
+    act(() => withAsk('loading'));
+    expect(line().hidden).toBe(true);
+    act(() => withAsk('ready'));
+    expect(line().textContent).toContain('Neo is working on a reply…');
+  });
+
+  it('shows one working line for an unanswered ask, but not while Neo waits on you', () => {
+    const { container, model } = mount();
+    const line = () => container.querySelector<HTMLElement>('.neo-activity')!;
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              key: 'ask',
+              kind: 'ask',
+              ask: { askOrigin: { sessionId: root, messageId: 'ask' } },
+            } as never,
+          ],
+        },
+      };
+    });
+    expect(line().textContent).toContain('Neo is working on a reply…');
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'loading' },
+      };
+    });
+    expect(line().textContent).toContain('Neo is working on a reply…');
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'unavailable' },
+      };
+    });
+    expect(line().hidden).toBe(true);
+    act(() => {
+      model.value = {
+        ...model.value,
+        viewPublicConversation: { ...model.value.viewPublicConversation!, status: 'ready' },
+      };
+      model.value.store.agentState.value = { status: 'waiting_for_input' } as never;
+    });
+    expect(line().hidden).toBe(true);
+    act(() => {
+      model.value.store.agentState.value = { status: 'idle' } as never;
+      model.value.store.error.value = { message: 'Session failed' } as never;
+    });
+    expect(line().hidden).toBe(true);
   });
 
   it('does not enable the new layout for legacy SDK conversations', () => {

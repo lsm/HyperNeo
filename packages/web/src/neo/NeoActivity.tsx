@@ -41,10 +41,11 @@ export function NeoActivity({
   enabled: boolean;
   reply?: string | null;
 }) {
-  const items = [
-    ...(reply ? [{ key: 'neo-reply', text: reply }] : []),
-    ...(enabled ? projectActivity(scenes, concerns) : []),
-  ];
+  const items = reply
+    ? [{ key: 'neo-reply', text: reply }]
+    : enabled
+      ? projectActivity(scenes, concerns)
+      : [];
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const fingerprint = JSON.stringify(items);
   const current = items.find((item) => item.key === activeKey) ?? items[0];

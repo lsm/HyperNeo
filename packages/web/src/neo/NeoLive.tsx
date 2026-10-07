@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { neoAwaitingReply } from './processing-activity.ts';
 import { restoreNeoImages } from './neo-attachments.ts';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -21,7 +22,7 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
+import { NEO_QUICK_CHOICE_LABEL, type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 
@@ -63,6 +64,10 @@ export function NeoLive() {
       ? neo.viewPublicConversation
       : undefined;
   const sceneScope = neo.sessionId;
+  const loadedScope = useRef<string | null>(null);
+  if (publicConversation?.status === 'ready') loadedScope.current = sceneScope;
+  const conversationLoaded =
+    loadedScope.current === sceneScope && publicConversation?.status !== 'unavailable';
   useEffect(() => setChat(null), [sceneScope]);
   const currentScope = useRef(sceneScope);
   currentScope.current = sceneScope;
@@ -589,7 +594,18 @@ export function NeoLive() {
             scenes={scenes?.running ?? []}
             concerns={concerns}
             enabled={connected && conversationReady}
-            reply={replyProgress}
+            reply={
+              replyProgress ??
+              (connected &&
+              publicConversation &&
+              conversationLoaded &&
+              neo.store.agentState.value.status !== 'waiting_for_input' &&
+              !neo.store.error.value &&
+              !scenes?.attention.some((scene) => scene.label === NEO_QUICK_CHOICE_LABEL) &&
+              neoAwaitingReply(publicConversation.entries)
+                ? 'Neo is working on a reply…'
+                : null)
+            }
           />
           {ready && neo.sessionId && (
             <NeoComposer
