@@ -1,5 +1,3 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -40,7 +38,6 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
 } from './driver-work.ts';
-import { neoFolder, neoTaskFolderName } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -97,8 +94,7 @@ export class NeoService {
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
-    events: InternalEventBus<DaemonInternalEventMap>,
-    private readonly workRoot: () => string = neoFolder
+    events: InternalEventBus<DaemonInternalEventMap>
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
@@ -401,39 +397,12 @@ export class NeoService {
       await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
       return;
     }
-    if (work.status === 'proposed') {
-      work = this.repo.transitionWork(id, work, {
-        status: 'queued',
-        sessionId: crypto.randomUUID(),
-      });
-    }
-    if (!work?.sessionId) return;
-    this.repo.reserveBinding({
-      sessionId: work.sessionId,
-      concernId: work.concernId,
-      kind: 'worker',
+    const failed = this.repo.transitionWork(id, work, {
+      status: 'failed',
+      report:
+        'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.',
     });
-    const taskFolder = join(this.workRoot(), neoTaskFolderName(work.title, work.sessionId));
-    mkdirSync(taskFolder, { recursive: true });
-    if (!this.db.getSession(work.sessionId)) {
-      await this.sessions.createSession({
-        sessionId: work.sessionId,
-        title: work.title,
-        workspacePath: taskFolder,
-        worktreeMode: 'direct',
-        config: {
-          permissionMode: 'acceptEdits',
-          maxTurns: 64,
-          systemPrompt: {
-            type: 'preset',
-            preset: 'claude_code',
-            append: `You are executing a user-approved work brief delegated by Neo. Do the work using existing HyperNeo capabilities. Your working directory is this task's own folder inside the shared Neo folder for Neo's ad-hoc work, not a project: keep every file you create inside it and never write elsewhere, including other tasks' folders. If the work truly needs a real repository or folder, say so in your result instead of guessing paths. Stay within the approved scope and do not claim actions succeeded without evidence. If blocked or additional authority is needed, explain precisely. End with a concise result, evidence and unresolved issues. Your response will return to Neo. Do not access private Neo context or try to impersonate a human.`,
-          },
-        },
-      });
-    }
-    if (this.repo.getWork(id)?.status !== 'queued') return;
-    await this.deliver(work.sessionId, work.id, work.instruction, work.originSessionId);
+    if (failed) await this.returnReport(failed);
   }
 
   async cancel(id: string): Promise<void> {
@@ -441,18 +410,7 @@ export class NeoService {
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
     const cancelled = this.repo.transitionWork(id, work, { status: 'cancelled' });
     const driverRef = cancelled ? this.driverTargets.readRef(id) : null;
-    if (cancelled && driverRef) {
-      await this.stopDriverWork(driverRef, cancelled);
-      return;
-    }
-    if (cancelled?.sessionId) {
-      const target = this.resolveWorkTarget(id);
-      if (!target.accepted || target.targetSessionId !== null) return;
-      await this.workPending.get(id)?.catch(() => {});
-      if (!this.db.getSession(cancelled.sessionId)) return;
-      const session = await this.sessions.getSessionAsync(cancelled.sessionId);
-      await session?.handleInterrupt({ skipDeferredReplay: true });
-    }
+    if (cancelled && driverRef) await this.stopDriverWork(driverRef, cancelled);
   }
 
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
@@ -659,27 +617,8 @@ export class NeoService {
     if (work.status === 'cancelled' || work.status === 'proposed') return;
     if (work.status === 'queued') {
       const target = this.resolveWorkTarget(id);
-      if (!target.accepted) {
-        await this.failUnavailableTarget(work, target.reason);
-        return;
-      }
-      if (target.targetSessionId !== null) return;
-      const messages = this.db.getSDKMessageRepo();
-      const failed = messages.getErrorTerminalResultSubtypeAfter(work.sessionId, work.id);
-      if (!failed && !messages.hasTerminalResultAfter(work.sessionId, work.id)) return;
-      const text = messages
-        .getAssistantMessagesSince(work.sessionId, null)
-        .map((item) => item.text)
-        .filter(Boolean)
-        .at(-1);
-      work = this.repo.transitionWork(work.id, work, {
-        status: failed ? 'failed' : 'reported',
-        report: (failed
-          ? `The execution stopped: ${failed}. ${text ?? ''}`
-          : text ||
-            'The session ended without a written result. Inspect the execution before treating this as complete.'
-        ).slice(0, 12000),
-      });
+      if (!target.accepted) await this.failUnavailableTarget(work, target.reason);
+      return;
     }
     if (work && (work.status === 'reported' || work.status === 'failed'))
       await this.returnReport(work);

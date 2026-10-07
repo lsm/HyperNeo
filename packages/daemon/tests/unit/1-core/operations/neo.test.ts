@@ -1,6 +1,4 @@
-import { existsSync, mkdtempSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { MessageHub } from '@hyperneo/shared';
@@ -38,8 +36,6 @@ import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
-
-const neoRoot = mkdtempSync(join(tmpdir(), 'neo-root-'));
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const concern = {
@@ -132,8 +128,7 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events,
-      () => neoRoot
+      events
     );
   });
   afterEach(() => {
@@ -169,9 +164,23 @@ describe('Neo MVP', () => {
       requestKey: crypto.randomUUID(),
       concernId: null,
       originSessionId: root,
+      targetSessionId: 'ordinary',
       title: 'Suggest venues',
       instruction: 'Suggest three free venues. Do not book anything.',
     });
+  }
+  async function finish(
+    id: string,
+    status: 'reported' | 'failed' = 'reported',
+    report = 'A quiet library room is a possible free venue.'
+  ) {
+    const outcome = await invoke(
+      'neo.work.report',
+      { id, status, report },
+      { source: 'mcp', sessionId: 'ordinary' }
+    );
+    if (outcome.kind !== 'completed') throw new Error(outcome.message);
+    return outcome.value;
   }
 
   test('opening is idempotent, independent of concern creation and uses constrained coordinator sessions', async () => {
@@ -397,41 +406,29 @@ describe('Neo MVP', () => {
     expect(service.repo.getConcern('private')).toBeNull();
   });
 
-  test('proposals do not execute; duplicate Starts reuse one real session and durable handoff', async () => {
+  test('proposals do not execute; duplicate Starts deliver one durable brief to the chosen chat', async () => {
     const work = await propose();
-    expect(created).toHaveLength(1);
     expect(jobs).toHaveLength(0);
     await Promise.all([service.start(work.id), service.start(work.id)]);
     await service.start(work.id);
-    expect(created).toHaveLength(2);
+    expect(created).toHaveLength(1);
     expect(jobs).toHaveLength(1);
-    const saved = service.repo.getWork(work.id)!;
-    expect(saved.status).toBe('queued');
-    expect(saved.sessionId).not.toBe(work.originSessionId);
+    expect(service.repo.getWork(work.id)).toMatchObject({
+      status: 'queued',
+      sessionId: 'ordinary',
+    });
     expect(jobs[0].payload).toMatchObject({
-      to: { kind: 'session', sessionId: saved.sessionId },
+      to: { kind: 'session', sessionId: 'ordinary' },
       messageUuid: work.id,
     });
-    expect(service.repo.getBindingBySession(saved.sessionId!)?.kind).toBe('worker');
-    expect(created[0].workspacePath).toBeNull();
-    const taskFolder = `${work.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${saved.sessionId!.slice(0, 8)}`;
-    expect(created[1].workspacePath).toBe(join(neoRoot, taskFolder));
-    expect(created[1].worktreeMode).toBe('direct');
-    expect(existsSync(join(neoRoot, taskFolder))).toBe(true);
-    const config = created[1].config as { systemPrompt: { append: string } };
-    expect(config.systemPrompt.append).toContain(
-      "this task's own folder inside the shared Neo folder"
-    );
   });
 
-  test('a response returns through the mailbox only after a terminal result and recovers without duplication', async () => {
+  test('a response returns through the mailbox only after the chat reports and recovers without duplication', async () => {
     const work = await propose();
     await service.start(work.id);
     await service.reconcile(work.id);
     expect(service.repo.getWork(work.id)?.status).toBe('queued');
-    terminal = true;
-    const sessionId = service.repo.getWork(work.id)!.sessionId!;
-    await events.publish('session.updated', { sessionId, processingState: { status: 'idle' } });
+    await finish(work.id);
     expect(service.repo.getWork(work.id)).toMatchObject({
       status: 'reported',
       report: 'A quiet library room is a possible free venue.',
@@ -602,7 +599,10 @@ describe('Neo MVP', () => {
       await invoke('neo.work.propose', input, { source: 'mcp', sessionId: root })
     ).toMatchObject({ value: { ok: false } });
     expect(service.repo.listWork()).toEqual([]);
-    expect(await invoke('neo.work.propose', input)).toMatchObject({
+    expect(await invoke('neo.work.propose', input)).toMatchObject({ value: { ok: false } });
+    expect(
+      await invoke('neo.work.propose', { ...input, targetSessionId: 'ordinary' })
+    ).toMatchObject({
       value: { ok: true, work: { originMessageId: null, originSessionId: root } },
     });
     expect(service.repo.listWork()).toHaveLength(1);
@@ -611,8 +611,7 @@ describe('Neo MVP', () => {
   test('reports runtime failure rather than successful completion', async () => {
     const work = await propose();
     await service.start(work.id);
-    failed = 'error_max_turns';
-    await service.reconcile(work.id);
+    await finish(work.id, 'failed', 'The execution stopped: error_max_turns.');
     expect(service.repo.getWork(work.id)).toMatchObject({
       status: 'failed',
       report: expect.stringContaining('error_max_turns'),
@@ -627,13 +626,13 @@ describe('Neo MVP', () => {
       requestKey: crypto.randomUUID(),
       concernId: concern.id,
       originSessionId: origin ?? root,
+      targetSessionId: 'ordinary',
       title: 'Suggest venues',
       instruction: 'Suggest free venues, do not book anything.',
     });
     await service.start(work.id);
     const saved = service.repo.getWork(work.id)!;
     terminalSessions ??= new Set();
-    terminalSessions.add(saved.sessionId!);
     return { work: saved, root };
   }
 
@@ -643,7 +642,7 @@ describe('Neo MVP', () => {
       service.repo.saveConcern(concern, 0);
       const holderId = await service.open(concern.id);
       const { work, root } = await concernWork(origin === 'holder' ? holderId : undefined);
-      await Promise.all([service.reconcile(work.id), service.reconcile(work.id)]);
+      await Promise.all([finish(work.id), finish(work.id)]);
       const review = service.consultations.get(`neo-work:${work.id}:review`)!;
       expect(review).toMatchObject({
         concernId: concern.id,
@@ -678,7 +677,7 @@ describe('Neo MVP', () => {
       await service.recover();
       expect(jobs).toHaveLength(3);
       expect(service.repo.listWork()).toHaveLength(1);
-      expect(created).toHaveLength(3);
+      expect(created).toHaveLength(2);
     }
   );
 
@@ -686,8 +685,8 @@ describe('Neo MVP', () => {
     const { item, holder } = await consultation();
     const first = await concernWork();
     const second = await concernWork();
-    await service.reconcile(first.work.id);
-    await service.reconcile(second.work.id);
+    await finish(first.work.id);
+    await finish(second.work.id);
     expect(service.consultations.list()).toHaveLength(1);
     expect(service.repo.listWork().every((work) => work.status === 'reported')).toBe(true);
     await invoke('neo.concern.respond', { id: item.id, answer: 'Initial answer' }, holder);
@@ -705,7 +704,7 @@ describe('Neo MVP', () => {
 
   test('restarts with a saved result without executing again or duplicating the holder review', async () => {
     const { work } = await concernWork();
-    await service.reconcile(work.id);
+    await finish(work.id);
     const review = service.consultations.list()[0];
     const workerCount = created.length;
     jobs = [];
@@ -714,8 +713,7 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events,
-      () => neoRoot
+      events
     );
     await service.recover();
     expect(jobs).toHaveLength(1);
@@ -731,8 +729,7 @@ describe('Neo MVP', () => {
 
   test('preserves failed execution evidence for holder interpretation', async () => {
     const { work } = await concernWork();
-    failed = 'error_max_turns';
-    await service.reconcile(work.id);
+    await finish(work.id, 'failed', 'The execution stopped: error_max_turns.');
     const review = service.consultations.list()[0];
     expect(review.status).toBe('pending');
     expect(review.question).toContain('error_max_turns');
@@ -747,7 +744,7 @@ describe('Neo MVP', () => {
     queue.enqueueUniquePending = mock(() => {
       throw new Error('Mailbox unavailable');
     });
-    await expect(service.reconcile(work.id)).rejects.toThrow('Mailbox unavailable');
+    await expect(finish(work.id)).rejects.toThrow('Mailbox unavailable');
     const review = service.consultations.list()[0];
     expect(review.status).toBe('pending');
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
@@ -776,7 +773,7 @@ describe('Neo MVP', () => {
 
   test('a failed holder review remains settled without looping or replacing the raw result', async () => {
     const { work } = await concernWork();
-    await service.reconcile(work.id);
+    await finish(work.id);
     const review = service.consultations.list()[0];
     terminalSessions!.add(review.sessionId);
     await service.syncConsultation(review.id);
@@ -785,19 +782,6 @@ describe('Neo MVP', () => {
     await service.recover();
     expect(service.consultations.list()).toHaveLength(1);
     expect(jobs).toHaveLength(3);
-  });
-
-  test('a failed session launch is visible instead of staying handed-off forever', async () => {
-    const work = await propose();
-    sessions.createSession = mock(async () => {
-      throw new Error('Workspace unavailable');
-    });
-    await expect(service.start(work.id)).rejects.toThrow('Workspace unavailable');
-    expect(service.repo.getWork(work.id)).toMatchObject({
-      status: 'failed',
-      report: expect.stringContaining('Workspace unavailable'),
-    });
-    expect(jobs).toHaveLength(0);
   });
 
   test.each(['reported', 'failed', 'expired', 'stopped'])(
@@ -814,7 +798,7 @@ describe('Neo MVP', () => {
         value: { ok: true, concern: { revision: 2, context: correction.context } },
       });
       const corrected = service.repo.getConcern(concern.id);
-      await service.reconcile(work.id);
+      await finish(work.id);
       const review = service.consultations.get(`neo-work:${work.id}:review`)!;
       const holder = holderInput(review.sessionId, review.id);
       const staleSave = { ...concern, expectedRevision: 1, context: 'Six people at the library' };
@@ -859,8 +843,7 @@ describe('Neo MVP', () => {
         db,
         sessions,
         { event: mock(() => {}) } as unknown as MessageHub,
-        events,
-        () => neoRoot
+        events
       );
       await service.recover();
       await service.recover();
@@ -878,7 +861,7 @@ describe('Neo MVP', () => {
 
   test('a newer correction requires a fresh request before the holder can incorporate evidence', async () => {
     const { work } = await concernWork();
-    await service.reconcile(work.id);
+    await finish(work.id);
     const review = service.consultations.list()[0];
     const holder = holderInput(review.sessionId, review.id);
     const context = 'Eight people. I will host at my home.';
@@ -927,38 +910,17 @@ describe('Neo MVP', () => {
     expect(service.repo.listWork()).toHaveLength(1);
   });
 
-  test('cancellation during session creation cannot enqueue work afterwards', async () => {
-    const work = await propose();
-    const originalCreate = sessions.createSession;
-    let release: () => void = () => {};
-    sessions.createSession = async (params) => {
-      await new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      return originalCreate(params);
-    };
-    const starting = service.start(work.id);
-    const cancelling = service.cancel(work.id);
-    release();
-    await Promise.all([starting, cancelling]);
-    expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
-    expect(jobs).toHaveLength(0);
-    expect(interrupt).toHaveBeenCalledWith({ skipDeferredReplay: true });
-  });
-
-  test('cancelled proposals never start and running work is interrupted without replay', async () => {
+  test('cancelled proposals never start and cancelling queued work does not interrupt the shared chat', async () => {
     const first = await propose();
     await service.cancel(first.id);
     await service.start(first.id);
     expect(jobs).toHaveLength(0);
-    expect(created).toHaveLength(1);
     const second = await propose();
     await service.start(second.id);
     await service.cancel(second.id);
-    terminal = true;
     await service.reconcile(second.id);
     expect(service.repo.getWork(second.id)?.status).toBe('cancelled');
-    expect(interrupt).toHaveBeenCalledWith({ skipDeferredReplay: true });
+    expect(interrupt).not.toHaveBeenCalled();
     expect(jobs).toHaveLength(1);
   });
 
@@ -975,7 +937,7 @@ describe('Neo MVP', () => {
       kind: 'completed',
       value: { ok: true, work: { id: queued.id, status: 'cancelled' } },
     });
-    expect(interrupt).toHaveBeenCalledWith({ skipDeferredReplay: true });
+    expect(interrupt).not.toHaveBeenCalled();
   });
 
   test('cancel is idempotent for withdrawn work and rejects work that already ran', async () => {
@@ -1451,8 +1413,7 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events,
-      () => neoRoot
+      events
     );
     await service.recover();
     expect(jobs).toHaveLength(1);

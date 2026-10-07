@@ -93,34 +93,6 @@ describe('Neo terminal error results', () => {
     return value;
   }
 
-  test('an actual success-subtype API error fails the dedicated receipt', async () => {
-    const work = queue();
-    result({
-      is_error: true,
-      terminal_reason: 'api_error',
-      api_error_status: 400,
-      result: 'API Error: 400 Fictional acceptance-only worker provider failure.',
-    });
-    expect(db.getSDKMessageRepo().getErrorTerminalResultSubtypeAfter('worker', work.id)).toBe(
-      'error'
-    );
-    await service.reconcile(work.id);
-    expect(service.repo.getWork(work.id)).toMatchObject({
-      status: 'failed',
-      originSessionId: 'root',
-      originMessageId: 'original-ask',
-      sessionId: 'worker',
-      report: expect.stringContaining('The execution stopped: error.'),
-    });
-    const jobs = db.getDatabase().prepare('SELECT * FROM job_queue ORDER BY rowid').all();
-    expect(jobs).toHaveLength(1);
-    await service.reconcile(work.id);
-    expect(db.getDatabase().prepare('SELECT * FROM job_queue ORDER BY rowid').all()).toEqual(jobs);
-    expect(
-      db.getDatabase().prepare('SELECT COUNT(*) AS count FROM neo_publications').get()
-    ).toEqual({ count: 0 });
-  });
-
   test.each([
     { name: 'flagged success', extra: { is_error: true }, expected: 'error' },
     { name: 'unflagged success', extra: { is_error: false }, expected: null },
@@ -182,15 +154,5 @@ describe('Neo terminal error results', () => {
     result({ is_error: true }, 'other');
     expect(sdk.getErrorTerminalResultSubtypeAfter('worker', work.id)).toBeNull();
     expect(sdk.getErrorTerminalResultSubtypeAfter('worker', 'earlier')).toBe('error');
-  });
-
-  test('ordinary success remains a reported response, not a verified completion', async () => {
-    const work = queue();
-    result({ is_error: false });
-    await service.reconcile(work.id);
-    expect(service.repo.getWork(work.id)).toMatchObject({
-      status: 'reported',
-      report: expect.stringContaining('Inspect the execution before treating this as complete.'),
-    });
   });
 });
