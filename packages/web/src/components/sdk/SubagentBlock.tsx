@@ -86,6 +86,7 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
 }
 
 interface SubagentBlockProps {
+  assistantUuid?: string;
   input: AgentInput;
   output?: unknown;
   isError?: boolean;
@@ -260,6 +261,7 @@ function extractOutputText(output: unknown): string {
 }
 
 export function SubagentBlock({
+  assistantUuid,
   input,
   output,
   isError = false,
@@ -364,7 +366,11 @@ export function SubagentBlock({
         onClick={() => {
           if (!isExpanded)
             hydrate(
-              nestedMessages.flatMap((message) => (message.uuid ? [message.uuid as string] : []))
+              [
+                assistantUuid,
+                messageUuid,
+                ...nestedMessages.map((message) => message.uuid as string | undefined),
+              ].filter((uuid): uuid is string => !!uuid)
             );
           setIsExpanded(!isExpanded);
         }}
@@ -533,6 +539,7 @@ function NestedMessageRenderer({
   isParentRunning?: boolean;
   completedHookUuids?: Set<string>;
 }) {
+  const hydrate = useHydrateMessages();
   const replacementStatus = replacementStatusMap?.get(getMessageUuid(message) ?? '');
   const withReplacementStatus = (content: ComponentChild) => {
     if (!replacementStatus || content == null || content === false) return content;
@@ -576,6 +583,8 @@ function NestedMessageRenderer({
             key={`thinking-${idx}`}
             content={(block as { thinking: string }).thinking}
             estimatedTokens={estimatedThinkingTokens}
+            thinnedChars={(block as { thinking_chars?: number }).thinking_chars}
+            onOpen={() => message.uuid && hydrate([message.uuid])}
           />
         ))}
 
@@ -616,6 +625,13 @@ function NestedMessageRenderer({
               taskNotification={taskNotification}
               taskProgress={taskProgress}
               isRunning={isRunningTool}
+              onExpand={() =>
+                hydrate(
+                  [message.uuid as string | undefined, resultData?.messageUuid].filter(
+                    (uuid): uuid is string => !!uuid
+                  )
+                )
+              }
             />
           );
         })}

@@ -323,6 +323,7 @@ function ToolUseBlock({
   if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
     return (
       <SubagentBlock
+        assistantUuid={assistantUuid}
         input={block.input as unknown as AgentInput}
         output={content}
         isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
