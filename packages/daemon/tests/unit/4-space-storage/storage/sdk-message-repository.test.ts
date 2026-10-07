@@ -3495,6 +3495,37 @@ describe('SDKMessageRepository', () => {
       );
     });
 
+    it('getTurnErrorResultSubtype reads only the turn of the given input', () => {
+      const at = (minute: number) => `2026-08-11T16:${String(minute).padStart(2, '0')}:00.000Z`;
+      insertMessage('session-1', 'user', { uuid: 'brief-a', timestamp: at(0) });
+      expect(repository.getTurnErrorResultSubtype('session-1', 'brief-a')).toBeNull();
+      insertMessage('session-1', 'result', {
+        timestamp: at(1),
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      insertMessage('session-1', 'result', { timestamp: at(2), terminal: true });
+      expect(repository.getTurnErrorResultSubtype('session-1', 'brief-a')).toBeNull();
+
+      insertMessage('session-1', 'user', { uuid: 'brief-b', timestamp: at(3) });
+      insertMessage('session-1', 'result', {
+        timestamp: at(4),
+        terminal: true,
+        subtype: 'error_max_turns',
+      });
+      expect(repository.getTurnErrorResultSubtype('session-1', 'brief-a')).toBeNull();
+      expect(repository.getTurnErrorResultSubtype('session-1', 'brief-b')).toBe('error_max_turns');
+
+      insertMessage('session-1', 'user', { uuid: 'brief-c', timestamp: at(5) });
+      insertMessage('session-1', 'result', {
+        timestamp: at(6),
+        terminal: true,
+        sdkMessage: JSON.stringify({ type: 'result', subtype: 'success', is_error: true }),
+      });
+      expect(repository.getTurnErrorResultSubtype('session-1', 'brief-c')).toBe('error');
+      expect(repository.getTurnErrorResultSubtype('session-1', 'missing')).toBeNull();
+    });
+
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
