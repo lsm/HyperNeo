@@ -57,16 +57,7 @@ export const ACP_AGENTS: readonly AcpAgentSpec[] = [
       link: (session) => `ghapp://sessions/${encodeURIComponent(session.sessionId)}`,
     },
   },
-  {
-    id: 'opencode',
-    name: 'OpenCode',
-    bin: 'opencode',
-    args: ['acp'],
-    app: {
-      path: '/Applications/OpenCode.app',
-      link: (session) => `opencode://open-project?directory=${encodeURIComponent(session.cwd)}`,
-    },
-  },
+  { id: 'opencode', name: 'OpenCode', bin: 'opencode', args: ['acp'] },
 ];
 
 export interface AcpAgentSession {

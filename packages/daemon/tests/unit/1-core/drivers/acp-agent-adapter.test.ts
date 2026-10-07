@@ -64,22 +64,15 @@ describe('createAcpAgentAdapter.find', () => {
     ]);
   });
 
-  test('links each session into the desktop app when one is installed', async () => {
+  test('links each session into the GitHub Copilot app when it is installed', async () => {
     const [copilot, opencode] = ACP_AGENTS;
-    const listed = [session('s/1', '/my repo', 'Work')];
-    const links = await Promise.all(
-      [copilot, opencode].map(async (agent) => {
-        const groups = await adapter(listed, [], { agent, link: agent.app?.link }).find({
-          includeClosed: false,
-          limit: 20,
-        });
-        return groups[0].work[0].link;
-      })
-    );
-    expect(links).toEqual([
-      'ghapp://sessions/s%2F1',
-      'opencode://open-project?directory=%2Fmy%20repo',
-    ]);
+    const listed = [session('s/1', '/repo', 'Work')];
+    const [linked] = await adapter(listed, [], { link: copilot.app?.link }).find({
+      includeClosed: false,
+      limit: 20,
+    });
+    expect(linked.work[0].link).toBe('ghapp://sessions/s%2F1');
+    expect(opencode.app).toBeUndefined();
     const [group] = await adapter(listed).find({ includeClosed: false, limit: 20 });
     expect(group.work[0].link).toBeUndefined();
   });
