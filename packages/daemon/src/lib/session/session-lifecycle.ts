@@ -16,7 +16,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
 import { resolveFallbackChain } from '../agent/fallback-recovery.ts';
-import { findInModels } from '../model-service.ts';
+import { canonicalModelId, findInModels } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { inferProviderForModel } from '../providers/registry.ts';
@@ -1170,9 +1170,10 @@ export class SessionLifecycle {
         }
         const byDefault = pick(defaultModel, defaultProvider);
         if (byDefault) return byDefault;
+        const chainProvider = defaultProvider ?? inferProviderForModel(defaultModel);
         const chain = resolveFallbackChain(
-          defaultProvider ?? inferProviderForModel(defaultModel),
-          defaultModel,
+          chainProvider,
+          canonicalModelId(chainProvider, defaultModel),
           settings.modelFallbackMap,
           settings.fallbackModels
         );
@@ -1193,7 +1194,7 @@ export class SessionLifecycle {
 
     if (unavailable) {
       throw new Error(
-        `Model '${requestedModel}'${requestedProvider ? ` (${requestedProvider})` : ''} is not available and no fallback model is. Choose a default model in Settings → Models.`
+        `Model '${requestedModel}'${requestedProvider ? ` (${requestedProvider})` : ''} is not available and no fallback model is. Choose another default model in Settings.`
       );
     }
 

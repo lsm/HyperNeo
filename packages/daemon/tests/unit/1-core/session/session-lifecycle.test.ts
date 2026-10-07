@@ -854,7 +854,7 @@ describe('SessionLifecycle', () => {
         withSettings({ model: 'opus', fallbackModels: [] });
 
         await expect(lifecycle.create({})).rejects.toThrow(
-          "Model 'opus' is not available and no fallback model is"
+          "Model 'opus' is not available and no fallback model is. Choose another default model in Settings."
         );
         expect(createdSessions).toEqual([]);
       });
@@ -894,6 +894,23 @@ describe('SessionLifecycle', () => {
           modelProvider: 'anthropic',
           fallbackModels: [{ model: 'k3', provider: 'kimi' }],
           modelFallbackMap: { 'anthropic/gone': [{ model: 'opus', provider: 'anthropic' }] },
+        });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({
+          model: 'claude-opus-4-20250514',
+          provider: 'anthropic',
+        });
+      });
+
+      it('keys the per-model override by the default model canonical id', async () => {
+        setModelsCache(new Map([['global', mockKimiModels.slice(0, 2)]]));
+        withSettings({
+          model: 'k3',
+          modelProvider: 'kimi',
+          fallbackModels: [{ model: 'sonnet', provider: 'anthropic' }],
+          modelFallbackMap: { 'kimi/kimi-k3[1m]': [{ model: 'opus', provider: 'anthropic' }] },
         });
 
         await lifecycle.create({});
