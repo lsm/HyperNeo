@@ -146,7 +146,7 @@ describe('Neo world briefing delivery', () => {
     expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
     for (const text of [
       'daemon.snapshot',
-      'operations.list {all:true}',
+      'operations.list {all:true, query:',
       'operations.describe',
       'project and non-project chats',
       'tasks, agents, workflows, goals and evolution',
@@ -251,4 +251,18 @@ describe('Neo look-up guidance', () => {
     expect(prompt).toContain('Never tell the user you have no access');
     expect(prompt).toContain('never put file contents into a fetched URL');
   });
+
+  test.each([null, 'saas'])(
+    'tells %s how to repair a session the human asks about',
+    (concernId) => {
+      const prompt = neoPrompt(concernId);
+      for (const text of [
+        'when the human asks you to fix a session',
+        'session.runtimeSettings.update',
+        'session.interrupt {spaceId,sessionId}',
+        'except work.stop and work.send to repair a session',
+      ])
+        expect(prompt).toContain(text);
+    }
+  );
 });

@@ -56,6 +56,7 @@ export interface ClaudeDesktopAdapterDeps {
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
+  gitRoot: (folder: string) => Promise<string | null>;
   newId: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
@@ -578,10 +579,23 @@ export async function startClaudeSession(
 ): Promise<Result<WorkSummary>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
+  const repo = await deps.gitRoot(folder).catch(() => null);
+  const worktree = repo ? `neo-${cliSessionId.slice(0, 8)}` : null;
+  const cwd = repo && worktree ? join(repo, '.claude', 'worktrees', worktree) : folder;
   try {
     const opened = await runToExit(
       deps,
-      ['claude', '-p', '--session-id', cliSessionId, '-n', request.title, '--', OPENING_MESSAGE],
+      [
+        'claude',
+        '-p',
+        '--session-id',
+        cliSessionId,
+        '-n',
+        request.title,
+        ...(worktree ? ['--worktree', worktree] : []),
+        '--',
+        OPENING_MESSAGE,
+      ],
       folder
     );
     if (opened.code !== 0) {
@@ -589,7 +603,7 @@ export async function startClaudeSession(
     }
     deps
       .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
-        cwd: folder,
+        cwd,
         stdout: 'ignore',
         stderr: 'ignore',
         detached: true,
@@ -609,7 +623,7 @@ export async function startClaudeSession(
   const record: ClaudeDesktopRecord = {
     sessionId,
     cliSessionId,
-    cwd: folder,
+    cwd,
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),

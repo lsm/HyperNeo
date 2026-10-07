@@ -57,7 +57,7 @@ function policyFixture() {
 async function listedNames(
   registry: OperationRegistry,
   listCaller: OperationCaller,
-  input: { all?: boolean } = {}
+  input: { all?: boolean; query?: string } = {}
 ) {
   const outcome = await invokeOperation(registry, 'operations.list', input, listCaller);
   if (outcome.kind !== 'completed') throw new Error(`operations.list failed: ${outcome.message}`);
@@ -91,7 +91,7 @@ describe('shared operation discovery', () => {
         {
           name: 'operations.list',
           description:
-            'List the operations meant for this session. Pass { all: true } for the full catalog; an unlisted operation can still be described and invoked by name.',
+            'List the operations meant for this session. Pass { all: true } for the full catalog and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
         },
         {
           name: 'operations.describe',
@@ -224,6 +224,22 @@ describe('operation listing by caller', () => {
     expect(await listedNames(policyFixture(), { source: 'mcp', sessionId: 'plain' })).toEqual(
       UNRESTRICTED
     );
+  });
+
+  test('query keeps only operations whose name or description has every word', async () => {
+    const member = {
+      source: 'mcp' as const,
+      sessionId: 'member',
+      role: 'long_term_agent' as const,
+    };
+    expect(
+      await listedNames(policyFixture(), member, { all: true, query: 'WORKER mutating' })
+    ).toEqual(['family.mutate']);
+    expect(await listedNames(policyFixture(), member, { query: 'family' })).toEqual([
+      'family.read',
+      'family.unpoliced',
+    ]);
+    expect(await listedNames(policyFixture(), member, { all: true, query: 'nothing' })).toEqual([]);
   });
 
   test('all: true returns the full catalog to an MCP caller', async () => {
