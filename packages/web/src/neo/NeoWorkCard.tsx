@@ -1,7 +1,9 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
+import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { providerLogoColor } from '../lib/provider-brand.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoWorkDriverLabel, neoWorkDriverLink } from './work-driver.ts';
@@ -12,6 +14,11 @@ const labels: Record<NeoWork['status'], string> = {
   reported: 'Response ready',
   failed: 'Failed',
   cancelled: 'Stopped',
+};
+
+const appLogos: Record<string, string> = {
+  'claude-desktop': 'anthropic',
+  'codex-desktop': 'anthropic-codex',
 };
 
 const tones = {
@@ -86,6 +93,7 @@ export function NeoWorkCard({
   const tone = neoWorkTone(work, driver, waiting);
   const icon = tone === 'success' ? 'check' : 'work';
   const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
+  const appLogo = driver ? appLogos[driver.adapter] : undefined;
   const openLink = driverLink && (
     <a
       href={driverLink}
@@ -93,7 +101,13 @@ export function NeoWorkCard({
       aria-label={`Open ${work.title}`}
     >
       Open
-      <NeoIcon name="external" class="!h-3.5 !w-3.5" />
+      {appLogo ? (
+        <span data-app-logo={appLogo} class="flex" style={{ color: providerLogoColor(appLogo) }}>
+          <ProviderLogo provider={appLogo} class="h-3.5 w-3.5" />
+        </span>
+      ) : (
+        <NeoIcon name="external" class="!h-3.5 !w-3.5" />
+      )}
     </a>
   );
   if (presentation === 'summary' && onOpen)

@@ -140,4 +140,29 @@ describe('NeoWorkCard with drivers work', () => {
     expect(screen.getByText('Waiting for your answer')).toBeTruthy();
     expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
+
+  it('marks the Open link with the app it opens', () => {
+    const logos = [
+      { adapter: 'codex-desktop', link: 'codex://threads/t1' },
+      { adapter: 'claude-desktop', link: 'claude://claude.ai/epitaxy/local_a1' },
+      { adapter: 'hyperneo', daemon: null, link: '/session/s1' },
+    ].map((target) => {
+      const { unmount } = render(
+        <NeoWorkCard
+          work={work}
+          driver={{ ...driver, status: 'running', ...target }}
+          busy={false}
+          disabled={false}
+          onAction={vi.fn()}
+          onOpen={vi.fn()}
+          presentation="summary"
+        />
+      );
+      const link = screen.getByRole('link', { name: 'Open Bigger font' });
+      const logo = link.querySelector('[data-app-logo]')?.getAttribute('data-app-logo') ?? null;
+      unmount();
+      return logo;
+    });
+    expect(logos).toEqual(['anthropic-codex', 'anthropic', null]);
+  });
 });
