@@ -1,5 +1,6 @@
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
+  FallbackModelEntry,
   MessageHub,
   Provider,
   Session,
@@ -145,7 +146,8 @@ export class SessionLifecycle {
     const requestedModel = params.config?.model || globalSettings.model;
     const { id: modelId, provider: resolvedProvider } = await this.getValidatedModelId(
       requestedModel,
-      params.config?.provider
+      params.config?.provider ?? (params.config?.model ? undefined : globalSettings.modelProvider),
+      globalSettings.fallbackModels ?? []
     );
 
     const providedTitle = params.title?.trim();
@@ -1126,7 +1128,8 @@ export class SessionLifecycle {
 
   private async getValidatedModelId(
     requestedModel?: string,
-    explicitProvider?: string
+    explicitProvider?: string,
+    fallbackModels: FallbackModelEntry[] = []
   ): Promise<{ id: string; provider?: string }> {
     if (requestedModel && explicitProvider) {
       const { isCuratedOutModel } = await import('../model-service.ts');
@@ -1137,51 +1140,63 @@ export class SessionLifecycle {
       }
     }
 
+    let unavailable = false;
     try {
       const { getAvailableModels } = await import('../model-service.ts');
       const availableModels = getAvailableModels('global');
 
       if (availableModels.length > 0) {
         if (requestedModel) {
-          const found = findInModels(availableModels, requestedModel);
+          const found = findInModels(
+            explicitProvider
+              ? availableModels.filter((m) => m.provider === explicitProvider)
+              : availableModels,
+            requestedModel
+          );
           if (found) {
-            if (explicitProvider && found.provider !== explicitProvider) {
-            } else {
-              const suffix = /\[1m\]$/i;
-              if (
-                requestedModel &&
-                suffix.test(requestedModel.trim()) &&
-                !suffix.test(found.id) &&
-                KimiProvider.isKimiK3OneMModel(found.id)
-              ) {
-                return { id: `${found.id}[1m]`, provider: found.provider };
-              }
-
-              return { id: found.id, provider: found.provider };
+            const suffix = /\[1m\]$/i;
+            if (
+              suffix.test(requestedModel.trim()) &&
+              !suffix.test(found.id) &&
+              KimiProvider.isKimiK3OneMModel(found.id)
+            ) {
+              return { id: `${found.id}[1m]`, provider: found.provider };
             }
+            return { id: found.id, provider: found.provider };
           }
 
           if (explicitProvider) {
-            return { id: requestedModel };
+            return { id: requestedModel, provider: explicitProvider };
+          }
+        } else {
+          const defaultByConfig = findInModels(availableModels, this.config.defaultModel);
+          if (defaultByConfig) {
+            return { id: defaultByConfig.id, provider: defaultByConfig.provider };
           }
         }
 
-        const configuredDefault = this.config.defaultModel;
-        const defaultByConfig = findInModels(availableModels, configuredDefault);
-
-        if (defaultByConfig) {
-          return { id: defaultByConfig.id, provider: defaultByConfig.provider };
+        for (const entry of fallbackModels) {
+          const fallback = findInModels(
+            availableModels.filter((m) => m.provider === entry.provider),
+            entry.model
+          );
+          if (fallback) {
+            this.logger.warn(
+              `[SessionLifecycle] Model '${requestedModel}' is not available; using fallback '${fallback.id}' (${fallback.provider})`
+            );
+            return { id: fallback.id, provider: fallback.provider };
+          }
         }
-
-        const defaultModel =
-          availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
-
-        if (defaultModel) {
-          return { id: defaultModel.id, provider: defaultModel.provider };
-        }
+        unavailable = true;
       }
     } catch (error) {
       this.logger.error('[SessionLifecycle] Error getting models:', error);
+    }
+
+    if (unavailable) {
+      throw new Error(
+        `Model '${requestedModel ?? this.config.defaultModel}'${explicitProvider ? ` (${explicitProvider})` : ''} is not available and no fallback model is. Choose a default model in Settings → Models.`
+      );
     }
 
     const fallbackModel = requestedModel || this.config.defaultModel;
