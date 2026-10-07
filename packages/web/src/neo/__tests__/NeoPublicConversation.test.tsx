@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoConversation } from '../NeoConversation.tsx';
-import { NeoPublicConversation, publicAskText } from '../NeoPublicConversation.tsx';
+import { NeoPublicConversation, PendingAsk, publicAskText } from '../NeoPublicConversation.tsx';
 import { projectNeoProcessingActivity } from '../processing-activity.ts';
 import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { neoMessageAnchor } from '../reply-context.ts';
@@ -441,5 +441,41 @@ describe('NeoPublicConversation topic labels', () => {
     expect(within(replies[0]).getByText('Fictional research')).toBeTruthy();
     expect(within(replies[1]).queryByText('Fictional research')).toBeNull();
     expect(within(replies[1]).getByText('Neo')).toBeTruthy();
+  });
+});
+
+describe('PendingAsk', () => {
+  const pending = (state: 'sending' | 'accepted' | 'failed') => ({
+    requestId: 'pending-1',
+    sessionId: root,
+    text: 'Re-run the research',
+    images: [],
+    createdAt: '2026-10-07T13:58:00.000Z',
+    state,
+    ...(state === 'failed' ? { reason: 'Neo is busy.' } : {}),
+  });
+
+  it('shows a spinner while sending and the double check once accepted', () => {
+    const view = render(<PendingAsk ask={pending('sending')} />);
+    expect(screen.getByRole('img', { name: 'Sending' })).toBeTruthy();
+    view.rerender(<PendingAsk ask={pending('accepted')} />);
+    expect(screen.queryByRole('img', { name: 'Sending' })).toBeNull();
+    expect(screen.getByRole('img', { name: 'Message accepted' })).toBeTruthy();
+  });
+
+  it('marks a failed ask with a reason on tap, a red border, and icon-only Retry and Edit', () => {
+    const onRetry = vi.fn();
+    const onEdit = vi.fn();
+    const { container } = render(
+      <PendingAsk ask={pending('failed')} onRetry={onRetry} onEdit={onEdit} />
+    );
+    expect(container.querySelector('.neo-message-bubble')?.className).toContain('!border-danger');
+    expect(screen.queryByText('Not sent: Neo is busy.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Not sent: Neo is busy.' }));
+    expect(screen.getByText('Not sent: Neo is busy.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(onRetry).toHaveBeenCalledWith('pending-1');
+    expect(onEdit).toHaveBeenCalledWith('pending-1');
   });
 });

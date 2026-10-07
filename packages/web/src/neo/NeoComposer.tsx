@@ -93,14 +93,8 @@ export function NeoComposer({
     try {
       const images = files.flatMap((file) => (file.kind === 'image' ? [file.image] : []));
       const content = attachmentMessage(submitted, files);
-      const receipt = await onSend({ sessionId, text: content, images });
-      if (receipt.ok) {
-        attachments.remove(files.map((file) => file.id));
-        if (current() && currentDraft.current === submitted) onDraft('');
-      } else if (current()) onError(receipt.reason);
-    } catch {
-      if (current())
-        onError('Could not confirm this message. Your draft is still here; please try again.');
+      attachments.remove(files.map((file) => file.id));
+      await onSend({ sessionId, text: content, images }).catch(() => undefined);
     } finally {
       if (sendingText.current === submitted) {
         sendingText.current = null;

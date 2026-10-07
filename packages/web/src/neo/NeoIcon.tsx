@@ -13,6 +13,9 @@ const paths = {
   work: 'M8 7V4h8v3M4 7h16v13H4V7Zm0 5c5 3 11 3 16 0M10 12h4',
   check: 'm5 12 4 4L19 6',
   received: 'm2 12 4 4L16 6m-4 10L22 6',
+  alert: 'M12 8v5m0 3h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+  retry: 'M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4',
+  edit: 'M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z',
   stop: 'M7 7h10v10H7z',
   back: 'm12 5-7 7 7 7M5 12h14',
 };
