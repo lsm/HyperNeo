@@ -830,6 +830,129 @@ describe('SessionLifecycle', () => {
       );
     });
 
+    describe('default model resolution', () => {
+      const localModel: ModelInfo = {
+        id: 'qwen/qwen3.6-35b-a3b',
+        alias: 'qwen/qwen3.6-35b-a3b',
+        name: 'Qwen 3.6',
+        family: 'custom:lmstudio',
+        provider: 'custom:lmstudio',
+        contextWindow: 131_072,
+        description: 'Local model',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+      const withSettings = (settings: Partial<typeof DEFAULT_GLOBAL_SETTINGS>) =>
+        (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockImplementation(() => ({
+          ...DEFAULT_GLOBAL_SETTINGS,
+          ...settings,
+        }));
+      const createdConfig = () => createdSessions[0]?.config;
+
+      it('never substitutes an arbitrary first model for an unavailable default', async () => {
+        setModelsCache(new Map([['global', [localModel]]]));
+        withSettings({ model: 'opus', fallbackModels: [] });
+
+        await expect(lifecycle.create({})).rejects.toThrow(
+          "Model 'opus' is not available and no fallback model is. Choose another default model in Settings."
+        );
+        expect(createdSessions).toEqual([]);
+      });
+
+      it('uses the configured fallback chain when the default is unavailable', async () => {
+        setModelsCache(new Map([['global', [localModel, ...mockKimiModels.slice(2)]]]));
+        withSettings({
+          model: 'opus',
+          fallbackModels: [
+            { model: 'missing', provider: 'kimi' },
+            { model: 'k3', provider: 'kimi' },
+          ],
+        });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({ model: 'kimi-k3[1m]', provider: 'kimi' });
+      });
+
+      it('does not pass through a saved default missing from its provider', async () => {
+        setModelsCache(new Map([['global', mockKimiModels]]));
+        withSettings({
+          model: 'gone',
+          modelProvider: 'anthropic',
+          fallbackModels: [{ model: 'k3', provider: 'kimi' }],
+        });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({ model: 'kimi-k3[1m]', provider: 'kimi' });
+      });
+
+      it('prefers the per-model fallback override for the default', async () => {
+        setModelsCache(new Map([['global', mockKimiModels]]));
+        withSettings({
+          model: 'gone',
+          modelProvider: 'anthropic',
+          fallbackModels: [{ model: 'k3', provider: 'kimi' }],
+          modelFallbackMap: { 'anthropic/gone': [{ model: 'opus', provider: 'anthropic' }] },
+        });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({
+          model: 'claude-opus-4-20250514',
+          provider: 'anthropic',
+        });
+      });
+
+      it('keys the per-model override by the default model canonical id', async () => {
+        setModelsCache(new Map([['global', mockKimiModels.slice(0, 2)]]));
+        withSettings({
+          model: 'k3',
+          modelProvider: 'kimi',
+          fallbackModels: [{ model: 'sonnet', provider: 'anthropic' }],
+          modelFallbackMap: { 'kimi/kimi-k3[1m]': [{ model: 'opus', provider: 'anthropic' }] },
+        });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({
+          model: 'claude-opus-4-20250514',
+          provider: 'anthropic',
+        });
+      });
+
+      it('uses the default model for an unknown requested model', async () => {
+        setModelsCache(new Map([['global', mockKimiModels]]));
+        withSettings({ model: 'opus', modelProvider: 'anthropic' });
+
+        await lifecycle.create({ config: { model: 'haiku-4.5' } });
+
+        expect(createdConfig()).toMatchObject({
+          model: 'claude-opus-4-20250514',
+          provider: 'anthropic',
+        });
+      });
+
+      it('resolves the default model within its saved provider', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [...mockKimiModels, { ...localModel, alias: 'opus', providerAliases: ['opus'] }],
+            ],
+          ])
+        );
+        withSettings({ model: 'opus', modelProvider: 'custom:lmstudio' });
+
+        await lifecycle.create({});
+
+        expect(createdConfig()).toMatchObject({
+          model: 'qwen/qwen3.6-35b-a3b',
+          provider: 'custom:lmstudio',
+        });
+      });
+    });
+
     describe('model curation', () => {
       afterEach(() => {
         getProviderRegistry().setCuratedModels('kimi', undefined);

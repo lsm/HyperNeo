@@ -1722,6 +1722,11 @@ export function schedulePendingSliceRelease(providerId: string, cacheKey: string
   pendingSliceReleases.set(pendingSliceKey(cacheKey, providerId), modelLoadSequence);
 }
 
+export function canonicalModelId(providerId: string, model: string): string {
+  const known = STATIC_MODEL_METADATA.filter((candidate) => candidate.provider === providerId);
+  return findInModels(known, model)?.id ?? model;
+}
+
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
   const normalized = idOrAlias.toLowerCase();
 

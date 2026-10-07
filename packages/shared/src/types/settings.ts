@@ -124,6 +124,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   maxConcurrentWorkers?: number;
 
+  modelProvider?: string;
+
   fallbackModels?: FallbackModelEntry[];
 
   modelFallbackMap?: Record<string, FallbackModelEntry[]>;
