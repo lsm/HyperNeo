@@ -880,16 +880,14 @@ export class TaskAgentManager {
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
         const ownsSpace = task.spaceId === space.id;
-        const taskWorkspace = ownsSpace
-          ? (this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task))
-          : undefined;
+        const taskWorkspace = ownsSpace ? this.getTaskWorktreePath(task.id) : undefined;
+        const repoRoot = ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath;
         const workspace = resolveSpawnWorkspace({
           cachedTaskWorktreePath: taskWorkspace,
           hasWorktreeManager: taskWorkspace ? false : Boolean(this.config.worktreeManager),
-          spaceWorkspacePath: space.workspacePath,
+          spaceWorkspacePath: repoRoot,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
-          const repoRoot = ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath;
           try {
             const result = await this.config.worktreeManager.createTaskWorktree(
               space.id,
@@ -907,6 +905,8 @@ export class TaskAgentManager {
               `TaskAgentManager: failed to create worktree for workflow task ${task.id}; failing the spawn instead of falling back to the space workspace: ${detail}`
             );
             const message = `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`;
+            const ownFolder = ownsSpace ? explicitTaskWorkspace(task) : undefined;
+            if (err instanceof WorkspaceNotGitRepositoryError && ownFolder) return ownFolder;
             if (err instanceof WorkspaceNotGitRepositoryError) {
               throw new PermanentSpawnError(message);
             }

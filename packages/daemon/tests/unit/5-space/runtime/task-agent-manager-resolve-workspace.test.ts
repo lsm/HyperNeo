@@ -32,7 +32,8 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     cachedTaskWorktreePath: string | undefined;
     storedTaskWorktreePath?: string;
     hasWorktreeManager: boolean;
-    createResult: 'success' | 'fail' | 'n/a';
+    createResult: 'success' | 'fail' | 'not-git' | 'n/a';
+    expectedRepoRoot?: string;
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
     expectedCreateCalled: boolean;
     expectedCachedPath: string | undefined;
@@ -102,6 +103,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   async function runRow(row: Row) {
     const createTaskWorktree = mock(async () => {
       if (row.createResult === 'fail') throw new Error(CREATE_ERROR);
+      if (row.createResult === 'not-git') throw new WorkspaceNotGitRepositoryError(CREATE_ERROR);
       return { path: CREATED_PATH, slug: 'task-9-abc' };
     });
 
@@ -142,7 +144,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         TASK_TITLE,
         TASK_NUMBER,
         undefined,
-        SPACE_WORKSPACE
+        row.expectedRepoRoot ?? SPACE_WORKSPACE
       );
     } else {
       expect(createTaskWorktree).not.toHaveBeenCalled();
@@ -210,15 +212,28 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   describe('explicit task workspace family (WS10)', () => {
     test.each([
       {
-        name: 'explicit task workspace is honored without creating a space-root worktree',
+        name: 'explicit task workspace gets its own worktree from that folder',
         taskWorkspacePath: TASK_WORKSPACE,
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: true,
-        createResult: 'n/a',
-        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
-        expectedCreateCalled: false,
-        expectedCachedPath: undefined,
+        createResult: 'success',
+        expectedRepoRoot: TASK_WORKSPACE,
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedCachedPath: CREATED_PATH,
         expectedWarning: '',
+      },
+      {
+        name: 'explicit task workspace that is not a git repo is used as is',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'not-git',
+        expectedRepoRoot: TASK_WORKSPACE,
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: true,
+        expectedCachedPath: undefined,
+        expectedWarning: 'failed to create worktree',
       },
       {
         name: 'explicit task workspace is honored without a manager',
