@@ -102,7 +102,7 @@ export function useAutoScroll({
         );
         lastScrollTopRef.current = container.scrollTop;
         setIsNearBottom(distance < nearBottomThreshold);
-        setShowScrollButton(!followingRef.current && distance >= nearBottomThreshold);
+        setShowScrollButton(distance >= nearBottomThreshold);
       };
       const follow = () => {
         if (followingRef.current && !pausedRef.current) pin();
@@ -160,10 +160,11 @@ export function useAutoScroll({
   }, [resetKey]);
 
   useLayoutEffect(() => {
-    if (!hasContent) {
-      landedRef.current = false;
-      return;
-    }
+    if (!enabled) followingRef.current = false;
+  }, [enabled]);
+
+  useLayoutEffect(() => {
+    if (!hasContent) return;
     if (loadingOlder) return;
     if (!landedRef.current) {
       landedRef.current = true;

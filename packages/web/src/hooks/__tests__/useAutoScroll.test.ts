@@ -1024,6 +1024,42 @@ describe('useAutoScroll', () => {
   });
 
   describe('following by scroll position', () => {
+    it('does not snap back to the bottom when a search jump ends', () => {
+      const { containerRef, endRef } = createMockRefs();
+      const { rerender } = renderHook(
+        ({ enabled }) => useAutoScroll({ containerRef, endRef, messageCount: 5, enabled }),
+        { initialProps: { enabled: true } }
+      );
+      rerender({ enabled: false });
+      containerRef.current!.scrollTop = 200;
+      rerender({ enabled: true });
+      expect(containerRef.current!.scrollTop).toBe(200);
+    });
+
+    it('shows the scroll button when far from the bottom, even while paused', () => {
+      const { containerRef, endRef } = createMockRefs();
+      const { result } = renderHook(() =>
+        useAutoScroll({ containerRef, endRef, messageCount: 0, enabled: false })
+      );
+      expect(result.current.showScrollButton).toBe(true);
+    });
+
+    it('keeps a scrolled-up reader in place when content reloads', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      const { rerender } = renderHook(
+        ({ messageCount }) => useAutoScroll({ containerRef, endRef, messageCount }),
+        { initialProps: { messageCount: 5 } }
+      );
+      containerRef.current!.scrollTop = 100;
+      act(() => {
+        handler(addEventListenerMock, 'wheel')();
+        handler(addEventListenerMock, 'scroll')();
+      });
+      rerender({ messageCount: 0 });
+      rerender({ messageCount: 6 });
+      expect(containerRef.current!.scrollTop).toBe(100);
+    });
+
     it('keeps waiting for a scroll container that mounts late', async () => {
       vi.useFakeTimers();
       const { containerRef: mounted, endRef, addEventListenerMock } = createMockRefs();
