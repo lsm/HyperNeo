@@ -278,11 +278,11 @@ describe('SDKSystemMessage', () => {
   });
 
   describe('Status Message', () => {
-    it('should render compacting status', () => {
+    it('draws no boundary for a compacting status; only compact_boundary marks it', () => {
       const message = createStatusMessage('compacting');
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.textContent).toContain('Compact Boundary');
+      expect(container.innerHTML).toBe('');
     });
 
     it('should return null for null status', () => {
@@ -290,13 +290,6 @@ describe('SDKSystemMessage', () => {
       const { container } = render(<SDKSystemMessage message={message} />);
 
       expect(container.innerHTML).toBe('');
-    });
-
-    it('should have yellow color scheme for compacting', () => {
-      const message = createStatusMessage('compacting');
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      expect(container.querySelector('.text-warning')).toBeTruthy();
     });
   });
 
