@@ -18,6 +18,7 @@ import type {
 } from '@hyperneo/shared';
 import {
   isSDKAssistantMessage,
+  isSDKCompactBoundary,
   isSDKResultMessage,
   isSDKSystemMessage,
   isSDKSystemInit,
@@ -128,6 +129,7 @@ function isActivityOnly(message: SDKMessage): boolean {
   if (isSDKResultMessage(message)) {
     return message.subtype === 'success' && !(message as { is_error?: boolean }).is_error;
   }
+  if (isSDKCompactBoundary(message)) return false;
   return (
     isSDKSystemMessage(message) ||
     isSDKToolProgressMessage(message) ||
