@@ -9,7 +9,9 @@ import {
 } from './registry.ts';
 
 const SummarySchema = z.object({ name: z.string(), description: z.string() });
-const ListInputSchema = z.object({ all: z.boolean().optional() }).default({});
+const ListInputSchema = z
+  .object({ all: z.boolean().optional(), query: z.string().optional() })
+  .default({});
 const DescriptionSchema = z.discriminatedUnion('found', [
   z.object({
     found: z.literal(true),
@@ -33,14 +35,30 @@ export function isOperationListed(
   return !policy.roles || (caller.role !== undefined && policy.roles.includes(caller.role));
 }
 
+function matchesOperationQuery(
+  operation: Pick<OperationDefinition, 'name' | 'description'>,
+  query = ''
+): boolean {
+  const text = `${operation.name} ${operation.description}`.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => text.includes(word));
+}
+
 export function listOperationSummaries(
   registry: OperationRegistry,
   caller: OperationCaller,
-  all = false
+  all = false,
+  query?: string
 ) {
   return registry.entries
     .filter(
-      (entry) => isOperationAdmitted(entry, caller) && (all || isOperationListed(entry, caller))
+      (entry) =>
+        isOperationAdmitted(entry, caller) &&
+        (all || isOperationListed(entry, caller)) &&
+        matchesOperationQuery(entry, query)
     )
     .map(({ name, description }) => ({ name, description }));
 }
@@ -76,10 +94,11 @@ export function createDiscoveryOperations(
     defineOperation({
       name: 'operations.list',
       description:
-        'List the operations meant for this session. Pass { all: true } for the full catalog; an unlisted operation can still be described and invoked by name.',
+        'List the operations meant for this session. Pass { all: true } for the full catalog and { query } with keywords to keep only operations whose name or description contains every word; an unlisted operation can still be described and invoked by name.',
       inputSchema: ListInputSchema,
       resultSchema: z.array(SummarySchema),
-      execute: async ({ all }, caller) => listOperationSummaries(getRegistry(), caller, all),
+      execute: async ({ all, query }, caller) =>
+        listOperationSummaries(getRegistry(), caller, all, query),
     }),
     defineOperation({
       name: 'operations.describe',
