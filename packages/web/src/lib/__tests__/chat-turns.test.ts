@@ -1,6 +1,6 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildChatTurns } from '../chat-turns.ts';
+import { buildChatTurns, liveTurnActivity } from '../chat-turns.ts';
 
 const user = (uuid: string, timestamp: number) =>
   ({
@@ -64,5 +64,23 @@ describe('buildChatTurns', () => {
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
+  });
+});
+
+describe('liveTurnActivity', () => {
+  it('keeps a turn running while it waits for an answer or a retry', () => {
+    expect(liveTurnActivity('waiting_for_input', undefined)).toEqual({
+      active: true,
+      action: 'Waiting for your answer',
+    });
+    expect(liveTurnActivity('rate_limit_cooldown', 'Reading...')).toEqual({
+      active: true,
+      action: 'Waiting to retry',
+    });
+    expect(liveTurnActivity('processing', 'Reading...')).toEqual({
+      active: true,
+      action: 'Reading...',
+    });
+    expect(liveTurnActivity('idle', undefined)).toEqual({ active: false, action: undefined });
   });
 });

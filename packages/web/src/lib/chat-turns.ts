@@ -78,3 +78,16 @@ export function buildChatTurns(messages: ChatMessage[]): ChatTurn[] {
   }
   return groups.map((group, index) => summarize(group, index === groups.length - 1));
 }
+
+export function liveTurnActivity(
+  agentStatus: string,
+  currentAction: string | undefined
+): { active: boolean; action: string | undefined } {
+  if (agentStatus === 'waiting_for_input')
+    return { active: true, action: 'Waiting for your answer' };
+  if (agentStatus === 'rate_limit_cooldown') return { active: true, action: 'Waiting to retry' };
+  return {
+    active: agentStatus === 'processing' || agentStatus === 'queued',
+    action: currentAction,
+  };
+}
