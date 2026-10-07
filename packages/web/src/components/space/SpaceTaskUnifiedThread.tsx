@@ -50,7 +50,6 @@ export function SpaceTaskUnifiedThread({
   overlayTaskReadonly,
   cooldownBannerMembers = [],
   authErrorBannerMembers = [],
-  autoScrollEnabled = true,
   onShowScrollButtonChange,
   onScrollToBottomChange,
   onScrollerChange,
@@ -66,7 +65,6 @@ export function SpaceTaskUnifiedThread({
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef,
     endRef: messagesEndRef,
-    enabled: autoScrollEnabled,
     messageCount: isLoading || isReconnecting ? 0 : rows.length,
     resetKey: taskId,
   });

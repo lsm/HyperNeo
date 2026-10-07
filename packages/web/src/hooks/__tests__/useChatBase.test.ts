@@ -932,14 +932,12 @@ describe('useChatBase', () => {
       );
     });
 
-    it('should pass autoScrollEnabled option to useAutoScroll', () => {
+    it('follows by scroll position whatever autoScrollEnabled says', () => {
       const options = createDefaultOptions({ autoScrollEnabled: false });
       renderHook(() => useChatBase(options));
 
       expect(mockUseAutoScroll).toHaveBeenCalledWith(
-        expect.objectContaining({
-          enabled: false,
-        })
+        expect.not.objectContaining({ enabled: expect.anything() })
       );
     });
 
@@ -950,17 +948,6 @@ describe('useChatBase', () => {
       expect(mockUseAutoScroll).toHaveBeenCalledWith(
         expect.objectContaining({
           nearBottomThreshold: 100,
-        })
-      );
-    });
-
-    it('should use default autoScrollEnabled of true', () => {
-      const options = createDefaultOptions();
-      renderHook(() => useChatBase(options));
-
-      expect(mockUseAutoScroll).toHaveBeenCalledWith(
-        expect.objectContaining({
-          enabled: true,
         })
       );
     });
