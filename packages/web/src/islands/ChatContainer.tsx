@@ -728,7 +728,7 @@ export default function ChatContainer({
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef: messagesContainerRef,
     endRef: messagesEndRef,
-    enabled: autoScroll && !highlightMessageId && !searchTargetMessageId,
+    enabled: !highlightMessageId && !searchTargetMessageId,
     messageCount: messages.length,
     isInitialLoad,
     loadingOlder,

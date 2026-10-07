@@ -3,7 +3,7 @@
 import { renderHook, act } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 
-import { useAutoScroll } from '../useAutoScroll.ts';
+import { followAfterScroll, useAutoScroll } from '../useAutoScroll.ts';
 
 function createMockRefs() {
   const scrollIntoViewMock = vi.fn(function (this: HTMLDivElement, options?: ScrollToOptions) {
@@ -1023,157 +1023,47 @@ describe('useAutoScroll', () => {
     });
   });
 
-  describe('bounded settle-scroll (refresh / cold-mount)', () => {
-    it('should keep re-pinning to the bottom across the settle window as content grows', () => {
-      vi.useFakeTimers();
-      const { containerRef, endRef } = createMockRefs();
+  describe('following by scroll position', () => {
+    function scrollHandler(addEventListenerMock: ReturnType<typeof vi.fn>) {
+      const call = addEventListenerMock.mock.calls.findLast(([type]) => type === 'scroll');
+      return call?.[1] as () => void;
+    }
 
-      const { rerender } = renderHook(
-        ({ messageCount, isInitialLoad }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad,
-          }),
-        { initialProps: { messageCount: 0, isInitialLoad: true } }
-      );
-
-      rerender({ messageCount: 5, isInitialLoad: true });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      act(() => {
-        vi.advanceTimersByTime(16);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      containerRef.current!.scrollHeight = 1500;
-
-      act(() => {
-        vi.advanceTimersByTime(500);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1500);
-
-      containerRef.current!.scrollHeight = 9999;
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1500);
-      vi.useRealTimers();
-    });
-
-    it('should cancel the settle when the user scrolls away during the window', () => {
-      vi.useFakeTimers();
+    it('stops following when the user scrolls up a little, and resumes at the bottom', () => {
       const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      const grow = (height: number) =>
+        act(() => {
+          container.scrollHeight = height;
+          resizeObserverInstances.at(-1)!.triggerResize();
+        });
 
-      const { rerender } = renderHook(
-        ({ messageCount }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad: false,
-          }),
-        { initialProps: { messageCount: 0 } }
-      );
+      grow(1200);
+      expect(container.scrollTop).toBe(1200);
 
-      rerender({ messageCount: 5 });
-      expect(containerRef.current!.scrollTop).toBe(1000);
+      container.scrollTop = 1200 - 500 - 50;
+      act(() => scrollHandler(addEventListenerMock)());
+      grow(1400);
+      expect(container.scrollTop).toBe(650);
 
-      const wheelCalls = addEventListenerMock.mock.calls.filter((c) => c[0] === 'wheel');
-      expect(wheelCalls.length).toBeGreaterThan(0);
-      const wheelHandler = wheelCalls[wheelCalls.length - 1][1] as () => void;
-      act(() => {
-        wheelHandler();
-      });
-
-      containerRef.current!.scrollHeight = 1500;
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-      vi.useRealTimers();
+      container.scrollTop = 1400 - 500;
+      act(() => scrollHandler(addEventListenerMock)());
+      grow(1600);
+      expect(container.scrollTop).toBe(1600);
     });
+  });
+});
 
-    it('should cancel an in-flight settle when enabled flips false mid-settle', () => {
-      vi.useFakeTimers();
-      const { containerRef, endRef } = createMockRefs();
+describe('followAfterScroll', () => {
+  it('drops following on any upward scroll that leaves the bottom', () => {
+    expect(followAfterScroll(true, true, 50, 200)).toBe(false);
+    expect(followAfterScroll(true, true, 0, 200)).toBe(true);
+  });
 
-      const { rerender } = renderHook(
-        ({ messageCount, enabled }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled,
-            messageCount,
-            isInitialLoad: false,
-          }),
-        { initialProps: { messageCount: 0, enabled: true } }
-      );
-
-      rerender({ messageCount: 5, enabled: true });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      containerRef.current!.scrollHeight = 1500;
-      rerender({ messageCount: 5, enabled: false });
-
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-      vi.useRealTimers();
-    });
-
-    it('should cancel an in-flight settle when loadingOlder flips true mid-settle', () => {
-      vi.useFakeTimers();
-      const { containerRef, endRef } = createMockRefs();
-
-      const { rerender } = renderHook(
-        ({ messageCount, loadingOlder }) =>
-          useAutoScroll({
-            containerRef,
-            endRef,
-            enabled: true,
-            messageCount,
-            isInitialLoad: false,
-            loadingOlder,
-          }),
-        { initialProps: { messageCount: 0, loadingOlder: false } }
-      );
-
-      rerender({ messageCount: 5, loadingOlder: false });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-
-      rerender({ messageCount: 5, loadingOlder: true });
-
-      containerRef.current!.scrollHeight = 1500;
-      rerender({ messageCount: 5, loadingOlder: false });
-
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(containerRef.current!.scrollTop).toBe(1000);
-      vi.useRealTimers();
-    });
-
-    it('should register wheel/touch/keydown gesture listeners to cancel the settle', () => {
-      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
-
-      renderHook(() =>
-        useAutoScroll({
-          containerRef,
-          endRef,
-          enabled: true,
-          messageCount: 5,
-        })
-      );
-
-      const registered = addEventListenerMock.mock.calls.map((c) => c[0]);
-      expect(registered).toEqual(
-        expect.arrayContaining(['wheel', 'touchstart', 'touchmove', 'keydown'])
-      );
-    });
+  it('resumes following near the bottom and keeps it while content grows', () => {
+    expect(followAfterScroll(false, false, 150, 200)).toBe(true);
+    expect(followAfterScroll(true, false, 900, 200)).toBe(true);
+    expect(followAfterScroll(false, false, 900, 200)).toBe(false);
   });
 });
