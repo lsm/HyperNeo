@@ -43,6 +43,7 @@ import { SDKToolUseSummaryMessage } from './SDKToolUseSummaryMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
+import { useChatDisplayMode } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -121,6 +122,17 @@ function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
   const subtype = (message as { subtype?: unknown }).subtype as string;
   return !isHiddenSystemSubtype(subtype);
+}
+
+function isActivityOnly(message: SDKMessage): boolean {
+  if (isSDKResultMessage(message)) {
+    return message.subtype === 'success' && !(message as { is_error?: boolean }).is_error;
+  }
+  return (
+    isSDKSystemMessage(message) ||
+    isSDKToolProgressMessage(message) ||
+    isSDKToolUseSummaryMessage(message)
+  );
 }
 
 function isToolResultUserMessage(message: SDKMessage): boolean {
@@ -227,6 +239,7 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
 }: Props) {
+  const minimal = useChatDisplayMode() === 'minimal';
   if (isHyperNeoActionMessage(message)) {
     const actionMsg = message as HyperNeoActionMessage;
     if (actionMsg.action === 'sdk_resume_choice') {
@@ -273,6 +286,10 @@ function SDKMessageRendererImpl({
     if (toolUseId && foldableToolUseIds?.has(toolUseId)) {
       return null;
     }
+  }
+
+  if (minimal && isActivityOnly(sdkMessage)) {
+    return null;
   }
 
   let renderedMessage: JSX.Element | null = null;

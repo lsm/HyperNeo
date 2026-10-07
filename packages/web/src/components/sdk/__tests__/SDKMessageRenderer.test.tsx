@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKMessageRenderer } from '../SDKMessageRenderer';
+import { ChatDisplayModeContext } from '../chat-display-mode';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
@@ -784,5 +785,24 @@ describe('SDKMessageRenderer', () => {
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
       expect(container.querySelector('input[type="checkbox"]')).toBeFalsy();
     });
+  });
+});
+
+describe('SDKMessageRenderer in minimal display mode', () => {
+  const inMinimal = (message: SDKMessage) =>
+    render(
+      <ChatDisplayModeContext.Provider value="minimal">
+        <SDKMessageRenderer message={message} />
+      </ChatDisplayModeContext.Provider>
+    );
+
+  it('hides a successful result and tool progress', () => {
+    expect(inMinimal(createResultMessage(true)).container.innerHTML).toBe('');
+    expect(inMinimal(createToolProgressMessage()).container.innerHTML).toBe('');
+  });
+
+  it('keeps a failed result and auth prompts', () => {
+    expect(inMinimal(createResultMessage(false)).container.innerHTML).not.toBe('');
+    expect(inMinimal(createAuthStatusMessage()).container.innerHTML).not.toBe('');
   });
 });

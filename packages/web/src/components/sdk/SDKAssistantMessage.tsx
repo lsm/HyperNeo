@@ -26,7 +26,7 @@ import { Tooltip } from '../ui/Tooltip.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
-import { useHydrateMessages } from './chat-display-mode.ts';
+import { useChatDisplayMode, useHydrateMessages } from './chat-display-mode.ts';
 import type { MessageReplacementStatus } from '../../lib/sdk-message-replacement.ts';
 
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
@@ -68,6 +68,7 @@ export function SDKAssistantMessage({
   const { message: apiMessage } = message;
   const contentBlocks = apiMessage.content as ContentBlock[];
   const hasError = 'error' in message && message.error !== undefined;
+  const minimal = useChatDisplayMode() === 'minimal';
   const hydrate = useHydrateMessages();
 
   const getTextContent = (): string => {
@@ -120,8 +121,12 @@ export function SDKAssistantMessage({
   };
 
   const textBlocks = contentBlocks.filter(isTextBlock);
-  const toolBlocks = contentBlocks.filter(isToolUseBlock);
-  const thinkingBlocks = contentBlocks.filter(isThinkingBlock).filter(hasRenderableThinking);
+  const toolBlocks = contentBlocks
+    .filter(isToolUseBlock)
+    .filter((block) => !minimal || MINIMAL_TOOLS.has(block.name));
+  const thinkingBlocks = minimal
+    ? []
+    : contentBlocks.filter(isThinkingBlock).filter(hasRenderableThinking);
 
   const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as
     | number
@@ -261,7 +266,22 @@ export function SDKAssistantMessage({
     </div>
   );
 
+  if (minimal && textBlocks.length === 0 && toolBlocks.length === 0) return null;
+
   return messageContent;
+}
+
+const MINIMAL_TOOLS = new Set(['AskUserQuestion', 'Task', 'Agent']);
+
+function subagentReplyText(output: unknown): string {
+  if (output && typeof output === 'object' && !Array.isArray(output) && 'content' in output)
+    return subagentReplyText((output as { content: unknown }).content);
+  if (typeof output === 'string') return output;
+  if (!Array.isArray(output)) return '';
+  return output
+    .map((part) => (part && typeof part === 'object' ? (part as { text?: unknown }).text : null))
+    .filter((text): text is string => typeof text === 'string')
+    .join('\n\n');
 }
 
 function ToolUseBlock({
@@ -316,9 +336,27 @@ function ToolUseBlock({
   const messageUuid = resultData?.messageUuid;
   const sessionId = resultData?.sessionId || propSessionId;
   const isOutputRemoved = resultData?.isOutputRemoved || false;
+  const minimal = useChatDisplayMode() === 'minimal';
   const hydrate = useHydrateMessages();
   const loadFull = () =>
     hydrate([assistantUuid, messageUuid].filter((uuid): uuid is string => !!uuid));
+  const isSubagent = block.name === 'Task' || block.name === 'Agent';
+  const reply = minimal && isSubagent ? subagentReplyText(content).trim() : '';
+  useEffect(() => {
+    if (minimal && isSubagent && !reply && messageUuid) hydrate([messageUuid]);
+  }, [minimal, isSubagent, reply, messageUuid, hydrate]);
+
+  if (minimal && isSubagent) {
+    if (!reply) return null;
+    return (
+      <div class="border-l-2 border-line pl-3" data-testid="subagent-reply">
+        <div class="text-xs text-fg-muted mb-1">
+          {(block.input as unknown as AgentInput).description}
+        </div>
+        <MarkdownRenderer content={reply} class="dark:prose-invert" />
+      </div>
+    );
+  }
 
   if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
     return (

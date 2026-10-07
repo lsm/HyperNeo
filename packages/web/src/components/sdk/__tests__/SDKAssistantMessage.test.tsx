@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
+import { ChatDisplayModeContext, MessageHydrationContext } from '../chat-display-mode';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 import type { PendingUserQuestion, ResolvedQuestion } from '@hyperneo/shared';
@@ -1104,5 +1105,63 @@ describe('SDKAssistantMessage', () => {
         expect(container.textContent).toContain('Question skipped');
       });
     });
+  });
+});
+
+describe('SDKAssistantMessage in minimal display mode', () => {
+  const inMinimal = (node: preact.ComponentChild) =>
+    render(
+      <ChatDisplayModeContext.Provider value="minimal">{node}</ChatDisplayModeContext.Provider>
+    );
+
+  it('keeps the text and drops tool cards and thinking', () => {
+    const { container } = inMinimal(<SDKAssistantMessage message={createMixedContentMessage()} />);
+    expect(container.textContent).toContain('The file has been read.');
+    expect(container.textContent).not.toContain('/test/file.txt');
+  });
+
+  it('renders nothing for a tool-only message', () => {
+    const { container } = inMinimal(<SDKAssistantMessage message={createToolUseMessage()} />);
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('loads a thinned subagent result to show its reply', () => {
+    const hydrate = vi.fn();
+    const toolResultsMap = new Map([
+      [
+        'toolu_task123',
+        { content: { type: 'tool_result', content: '', output_thinned: true }, messageUuid: 'r-1' },
+      ],
+    ]);
+    render(
+      <MessageHydrationContext.Provider value={hydrate}>
+        <ChatDisplayModeContext.Provider value="minimal">
+          <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
+        </ChatDisplayModeContext.Provider>
+      </MessageHydrationContext.Provider>
+    );
+    expect(hydrate).toHaveBeenCalledWith(['r-1']);
+  });
+
+  it("shows a subagent's final reply under its description", async () => {
+    const toolResultsMap = new Map([
+      [
+        'toolu_task123',
+        {
+          content: {
+            type: 'tool_result',
+            tool_use_id: 'toolu_task123',
+            content: [{ type: 'text', text: 'Found 12 test files.' }],
+          },
+        },
+      ],
+    ]);
+    const { getByTestId } = inMinimal(
+      <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
+    );
+    expect(getByTestId('subagent-reply').textContent).toContain('Find all test files');
+    await waitFor(() =>
+      expect(getByTestId('subagent-reply').textContent).toContain('Found 12 test files.')
+    );
   });
 });

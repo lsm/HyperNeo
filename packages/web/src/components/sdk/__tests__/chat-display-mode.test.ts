@@ -8,14 +8,15 @@ describe('resolveChatDisplayMode', () => {
     expect(resolveChatDisplayMode(undefined, undefined)).toBe('compact');
   });
 
-  it('shows minimal as compact until minimal is offered', () => {
-    expect(resolveChatDisplayMode('minimal', undefined)).toBe('compact');
+  it('keeps a minimal choice', () => {
+    expect(resolveChatDisplayMode('minimal', 'full')).toBe('minimal');
   });
 });
 
 describe('nextChatDisplayMode', () => {
   it('cycles through the offered modes', () => {
     expect(nextChatDisplayMode('full')).toBe('compact');
-    expect(nextChatDisplayMode('compact')).toBe('full');
+    expect(nextChatDisplayMode('compact')).toBe('minimal');
+    expect(nextChatDisplayMode('minimal')).toBe('full');
   });
 });

@@ -2,7 +2,7 @@ import type { ChatDisplayMode } from '@hyperneo/shared';
 import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
 
-const OFFERED_MODES: readonly ChatDisplayMode[] = ['full', 'compact'];
+const OFFERED_MODES: readonly ChatDisplayMode[] = ['full', 'compact', 'minimal'];
 
 export const ChatDisplayModeContext = createContext<ChatDisplayMode>('full');
 
@@ -20,6 +20,10 @@ export function resolveChatDisplayMode(
 
 export function nextChatDisplayMode(mode: ChatDisplayMode): ChatDisplayMode {
   return OFFERED_MODES[(OFFERED_MODES.indexOf(mode) + 1) % OFFERED_MODES.length];
+}
+
+export function useChatDisplayMode(): ChatDisplayMode {
+  return useContext(ChatDisplayModeContext);
 }
 
 export const MessageHydrationContext = createContext<(uuids: string[]) => void>(() => {});

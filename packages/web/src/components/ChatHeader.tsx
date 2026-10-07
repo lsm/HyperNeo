@@ -13,6 +13,18 @@ import { sessions } from '../lib/state.ts';
 import { useState } from 'preact/hooks';
 import { nextChatDisplayMode } from './sdk/chat-display-mode.ts';
 
+const DISPLAY_MODE_TITLES: Record<ChatDisplayMode, string> = {
+  full: 'Full view: switch to compact',
+  compact: 'Compact view: switch to minimal',
+  minimal: 'Minimal view: switch to full',
+};
+
+const DISPLAY_MODE_ICONS: Record<ChatDisplayMode, string> = {
+  full: 'M4 6h16M4 10h16M4 14h16M4 18h16',
+  compact: 'M4 7h16M4 12h10M4 17h16',
+  minimal: 'M4 9h16M4 15h10',
+};
+
 export interface ChatHeaderProps {
   session: Session | null;
   features?: SessionFeatures;
@@ -174,22 +186,17 @@ export function ChatHeader({
         )}
         {displayMode && onDisplayModeChange && (
           <IconButton
-            title={displayMode === 'full' ? 'Hide tool details' : 'Show tool details'}
+            title={DISPLAY_MODE_TITLES[displayMode]}
             data-testid="display-mode-btn"
-            aria-pressed={displayMode === 'full'}
             onClick={() => onDisplayModeChange(nextChatDisplayMode(displayMode))}
-            class={cn('flex-shrink-0 text-fg-muted', displayMode === 'full' && 'bg-fill text-fg')}
+            class="flex-shrink-0 text-fg-muted"
           >
             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width={1.9}
-                d={
-                  displayMode === 'full'
-                    ? 'M4 6h16M4 10h16M4 14h16M4 18h16'
-                    : 'M4 7h16M4 12h10M4 17h16'
-                }
+                d={DISPLAY_MODE_ICONS[displayMode]}
               />
             </svg>
           </IconButton>

@@ -35,6 +35,7 @@ const PERMISSION_MODE_OPTIONS = [
 const CHAT_DISPLAY_MODE_OPTIONS = [
   { value: 'compact', label: 'Compact' },
   { value: 'full', label: 'Full' },
+  { value: 'minimal', label: 'Minimal' },
 ];
 
 const THINKING_LEVEL_OPTIONS = [
@@ -268,7 +269,7 @@ export function GeneralSettings() {
 
         <SettingsRow
           label="Default chat view"
-          description="Compact shows one line per tool call; each chat can override it"
+          description="Compact shows one line per tool call, Minimal only replies; each chat can override it"
         >
           <SettingsSelect
             value={localDisplayMode}
