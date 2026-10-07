@@ -25,12 +25,14 @@ export interface UseAutoScrollResult {
 export function followAfterScroll(
   following: boolean,
   userScrolling: boolean,
-  scrolledUp: boolean,
+  scrolledUpBy: number,
   distanceFromBottom: number,
-  nearBottomThreshold: number
+  nearBottomThreshold: number,
+  viewportHeight: number
 ): boolean {
-  if (!userScrolling) return following;
-  if (scrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
+  const offBottom = distanceFromBottom >= nearBottomThreshold;
+  if (!userScrolling) return following && !(scrolledUpBy > viewportHeight && offBottom);
+  if (scrolledUpBy > 1) return distanceFromBottom < AT_BOTTOM_PX;
   return following || distanceFromBottom < nearBottomThreshold;
 }
 
@@ -99,9 +101,10 @@ export function useAutoScroll({
         followingRef.current = followAfterScroll(
           followingRef.current,
           userScrolling,
-          container.scrollTop < lastScrollTopRef.current - 1,
+          lastScrollTopRef.current - container.scrollTop,
           distance,
-          nearBottomThreshold
+          nearBottomThreshold,
+          container.clientHeight
         );
         lastScrollTopRef.current = container.scrollTop;
         setIsNearBottom(distance < nearBottomThreshold);
@@ -165,8 +168,8 @@ export function useAutoScroll({
   }, [resetKey]);
 
   useLayoutEffect(() => {
-    if (!enabled) followingRef.current = false;
-  }, [enabled]);
+    if (!enabled || loadingOlder) followingRef.current = false;
+  }, [enabled, loadingOlder]);
 
   useLayoutEffect(() => {
     if (!hasContent) return;

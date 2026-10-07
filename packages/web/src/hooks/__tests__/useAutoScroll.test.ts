@@ -392,8 +392,10 @@ describe('useAutoScroll', () => {
       const baselineScroll = containerRef.current!.scrollTop;
 
       rerender({ messageCount: 55, loadingOlder: true });
+      containerRef.current!.scrollHeight = 1500;
 
       rerender({ messageCount: 55, loadingOlder: false });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
       expect(containerRef.current!.scrollTop).toBe(baselineScroll);
     });
 
@@ -418,8 +420,10 @@ describe('useAutoScroll', () => {
       const baselineScroll = containerRef.current!.scrollTop;
 
       rerender({ messageCount: 200, loadingOlder: true });
+      containerRef.current!.scrollHeight = 1500;
 
       rerender({ messageCount: 250, loadingOlder: false });
+      act(() => resizeObserverInstances.at(-1)!.triggerResize());
       expect(containerRef.current!.scrollTop).toBe(baselineScroll);
     });
 
@@ -1107,13 +1111,30 @@ describe('useAutoScroll', () => {
       const { containerRef, endRef, addEventListenerMock } = createMockRefs();
       renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
       const container = containerRef.current!;
-      container.scrollTop = 300;
+      container.scrollTop = 600;
+      container.scrollHeight = 1300;
       act(() => handler(addEventListenerMock, 'scroll')());
       act(() => {
-        container.scrollHeight = 1300;
         resizeObserverInstances.at(-1)!.triggerResize();
       });
       expect(container.scrollTop).toBe(1300);
+    });
+
+    it('stops following when an unmarked scroll jumps far up, like find-in-page', () => {
+      const { containerRef, endRef, addEventListenerMock } = createMockRefs();
+      renderHook(() => useAutoScroll({ containerRef, endRef, messageCount: 5 }));
+      const container = containerRef.current!;
+      act(() => {
+        container.scrollHeight = 2000;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      container.scrollTop = 100;
+      act(() => handler(addEventListenerMock, 'scroll')());
+      act(() => {
+        container.scrollHeight = 2400;
+        resizeObserverInstances.at(-1)!.triggerResize();
+      });
+      expect(container.scrollTop).toBe(100);
     });
 
     function handler(addEventListenerMock: ReturnType<typeof vi.fn>, event: string) {
@@ -1153,14 +1174,19 @@ describe('useAutoScroll', () => {
 
 describe('followAfterScroll', () => {
   it('drops following when the user scrolls up off the bottom', () => {
-    expect(followAfterScroll(true, true, true, 50, 200)).toBe(false);
-    expect(followAfterScroll(true, true, true, 0, 200)).toBe(true);
+    expect(followAfterScroll(true, true, 50, 50, 200, 500)).toBe(false);
+    expect(followAfterScroll(true, true, 50, 0, 200, 500)).toBe(true);
   });
 
   it('resumes when the user scrolls near the bottom, and ignores layout-driven scrolls', () => {
-    expect(followAfterScroll(false, true, false, 150, 200)).toBe(true);
-    expect(followAfterScroll(false, true, false, 900, 200)).toBe(false);
-    expect(followAfterScroll(true, false, true, 900, 200)).toBe(true);
-    expect(followAfterScroll(false, false, false, 0, 200)).toBe(false);
+    expect(followAfterScroll(false, true, 0, 150, 200, 500)).toBe(true);
+    expect(followAfterScroll(false, true, 0, 900, 200, 500)).toBe(false);
+    expect(followAfterScroll(true, false, 200, 900, 200, 500)).toBe(true);
+    expect(followAfterScroll(false, false, 0, 0, 200, 500)).toBe(false);
+  });
+
+  it('drops following on an unmarked jump of more than a viewport off the bottom', () => {
+    expect(followAfterScroll(true, false, 900, 900, 200, 500)).toBe(false);
+    expect(followAfterScroll(true, false, 900, 0, 200, 500)).toBe(true);
   });
 });
