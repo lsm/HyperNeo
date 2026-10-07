@@ -20,10 +20,15 @@ const tones = {
   accent: 'text-accent bg-accent/10',
 };
 
-function neoWorkTone(work: NeoWork, driver?: NeoWorkDriverReceipt): keyof typeof tones {
+function neoWorkTone(
+  work: NeoWork,
+  driver: NeoWorkDriverReceipt | undefined,
+  waiting: boolean
+): keyof typeof tones {
   const status = work.status === 'queued' ? driver?.status : null;
   if (work.status === 'reported' || status === 'done') return 'success';
   if (
+    (work.status === 'queued' && waiting) ||
     work.status === 'failed' ||
     work.status === 'cancelled' ||
     status === 'failed' ||
@@ -78,7 +83,7 @@ export function NeoWorkCard({
   }, [work.id, questionSlot]);
   const label =
     work.status === 'queued' && driver ? neoWorkDriverLabel(driver) : labels[work.status];
-  const tone = neoWorkTone(work, driver);
+  const tone = neoWorkTone(work, driver, waiting);
   const icon = tone === 'success' ? 'check' : 'work';
   const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
   const openLink = driverLink && (

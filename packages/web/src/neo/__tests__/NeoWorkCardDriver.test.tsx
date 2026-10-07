@@ -127,5 +127,17 @@ describe('NeoWorkCard with drivers work', () => {
       return tone;
     });
     expect(tones).toEqual(cases.map(([, , tone]) => tone));
+    const { container } = render(
+      <NeoWorkCard
+        work={{ ...work, sessionId: 's1' }}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={vi.fn()}
+        waiting
+      />
+    );
+    expect(screen.getByText('Waiting for your answer')).toBeTruthy();
+    expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
 });
