@@ -186,7 +186,7 @@ describe('Neo MVP controls', () => {
         images: [],
       })
     );
-    await waitFor(() => expect(onDraft).toHaveBeenCalledWith(''));
+    expect(onDraft).not.toHaveBeenCalled();
   });
   it('does not erase text typed while an earlier message is being accepted', async () => {
     let accept: () => void = () => {};

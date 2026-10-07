@@ -6,8 +6,9 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { QuestionPrompt } from '../components/QuestionPrompt.tsx';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { connectionState } from '../lib/state.ts';
+import type { NeoPendingAsk } from './neo-intake.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
-import { NeoPublicConversation } from './NeoPublicConversation.tsx';
+import { NeoPublicConversation, PendingAsk } from './NeoPublicConversation.tsx';
 import type { NeoPublicConversation as PublicConversation } from './public-conversation.ts';
 
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
@@ -59,8 +60,14 @@ export function NeoConversation({
   onLoadEarlierPublic,
   onProgress,
   topics,
+  pendingAsks,
+  onRetryAsk,
+  onEditAsk,
 }: {
   store: SessionStore;
+  pendingAsks?: readonly NeoPendingAsk[];
+  onRetryAsk?: (requestId: string) => void;
+  onEditAsk?: (requestId: string) => void;
   topics?: ReadonlyMap<string, string>;
   sessionId: string;
   works?: NeoWork[];
@@ -145,6 +152,16 @@ export function NeoConversation({
             onLoadEarlier={onLoadEarlierPublic}
           />
         )}
+        {pendingAsks
+          ?.filter(
+            (ask) =>
+              !publicConversation?.entries.some(
+                (entry) => entry.kind === 'ask' && entry.ask.requestId === ask.requestId
+              )
+          )
+          .map((ask) => (
+            <PendingAsk key={ask.requestId} ask={ask} onRetry={onRetryAsk} onEdit={onEditAsk} />
+          ))}
         {progressLabel && !onProgress && renderProgress(progressLabel)}
         {pending && epoch && (
           <QuestionPrompt

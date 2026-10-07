@@ -440,6 +440,12 @@ export function NeoLive() {
               onOpenPublicWork={(id) => openScene({ kind: 'work', id })}
               onRetryPublic={retryPublicConversation}
               onProgress={setReplyProgress}
+              pendingAsks={neo.pendingAsks}
+              onRetryAsk={(requestId) => void neo.retrySend(requestId)}
+              onEditAsk={(requestId) => {
+                const failed = neo.discardSend(requestId);
+                if (failed) writeDraft(failed.text);
+              }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
                 const top = element?.getBoundingClientRect().top ?? 0;
@@ -588,13 +594,13 @@ export function NeoLive() {
               onSend={(input) => {
                 const submitted = draft ?? '';
                 const captured = reloadBuffer.read(neo.sessionId ?? '');
+                setDraft('');
                 return inputDraft.holdDraftAdoption(async () => {
                   const receipt = await neo.send(input);
                   if (receipt.ok) {
                     await inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
                     if (captured?.text === submitted)
                       reloadBuffer.forget(neo.sessionId ?? '', captured.id);
-                    setDraft((current) => (current === submitted ? '' : current));
                   }
                   return receipt;
                 });

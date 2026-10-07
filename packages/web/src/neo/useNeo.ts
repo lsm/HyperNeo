@@ -3,7 +3,7 @@ import type { NeoResult, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import { SessionStore } from '../lib/session-store.ts';
-import { createNeoIntakeClient } from './neo-intake.ts';
+import { createNeoIntakeClient, type NeoPendingAsk } from './neo-intake.ts';
 import { readNeoConversationAsks } from './conversation-ask-client.ts';
 import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
@@ -15,10 +15,17 @@ import { projectNeoPublicHolderConversation } from './public-holder-conversation
 
 export function useNeo() {
   const store = useMemo(() => new SessionStore(), []);
-  const intake = useMemo(() => createNeoIntakeClient(() => connectionManager.getHub()), []);
+  const [pendingAsks, setPendingAsks] = useState<readonly NeoPendingAsk[]>([]);
+  const intake = useMemo(
+    () => createNeoIntakeClient(() => connectionManager.getHub(), setPendingAsks),
+    []
+  );
   const [snapshot, setSnapshot] = useState<NeoSnapshot | null>(null);
   const publications = useNeoPublications(snapshot?.sessionId ?? null);
   const asks = useNeoConversationAsks(snapshot?.sessionId ?? null);
+  useEffect(() => {
+    intake.settle(new Set(asks.items.map((ask) => ask.requestId)));
+  }, [asks.items, intake]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busyWork, setBusyWork] = useState<string | null>(null);
@@ -149,6 +156,9 @@ export function useNeo() {
     open,
     act,
     send: intake.send,
+    pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
+    retrySend: intake.retry,
+    discardSend: intake.discard,
     retry: () => setAttempt((value) => value + 1),
   };
 }

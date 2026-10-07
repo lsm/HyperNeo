@@ -300,3 +300,56 @@ describe('Neo intake submission lifecycle', () => {
     expect(request.mock.calls[2][1].input.requestId).toBe(secondId);
   });
 });
+
+describe('createNeoIntakeClient pending asks', () => {
+  function tracked() {
+    const seen: string[][] = [];
+    const request = vi.fn(async (_method: string, { input }: { input: Payload }) =>
+      receipt(input.requestId)
+    );
+    const getHub = vi.fn(async () => ({ request }) as unknown as MessageHub);
+    const client = createNeoIntakeClient(getHub, (asks) =>
+      seen.push(asks.map((ask) => `${ask.text}:${ask.state}`))
+    );
+    return { request, client, seen };
+  }
+
+  it('shows an ask as sending at once, then accepted until the ledger has it', async () => {
+    const { client, seen } = tracked();
+    const flight = client.send({ sessionId: 'neo:root', text: 'Hello' });
+    expect(seen.at(-1)).toEqual(['Hello:sending']);
+    const result = await flight;
+    expect(seen.at(-1)).toEqual(['Hello:accepted']);
+    client.settle(new Set(['someone-else']));
+    expect(seen.at(-1)).toEqual(['Hello:accepted']);
+    client.settle(new Set([result.ok ? result.requestId : '']));
+    expect(seen.at(-1)).toEqual([]);
+  });
+
+  it('marks a rejected ask failed, retries it with the same request id, and discards on edit', async () => {
+    const { client, request, seen } = tracked();
+    request.mockResolvedValueOnce({ ok: false, reason: 'Busy' } as never);
+    await client.send({ sessionId: 'neo:root', text: 'Hello' });
+    expect(seen.at(-1)).toEqual(['Hello:failed']);
+    const firstId = request.mock.calls[0][1].input.requestId;
+    request.mockResolvedValueOnce({ ok: false, reason: 'Still busy' } as never);
+    await client.retry(firstId);
+    expect(request.mock.calls[1][1].input.requestId).toBe(firstId);
+    expect(client.discard(firstId)).toEqual({
+      sessionId: 'neo:root',
+      text: 'Hello',
+      images: undefined,
+    });
+    expect(seen.at(-1)).toEqual([]);
+    expect(client.retry(firstId)).toBeNull();
+  });
+
+  it('marks a thrown send failed and still rejects for the caller', async () => {
+    const { client, request, seen } = tracked();
+    request.mockRejectedValueOnce(new Error('Connection failed'));
+    await expect(client.send({ sessionId: 'neo:root', text: 'Hello' })).rejects.toThrow(
+      'Connection failed'
+    );
+    expect(seen.at(-1)).toEqual(['Hello:failed']);
+  });
+});

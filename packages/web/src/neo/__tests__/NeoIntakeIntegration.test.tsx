@@ -186,7 +186,7 @@ describe('Neo live durable intake', () => {
   });
 
   it.each(['transport', 'receipt', 'rejection'])(
-    'retains an unconfirmed %s draft for a same-identity retry',
+    'shows an unconfirmed %s ask as not sent and retries it with the same identity',
     async (failure) => {
       const input = await open();
       let first = true;
@@ -204,22 +204,28 @@ describe('Neo live durable intake', () => {
       );
       await attach('note.txt', 'Keep this attachment', 'text/plain');
       submit('Do not lose this');
-      await screen.findByRole('alert');
-      expect((input as HTMLTextAreaElement).value).toBe('Do not lose this');
-      expect(screen.getByRole('button', { name: 'Remove note.txt' })).toBeTruthy();
-      await waitFor(() =>
-        expect(
-          (screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
-        ).toBe(false)
-      );
-      submit();
+      expect((input as HTMLTextAreaElement).value).toBe('');
+      expect(screen.queryByRole('button', { name: 'Remove note.txt' })).toBeNull();
+      await screen.findByRole('button', { name: /^Not sent/ });
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(asks()).toHaveLength(2));
       expect(asks()[1][1].input).toEqual(asks()[0][1].input);
-      await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(''));
-      expect(screen.queryByRole('button', { name: 'Remove note.txt' })).toBeNull();
-      expect(screen.queryByRole('alert')).toBeNull();
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^Not sent/ })).toBeNull());
+      expect((input as HTMLTextAreaElement).value).toBe('');
     }
   );
+
+  it('puts a not-sent ask back in the composer on Edit', async () => {
+    const input = await open();
+    request.mockImplementation(async (_method: string, { name }: { name: string }) =>
+      name === 'neo.message.send' ? { ok: false, reason: 'Neo is busy.' } : snapshot()
+    );
+    submit('Try this later');
+    expect((input as HTMLTextAreaElement).value).toBe('');
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe('Try this later'));
+    expect(screen.queryByRole('button', { name: /^Not sent/ })).toBeNull();
+  });
 
   it('keeps later text and attachments while accepting only one repeated submit', async () => {
     await open();

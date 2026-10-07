@@ -142,9 +142,9 @@ describe('NeoLive ordinary edit reload capture', () => {
     type('Accepted edit');
     expect(read()).toMatchObject({ text: 'Accepted edit' });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-    await waitFor(() => expect(value()).toBe(''));
+    expect(value()).toBe('');
     expect(view.model.value.send).toHaveBeenCalledTimes(1);
-    expect(read()).toBeNull();
+    await waitFor(() => expect(read()).toBeNull());
   });
 
   it.each([false, true])(

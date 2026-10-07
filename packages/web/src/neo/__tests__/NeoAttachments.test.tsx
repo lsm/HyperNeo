@@ -186,14 +186,15 @@ describe('Neo attachments', () => {
       })
     );
   });
-  it('keeps attachments on failure and isolates drafts across conversation remounts', async () => {
+  it('clears attachments on send and isolates drafts across conversation remounts', async () => {
     const id = crypto.randomUUID();
     const view = render(composer(id));
     await attach();
     sendMessage.mockResolvedValueOnce({ ok: false, reason: 'Try again' });
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
-    expect(screen.getByRole('button', { name: 'Remove notes.md' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull();
+    await attach();
     view.unmount();
     const other = render(composer());
     expect(screen.queryByRole('button', { name: 'Remove notes.md' })).toBeNull();

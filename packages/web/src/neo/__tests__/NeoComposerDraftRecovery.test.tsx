@@ -208,8 +208,10 @@ describe('Neo real composer draft recovery', () => {
       await act(async () => {
         releases.get(order[1])!();
       });
-      await waitFor(() => expect(value()).toBe(''));
-      expect(persisted.get(root)).toBe(concurrent ? 'Concurrent overlapping draft' : '');
+      expect(value()).toBe('');
+      await waitFor(() =>
+        expect(persisted.get(root)).toBe(concurrent ? 'Concurrent overlapping draft' : '')
+      );
       view.unmount();
       mount();
       await waitFor(() => expect(value()).toBe(concurrent ? 'Concurrent overlapping draft' : ''));
@@ -366,7 +368,7 @@ describe('Neo real composer draft recovery', () => {
     type('Edited accepted submission');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(view.model.value.send).toHaveBeenCalledOnce());
-    expect(value()).toBe('Edited accepted submission');
+    expect(value()).toBe('');
     await act(async () => {
       release();
     });
