@@ -23,10 +23,13 @@ function isTopLevel(message: ChatMessage): boolean {
   return !(message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
 }
 
+const PENDING_DELIVERY = new Set(['queued', 'processing', 'retrying']);
+
 function startsTurn(message: ChatMessage): boolean {
   return (
     message.type === 'user' &&
     isTopLevel(message) &&
+    !PENDING_DELIVERY.has(String((message as { deliveryStatus?: unknown }).deliveryStatus)) &&
     !contentBlocks(message).some((block) => block?.type === 'tool_result')
   );
 }

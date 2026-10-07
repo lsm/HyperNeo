@@ -61,6 +61,18 @@ describe('buildChatTurns', () => {
     expect(turns.map((turn) => turn.outcome)).toEqual(['failed', 'stopped', 'running']);
   });
 
+  it('keeps a turn running while a follow-up waits in the queue', () => {
+    const queued = { ...user('u2', 30), deliveryStatus: 'queued' } as unknown as ChatMessage;
+    const turns = buildChatTurns([
+      user('u1', 1),
+      assistant('a1', { type: 'tool_use', id: 't' }),
+      queued,
+    ]);
+    expect(turns.map((turn) => [turn.key, turn.messages.length, turn.outcome])).toEqual([
+      ['u1', 3, 'running'],
+    ]);
+  });
+
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
