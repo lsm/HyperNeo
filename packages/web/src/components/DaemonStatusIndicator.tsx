@@ -3,6 +3,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 
 export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boolean }) {
   const state = connectionState.value;
+  if (state === 'connected') return null;
 
   let dotColor: string;
   let statusLabel: string;
@@ -10,12 +11,6 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
   let showPulse = false;
 
   switch (state) {
-    case 'connected':
-      dotColor = 'bg-success';
-      statusLabel = 'Connection ready';
-      displayLabel = '';
-      showPulse = true;
-      break;
     case 'connecting':
       dotColor = 'bg-warning';
       statusLabel = 'Connecting';
@@ -42,7 +37,6 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
       break;
   }
 
-  const isConnected = state === 'connected';
   const canReconnect = state === 'disconnected' || state === 'error' || state === 'failed';
   const shouldShowLabel = showLabel && displayLabel !== '';
 
@@ -57,7 +51,6 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
       onClick={handleClick}
       disabled={!canReconnect}
       aria-label={statusLabel}
-      aria-pressed={isConnected}
       class={`
 					${shouldShowLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
 					flex items-center justify-center rounded-lg text-sm text-fg-muted transition-colors
@@ -68,9 +61,7 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
       <div class="relative flex items-center justify-center">
         <span class={`w-3 h-3 ${dotColor} rounded-full block`} />
         {showPulse && (
-          <span
-            class={`absolute inset-0 w-3 h-3 ${dotColor} rounded-full ${isConnected ? 'animate-ping opacity-75' : 'animate-pulse'}`}
-          />
+          <span class={`absolute inset-0 w-3 h-3 ${dotColor} rounded-full animate-pulse`} />
         )}
       </div>
       {shouldShowLabel && (
