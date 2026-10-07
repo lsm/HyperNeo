@@ -105,6 +105,31 @@ describe('codex-desktop start', () => {
     expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
   });
 
+  test('runs a subfolder start at the worktree root', async () => {
+    const { instance, calls } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen/web'],
+      { root: '/focus/dolmen' }
+    );
+    await instance.start?.(
+      { ...request, place: { ...place, folder: '/focus/dolmen/web', name: 'web' } },
+      user
+    );
+    expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
+  });
+
+  test('removes the worktree when no thread starts', async () => {
+    const { instance, spawned } = adapter({ call: async () => ({}) }, ['/focus/dolmen'], {
+      root: '/focus/dolmen',
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({ ok: false });
+    expect(spawned.map(({ args }) => args.slice(0, 3))).toEqual([
+      ['git', 'worktree', 'add'],
+      ['git', 'worktree', 'remove'],
+    ]);
+    expect(spawned[1].args.at(-1)).toBe('/codex/worktrees/abcd1234/dolmen');
+  });
+
   test('does not start a thread when the worktree cannot be created', async () => {
     const { instance, calls, closed } = adapter({}, ['/focus/dolmen'], {
       root: '/focus/dolmen',

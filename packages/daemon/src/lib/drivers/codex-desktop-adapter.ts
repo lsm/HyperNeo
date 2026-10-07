@@ -1,5 +1,5 @@
 import { open } from 'node:fs/promises';
-import { basename, join, relative } from 'node:path';
+import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -494,22 +494,37 @@ export function startedThreadId(started: unknown): string | null {
   return typeof id === 'string' && id ? id : null;
 }
 
+interface CodexWorkFolder {
+  cwd: string;
+  release: () => Promise<void>;
+}
+
+async function runGit(args: string[], repo: string, deps: CodexDesktopAdapterDeps) {
+  const proc = deps.spawn(['git', ...args], { cwd: repo, stdout: 'ignore', stderr: 'pipe' });
+  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  return { code, stderr: stderr.trim() };
+}
+
 export async function prepareCodexWorkFolder(
   folder: string,
   deps: CodexDesktopAdapterDeps
-): Promise<Result<string>> {
+): Promise<Result<CodexWorkFolder>> {
   const repo = await deps.gitRoot(folder).catch(() => null);
-  if (!repo) return { ok: true, value: folder };
+  if (!repo) return { ok: true, value: { cwd: folder, release: async () => {} } };
   const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
-  const proc = deps.spawn(['git', 'worktree', 'add', '--detach', worktree, 'HEAD'], {
-    cwd: repo,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  });
-  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  return code === 0
-    ? { ok: true, value: join(worktree, relative(repo, folder)) }
-    : reject('not_delivered', `Could not create a worktree in ${repo}: ${stderr.trim()}`);
+  const added = await runGit(['worktree', 'add', '--detach', worktree, 'HEAD'], repo, deps);
+  if (added.code !== 0) {
+    return reject('not_delivered', `Could not create a worktree in ${repo}: ${added.stderr}`);
+  }
+  return {
+    ok: true,
+    value: {
+      cwd: worktree,
+      release: async () => {
+        await runGit(['worktree', 'remove', '--force', worktree], repo, deps).catch(() => {});
+      },
+    },
+  };
 }
 
 export async function startCodexThread(
@@ -527,10 +542,12 @@ export async function startCodexThread(
     );
   }
   let threadId: string | null = null;
+  let workFolder: CodexWorkFolder | null = null;
   try {
-    const cwd = await prepareCodexWorkFolder(folder, deps);
-    if (!cwd.ok) return cwd;
-    threadId = startedThreadId(await server.call('thread/start', { cwd: cwd.value }));
+    const prepared = await prepareCodexWorkFolder(folder, deps);
+    if (!prepared.ok) return prepared;
+    workFolder = prepared.value;
+    threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
     if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
     await server.call('thread/name/set', { threadId, name: request.title });
     await server.call('turn/start', {
@@ -556,6 +573,7 @@ export async function startCodexThread(
     );
   } finally {
     server.close();
+    if (!threadId) await workFolder?.release();
   }
 }
 
