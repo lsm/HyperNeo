@@ -139,6 +139,8 @@ function codexDesktopAdapters(
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
       folderExists: existsSync,
+      gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
+      newId: () => crypto.randomUUID(),
       searchChats: (text) => searchChats(text, ['codex']),
     }),
   ];
