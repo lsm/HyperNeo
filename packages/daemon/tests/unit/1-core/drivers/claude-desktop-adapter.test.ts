@@ -269,6 +269,10 @@ describe('claude-desktop adapter against the app session records', () => {
       '-n',
     ]);
     expect(spawned[0].args.at(-1)).toContain('session named "lakehouse loader"');
+    expect(spawned[0].args.at(-1)).toContain(
+      'load "orders"\nthen stop\n\n(Relayed from HyperNeo by a one-shot sender that has already exited.'
+    );
+    expect(spawned[0].args.at(-1)).toContain('Do not message the sender back.)\n</message>');
     expect(await adapter(undefined, 1).send?.(ref, 'hi', user)).toEqual({
       ok: false,
       reason: 'not_delivered',

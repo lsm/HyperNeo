@@ -376,8 +376,11 @@ export function requireOpenClaudeRecord(
     : { reason: reject('not_open', `${record.title} has no Claude Code session yet.`) };
 }
 
+const RELAY_REPLY_NOTE =
+  '(Relayed from HyperNeo by a one-shot sender that has already exited. Answer here in this session; HyperNeo reads your reply from this chat. Do not message the sender back.)';
+
 export function claudeRelayPrompt(name: string, message: string): string {
-  return `Use the SendMessage tool once to send the text between the message tags, exactly and without the tags, to the session named ${JSON.stringify(name)}. Do nothing else, then stop.\n<message>\n${message}\n</message>`;
+  return `Use the SendMessage tool once to send the text between the message tags, exactly and without the tags, to the session named ${JSON.stringify(name)}. Do nothing else, then stop.\n<message>\n${message}\n\n${RELAY_REPLY_NOTE}\n</message>`;
 }
 
 export function transcriptHasRelayedMessage(lines: readonly string[], message: string): boolean {
