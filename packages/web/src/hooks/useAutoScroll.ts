@@ -111,7 +111,7 @@ export function useAutoScroll({
         if (followingRef.current && !pausedRef.current) pin();
         onScroll();
       };
-      if (!landedRef.current)
+      if (!landedRef.current && !pausedRef.current)
         followingRef.current =
           container.scrollHeight - container.scrollTop - container.clientHeight <
           nearBottomThreshold;

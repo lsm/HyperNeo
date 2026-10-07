@@ -1038,6 +1038,21 @@ describe('useAutoScroll', () => {
       expect(containerRef.current!.scrollTop).toBe(200);
     });
 
+    it('keeps a deep link paused from an empty mount through the jump', () => {
+      const { containerRef, endRef } = createMockRefs();
+      containerRef.current!.scrollTop = 500;
+      const { rerender } = renderHook(
+        ({ messageCount, enabled, isInitialLoad }) =>
+          useAutoScroll({ containerRef, endRef, messageCount, enabled, isInitialLoad }),
+        { initialProps: { messageCount: 0, enabled: false, isInitialLoad: true } }
+      );
+      rerender({ messageCount: 5, enabled: false, isInitialLoad: true });
+      containerRef.current!.scrollTop = 100;
+      rerender({ messageCount: 5, enabled: true, isInitialLoad: false });
+      rerender({ messageCount: 6, enabled: true, isInitialLoad: false });
+      expect(containerRef.current!.scrollTop).toBe(100);
+    });
+
     it('does not snap back to the bottom when a search jump ends', () => {
       const { containerRef, endRef } = createMockRefs();
       const { rerender } = renderHook(
