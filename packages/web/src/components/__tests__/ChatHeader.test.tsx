@@ -48,7 +48,7 @@ describe('ChatHeader', () => {
   });
 
   describe('Display mode toggle', () => {
-    it('switches a compact chat to full', () => {
+    it('switches a compact chat to minimal', () => {
       const onDisplayModeChange = vi.fn();
       const { getByTestId } = render(
         <ChatHeader
@@ -58,10 +58,9 @@ describe('ChatHeader', () => {
         />
       );
       const toggle = getByTestId('display-mode-btn');
-      expect(toggle.getAttribute('title')).toBe('Show tool details');
-      expect(toggle.getAttribute('aria-pressed')).toBe('false');
+      expect(toggle.getAttribute('title')).toBe('Compact view: switch to minimal');
       fireEvent.click(toggle);
-      expect(onDisplayModeChange).toHaveBeenCalledWith('full');
+      expect(onDisplayModeChange).toHaveBeenCalledWith('minimal');
     });
 
     it('hides the toggle without a handler', () => {
