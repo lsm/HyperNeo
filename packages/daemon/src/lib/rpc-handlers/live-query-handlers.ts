@@ -10,6 +10,10 @@ import type {
 import { capMessageOutput } from './message-output-cap.ts';
 import { thinMessage } from './message-thinning.ts';
 import {
+  TASK_MESSAGE_FLAG,
+  ensureTaskMessageRows,
+} from '../../storage/schema/task-message-rows.ts';
+import {
   createEventMessage,
   ErrorCode,
   MessageHubHandlerError,
@@ -2023,298 +2027,399 @@ joined AS (
   `.trim();
 }
 
-const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
-${spaceTaskConvBaseCte(true)},
--- Assistant rows with a non-empty text block, ranked newest-first per segment.
-assistant_text AS (
-  SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
-  FROM joined
-  WHERE messageType = 'assistant'
-    AND json_valid(content)
-    AND json_type(content, '$.message.content') = 'array'
-    AND EXISTS (
-      SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE CASE
-        WHEN json_valid(b.value) THEN CASE
-          WHEN json_type(b.value) = 'object'
-            THEN json_extract(b.value, '$.type')
-          ELSE NULL
-        END
-        ELSE NULL
-      END = 'text'
-        AND TRIM(COALESCE(json_extract(b.value, '$.text'), '')) != ''
-    )
+const HOOK_SUBTYPES = `('hook_started', 'hook_progress', 'hook_response')`;
+
+const SPACE_TASK_FLAG_ROWS_BASE_CTE = `
+WITH target_task AS (
+  SELECT *
+  FROM space_tasks
+  WHERE id = ?
 ),
--- Assistant rows with a non-empty thinking block, ranked newest-first.
-assistant_thinking AS (
-  SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
-  FROM joined
-  WHERE messageType = 'assistant'
-    AND json_valid(content)
-    AND json_type(content, '$.message.content') = 'array'
-    AND EXISTS (
-      SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE CASE
-        WHEN json_valid(b.value) THEN CASE
-          WHEN json_type(b.value) = 'object'
-            THEN json_extract(b.value, '$.type')
-          ELSE NULL
-        END
-        ELSE NULL
-      END = 'thinking'
-        AND TRIM(COALESCE(json_extract(b.value, '$.thinking'), '')) != ''
-    )
+task_sessions AS MATERIALIZED (
+  SELECT DISTINCT session_id
+  FROM task_message_rows
+  WHERE task_id = (SELECT id FROM target_task)
 ),
--- Assistant rows carrying a tool_use block, ranked newest-first.
-assistant_tool AS (
-  SELECT sessionId, turnIndex, id,
-    ROW_NUMBER() OVER (PARTITION BY sessionId, turnIndex ORDER BY createdAt DESC, insOrder DESC) AS rn
-  FROM joined
-  WHERE messageType = 'assistant'
-    AND json_valid(content)
-    AND json_type(content, '$.message.content') = 'array'
-    AND EXISTS (
-      SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE CASE
-        WHEN json_valid(b.value) THEN CASE
-          WHEN json_type(b.value) = 'object'
-            THEN json_extract(b.value, '$.type')
-          ELSE NULL
-        END
-        ELSE NULL
-      END = 'tool_use'
-    )
+${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') IN (SELECT session_id FROM task_sessions)`)},
+active_delivery_retrying AS MATERIALIZED (
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
+  FROM active_delivery_candidates
+  GROUP BY message_uuid, session_id
 ),
--- The summary row id(s) per (session, turn): assistant text if any, else
--- thinking if any, else the last N tool rows. NOT EXISTS makes the fallback
--- tiers mutually exclusive per segment.
-seg_summary AS (
-  SELECT id FROM assistant_text WHERE rn = 1
-  UNION ALL
-  SELECT t.id FROM assistant_thinking t
-  WHERE t.rn = 1
-    AND NOT EXISTS (
-      SELECT 1 FROM assistant_text a
-      WHERE a.sessionId = t.sessionId AND a.turnIndex = t.turnIndex
-    )
-  UNION ALL
-  SELECT tu.id FROM assistant_tool tu
-  WHERE tu.rn <= ${SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT}
-    AND NOT EXISTS (
-      SELECT 1 FROM assistant_text a
-      WHERE a.sessionId = tu.sessionId AND a.turnIndex = tu.turnIndex
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM assistant_thinking th
-      WHERE th.sessionId = tu.sessionId AND th.turnIndex = tu.turnIndex
-    )
-),
-base_selection AS (
-  -- Every anchor (renderable user message) — never swallowed.
-  SELECT id FROM joined WHERE messageType = 'user' AND isRenderable = 1
-  UNION ALL
-  -- Every result row (completion / error marker).
-  SELECT id FROM joined WHERE isTerminal = 1
-  UNION ALL
-  -- Non-hook system rows (init / compact_boundary / api_retry / ...).
-  SELECT id FROM joined
-  WHERE messageType = 'system'
-    AND NOT (
-      COALESCE(CASE WHEN json_valid(content) THEN json_extract(content, '$.subtype') END, '')
-      IN ('hook_started', 'hook_progress', 'hook_response')
-    )
-  UNION ALL
-  -- GitHub activity rows (PR / review / CI events). They sit outside the
-  -- conversation-turn model (turnIndex IS NULL, not bounded by the recent-turn
-  -- window) but are sparse — state-filtered to ('routed','delivered') — and
-  -- legacy compact surfaced them, so keep them visible alongside the thread
-  -- (#2338 review). The full byTask feed is the other surface for them.
-  SELECT id FROM joined WHERE kind = 'github'
-  UNION ALL
-  -- HyperNeo-native action prompts (message_type='hyperneo_action', e.g.
-  -- sdk_resume_choice). They are renderable, non-terminal, and neither user nor
-  -- system nor assistant, so no other branch matches them; legacy compact kept
-  -- them via the non-terminal tail. The frontend (SDKResumeChoiceMessage)
-  -- renders the unblock card from the feed, so without this branch the card
-  -- disappears from the task pane after refresh/reconnect (#2338).
-  SELECT id FROM joined WHERE messageType = 'hyperneo_action'
-  UNION ALL
-  -- File/todo-mutating tool_use rows (Write/Edit/MultiEdit/TodoWrite). The
-  -- Artifacts + Todos panel (TaskArtifactsPanel) reads the compact feed and
-  -- derives file ops / todos from these via extractFileOperations /
-  -- buildThreadEvents; seg_summary only keeps tool rows when a segment has NO
-  -- assistant text, so without this branch they vanish in the common case
-  -- (agent replies with text AND edits files). Tool names mirror the
-  -- extractors in space-task-thread-events.ts (#2338 round 5).
-  --
-  -- NOT EXISTS seg_summary keeps this complementary: in a no-text turn
-  -- seg_summary already keeps the last-N tool rows (which may include these),
-  -- so without this guard the UNION ALL would emit them twice. This branch then
-  -- only adds mutating tools seg_summary dropped — i.e. the text-turn case it
-  -- exists for, plus any beyond the last-N cap (#2338 round 6).
-  SELECT id FROM joined
-  WHERE messageType = 'assistant'
-    AND json_valid(content)
-    AND json_type(content, '$.message.content') = 'array'
-    AND EXISTS (
-      SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE CASE
-        WHEN json_valid(b.value) THEN CASE
-          WHEN json_type(b.value) = 'object'
-            THEN json_extract(b.value, '$.name')
-          ELSE NULL
-        END
-        ELSE NULL
-      END IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
-        AND CASE
-          WHEN json_valid(b.value) THEN CASE
-            WHEN json_type(b.value) = 'object'
-              THEN json_extract(b.value, '$.type')
-            ELSE NULL
-          END
-          ELSE NULL
-        END = 'tool_use'
-    )
-    AND NOT EXISTS (SELECT 1 FROM seg_summary ss WHERE ss.id = joined.id)
-  UNION ALL
-  -- Per-segment summary (assistant text -> thinking -> last N tools).
-  SELECT id FROM seg_summary
-),
-hook_rows AS (
-  SELECT id FROM joined
-  WHERE messageType = 'system'
-    AND COALESCE(
-      CASE WHEN json_valid(content) THEN json_extract(content, '$.subtype') END,
-      ''
-    ) IN ('hook_started', 'hook_progress', 'hook_response')
-),
-tail_eligible AS (
-  SELECT id FROM base_selection
-  UNION
-  SELECT id FROM hook_rows
-),
-session_candidates AS (
+github_events AS (
   SELECT
-    j.id AS id,
-    j.sessionId AS sessionId,
-    j.isTerminal AS isTerminalRow,
-    j.turnIndex AS turnIndex,
-    ROW_NUMBER() OVER (
-      PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
-    ) AS candRank
-  FROM joined j
-  WHERE j.sessionId IS NOT NULL
-    AND (
-      j.messageType IN ('assistant', 'result')
-      OR (
-        j.messageType = 'system'
-        AND json_valid(j.content)
-        AND COALESCE(json_extract(j.content, '$.subtype'), '')
-          IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+    ge.id AS id,
+    NULL AS sessionId,
+    'github' AS kind,
+    'github' AS role,
+    'GitHub' AS label,
+    NULL AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    'github_pr_activity' AS messageType,
+    json_object(
+      'type', 'user',
+      'uuid', ge.id,
+      'message', json_object(
+        'role', 'user',
+        'content', json_array(json_object('type', 'text', 'text', '[GitHub] ' || ge.summary || char(10) || ge.external_url))
       )
-    )
+    ) AS githubContent,
+    'delivered' AS deliveryState,
+    ge.occurred_at AS createdAt,
+    NULL AS parentToolUseId,
+    1 AS isRenderable,
+    0 AS isTerminal,
+    NULL AS turnIndex,
+    ge.rowid AS insOrder,
+    0 AS flags,
+    NULL AS jsonSubtype,
+    ge.rowid AS githubRowid
+  FROM target_task tt
+  JOIN space_github_events ge ON ge.task_id = tt.id
+  WHERE ge.state IN ('routed', 'delivered')
 ),
-active_sessions AS (
-  SELECT sessionId
-  FROM session_candidates c
-  WHERE c.candRank = 1
-    AND COALESCE(c.isTerminalRow, 0) = 0
-    AND c.turnIndex = (
-      SELECT j2.turnIndex
-      FROM joined j2
-      WHERE j2.sessionId = c.sessionId
-      ORDER BY j2.createdAt DESC, j2.insOrder DESC
-      LIMIT 1
-    )
+session_node_exec AS (
+  SELECT tt.id AS task_id, ne.agent_session_id AS session_id, ne.id AS node_execution_id,
+         ne.agent_id, ne.agent_name,
+         ROW_NUMBER() OVER (
+           PARTITION BY tt.id, ne.agent_session_id
+           ORDER BY
+             CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC
+         ) AS rn
+  FROM target_task tt
+  JOIN node_executions ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id IS NOT NULL
 ),
-active_session_tails AS (
-  SELECT id
+session_labels AS MATERIALIZED (
+  SELECT
+    ts.session_id AS sessionId,
+    sne.node_execution_id AS nodeExecutionId,
+    CASE
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
+      ELSE 'node_agent'
+    END AS kind,
+    CASE
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
+    END AS role,
+    CASE
+      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
+      ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
+    END AS label
+  FROM task_sessions ts
+  LEFT JOIN sessions s_kind ON s_kind.id = ts.session_id
+  LEFT JOIN session_node_exec sne
+    ON sne.task_id = (SELECT id FROM target_task)
+   AND sne.session_id = ts.session_id
+   AND sne.rn = 1
+  LEFT JOIN space_long_horizon_agents sa
+    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
+),
+recent_turns AS (
+  SELECT COALESCE(MIN(turn_index), 0) AS minTurn
+  FROM (
+    SELECT DISTINCT turn_index
+    FROM task_message_rows
+    WHERE task_id = (SELECT id FROM target_task)
+      AND turn_index IS NOT NULL
+    ORDER BY turn_index DESC
+    LIMIT ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
+  )
+),
+task_shutdown_boundaries AS MATERIALIZED (
+  SELECT session_id, id, created_at
   FROM (
     SELECT
-      j.id AS id,
-      j.kind AS kind,
+      tm.session_id AS session_id,
+      tm.id AS id,
+      tm.created_at AS created_at,
       ROW_NUMBER() OVER (
-        PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
-      ) AS sessionRank
-    FROM joined j
-    WHERE j.sessionId IS NOT NULL
-      AND j.id IN (SELECT id FROM tail_eligible)
-      AND j.sessionId IN (SELECT sessionId FROM active_sessions)
+        PARTITION BY tm.session_id
+        ORDER BY tm.created_at DESC, tm.id DESC
+      ) AS rn
+    FROM task_message_rows tm
+    WHERE tm.task_id = (SELECT id FROM target_task)
+      AND tm.parent_tool_use_id IS NULL
+      AND (tm.message_type != 'user' OR COALESCE(tm.send_status, 'consumed') IN ('consumed', 'failed'))
   )
-  WHERE sessionRank = 1
+  WHERE rn = 1
+),
+${SPACE_TASK_CONV_ARTIFACT_STATE_CTES}sdk_rows AS (
+  SELECT
+    tm.id AS id,
+    tm.session_id AS sessionId,
+    sl.kind AS kind,
+    sl.role AS role,
+    sl.label AS label,
+    sl.nodeExecutionId AS nodeExecutionId,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    tm.message_type AS messageType,
+    NULL AS githubContent,
+    CASE
+      WHEN tm.message_type != 'user' THEN NULL
+      WHEN COALESCE(tm.send_status, 'consumed') = 'failed' THEN 'failed'
+      WHEN adr.retrying THEN 'retrying'
+      WHEN COALESCE(tm.send_status, 'consumed') = 'consumed' THEN 'delivered'
+      WHEN COALESCE(tm.send_status, 'consumed') = 'submitted' THEN 'processing'
+      ELSE 'queued'
+    END AS deliveryState,
+    tm.created_at AS createdAt,
+    tm.parent_tool_use_id AS parentToolUseId,
+    tm.is_renderable AS isRenderable,
+    tm.is_terminal AS isTerminal,
+    tm.turn_index AS turnIndex,
+    tm.seq AS insOrder,
+    tm.flags AS flags,
+    tm.json_subtype AS jsonSubtype,
+    NULL AS githubRowid
+  FROM target_task tt
+  JOIN task_message_rows tm ON tm.task_id = tt.id
+  LEFT JOIN active_delivery_retrying adr
+    ON adr.message_uuid = tm.sdk_uuid
+   AND adr.session_id = tm.session_id
+  CROSS JOIN recent_turns rt
+  LEFT JOIN session_labels sl ON sl.sessionId = tm.session_id
+  WHERE (
+    tm.turn_index >= rt.minTurn
+    OR (
+      tm.message_type = 'user'
+      AND COALESCE(tm.send_status, 'consumed') NOT IN ('consumed', 'failed')
+    )
+    OR (tm.message_type = 'hyperneo_action' AND tm.flags & ${TASK_MESSAGE_FLAG.unresolvedAction})
+    OR tm.id IN (SELECT id FROM artifact_state_rows)
+  )
+    AND (
+      tm.message_type != 'system'
+      OR COALESCE(tm.message_subtype, '') != 'informational'
+      OR NOT tm.flags & ${TASK_MESSAGE_FLAG.infoLevel}
+    )
+    AND (
+      tm.message_type != 'system'
+      OR COALESCE(tm.message_subtype, '') != 'worker_shutting_down'
+      OR (
+        tm.parent_tool_use_id IS NULL
+        AND tm.id IN (SELECT id FROM task_shutdown_boundaries)
+      )
+      OR (
+        tm.parent_tool_use_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM task_shutdown_boundaries boundary
+          WHERE boundary.session_id = tm.session_id
+            AND (
+              boundary.created_at > tm.created_at
+              OR (boundary.created_at = tm.created_at AND boundary.id > tm.id)
+            )
+        )
+      )
+    )
+),
+joined AS MATERIALIZED (
+  SELECT * FROM github_events
+  UNION ALL
+  SELECT * FROM sdk_rows
+)`.trim();
+
+const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
+${SPACE_TASK_FLAG_ROWS_BASE_CTE},
+feed AS MATERIALIZED (
+  SELECT
+    COALESCE(-githubRowid, insOrder) AS k,
+    sessionId,
+    turnIndex,
+    messageType,
+    isRenderable,
+    isTerminal,
+    flags,
+    COALESCE(jsonSubtype, '') AS subtype,
+    createdAt,
+    insOrder,
+    kind,
+    id,
+    deliveryState
+  FROM joined
+),
+assistant_rank AS MATERIALIZED (
+  SELECT
+    k,
+    sessionId,
+    turnIndex,
+    flags,
+    ROW_NUMBER() OVER (
+      PARTITION BY sessionId, turnIndex, flags & ${TASK_MESSAGE_FLAG.text} != 0
+      ORDER BY createdAt DESC, insOrder DESC
+    ) AS textRank,
+    ROW_NUMBER() OVER (
+      PARTITION BY sessionId, turnIndex, flags & ${TASK_MESSAGE_FLAG.thinking} != 0
+      ORDER BY createdAt DESC, insOrder DESC
+    ) AS thinkingRank,
+    ROW_NUMBER() OVER (
+      PARTITION BY sessionId, turnIndex, flags & ${TASK_MESSAGE_FLAG.toolUse} != 0
+      ORDER BY createdAt DESC, insOrder DESC
+    ) AS toolRank
+  FROM feed
+  WHERE messageType = 'assistant'
+    AND flags & ${TASK_MESSAGE_FLAG.text | TASK_MESSAGE_FLAG.thinking | TASK_MESSAGE_FLAG.toolUse}
+),
+segments AS MATERIALIZED (
+  SELECT
+    sessionId,
+    turnIndex,
+    MAX(flags & ${TASK_MESSAGE_FLAG.text} != 0) AS hasText,
+    MAX(flags & ${TASK_MESSAGE_FLAG.thinking} != 0) AS hasThinking
+  FROM assistant_rank
+  WHERE turnIndex IS NOT NULL
+  GROUP BY sessionId, turnIndex
+),
+seg_summary AS MATERIALIZED (
+  SELECT a.k
+  FROM assistant_rank a
+  LEFT JOIN segments s ON s.sessionId = a.sessionId AND s.turnIndex = a.turnIndex
+  WHERE (a.flags & ${TASK_MESSAGE_FLAG.text} AND a.textRank = 1)
+    OR (
+      NOT COALESCE(s.hasText, 0)
+      AND a.flags & ${TASK_MESSAGE_FLAG.thinking}
+      AND a.thinkingRank = 1
+    )
+    OR (
+      NOT COALESCE(s.hasText, 0)
+      AND NOT COALESCE(s.hasThinking, 0)
+      AND a.flags & ${TASK_MESSAGE_FLAG.toolUse}
+      AND a.toolRank <= ${SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT}
+    )
+),
+base_selection AS MATERIALIZED (
+  SELECT k FROM feed
+  WHERE (messageType = 'user' AND isRenderable = 1)
+    OR isTerminal = 1
+    OR (messageType = 'system' AND subtype NOT IN ${HOOK_SUBTYPES})
+    OR kind = 'github'
+    OR messageType = 'hyperneo_action'
+    OR (messageType = 'assistant' AND flags & ${TASK_MESSAGE_FLAG.mutatingTool})
+  UNION
+  SELECT k FROM seg_summary
+),
+session_latest AS MATERIALIZED (
+  SELECT sessionId, turnIndex
+  FROM (
+    SELECT
+      sessionId,
+      turnIndex,
+      ROW_NUMBER() OVER (PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC) AS rn
+    FROM feed
+    WHERE sessionId IS NOT NULL
+  )
+  WHERE rn = 1
+),
+session_candidates AS MATERIALIZED (
+  SELECT sessionId, isTerminal, turnIndex
+  FROM (
+    SELECT
+      sessionId,
+      isTerminal,
+      turnIndex,
+      ROW_NUMBER() OVER (PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC) AS rn
+    FROM feed
+    WHERE sessionId IS NOT NULL
+      AND (
+        messageType IN ('assistant', 'result')
+        OR (
+          messageType = 'system'
+          AND subtype IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+        )
+      )
+  )
+  WHERE rn = 1
+),
+active_sessions AS MATERIALIZED (
+  SELECT c.sessionId
+  FROM session_candidates c
+  JOIN session_latest l ON l.sessionId = c.sessionId
+  WHERE COALESCE(c.isTerminal, 0) = 0
+    AND c.turnIndex = l.turnIndex
+),
+active_session_tails AS MATERIALIZED (
+  SELECT k
+  FROM (
+    SELECT
+      f.k,
+      f.kind,
+      ROW_NUMBER() OVER (PARTITION BY f.sessionId ORDER BY f.createdAt DESC, f.insOrder DESC) AS rn
+    FROM feed f
+    WHERE f.sessionId IN (SELECT sessionId FROM active_sessions)
+      AND (
+        f.k IN (SELECT k FROM base_selection)
+        OR (f.messageType = 'system' AND f.subtype IN ${HOOK_SUBTYPES})
+      )
+  )
+  WHERE rn = 1
     AND kind != 'github'
 ),
-selected_ids AS (
-  SELECT id FROM base_selection
-  UNION ALL
-  SELECT id FROM active_session_tails
+pinned AS MATERIALIZED (
+  SELECT k FROM feed
+  WHERE (messageType = 'hyperneo_action' AND flags & ${TASK_MESSAGE_FLAG.unresolvedAction})
+    OR (messageType = 'user' AND deliveryState IN ('queued', 'processing', 'retrying'))
+    OR id IN (SELECT id FROM artifact_state_rows)
 ),
-ranked_rows AS (
-  SELECT
-    j.id AS id,
-    j.sessionId AS sessionId,
-    j.kind AS kind,
-    j.role AS role,
-    j.label AS label,
-    j.nodeExecutionId AS nodeExecutionId,
-    j.taskId AS taskId,
-    j.taskTitle AS taskTitle,
-    j.messageType AS messageType,
-    j.content AS content,
-    j.origin AS origin,
-    j.deliveryState AS deliveryState,
-    j.createdAt AS createdAt,
-    j.turnIndex AS turnIndex,
-    j.parentToolUseId AS parentToolUseId,
-    j.insOrder AS insOrder,
-    (
-      (
-        j.messageType = 'hyperneo_action'
-        AND COALESCE(
-          CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
-          1
-        ) = 0
-      )
-      OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
-      OR j.id IN (SELECT id FROM artifact_state_rows)
-    ) AS pinned
-  FROM joined j
-  JOIN (SELECT DISTINCT id FROM selected_ids) s ON s.id = j.id
+ordinary AS MATERIALIZED (
+  SELECT k
+  FROM (
+    SELECT
+      f.k,
+      ROW_NUMBER() OVER (
+        ORDER BY f.createdAt DESC, f.insOrder DESC, f.kind DESC, f.id DESC
+      ) AS ordinaryRank
+    FROM feed f
+    WHERE f.k IN (SELECT k FROM base_selection)
+      AND f.k NOT IN (SELECT k FROM pinned)
+      AND f.k NOT IN (SELECT k FROM active_session_tails)
+  )
+  WHERE ordinaryRank <= ?
 ),
-ordinary_ranked AS (
-  SELECT
-    id,
-    ROW_NUMBER() OVER (
-      ORDER BY createdAt DESC, insOrder DESC, kind DESC, id DESC
-    ) AS ordinaryRank
-  FROM ranked_rows
-  WHERE NOT pinned
-    AND id NOT IN (SELECT id FROM active_session_tails)
+chosen AS MATERIALIZED (
+  SELECT k FROM pinned
+  WHERE k IN (SELECT k FROM base_selection) OR k IN (SELECT k FROM active_session_tails)
+  UNION
+  SELECT k FROM active_session_tails
+  UNION
+  SELECT k FROM ordinary
 )
 SELECT
-  id,
-  sessionId,
-  kind,
-  role,
-  label,
-  nodeExecutionId,
-  taskId,
-  taskTitle,
-  messageType,
-  content,
-  origin,
-  deliveryState,
-  createdAt,
-  turnIndex,
-  parentToolUseId,
-  insOrder
-FROM ranked_rows
-WHERE pinned
-  OR id IN (SELECT id FROM active_session_tails)
-  OR id IN (SELECT id FROM ordinary_ranked WHERE ordinaryRank <= ?)
-ORDER BY createdAt ASC, insOrder ASC, kind ASC, id ASC
+  j.id,
+  j.sessionId,
+  j.kind,
+  j.role,
+  j.label,
+  j.nodeExecutionId,
+  j.taskId,
+  j.taskTitle,
+  j.messageType,
+  COALESCE(sm.sdk_message, j.githubContent) AS content,
+  CASE WHEN j.kind = 'github' THEN 'system' ELSE sm.origin END AS origin,
+  j.deliveryState,
+  j.createdAt,
+  j.turnIndex,
+  j.parentToolUseId,
+  j.insOrder
+FROM chosen c
+JOIN joined j ON COALESCE(-j.githubRowid, j.insOrder) = c.k
+LEFT JOIN sdk_messages sm ON sm.id = j.id AND j.kind != 'github'
+ORDER BY j.createdAt ASC, j.insOrder ASC, j.kind ASC, j.id ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
@@ -3597,6 +3702,7 @@ export function setupLiveQueryHandlers(
             `Unauthorized: spaceTaskMessages.byTask.compact limit must be an integer in [1, ${MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW}], got ${String(limit)}`
           );
         }
+        ensureTaskMessageRows(db, taskId);
       }
     } else if (
       queryName === 'spaceSessions.bySpace' ||
