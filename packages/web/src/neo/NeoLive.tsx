@@ -39,6 +39,7 @@ export function NeoLive() {
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const inputDraft = useInputDraft(neo.sessionId ?? '', 250, true);
   const reloadBuffer = useRef(createNeoDraftReloadBuffer()).current;
+  const acceptedCleanups = useRef(new Map<string, () => Promise<void>>()).current;
   const scroll = useRef<HTMLElement>(null);
   const mainScroll = useRef<HTMLElement>(null);
   const footer = useRef<HTMLElement>(null);
@@ -442,12 +443,29 @@ export function NeoLive() {
               onRetryPublic={retryPublicConversation}
               onProgress={setReplyProgress}
               pendingAsks={neo.pendingAsks}
-              onRetryAsk={(requestId) => void neo.retrySend(requestId)?.catch(() => undefined)}
+              onRetryAsk={(requestId) =>
+                void neo
+                  .retrySend(requestId)
+                  ?.then(async (receipt) => {
+                    if (!receipt.ok) return;
+                    const cleanup = acceptedCleanups.get(requestId);
+                    acceptedCleanups.delete(requestId);
+                    await cleanup?.();
+                  })
+                  .catch(() => undefined)
+              }
               onEditAsk={(requestId) => {
-                const failed = neo.discardSend(requestId);
-                if (!failed) return;
+                const failed = neo.pendingAsks.find((ask) => ask.requestId === requestId);
+                if (!failed || !restoreNeoImages(failed.sessionId, failed.images)) {
+                  if (failed)
+                    neo.setError(
+                      'Remove some attachments first: a message can carry up to 6 files, 8 MB in all.'
+                    );
+                  return;
+                }
+                if (!neo.discardSend(requestId)) return;
+                acceptedCleanups.delete(requestId);
                 writeDraft(failed.text);
-                restoreNeoImages(failed.sessionId, failed.images ?? []);
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
@@ -596,14 +614,21 @@ export function NeoLive() {
               onError={neo.setError}
               onSend={(input) => {
                 const submitted = draft ?? '';
-                const captured = reloadBuffer.read(neo.sessionId ?? '');
+                const sessionId = neo.sessionId ?? '';
+                const captured = reloadBuffer.read(sessionId);
                 setDraft('');
+                const cleanup = async () => {
+                  await inputDraft.clearSubmitted(sessionId, submitted);
+                  if (captured?.text === submitted) reloadBuffer.forget(sessionId, captured.id);
+                };
                 return inputDraft.holdDraftAdoption(async () => {
-                  const receipt = await neo.send(input);
+                  const flight = neo.send(input);
+                  const requestId = neo.sendRequestId(input);
+                  if (requestId) acceptedCleanups.set(requestId, cleanup);
+                  const receipt = await flight;
                   if (receipt.ok) {
-                    await inputDraft.clearSubmitted(neo.sessionId ?? '', submitted);
-                    if (captured?.text === submitted)
-                      reloadBuffer.forget(neo.sessionId ?? '', captured.id);
+                    if (requestId) acceptedCleanups.delete(requestId);
+                    await cleanup();
                   }
                   return receipt;
                 });

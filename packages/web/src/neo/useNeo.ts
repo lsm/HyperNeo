@@ -159,6 +159,7 @@ export function useNeo() {
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,
     discardSend: intake.discard,
+    sendRequestId: intake.requestIdFor,
     retry: () => setAttempt((value) => value + 1),
   };
 }

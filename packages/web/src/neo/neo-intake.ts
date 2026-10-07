@@ -197,5 +197,12 @@ export function createNeoIntakeClient(
       }
     if (changed) onPending([...shown.values()]);
   }
-  return { send, retry, discard, settle };
+  function requestIdFor(draft: NeoDraft): string | null {
+    const entries = pending.get(draft.sessionId);
+    return (
+      [...(entries ?? [])].find((item) => sameDraft(item.submission, draft))?.submission
+        .requestId ?? null
+    );
+  }
+  return { send, retry, discard, settle, requestIdFor };
 }

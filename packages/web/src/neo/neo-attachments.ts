@@ -67,9 +67,14 @@ export function attachmentMessage(draft: string, files: NeoAttachment[]) {
   return [draft.trim() || (files.length ? 'Attached files' : ''), ...documents].join('\n\n');
 }
 
-export function restoreNeoImages(sessionId: string, images: readonly MessageImage[]) {
-  if (!images.length) return;
+export function restoreNeoImages(sessionId: string, images: readonly MessageImage[]): boolean {
+  if (!images.length) return true;
   const current = drafts.peek()[sessionId] ?? { files: [], reading: 0 };
+  const size = [
+    ...current.files.map((file) => (file.kind === 'image' ? file.image : null)),
+    ...images,
+  ].reduce((total, image) => total + (image?.data.length ?? 0), 0);
+  if (current.files.length + images.length > 6 || size > 8 * 1024 * 1024) return false;
   const restored = images.map(
     (image, index): NeoAttachment => ({
       id: generateUUID(),
@@ -81,8 +86,9 @@ export function restoreNeoImages(sessionId: string, images: readonly MessageImag
   );
   drafts.value = {
     ...drafts.peek(),
-    [sessionId]: { ...current, files: [...current.files, ...restored].slice(0, 6) },
+    [sessionId]: { ...current, files: [...current.files, ...restored] },
   };
+  return true;
 }
 
 export function useNeoAttachments(sessionId: string | null) {

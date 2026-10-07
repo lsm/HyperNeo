@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoLive } from '../NeoLive.tsx';
-import { readNeoAttachment, attachmentMessage } from '../neo-attachments.ts';
+import { readNeoAttachment, attachmentMessage, restoreNeoImages } from '../neo-attachments.ts';
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
@@ -227,5 +227,20 @@ describe('Neo attachments', () => {
     );
     expect(screen.getByRole('button', { name: 'Remove later.txt' })).toBeTruthy();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('restoreNeoImages', () => {
+  const photo = { data: 'cGhvdG8=', media_type: 'image/png' as const };
+  it('restores photos within the limit and refuses past six files', () => {
+    const id = crypto.randomUUID();
+    expect(restoreNeoImages(id, [photo, photo])).toBe(true);
+    expect(
+      restoreNeoImages(
+        id,
+        Array.from({ length: 5 }, () => photo)
+      )
+    ).toBe(false);
+    expect(restoreNeoImages(id, [photo])).toBe(true);
   });
 });

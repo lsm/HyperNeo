@@ -130,6 +130,7 @@ function mount() {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
     send: vi.fn().mockResolvedValue({ ok: true, created: true, messageId: 'fictional-send' }),
+    sendRequestId: vi.fn(() => null),
   });
   seams.useNeo.mockImplementation(() => model.value);
   return { ...render(<NeoLive />), model, store };
