@@ -363,6 +363,46 @@ describe('useViewportSafety — keyboard detection', () => {
     scrollSpy.mockRestore();
   });
 
+  it('pins the document at the top when Safari pans it as the keyboard opens', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const scrollSpy = vi.spyOn(window, 'scrollTo');
+
+    renderHook(() => useViewportSafety());
+
+    mockVV.height = WINDOW_INNER_HEIGHT - 300;
+    mockVV.offsetTop = 220;
+    mockVV._trigger('resize');
+
+    expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
+    scrollSpy.mockRestore();
+  });
+
+  it('pins the document at the top when the visual viewport scrolls while the keyboard is open', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const scrollSpy = vi.spyOn(window, 'scrollTo');
+
+    renderHook(() => useViewportSafety());
+
+    mockVV.offsetTop = 120;
+    mockVV._trigger('scroll');
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    mockVV.height = WINDOW_INNER_HEIGHT - 300;
+    mockVV.offsetTop = 0;
+    mockVV._trigger('resize');
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    mockVV.offsetTop = 120;
+    mockVV._trigger('scroll');
+
+    expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
+    scrollSpy.mockRestore();
+  });
+
   it('does NOT trigger at threshold boundary (50px exactly)', () => {
     setNavigator(0, DESKTOP_SAFARI_UA);
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);

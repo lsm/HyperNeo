@@ -1247,6 +1247,14 @@ a:focus-visible {
   transition: transform 0.2s ease;
 }
 
+/* While the keyboard is open the document is only as tall as the visual
+   viewport, so Safari has nothing to pan when it scrolls the focused composer
+   into view. */
+html.keyboard-open,
+html.keyboard-open body {
+  height: var(--safe-height, 100dvh);
+}
+
 html.keyboard-open [data-testid="bottom-tab-bar"] {
   transform: translateY(100%);
 }
