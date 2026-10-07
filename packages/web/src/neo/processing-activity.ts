@@ -1,5 +1,15 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { NeoPublicEntry } from './public-conversation.ts';
+
+export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry.kind === 'ask') return true;
+    if (entry.kind === 'publication' && !entry.publication.interim) return false;
+  }
+  return false;
+}
 
 export type NeoProcessingActivity = { label: string; messageId: string | null } | 'inactive';
 

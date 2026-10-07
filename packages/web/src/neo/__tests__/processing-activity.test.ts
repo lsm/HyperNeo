@@ -1,6 +1,8 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
+import type { NeoPublicEntry } from '../public-conversation.ts';
 import {
+  neoAwaitingReply,
   projectNeoProcessingActivity,
   scopeNeoProcessingAsk,
   scopeNeoProcessingStatus,
@@ -298,5 +300,22 @@ describe('projectNeoProcessingActivity', () => {
       visible
     );
     expect(result).not.toBeInstanceOf(Promise);
+  });
+});
+
+describe('neoAwaitingReply', () => {
+  const ask = { kind: 'ask', key: 'a' } as NeoPublicEntry;
+  const reply = (interim?: true) =>
+    ({ kind: 'publication', key: 'p', publication: { interim } }) as unknown as NeoPublicEntry;
+
+  it('waits while the newest non-interim entry is the human ask', () => {
+    expect(neoAwaitingReply([ask])).toBe(true);
+    expect(neoAwaitingReply([reply(), ask, reply(true)])).toBe(true);
+  });
+
+  it('stops once a final reply follows the ask', () => {
+    expect(neoAwaitingReply([ask, reply()])).toBe(false);
+    expect(neoAwaitingReply([ask, reply(true), reply()])).toBe(false);
+    expect(neoAwaitingReply([])).toBe(false);
   });
 });

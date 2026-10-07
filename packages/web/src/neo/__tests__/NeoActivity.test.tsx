@@ -125,7 +125,7 @@ describe('NeoActivity', () => {
     expect(result.container.querySelectorAll('button, a, input')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('leads with Neo reply progress and keeps it while scenes are disabled', () => {
+  it('shows only the one Neo reply line while a reply is pending, whatever else runs', () => {
     const view = render(
       <NeoActivity
         scenes={[workScene('one')]}
@@ -146,7 +146,7 @@ describe('NeoActivity', () => {
       />
     );
     expect(line.textContent).toContain('Neo is working on a reply…');
-    expect(line.textContent).toContain('1/2');
+    expect(line.textContent).not.toContain('1/2');
   });
   it('rotates stable scene identities without taking focus from a draft', () => {
     const result = render(

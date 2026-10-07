@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { useNeo } from './useNeo.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { neoAwaitingReply } from './processing-activity.ts';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoActivity } from './NeoActivity.tsx';
@@ -562,7 +563,12 @@ export function NeoLive() {
             scenes={scenes?.running ?? []}
             concerns={concerns}
             enabled={connected && conversationReady}
-            reply={replyProgress}
+            reply={
+              replyProgress ??
+              (publicConversation && neoAwaitingReply(publicConversation.entries)
+                ? 'Neo is working on a reply…'
+                : null)
+            }
           />
           {ready && neo.sessionId && (
             <NeoComposer
