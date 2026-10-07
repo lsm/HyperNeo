@@ -32,6 +32,7 @@ import type { OperationCaller, OperationDefinition } from '../../operations/regi
 import { neoFolder } from '../../neo/folder.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurns } from '../../../storage/work-turns.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { FamilyOperationContext } from './context.ts';
@@ -113,6 +114,7 @@ function claudeDesktopAdapters(
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       spawn: spawnProcess,
       folderExists: existsSync,
+      gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
       newId: () => crypto.randomUUID(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,

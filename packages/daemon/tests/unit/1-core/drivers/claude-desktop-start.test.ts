@@ -33,11 +33,13 @@ describe('selectClaudeStartFolder', () => {
 describe('claude-desktop start', () => {
   let dir: string;
   let spawned: string[][];
+  let cwds: (string | undefined)[];
   let clock: number;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
     spawned = [];
+    cwds = [];
     clock = 1_000;
   });
 
@@ -48,6 +50,7 @@ describe('claude-desktop start', () => {
     appearsAfter?: number;
     relayWrites?: boolean;
     twin?: boolean;
+    gitRoot?: string;
   }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
     mkdirSync(transcripts, { recursive: true });
@@ -67,8 +70,9 @@ describe('claude-desktop start', () => {
             ]
           : [];
       },
-      spawn: (args) => {
+      spawn: (args, spawnOptions) => {
         spawned.push(args);
+        cwds.push(spawnOptions?.cwd);
         const relay = args.includes('SendMessage ListAgents');
         if (relay && options.relayWrites) {
           appendFileSync(
@@ -86,6 +90,7 @@ describe('claude-desktop start', () => {
         };
       },
       folderExists: () => true,
+      gitRoot: async () => options.gitRoot ?? null,
       newId: () => 'u1',
       sleep: async (ms) => {
         clock += ms;
@@ -126,6 +131,23 @@ describe('claude-desktop start', () => {
       'u1',
     ]);
     expect(spawned[2].at(-1)).toContain('session named "Bigger font"');
+  });
+
+  test('opens work in a git repo in its own worktree and resumes it there', async () => {
+    await adapter({ appearsAfter: 1, gitRoot: '/focus/dolmen' }).start?.(request, user);
+    expect(spawned[0]).toEqual([
+      'claude',
+      '-p',
+      '--session-id',
+      'u1',
+      '-n',
+      'Bigger font',
+      '--worktree',
+      'neo-u1',
+      '--',
+      'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.',
+    ]);
+    expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
   });
 
   test('refuses to relay when another live session has the same name', async () => {
