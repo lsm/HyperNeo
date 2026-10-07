@@ -270,6 +270,8 @@ export function SDKAssistantMessage({
 const MINIMAL_TOOLS = new Set(['AskUserQuestion', 'Task', 'Agent']);
 
 function subagentReplyText(output: unknown): string {
+  if (output && typeof output === 'object' && !Array.isArray(output) && 'content' in output)
+    return subagentReplyText((output as { content: unknown }).content);
   if (typeof output === 'string') return output;
   if (!Array.isArray(output)) return '';
   return output

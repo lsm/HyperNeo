@@ -1127,7 +1127,16 @@ describe('SDKAssistantMessage in minimal display mode', () => {
 
   it("shows a subagent's final reply under its description", async () => {
     const toolResultsMap = new Map([
-      ['toolu_task123', { content: [{ type: 'text', text: 'Found 12 test files.' }] }],
+      [
+        'toolu_task123',
+        {
+          content: {
+            type: 'tool_result',
+            tool_use_id: 'toolu_task123',
+            content: [{ type: 'text', text: 'Found 12 test files.' }],
+          },
+        },
+      ],
     ]);
     const { getByTestId } = inMinimal(
       <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
