@@ -99,6 +99,48 @@ describe('NeoWorkCard with drivers work', () => {
     expect(screen.getByRole('link', { name: 'Open Bigger font' })).toBeTruthy();
   });
 
+  it('tints each summary row by where its work stands', () => {
+    const cases: Array<
+      [Partial<NeoWork>, (typeof driver)['status'] | 'running' | 'done' | 'stopped' | null, string]
+    > = [
+      [{}, 'running', 'accent'],
+      [{}, 'done', 'success'],
+      [{}, 'stopped', 'warning'],
+      [{ status: 'reported' }, null, 'success'],
+      [{ status: 'failed' }, null, 'warning'],
+      [{ status: 'cancelled' }, null, 'warning'],
+    ];
+    const tones = cases.map(([patch, status, _tone]) => {
+      const { container, unmount } = render(
+        <NeoWorkCard
+          work={{ ...work, ...patch }}
+          driver={status ? { ...driver, status } : undefined}
+          busy={false}
+          disabled={false}
+          onAction={vi.fn()}
+          onOpen={vi.fn()}
+          presentation="summary"
+        />
+      );
+      const tone = container.querySelector('[data-tone]')?.getAttribute('data-tone');
+      unmount();
+      return tone;
+    });
+    expect(tones).toEqual(cases.map(([, , tone]) => tone));
+    const { container } = render(
+      <NeoWorkCard
+        work={{ ...work, sessionId: 's1' }}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={vi.fn()}
+        waiting
+      />
+    );
+    expect(screen.getByText('Waiting for your answer')).toBeTruthy();
+    expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
+  });
+
   it('marks the Open link with the app it opens', () => {
     const logos = [
       { adapter: 'codex-desktop', link: 'codex://threads/t1' },

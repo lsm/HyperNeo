@@ -21,6 +21,31 @@ const appLogos: Record<string, string> = {
   'codex-desktop': 'anthropic-codex',
 };
 
+const tones = {
+  success: 'text-success bg-success/10',
+  warning: 'text-warning bg-warning/10',
+  accent: 'text-accent bg-accent/10',
+};
+
+function neoWorkTone(
+  work: NeoWork,
+  driver: NeoWorkDriverReceipt | undefined,
+  waiting: boolean
+): keyof typeof tones {
+  const status = work.status === 'queued' ? driver?.status : null;
+  if (work.status === 'reported' || status === 'done') return 'success';
+  if (
+    (work.status === 'queued' && waiting) ||
+    work.status === 'failed' ||
+    work.status === 'cancelled' ||
+    status === 'failed' ||
+    status === 'stopped' ||
+    status === 'needs_you'
+  )
+    return 'warning';
+  return 'accent';
+}
+
 const interactive =
   'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
 
@@ -65,6 +90,8 @@ export function NeoWorkCard({
   }, [work.id, questionSlot]);
   const label =
     work.status === 'queued' && driver ? neoWorkDriverLabel(driver) : labels[work.status];
+  const tone = neoWorkTone(work, driver, waiting);
+  const icon = tone === 'success' ? 'check' : 'work';
   const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
   const appLogo = driver ? appLogos[driver.adapter] : undefined;
   const openLink = driverLink && (
@@ -94,8 +121,12 @@ export function NeoWorkCard({
           class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left focus-visible:outline-accent disabled:cursor-default"
           aria-label={work.sessionId ? `Open chat for ${work.title}` : work.title}
         >
-          <span aria-hidden="true" class="shrink-0 text-fg-muted">
-            <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
+          <span
+            aria-hidden="true"
+            data-tone={tone}
+            class={`shrink-0 rounded-lg p-1.5 ${tones[tone]}`}
+          >
+            <NeoIcon name={icon} />
           </span>
           <span class="min-w-0 flex-1">
             <span class="block break-words text-sm font-medium">{work.title}</span>
@@ -111,12 +142,6 @@ export function NeoWorkCard({
       </div>
     );
   const active = work.status === 'queued';
-  const color =
-    work.status === 'reported'
-      ? 'text-success bg-success/10'
-      : work.status === 'failed'
-        ? 'text-warning bg-warning/10'
-        : 'text-accent bg-accent/10';
   const answering = active && waiting && !!work.sessionId && !!onOpen;
   const hasActions = work.status === 'proposed' || answering;
   const openable = !!onOpen && !!work.sessionId && !hasActions;
@@ -147,8 +172,8 @@ export function NeoWorkCard({
       }
     >
       <div class="mb-3 flex items-center gap-3">
-        <span class={`rounded-xl p-2 ${color}`}>
-          <NeoIcon name={work.status === 'reported' ? 'check' : 'work'} />
+        <span data-tone={tone} class={`rounded-xl p-2 ${tones[tone]}`}>
+          <NeoIcon name={icon} />
         </span>
         <span class="text-xs font-medium text-fg-muted">
           {answering ? 'Waiting for your answer' : label}
