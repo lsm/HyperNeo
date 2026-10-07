@@ -3,6 +3,14 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
+  ACP_AGENTS,
+  createAcpAgentAdapter,
+  findAcpAgentBinary,
+  gitWorktreeProject,
+  listAcpAgentSessions,
+  reuseAcpSessionList,
+} from '../../drivers/acp-agent-adapter.ts';
+import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
@@ -121,6 +129,23 @@ function claudeDesktopAdapters(
       searchChats: (text) => searchChats(text, ['claude']),
     }),
   ];
+}
+
+function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[] {
+  return ACP_AGENTS.flatMap((agent) => {
+    const command = findAcpAgentBinary(agent.bin);
+    if (!command) return [];
+    return [
+      createAcpAgentAdapter({
+        agent,
+        machine: hostname(),
+        now: Date.now,
+        listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
+        ownSessions,
+        projectFolder: gitWorktreeProject,
+      }),
+    ];
+  });
 }
 
 function codexDesktopAdapters(
@@ -292,6 +317,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ...codexDesktopAdapters(searchChats),
     ...claudeDesktopAdapters(searchChats),
     ...claudeCodeAdapters(searchChats),
+    ...acpAgentAdapters(
+      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
+    ),
   ];
   const deps = { adapters: () => adapters, remote: remoteDaemons, daemonName: machine };
   const readTurns = (

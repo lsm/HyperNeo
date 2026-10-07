@@ -276,6 +276,47 @@ describe('AcpClient', () => {
     ]);
   });
 
+  test('listSessions pages session/list only when the agent advertises it', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+    const initPromise = client.initialize();
+    transport.resolveRequest(1, {
+      protocolVersion: 1,
+      agentInfo: { name: 'a', version: '1' },
+      agentCapabilities: { sessionCapabilities: { list: {} } },
+    });
+    await initPromise;
+    expect(client.canListSessions()).toBe(true);
+
+    const listPromise = client.listSessions({ cursor: 'next' });
+    transport.resolveRequest(2, {
+      sessions: [{ sessionId: 's1', cwd: '/repo', title: 'Fix it' }],
+      nextCursor: null,
+    });
+    expect(await listPromise).toEqual({
+      sessions: [{ sessionId: 's1', cwd: '/repo', title: 'Fix it' }],
+      nextCursor: null,
+    });
+    expect(transport.sendRequest.mock.calls[1]).toEqual(['session/list', { cursor: 'next' }]);
+
+    const failed = client.listSessions();
+    transport.resolveError(3, { code: -32601, message: 'Method not found' });
+    await expect(failed).rejects.toThrow('session/list failed: Method not found');
+  });
+
+  test('canListSessions is false without the list capability', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+    const initPromise = client.initialize();
+    transport.resolveRequest(1, {
+      protocolVersion: 1,
+      agentInfo: { name: 'a', version: '1' },
+      agentCapabilities: { loadSession: true },
+    });
+    await initPromise;
+    expect(client.canListSessions()).toBe(false);
+  });
+
   test('sendPrompt yields session/update notifications', async () => {
     const client = new AcpClient({ command: 'acp-agent' });
     const transport = lastMockTransport!;
