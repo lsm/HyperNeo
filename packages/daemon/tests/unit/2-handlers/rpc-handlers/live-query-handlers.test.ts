@@ -2481,16 +2481,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 
-      test('artifact candidates use the task assistant partial index', () => {
+      test('artifact pins read the task message rows, not message JSON', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
         const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId, 100) as Array<{
           detail: string;
         }>;
 
-        expect(plan.map((row) => row.detail).join('\n')).toContain(
-          'idx_sdk_messages_task_assistant'
-        );
+        const detail = plan.map((row) => row.detail).join('\n');
+        expect(detail).toContain('idx_task_message_rows_task');
+        expect(detail).not.toContain('idx_sdk_messages_task_assistant');
       });
 
       test('includes DB message origin in compact rows', () => {
