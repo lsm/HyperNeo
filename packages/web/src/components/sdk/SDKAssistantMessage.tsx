@@ -294,12 +294,17 @@ function backgroundSubagentReply(
   input: AgentInput,
   replyText: string,
   notification: SDKTaskNotificationMessage | undefined
-): { status: string; text: string } | null {
+): { status: string; text: string; running: boolean; failed: boolean } | null {
   const launched = /^Async agent launched successfully/.test(replyText);
   if (!input.run_in_background && !launched && !notification) return null;
   return notification
-    ? { status: BACKGROUND_STATUS[notification.status], text: notification.summary }
-    : { status: 'Running in the background…', text: '' };
+    ? {
+        status: BACKGROUND_STATUS[notification.status],
+        text: notification.summary,
+        running: false,
+        failed: notification.status !== 'completed',
+      }
+    : { status: 'Running in the background', text: '', running: true, failed: false };
 }
 
 function ToolUseBlock({
@@ -373,10 +378,14 @@ function ToolUseBlock({
       <div class="border-l-2 border-line pl-3" data-testid="subagent-reply">
         <div class="text-xs text-fg-muted mb-1">
           {(block.input as unknown as AgentInput).description} · {background.status}
+          {background.running && <span class="animated-ellipsis" aria-hidden="true" />}
         </div>
-        {background.text && (
-          <MarkdownRenderer content={background.text} class="dark:prose-invert" />
-        )}
+        {background.text &&
+          (background.failed ? (
+            <div class="text-xs text-fg-muted break-words line-clamp-3">{background.text}</div>
+          ) : (
+            <MarkdownRenderer content={background.text} class="dark:prose-invert" />
+          ))}
       </div>
     );
   }

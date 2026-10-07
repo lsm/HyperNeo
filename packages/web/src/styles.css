@@ -1301,6 +1301,28 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
   will-change: transform;
 }
 
+@keyframes ellipsisGrow {
+  to {
+    width: 3ch;
+  }
+}
+
+.animated-ellipsis::after {
+  content: "...";
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: ellipsisGrow 1.2s steps(4, jump-none) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-ellipsis::after {
+    animation: none;
+    width: auto;
+  }
+}
+
 @keyframes runningShimmer {
   0% {
     transform: translateX(-100%);

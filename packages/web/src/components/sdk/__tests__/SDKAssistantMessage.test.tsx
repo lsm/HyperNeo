@@ -1160,7 +1160,8 @@ describe('SDKAssistantMessage in minimal display mode', () => {
       <SDKAssistantMessage message={createTaskToolMessage()} toolResultsMap={toolResultsMap} />
     );
     const reply = () => view.getByTestId('subagent-reply').textContent ?? '';
-    expect(reply()).toContain('Running in the background…');
+    expect(reply()).toContain('Running in the background');
+    expect(view.getByTestId('subagent-reply').querySelector('.animated-ellipsis')).toBeTruthy();
     expect(reply()).not.toContain('Async agent launched');
     view.unmount();
     const notifications = new Map([
@@ -1185,9 +1186,32 @@ describe('SDKAssistantMessage in minimal display mode', () => {
       />
     );
     expect(done.getByTestId('subagent-reply').textContent).toContain('Finished in the background');
+    expect(done.getByTestId('subagent-reply').querySelector('.animated-ellipsis')).toBeNull();
     await waitFor(() =>
       expect(done.getByTestId('subagent-reply').textContent).toContain('Audit found no deadlock.')
     );
+    done.unmount();
+    const failed = inMinimal(
+      <SDKAssistantMessage
+        message={createTaskToolMessage()}
+        toolResultsMap={toolResultsMap}
+        taskNotificationsMap={
+          new Map([
+            [
+              'toolu_task123',
+              {
+                ...notifications.get('toolu_task123'),
+                status: 'failed',
+                summary: 'API Error: 400',
+              },
+            ],
+          ]) as never
+        }
+      />
+    );
+    const failure = failed.getByText('API Error: 400');
+    expect(failure.className).toContain('text-xs');
+    expect(failed.getByTestId('subagent-reply').textContent).toContain('Failed in the background');
   });
 
   it("shows a subagent's final reply under its description", async () => {
