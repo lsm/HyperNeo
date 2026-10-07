@@ -24,11 +24,13 @@ export interface UseAutoScrollResult {
 
 export function followAfterScroll(
   following: boolean,
-  userScrolledUp: boolean,
+  userScrolling: boolean,
+  scrolledUp: boolean,
   distanceFromBottom: number,
   nearBottomThreshold: number
 ): boolean {
-  if (userScrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
+  if (!userScrolling) return following;
+  if (scrolledUp) return distanceFromBottom < AT_BOTTOM_PX;
   return following || distanceFromBottom < nearBottomThreshold;
 }
 
@@ -96,7 +98,8 @@ export function useAutoScroll({
           pointerDown || performance.now() - lastUserInputAt < USER_SCROLL_WINDOW_MS;
         followingRef.current = followAfterScroll(
           followingRef.current,
-          userScrolling && container.scrollTop < lastScrollTopRef.current - 1,
+          userScrolling,
+          container.scrollTop < lastScrollTopRef.current - 1,
           distance,
           nearBottomThreshold
         );
@@ -108,8 +111,10 @@ export function useAutoScroll({
         if (followingRef.current && !pausedRef.current) pin();
         onScroll();
       };
-      followingRef.current =
-        container.scrollHeight - container.scrollTop - container.clientHeight < nearBottomThreshold;
+      if (!landedRef.current)
+        followingRef.current =
+          container.scrollHeight - container.scrollTop - container.clientHeight <
+          nearBottomThreshold;
       lastScrollTopRef.current = container.scrollTop;
       onScroll();
       container.addEventListener('scroll', onScroll, { passive: true });
@@ -169,7 +174,7 @@ export function useAutoScroll({
     if (!landedRef.current) {
       landedRef.current = true;
       if (pausedRef.current && isInitialLoad) return;
-      followingRef.current = true;
+      if (!pausedRef.current) followingRef.current = true;
     } else if (!followingRef.current || pausedRef.current) {
       return;
     }

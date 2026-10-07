@@ -1024,6 +1024,20 @@ describe('useAutoScroll', () => {
   });
 
   describe('following by scroll position', () => {
+    it('lands once while paused without arming the follow for later', () => {
+      const { containerRef, endRef } = createMockRefs();
+      const { rerender } = renderHook(
+        ({ messageCount, enabled }) =>
+          useAutoScroll({ containerRef, endRef, messageCount, enabled }),
+        { initialProps: { messageCount: 0, enabled: false } }
+      );
+      rerender({ messageCount: 5, enabled: false });
+      expect(containerRef.current!.scrollTop).toBe(1000);
+      containerRef.current!.scrollTop = 200;
+      rerender({ messageCount: 5, enabled: true });
+      expect(containerRef.current!.scrollTop).toBe(200);
+    });
+
     it('does not snap back to the bottom when a search jump ends', () => {
       const { containerRef, endRef } = createMockRefs();
       const { rerender } = renderHook(
@@ -1123,14 +1137,15 @@ describe('useAutoScroll', () => {
 });
 
 describe('followAfterScroll', () => {
-  it('drops following on any upward scroll that leaves the bottom', () => {
-    expect(followAfterScroll(true, true, 50, 200)).toBe(false);
-    expect(followAfterScroll(true, true, 0, 200)).toBe(true);
+  it('drops following when the user scrolls up off the bottom', () => {
+    expect(followAfterScroll(true, true, true, 50, 200)).toBe(false);
+    expect(followAfterScroll(true, true, true, 0, 200)).toBe(true);
   });
 
-  it('resumes following near the bottom and keeps it while content grows', () => {
-    expect(followAfterScroll(false, false, 150, 200)).toBe(true);
-    expect(followAfterScroll(true, false, 900, 200)).toBe(true);
-    expect(followAfterScroll(false, false, 900, 200)).toBe(false);
+  it('resumes when the user scrolls near the bottom, and ignores layout-driven scrolls', () => {
+    expect(followAfterScroll(false, true, false, 150, 200)).toBe(true);
+    expect(followAfterScroll(false, true, false, 900, 200)).toBe(false);
+    expect(followAfterScroll(true, false, true, 900, 200)).toBe(true);
+    expect(followAfterScroll(false, false, false, 0, 200)).toBe(false);
   });
 });
