@@ -26,7 +26,7 @@ import {
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
 import { NewChatModelPicker } from '../components/NewChatModelPicker.tsx';
-import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
+import { findDefaultModel, useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 type NewChatWorktreeMode = 'worktree' | 'direct';
 
@@ -103,15 +103,6 @@ function findModelInfo(
   );
 }
 
-function findDefaultModelInfo(models: ModelInfo[], modelId: string | undefined): ModelInfo | null {
-  if (!modelId) return null;
-  return (
-    models.find((model) => model.id === modelId || model.alias === modelId) ??
-    models.find((model) => model.id.includes(modelId) || model.alias?.includes(modelId)) ??
-    null
-  );
-}
-
 function getModelLabel(modelInfo: ModelInfo | null, fallbackModelId: string | undefined): string {
   if (modelInfo) return modelInfo.name;
   if (fallbackModelId) return fallbackModelId.replace(/-/g, ' ');
@@ -149,8 +140,8 @@ export function SessionsPage() {
     [availableModels, selectedModel]
   );
   const defaultModelInfo = useMemo(
-    () => findDefaultModelInfo(availableModels, defaultModelId),
-    [availableModels, defaultModelId]
+    () => findDefaultModel(availableModels, defaultModelId, globalSettings.value?.modelProvider),
+    [availableModels, defaultModelId, globalSettings.value?.modelProvider]
   );
   const activeModelInfo = selectedModelInfo ?? defaultModelInfo;
   const activeModelLabel = getModelLabel(
