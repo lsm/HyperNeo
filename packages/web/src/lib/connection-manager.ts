@@ -43,6 +43,8 @@ export function getDaemonWsUrl(
   return `${protocol}//${hostname}`;
 }
 
+const HIDDEN_GRACE_MS = 20_000;
+
 export class ConnectionManager {
   private readonly application: ConnectionApplication;
   private messageHub: MessageHub | null = null;
@@ -50,6 +52,9 @@ export class ConnectionManager {
   private baseUrl: string;
   private connectionPromise: Promise<MessageHub> | null = null;
   private visibilityHandler: (() => void) | null = null;
+  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  private pageShowHandler: (() => void) | null = null;
+  private resumeWait: (() => void) | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -265,25 +270,60 @@ export class ConnectionManager {
     }
 
     this.visibilityHandler = () => {
-      if (!document.hidden) {
-        if (this.transport) {
-          this.transport.resetReconnectState();
-        }
-        this.validateConnectionOnResume();
+      if (this.hiddenTimer) {
+        clearTimeout(this.hiddenTimer);
+        this.hiddenTimer = null;
       }
+      if (document.hidden) {
+        this.cancelResumeWait();
+        this.hiddenTimer = setTimeout(() => {
+          this.hiddenTimer = null;
+          if (!document.hidden) return;
+          this.transport?.suspend();
+        }, HIDDEN_GRACE_MS);
+        return;
+      }
+      if (this.transport?.isSuspended()) {
+        this.resumeSuspended();
+        return;
+      }
+      if (this.resumeWait) return;
+      if (this.transport) {
+        this.transport.resetReconnectState();
+      }
+      this.validateConnectionOnResume();
     };
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
+    this.pageShowHandler = () => {
+      if (!document.hidden && this.transport?.isSuspended()) this.resumeSuspended();
+    };
+    window.addEventListener('pageshow', this.pageShowHandler);
     this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
   }
 
+  private resumeSuspended(): void {
+    this.cancelResumeWait();
+    this.transport?.resume();
+    const wait = this.onceConnected(() => {
+      this.resumeWait = null;
+      void this.validateConnectionOnResume();
+    });
+    if (!this.isConnected()) this.resumeWait = wait;
+  }
+
+  private cancelResumeWait(): void {
+    this.resumeWait?.();
+    this.resumeWait = null;
+  }
+
   private async validateConnectionOnResume(): Promise<void> {
     this._isResuming = true;
-    this.application.markSessionsRecovering();
 
     try {
       if (!this.messageHub || !this.transport) {
+        this.application.markSessionsRecovering();
         await this.reconnect();
         return;
       }
@@ -296,6 +336,7 @@ export class ConnectionManager {
           })
         );
       } catch {
+        this.application.markSessionsRecovering();
         if (this.transport) {
           this.transport.forceReconnect();
         }
@@ -366,6 +407,16 @@ export class ConnectionManager {
     if (this.visibilityHandler) {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
+    }
+    if (this.hiddenTimer) {
+      clearTimeout(this.hiddenTimer);
+      this.hiddenTimer = null;
+    }
+    this.cancelResumeWait();
+
+    if (this.pageShowHandler) {
+      window.removeEventListener('pageshow', this.pageShowHandler);
+      this.pageShowHandler = null;
     }
 
     if (this.pageHideHandler) {

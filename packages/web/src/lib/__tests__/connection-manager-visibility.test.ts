@@ -86,6 +86,9 @@ describe('ConnectionManager - Page Visibility Handling', () => {
         resetReconnectState: vi.fn(() => {}),
         forceReconnect: vi.fn(() => {}),
         close: vi.fn(() => {}),
+        isSuspended: vi.fn(() => false),
+        suspend: vi.fn(() => {}),
+        resume: vi.fn(() => {}),
       };
 
       mockMessageHub = {
@@ -250,6 +253,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
         isReady: vi.fn(() => true),
         resetReconnectState: vi.fn(() => {}),
         forceReconnect: vi.fn(() => {}),
+        isSuspended: vi.fn(() => false),
       };
 
       mockMessageHub = {
@@ -302,6 +306,165 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
       expect(appStateRefreshSpy).not.toHaveBeenCalled();
       expect(globalStoreRefreshSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Background grace and quiet resume', () => {
+    const setHidden = (hidden: boolean) =>
+      Object.defineProperty(document, 'hidden', {
+        value: hidden,
+        writable: true,
+        configurable: true,
+      });
+    let transport: Record<string, ReturnType<typeof vi.fn>>;
+    let markSessionsRecovering: ReturnType<typeof vi.fn>;
+    let manager: ConnectionManager;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      markSessionsRecovering = vi.fn();
+      manager = new ConnectionManager('ws://test', {
+        lifecycle: { setState: vi.fn(), getState: vi.fn() },
+        createEventEffects: vi.fn(),
+        createResumeEffects: (effects: Record<string, unknown>) => ({
+          ...effects,
+          getActiveSpaceId: () => null,
+          refreshSessions: vi.fn(async () => {}),
+          refreshApp: vi.fn(async () => {}),
+          refreshGlobal: vi.fn(async () => {}),
+          refreshSpace: vi.fn(async () => {}),
+          recoverAgents: vi.fn(async () => {}),
+        }),
+        markSessionsRecovering,
+      });
+      transport = {
+        isReady: vi.fn(() => true),
+        isSuspended: vi.fn(() => false),
+        suspend: vi.fn(),
+        resume: vi.fn(),
+        resetReconnectState: vi.fn(),
+        forceReconnect: vi.fn(),
+      };
+      (manager as unknown as Record<string, unknown>).transport = transport;
+      (manager as unknown as Record<string, unknown>).messageHub = {
+        request: vi.fn(async () => ({ status: 'ok' })),
+        joinChannel: vi.fn(async () => {}),
+        isConnected: vi.fn(() => true),
+      };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      setHidden(false);
+    });
+
+    it('keeps the socket through a short switch and closes it after 20 s hidden', () => {
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(19_000);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(5_000);
+      expect(transport.suspend).not.toHaveBeenCalled();
+
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(20_000);
+      expect(transport.suspend).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not suspend a page that became visible without a visibilitychange', () => {
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      setHidden(false);
+      vi.advanceTimersByTime(20_000);
+      expect(transport.suspend).not.toHaveBeenCalled();
+    });
+
+    it('runs one resume check when pageshow and visibilitychange both arrive', async () => {
+      const hub = (manager as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+        .messageHub;
+      hub.isConnected.mockReturnValue(false);
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      window.dispatchEvent(new Event('pageshow'));
+      transport.isSuspended.mockReturnValue(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      expect(hub.request).not.toHaveBeenCalled();
+      expect(markSessionsRecovering).not.toHaveBeenCalled();
+
+      hub.isConnected.mockReturnValue(true);
+      (manager as unknown as { notifyConnectionHandlers(): void }).notifyConnectionHandlers();
+      await vi.runAllTimersAsync();
+      expect(hub.request).toHaveBeenCalledTimes(1);
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
+    });
+
+    it('does not stay stuck on a resume that never connected', async () => {
+      const hub = (manager as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+        .messageHub;
+      hub.isConnected.mockReturnValue(false);
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      transport.isSuspended.mockReturnValue(false);
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      expect(transport.resetReconnectState).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs one resume check after two resumes that waited for the same connection', async () => {
+      const hub = (manager as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+        .messageHub;
+      hub.isConnected.mockReturnValue(false);
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(20_000);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      expect(transport.resume).toHaveBeenCalledTimes(2);
+
+      hub.isConnected.mockReturnValue(true);
+      (manager as unknown as { notifyConnectionHandlers(): void }).notifyConnectionHandlers();
+      await vi.runAllTimersAsync();
+      expect(hub.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('resumes a suspended socket when the page is shown again', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      window.dispatchEvent(new Event('pageshow'));
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+    });
+
+    it('resumes a suspended socket and rejoins its channels once it reconnects', async () => {
+      const hub = (manager as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+        .messageHub;
+      hub.isConnected.mockReturnValue(false);
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+      expect(hub.joinChannel).not.toHaveBeenCalled();
+
+      hub.isConnected.mockReturnValue(true);
+      (manager as unknown as { notifyConnectionHandlers(): void }).notifyConnectionHandlers();
+      await vi.runAllTimersAsync();
+      expect(hub.joinChannel).toHaveBeenCalledWith('global');
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
+    });
+
+    it('does not mark sessions recovering when the live socket answers', async () => {
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      await vi.runAllTimersAsync();
+      expect(markSessionsRecovering).not.toHaveBeenCalled();
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
     });
   });
 

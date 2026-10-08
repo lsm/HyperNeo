@@ -182,8 +182,8 @@ describe('ConnectionManager with separate applications', () => {
     const pendingA = resume(first);
     await resume(second);
     await setImmediate();
-    expect(a.mark).toHaveBeenCalledOnce();
-    expect(b.mark).toHaveBeenCalledOnce();
+    expect(a.mark).not.toHaveBeenCalled();
+    expect(b.mark).not.toHaveBeenCalled();
     expect(fixtures.hubs[0].request).toHaveBeenCalledWith('system.health', {}, { timeout: 3000 });
     expect(fixtures.hubs[1].request).toHaveBeenCalledWith('system.health', {}, { timeout: 3000 });
     expect(fixtures.hubs[0].joinChannel.mock.calls).toEqual([['global'], ['space:space-a']]);
@@ -202,6 +202,8 @@ describe('ConnectionManager with separate applications', () => {
     await resume(first);
     expect(fixtures.transports[0].forceReconnect).toHaveBeenCalledOnce();
     expect(fixtures.transports[1].forceReconnect).not.toHaveBeenCalled();
+    expect(a.mark).toHaveBeenCalledOnce();
+    expect(b.mark).not.toHaveBeenCalled();
     expect(b.refresh).toHaveBeenCalledTimes(4);
     expect(second.getConnectionState()).toBe('connected');
     expect(second.getHubIfConnected()).not.toBeNull();

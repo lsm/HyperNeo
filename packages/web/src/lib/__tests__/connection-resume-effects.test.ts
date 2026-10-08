@@ -122,13 +122,7 @@ describe('real ConnectionManager resume recovery', () => {
     });
     expect(Reflect.get(manager, '_isResuming')).toBe(true);
     await started;
-    expect(fixture.effects).toEqual([
-      'mark-recovering',
-      'health',
-      'join:global',
-      'join:space:space-1',
-      ...refreshes,
-    ]);
+    expect(fixture.effects).toEqual(['health', 'join:global', 'join:space:space-1', ...refreshes]);
     for (const [index, release] of releases.entries()) if (index !== held) release();
     await setImmediate();
     expect(settled).toBe(false);
@@ -145,10 +139,10 @@ describe('real ConnectionManager resume recovery', () => {
     async (failure) => {
       fixture.failure = failure;
       await runResume();
-      const beforeFailure = ['mark-recovering', 'health'];
+      const beforeFailure = ['health'];
       if (failure !== 'health')
         beforeFailure.push('join:global', 'join:space:space-1', ...refreshes);
-      expect(fixture.effects).toEqual([...beforeFailure, 'force-reconnect']);
+      expect(fixture.effects).toEqual([...beforeFailure, 'mark-recovering', 'force-reconnect']);
       expect(fixture.ready).toBe(false);
       expect(Reflect.get(manager, '_isResuming')).toBe(false);
     }
@@ -182,16 +176,11 @@ describe('real ConnectionManager resume recovery', () => {
     });
     const pending = runResume();
     await setImmediate();
-    expect(fixture.effects).toEqual(['mark-recovering', 'health', 'join:global']);
+    expect(fixture.effects).toEqual(['health', 'join:global']);
     fixture.activeSpace = 'space-2';
     releases[0]();
     await setImmediate();
-    expect(fixture.effects).toEqual([
-      'mark-recovering',
-      'health',
-      'join:global',
-      'join:space:space-2',
-    ]);
+    expect(fixture.effects).toEqual(['health', 'join:global', 'join:space:space-2']);
     releases[1]();
     await pending;
     expect(fixture.effects.slice(-7)).toEqual([...refreshes, 'state:connected', 'notify']);
@@ -201,7 +190,6 @@ describe('real ConnectionManager resume recovery', () => {
     fixture.activeSpace = null;
     await runResume();
     expect(fixture.effects).toEqual([
-      'mark-recovering',
       'health',
       'join:global',
       ...refreshes,
@@ -217,13 +205,7 @@ describe('real ConnectionManager resume recovery', () => {
       fixture.ready = false;
     };
     await runResume();
-    expect(fixture.effects).toEqual([
-      'mark-recovering',
-      'health',
-      'join:global',
-      'join:space:space-1',
-      ...refreshes,
-    ]);
+    expect(fixture.effects).toEqual(['health', 'join:global', 'join:space:space-1', ...refreshes]);
     expect(Reflect.get(manager, '_isResuming')).toBe(false);
   });
 

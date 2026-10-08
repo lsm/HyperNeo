@@ -196,6 +196,7 @@ describe('Safari Background Tab - Integration Tests', () => {
         resetReconnectState: vi.fn(() => {}),
         forceReconnect: vi.fn(() => {}),
         close: vi.fn(() => {}),
+        isSuspended: vi.fn(() => false),
       };
 
       mockMessageHub = {
