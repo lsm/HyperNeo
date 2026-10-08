@@ -177,7 +177,6 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
     bottomInsetClass,
     bottomScrollPaddingClass,
     bottomInsetPx,
-    header,
     footer,
   }: {
     taskId: string;
@@ -185,7 +184,6 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
     bottomInsetClass?: string;
     bottomScrollPaddingClass?: string;
     bottomInsetPx?: number;
-    header?: ComponentChildren;
     footer?: ComponentChildren;
   }) => (
     <div
@@ -196,7 +194,6 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
       data-bottom-scroll-padding={bottomScrollPaddingClass ?? ''}
       data-bottom-inset-px={bottomInsetPx ?? ''}
     >
-      {header}
       {footer}
     </div>
   ),
@@ -376,15 +373,14 @@ describe('SpaceTaskPane', () => {
     expect(getByText('Task not found')).toBeTruthy();
   });
 
-  it('renders title, status, and high priority badge', () => {
+  it('renders title and status', () => {
     mockTasks.value = [makeTask({ title: 'My Task', status: 'in_progress', priority: 'high' })];
     const { getByText, getAllByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(getByText('My Task')).toBeTruthy();
     expect(getAllByText('In Progress').length).toBeGreaterThan(0);
-    expect(getByTestId('task-brief-priority').textContent).toBe('High priority');
   });
 
-  it('shows workspace badge for non-primary-bound task and hides it for primary-bound task', () => {
+  it('names a non-primary workspace in the Ready to run panel and the Space workspace otherwise', () => {
     mockWorkspaces.value = [
       { id: 'ws-1', spaceId: 'space-1', path: '/primary', label: 'Main', isPrimary: true },
       { id: 'ws-2', spaceId: 'space-1', path: '/secondary/docs', label: 'Docs', isPrimary: false },
@@ -398,13 +394,15 @@ describe('SpaceTaskPane', () => {
         workspacePath: '/secondary/docs',
       }),
     ];
-    const { queryByTestId, rerender } = render(<SpaceTaskPane taskId="task-1" />);
-    expect(queryByTestId('task-workspace-badge')).toBeNull();
+    mockTaskMessageActivity.value = new Map([
+      ['task-1', 0],
+      ['task-2', 0],
+    ]);
+    const { getByTestId, rerender } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByTestId('task-ready-panel').textContent).toContain('Space workspace');
 
     rerender(<SpaceTaskPane taskId="task-2" />);
-    const badge = queryByTestId('task-workspace-badge');
-    expect(badge).toBeTruthy();
-    expect(badge?.textContent).toBe('Docs');
+    expect(getByTestId('task-ready-panel').textContent).toContain('Docs');
   });
 
   it('shows the task number in the header', () => {
@@ -424,7 +422,6 @@ describe('SpaceTaskPane', () => {
     ];
     const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(queryByTestId('task-status-label')).toBeNull();
-    expect(getByTestId('task-brief-priority').textContent).toBe('Normal priority');
     expect(getByTestId('pending-task-completion-banner')).toBeTruthy();
   });
 
@@ -2950,7 +2947,7 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
     expect(queryByTestId('task-info-view')).toBeNull();
   });
 
-  it('task information view surfaces description, workflow, and priority', () => {
+  it('task information view surfaces description and workflow', () => {
     mockTasks.value = [
       makeTask({ status: 'open', priority: 'urgent', preferredWorkflowId: 'workflow-9' }),
     ];
@@ -2966,7 +2963,6 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
     const { getByText, getAllByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(getByText('Task description')).toBeTruthy();
     expect(getByText('Release Workflow')).toBeTruthy();
-    expect(getByTestId('task-brief-priority').textContent).toBe('Urgent');
     expect(getAllByText('Open').length).toBeGreaterThan(0);
   });
 });

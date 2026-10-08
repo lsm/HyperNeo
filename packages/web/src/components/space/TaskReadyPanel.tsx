@@ -35,6 +35,7 @@ function readiness(
 export function TaskReadyPanel({
   task,
   workspaceLabel,
+  description,
   canRunDirectly,
   busy,
   onRun,
@@ -43,6 +44,7 @@ export function TaskReadyPanel({
 }: {
   task: SpaceTask;
   workspaceLabel?: string | null;
+  description: string;
   canRunDirectly: boolean;
   busy: boolean;
   onRun: () => void;
@@ -99,6 +101,15 @@ export function TaskReadyPanel({
         </h3>
         <p class="text-sm text-fg-muted">{state.detail}</p>
       </div>
+
+      {description && (
+        <p
+          class="whitespace-pre-wrap break-words text-sm text-fg-soft"
+          data-testid="task-ready-description"
+        >
+          {description}
+        </p>
+      )}
 
       <dl class="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 text-sm">
         <dt class="text-xs text-fg-muted">Workflow</dt>

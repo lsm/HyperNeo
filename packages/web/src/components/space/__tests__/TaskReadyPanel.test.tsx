@@ -38,6 +38,7 @@ function renderPanel(task: SpaceTask, canRunDirectly = true) {
     <TaskReadyPanel
       task={task}
       workspaceLabel="Docs"
+      description="Add a README section for readConfig."
       canRunDirectly={canRunDirectly}
       busy={false}
       {...handlers}
@@ -57,6 +58,9 @@ describe('TaskReadyPanel', () => {
   it('makes Run the main action when the Space has no workflows', () => {
     const { getByTestId, handlers } = renderPanel(makeTask());
     expect(getByTestId('task-ready-title').textContent).toBe('Ready to run');
+    expect(getByTestId('task-ready-description').textContent).toBe(
+      'Add a README section for readConfig.'
+    );
     fireEvent.click(getByTestId('task-run-button'));
     expect(handlers.onRun).toHaveBeenCalled();
   });

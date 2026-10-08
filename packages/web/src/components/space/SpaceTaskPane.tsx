@@ -32,7 +32,6 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { TaskBrief } from './TaskBrief';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
@@ -515,15 +514,6 @@ export function SpaceTaskPane({
     task,
     spaceStore.workspaces?.value ?? [],
     spaceStore.space?.value?.workspacePath
-  );
-  const taskBrief = (collapsible: boolean) => (
-    <TaskBrief
-      task={task}
-      description={resolvedTask?.description ?? task.description ?? ''}
-      workspaceLabel={workspaceLabel}
-      routeSpaceId={navigationSpaceId}
-      collapsible={collapsible}
-    />
   );
   const visibleTarget = visibleTargetName
     ? composerTargets.find(
@@ -1297,7 +1287,6 @@ export function SpaceTaskPane({
                     scrollToBottomRef.current = scrollToBottom;
                   }}
                   onScrollerChange={setThreadScroller}
-                  header={taskBrief(true)}
                   footer={
                     resolvedTask?.result ? (
                       <section
@@ -1317,10 +1306,10 @@ export function SpaceTaskPane({
               ) : (
                 <div class="h-full overflow-y-auto" data-testid="task-info-view">
                   <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
-                    {taskBrief(false)}
                     <TaskReadyPanel
                       task={task}
                       workspaceLabel={workspaceLabel}
+                      description={resolvedTask?.description ?? task.description ?? ''}
                       canRunDirectly={canRunDirectly}
                       busy={statusTransitioning}
                       onRun={handleRunTaskDirectly}

@@ -37,7 +37,6 @@ interface SpaceTaskUnifiedThreadProps {
   onShowScrollButtonChange?: (showScrollButton: boolean) => void;
   onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
   onScrollerChange?: (scroller: HTMLDivElement | null) => void;
-  header?: ComponentChildren;
   footer?: ComponentChildren;
 }
 
@@ -55,7 +54,6 @@ export function SpaceTaskUnifiedThread({
   onShowScrollButtonChange,
   onScrollToBottomChange,
   onScrollerChange,
-  header,
   footer,
 }: SpaceTaskUnifiedThreadProps) {
   const { rows, activeTurnSummaries, isLoading, error, isReconnecting } = useSpaceTaskMessages(
@@ -90,7 +88,6 @@ export function SpaceTaskUnifiedThread({
   if (isLoading || isReconnecting) {
     return (
       <div class="h-full overflow-y-auto">
-        {header && <div class="px-4 pt-4">{header}</div>}
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-fg-muted">
           Loading task thread…
         </div>
@@ -101,7 +98,6 @@ export function SpaceTaskUnifiedThread({
   if (error) {
     return (
       <div class="h-full overflow-y-auto">
-        {header && <div class="px-4 pt-4">{header}</div>}
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
           <p class="text-sm text-warning">{error}</p>
         </div>
@@ -112,7 +108,6 @@ export function SpaceTaskUnifiedThread({
   if (parsedRows.length === 0) {
     return (
       <div class="h-full overflow-y-auto">
-        {header && <div class="px-4 pt-4">{header}</div>}
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
           <p class="text-sm text-fg-muted">No task-agent activity yet.</p>
         </div>
@@ -160,7 +155,6 @@ export function SpaceTaskUnifiedThread({
         style={dynamicBottomInsetStyle}
       >
         <div class="min-h-[calc(100%+1px)]">
-          {header && <div class="px-4 pt-4">{header}</div>}
           <MinimalThreadFeed
             parsedRows={parsedRows}
             activeAgentLabels={activeAgentLabels}

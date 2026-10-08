@@ -140,28 +140,6 @@ describe('SpaceTaskUnifiedThread', () => {
     expect(screen.queryByText(/Reconnecting/)).toBeNull();
   });
 
-  it('renders the header slot above the feed, while loading, and with no rows', () => {
-    const header = <div data-testid="thread-header">Brief</div>;
-    mockRows = [
-      makeRow(
-        'r1',
-        'Coder',
-        { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
-        1
-      ),
-    ];
-    const { rerender } = render(<SpaceTaskUnifiedThread taskId="task-1" header={header} />);
-    expect(screen.getByTestId('thread-header')).toBeTruthy();
-
-    mockRows = [];
-    rerender(<SpaceTaskUnifiedThread taskId="task-1" header={header} />);
-    expect(screen.getByTestId('thread-header')).toBeTruthy();
-
-    mockIsLoading = true;
-    rerender(<SpaceTaskUnifiedThread taskId="task-1" header={header} />);
-    expect(screen.getByTestId('thread-header')).toBeTruthy();
-  });
-
   it('shows empty state when no rows', () => {
     mockRows = [];
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
