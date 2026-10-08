@@ -27,6 +27,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
+import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -268,6 +269,8 @@ export function shouldPreserveAnthropicOAuthToken(
 ): boolean {
   return providerId === 'anthropic' && providerEnvVars.CLAUDE_CODE_OAUTH_TOKEN !== '';
 }
+
+const writeFlagSettingsFile = createFlagSettingsFileWriter();
 
 function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: ProviderEnvVars): void {
   const flagEnv: Record<string, string> = {};
@@ -986,6 +989,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
+      writeFlagSettingsFile(queryOptions, session.id);
       recoveryState.startGuard?.();
       const queryObject = query({
         prompt: this.createMessageGeneratorWrapper(
