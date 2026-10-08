@@ -3,8 +3,7 @@ import type { WorkExchangeEntry, WorkInput } from './types.ts';
 const RECENT_INPUTS = 8;
 const INPUT_TEXT_LIMIT = 160;
 const EXCHANGE_TEXT_LIMIT = 4_000;
-const EXCHANGE_HEAD = 5;
-const EXCHANGE_TAIL = 35;
+const EXCHANGE_ENTRIES = 40;
 
 export function workEntryTime(timestamp: unknown): number | undefined {
   const at = Date.parse(String(timestamp));
@@ -38,11 +37,9 @@ export function exchangeEntry(
 }
 
 export function boundExchange(entries: WorkExchangeEntry[], cut: boolean): WorkExchange {
-  if (entries.length <= EXCHANGE_HEAD + EXCHANGE_TAIL) return { entries, cut };
-  return {
-    entries: [...entries.slice(0, EXCHANGE_HEAD), ...entries.slice(-EXCHANGE_TAIL)],
-    cut: true,
-  };
+  return entries.length <= EXCHANGE_ENTRIES
+    ? { entries, cut }
+    : { entries: entries.slice(-EXCHANGE_ENTRIES), cut: true };
 }
 
 export function withExchange(exchange: WorkExchange | undefined) {

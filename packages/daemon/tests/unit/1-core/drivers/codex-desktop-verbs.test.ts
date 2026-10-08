@@ -128,6 +128,17 @@ describe('codexExchange', () => {
     });
   });
 
+  test('keeps the latest 40 messages of a long run and marks the earlier ones unread', () => {
+    const lines = Array.from({ length: 45 }, (_, index) =>
+      at(`2026-10-08T17:01:${String(index).padStart(2, '0')}.000Z`, said(`step ${index}`))
+    );
+    const { entries, cut } = codexExchange(lines, Date.parse(t(0)), false);
+    expect(entries).toHaveLength(40);
+    expect(entries[0].text).toBe('step 5');
+    expect(entries.at(-1)?.text).toBe('step 44');
+    expect(cut).toBe(true);
+  });
+
   test('marks the exchange cut only when the read tail starts after since', () => {
     const lines = [at(t(3), said('late'))];
     expect(codexExchange(lines, Date.parse(t(1)), true).cut).toBe(true);
