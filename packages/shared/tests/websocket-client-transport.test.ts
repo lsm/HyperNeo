@@ -879,6 +879,56 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       expect(pingMessages.length).toBeGreaterThan(0);
     });
 
+    it('drops a socket that misses a PONG and reconnects', async () => {
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        pingInterval: 60,
+        pongTimeout: 30,
+      });
+      await transport.initialize();
+      const first = mockWebSocketInstance;
+      const states: string[] = [];
+      transport.onConnectionChange((state) => {
+        states.push(state);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(states).toContain('disconnected');
+      expect(mockWebSocketInstance).not.toBe(first);
+    });
+
+    it('keeps a socket that answers every PING, even with a timeout shorter than the interval', async () => {
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        pingInterval: 40,
+        pongTimeout: 20,
+      });
+      await transport.initialize();
+      const socket = mockWebSocketInstance!;
+      const send = socket.send.bind(socket);
+      socket.send = (data: string) => {
+        send(data);
+        if (JSON.parse(data).type === 'PING')
+          setTimeout(
+            () =>
+              socket.simulateMessage(
+                JSON.stringify({
+                  id: 'pong',
+                  type: MessageType.PONG,
+                  method: 'heartbeat',
+                  sessionId: 'global',
+                  timestamp: new Date().toISOString(),
+                })
+              ),
+            5
+          );
+      };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(mockWebSocketInstance).toBe(socket);
+      expect(transport.isReady()).toBe(true);
+    });
+
     it('should update lastPongTime on PONG response', async () => {
       transport = new WebSocketClientTransport({
         url: 'ws://localhost:9999',
