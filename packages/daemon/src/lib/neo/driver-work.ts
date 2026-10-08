@@ -11,7 +11,12 @@ import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
-  z.object({ verb: z.literal('start'), adapter: z.string().min(1).max(80), place: PlaceSchema }),
+  z.object({
+    verb: z.literal('start'),
+    adapter: z.string().min(1).max(80),
+    place: PlaceSchema,
+    createFolder: z.boolean().optional(),
+  }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
 ]);
 
@@ -40,6 +45,7 @@ export function driverWorkCall(
           place: target.place,
           title: work.title,
           message: work.instruction,
+          ...(target.createFolder ? { createFolder: true } : {}),
         },
       }
     : { name: 'work.send', input: { ref: target.ref, message: work.instruction } };

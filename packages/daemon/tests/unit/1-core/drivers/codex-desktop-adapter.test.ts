@@ -95,6 +95,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
       spawn: unusedSpawn,
       appServer: () => Promise.reject(new Error('not used')),
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'abcd1234-0000',
     });
@@ -110,6 +112,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
       spawn: unusedSpawn,
       appServer: () => Promise.reject(new Error('not used')),
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'abcd1234-0000',
       searchChats: async (text) => {
@@ -264,6 +268,8 @@ describe('codex-desktop adapter against a Codex state database', () => {
       spawn: unusedSpawn,
       appServer: () => Promise.reject(new Error('not used')),
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'abcd1234-0000',
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });

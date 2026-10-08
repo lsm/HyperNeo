@@ -111,6 +111,8 @@ describe('codex-desktop adapter status and send', () => {
       spawn,
       appServer,
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'abcd1234-0000',
     });

@@ -47,6 +47,8 @@ function adapter(
       };
     },
     folderExists: (folder) => folders.includes(folder),
+    makeFolder: () => {},
+    homeDir: '/Users/test',
     gitRoot: async () => git.root ?? null,
     newId: () => 'abcd1234-0000',
   });
@@ -155,7 +157,7 @@ describe('codex-desktop start', () => {
     expect(await start({ ...place, folder: '/gone' })).toEqual({
       ok: false,
       reason: 'invalid_place',
-      detail: '/gone does not exist.',
+      detail: '/gone does not exist. To start a new project there, pass createFolder: true.',
     });
     expect(calls).toEqual([]);
   });

@@ -230,6 +230,8 @@ const findOnly = {
   },
   neoFolder: () => '/data/Neo',
   folderExists: () => true,
+  makeFolder: () => {},
+  homeDir: '/Users/test',
 };
 
 describe('skipSpaceQuery', () => {
@@ -357,6 +359,8 @@ describe('hyperneo adapter against the sessions table', () => {
       },
       neoFolder: () => '/data/Neo',
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
     });
     const groups = await adapter.find({ includeClosed: false, limit: 20 });
     expect(
