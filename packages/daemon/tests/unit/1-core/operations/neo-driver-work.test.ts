@@ -241,6 +241,17 @@ describe('driverExchangeReport', () => {
         'Raise the font.'
       )
     ).toBe('Agent: Looking.\n\nInput: also the footer\n\nAgent: Both done.');
+    expect(
+      driverExchangeReport(
+        [
+          user(1, 'Raise the font. Neo routed this to you'),
+          user(2, 'Raise the font. I mean the footer too'),
+          agent(3, 'Done.'),
+        ],
+        false,
+        'Raise the font.'
+      )
+    ).toBe('Input: Raise the font. I mean the footer too\n\nAgent: Done.');
     expect(driverExchangeReport([user(1, 'hi')], false, null)).toBeNull();
     expect(driverExchangeReport(undefined, false, null)).toBeNull();
   });

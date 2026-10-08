@@ -268,11 +268,13 @@ export function driverExchangeReport(
   cut: boolean,
   opening: string | null
 ): string | null {
-  const parts = (exchange ?? [])
-    .filter(
-      (entry) =>
-        !(entry.role === 'user' && opening && entry.text.replace(/\s+/g, ' ').includes(opening))
-    )
+  const entries = exchange ?? [];
+  const own = entries.findIndex(
+    (entry) =>
+      entry.role === 'user' && !!opening && entry.text.replace(/\s+/g, ' ').includes(opening)
+  );
+  const parts = entries
+    .filter((_, index) => index !== own)
     .map((entry) => `${entry.role === 'agent' ? 'Agent' : 'Input'}: ${entry.text}`);
   if (!parts.some((part) => part.startsWith('Agent: '))) return null;
   const head = cut ? ['(Earlier messages were not read; this is not the whole exchange.)'] : [];
