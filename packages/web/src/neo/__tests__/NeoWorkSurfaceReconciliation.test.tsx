@@ -13,6 +13,7 @@ beforeEach(async () => {
   vi.doMock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
   vi.doMock('../../lib/state.ts', () => ({
     connectionState: { value: 'connected', subscribe: () => () => {} },
+    reconnectAttemptCount: { value: 0, subscribe: () => () => {} },
   }));
   vi.doMock('../../components/chat/MarkdownRenderer.tsx', () => ({
     default: ({ content }: { content: string }) => <p>{content}</p>,

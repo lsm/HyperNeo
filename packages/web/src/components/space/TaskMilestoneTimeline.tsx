@@ -86,7 +86,7 @@ export function TaskMilestoneTimeline({
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-fg-muted">
-          {isReconnecting ? 'Reconnecting task timeline…' : 'Loading task timeline…'}
+          Loading task timeline…
         </div>
       </div>
     );

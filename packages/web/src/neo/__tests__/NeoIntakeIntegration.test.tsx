@@ -9,9 +9,13 @@ const stores = vi.hoisted(
   () => [] as { isWorking: { value: boolean }; sdkMessages: { value: ChatMessage[] } }[]
 );
 const connected = signal('connected');
+const attempts = signal(0);
 vi.mock('../../lib/state.ts', () => ({
   get connectionState() {
     return connected;
+  },
+  get reconnectAttemptCount() {
+    return attempts;
   },
 }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -80,6 +84,7 @@ beforeEach(() => {
   request.mockReset();
   stores.length = 0;
   connected.value = 'connected';
+  attempts.value = 0;
   request.mockImplementation(
     async (
       method: string,
@@ -268,5 +273,18 @@ describe('Neo live durable intake', () => {
     expect(asks()).toHaveLength(0);
     submit();
     await waitFor(() => expect(asks()).toHaveLength(1));
+  });
+
+  it('shows its own connecting notice only on first connect, leaving reconnects to the app banner', async () => {
+    await open();
+    act(() => {
+      connected.value = 'connecting';
+    });
+    expect(screen.getByText('Connecting to HyperNeo…')).toBeTruthy();
+    act(() => {
+      attempts.value = 1;
+      connected.value = 'reconnecting';
+    });
+    expect(screen.queryByText('Connecting to HyperNeo…')).toBeNull();
   });
 });

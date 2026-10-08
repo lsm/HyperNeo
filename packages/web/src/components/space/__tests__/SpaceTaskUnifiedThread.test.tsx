@@ -132,11 +132,12 @@ describe('SpaceTaskUnifiedThread', () => {
     expect(screen.getByText('Loading task thread…')).toBeTruthy();
   });
 
-  it('shows reconnecting state when reconnecting', () => {
+  it('shows the loading placeholder while reconnecting instead of its own reconnect notice', () => {
     mockIsReconnecting = true;
     mockRows = [];
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
-    expect(screen.getByText('Reconnecting task thread…')).toBeTruthy();
+    expect(screen.getByText('Loading task thread…')).toBeTruthy();
+    expect(screen.queryByText(/Reconnecting/)).toBeNull();
   });
 
   it('shows empty state when no rows', () => {

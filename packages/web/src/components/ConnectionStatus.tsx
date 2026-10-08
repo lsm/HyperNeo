@@ -37,12 +37,11 @@ interface StatusResult {
 }
 
 function resolveStatus({
-  connectionState,
   isProcessing,
   currentAction,
   activity,
   streamingPhase,
-}: ConnectionStatusProps): StatusResult {
+}: Omit<ConnectionStatusProps, 'connectionState'>): StatusResult {
   if (isProcessing && currentAction) {
     const byPhase = SESSION_PROCESSING_PHASE_CONFIG as Partial<
       Record<string, SessionProcessingConfig>
@@ -51,21 +50,9 @@ function resolveStatus({
     return { tone: config.tone, pulse: true, text: currentAction };
   }
 
-  switch (connectionState) {
-    case 'connected':
-      return activity
-        ? { tone: SESSION_PROCESSING_STATUS_CONFIG.processing.tone, pulse: true, text: activity }
-        : { tone: 'success', pulse: false, text: 'Ready' };
-    case 'connecting':
-      return { tone: 'progress', pulse: true, text: 'Connecting...' };
-    case 'reconnecting':
-      return { tone: 'progress', pulse: true, text: 'Reconnecting...' };
-    case 'failed':
-    case 'error':
-      return { tone: 'danger', pulse: false, text: 'Connection Failed' };
-    default:
-      return { tone: 'neutral', pulse: false, text: 'Offline' };
-  }
+  return activity
+    ? { tone: SESSION_PROCESSING_STATUS_CONFIG.processing.tone, pulse: true, text: activity }
+    : { tone: 'success', pulse: false, text: 'Ready' };
 }
 
 export default function ConnectionStatus({
@@ -75,8 +62,8 @@ export default function ConnectionStatus({
   activity,
   streamingPhase,
 }: ConnectionStatusProps) {
+  if (connectionState !== 'connected') return null;
   const status = resolveStatus({
-    connectionState,
     isProcessing,
     currentAction,
     activity,

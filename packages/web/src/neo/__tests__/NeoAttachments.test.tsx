@@ -19,6 +19,7 @@ vi.mock('../NeoPreferences.tsx', () => ({ NeoPreferences: () => null }));
 vi.mock('../NeoVoice.tsx', () => ({ NeoVoice: () => null }));
 vi.mock('../../lib/state.ts', () => ({
   connectionState: { value: 'connected', subscribe: () => () => {} },
+  reconnectAttemptCount: { value: 0, subscribe: () => () => {} },
 }));
 beforeEach(() => {
   sendMessage.mockReset();
