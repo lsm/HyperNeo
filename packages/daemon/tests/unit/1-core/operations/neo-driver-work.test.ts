@@ -70,8 +70,10 @@ describe('requireNeoExecutionChoice', () => {
 describe('driverWorkCall', () => {
   test('sends the goal with a started or continued driver session', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: null };
-    expect(driverWorkCall(startTarget, work, goal).input.message).toContain('Goal: A full iOS app');
-    expect(driverWorkCall(sendTarget, work, goal).input.message).toContain('Goal: A full iOS app');
+    for (const target of [startTarget, sendTarget])
+      expect(driverWorkCall(target, work, goal).input.message).toContain(
+        'Neo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app'
+      );
   });
 
   test('starts new work with the title and instruction, or sends the instruction', () => {
@@ -105,7 +107,7 @@ describe('withWorkGoal', () => {
   test('appends the goal and checklist, and leaves a bare instruction alone', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
     expect(withWorkGoal('Build the chat screen.', goal)).toBe(
-      'Build the chat screen.\n\nGoal: A full iOS app\nDone when:\n- runs in the simulator\nIf you stop before this is done, say what remains and why.'
+      'Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\nIf you stop before this is done, say what remains and why.'
     );
     expect(withWorkGoal('Build the chat screen.', null)).toBe('Build the chat screen.');
     const longest = withWorkGoal('i'.repeat(16000), {
