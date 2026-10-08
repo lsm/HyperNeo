@@ -44,6 +44,7 @@ import {
   readDriverLive,
   readDriverSendBaseline,
   readDriverSent,
+  messageOpening,
   readDriverLanded,
   readDriverNeedsYou,
   readDriverSettlement,
@@ -532,7 +533,11 @@ export class NeoService {
         result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
         result.link
       );
-      if (probe) this.driverTargets.recordSent(queued.id, probe.sent);
+      const opening = messageOpening(String(call.input.message));
+      this.driverTargets.recordSent(
+        queued.id,
+        probe ? probe.sent : opening ? { inputBefore: 0, opening } : null
+      );
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);

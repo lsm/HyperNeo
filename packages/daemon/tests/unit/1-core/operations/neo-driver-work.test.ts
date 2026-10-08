@@ -382,14 +382,26 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(service.driverTargets.readSent('work-1')).toEqual({
+        inputBefore: 0,
+        opening: work.instruction,
+      });
       reply = {
         ok: true,
-        value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Font is 16px.' },
+        value: {
+          status: 'done',
+          lastActivityAt: Date.now() + 1_000,
+          lastReply: 'Font is 16px.',
+          exchange: [
+            { at: Date.now() + 500, role: 'user', text: work.instruction },
+            { at: Date.now() + 900, role: 'agent', text: 'Font is 16px.' },
+          ],
+        },
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Font is 16px.',
+        report: 'Agent: Font is 16px.',
       });
       expect(returned).toEqual(['work-1']);
       const since = service.driverTargets.readStartedAt('work-1');
