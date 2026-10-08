@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
+import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from './task-notification-requery.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -2056,9 +2057,11 @@ export class QueryRunner {
               typeof (promptContent[0] as { text?: unknown }).text === 'string'
             ? ((promptContent[0] as { text: string }).text as string)
             : undefined;
-      const isDaemonCompactCommand = isInternal && promptText === '/compact';
+      const startsDaemonTurn =
+        isInternal &&
+        (promptText === '/compact' || promptText === TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
 
-      if (isDaemonCompactCommand && stateManager.getState().status !== 'processing') {
+      if (startsDaemonTurn && stateManager.getState().status !== 'processing') {
         await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');
       }
 

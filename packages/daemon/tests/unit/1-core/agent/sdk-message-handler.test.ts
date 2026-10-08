@@ -2675,6 +2675,30 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('marks an SDK-started turn as processing only when the session was idle', async () => {
+      const setProcessing = mock(async () => {});
+      (mockStateManager as unknown as { setProcessing: typeof setProcessing }).setProcessing =
+        setProcessing;
+      getStateSpy.mockImplementation(() => ({ status: 'idle' }));
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'running',
+        uuid: 'state-running',
+      } as unknown as SDKMessage);
+      expect(setProcessing).toHaveBeenCalledWith('state-running', 'initializing');
+
+      setProcessing.mockClear();
+      getStateSpy.mockImplementation(() => ({ status: 'processing' }));
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'running',
+        uuid: 'state-running-2',
+      } as unknown as SDKMessage);
+      expect(setProcessing).not.toHaveBeenCalled();
+    });
+
     it('should reset session-state turn mode after idle so later result can finish turn', async () => {
       await handler.handleMessage({
         type: 'system',

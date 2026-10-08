@@ -40,6 +40,7 @@ import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-mana
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from '../../../../src/lib/agent/task-notification-requery';
 import {
   QueryAttemptRegistry,
   type QueryAttemptToken,
@@ -1541,6 +1542,30 @@ describe('QueryRunner', () => {
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
+    });
+
+    it('marks the runtime continue follow-up turn as processing', async () => {
+      async function* mockMessageGenerator() {
+        yield {
+          message: {
+            uuid: 'continue-1',
+            message: { role: 'user', content: TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE },
+            internal: true,
+          },
+          onSent: () => {},
+        };
+      }
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: mock(() => mockMessageGenerator()),
+        } as unknown as MessageQueue,
+      });
+
+      for await (const _msg of runner.createMessageGeneratorWrapper(0)) {
+      }
+
+      expect(setProcessingSpy).toHaveBeenCalledWith('continue-1', 'initializing');
     });
 
     it('should skip processing state for internal messages', async () => {
