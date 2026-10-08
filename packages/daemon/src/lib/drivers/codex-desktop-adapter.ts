@@ -15,6 +15,7 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkDetail,
+  WorkExchangeEntry,
   WorkInput,
   WorkRef,
   WorkStatus,
@@ -22,7 +23,15 @@ import type {
 } from './types.ts';
 import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
-import { recentWorkInputs, workEntryTime, workInput } from './work-inputs.ts';
+import {
+  boundExchange,
+  exchangeEntry,
+  recentWorkInputs,
+  type WorkExchange,
+  withExchange,
+  workEntryTime,
+  workInput,
+} from './work-messages.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -90,6 +99,7 @@ export interface CodexTurnState {
   reply: string | null;
   replyAt?: number;
   inputs?: WorkInput[];
+  exchange?: WorkExchange;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -293,7 +303,10 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   });
 }
 
-export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
+async function readRolloutWindow(
+  path: string,
+  bytes = ROLLOUT_TAIL_BYTES
+): Promise<{ lines: string[]; truncated: boolean }> {
   const handle = await open(path, 'r');
   try {
     const { size } = await handle.stat();
@@ -301,10 +314,14 @@ export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES):
     const buffer = Buffer.alloc(size - start);
     await handle.read(buffer, 0, buffer.length, start);
     const lines = buffer.toString('utf8').split('\n');
-    return start > 0 ? lines.slice(1) : lines;
+    return { lines: start > 0 ? lines.slice(1) : lines, truncated: start > 0 };
   } finally {
     await handle.close();
   }
+}
+
+export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
+  return (await readRolloutWindow(path, bytes)).lines;
 }
 
 function parseLine(
@@ -373,6 +390,42 @@ export function codexRecentInputs(lines: readonly string[]): WorkInput[] {
   );
 }
 
+export function codexExchange(
+  lines: readonly string[],
+  since: number,
+  truncated: boolean
+): WorkExchange {
+  const entries: WorkExchangeEntry[] = [];
+  let earliest: number | undefined;
+  for (const line of lines) {
+    const entry = parseLine(line);
+    if (!entry) continue;
+    const at = workEntryTime(entry.timestamp);
+    earliest ??= at;
+    const payload = entry.payload ?? {};
+    const said = entry.type === 'response_item' ? messageText(payload, 'assistant') : null;
+    const asked = entry.type === 'response_item' ? messageText(payload, 'user') : null;
+    const final =
+      entry.type === 'event_msg' &&
+      payload.type === 'task_complete' &&
+      typeof payload.last_agent_message === 'string'
+        ? payload.last_agent_message
+        : null;
+    const next =
+      said !== null
+        ? exchangeEntry(at, 'agent', said, since)
+        : asked !== null && !INJECTED_INPUT.test(asked)
+          ? exchangeEntry(at, 'user', asked, since)
+          : final !== null
+            ? exchangeEntry(at, 'agent', final, since)
+            : null;
+    const last = entries.at(-1);
+    if (next && !(final !== null && last?.role === 'agent' && last.text === next.text))
+      entries.push(next);
+  }
+  return boundExchange(entries, truncated && (earliest === undefined || earliest > since));
+}
+
 export function activeCodexTurn(lines: readonly string[]): string | null | undefined {
   for (const line of [...lines].reverse()) {
     const entry = parseLine(line);
@@ -417,10 +470,17 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
     : { value: detail };
 }
 
-export async function readCodexTurn(detail: CodexThreadDetail): Promise<CodexTurnState> {
+export async function readCodexTurn(
+  detail: CodexThreadDetail,
+  since?: number
+): Promise<CodexTurnState> {
   try {
-    const lines = await readRolloutTail(detail.thread.rolloutPath);
-    return { ...codexTurnState(lines), inputs: codexRecentInputs(lines) };
+    const { lines, truncated } = await readRolloutWindow(detail.thread.rolloutPath);
+    return {
+      ...codexTurnState(lines),
+      inputs: codexRecentInputs(lines),
+      ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
+    };
   } catch {
     return { marker: null, reply: null };
   }
@@ -446,6 +506,7 @@ export function describeCodexThread(
       ...(state.reply ? { lastReply: state.reply.slice(0, REPLY_LIMIT) } : {}),
       ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
+      ...withExchange(state.exchange),
     },
   };
 }
@@ -485,13 +546,14 @@ export async function queueCodexMessage(
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
-  .input(['ref', 'deps'])
+  .input(['ref', 'deps', 'since'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
-  .pipe(readCodexTurn, 'outcome', 'turn')
+  .pipe(readCodexTurn, ['outcome', 'since'], 'turn')
   .pipe(describeCodexThread, ['outcome', 'turn', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  since: number | undefined
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
@@ -676,7 +738,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       ),
     start: (request) => runCodexStart(request, deps),
     send: (ref, message) => runCodexSend(ref, message, deps),
-    status: (ref) => runCodexStatus(ref, deps),
+    status: (ref, since) => runCodexStatus(ref, deps, since),
     stop: (ref) => runCodexStop(ref, deps),
   };
 }

@@ -44,6 +44,7 @@ import {
   readDriverLive,
   readDriverSendBaseline,
   readDriverSent,
+  messageOpening,
   readDriverLanded,
   readDriverNeedsYou,
   readDriverSettlement,
@@ -532,7 +533,11 @@ export class NeoService {
         result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
         result.link
       );
-      if (probe) this.driverTargets.recordSent(queued.id, probe.sent);
+      const opening = messageOpening(String(call.input.message));
+      this.driverTargets.recordSent(
+        queued.id,
+        probe ? probe.sent : opening ? { inputBefore: 0, opening } : null
+      );
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
@@ -603,25 +608,26 @@ export class NeoService {
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
+    const startedAt = this.driverTargets.readStartedAt(work.id);
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       'work.status',
-      { ref },
+      { ref, ...(startedAt !== null ? { since: startedAt } : {}) },
       driverWorkCaller(work)
     );
     const live = readDriverLive(outcome);
     if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
       this.notifyChanged();
-    const startedAt = this.driverTargets.readStartedAt(work.id);
-    const landed =
-      startedAt === null ? readDriverLanded(outcome, this.driverTargets.readSent(work.id)) : null;
+    const sent = this.driverTargets.readSent(work.id);
+    const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
     if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
     const settled = readDriverSettlement(
       work,
       outcome,
       Date.now(),
       startedAt,
-      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send'
+      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
+      sent?.opening ?? (messageOpening(work.instruction) || null)
     );
     if (!settled) {
       await this.noteDriverStall(work, outcome);

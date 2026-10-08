@@ -73,11 +73,18 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
 }
 
 export const WorkInputSchema = z.object({ at: z.number(), text: z.string() });
+export const WorkExchangeEntrySchema = z.object({
+  at: z.number(),
+  role: z.enum(['user', 'agent']),
+  text: z.string(),
+});
 
 export const WorkDetailSchema = WorkSummarySchema.extend({
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
   recentInputs: z.array(WorkInputSchema).optional(),
+  exchange: z.array(WorkExchangeEntrySchema).optional(),
+  exchangeCut: z.boolean().optional(),
 });
 
 export type WorkStatus = z.infer<typeof WorkStatusSchema>;
@@ -88,6 +95,7 @@ export type PlaceGroup = z.infer<typeof PlaceGroupSchema>;
 export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
 export type WorkInput = z.infer<typeof WorkInputSchema>;
+export type WorkExchangeEntry = z.infer<typeof WorkExchangeEntrySchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 
@@ -126,6 +134,6 @@ export interface WorkAdapter {
     message: string,
     context: WorkCallContext
   ) => Promise<Result<{ delivered: boolean }>>;
-  readonly status?: (ref: WorkRef) => Promise<Result<WorkDetail>>;
+  readonly status?: (ref: WorkRef, since?: number) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
 }

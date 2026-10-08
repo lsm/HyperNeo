@@ -581,4 +581,39 @@ describe('claudeTranscriptState', () => {
       lastAt: Date.parse('2026-10-08T10:03:00.000Z'),
     });
   });
+
+  test('lists the messages after since, typed, relayed and said', () => {
+    const entry = (timestamp: string, fields: Record<string, unknown>) =>
+      JSON.stringify({ timestamp, ...fields });
+    const lines = [
+      entry('2026-10-08T10:00:00.000Z', {
+        type: 'user',
+        isMeta: true,
+        origin: { kind: 'peer', body: 'Neo asks: load it' },
+        message: { content: 'wrapped' },
+      }),
+      entry('2026-10-08T10:01:00.000Z', {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Loading.' }] },
+      }),
+      entry('2026-10-08T10:02:00.000Z', {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Bash' }] },
+      }),
+      entry('2026-10-08T10:03:00.000Z', { type: 'user', message: { content: 'and the rest' } }),
+      entry('2026-10-08T10:04:00.000Z', {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'All loaded.' }] },
+      }),
+    ];
+    expect(claudeTranscriptState(lines, Date.parse('2026-10-08T10:00:00.000Z')).exchange).toEqual({
+      entries: [
+        { at: Date.parse('2026-10-08T10:01:00.000Z'), role: 'agent', text: 'Loading.' },
+        { at: Date.parse('2026-10-08T10:03:00.000Z'), role: 'user', text: 'and the rest' },
+        { at: Date.parse('2026-10-08T10:04:00.000Z'), role: 'agent', text: 'All loaded.' },
+      ],
+      cut: false,
+    });
+    expect(claudeTranscriptState(lines).exchange).toBeUndefined();
+  });
 });

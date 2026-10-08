@@ -14,6 +14,7 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkDetail,
+  WorkExchangeEntry,
   WorkInput,
   WorkRef,
   WorkStatus,
@@ -21,7 +22,15 @@ import type {
 } from './types.ts';
 import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
-import { recentWorkInputs, workEntryTime, workInput } from './work-inputs.ts';
+import {
+  boundExchange,
+  exchangeEntry,
+  recentWorkInputs,
+  type WorkExchange,
+  withExchange,
+  workEntryTime,
+  workInput,
+} from './work-messages.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -314,7 +323,10 @@ export function claudeTranscriptPath(
   return join(projectsDir, cwd.replace(/[/.]/g, '-'), `${record.cliSessionId}.jsonl`);
 }
 
-async function readTailLines(path: string, bytes: number): Promise<string[]> {
+async function readTailLines(
+  path: string,
+  bytes: number
+): Promise<{ lines: string[]; truncated: boolean }> {
   const handle = await open(path, 'r');
   try {
     const { size } = await handle.stat();
@@ -322,7 +334,7 @@ async function readTailLines(path: string, bytes: number): Promise<string[]> {
     const buffer = Buffer.alloc(size - start);
     await handle.read(buffer, 0, buffer.length, start);
     const lines = buffer.toString('utf8').split('\n');
-    return start > 0 ? lines.slice(1) : lines;
+    return { lines: start > 0 ? lines.slice(1) : lines, truncated: start > 0 };
   } finally {
     await handle.close();
   }
@@ -346,6 +358,7 @@ export interface ClaudeTranscriptState {
   replyAt?: number;
   inputs: WorkInput[];
   lastAt: number;
+  exchange?: WorkExchange;
 }
 
 interface ClaudeTranscriptEntry {
@@ -372,11 +385,17 @@ function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
     .join('\n');
 }
 
-export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscriptState {
+export function claudeTranscriptState(
+  lines: readonly string[],
+  since?: number,
+  truncated = false
+): ClaudeTranscriptState {
   const inputs: WorkInput[] = [];
+  const exchange: WorkExchangeEntry[] = [];
   let reply: string | null = null;
   let replyAt: number | undefined;
   let lastAt = 0;
+  let earliest: number | undefined;
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
     try {
@@ -387,6 +406,7 @@ export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscrip
     if (!entry) continue;
     const at = workEntryTime(entry.timestamp);
     if (at !== undefined) lastAt = Math.max(lastAt, at);
+    earliest ??= at;
     const said = assistantText(line);
     if (said) {
       reply = said;
@@ -395,12 +415,29 @@ export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscrip
     const text = claudeInputText(entry);
     const input = text === null ? null : workInput(at, text);
     if (input) inputs.push(input);
+    const next =
+      since === undefined
+        ? null
+        : said
+          ? exchangeEntry(at, 'agent', said, since)
+          : text !== null
+            ? exchangeEntry(at, 'user', text, since)
+            : null;
+    if (next) exchange.push(next);
   }
   return {
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
     inputs: recentWorkInputs(inputs),
     lastAt,
+    ...(since !== undefined
+      ? {
+          exchange: boundExchange(
+            exchange,
+            truncated && (earliest === undefined || earliest > since)
+          ),
+        }
+      : {}),
   };
 }
 
@@ -416,12 +453,14 @@ export function requireClaudeRecord(
 
 export async function readClaudeTranscript(
   record: ClaudeDesktopRecord,
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  since?: number
 ): Promise<ClaudeTranscriptState | null> {
   const path = claudeTranscriptPath(deps.projectsDir, record);
   if (!path) return null;
   try {
-    return claudeTranscriptState(await readTailLines(path, TRANSCRIPT_TAIL_BYTES));
+    const { lines, truncated } = await readTailLines(path, TRANSCRIPT_TAIL_BYTES);
+    return claudeTranscriptState(lines, since, truncated);
   } catch {
     return null;
   }
@@ -446,21 +485,23 @@ export function describeClaudeSession(
         ? { lastReplyAt: transcript.replyAt }
         : {}),
       recentInputs: transcript.inputs,
+      ...withExchange(transcript.exchange),
     },
   };
 }
 
 const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'cache'])
+  .input(['ref', 'deps', 'cache', 'since'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
   .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(readClaudeTranscript, ['outcome', 'deps'], 'transcript')
+  .pipe(readClaudeTranscript, ['outcome', 'deps', 'since'], 'transcript')
   .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'transcript', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  since: number | undefined
 ) => Promise<Result<WorkDetail>>;
 
 export function requireOpenClaudeRecord(
@@ -772,6 +813,6 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
       ),
     start: (request) => runClaudeDesktopStart(request, deps),
     send: (ref, message) => runClaudeDesktopSend(ref, message, deps, cache),
-    status: (ref) => runClaudeDesktopStatus(ref, reused, cache),
+    status: (ref, since) => runClaudeDesktopStatus(ref, reused, cache, since),
   };
 }

@@ -10,6 +10,7 @@ import {
   withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
+  driverExchangeReport,
   readDriverLanded,
   readDriverSent,
   readDriverNeedsYou,
@@ -223,6 +224,51 @@ describe('readDriverSent and readDriverLanded', () => {
   });
 });
 
+describe('driverExchangeReport', () => {
+  const agent = (at: number, text: string) => ({ at, role: 'agent' as const, text });
+  const user = (at: number, text: string) => ({ at, role: 'user' as const, text });
+
+  test('gives every message after Neo’s, oldest first, without Neo’s own message', () => {
+    expect(
+      driverExchangeReport(
+        [
+          user(1, 'Raise the font. Neo routed this to you'),
+          agent(2, 'Looking.'),
+          user(3, 'also the footer'),
+          agent(4, 'Both done.'),
+        ],
+        false,
+        'Raise the font.'
+      )
+    ).toBe('Agent: Looking.\n\nInput: also the footer\n\nAgent: Both done.');
+    expect(
+      driverExchangeReport(
+        [
+          user(1, 'Raise the font. Neo routed this to you'),
+          user(2, 'Raise the font. I mean the footer too'),
+          agent(3, 'Done.'),
+        ],
+        false,
+        'Raise the font.'
+      )
+    ).toBe('Input: Raise the font. I mean the footer too\n\nAgent: Done.');
+    expect(driverExchangeReport([user(1, 'hi')], false, null)).toBeNull();
+    expect(driverExchangeReport(undefined, false, null)).toBeNull();
+  });
+
+  test('says when earlier messages were not read and trims the middle to fit', () => {
+    expect(driverExchangeReport([agent(1, 'Done.')], true, null)).toBe(
+      '(Earlier messages were not read; this is not the whole exchange.)\n\nAgent: Done.'
+    );
+    const long = Array.from({ length: 10 }, (_, index) => agent(index, `${index}`.repeat(3_000)));
+    const report = driverExchangeReport(long, false, null) ?? '';
+    expect(report.length).toBeLessThanOrEqual(12_000);
+    expect(report.startsWith(`Agent: ${'0'.repeat(3_000)}`)).toBe(true);
+    expect(report.endsWith(`Agent: ${'9'.repeat(3_000)}`)).toBe(true);
+    expect(report).toContain('messages in between trimmed.');
+  });
+});
+
 describe('Neo work with a drivers target', () => {
   async function setup(
     reply: unknown,
@@ -347,19 +393,63 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(service.driverTargets.readSent('work-1')).toEqual({
+        inputBefore: 0,
+        opening: work.instruction,
+      });
       reply = {
         ok: true,
-        value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Font is 16px.' },
+        value: {
+          status: 'done',
+          lastActivityAt: Date.now() + 1_000,
+          lastReply: 'Font is 16px.',
+          exchange: [
+            { at: Date.now() + 500, role: 'user', text: work.instruction },
+            { at: Date.now() + 900, role: 'agent', text: 'Font is 16px.' },
+          ],
+        },
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Font is 16px.',
+        report: 'Agent: Font is 16px.',
       });
       expect(returned).toEqual(['work-1']);
+      const since = service.driverTargets.readStartedAt('work-1');
       expect(calls.filter((call) => call.name === 'work.status').map((call) => call.input)).toEqual(
-        [{ ref }, { ref }]
+        [
+          { ref, since },
+          { ref, since },
+        ]
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('drops Neo’s instruction from the report even when what it sent was never recorded', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Font is 16px.',
+        exchange: [
+          { at: Date.now() + 500, role: 'user', text: `${work.instruction}\n\nNeo routed this` },
+          { at: Date.now() + 900, role: 'agent', text: 'Font is 16px.' },
+        ],
+      },
+    }));
+    Object.assign(service, { returnReport: async () => {} });
+    try {
+      await service.start('work-1');
+      service.driverTargets.recordSent('work-1', null);
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Agent: Font is 16px.',
+      });
     } finally {
       db.close();
     }
@@ -718,12 +808,16 @@ describe('Neo work with a drivers target', () => {
           recentInputs: landed,
           lastReply: 'Blocked on X.',
           lastReplyAt: 7,
+          exchange: [
+            { at: 5, role: 'agent', text: 'Checked the tree.' },
+            { at: 7, role: 'agent', text: 'Blocked on X.' },
+          ],
         },
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
         status: 'reported',
-        report: 'Blocked on X.',
+        report: 'Agent: Checked the tree.\n\nAgent: Blocked on X.',
       });
       expect(returned).toEqual(['work-1']);
     } finally {
