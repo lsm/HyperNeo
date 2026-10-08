@@ -58,7 +58,9 @@ vi.mock('../state', () => ({
 }));
 vi.mock('../global-store', () => ({ globalStore: {} }));
 vi.mock('../session-store', () => ({ sessionStore: {} }));
-vi.mock('../space-store', () => ({ spaceStore: {} }));
+vi.mock('../space-store', () => ({
+  spaceStore: { rejoinChannel: () => fixture.effects.push('rejoin-space') },
+}));
 vi.mock('../space-agent-store', () => ({
   spaceAgentStore: {
     recover() {
@@ -110,6 +112,7 @@ describe('real ConnectionManager connection-event effects', () => {
       'start-actions',
       'start-audio',
       'start-transcripts',
+      'rejoin-space',
       'notify',
       'recover-agents',
     ]);

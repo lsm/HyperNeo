@@ -780,6 +780,12 @@ class SpaceStore {
     }
   }
 
+  rejoinChannel(): void {
+    const channel = this.activeSpaceChannel;
+    const hub = channel ? connectionManager.getHubIfConnected() : null;
+    if (channel && hub) void hub.joinChannel(channel).catch(() => {});
+  }
+
   private async startSubscriptions(spaceId: string): Promise<void> {
     const hub = await connectionManager.getHub();
 

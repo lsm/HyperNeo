@@ -44,6 +44,9 @@ function fixture(attempts: number | undefined = 3) {
     notifyConnected: () => {
       calls.push('notify');
     },
+    rejoinSpace: () => {
+      calls.push('rejoin-space');
+    },
     recoverAgents: () => {
       calls.push('recover');
       return new Promise<void>(() => {});
@@ -63,6 +66,7 @@ const connected = [
   'start-actions',
   'start-audio',
   'start-transcripts',
+  'rejoin-space',
   'notify',
   'recover',
 ];
