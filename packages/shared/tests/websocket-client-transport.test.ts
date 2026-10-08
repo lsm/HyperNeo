@@ -540,6 +540,43 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
     });
   });
 
+  describe('suspend and resume', () => {
+    it('closes cleanly without retrying while suspended, then reconnects on resume', async () => {
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        reconnectDelay: 20,
+      });
+      await transport.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const first = mockWebSocketInstance;
+      const closeCodes: unknown[] = [];
+      if (first) {
+        const close = first.close.bind(first);
+        first.close = (...args: unknown[]) => {
+          closeCodes.push(args[0]);
+          close();
+        };
+      }
+
+      transport.suspend();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(closeCodes).toEqual([1001]);
+      expect(transport.isSuspended()).toBe(true);
+      expect(transport.isReady()).toBe(false);
+      expect(mockWebSocketInstance).toBe(first);
+      expect(transport.getState()).toBe('disconnected');
+
+      transport.resume();
+      expect(transport.getState()).toBe('connecting');
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(mockWebSocketInstance).not.toBe(first);
+      expect(transport.isReady()).toBe(true);
+      expect(transport.isSuspended()).toBe(false);
+      expect(transport.getReconnectAttempts()).toBe(0);
+    });
+  });
+
   describe('Automatic Reconnection', () => {
     it('should ignore late close events from superseded sockets', async () => {
       transport = new WebSocketClientTransport({

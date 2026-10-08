@@ -43,6 +43,8 @@ export function getDaemonWsUrl(
   return `${protocol}//${hostname}`;
 }
 
+const HIDDEN_GRACE_MS = 20_000;
+
 export class ConnectionManager {
   private readonly application: ConnectionApplication;
   private messageHub: MessageHub | null = null;
@@ -50,6 +52,7 @@ export class ConnectionManager {
   private baseUrl: string;
   private connectionPromise: Promise<MessageHub> | null = null;
   private visibilityHandler: (() => void) | null = null;
+  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -265,12 +268,25 @@ export class ConnectionManager {
     }
 
     this.visibilityHandler = () => {
-      if (!document.hidden) {
-        if (this.transport) {
-          this.transport.resetReconnectState();
-        }
-        this.validateConnectionOnResume();
+      if (this.hiddenTimer) {
+        clearTimeout(this.hiddenTimer);
+        this.hiddenTimer = null;
       }
+      if (document.hidden) {
+        this.hiddenTimer = setTimeout(() => {
+          this.hiddenTimer = null;
+          this.transport?.suspend();
+        }, HIDDEN_GRACE_MS);
+        return;
+      }
+      if (this.transport?.isSuspended()) {
+        this.transport.resume();
+        return;
+      }
+      if (this.transport) {
+        this.transport.resetReconnectState();
+      }
+      this.validateConnectionOnResume();
     };
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
@@ -280,10 +296,10 @@ export class ConnectionManager {
 
   private async validateConnectionOnResume(): Promise<void> {
     this._isResuming = true;
-    this.application.markSessionsRecovering();
 
     try {
       if (!this.messageHub || !this.transport) {
+        this.application.markSessionsRecovering();
         await this.reconnect();
         return;
       }
@@ -296,6 +312,7 @@ export class ConnectionManager {
           })
         );
       } catch {
+        this.application.markSessionsRecovering();
         if (this.transport) {
           this.transport.forceReconnect();
         }
@@ -366,6 +383,10 @@ export class ConnectionManager {
     if (this.visibilityHandler) {
       document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.visibilityHandler = null;
+    }
+    if (this.hiddenTimer) {
+      clearTimeout(this.hiddenTimer);
+      this.hiddenTimer = null;
     }
 
     if (this.pageHideHandler) {

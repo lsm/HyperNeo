@@ -86,6 +86,9 @@ describe('ConnectionManager - Page Visibility Handling', () => {
         resetReconnectState: vi.fn(() => {}),
         forceReconnect: vi.fn(() => {}),
         close: vi.fn(() => {}),
+        isSuspended: vi.fn(() => false),
+        suspend: vi.fn(() => {}),
+        resume: vi.fn(() => {}),
       };
 
       mockMessageHub = {
@@ -250,6 +253,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
         isReady: vi.fn(() => true),
         resetReconnectState: vi.fn(() => {}),
         forceReconnect: vi.fn(() => {}),
+        isSuspended: vi.fn(() => false),
       };
 
       mockMessageHub = {
@@ -302,6 +306,87 @@ describe('ConnectionManager - Page Visibility Handling', () => {
 
       expect(appStateRefreshSpy).not.toHaveBeenCalled();
       expect(globalStoreRefreshSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Background grace and quiet resume', () => {
+    const setHidden = (hidden: boolean) =>
+      Object.defineProperty(document, 'hidden', {
+        value: hidden,
+        writable: true,
+        configurable: true,
+      });
+    let transport: Record<string, ReturnType<typeof vi.fn>>;
+    let markSessionsRecovering: ReturnType<typeof vi.fn>;
+    let manager: ConnectionManager;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      markSessionsRecovering = vi.fn();
+      manager = new ConnectionManager('ws://test', {
+        lifecycle: { setState: vi.fn(), getState: vi.fn() },
+        createEventEffects: vi.fn(),
+        createResumeEffects: (effects: Record<string, unknown>) => ({
+          ...effects,
+          getActiveSpaceId: () => null,
+          refreshSessions: vi.fn(async () => {}),
+          refreshApp: vi.fn(async () => {}),
+          refreshGlobal: vi.fn(async () => {}),
+          refreshSpace: vi.fn(async () => {}),
+          recoverAgents: vi.fn(async () => {}),
+        }),
+        markSessionsRecovering,
+      });
+      transport = {
+        isReady: vi.fn(() => true),
+        isSuspended: vi.fn(() => false),
+        suspend: vi.fn(),
+        resume: vi.fn(),
+        resetReconnectState: vi.fn(),
+        forceReconnect: vi.fn(),
+      };
+      (manager as unknown as Record<string, unknown>).transport = transport;
+      (manager as unknown as Record<string, unknown>).messageHub = {
+        request: vi.fn(async () => ({ status: 'ok' })),
+        joinChannel: vi.fn(async () => {}),
+        isConnected: vi.fn(() => true),
+      };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      setHidden(false);
+    });
+
+    it('keeps the socket through a short switch and closes it after 20 s hidden', () => {
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(19_000);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(5_000);
+      expect(transport.suspend).not.toHaveBeenCalled();
+
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      vi.advanceTimersByTime(20_000);
+      expect(transport.suspend).toHaveBeenCalledTimes(1);
+    });
+
+    it('resumes a suspended socket without a health check', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
+    });
+
+    it('does not mark sessions recovering when the live socket answers', async () => {
+      setHidden(false);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      await vi.runAllTimersAsync();
+      expect(markSessionsRecovering).not.toHaveBeenCalled();
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
     });
   });
 

@@ -42,6 +42,7 @@ export class WebSocketClientTransport implements IMessageTransport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  private suspended = false;
 
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
@@ -129,7 +130,7 @@ export class WebSocketClientTransport implements IMessageTransport {
   }
 
   private handleDisconnect(): void {
-    if (this.closed) {
+    if (this.closed || this.suspended) {
       return;
     }
 
@@ -208,6 +209,33 @@ export class WebSocketClientTransport implements IMessageTransport {
     }
 
     this.setState('disconnected');
+  }
+
+  suspend(): void {
+    if (this.closed || this.suspended) return;
+    this.suspended = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.stopPing();
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close(1001, 'Page hidden');
+    this.setState('disconnected');
+  }
+
+  isSuspended(): boolean {
+    return this.suspended;
+  }
+
+  resume(): void {
+    if (!this.suspended) return;
+    this.suspended = false;
+    this.resetReconnectState();
+    this.connect().catch((error) => {
+      log.error(`Reconnection after resume failed:`, error);
+    });
   }
 
   isReady(): boolean {
