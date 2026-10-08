@@ -27,6 +27,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
+import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -268,6 +269,8 @@ export function shouldPreserveAnthropicOAuthToken(
 ): boolean {
   return providerId === 'anthropic' && providerEnvVars.CLAUDE_CODE_OAUTH_TOKEN !== '';
 }
+
+const writeFlagSettingsFile = createFlagSettingsFileWriter();
 
 function applyProviderEnvToFlagSettings(queryOptions: Options, envVars: ProviderEnvVars): void {
   const flagEnv: Record<string, string> = {};
@@ -692,6 +695,7 @@ export class QueryRunner {
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
+    let removeFlagSettingsFile: (() => void) | undefined;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -986,6 +990,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
+      removeFlagSettingsFile = writeFlagSettingsFile(queryOptions, session.id);
       recoveryState.startGuard?.();
       const queryObject = query({
         prompt: this.createMessageGeneratorWrapper(
@@ -1653,6 +1658,7 @@ export class QueryRunner {
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
       holderTurn?.dispose();
+      removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');
 
