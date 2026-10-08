@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
-import { WebSocketClientTransport } from '../src/message-hub/websocket-client-transport.ts';
+import {
+  reconnectDelayFor,
+  WebSocketClientTransport,
+} from '../src/message-hub/websocket-client-transport.ts';
 import { MessageType } from '../src/message-hub/protocol.ts';
 import type { HubMessage, ConnectionState } from '../src/message-hub/types.ts';
 
@@ -646,7 +649,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       if (mockWebSocketInstance) {
         mockWebSocketInstance.simulateDisconnect();
       }
-      await new Promise((resolve) => setTimeout(resolve, 30));
 
       transport.forceReconnect();
 
@@ -711,40 +713,12 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       expect(connectionAttempts).toBeLessThanOrEqual(maxAttempts + 3);
     });
 
-    it('should use exponential backoff for reconnection', async () => {
-      const reconnectTimes: number[] = [];
-
-      global.WebSocket = vi.fn(function () {
-        reconnectTimes.push(Date.now());
-        const ws = new MockWebSocket('ws://localhost:9999', false);
-        setTimeout(() => {
-          ws.readyState = MockWebSocket.CLOSED;
-          ws.onerror?.(new Event('error'));
-          ws.onclose?.(new CloseEvent('close'));
-        }, 5);
-        return ws as unknown as WebSocket;
-      }) as unknown as typeof WebSocket;
-
-      transport = new WebSocketClientTransport({
-        url: 'ws://localhost:9999',
-        autoReconnect: true,
-        maxReconnectAttempts: 4,
-        reconnectDelay: 100,
-      });
-
-      transport.initialize();
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      expect(reconnectTimes.length).toBeGreaterThanOrEqual(3);
-
-      if (reconnectTimes.length >= 3) {
-        const delay1 = reconnectTimes[1] - reconnectTimes[0];
-        const delay2 = reconnectTimes[2] - reconnectTimes[1];
-
-        expect(delay1).toBeGreaterThan(50);
-        expect(delay2).toBeGreaterThan(50);
-      }
+    it('retries at once, then backs off with full jitter up to the cap', () => {
+      expect(reconnectDelayFor(1, 500, 30_000, () => 1)).toBe(0);
+      expect(reconnectDelayFor(2, 500, 30_000, () => 1)).toBe(500);
+      expect(reconnectDelayFor(4, 500, 30_000, () => 1)).toBe(2_000);
+      expect(reconnectDelayFor(4, 500, 30_000, () => 0.25)).toBe(500);
+      expect(reconnectDelayFor(20, 500, 30_000, () => 1)).toBe(30_000);
     });
   });
 
@@ -765,8 +739,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       if (firstInstance) {
         firstInstance.simulateDisconnect();
       }
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
 
       const message: HubMessage = {
         id: 'test-1',

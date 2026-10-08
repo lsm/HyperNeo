@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.ts';
+import { useOnline } from '../hooks/useOnline.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 
 const BANNER_DELAY_MS = 2000;
@@ -21,6 +22,7 @@ export function ConnectionOverlay() {
   const state = connectionState.value;
   const attempts = reconnectAttemptCount.value;
   const [retrying, setRetrying] = useState(false);
+  const online = useOnline();
 
   const level = getBannerLevel(state, attempts);
   const visible = useDelayedFlag(level !== 'hidden', BANNER_DELAY_MS);
@@ -62,7 +64,11 @@ export function ConnectionOverlay() {
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
             />
           </svg>
-          {level === 'reconnecting' ? 'Reconnecting…' : 'Connection lost. Retrying…'}
+          {!online
+            ? 'Waiting for network…'
+            : level === 'reconnecting'
+              ? 'Reconnecting…'
+              : 'Connection lost. Retrying…'}
         </button>
       </div>
     );

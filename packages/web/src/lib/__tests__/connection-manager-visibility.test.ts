@@ -435,6 +435,38 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       expect(hub.request).toHaveBeenCalledTimes(1);
     });
 
+    const network = () => (manager as unknown as { networkHandler: () => void }).networkHandler();
+
+    it('waits for the network while offline and reconnects a second after it returns', () => {
+      const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      try {
+        setHidden(false);
+        network();
+        expect(transport.suspend).toHaveBeenCalledTimes(1);
+
+        transport.isSuspended.mockReturnValue(true);
+        visibilityChangeHandler?.(new Event('visibilitychange'));
+        expect(transport.resume).not.toHaveBeenCalled();
+
+        onLine.mockReturnValue(true);
+        network();
+        vi.advanceTimersByTime(900);
+        expect(transport.resume).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(100);
+        expect(transport.resume).toHaveBeenCalledTimes(1);
+      } finally {
+        onLine.mockRestore();
+      }
+    });
+
+    it('leaves a hidden tab suspended when the network returns', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(true);
+      network();
+      vi.advanceTimersByTime(1_000);
+      expect(transport.resume).not.toHaveBeenCalled();
+    });
+
     it('resumes a suspended socket when the page is shown again', () => {
       transport.isSuspended.mockReturnValue(true);
       setHidden(false);

@@ -44,6 +44,7 @@ export function getDaemonWsUrl(
 }
 
 const HIDDEN_GRACE_MS = 20_000;
+const ONLINE_SETTLE_MS = 1_000;
 
 export class ConnectionManager {
   private readonly application: ConnectionApplication;
@@ -55,6 +56,8 @@ export class ConnectionManager {
   private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private pageShowHandler: (() => void) | null = null;
   private resumeWait: (() => void) | null = null;
+  private networkHandler: (() => void) | null = null;
+  private onlineTimer: ReturnType<typeof setTimeout> | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -175,8 +178,9 @@ export class ConnectionManager {
     this.transport = new WebSocketClientTransport({
       url: `${this.baseUrl}/ws`,
       autoReconnect: true,
-      maxReconnectAttempts: 10,
-      reconnectDelay: 1000,
+      maxReconnectAttempts: Infinity,
+      reconnectDelay: 500,
+      maxReconnectDelay: 30_000,
       pingInterval: 30000,
     });
 
@@ -284,7 +288,7 @@ export class ConnectionManager {
         return;
       }
       if (this.transport?.isSuspended()) {
-        this.resumeSuspended();
+        if (navigator.onLine) this.resumeSuspended();
         return;
       }
       if (this.resumeWait) return;
@@ -296,9 +300,28 @@ export class ConnectionManager {
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
     this.pageShowHandler = () => {
-      if (!document.hidden && this.transport?.isSuspended()) this.resumeSuspended();
+      if (!document.hidden && navigator.onLine && this.transport?.isSuspended())
+        this.resumeSuspended();
     };
     window.addEventListener('pageshow', this.pageShowHandler);
+    this.networkHandler = () => {
+      if (this.onlineTimer) {
+        clearTimeout(this.onlineTimer);
+        this.onlineTimer = null;
+      }
+      if (!navigator.onLine) {
+        this.cancelResumeWait();
+        this.transport?.suspend();
+        return;
+      }
+      this.onlineTimer = setTimeout(() => {
+        this.onlineTimer = null;
+        if (!document.hidden && navigator.onLine && this.transport?.isSuspended())
+          this.resumeSuspended();
+      }, ONLINE_SETTLE_MS);
+    };
+    window.addEventListener('online', this.networkHandler);
+    window.addEventListener('offline', this.networkHandler);
     this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
   }
@@ -417,6 +440,16 @@ export class ConnectionManager {
     if (this.pageShowHandler) {
       window.removeEventListener('pageshow', this.pageShowHandler);
       this.pageShowHandler = null;
+    }
+
+    if (this.networkHandler) {
+      window.removeEventListener('online', this.networkHandler);
+      window.removeEventListener('offline', this.networkHandler);
+      this.networkHandler = null;
+    }
+    if (this.onlineTimer) {
+      clearTimeout(this.onlineTimer);
+      this.onlineTimer = null;
     }
 
     if (this.pageHideHandler) {
