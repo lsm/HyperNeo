@@ -2677,7 +2677,7 @@ export class AgentSession
           const providerId = (this.session.config.provider as string | undefined)?.trim();
           if (providerId) {
             const registry = initializeProviders();
-            await waitForOptionalProviderRegistration(registry);
+            await waitForOptionalProviderRegistration(registry, true);
             if (!registry.has(providerId)) {
               throw new MessageDeliveryTerminalTurnError(
                 `Provider '${providerId}' is not registered`
