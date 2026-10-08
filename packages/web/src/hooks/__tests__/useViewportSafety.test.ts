@@ -331,6 +331,30 @@ describe('useViewportSafety — keyboard detection', () => {
     }
   });
 
+  it('does not mistake a browser toolbar appearing while a field stays focused for a keyboard', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    try {
+      renderHook(() => useViewportSafety());
+
+      field.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 668 });
+      mockVV.height = 668;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      field.remove();
+    }
+  });
+
   it('re-checks the keyboard when the focused field blurs without a resize', async () => {
     setNavigator(5, IPHONE_SAFARI_UA);
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);

@@ -1,6 +1,7 @@
 import { useEffect } from 'preact/hooks';
 
 const KEYBOARD_THRESHOLD = 50;
+const RESIZING_KEYBOARD_THRESHOLD = 150;
 
 function isZoomed(vv: VisualViewport): boolean {
   return Math.abs(vv.scale - 1) > 0.01;
@@ -63,7 +64,10 @@ export function useViewportSafety(): void {
         fullHeight = window.innerHeight;
         fullWidth = window.innerWidth;
       }
-      return fullHeight - viewport.height > KEYBOARD_THRESHOLD;
+      return (
+        window.innerHeight - viewport.height > KEYBOARD_THRESHOLD ||
+        fullHeight - viewport.height > RESIZING_KEYBOARD_THRESHOLD
+      );
     };
     let savedBottomBarHeight: string | null = null;
 
