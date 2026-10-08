@@ -79,9 +79,9 @@ export function TaskBrief({
       class="rounded-xl border border-line bg-surface-raised/40 px-4 py-3"
       data-testid="task-brief"
     >
-      <div class="flex items-baseline justify-between gap-3">
+      <div class="flex items-baseline gap-2">
         <span class="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">Brief</span>
-        {created && <span class="text-[11px] text-fg-faint">{created}</span>}
+        {created && <span class="text-[11px] text-fg-faint">· {created}</span>}
       </div>
       <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
         <span class={priority.class} data-testid="task-brief-priority">
