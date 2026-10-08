@@ -545,7 +545,7 @@ export class NeoService {
       }
       this.repo.transitionWork(queued.id, current, {
         status: 'queued',
-        report: driverStartedReport(result.ref, result.link),
+        report: driverStartedReport(result.ref, result.link, result.model),
       });
       return;
     }

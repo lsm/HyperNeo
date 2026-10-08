@@ -25,6 +25,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
     adapter: z.string().min(1).max(80),
     place: PlaceSchema,
     createFolder: z.boolean().optional(),
+    model: z.string().trim().min(1).max(200).optional(),
   }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
 ]);
@@ -83,14 +84,16 @@ export function driverWorkCall(
           title: work.title,
           message,
           ...(target.createFolder ? { createFolder: true } : {}),
+          ...(target.model ? { model: target.model } : {}),
         },
       }
     : { name: 'work.send', input: { ref: target.ref, message } };
 }
 
-export function driverStartedReport(ref: WorkRef, link?: string): string {
+export function driverStartedReport(ref: WorkRef, link?: string, model?: string): string {
   const where = link ? ` It opens at ${link}.` : '';
-  return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
+  const runs = model ? ` It runs on ${model}.` : '';
+  return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${runs}${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {
@@ -100,20 +103,24 @@ export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): Operat
 export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
-): { ref: WorkRef; link?: string; startedAt?: number; queued?: true } | { failure: string } {
+):
+  | { ref: WorkRef; link?: string; model?: string; startedAt?: number; queued?: true }
+  | { failure: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
   if (!reply.data.ok) return { failure: `${reply.data.reason}: ${reply.data.detail}` };
   if ('ref' in reply.data.value) {
-    const { ref, link, lastActivityAt } = reply.data.value as {
+    const { ref, link, model, lastActivityAt } = reply.data.value as {
       ref: WorkRef;
       link?: unknown;
+      model?: unknown;
       lastActivityAt?: unknown;
     };
     return {
       ref,
       ...(typeof link === 'string' ? { link } : {}),
+      ...(typeof model === 'string' ? { model } : {}),
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
     };
   }

@@ -43,28 +43,59 @@ import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
 import { readWorkTurns } from '../../../storage/work-turns.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
+import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
+import type { ModelInfo, Provider } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
 
+export function newestAvailableModel(models: readonly ModelInfo[]): ModelInfo | null {
+  return models.reduce<ModelInfo | null>(
+    (newest, model) =>
+      model.available !== false && (!newest || model.releaseDate > newest.releaseDate)
+        ? model
+        : newest,
+    null
+  );
+}
+
+async function readAvailableModels(): Promise<readonly ModelInfo[]> {
+  const { getAvailableModels } = await import('../../model-service.ts');
+  return getAvailableModels('global');
+}
+
 export async function createDriverSession(
   sessionManager: Pick<SessionManager, 'createSession' | 'getWorktreeManager'>,
   workspacePath: string,
-  title: string
+  title: string,
+  model?: string,
+  availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
 ): Promise<string> {
   const { isGitRepo } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
-  return sessionManager.createSession({
-    workspacePath,
-    title,
-    worktreeMode: isGitRepo ? 'worktree' : 'direct',
-  });
+  const create = (config?: { model: string; provider?: Provider }) =>
+    sessionManager.createSession({
+      workspacePath,
+      title,
+      worktreeMode: isGitRepo ? 'worktree' : 'direct',
+      ...(config ? { config } : {}),
+    });
+  try {
+    return await create(model ? { model } : undefined);
+  } catch (error) {
+    if (model || !(error instanceof ModelUnavailableError)) throw error;
+    const newest = newestAvailableModel(await availableModels());
+    if (!newest) throw error;
+    return create({ model: newest.id, provider: newest.provider as Provider });
+  }
 }
 
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus } = context.deps;
   return {
-    create: (workspacePath, title) => createDriverSession(sessionManager, workspacePath, title),
+    create: (workspacePath, title, model) =>
+      createDriverSession(sessionManager, workspacePath, title, model),
+    model: (sessionId) => sessionManager.getSessionFromDB(sessionId)?.config?.model ?? null,
     chooseWorktree: async (sessionId) => {
       await sessionManager.getSessionLifecycle().completeWorktreeChoice(sessionId, 'worktree');
     },

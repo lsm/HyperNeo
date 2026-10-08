@@ -6,15 +6,16 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 function control(db: Database, events: string[]) {
   return {
     sessions: {
-      create: async (workspacePath: string, title: string) => {
+      create: async (workspacePath: string, title: string, model?: string) => {
         const status = workspacePath === '/focus/repo' ? 'pending_worktree_choice' : 'active';
         db.prepare(
           `INSERT INTO sessions (id, title, workspace_path, status, last_active_at, type)
             VALUES ('new', ?, ?, ?, '2026-10-04T12:00:00.000Z', 'worker')`
         ).run(title, workspacePath, status);
-        events.push(`create ${workspacePath}`);
+        events.push(`create ${workspacePath}${model ? ` on ${model}` : ''}`);
         return 'new';
       },
+      model: (sessionId: string) => (sessionId === 'new' ? 'gpt-6-luna' : null),
       chooseWorktree: async (sessionId: string) => {
         db.exec(`UPDATE sessions SET status = 'active' WHERE id = '${sessionId}'`);
         events.push(`worktree ${sessionId}`);
@@ -215,10 +216,23 @@ describe('hyperneo adapter start and stop', () => {
     );
     expect(result).toMatchObject({
       ok: true,
-      value: { ref: { adapter: 'hyperneo', id: 'new' }, title: 'font size', status: 'queued' },
+      value: {
+        ref: { adapter: 'hyperneo', id: 'new' },
+        title: 'font size',
+        status: 'queued',
+        model: 'gpt-6-luna',
+      },
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
     expect(handed).toEqual(['new: make it larger']);
+  });
+
+  test('start opens the session on the model Neo picked', async () => {
+    await adapter().start?.(
+      { place: place('/focus/notes'), title: 'essay', message: 'write it', model: 'glm-5.3' },
+      from
+    );
+    expect(events[0]).toBe('create /focus/notes on glm-5.3');
   });
 
   test('start refuses work with no folder instead of using the Neo folder', async () => {

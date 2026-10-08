@@ -49,7 +49,8 @@ export interface HyperneoSessionRow {
 }
 
 export interface HyperneoSessionControl {
-  create(workspacePath: string, title: string): Promise<string>;
+  create(workspacePath: string, title: string, model?: string): Promise<string>;
+  model(sessionId: string): string | null;
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
   interrupt(sessionId: string): boolean;
@@ -355,7 +356,7 @@ export async function createHyperneoSession(
   request: StartRequest,
   deps: HyperneoAdapterDeps
 ): Promise<string> {
-  const sessionId = await deps.sessions.create(folder, request.title);
+  const sessionId = await deps.sessions.create(folder, request.title, request.model);
   if (readHyperneoSession(deps.db(), sessionId)?.status === 'pending_worktree_choice') {
     await deps.sessions.chooseWorktree(sessionId);
   }
@@ -379,7 +380,15 @@ export async function openHyperneoWork(
   const row = readHyperneoSession(deps.db(), sessionId);
   if (!row) return reject('not_found', `Session ${sessionId} is gone.`);
   const work = toWork(row, deps.machine);
-  return { ok: true, value: work.status === 'done' ? { ...work, status: 'queued' } : work };
+  const model = deps.sessions.model(sessionId);
+  return {
+    ok: true,
+    value: {
+      ...work,
+      ...(work.status === 'done' ? { status: 'queued' as const } : {}),
+      ...(model ? { model } : {}),
+    },
+  };
 }
 
 export function stopHyperneoWork(
