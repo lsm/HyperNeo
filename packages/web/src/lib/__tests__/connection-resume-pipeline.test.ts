@@ -39,20 +39,11 @@ function fixture() {
     refreshSpace: async () => {
       calls.push('space');
     },
-    recoverAgents: async () => {
-      calls.push('agents');
-    },
   };
   return { effects, calls };
 }
-const refreshMethods = [
-  'refreshSessions',
-  'refreshApp',
-  'refreshGlobal',
-  'refreshSpace',
-  'recoverAgents',
-] as const;
-const refreshCalls = ['sessions', 'app', 'global', 'space', 'agents'];
+const refreshMethods = ['refreshSessions', 'refreshApp', 'refreshGlobal', 'refreshSpace'] as const;
+const refreshCalls = ['sessions', 'app', 'global', 'space'];
 
 describe('connection resume stages', () => {
   it('delegates health and global join without replacing their promises', () => {
@@ -123,7 +114,7 @@ describe('runConnectionResume', () => {
       settled = true;
     });
     await setImmediate();
-    expect(calls).toHaveLength(8);
+    expect(calls).toHaveLength(7);
     expect(settled).toBe(false);
     gate.resolve();
     await pending;

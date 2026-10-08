@@ -35,9 +35,6 @@ vi.mock('../space-store', () => ({
     refresh: () => fixture.refresh('space'),
   },
 }));
-vi.mock('../space-agent-store', () => ({
-  spaceAgentStore: { recover: () => fixture.refresh('agents') },
-}));
 vi.mock('../signals', () => ({ currentSessionIdSignal: {}, slashCommandsSignal: {} }));
 vi.mock('../outbound-queue', () => ({ startAutoFlush: () => {}, stopAutoFlush: () => {} }));
 vi.mock('../voice/voice-audio-outbox', () => ({
@@ -49,13 +46,7 @@ vi.mock('../voice/voice-transcript-outbox', () => ({
   stopVoiceTranscriptOutboxFlush: () => {},
 }));
 
-const refreshes = [
-  'refresh:sessions',
-  'refresh:app',
-  'refresh:global',
-  'refresh:space',
-  'refresh:agents',
-];
+const refreshes = ['refresh:sessions', 'refresh:app', 'refresh:global', 'refresh:space'];
 
 describe('real ConnectionManager resume recovery', () => {
   let manager: ConnectionManager;
@@ -103,7 +94,7 @@ describe('real ConnectionManager resume recovery', () => {
     vi.restoreAllMocks();
   });
 
-  it.each([0, 1, 2, 3, 4])('waits for refresh %s after all others complete', async (held) => {
+  it.each([0, 1, 2, 3])('waits for refresh %s after all others complete', async (held) => {
     const releases: Array<() => void> = [];
     let allStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -113,7 +104,7 @@ describe('real ConnectionManager resume recovery', () => {
       fixture.effects.push(`refresh:${name}`);
       return new Promise<void>((resolve) => {
         releases.push(resolve);
-        if (releases.length === 5) allStarted();
+        if (releases.length === refreshes.length) allStarted();
       });
     };
     let settled = false;
@@ -158,7 +149,11 @@ describe('real ConnectionManager resume recovery', () => {
         await vi.runAllTimersAsync();
         await pending;
         expect(fixture.effects.filter((effect) => effect === `join:${channel}`)).toHaveLength(3);
-        expect(fixture.effects.slice(-7)).toEqual([...refreshes, 'state:connected', 'notify']);
+        expect(fixture.effects.slice(-refreshes.length - 2)).toEqual([
+          ...refreshes,
+          'state:connected',
+          'notify',
+        ]);
         expect(fixture.effects).not.toContain('force-reconnect');
       } finally {
         vi.useRealTimers();
@@ -183,7 +178,11 @@ describe('real ConnectionManager resume recovery', () => {
     expect(fixture.effects).toEqual(['health', 'join:global', 'join:space:space-2']);
     releases[1]();
     await pending;
-    expect(fixture.effects.slice(-7)).toEqual([...refreshes, 'state:connected', 'notify']);
+    expect(fixture.effects.slice(-refreshes.length - 2)).toEqual([
+      ...refreshes,
+      'state:connected',
+      'notify',
+    ]);
   });
 
   it('omits only the space-channel join when no space is active', async () => {

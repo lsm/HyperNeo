@@ -60,9 +60,6 @@ vi.mock('../state', () => ({
 vi.mock('../global-store', () => ({ globalStore: {} }));
 vi.mock('../session-store', () => ({ sessionStore: {} }));
 vi.mock('../space-store', () => ({ spaceStore: { rejoinChannel: () => {} } }));
-vi.mock('../space-agent-store', () => ({
-  spaceAgentStore: { recover: async () => {} },
-}));
 vi.mock('../signals', () => ({ currentSessionIdSignal: {}, slashCommandsSignal: {} }));
 vi.mock('../outbound-queue', () => ({
   startAutoFlush: () => fixture.effects.push('start-actions'),

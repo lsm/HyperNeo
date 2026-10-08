@@ -79,7 +79,6 @@ function makeApplication(spaceId: string) {
     exposeHub: vi.fn(),
     markHubReady: vi.fn(),
   };
-  const recover = vi.fn(async () => {});
   const redirect = vi.fn();
   const refresh = vi.fn(async () => {});
   const mark = vi.fn();
@@ -91,7 +90,6 @@ function makeApplication(spaceId: string) {
       setReconnectAttempts: vi.fn(),
       rejoinSpace: vi.fn(),
       redirectExpiredSession: redirect,
-      recoverAgents: recover,
     }),
     createResumeEffects: (owner) => ({
       ...owner,
@@ -100,11 +98,10 @@ function makeApplication(spaceId: string) {
       refreshApp: refresh,
       refreshGlobal: refresh,
       refreshSpace: refresh,
-      recoverAgents: recover,
     }),
     markSessionsRecovering: mark,
   };
-  return { application, lifecycle, recover, redirect, refresh, mark };
+  return { application, lifecycle, redirect, refresh, mark };
 }
 
 describe('ConnectionManager with separate applications', () => {
@@ -145,9 +142,7 @@ describe('ConnectionManager with separate applications', () => {
     expect(notifyA).toHaveBeenCalledOnce();
     expect(notifyB).not.toHaveBeenCalled();
     expect(a.lifecycle.startActions).toHaveBeenCalledOnce();
-    expect(a.recover).toHaveBeenCalledOnce();
     expect(b.lifecycle.startActions).not.toHaveBeenCalled();
-    expect(b.recover).not.toHaveBeenCalled();
     hubA.emit('error', new Error('HTTP 401 Unauthorized'));
     expect(a.redirect).toHaveBeenCalledOnce();
     expect(a.lifecycle.stopAudio).toHaveBeenCalledOnce();
