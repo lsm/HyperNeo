@@ -471,6 +471,17 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
+  private async failErroredTurn(work: NeoWork): Promise<void> {
+    if (!work.sessionId) return;
+    const failure = this.db.getSDKMessageRepo().getTurnErrorResultSubtype(work.sessionId, work.id);
+    if (!failure) return;
+    const failed = this.repo.transitionWork(work.id, work, {
+      status: 'failed',
+      report: `The chat stopped with an error before reporting: ${failure}.`,
+    });
+    if (failed) await this.returnReport(failed);
+  }
+
   async recover(): Promise<void> {
     await this.recoverConsultations();
     for (const work of this.repo.listWork()) {
@@ -618,6 +629,7 @@ export class NeoService {
     if (work.status === 'queued') {
       const target = this.resolveWorkTarget(id);
       if (!target.accepted) await this.failUnavailableTarget(work, target.reason);
+      else await this.failErroredTurn(work);
       return;
     }
     if (work && (work.status === 'reported' || work.status === 'failed'))

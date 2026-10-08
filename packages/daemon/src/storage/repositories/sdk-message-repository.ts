@@ -140,6 +140,37 @@ export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1
             )
           LIMIT 1`;
 
+const GET_TURN_ERROR_RESULT_SUBTYPE_SQL = `WITH brief AS (
+            SELECT m.consumed_seq AS seq FROM sdk_messages m
+             WHERE m.session_id = ?1 AND m.sdk_uuid = ?2 AND m.consumed_seq IS NOT NULL
+             ORDER BY m.consumed_seq DESC LIMIT 1
+          ), next_input AS (
+            SELECT MIN(u.consumed_seq) AS seq FROM sdk_messages u, brief
+             WHERE u.session_id = ?1
+               AND u.message_type = 'user'
+               AND u.sdk_uuid != ?2
+               AND u.consumed_seq > brief.seq
+          )
+          SELECT CASE
+            WHEN r.message_subtype != 'success' THEN r.message_subtype
+            WHEN COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1 THEN 'error'
+            ELSE NULL END AS subtype
+           FROM sdk_messages r, brief, next_input
+          WHERE r.session_id = ?1
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype IS NOT NULL
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq > brief.seq
+            AND (next_input.seq IS NULL OR r.consumed_seq < next_input.seq)
+            AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
+            AND NOT (
+              COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+            )
+          ORDER BY r.consumed_seq DESC
+          LIMIT 1`;
+
 export const HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL = `SELECT 1
            FROM sdk_messages r
           WHERE r.session_id = ?
@@ -2009,6 +2040,14 @@ export class SDKMessageRepository {
     const row = this.db
       .prepare(GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL)
       .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
+    return row?.subtype ?? null;
+  }
+
+  getTurnErrorResultSubtype(sessionId: string, uuid: string): string | null {
+    const row = this.db.prepare(GET_TURN_ERROR_RESULT_SUBTYPE_SQL).get(sessionId, uuid) as
+      | { subtype: string | null }
+      | undefined
+      | null;
     return row?.subtype ?? null;
   }
 

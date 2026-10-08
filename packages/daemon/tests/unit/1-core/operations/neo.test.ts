@@ -106,6 +106,8 @@ describe('Neo MVP', () => {
         hasTerminalResultAfter: (id: string) => terminalSessions?.has(id) ?? terminal,
         getErrorTerminalResultSubtypeAfter: (id: string) =>
           terminalSessions && !terminalSessions.has(id) ? null : failed,
+        getTurnErrorResultSubtype: (id: string) =>
+          terminalSessions && !terminalSessions.has(id) ? null : failed,
         getAssistantMessagesSince: () => [
           {
             id: 'reply',
@@ -616,6 +618,28 @@ describe('Neo MVP', () => {
       status: 'failed',
       report: expect.stringContaining('error_max_turns'),
     });
+  });
+
+  test('fails queued work and returns it to Neo when its chat turn ends in an error', async () => {
+    const work = await propose();
+    await service.start(work.id);
+    await service.reconcile(work.id);
+    expect(service.repo.getWork(work.id)?.status).toBe('queued');
+    failed = 'error_during_execution';
+    await events.publish('session.updated', {
+      sessionId: 'ordinary',
+      processingState: { status: 'idle' },
+    });
+    expect(service.repo.getWork(work.id)).toMatchObject({
+      status: 'failed',
+      report: 'The chat stopped with an error before reporting: error_during_execution.',
+    });
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1].payload).toMatchObject({
+      to: { sessionId: work.originSessionId },
+      messageUuid: work.id,
+    });
+    expect(JSON.stringify(jobs[1])).toContain('error_during_execution');
   });
 
   async function concernWork(origin?: string) {
