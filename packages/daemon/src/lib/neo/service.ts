@@ -627,7 +627,7 @@ export class NeoService {
       Date.now(),
       startedAt,
       !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
-      sent?.opening ?? null
+      sent?.opening ?? (messageOpening(work.instruction) || null)
     );
     if (!settled) {
       await this.noteDriverStall(work, outcome);

@@ -427,6 +427,34 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('drops Neo’s instruction from the report even when what it sent was never recorded', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Font is 16px.',
+        exchange: [
+          { at: Date.now() + 500, role: 'user', text: `${work.instruction}\n\nNeo routed this` },
+          { at: Date.now() + 900, role: 'agent', text: 'Font is 16px.' },
+        ],
+      },
+    }));
+    Object.assign(service, { returnReport: async () => {} });
+    try {
+      await service.start('work-1');
+      service.driverTargets.recordSent('work-1', null);
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Agent: Font is 16px.',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('asks the proposing session to check idle work against its done-when list', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
