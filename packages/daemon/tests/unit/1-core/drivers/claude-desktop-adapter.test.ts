@@ -89,6 +89,8 @@ describe('claude-desktop adapter against the app session records', () => {
         return live;
       },
       folderExists: (folder) => folder !== '/gone',
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'unused',
       sleep: async () => {},
@@ -196,6 +198,8 @@ describe('claude-desktop adapter against the app session records', () => {
         throw new Error('not spawned');
       },
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'unused',
       sleep: async () => {},
@@ -362,6 +366,8 @@ describe('claude-desktop adapter against the app session records', () => {
         throw new Error('not spawned');
       },
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => null,
       newId: () => 'unused',
       sleep: async () => {},

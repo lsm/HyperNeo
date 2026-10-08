@@ -19,6 +19,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
+import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
@@ -69,6 +70,8 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   folderExists: (folder: string) => boolean;
+  makeFolder: (folder: string) => void;
+  homeDir: string;
   gitRoot: (folder: string) => Promise<string | null>;
   newId: () => string;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
@@ -483,9 +486,7 @@ export function selectCodexStartFolder(
   if (!place.folder) {
     return { reason: reject('invalid_place', 'A Codex thread needs a folder to work in.') };
   }
-  return deps.folderExists(place.folder)
-    ? { value: place.folder }
-    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+  return ensureStartFolder(place.folder, request.createFolder, deps);
 }
 
 export function startedThreadId(started: unknown): string | null {

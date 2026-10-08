@@ -18,6 +18,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
+import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 
 const SESSIONS_PER_PLACE = 20;
@@ -56,6 +57,8 @@ export interface ClaudeDesktopAdapterDeps {
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
+  makeFolder: (folder: string) => void;
+  homeDir: string;
   gitRoot: (folder: string) => Promise<string | null>;
   newId: () => string;
   sleep: (ms: number) => Promise<void>;
@@ -536,9 +539,7 @@ export function selectClaudeStartFolder(
   if (!place.folder) {
     return { reason: reject('invalid_place', 'A Claude Code session needs a folder to work in.') };
   }
-  return deps.folderExists(place.folder)
-    ? { value: place.folder }
-    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+  return ensureStartFolder(place.folder, request.createFolder, deps);
 }
 
 async function runToExit(

@@ -29,6 +29,8 @@ function control(db: Database, events: string[]) {
     },
     neoFolder: () => '/data/Neo',
     folderExists: (folder: string) => folder !== '/focus/missing',
+    makeFolder: () => {},
+    homeDir: '/Users/test',
   };
 }
 
