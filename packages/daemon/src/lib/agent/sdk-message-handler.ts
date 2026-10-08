@@ -1278,6 +1278,14 @@ export class SDKMessageHandler {
 
     if (!isSDKSystemMessage(message)) return;
 
+    if (
+      isSDKSystemInit(message) &&
+      !(message as { parent_tool_use_id?: string | null }).parent_tool_use_id &&
+      this.ctx.stateManager.getState().status === 'idle'
+    ) {
+      await this.ctx.stateManager.setProcessing(message.uuid ?? 'sdk-turn', 'initializing');
+    }
+
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
       const sdkCapabilities = [...(message.capabilities ?? [])];
