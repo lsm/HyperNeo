@@ -477,7 +477,12 @@ export class NeoService {
     );
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
-      this.driverTargets.recordRef(queued.id, result.ref, result.startedAt, result.link);
+      this.driverTargets.recordRef(
+        queued.id,
+        result.ref,
+        result.startedAt ?? Date.now(),
+        result.link
+      );
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
