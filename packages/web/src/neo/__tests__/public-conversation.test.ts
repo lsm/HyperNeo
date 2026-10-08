@@ -3,6 +3,7 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import {
   admitNeoPublicSources,
+  neoWorkSummaries,
   projectNeoPublicConversation,
   requireNeoPublicIdentities,
 } from '../public-conversation.ts';
@@ -226,5 +227,34 @@ describe('durable public conversation projection', () => {
       'reason'
     );
     expect(projectNeoPublicConversation(root, a, publications()).entries).toEqual([]);
+  });
+});
+
+describe('neoWorkSummaries', () => {
+  it('takes Neo’s latest publication linked to each work, short text first', () => {
+    const entry = (item: NeoPublication) => ({
+      kind: 'publication' as const,
+      key: item.publicationId,
+      publication: item,
+      replyTo: null,
+    });
+    const later = {
+      ...publication(2),
+      shortText: ' ',
+      fullText: 'Blocked: two files are missing.',
+    };
+    const other = { ...publication(3), links: [] };
+    expect([
+      ...neoWorkSummaries([
+        entry(publication(1)),
+        { kind: 'ask', key: 'a', ask: ask() },
+        entry(later),
+        entry(other),
+      ]),
+    ]).toEqual([['work:1', 'Blocked: two files are missing.']]);
+    expect([...neoWorkSummaries([entry(publication(1))])]).toEqual([
+      ['work:1', 'The draft is ready.'],
+    ]);
+    expect([...neoWorkSummaries(undefined)]).toEqual([]);
   });
 });

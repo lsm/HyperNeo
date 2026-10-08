@@ -251,3 +251,39 @@ describe('NeoWorkCard continues', () => {
     expect(screen.getByText('Neo continued it 2/5').getAttribute('title')).toBe('Build settings.');
   });
 });
+
+describe('NeoWorkCard result', () => {
+  it('shows Neo’s summary instead of the raw report, and a failure’s reason', () => {
+    render(
+      <NeoWorkCard
+        work={work('r', 'reported', { report: 'A long raw agent reply' })}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        summary="Blocked: two files are missing."
+      />
+    );
+    expect(screen.getByText('Blocked: two files are missing.')).toBeTruthy();
+    expect(screen.queryByText('A long raw agent reply')).toBeNull();
+    cleanup();
+    render(
+      <NeoWorkCard
+        work={work('n', 'reported', { report: 'A long raw agent reply' })}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+      />
+    );
+    expect(screen.queryByText('A long raw agent reply')).toBeNull();
+    cleanup();
+    render(
+      <NeoWorkCard
+        work={work('f', 'failed', { report: 'Could not start.' })}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+      />
+    );
+    expect(screen.getByText('Could not start.')).toBeTruthy();
+  });
+});

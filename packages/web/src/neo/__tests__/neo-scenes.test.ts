@@ -276,7 +276,7 @@ describe('describeNeoDriverScenes', () => {
     link: 'codex://threads/t1',
   };
 
-  it('names where queued work went, raises it when it needs the user and settles it when it ends', () => {
+  it('names where queued work went, raises it when it needs the user and keeps idle work in progress until Neo checks it', () => {
     const scenes = classifyNeoScenes([
       { kind: 'work', ...work('w', 'queued', 1) },
       { kind: 'work', ...work('r', 'queued', 2) },
@@ -297,7 +297,7 @@ describe('describeNeoDriverScenes', () => {
     expect(described.map((scene) => [scene.ref.id, scene.group, scene.label])).toEqual([
       ['w', 'attention', 'Needs you in Codex Desktop on laptop'],
       ['r', 'running', 'Running in Codex Desktop on laptop'],
-      ['f', 'outcomes', 'Finished in Codex Desktop on laptop'],
+      ['f', 'running', 'Idle in Codex Desktop on laptop · Neo is checking'],
       ['s', 'outcomes', 'Stopped in Codex Desktop on laptop'],
       ['done', 'outcomes', 'Response ready'],
     ]);

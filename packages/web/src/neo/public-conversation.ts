@@ -129,3 +129,16 @@ export const projectNeoPublicConversation = (
   asks: NeoAskState,
   publications: NeoPublicationState
 ) => NeoPublicConversation;
+
+export function neoWorkSummaries(
+  entries: readonly NeoPublicEntry[] | undefined
+): ReadonlyMap<string, string> {
+  const summaries = new Map<string, string>();
+  for (const entry of entries ?? []) {
+    if (entry.kind !== 'publication') continue;
+    const text = entry.publication.shortText.trim() || entry.publication.fullText.trim();
+    for (const link of entry.publication.links)
+      if (link.kind === 'work' && text) summaries.set(link.id, text);
+  }
+  return summaries;
+}

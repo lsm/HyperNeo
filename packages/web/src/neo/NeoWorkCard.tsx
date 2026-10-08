@@ -38,7 +38,7 @@ function neoWorkTone(
   waiting: boolean
 ): keyof typeof tones {
   const status = work.status === 'queued' ? driver?.status : null;
-  if (work.status === 'reported' || status === 'done') return 'success';
+  if (work.status === 'reported') return 'success';
   if (
     (work.status === 'queued' && waiting) ||
     work.status === 'failed' ||
@@ -77,6 +77,7 @@ export function NeoWorkCard({
   presentation = 'detail',
   questionSlot,
   waiting = false,
+  summary,
 }: {
   work: NeoWork;
   driver?: NeoWorkDriverReceipt;
@@ -89,6 +90,7 @@ export function NeoWorkCard({
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
   waiting?: boolean;
+  summary?: string;
 }) {
   const attachQuestion = useMemo(() => {
     let previous: HTMLElement | null = null;
@@ -233,8 +235,8 @@ export function NeoWorkCard({
           {work.instruction}
         </p>
       )}
-      {work.status === 'failed' && work.report && (
-        <p class="mt-2 line-clamp-2 break-words text-sm text-fg-muted">{work.report}</p>
+      {work.status !== 'proposed' && (summary || (work.status === 'failed' && work.report)) && (
+        <p class="mt-2 line-clamp-3 break-words text-sm text-fg-muted">{summary || work.report}</p>
       )}
       {active &&
         work.sessionId &&

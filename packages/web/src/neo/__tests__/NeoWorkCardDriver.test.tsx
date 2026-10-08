@@ -43,10 +43,10 @@ describe('neoWorkDriverLabel', () => {
       'Handed to a Space'
     );
     expect(neoWorkDriverLabel({ ...driver, adapter: 'oap', daemon: null, status: 'done' })).toBe(
-      'Finished in oap'
+      'Idle in oap · Neo is checking'
     );
     expect(neoWorkDriverLabel({ ...driver, adapter: 'copilot-cli', status: 'done' })).toBe(
-      'Finished in GitHub Copilot on laptop'
+      'Idle in GitHub Copilot on laptop · Neo is checking'
     );
   });
 });
@@ -110,7 +110,7 @@ describe('NeoWorkCard with drivers work', () => {
       [Partial<NeoWork>, (typeof driver)['status'] | 'running' | 'done' | 'stopped' | null, string]
     > = [
       [{}, 'running', 'accent'],
-      [{}, 'done', 'success'],
+      [{}, 'done', 'accent'],
       [{}, 'stopped', 'warning'],
       [{ status: 'reported' }, null, 'success'],
       [{ status: 'failed' }, null, 'warning'],
