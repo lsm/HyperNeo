@@ -434,11 +434,7 @@ export class NeoService {
     if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
     if (work.status !== 'queued' && work.status !== 'reported')
       return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
-    const budget = readContinueBudget(
-      this.workContinues.get(id),
-      this.driverTargets.readStartedAt(id),
-      now
-    );
+    const budget = this.continueBudget(id, now);
     if (budget) return { ok: false, reason: budget };
     if (this.continuing.has(id))
       return { ok: false, reason: 'This work is already being continued; wait for that first.' };
@@ -603,6 +599,14 @@ export class NeoService {
     if (done) await this.returnReport(done);
   }
 
+  private continueBudget(id: string, now: number): string | null {
+    return readContinueBudget(
+      this.workContinues.get(id),
+      this.driverTargets.readStartedAt(id),
+      now
+    );
+  }
+
   private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
     const live = readDriverActivity(outcome);
     if (live?.status !== 'running') {
@@ -616,7 +620,7 @@ export class NeoService {
       return;
     }
     if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
-    const budget = readContinueBudget(this.workContinues.get(work.id), work.createdAt, now);
+    const budget = this.continueBudget(work.id, now);
     await this.deliver(
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
@@ -753,11 +757,7 @@ export class NeoService {
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
     const continued = this.workContinues.get(work.id)?.count ?? 0;
-    const budget = readContinueBudget(
-      this.workContinues.get(work.id),
-      this.driverTargets.readStartedAt(work.id),
-      Date.now()
-    );
+    const budget = this.continueBudget(work.id, Date.now());
     await this.deliver(
       work.originSessionId,
       neoDoneCheckMessageId(work.id, continued),

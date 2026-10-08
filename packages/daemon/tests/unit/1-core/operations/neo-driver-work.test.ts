@@ -376,7 +376,7 @@ describe('Neo work with a drivers target', () => {
         notes.push([target, messageId, content]);
       },
     });
-    let now = Date.now();
+    let now = Date.now() + 5 * 60 * 60_000;
     const clock = spyOn(Date, 'now').mockImplementation(() => now);
     try {
       await service.start('work-1');
@@ -388,6 +388,7 @@ describe('Neo work with a drivers target', () => {
       await service.refreshDriverWork();
       expect(notes.map(([target, id]) => [target, id])).toEqual([['neo:root', 'work-1:stall:5']]);
       expect(notes[0][2]).toContain('work.stop');
+      expect(notes[0][2]).not.toContain('continue_budget_spent');
       expect(notes[0][2]).toContain('- voice works');
       activity = 6;
       now += 30 * 60_000;
