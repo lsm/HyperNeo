@@ -143,10 +143,15 @@ export function readDriverLive(
   return typeof link === 'string' ? { status, link } : { status };
 }
 
-export function readDriverSendBaseline(outcome: OperationOutcome, sentAt: number): number | null {
-  if (outcome.kind !== 'completed') return sentAt;
+export function readDriverSendBaseline(
+  outcome: OperationOutcome,
+  sentAt: number,
+  remote: boolean
+): number | null {
+  const fallback = remote ? null : sentAt;
+  if (outcome.kind !== 'completed') return fallback;
   const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return sentAt;
+  if (!reply.success || !reply.data.ok) return fallback;
   const { status, lastActivityAt } = reply.data.value;
   return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
 }
