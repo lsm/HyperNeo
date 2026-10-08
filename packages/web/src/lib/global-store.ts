@@ -159,6 +159,7 @@ export class GlobalStore {
   }
 
   private applySessionsDelta(event: LiveQueryDeltaEvent): void {
+    if (!event.removed?.length && !event.updated?.length && !event.added?.length) return;
     const next = new Map(this.sessions.value.map((s) => [s.id, s]));
 
     for (const row of (event.removed ?? []) as Session[]) next.delete(row.id);
