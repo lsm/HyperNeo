@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
+import { Logger } from '../../lib/logger.ts';
 
 export type { AgentMemoryEntry, AgentMemorySearchResult };
 
@@ -70,6 +71,8 @@ const RRF_K = 60;
 const VECTOR_CANDIDATE_LIMIT = 100;
 const EMBEDDING_ERROR_MAX_LENGTH = 500;
 const EMBEDDING_BACKFILL_BATCH_SIZE = 25;
+
+const log = new Logger('agent-memory-repository');
 const DEFAULT_STALE_MEMORY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_DUPLICATE_JACCARD_THRESHOLD = 0.82;
 const DEFAULT_CORE_MEMORY_LIMIT = 10;
@@ -529,41 +532,39 @@ export class AgentMemoryRepository {
 
   backfillPendingEmbeddings(): void {
     if (!this.embedder) return;
-    void this.backfillEmbeddingBatches();
+    this.backfillEmbeddingBatches().catch((error) => {
+      log.error('Agent memory embedding backfill failed:', error);
+    });
   }
 
   private async backfillEmbeddingBatches(): Promise<void> {
     if (!this.embedder) return;
-    const attemptedMemoryIds = new Set<number>();
+    let cursor = 0;
     for (;;) {
-      const attemptedIds = [...attemptedMemoryIds];
-      const attemptedFilter = attemptedIds.length
-        ? `AND m.id NOT IN (${attemptedIds.map(() => '?').join(', ')})`
-        : '';
       const rows = this.db
         .prepare(
           `SELECT m.*
 					 FROM space_agent_memory m
 					 LEFT JOIN memory_vectors v ON v.memory_id = m.id
-					 WHERE (
+					 WHERE m.id > ?
+					 AND (
 						m.embedding_status IN ('pending', 'failed')
 						OR v.memory_id IS NULL
 						OR v.model != ?
 						OR v.dimensions != ?
 					 )
-					 ${attemptedFilter}
-					 ORDER BY m.updated_at ASC, m.key ASC
+					 ORDER BY m.id ASC
 					 LIMIT ?`
         )
         .all(
+          cursor,
           this.embedder.model,
           this.embedder.dimensions,
-          ...attemptedIds,
           EMBEDDING_BACKFILL_BATCH_SIZE
         ) as AgentMemoryRow[];
       if (rows.length === 0) return;
       for (const row of rows) {
-        attemptedMemoryIds.add(row.id);
+        cursor = row.id;
         await this.updateEmbedding(row);
       }
     }

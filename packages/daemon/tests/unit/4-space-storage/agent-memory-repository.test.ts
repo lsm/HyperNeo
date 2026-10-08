@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { Logger } from '../../../src/lib/logger.ts';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import {
@@ -742,6 +743,24 @@ describe('AgentMemoryRepository', () => {
       await flushPromises();
     }
     expect(embedder.pendingCount).toBe(1);
+  });
+
+  test('startup backfill logs a failed pass instead of rejecting unhandled', async () => {
+    const logged = spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    try {
+      repo = new AgentMemoryRepository(db, undefined, new KeywordEmbedder());
+      db.exec('DROP TABLE memory_vectors');
+
+      repo.backfillPendingEmbeddings();
+      await flushPromises();
+
+      expect(logged).toHaveBeenCalledWith(
+        'Agent memory embedding backfill failed:',
+        expect.any(Error)
+      );
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test('startup backfill retries failed rows only once per pass', async () => {
