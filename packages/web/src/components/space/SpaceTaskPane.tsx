@@ -1139,14 +1139,14 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class={`flex h-[88px] flex-shrink-0 items-center bg-surface-overlay border-b px-4 border-line`}
+        class={`flex h-14 flex-shrink-0 items-center bg-surface-overlay border-b px-3 border-line`}
       >
-        <div class="flex w-full items-center gap-3 pr-12" data-tauri-drag-region>
+        <div class="flex w-full items-center gap-1.5" data-tauri-drag-region>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+              class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
               aria-label="Back"
               data-testid="task-back-button"
             >
@@ -1168,7 +1168,7 @@ export function SpaceTaskPane({
               #{task.taskNumber}
             </span>
             <h2
-              class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-fg"
+              class="min-w-0 truncate text-[15px] font-semibold leading-6 text-fg"
               title={task.title}
               data-tauri-drag-region
             >
@@ -1179,6 +1179,7 @@ export function SpaceTaskPane({
                 <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={activitySummary} />
               </span>
             )}
+            <span class="flex-1" data-tauri-drag-region />
             {taskActionItems.length > 0 && (
               <Dropdown
                 items={taskActionItems}

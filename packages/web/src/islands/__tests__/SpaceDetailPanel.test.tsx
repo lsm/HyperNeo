@@ -12,6 +12,7 @@ const {
   mockNavigateToSpaceSession,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceTasks,
+  mockNavigateToSpaceConfigure,
 } = vi.hoisted(() => ({
   mockNavigateToSpace: vi.fn(),
   mockNavigateToSpaceAgent: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockNavigateToSpaceSession: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceTasks: vi.fn(),
+  mockNavigateToSpaceConfigure: vi.fn(),
 }));
 
 const { mockArchiveSession, mockToastSuccess, mockToastError } = vi.hoisted(() => ({
@@ -89,6 +91,7 @@ vi.mock('../../lib/router.ts', () => ({
   navigateToSpaceSession: mockNavigateToSpaceSession,
   navigateToSpaceGoals: mockNavigateToSpaceGoals,
   navigateToSpaceTasks: mockNavigateToSpaceTasks,
+  navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 }));
 
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
@@ -784,6 +787,16 @@ describe('SpaceDetailPanel', () => {
 
       const tasksNav = screen.getByTestId('space-detail-tasks');
       expect(within(tasksNav).getByText('2')).toBeTruthy();
+    });
+
+    it('opens Space settings from the nav item under Tasks', () => {
+      render(<SpaceDetailPanel spaceId="space-1" />);
+      const nav = screen.getByTestId('space-detail-settings');
+      expect(screen.getByTestId('space-detail-tasks').nextElementSibling).toBe(nav);
+
+      fireEvent.click(nav);
+
+      expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-1');
     });
 
     it('Tasks-nav badge is hidden when no action-required tasks exist', () => {
