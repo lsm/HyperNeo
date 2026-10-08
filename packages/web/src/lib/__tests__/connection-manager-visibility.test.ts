@@ -388,11 +388,20 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       expect(transport.resume).toHaveBeenCalledTimes(1);
     });
 
-    it('resumes a suspended socket without a health check', () => {
+    it('resumes a suspended socket and rejoins its channels once it reconnects', async () => {
+      const hub = (manager as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>)
+        .messageHub;
+      hub.isConnected.mockReturnValue(false);
       transport.isSuspended.mockReturnValue(true);
       setHidden(false);
       visibilityChangeHandler?.(new Event('visibilitychange'));
       expect(transport.resume).toHaveBeenCalledTimes(1);
+      expect(hub.joinChannel).not.toHaveBeenCalled();
+
+      hub.isConnected.mockReturnValue(true);
+      (manager as unknown as { notifyConnectionHandlers(): void }).notifyConnectionHandlers();
+      await vi.runAllTimersAsync();
+      expect(hub.joinChannel).toHaveBeenCalledWith('global');
       expect(transport.forceReconnect).not.toHaveBeenCalled();
     });
 

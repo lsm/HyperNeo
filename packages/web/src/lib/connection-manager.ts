@@ -282,7 +282,7 @@ export class ConnectionManager {
         return;
       }
       if (this.transport?.isSuspended()) {
-        this.transport.resume();
+        this.resumeSuspended();
         return;
       }
       if (this.transport) {
@@ -293,11 +293,16 @@ export class ConnectionManager {
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
     this.pageShowHandler = () => {
-      if (!document.hidden && this.transport?.isSuspended()) this.transport.resume();
+      if (!document.hidden && this.transport?.isSuspended()) this.resumeSuspended();
     };
     window.addEventListener('pageshow', this.pageShowHandler);
     this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
+  }
+
+  private resumeSuspended(): void {
+    this.transport?.resume();
+    this.onceConnected(() => void this.validateConnectionOnResume());
   }
 
   private async validateConnectionOnResume(): Promise<void> {
