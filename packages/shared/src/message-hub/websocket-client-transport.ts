@@ -21,9 +21,21 @@ export interface WebSocketClientTransportOptions {
 
   reconnectDelay?: number;
 
+  maxReconnectDelay?: number;
+
   pingInterval?: number;
 
   pongTimeout?: number;
+}
+
+export function reconnectDelayFor(
+  attempt: number,
+  base: number,
+  cap: number,
+  random: () => number = Math.random
+): number {
+  if (attempt <= 1) return 0;
+  return random() * Math.min(cap, base * 2 ** (attempt - 2));
 }
 
 export class WebSocketClientTransport implements IMessageTransport {
@@ -35,6 +47,7 @@ export class WebSocketClientTransport implements IMessageTransport {
   private readonly autoReconnect: boolean;
   private readonly maxReconnectAttempts: number;
   private readonly reconnectDelay: number;
+  private readonly maxReconnectDelay: number;
   private readonly pingInterval: number;
   private readonly pongTimeout: number;
 
@@ -62,6 +75,7 @@ export class WebSocketClientTransport implements IMessageTransport {
     this.autoReconnect = options.autoReconnect ?? true;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5;
     this.reconnectDelay = options.reconnectDelay ?? 1000;
+    this.maxReconnectDelay = options.maxReconnectDelay ?? 30_000;
     this.pingInterval = options.pingInterval ?? 30000;
     this.pongTimeout = options.pongTimeout ?? 45000;
   }
@@ -146,9 +160,11 @@ export class WebSocketClientTransport implements IMessageTransport {
 
     this.reconnectAttempts++;
 
-    const baseDelay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-    const jitter = Math.random() * baseDelay * 0.6 - baseDelay * 0.3;
-    const delay = Math.max(100, baseDelay + jitter);
+    const delay = reconnectDelayFor(
+      this.reconnectAttempts,
+      this.reconnectDelay,
+      this.maxReconnectDelay
+    );
 
     log.debug(
       `Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`

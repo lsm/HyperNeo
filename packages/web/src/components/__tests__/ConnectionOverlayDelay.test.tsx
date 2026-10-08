@@ -51,4 +51,23 @@ describe('ConnectionOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: /Connection lost. Retrying…/ }));
     expect(reconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('says it is waiting for the network while offline', () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      conn.state.value = 'disconnected';
+      render(<ConnectionOverlay />);
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(screen.getByRole('button', { name: /Waiting for network…/ })).toBeTruthy();
+      onLine.mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event('online'));
+      });
+      expect(screen.getByRole('button', { name: /Connection lost. Retrying…/ })).toBeTruthy();
+    } finally {
+      onLine.mockRestore();
+    }
+  });
 });

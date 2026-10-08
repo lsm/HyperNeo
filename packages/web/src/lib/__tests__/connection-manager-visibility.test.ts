@@ -434,6 +434,65 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       expect(hub.request).toHaveBeenCalledTimes(1);
     });
 
+    const network = () => (manager as unknown as { networkHandler: () => void }).networkHandler();
+
+    it('waits for the network while offline and reconnects a second after it returns', () => {
+      const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      try {
+        setHidden(false);
+        network();
+        expect(transport.suspend).toHaveBeenCalledTimes(1);
+
+        transport.isSuspended.mockReturnValue(true);
+        visibilityChangeHandler?.(new Event('visibilitychange'));
+        expect(transport.resume).not.toHaveBeenCalled();
+
+        onLine.mockReturnValue(true);
+        network();
+        vi.advanceTimersByTime(900);
+        expect(transport.resume).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(100);
+        expect(transport.resume).toHaveBeenCalledTimes(1);
+      } finally {
+        onLine.mockRestore();
+      }
+    });
+
+    it('keeps a loopback daemon connected while the OS reports offline', () => {
+      const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      try {
+        (manager as unknown as { baseUrl: string }).baseUrl = 'ws://127.0.0.1:9283';
+        network();
+        expect(transport.suspend).not.toHaveBeenCalled();
+      } finally {
+        onLine.mockRestore();
+      }
+    });
+
+    it('restarts a socket that went down without an offline event once online returns', () => {
+      setHidden(false);
+      transport.isReady.mockReturnValue(false);
+      network();
+      vi.advanceTimersByTime(1_000);
+      expect(transport.forceReconnect).toHaveBeenCalledTimes(1);
+      expect(transport.resume).not.toHaveBeenCalled();
+    });
+
+    it('lets a manual retry resume a suspended socket', async () => {
+      transport.isSuspended.mockReturnValue(true);
+      await manager.reconnect();
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+      expect(transport.forceReconnect).not.toHaveBeenCalled();
+    });
+
+    it('leaves a hidden tab suspended when the network returns', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(true);
+      network();
+      vi.advanceTimersByTime(1_000);
+      expect(transport.resume).not.toHaveBeenCalled();
+    });
+
     it('resumes a suspended socket when the page is shown again', () => {
       transport.isSuspended.mockReturnValue(true);
       setHidden(false);
