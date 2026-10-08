@@ -259,7 +259,9 @@ describe('neoWorkSummaries', () => {
     );
     expect([...neoWorkSummaries(undefined)]).toEqual([]);
   });
+});
 
+describe('neoWorkSummary', () => {
   it('ignores what Neo said about a work before its latest change, like the hand-off note', () => {
     const summaries = new Map([['work:1', { text: 'Handed it to Codex.', at: 100 }]]);
     expect(neoWorkSummary(summaries, { id: 'work:1', updatedAt: 100 })).toBe('Handed it to Codex.');
