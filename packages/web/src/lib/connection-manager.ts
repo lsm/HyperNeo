@@ -54,7 +54,7 @@ export class ConnectionManager {
   private visibilityHandler: (() => void) | null = null;
   private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private pageShowHandler: (() => void) | null = null;
-  private resumePending = false;
+  private resumeWait: (() => void) | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -275,6 +275,7 @@ export class ConnectionManager {
         this.hiddenTimer = null;
       }
       if (document.hidden) {
+        this.cancelResumeWait();
         this.hiddenTimer = setTimeout(() => {
           this.hiddenTimer = null;
           if (!document.hidden) return;
@@ -286,7 +287,7 @@ export class ConnectionManager {
         this.resumeSuspended();
         return;
       }
-      if (this.resumePending) return;
+      if (this.resumeWait) return;
       if (this.transport) {
         this.transport.resetReconnectState();
       }
@@ -303,12 +304,18 @@ export class ConnectionManager {
   }
 
   private resumeSuspended(): void {
-    this.resumePending = true;
+    this.cancelResumeWait();
     this.transport?.resume();
-    this.onceConnected(() => {
-      this.resumePending = false;
+    const wait = this.onceConnected(() => {
+      this.resumeWait = null;
       void this.validateConnectionOnResume();
     });
+    if (!this.isConnected()) this.resumeWait = wait;
+  }
+
+  private cancelResumeWait(): void {
+    this.resumeWait?.();
+    this.resumeWait = null;
   }
 
   private async validateConnectionOnResume(): Promise<void> {
@@ -405,6 +412,7 @@ export class ConnectionManager {
       clearTimeout(this.hiddenTimer);
       this.hiddenTimer = null;
     }
+    this.cancelResumeWait();
 
     if (this.pageShowHandler) {
       window.removeEventListener('pageshow', this.pageShowHandler);
