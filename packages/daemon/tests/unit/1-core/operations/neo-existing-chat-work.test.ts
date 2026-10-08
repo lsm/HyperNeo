@@ -180,7 +180,7 @@ describe('Neo existing chat work', () => {
     await service.start(work.id);
 
     const brief = content(jobs('project', work.id)[0]);
-    expect(brief).toContain('Goal: A full-featured native iOS app for Neo');
+    expect(brief).toContain('What the human asked: A full-featured native iOS app for Neo');
     expect(brief).toContain('builds and runs in the simulator');
     expect(brief).toContain('If you stop before this is done, say what remains and why.');
     expect(await invoke('neo.snapshot', {})).toMatchObject({

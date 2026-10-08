@@ -124,7 +124,7 @@ describe('neo.work.continue', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].ref).toEqual(ref);
     expect(sent[0].message).toContain('Now build the chat screen.');
-    expect(sent[0].message).toContain('Goal: A full-featured Neo iOS app');
+    expect(sent[0].message).toContain('What the human asked: A full-featured Neo iOS app');
     expect(service.workContinues.get(work.id)).toMatchObject({
       count: 1,
       lastMessage: 'Now build the chat screen.',

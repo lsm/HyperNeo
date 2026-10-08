@@ -57,7 +57,8 @@ export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): str
   return [
     instruction,
     '',
-    ...(goal.goal ? [`Goal: ${goal.goal}`] : []),
+    'Neo routed this to you: do it here, not by handing it to another session or chat.',
+    ...(goal.goal ? [`What the human asked: ${goal.goal}`] : []),
     ...(goal.doneWhen ? [`Done when:\n${goal.doneWhen}`] : []),
     'If you stop before this is done, say what remains and why.',
   ].join('\n');
