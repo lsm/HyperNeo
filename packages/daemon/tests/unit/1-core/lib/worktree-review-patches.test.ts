@@ -112,6 +112,30 @@ describe('WorktreeManager review summary patches', () => {
     expect(summary.files[0]?.patch).toContain('+line 0 changed');
   });
 
+  it('matches the per-file patch for a file left conflicted by a merge', async () => {
+    git(repo, 'switch', '-q', '-c', 'other');
+    writeFileSync(join(repo, 'file-1.txt'), 'other\n');
+    git(repo, 'commit', '-qam', 'other');
+    git(repo, 'switch', '-q', 'main');
+    writeFileSync(join(repo, 'file-1.txt'), 'main\n');
+    git(repo, 'commit', '-qam', 'main');
+    try {
+      git(repo, 'merge', '-q', 'other');
+    } catch {}
+    writeFileSync(join(repo, 'file-2.txt'), 'line 2 changed\n');
+
+    const { summary } = await reviewSummary([
+      { path: 'file-1.txt', status: 'conflicted', staged: false, unstaged: true },
+      { path: 'file-2.txt', status: 'modified', staged: false, unstaged: true },
+    ]);
+
+    for (const file of summary.files) {
+      expect(file.patch).toBe(
+        git(repo, 'diff', '--no-ext-diff', '--no-color', 'HEAD', '--', file.path)
+      );
+    }
+  });
+
   it('keeps the review file cap with a single diff call', async () => {
     const files: GitChangedFile[] = [];
     for (let index = 0; index < 90; index++) {

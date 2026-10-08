@@ -567,7 +567,7 @@ export class WorktreeManager {
           '--',
           ...batched,
         ]);
-        for (const chunk of output.split(/^(?=diff --git )/m)) {
+        for (const chunk of output.split(/^(?=diff --(?:git|cc|combined) )/m)) {
           const path = headers.get(chunk.slice(0, chunk.indexOf('\n')));
           if (path !== undefined) patches.set(path, boundPatch(chunk));
         }
