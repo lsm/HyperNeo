@@ -298,6 +298,41 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('asks the proposing session to check idle work against its done-when list', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Skeleton builds.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'A full Neo iOS app', '- chat works\n- voice works');
+    const notes: Array<[string, string, string]> = [];
+    Object.assign(service, {
+      deliver: async (target: string, messageId: string, content: string) => {
+        notes.push([target, messageId, content]);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      expect(notes.map(([target, id]) => [target, id])).toEqual([
+        ['neo:root', 'work-1:done-check:0'],
+      ]);
+      expect(notes[0][2]).toContain('neo.work.continue');
+      expect(notes[0][2]).toContain('- voice works');
+      expect(notes[0][2]).toContain('Skeleton builds.');
+
+      for (let n = 0; n < 5; n++) service.workContinues.record('work-1', `Step ${n}`, Date.now());
+      await service.reconcile('work-1');
+      expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5']);
+      expect(notes[1][2]).toContain('continue_budget_spent');
+      expect(notes[1][2]).toContain('Do not continue it.');
+    } finally {
+      db.close();
+    }
+  });
+
   test('keeps refreshing when returning one report fails and returns it again on recovery', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({

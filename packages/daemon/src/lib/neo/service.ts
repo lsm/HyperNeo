@@ -40,6 +40,7 @@ import {
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
+  driverDoneCheckNote,
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
@@ -698,6 +699,7 @@ export class NeoService {
   }
 
   private async returnReport(work: NeoWork): Promise<void> {
+    if (await this.askDoneCheck(work)) return;
     const rootId = await this.open(null);
     if (work.concernId) {
       await returnWorkThroughHolder(this, work, rootId);
@@ -709,6 +711,26 @@ export class NeoService {
       if (this.db.getSession(target))
         await this.deliver(target, work.id, content, work.sessionId ?? work.originSessionId);
     }
+  }
+
+  private async askDoneCheck(work: NeoWork): Promise<boolean> {
+    const goal = this.workGoals.get(work.id);
+    if (work.status !== 'reported' || !goal?.doneWhen || !this.driverTargets.get(work.id))
+      return false;
+    if (!this.db.getSession(work.originSessionId)) return false;
+    const continued = this.workContinues.get(work.id)?.count ?? 0;
+    const budget = readContinueBudget(
+      this.workContinues.get(work.id),
+      this.driverTargets.readStartedAt(work.id),
+      Date.now()
+    );
+    await this.deliver(
+      work.originSessionId,
+      `${work.id}:done-check:${continued}`,
+      driverDoneCheckNote(work, goal, continued, budget),
+      work.originSessionId
+    );
+    return true;
   }
 
   private hasDelivery(sessionId: string, messageId: string): boolean {
