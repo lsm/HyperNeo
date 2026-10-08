@@ -9,6 +9,7 @@ import {
   runSessionStreaming,
   resolveRequestCwd,
 } from '../../../../../src/lib/providers/anthropic-copilot/index';
+import { SESSION_HEADER } from '../../../../../src/lib/providers/anthropic-copilot/server';
 import {
   initializeProviders,
   resetProviderFactory,
@@ -547,6 +548,54 @@ describe('startEmbeddedServer', () => {
         mode: 'replace',
         content: 'be concise',
       });
+    } finally {
+      await s2.stop();
+    }
+  });
+
+  it("passes the session's thinking level as a reasoning effort the model supports", async () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const cap = makeMockClient(() => session);
+    spyOn(cap, 'createSession').mockImplementation(async (cfg: unknown) => {
+      configs.push(cfg as Record<string, unknown>);
+      return session as unknown as CopilotSession;
+    });
+    spyOn(cap, 'listModels').mockImplementation(
+      async () =>
+        [
+          {
+            id: 'gpt-5-mini',
+            capabilities: { supports: { reasoningEffort: true } },
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        ] as never
+    );
+    const levels: Record<string, string> = { s1: 'think32k', s2: 'think16k' };
+    const s2 = await startEmbeddedServer(cap, '/tmp', (sessionId) => levels[sessionId]);
+    try {
+      const ask = (model: string, sessionId?: string) =>
+        fetch(`${s2.url}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(sessionId ? { [SESSION_HEADER]: sessionId } : {}),
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 100,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        }).then((resp) => resp.text());
+      await ask('gpt-5-mini', 's1');
+      await ask('gpt-5-mini', 's2');
+      await ask('gpt-5-mini');
+      await ask('other-model', 's1');
+      expect(configs.map((cfg) => cfg['reasoningEffort'])).toEqual([
+        'high',
+        'medium',
+        undefined,
+        undefined,
+      ]);
     } finally {
       await s2.stop();
     }

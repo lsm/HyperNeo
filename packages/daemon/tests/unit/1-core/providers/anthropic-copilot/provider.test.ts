@@ -684,6 +684,45 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       );
     });
 
+    it('keeps the thinking level of at most the 1000 most recently active sessions', () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      const levels = (p as unknown as { sessionThinking: Map<string, string | undefined> })
+        .sessionThinking;
+      for (let n = 0; n < 1000; n++) p.setSessionThinkingConfig(`s${n}`, 'think8k');
+      p.setSessionThinkingConfig('s0', 'think32k');
+      p.setSessionThinkingConfig('s1000', 'think16k');
+      expect(levels.size).toBe(1000);
+      expect(levels.has('s1')).toBe(false);
+      expect(levels.get('s0')).toBe('think32k');
+      expect(levels.get('s1000')).toBe('think16k');
+    });
+
+    it('offers thinking levels only on models that support reasoning effort', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      const internals = p as unknown as Record<string, unknown>;
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      internals['clientCache'] = {
+        listModels: async () => [
+          { id: 'gpt-5.5', capabilities: { supports: { reasoningEffort: true } } },
+          { id: 'gemini-3.1-pro-preview', capabilities: { supports: { reasoningEffort: false } } },
+        ],
+      };
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+      const models = await p.listRemoteModels({ force: true });
+      expect(models.map((m) => [m.id, m.thinkingModes])).toEqual([
+        ['gpt-5.5', 'granular'],
+        ['gemini-3.1-pro-preview', 'off'],
+      ]);
+      expect(p.getModelThinkingMode('gpt-5.5')).toBe('granular');
+      expect(p.getModelThinkingMode('copilot-anthropic-gpt-5.5')).toBe('granular');
+      expect(p.getModelThinkingMode('gemini-3.1-pro-preview')).toBeUndefined();
+      internals['serverCache'] = { url: 'http://127.0.0.1:9999', stop: async () => {} };
+      expect(
+        p.buildSdkConfig('gpt-5.5', { sessionId: 's1' }).envVars['ANTHROPIC_CUSTOM_HEADERS']
+      ).toBe('x-hyperneo-session: s1');
+      expect(p.buildSdkConfig('gpt-5.5').envVars['ANTHROPIC_CUSTOM_HEADERS']).toBeUndefined();
+    });
+
     it('reports a curated catalog only after a successful remote listing', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
       const internals = p as unknown as Record<string, unknown>;
