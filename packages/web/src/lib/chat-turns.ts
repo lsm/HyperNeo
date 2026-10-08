@@ -43,6 +43,7 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   let toolCount = 0;
   let errorCount = 0;
   let result: Loose | null = null;
+  let workedMs = 0;
   for (const message of messages) {
     if (!isTopLevel(message)) continue;
     const blocks = contentBlocks(message);
@@ -52,7 +53,10 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
       errorCount += blocks.filter(
         (block) => block?.type === 'tool_result' && block.is_error
       ).length;
-    if (message.type === 'result') result = message as unknown as Loose;
+    if (message.type === 'result') {
+      result = message as unknown as Loose;
+      if (typeof result.duration_ms === 'number') workedMs += result.duration_ms;
+    }
   }
   const startedAt = timestampOf(messages[0]);
   const lastAt = timestampOf(messages[messages.length - 1]);
@@ -64,11 +68,7 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
     errorCount,
     startedAt,
     durationMs:
-      typeof result?.duration_ms === 'number'
-        ? result.duration_ms
-        : startedAt !== null && lastAt !== null
-          ? lastAt - startedAt
-          : null,
+      workedMs > 0 ? workedMs : startedAt !== null && lastAt !== null ? lastAt - startedAt : null,
     outcome: result ? (failed ? 'failed' : 'done') : isLast ? 'running' : 'stopped',
   };
 }

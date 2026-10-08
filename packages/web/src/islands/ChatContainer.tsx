@@ -955,9 +955,9 @@ export default function ChatContainer({
   const turnLabel = turnActive ? turnAction : backgroundLabel;
   const statusActivity = isProcessing ? undefined : turnLabel;
   const turnView = (turn: ChatTurn) => {
-    const background =
-      !turnActive && !!backgroundLabel && turn.key === lastTurnKey && turn.outcome !== 'failed';
-    const outcome = background
+    const live =
+      turn.key === lastTurnKey && (turnActive || (!!backgroundLabel && turn.outcome !== 'failed'));
+    const outcome = live
       ? 'running'
       : turn.outcome === 'running' && !turnActive
         ? 'stopped'
