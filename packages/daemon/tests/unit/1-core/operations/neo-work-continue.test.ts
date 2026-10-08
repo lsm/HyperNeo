@@ -36,6 +36,7 @@ describe('neo.work.continue', () => {
   let sent: Array<{ ref: unknown; message: string }>;
   let lastActivityAt: number;
   let duringSend: () => Promise<void>;
+  let delivered: boolean;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
   beforeEach(async () => {
@@ -44,6 +45,7 @@ describe('neo.work.continue', () => {
     sent = [];
     lastActivityAt = 0;
     duringSend = async () => {};
+    delivered = true;
     const driverRegistry = createOperationRegistry([
       defineOperation({
         name: 'work.status',
@@ -65,7 +67,7 @@ describe('neo.work.continue', () => {
         execute: async (input: { ref: unknown; message: string }) => {
           sent.push(input);
           await duringSend();
-          return { ok: true, value: { delivered: true } };
+          return { ok: true, value: { delivered } };
         },
       }),
     ]);
@@ -139,6 +141,37 @@ describe('neo.work.continue', () => {
     lastActivityAt = Date.now() + 1_000;
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
+  });
+
+  test('counts the time budget of sent work from the card, not the target session', async () => {
+    const { work } = service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'w-sent',
+        requestKey: 'root:sent',
+        concernId: null,
+        originSessionId: 'root',
+        title: 'Neo iOS app',
+        instruction: 'Make voice durable.',
+      },
+      { verb: 'send', ref }
+    );
+    service.driverTargets.recordRef(work.id, ref, Date.now() - 5 * HOUR);
+    const queued = service.repo.transitionWork(work.id, work, { status: 'queued' })!;
+    service.repo.transitionWork(work.id, queued, { status: 'reported', report: 'Done.' });
+    expect(await invoke({ id: work.id, message: 'Next step.' })).toMatchObject({
+      value: { ok: true },
+    });
+  });
+
+  test('a continue queued behind a running turn never settles on that turn', async () => {
+    const work = reportedWork();
+    delivered = false;
+    await invoke({ id: work.id, message: 'Now build the chat screen.' });
+    expect(service.driverTargets.readStartedAt(work.id)).toBeNull();
+    lastActivityAt = Date.now() + 1_000;
+    await service.refreshDriverWork();
+    expect(service.repo.getWork(work.id)?.status).toBe('queued');
   });
 
   test('stops after five continues and tells Neo to ask the human', async () => {

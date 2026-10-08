@@ -37,6 +37,7 @@ import {
   type NeoDriverTarget,
   readDriverOutcome,
   readDriverLive,
+  readDriverSendBaseline,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -426,16 +427,13 @@ export class NeoService {
     if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
     if (work.status !== 'queued' && work.status !== 'reported')
       return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
-    const budget = readContinueBudget(
-      this.workContinues.get(id),
-      this.driverTargets.readStartedAt(id),
-      now
-    );
+    const budget = readContinueBudget(this.workContinues.get(id), work.createdAt, now);
     if (budget) return { ok: false, reason: budget };
     if (this.continuing.has(id))
       return { ok: false, reason: 'This work is already being continued; wait for that first.' };
     this.continuing.add(id);
     try {
+      const baseline = await this.readSendBaseline(ref, work);
       const outcome = await invokeOperation(
         this.sessions.getOperationRegistry(),
         'work.send',
@@ -444,6 +442,7 @@ export class NeoService {
       );
       const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
       if ('failure' in sent) return { ok: false, reason: sent.failure };
+      this.driverTargets.recordStartedAt(id, 'queued' in sent ? null : baseline);
       const continued = this.workContinues.record(id, message, now);
       const count = continued?.count ?? 1;
       const current = this.repo.getWork(id) ?? work;
@@ -460,6 +459,20 @@ export class NeoService {
     } finally {
       this.continuing.delete(id);
     }
+  }
+
+  private async readSendBaseline(ref: WorkRef, work: NeoWork): Promise<number | null> {
+    const sentAt = Date.now();
+    return readDriverSendBaseline(
+      await invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.status',
+        { ref },
+        driverWorkCaller(work)
+      ),
+      sentAt,
+      !!ref.daemon
+    );
   }
 
   async cancel(id: string): Promise<void> {
@@ -483,6 +496,8 @@ export class NeoService {
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     const call = driverWorkCall(target, queued, this.workGoals.get(queued.id));
+    const baseline =
+      target.verb === 'send' ? await this.readSendBaseline(target.ref, queued) : Date.now();
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       call.name,
@@ -494,7 +509,7 @@ export class NeoService {
       this.driverTargets.recordRef(
         queued.id,
         result.ref,
-        result.startedAt ?? Date.now(),
+        result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
         result.link
       );
       const current = this.repo.getWork(queued.id);
@@ -576,12 +591,12 @@ export class NeoService {
     const live = readDriverLive(outcome);
     if (live && this.driverTargets.recordLive(work.id, live.status, live.link))
       this.notifyChanged();
-    if (this.driverTargets.get(work.id)?.verb !== 'start') return;
     const settled = readDriverSettlement(
       work,
       outcome,
       Date.now(),
-      this.workContinues.get(work.id)?.continuedAt ?? this.driverTargets.readStartedAt(work.id)
+      this.driverTargets.readStartedAt(work.id),
+      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send'
     );
     if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
     const done = this.repo.transitionWork(work.id, work, {
