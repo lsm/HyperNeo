@@ -23,7 +23,6 @@ import {
 } from '../lib/router.ts';
 import { cn } from '../lib/utils.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
-import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { SectionSwitcher } from '../components/SectionSwitcher.tsx';
 import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
@@ -566,7 +565,6 @@ export function ContextPanel() {
             </svg>
             <span>Settings</span>
           </button>
-          <DaemonStatusIndicator showLabel={isSpaceDetail} />
         </div>
       </div>
       <SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
