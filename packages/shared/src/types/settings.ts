@@ -166,7 +166,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   coordinatorMode: false,
   maxConcurrentWorkers: 3,
   sandbox: {
-    enabled: true,
+    enabled: false,
     autoAllowBashIfSandboxed: true,
     excludedCommands: ['git'],
     network: {

@@ -326,7 +326,7 @@ export default function ChatContainer({
   const [localError, setLocalError] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<ChatDisplayMode>('compact');
   const [coordinatorMode, setCoordinatorMode] = useState(true);
-  const [sandboxEnabled, setSandboxEnabled] = useState(true);
+  const [sandboxEnabled, setSandboxEnabled] = useState(false);
   const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
   const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
   const [searchLoadTarget, setSearchLoadTarget] = useState<SearchMessageLoadTarget | null>(null);

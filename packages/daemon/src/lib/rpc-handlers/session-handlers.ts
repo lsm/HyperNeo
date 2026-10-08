@@ -698,14 +698,14 @@ export function setupSessionHandlers(
     }
 
     const session = agentSession.getSessionData();
-    const previousMode = session.config.sandbox?.enabled ?? true;
+    const previousMode = session.config.sandbox?.enabled ?? false;
 
     if (previousMode === sandboxEnabled) {
       return { success: true, sandboxEnabled };
     }
 
     const updatedSandbox = {
-      ...session.config.sandbox,
+      ...(session.config.sandbox ?? sessionManager.getDatabase().getGlobalSettings().sandbox),
       enabled: sandboxEnabled,
     };
 
