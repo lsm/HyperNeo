@@ -20,6 +20,8 @@ export interface NeoWorkGoal {
   doneWhen: string | null;
 }
 
+export const NEO_WORK_CONTINUE_LIMIT = 5;
+
 export interface NeoWorkContinue {
   workId: string;
   count: number;

@@ -1,8 +1,9 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoWorkContinue,
-  NeoWorkDriverReceipt,
-  NeoWorkGoal,
+import {
+  NEO_WORK_CONTINUE_LIMIT,
+  type NeoWorkContinue,
+  type NeoWorkDriverReceipt,
+  type NeoWorkGoal,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
@@ -218,7 +219,7 @@ export function NeoWorkCard({
       )}
       {presentation === 'detail' && continued && (
         <p class="mt-1 text-xs text-fg-muted" title={continued.lastMessage}>
-          Neo continued it {continued.count}/5
+          Neo continued it {continued.count}/{NEO_WORK_CONTINUE_LIMIT}
         </p>
       )}
       {presentation === 'detail' && goal?.doneWhen && (

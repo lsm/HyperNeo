@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import { NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
@@ -41,7 +42,6 @@ import {
   driverNeedsYouNote,
   withWorkGoal,
   readContinueBudget,
-  NEO_WORK_CONTINUE_LIMIT,
 } from './driver-work.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';

@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkContinue, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_WORK_CONTINUE_LIMIT,
+  type NeoWorkContinue,
+  type NeoWorkGoal,
+} from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
   WorkRefSchema,
@@ -34,7 +38,6 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export const NEO_WORK_CONTINUE_LIMIT = 5;
 export const NEO_WORK_CONTINUE_WINDOW_MS = 4 * 60 * 60 * 1000;
 
 export function readContinueBudget(
