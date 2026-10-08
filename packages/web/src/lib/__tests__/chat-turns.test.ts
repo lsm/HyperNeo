@@ -84,6 +84,31 @@ describe('buildChatTurns', () => {
     ]);
   });
 
+  it('keeps a turn running after a mid-turn compaction and lets other synthetic prompts start turns', () => {
+    const boundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'cb',
+    } as unknown as ChatMessage;
+    const summary = { ...user('summary', 2), isSynthetic: true } as unknown as ChatMessage;
+    const cloneReturn = { ...user('clone', 9), isSynthetic: true } as unknown as ChatMessage;
+    const turns = buildChatTurns([
+      user('u1', 1),
+      boundary,
+      summary,
+      assistant('a1', { type: 'tool_use', id: 't1' }),
+      result('r1', 'success', 5_000),
+      cloneReturn,
+      boundary,
+      summary,
+      assistant('a2', { type: 'text', text: 'still going' }),
+    ]);
+    expect(turns.map((turn) => [turn.key, turn.messages.length, turn.outcome])).toEqual([
+      ['u1', 5, 'done'],
+      ['clone', 4, 'running'],
+    ]);
+  });
+
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
