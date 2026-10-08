@@ -41,6 +41,7 @@ const RecordSchema = z.object({
   title: z.string().default(''),
   isArchived: z.boolean().default(false),
   lastActivityAt: z.number().default(0),
+  permissionMode: z.string().optional(),
 });
 
 const LiveSessionSchema = z.object({
@@ -443,6 +444,11 @@ async function relayToLiveSession(
         'haiku',
         '--max-turns',
         '4',
+        ...(record.permissionMode === 'bypassPermissions'
+          ? ['--permission-mode', 'bypassPermissions']
+          : []),
+        '--tools',
+        'SendMessage ListAgents',
         '--allowedTools',
         'SendMessage ListAgents',
         '-n',
@@ -633,6 +639,9 @@ export async function startClaudeSession(
       `${sessionId} was created but Claude Code Desktop did not open it; send the task to it with work.send.`
     );
   }
+  const appRecord = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+    (candidate) => candidate.sessionId === sessionId
+  );
   const record: ClaudeDesktopRecord = {
     sessionId,
     cliSessionId,
@@ -640,6 +649,7 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
+    permissionMode: appRecord?.permissionMode,
   };
   const sent = await sendClaudeMessage({ ...record, cliSessionId }, live, request.message, deps);
   if (!sent.ok) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -135,6 +135,22 @@ describe('claude-desktop start', () => {
       'u1',
     ]);
     expect(spawned[2].at(-1)).toContain('session named "Bigger font"');
+  });
+
+  test('relays the task from the permission class the app opened the session in', async () => {
+    mkdirSync(join(dir, 'sessions', 'acct', 'scope'), { recursive: true });
+    writeFileSync(
+      join(dir, 'sessions', 'acct', 'scope', 'local_u1.json'),
+      JSON.stringify({
+        sessionId: 'local_u1',
+        cliSessionId: 'u1',
+        cwd: '/focus/dolmen',
+        title: 'Bigger font',
+        permissionMode: 'bypassPermissions',
+      })
+    );
+    await adapter({ appearsAfter: 1, relayWrites: true }).start?.(request, user);
+    expect(spawned[2].slice(6, 8)).toEqual(['--permission-mode', 'bypassPermissions']);
   });
 
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
