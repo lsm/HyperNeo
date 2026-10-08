@@ -99,6 +99,19 @@ describe('WorktreeManager review summary patches', () => {
     expect(summary.files).toHaveLength(6);
   });
 
+  it('keeps patches when git config drops the diff prefixes', async () => {
+    git(repo, 'config', 'diff.noprefix', 'true');
+    writeFileSync(join(repo, 'file-0.txt'), 'line 0 changed\n');
+
+    const { summary, diffCalls } = await reviewSummary([
+      { path: 'file-0.txt', status: 'modified', staged: false, unstaged: true },
+    ]);
+
+    expect(diffCalls).toHaveLength(1);
+    expect(summary.files[0]?.patch).toStartWith('diff --git a/file-0.txt b/file-0.txt\n');
+    expect(summary.files[0]?.patch).toContain('+line 0 changed');
+  });
+
   it('keeps the review file cap with a single diff call', async () => {
     const files: GitChangedFile[] = [];
     for (let index = 0; index < 90; index++) {

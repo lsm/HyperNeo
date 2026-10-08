@@ -561,6 +561,8 @@ export class WorktreeManager {
           '--no-ext-diff',
           '--no-color',
           '--no-renames',
+          '--src-prefix=a/',
+          '--dst-prefix=b/',
           ...rangeArgs,
           '--',
           ...batched,
@@ -569,6 +571,7 @@ export class WorktreeManager {
           const path = headers.get(chunk.slice(0, chunk.indexOf('\n')));
           if (path !== undefined) patches.set(path, boundPatch(chunk));
         }
+        if (output.trim() && patches.size === 0) fallback = paths;
       } catch {
         fallback = paths;
       }
