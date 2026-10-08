@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { getThinkingOptionsForProvider, normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   CreateSessionRequest,
   GitBranchesResponse,
   ModelInfo,
   Provider,
+  ThinkingLevel,
   WorkspaceHistoryEntry,
 } from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
@@ -40,6 +42,7 @@ interface NewChatSelection {
   mode: NewChatWorktreeMode;
   baseBranch: string | null;
   model: NewChatModelSelection | null;
+  thinkingLevel: ThinkingLevel | null;
 }
 
 const NEW_CHAT_SELECTION_KEY = 'hyperneo_new_chat_selection';
@@ -48,6 +51,7 @@ const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
   mode: 'worktree',
   baseBranch: null,
   model: null,
+  thinkingLevel: null,
 };
 
 function loadNewChatSelection(): NewChatSelection {
@@ -70,6 +74,10 @@ function loadNewChatSelection(): NewChatSelection {
         typeof value.model.id === 'string' &&
         typeof value.model.provider === 'string'
           ? { id: value.model.id, provider: value.model.provider }
+          : null,
+      thinkingLevel:
+        typeof value.thinkingLevel === 'string'
+          ? normalizeThinkingLevel(value.thinkingLevel)
           : null,
     };
   } catch {
@@ -113,7 +121,7 @@ export function SessionsPage() {
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
-  const { availableModels, loading: modelLoading } = useModelSwitcher(null);
+  const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
   const [project, setProject] = useState<string | null>(initialSelection.project);
@@ -129,6 +137,11 @@ export function SessionsPage() {
   const [selectedModel, setSelectedModel] = useState<NewChatModelSelection | null>(
     initialSelection.model
   );
+  const [selectedThinking, setSelectedThinking] = useState<ThinkingLevel | null>(
+    initialSelection.thinkingLevel
+  );
+  const thinkingLevel =
+    selectedThinking ?? normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
 
   const canCreate = connectionState.value === 'connected';
   const waitingForProjectGit = project !== null && gitLoading;
@@ -167,8 +180,14 @@ export function SessionsPage() {
   }, []);
 
   useEffect(() => {
-    saveNewChatSelection({ project, mode, baseBranch, model: selectedModel });
-  }, [project, mode, baseBranch, selectedModel]);
+    saveNewChatSelection({
+      project,
+      mode,
+      baseBranch,
+      model: selectedModel,
+      thinkingLevel: selectedThinking,
+    });
+  }, [project, mode, baseBranch, selectedModel, selectedThinking]);
 
   useEffect(() => {
     if (!project) {
@@ -286,6 +305,13 @@ export function SessionsPage() {
           provider: selectedModelInfo.provider as Provider,
         };
       }
+      if (selectedThinking) {
+        const supported = getThinkingOptionsForProvider(
+          activeModelInfo?.provider,
+          activeModelInfo?.thinkingModes
+        ).some((option) => option.value === selectedThinking);
+        req.config = { ...req.config, thinkingLevel: supported ? selectedThinking : 'off' };
+      }
       if (project) {
         req.workspacePath = project;
         if (gitInfo?.isGitRepo) {
@@ -358,6 +384,9 @@ export function SessionsPage() {
                 activeModelLabel={activeModelLabel}
                 availableModels={availableModels}
                 loading={modelLoading}
+                thinkingLevel={thinkingLevel}
+                onSelectThinking={setSelectedThinking}
+                onReload={() => void reloadModels()}
                 onSelectModel={(model) => {
                   if (!model.provider) {
                     toast.error('Model provider information is missing');

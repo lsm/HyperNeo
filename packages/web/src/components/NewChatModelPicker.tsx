@@ -1,23 +1,16 @@
-import type { ModelInfo } from '@hyperneo/shared';
+import { getThinkingOptionsForProvider } from '@hyperneo/shared';
+import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 
-import {
-  getProviderLabel,
-  groupModelsByProvider,
-  useClickOutside,
-  useFilteredModelsForPicker,
-  useModal,
-} from '../hooks';
+import { filterModelsForPicker, useClickOutside } from '../hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
-import {
-  providerPillStyle,
-  providerLogoColor,
-  providerHeaderStyle,
-  shortenModelName,
-} from '../lib/provider-brand.ts';
+import { providerPillStyle, providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
+import { NeoIcon } from '../neo/NeoIcon.tsx';
+import { NeoModelMenu } from '../neo/NeoModelMenu.tsx';
 import { ProviderLogo } from './ProviderLogo.tsx';
+import { ThinkingLevelIcon } from './ThinkingLevelIcon.tsx';
 import { Spinner } from './ui/Spinner.tsx';
 
 interface NewChatModelPickerProps {
@@ -25,15 +18,10 @@ interface NewChatModelPickerProps {
   activeModelLabel: string;
   availableModels: ModelInfo[];
   loading: boolean;
+  thinkingLevel: ThinkingLevel;
   onSelectModel: (model: ModelInfo) => void;
-}
-
-function providerDotClass(status: ProviderAuthStatus | undefined): string {
-  if (!status) return 'bg-fg-faint';
-  if (status.errorKind === 'transient') return 'bg-fg-faint';
-  if (!status.isAuthenticated) return 'bg-danger';
-  if (status.needsRefresh) return 'bg-warning';
-  return 'bg-success';
+  onSelectThinking: (level: ThinkingLevel) => void;
+  onReload: () => void;
 }
 
 export function NewChatModelPicker({
@@ -41,18 +29,21 @@ export function NewChatModelPicker({
   activeModelLabel,
   availableModels,
   loading,
+  thinkingLevel,
   onSelectModel,
+  onSelectThinking,
+  onReload,
 }: NewChatModelPickerProps) {
-  const dropdown = useModal();
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const requestIdRef = useRef(0);
-  const [searchQuery, setSearchQuery] = useState('');
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
   );
   const isConnected = connectionState.value === 'connected';
 
-  useClickOutside(dropdownRef, dropdown.close, dropdown.isOpen);
+  useClickOutside(ref, () => setOpen(false), open);
 
   const loadAuthStatuses = useCallback(() => {
     const hub = connectionManager.getHubIfConnected();
@@ -62,11 +53,9 @@ export function NewChatModelPicker({
       .request<{ providers?: ProviderAuthStatus[] }>('auth.providers', {})
       .then((result) => {
         if (requestId !== requestIdRef.current) return;
-        const statusMap = new Map<string, ProviderAuthStatus>();
-        for (const provider of result.providers ?? []) {
-          statusMap.set(provider.id, provider);
-        }
-        setProviderAuthStatuses(statusMap);
+        setProviderAuthStatuses(
+          new Map((result.providers ?? []).map((provider) => [provider.id, provider]))
+        );
       })
       .catch(() => {});
   }, []);
@@ -79,153 +68,77 @@ export function NewChatModelPicker({
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
-    const unsub = hub.onEvent('providers.changed', () => {
+    return hub.onEvent('providers.changed', () => {
       loadAuthStatuses();
     });
-    return () => {
-      unsub();
-    };
   }, [loadAuthStatuses, connectionState.value]);
 
-  useEffect(() => {
-    if (!dropdown.isOpen) setSearchQuery('');
-  }, [dropdown.isOpen]);
-
-  const filteredModels = useFilteredModelsForPicker(
+  const activeProvider = activeModelInfo?.provider;
+  const models = filterModelsForPicker(
     availableModels,
     providerAuthStatuses,
-    activeModelInfo?.provider,
-    activeModelInfo?.id,
-    searchQuery
+    activeProvider,
+    activeModelInfo?.id
   );
-  const groupedModels = groupModelsByProvider(filteredModels);
-  const activeModelKey = activeModelInfo
-    ? `${activeModelInfo.provider}:${activeModelInfo.id}`
-    : null;
-  const activeProvider = activeModelInfo?.provider;
-  const activeLabel = activeModelInfo
+  const options = getThinkingOptionsForProvider(activeProvider, activeModelInfo?.thinkingModes);
+  const level = options.some((option) => option.value === thinkingLevel) ? thinkingLevel : 'off';
+  const thinking = options.find((option) => option.value === level)?.label ?? 'Off';
+  const label = activeModelInfo
     ? shortenModelName(activeModelInfo.name, activeProvider)
     : activeModelLabel;
-
-  const modelCountLabel = useMemo(() => {
-    if (loading) return 'Loading models';
-    if (availableModels.length === 0) return 'No models loaded';
-    return `${availableModels.length} models`;
-  }, [availableModels.length, loading]);
+  const waiting = loading && availableModels.length === 0;
 
   return (
-    <div class="relative" ref={dropdownRef}>
+    <div class="relative min-w-0" ref={ref}>
       <button
+        ref={trigger}
         type="button"
-        onClick={dropdown.toggle}
-        disabled={loading && availableModels.length === 0}
-        title="Choose model"
-        aria-label="Choose model"
-        class="flex h-8 max-w-[240px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={() => setOpen(!open)}
+        disabled={waiting}
+        title={`${label} · Thinking: ${thinking}`}
+        aria-label="Choose model and thinking"
+        aria-expanded={open}
+        aria-controls="new-chat-preferences"
+        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         style={activeModelInfo ? providerPillStyle(activeProvider) : undefined}
       >
-        {loading && availableModels.length === 0 ? (
+        {waiting ? (
           <Spinner size="sm" />
         ) : activeModelInfo ? (
           <span class="flex shrink-0" style={{ color: providerLogoColor(activeProvider) }}>
             <ProviderLogo provider={activeProvider ?? 'anthropic'} class="h-4 w-4" />
           </span>
         ) : null}
-        <span class="min-w-0 truncate">{activeLabel}</span>
-        <svg
-          class="h-3.5 w-3.5 flex-shrink-0 text-fg-faint"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fill-rule="evenodd"
-            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
-            clip-rule="evenodd"
-          />
-        </svg>
+        <span class="min-w-0 truncate">{label}</span>
+        <span aria-hidden="true" class="text-fg-faint">
+          ·
+        </span>
+        <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
+          <ThinkingLevelIcon level={level} />
+        </span>
+        <NeoIcon
+          name="chevron"
+          class={`!h-3.5 !w-3.5 shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
-
-      {dropdown.isOpen && (
-        <div class="absolute bottom-full left-0 z-50 mb-2 flex max-h-[52vh] w-72 flex-col rounded-xl border border-line bg-surface-raised py-1 shadow-2xl">
-          <div class="flex items-center justify-between px-3 py-1.5">
-            <span class="text-xs font-semibold text-fg-muted">Model</span>
-            <span class="text-[10px] text-fg-faint">{modelCountLabel}</span>
-          </div>
-          <div class="px-2 pb-2">
-            <input
-              type="search"
-              value={searchQuery}
-              onInput={(e) => setSearchQuery(e.currentTarget.value)}
-              placeholder="Search models..."
-              aria-label="Search models"
-              class="w-full rounded-md border border-line-strong bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
-            />
-          </div>
-          <div class="min-h-0 flex-1 overflow-y-auto">
-            {Array.from(groupedModels.entries()).map(([provider, models], groupIndex) => {
-              const authStatus = providerAuthStatuses.get(provider);
-              return (
-                <div key={provider}>
-                  {groupIndex > 0 && <div class="mx-2 my-1 border-t border-line" />}
-                  <div
-                    class="flex items-center gap-1.5 px-3 py-1.5"
-                    style={providerHeaderStyle(provider)}
-                  >
-                    <span class="flex h-3.5 w-3.5 shrink-0">
-                      <ProviderLogo provider={provider} class="h-3.5 w-3.5" />
-                    </span>
-                    <span class="text-[11px] font-bold uppercase tracking-wider">
-                      {getProviderLabel(provider)}
-                    </span>
-                    <span
-                      class={`h-2 w-2 flex-shrink-0 rounded-full ${providerDotClass(authStatus)}`}
-                    />
-                    {authStatus?.needsRefresh && (
-                      <span class="text-[10px] text-warning" title="Token expiring soon">
-                        !
-                      </span>
-                    )}
-                  </div>
-                  {models.map((model) => {
-                    const isActive = `${model.provider}:${model.id}` === activeModelKey;
-                    const unavailable = model.available === false;
-                    return (
-                      <button
-                        key={`${model.provider}:${model.id}`}
-                        type="button"
-                        disabled={unavailable}
-                        class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                          unavailable ? 'cursor-not-allowed opacity-50' : 'hover:bg-fill-strong'
-                        } ${isActive ? 'text-accent' : 'text-fg-soft'}`}
-                        onClick={() => {
-                          if (unavailable) return;
-                          onSelectModel(model);
-                          dropdown.close();
-                        }}
-                      >
-                        <span class="min-w-0 flex-1 truncate">
-                          {shortenModelName(model.name, model.provider)}
-                        </span>
-                        {unavailable && (
-                          <span
-                            class="text-[10px] text-fg-faint"
-                            title="Not runnable on this account"
-                          >
-                            unavailable
-                          </span>
-                        )}
-                        {isActive && <span class="text-[10px] text-accent">✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-            {filteredModels.length === 0 && (
-              <div class="px-3 py-4 text-center text-xs text-fg-faint">No matching models</div>
-            )}
-          </div>
-        </div>
+      {open && (
+        <NeoModelMenu
+          id="new-chat-preferences"
+          models={models}
+          current={activeModelInfo ?? undefined}
+          level={level}
+          options={options}
+          busy={false}
+          loading={loading}
+          working={false}
+          onModel={onSelectModel}
+          onThinking={onSelectThinking}
+          onReload={onReload}
+          onClose={() => {
+            setOpen(false);
+            trigger.current?.focus();
+          }}
+        />
       )}
     </div>
   );

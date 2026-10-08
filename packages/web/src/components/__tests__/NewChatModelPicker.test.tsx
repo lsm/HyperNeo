@@ -42,6 +42,7 @@ function makeHub(providers: Array<Record<string, unknown>>) {
 
 describe('NewChatModelPicker', () => {
   const onSelectModel = vi.fn();
+  const onSelectThinking = vi.fn();
 
   const anthropicModels: ModelInfo[] = [
     makeModel('model-alpha', 'anthropic', 'Model Alpha'),
@@ -57,7 +58,10 @@ describe('NewChatModelPicker', () => {
         activeModelLabel="Model Alpha"
         availableModels={anthropicModels}
         loading={false}
+        thinkingLevel="off"
         onSelectModel={onSelectModel}
+        onSelectThinking={onSelectThinking}
+        onReload={vi.fn()}
         {...overrides}
       />
     );
@@ -67,13 +71,14 @@ describe('NewChatModelPicker', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    const button = container.querySelector('button[aria-label="Choose model"]')!;
+    const button = container.querySelector('button[aria-label="Choose model and thinking"]')!;
     fireEvent.click(button);
   }
 
   beforeEach(() => {
     cleanup();
     onSelectModel.mockClear();
+    onSelectThinking.mockClear();
     mockConnectionState.value = 'connected';
     mockGetHubIfConnected.mockReturnValue(null);
   });
@@ -82,43 +87,23 @@ describe('NewChatModelPicker', () => {
     cleanup();
   });
 
-  describe('availability dot', () => {
-    it('renders the transient failure as neutral, not danger', async () => {
-      mockGetHubIfConnected.mockReturnValue(
-        makeHub([{ id: 'anthropic', isAuthenticated: false, errorKind: 'transient' }])
-      );
+  describe('thinking', () => {
+    it('shows the chosen level on the trigger and reports a new one from the menu', async () => {
+      const { container } = renderPicker({ thinkingLevel: 'think16k' });
+      expect(container.querySelector('[aria-label="Thinking: Think 16k"]')).toBeTruthy();
 
-      const { container } = renderPicker();
       await openDropdown(container);
+      fireEvent.click(container.querySelector('button[aria-label="Think 32k"]')!);
 
-      const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-danger')).toBeFalsy();
+      expect(onSelectThinking).toHaveBeenCalledWith('think32k');
     });
 
-    it('renders an authenticated transient failure as degraded, not healthy', async () => {
-      mockGetHubIfConnected.mockReturnValue(
-        makeHub([{ id: 'anthropic', isAuthenticated: true, errorKind: 'transient' }])
-      );
-
-      const { container } = renderPicker();
-      await openDropdown(container);
-
-      const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-success')).toBeFalsy();
-    });
-
-    it('renders a definitive credential failure as danger', async () => {
-      mockGetHubIfConnected.mockReturnValue(
-        makeHub([{ id: 'anthropic', isAuthenticated: false, errorKind: 'credential' }])
-      );
-
-      const { container } = renderPicker();
-      await openDropdown(container);
-
-      const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-danger')).toBeTruthy();
+    it('shows Off when the model cannot think at the chosen level', () => {
+      const { container } = renderPicker({
+        thinkingLevel: 'think16k',
+        activeModelInfo: { ...activeModelInfo, thinkingModes: 'off' },
+      });
+      expect(container.querySelector('[aria-label="Thinking: Off"]')).toBeTruthy();
     });
   });
 
@@ -135,7 +120,7 @@ describe('NewChatModelPicker', () => {
         button.textContent?.includes('Model Beta')
       )!;
       expect(option.disabled).toBe(true);
-      expect(option.textContent).toContain('unavailable');
+      expect(option.title).toBe('Not runnable on this account');
 
       fireEvent.click(option);
       expect(onSelectModel).not.toHaveBeenCalled();
@@ -149,7 +134,7 @@ describe('NewChatModelPicker', () => {
       const { container } = renderPicker();
       await openDropdown(container);
 
-      const dropdown = container.querySelector('.absolute.bottom-full')!;
+      const dropdown = container.querySelector('#new-chat-preferences')!;
       expect(dropdown.textContent).toContain('Model Alpha');
       expect(dropdown.textContent).toContain('Model Beta');
     });
@@ -162,7 +147,7 @@ describe('NewChatModelPicker', () => {
       const { container } = renderPicker();
       await openDropdown(container);
 
-      const dropdown = container.querySelector('.absolute.bottom-full')!;
+      const dropdown = container.querySelector('#new-chat-preferences')!;
       expect(dropdown.textContent).toContain('Model Alpha');
       expect(dropdown.textContent).not.toContain('Model Beta');
     });
