@@ -77,6 +77,7 @@ interface SessionStatusBarProps {
   sessionId: string;
   isProcessing: boolean;
   currentAction?: string;
+  statusActivity?: string;
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
   contextUsage?: ContextInfo;
   maxContextTokens?: number;
@@ -96,6 +97,7 @@ export default function SessionStatusBar({
   sessionId: _sessionId,
   isProcessing,
   currentAction,
+  statusActivity,
   streamingPhase,
   contextUsage,
   maxContextTokens,
@@ -253,6 +255,7 @@ export default function SessionStatusBar({
         connectionState={isRecovering && connState === 'connected' ? 'reconnecting' : connState}
         isProcessing={isRecovering ? false : isProcessing}
         currentAction={isRecovering ? undefined : currentAction}
+        activity={isRecovering ? undefined : statusActivity}
         streamingPhase={isRecovering ? undefined : streamingPhase}
       />
 

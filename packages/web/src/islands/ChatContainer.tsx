@@ -33,7 +33,13 @@ import {
   resolveChatDisplayMode,
 } from '../components/sdk/chat-display-mode.ts';
 import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
-import { type ChatTurn, buildChatTurns, liveTurnActivity } from '../lib/chat-turns.ts';
+import {
+  type ChatTurn,
+  backgroundAgentsLabel,
+  buildChatTurns,
+  liveTurnActivity,
+  runningBackgroundAgents,
+} from '../lib/chat-turns.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import {
@@ -941,8 +947,21 @@ export default function ChatContainer({
     agentState.status,
     currentAction
   );
+  const backgroundLabel = useMemo(
+    () => backgroundAgentsLabel(runningBackgroundAgents(messages)),
+    [messages]
+  );
+  const lastTurnKey = turnAt?.[turnAt.length - 1]?.key;
+  const turnLabel = turnActive ? turnAction : backgroundLabel;
+  const statusActivity = isProcessing ? undefined : turnLabel;
   const turnView = (turn: ChatTurn) => {
-    const outcome = turn.outcome === 'running' && !turnActive ? 'stopped' : turn.outcome;
+    const background =
+      !turnActive && !!backgroundLabel && turn.key === lastTurnKey && turn.outcome !== 'failed';
+    const outcome = background
+      ? 'running'
+      : turn.outcome === 'running' && !turnActive
+        ? 'stopped'
+        : turn.outcome;
     return {
       turn: outcome === turn.outcome ? turn : { ...turn, outcome },
       expanded: turnExpansion[turn.key] ?? outcome === 'failed',
@@ -1451,7 +1470,7 @@ export default function ChatContainer({
                       {view && turnAt?.[idx + 1] !== turn && (
                         <TurnStatusLine
                           turn={view.turn}
-                          currentAction={turnAction}
+                          currentAction={turnLabel}
                           expanded={view.expanded}
                           onToggle={() =>
                             setTurnExpansion((previous) => ({
@@ -1486,6 +1505,7 @@ export default function ChatContainer({
         }
         isProcessing={isProcessing}
         currentAction={currentAction}
+        statusActivity={statusActivity}
         streamingPhase={streamingPhase}
         contextUsage={contextUsage ?? undefined}
         features={features}

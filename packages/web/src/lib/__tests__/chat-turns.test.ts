@@ -1,6 +1,11 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildChatTurns, liveTurnActivity } from '../chat-turns.ts';
+import {
+  backgroundAgentsLabel,
+  buildChatTurns,
+  liveTurnActivity,
+  runningBackgroundAgents,
+} from '../chat-turns.ts';
 
 const user = (uuid: string, timestamp: number) =>
   ({
@@ -76,6 +81,59 @@ describe('buildChatTurns', () => {
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
+  });
+});
+
+describe('runningBackgroundAgents', () => {
+  const launch = (uuid: string, id: string, background = true) =>
+    assistant(uuid, {
+      type: 'tool_use',
+      id,
+      name: 'Agent',
+      input: { description: id, run_in_background: background },
+    });
+  const notified = (id: string) =>
+    ({
+      type: 'system',
+      subtype: 'task_notification',
+      tool_use_id: id,
+      status: 'completed',
+    }) as unknown as ChatMessage;
+
+  it('counts background agents launched in the latest turn that have not reported back', () => {
+    const asyncResult = {
+      type: 'user',
+      uuid: 'r3',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'auto',
+            content: [{ type: 'text', text: 'Async agent launched successfully. agentId: x' }],
+          },
+        ],
+      },
+    } as unknown as ChatMessage;
+    const messages = [
+      user('u1', 1000),
+      launch('a0', 'old'),
+      user('u2', 2000),
+      launch('a1', 'one'),
+      launch('a2', 'two'),
+      launch('a3', 'sync', false),
+      asyncResult,
+      notified('one'),
+    ];
+    expect(runningBackgroundAgents(messages)).toBe(2);
+    expect(runningBackgroundAgents([...messages, notified('two'), notified('auto')])).toBe(0);
+  });
+});
+
+describe('backgroundAgentsLabel', () => {
+  it('names the count for the status line', () => {
+    expect(backgroundAgentsLabel(0)).toBeUndefined();
+    expect(backgroundAgentsLabel(1)).toBe('1 background agent running');
+    expect(backgroundAgentsLabel(3)).toBe('3 background agents running');
   });
 });
 

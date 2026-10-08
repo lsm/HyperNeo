@@ -26,6 +26,7 @@ interface ConnectionStatusProps {
     | 'failed';
   isProcessing: boolean;
   currentAction?: string;
+  activity?: string;
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 }
 
@@ -39,6 +40,7 @@ function resolveStatus({
   connectionState,
   isProcessing,
   currentAction,
+  activity,
   streamingPhase,
 }: ConnectionStatusProps): StatusResult {
   if (isProcessing && currentAction) {
@@ -51,7 +53,9 @@ function resolveStatus({
 
   switch (connectionState) {
     case 'connected':
-      return { tone: 'success', pulse: false, text: 'Ready' };
+      return activity
+        ? { tone: SESSION_PROCESSING_STATUS_CONFIG.processing.tone, pulse: true, text: activity }
+        : { tone: 'success', pulse: false, text: 'Ready' };
     case 'connecting':
       return { tone: 'progress', pulse: true, text: 'Connecting...' };
     case 'reconnecting':
@@ -68,9 +72,16 @@ export default function ConnectionStatus({
   connectionState,
   isProcessing,
   currentAction,
+  activity,
   streamingPhase,
 }: ConnectionStatusProps) {
-  const status = resolveStatus({ connectionState, isProcessing, currentAction, streamingPhase });
+  const status = resolveStatus({
+    connectionState,
+    isProcessing,
+    currentAction,
+    activity,
+    streamingPhase,
+  });
 
   return (
     <div class="flex items-center gap-2">
