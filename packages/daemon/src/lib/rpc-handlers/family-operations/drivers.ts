@@ -80,6 +80,15 @@ export async function createDriverSession(
       worktreeMode: isGitRepo ? 'worktree' : 'direct',
       ...(config ? { config } : {}),
     });
+  if (model) {
+    const wanted = model.toLowerCase();
+    const known = (await availableModels()).some(
+      (entry) =>
+        entry.available !== false &&
+        (entry.id.toLowerCase() === wanted || entry.alias?.toLowerCase() === wanted)
+    );
+    if (!known) throw new ModelUnavailableError(`Model '${model}' is not available.`);
+  }
   try {
     return await create(model ? { model } : undefined);
   } catch (error) {

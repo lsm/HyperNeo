@@ -64,7 +64,9 @@ describe('newestAvailableModel', () => {
 describe('createDriverSession model', () => {
   test('opens the session on the model asked for', async () => {
     const { created, manager } = sessionManager(false);
-    await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3');
+    await createDriverSession(manager as never, '/notes', 'essay', 'glm-5.3', async () => [
+      { ...model('glm-5.3[1m]', '2026-08-14'), alias: 'glm-5.3' },
+    ]);
     expect(created[0].config).toEqual({ model: 'glm-5.3' });
   });
 
@@ -78,16 +80,26 @@ describe('createDriverSession model', () => {
       async () => [model('gpt-5', '2026-01-01'), model('gpt-6', '2026-09-01')]
     );
     expect(id).toBe('new');
-    expect(created.map((params) => params.config)).toEqual([
+    expect(created.map((params): unknown => params.config)).toEqual([
       undefined,
       { model: 'gpt-6', provider: 'gpt' },
     ]);
   });
 
+  test('refuses a named model that is not available instead of using the default', async () => {
+    const { created, manager } = sessionManager(false);
+    await expect(
+      createDriverSession(manager as never, '/notes', 'essay', 'nope-1', async () => [
+        model('gpt-6', '2026-09-01'),
+      ])
+    ).rejects.toThrow(ModelUnavailableError);
+    expect(created).toEqual([]);
+  });
+
   test('keeps the failure for a model asked for by name, or when nothing can run', async () => {
     const asked = sessionManager(false, () => false);
     await expect(
-      createDriverSession(asked.manager as never, '/notes', 'essay', 'glm-5.3', async () => [
+      createDriverSession(asked.manager as never, '/notes', 'essay', 'gpt-6', async () => [
         model('gpt-6', '2026-09-01'),
       ])
     ).rejects.toThrow(ModelUnavailableError);
