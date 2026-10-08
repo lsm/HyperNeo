@@ -21,7 +21,11 @@ import { renderAddress } from '../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import { createNeoAskOriginResolver, neoDoneCheckMessageId } from './ask-origin.ts';
+import {
+  createNeoAskOriginResolver,
+  neoDoneCheckMessageId,
+  neoStallMessageId,
+} from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
@@ -42,6 +46,9 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
   driverDoneCheckNote,
+  driverStallNote,
+  NEO_WORK_STALL_MS,
+  readDriverActivity,
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
@@ -96,6 +103,7 @@ export class NeoService {
   private readonly processingStatus = new Map<string, string>();
   private readonly interruptedSessions = new Set<string>();
   private readonly continuing = new Set<string>();
+  private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
@@ -427,7 +435,7 @@ export class NeoService {
     if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
     if (work.status !== 'queued' && work.status !== 'reported')
       return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
-    const budget = readContinueBudget(this.workContinues.get(id), work.createdAt, now);
+    const budget = this.continueBudget(work, now);
     if (budget) return { ok: false, reason: budget };
     if (this.continuing.has(id))
       return { ok: false, reason: 'This work is already being continued; wait for that first.' };
@@ -598,12 +606,42 @@ export class NeoService {
       this.driverTargets.readStartedAt(work.id),
       !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send'
     );
-    if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
+    if (!settled) {
+      await this.noteDriverStall(work, outcome);
+      return this.noteDriverNeedsYou(work, ref, outcome);
+    }
+    this.activitySeen.delete(work.id);
     const done = this.repo.transitionWork(work.id, work, {
       status: settled.status,
       report: settled.report.slice(0, 12000),
     });
     if (done) await this.returnReport(done);
+  }
+
+  private continueBudget(work: NeoWork, now: number): string | null {
+    return readContinueBudget(this.workContinues.get(work.id), work.createdAt, now);
+  }
+
+  private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
+    const live = readDriverActivity(outcome);
+    if (live?.status !== 'running') {
+      this.activitySeen.delete(work.id);
+      return;
+    }
+    const now = Date.now();
+    const seen = this.activitySeen.get(work.id);
+    if (seen?.at !== live.lastActivityAt) {
+      this.activitySeen.set(work.id, { at: live.lastActivityAt, seenAt: now });
+      return;
+    }
+    if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
+    const budget = this.continueBudget(work, now);
+    await this.deliver(
+      work.originSessionId,
+      neoStallMessageId(work.id, live.lastActivityAt),
+      driverStallNote(work, this.workGoals.get(work.id), live.lastReply, budget),
+      work.originSessionId
+    );
   }
 
   private async noteDriverNeedsYou(
@@ -734,11 +772,7 @@ export class NeoService {
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
     const continued = this.workContinues.get(work.id)?.count ?? 0;
-    const budget = readContinueBudget(
-      this.workContinues.get(work.id),
-      this.driverTargets.readStartedAt(work.id),
-      Date.now()
-    );
+    const budget = this.continueBudget(work, Date.now());
     await this.deliver(
       work.originSessionId,
       neoDoneCheckMessageId(work.id, continued),

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
@@ -387,6 +387,46 @@ describe('Neo work with a drivers target', () => {
       await service.reconcile('work-1');
       expect(returned).toEqual(['work-1']);
     } finally {
+      db.close();
+    }
+  });
+
+  test('tells the proposing session once when running work shows no activity for 20 minutes', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    let activity = 5;
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'running', lastActivityAt: activity, lastReply: 'Building…' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'A full Neo iOS app', '- voice works');
+    const notes: Array<[string, string, string]> = [];
+    Object.assign(service, {
+      deliver: async (target: string, messageId: string, content: string) => {
+        notes.push([target, messageId, content]);
+      },
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      now += 19 * 60_000;
+      await service.refreshDriverWork();
+      expect(notes).toEqual([]);
+      now += 60_000;
+      await service.refreshDriverWork();
+      expect(notes.map(([target, id]) => [target, id])).toEqual([['neo:root', 'work-1:stall:5']]);
+      expect(notes[0][2]).toContain('work.stop');
+      expect(notes[0][2]).not.toContain('continue_budget_spent');
+      expect(notes[0][2]).toContain('- voice works');
+      activity = 6;
+      now += 30 * 60_000;
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      clock.mockRestore();
       db.close();
     }
   });
