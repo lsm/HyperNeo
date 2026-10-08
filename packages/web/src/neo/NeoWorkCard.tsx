@@ -1,5 +1,10 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkDriverReceipt, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_WORK_CONTINUE_LIMIT,
+  type NeoWorkContinue,
+  type NeoWorkDriverReceipt,
+  type NeoWorkGoal,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -64,6 +69,7 @@ export function NeoWorkCard({
   work,
   driver,
   goal,
+  continued,
   busy,
   disabled,
   onAction,
@@ -75,6 +81,7 @@ export function NeoWorkCard({
   work: NeoWork;
   driver?: NeoWorkDriverReceipt;
   goal?: NeoWorkGoal;
+  continued?: NeoWorkContinue;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: 'start' | 'cancel') => void;
@@ -208,6 +215,11 @@ export function NeoWorkCard({
         <p class="mt-2 break-words text-sm text-fg-soft">
           <span class="text-fg-muted">Goal: </span>
           {goal.goal}
+        </p>
+      )}
+      {presentation === 'detail' && continued && (
+        <p class="mt-1 text-xs text-fg-muted" title={continued.lastMessage}>
+          Neo continued it {continued.count}/{NEO_WORK_CONTINUE_LIMIT}
         </p>
       )}
       {presentation === 'detail' && goal?.doneWhen && (

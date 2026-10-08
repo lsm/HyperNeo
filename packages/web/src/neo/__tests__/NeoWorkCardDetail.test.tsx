@@ -234,3 +234,20 @@ describe('NeoWorkCard goal', () => {
     expect(screen.queryByText('A full iOS app')).toBeNull();
   });
 });
+
+describe('NeoWorkCard continues', () => {
+  afterEach(() => cleanup());
+
+  it('shows how many times Neo continued the work', () => {
+    render(
+      <NeoWorkCard
+        work={work('c1', 'queued')}
+        continued={{ workId: 'c1', count: 2, continuedAt: 1, lastMessage: 'Build settings.' }}
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+      />
+    );
+    expect(screen.getByText('Neo continued it 2/5').getAttribute('title')).toBe('Build settings.');
+  });
+});

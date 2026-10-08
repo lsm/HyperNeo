@@ -406,7 +406,9 @@ describe('Neo work with a drivers target', () => {
       sendTarget
     );
     try {
+      const before = Date.now();
       await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeGreaterThanOrEqual(before);
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
       expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status']);
