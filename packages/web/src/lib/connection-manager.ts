@@ -54,6 +54,7 @@ export class ConnectionManager {
   private visibilityHandler: (() => void) | null = null;
   private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private pageShowHandler: (() => void) | null = null;
+  private resumePending = false;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -285,6 +286,7 @@ export class ConnectionManager {
         this.resumeSuspended();
         return;
       }
+      if (this.resumePending) return;
       if (this.transport) {
         this.transport.resetReconnectState();
       }
@@ -301,8 +303,12 @@ export class ConnectionManager {
   }
 
   private resumeSuspended(): void {
+    this.resumePending = true;
     this.transport?.resume();
-    this.onceConnected(() => void this.validateConnectionOnResume());
+    this.onceConnected(() => {
+      this.resumePending = false;
+      void this.validateConnectionOnResume();
+    });
   }
 
   private async validateConnectionOnResume(): Promise<void> {
