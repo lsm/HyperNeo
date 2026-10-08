@@ -951,12 +951,20 @@ export default function ChatContainer({
     () => backgroundTasksLabel(countTopLevelTasks(runningToolUseIds, messages)),
     [runningToolUseIds, messages]
   );
-  const lastTurnKey = turnAt?.[turnAt.length - 1]?.key;
-  const turnLabel = turnActive ? turnAction : backgroundLabel;
-  const statusActivity = isProcessing ? undefined : turnLabel;
+  const lastTurn = turnAt?.[turnAt.length - 1];
+  const lastTurnBackground = useMemo(
+    () =>
+      lastTurn
+        ? backgroundTasksLabel(countTopLevelTasks(runningToolUseIds, lastTurn.messages))
+        : undefined,
+    [runningToolUseIds, lastTurn]
+  );
+  const turnLabel = turnActive ? turnAction : lastTurnBackground;
+  const statusActivity = isProcessing ? undefined : turnActive ? turnAction : backgroundLabel;
   const turnView = (turn: ChatTurn) => {
     const live =
-      turn.key === lastTurnKey && (turnActive || (!!backgroundLabel && turn.outcome !== 'failed'));
+      turn.key === lastTurn?.key &&
+      (turnActive || (!!lastTurnBackground && turn.outcome !== 'failed'));
     const outcome = live
       ? 'running'
       : turn.outcome === 'running' && !turnActive

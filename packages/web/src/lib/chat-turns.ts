@@ -77,13 +77,13 @@ export function countTopLevelTasks(
   runningToolUseIds: ReadonlySet<string>,
   messages: ChatMessage[]
 ): number {
-  const nested = new Set<string>();
+  const topLevel = new Set<string>();
   for (const message of messages) {
-    if (isTopLevel(message)) continue;
+    if (message.type !== 'assistant' || !isTopLevel(message)) continue;
     for (const block of contentBlocks(message))
-      if (block?.type === 'tool_use' && typeof block.id === 'string') nested.add(block.id);
+      if (block?.type === 'tool_use' && typeof block.id === 'string') topLevel.add(block.id);
   }
-  return [...runningToolUseIds].filter((id) => !nested.has(id)).length;
+  return [...runningToolUseIds].filter((id) => topLevel.has(id)).length;
 }
 
 export function backgroundTasksLabel(count: number): string | undefined {

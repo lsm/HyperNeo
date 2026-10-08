@@ -97,7 +97,7 @@ describe('buildChatTurns', () => {
 });
 
 describe('countTopLevelTasks', () => {
-  it('leaves out tasks that a subagent started inside itself', () => {
+  it('counts only tasks launched by top-level tool calls in the given messages', () => {
     const nestedBash = {
       ...assistant('sub', { type: 'tool_use', id: 'bash-in-agent', name: 'Bash' }),
       parent_tool_use_id: 'agent-a',
@@ -107,7 +107,9 @@ describe('countTopLevelTasks', () => {
       assistant('a1', { type: 'tool_use', id: 'agent-a', name: 'Agent' }),
       nestedBash,
     ];
-    expect(countTopLevelTasks(new Set(['agent-a', 'bash-in-agent']), messages)).toBe(1);
+    const running = new Set(['agent-a', 'bash-in-agent', 'scrolled-out']);
+    expect(countTopLevelTasks(running, messages)).toBe(1);
+    expect(countTopLevelTasks(running, [user('u2', 2)])).toBe(0);
   });
 });
 
