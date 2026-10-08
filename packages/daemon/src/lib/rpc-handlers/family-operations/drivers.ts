@@ -81,13 +81,10 @@ export async function createDriverSession(
       ...(config ? { config } : {}),
     });
   if (model) {
-    const wanted = model.toLowerCase();
-    const known = (await availableModels()).some(
-      (entry) =>
-        entry.available !== false &&
-        (entry.id.toLowerCase() === wanted || entry.alias?.toLowerCase() === wanted)
-    );
-    if (!known) throw new ModelUnavailableError(`Model '${model}' is not available.`);
+    const { findInModels } = await import('../../model-service.ts');
+    const usable = (await availableModels()).filter((entry) => entry.available !== false);
+    if (!findInModels(usable, model))
+      throw new ModelUnavailableError(`Model '${model}' is not available.`);
   }
   try {
     return await create(model ? { model } : undefined);

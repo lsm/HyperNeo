@@ -46,7 +46,7 @@ describe('createDriverSession', () => {
 });
 
 const model = (id: string, releaseDate: string, available = true): ModelInfo =>
-  ({ id, provider: id.split('-')[0], releaseDate, available }) as ModelInfo;
+  ({ id, alias: id, provider: id.split('-')[0], releaseDate, available }) as ModelInfo;
 
 describe('newestAvailableModel', () => {
   test('takes the most recently released model that is available', () => {
@@ -83,6 +83,20 @@ describe('createDriverSession model', () => {
     expect(created.map((params): unknown => params.config)).toEqual([
       undefined,
       { model: 'gpt-6', provider: 'gpt' },
+    ]);
+  });
+
+  test('accepts the provider aliases and legacy names session creation resolves', async () => {
+    const { created, manager } = sessionManager(false);
+    const models = async () => [
+      { ...model('kimi-k3-0901', '2026-09-01'), providerAliases: ['kimi-k3'] },
+      { ...model('sonnet', '2026-05-01'), alias: 'sonnet' },
+    ];
+    await createDriverSession(manager as never, '/notes', 'essay', 'kimi-k3', models);
+    await createDriverSession(manager as never, '/notes', 'essay', 'claude-sonnet-4-6', models);
+    expect(created.map((params): unknown => params.config)).toEqual([
+      { model: 'kimi-k3' },
+      { model: 'claude-sonnet-4-6' },
     ]);
   });
 
