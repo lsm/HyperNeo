@@ -140,7 +140,7 @@ describe('direct human publication prompt', () => {
   test.each([null, 'research'])('excludes internal and non-human inputs for %s', (concernId) => {
     const prompt = delivered(concernId);
     expect(prompt).toContain(
-      'Never publish internal compaction, tool chatter, other system deliveries or returned legacy results as answers'
+      'Never publish internal compaction, tool chatter, other system deliveries or returned legacy results as answers, except the work summary a returned-work or done-check note asks for'
     );
     expect(prompt).toContain('not a consultation request from Neo');
     expect(prompt).toContain('not a returned work or consultation result');

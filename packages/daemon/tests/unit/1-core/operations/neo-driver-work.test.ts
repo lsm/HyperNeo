@@ -7,6 +7,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
   driverWorkCall,
+  NEO_WORK_SUMMARY_NOTE,
   withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
@@ -479,12 +480,40 @@ describe('Neo work with a drivers target', () => {
       expect(notes[0][2]).toContain('neo.work.continue');
       expect(notes[0][2]).toContain('- voice works');
       expect(notes[0][2]).toContain('Skeleton builds.');
+      expect(notes[0][2]).toContain('do not tell the human yet');
+      expect(notes[0][2]).toContain(NEO_WORK_SUMMARY_NOTE);
 
       for (let n = 0; n < 5; n++) service.workContinues.record('work-1', `Step ${n}`, Date.now());
       await service.reconcile('work-1');
       expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
       expect(notes[1][2]).toContain('Do not continue it.');
+      expect(notes[1][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('asks Neo for a short linked summary when work without a checklist returns', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'failed', lastActivityAt: Date.now() + 1_000, lastReply: 'Tests fail.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const notes: Array<[string, string, string]> = [];
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (target: string, messageId: string, content: string) => {
+        notes.push([target, messageId, content]);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(notes.map(([target, id]) => [target, id])).toEqual([['neo:root', 'work-1']]);
+      expect(notes[0][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+      expect(notes[0][2]).toContain('"workId":"work-1"');
     } finally {
       db.close();
     }
