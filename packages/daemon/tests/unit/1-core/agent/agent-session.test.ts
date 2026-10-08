@@ -6104,7 +6104,10 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        session.config = { ...session.config, provider: 'custom:removed' };
+        session.config = {
+          ...session.config,
+          provider: 'custom:removed' as Session['config']['provider'],
+        };
         db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
