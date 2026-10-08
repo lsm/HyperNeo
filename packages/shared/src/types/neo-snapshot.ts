@@ -12,6 +12,7 @@ export interface NeoWorkDriverReceipt {
   daemon: string | null;
   status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
   link: string | null;
+  remoteLink?: string;
 }
 
 export interface NeoWorkGoal {

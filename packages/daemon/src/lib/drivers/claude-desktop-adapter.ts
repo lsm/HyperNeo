@@ -42,6 +42,8 @@ const RecordSchema = z.object({
   isArchived: z.boolean().default(false),
   lastActivityAt: z.number().default(0),
   permissionMode: z.string().optional(),
+  remoteControlUserEnabled: z.boolean().optional(),
+  bridgeSessionIds: z.array(z.string()).optional(),
 });
 
 const LiveSessionSchema = z.object({
@@ -164,12 +166,20 @@ function folderOf(record: ClaudeDesktopRecord): string | undefined {
   return record.originCwd ?? record.cwd;
 }
 
+export function claudeRemoteLink(record: ClaudeDesktopRecord): string | undefined {
+  const bridge = record.remoteControlUserEnabled ? record.bridgeSessionIds?.at(-1) : undefined;
+  return bridge && /^session_[A-Za-z0-9]+$/.test(bridge)
+    ? `https://claude.ai/code/${bridge}`
+    : undefined;
+}
+
 function toClaudeWork(
   record: ClaudeDesktopRecord,
   live: ReadonlyMap<string, string>,
   machine: string
 ): WorkSummary {
   const folder = folderOf(record);
+  const remoteLink = claudeRemoteLink(record);
   return {
     ref: { adapter: 'claude-desktop', id: record.sessionId },
     title: record.title,
@@ -179,6 +189,7 @@ function toClaudeWork(
     status: claudeDesktopWorkStatus(record, live),
     lastActivityAt: record.lastActivityAt,
     link: `claude://claude.ai/epitaxy/${record.sessionId}`,
+    ...(remoteLink ? { remoteLink } : {}),
   };
 }
 

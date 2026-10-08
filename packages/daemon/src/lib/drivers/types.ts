@@ -39,6 +39,7 @@ export const WorkSummarySchema = z.object({
   status: WorkStatusSchema,
   lastActivityAt: z.number(),
   link: z.string().optional(),
+  remoteLink: z.string().optional(),
   score: z.number().optional(),
   hits: z.number().int().nonnegative().optional(),
   lastHitAt: z.number().optional(),

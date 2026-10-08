@@ -139,6 +139,7 @@ const Snapshot = z.union([
           daemon: z.string().nullable(),
           status: WorkStatusSchema.nullable(),
           link: z.string().nullable(),
+          remoteLink: z.string().optional(),
         })
       )
       .max(100)

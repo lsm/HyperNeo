@@ -131,6 +131,33 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
+  test('links a session with Remote Control on to its claude.ai page', async () => {
+    const scope = join(dir, 'acct-a/scope-1');
+    const write = (id: string, fields: Record<string, unknown>) =>
+      writeFileSync(
+        join(scope, `local_${id}.json`),
+        JSON.stringify(
+          record(id, { originCwd: '/focus/remote', title: id, lastActivityAt: 40, ...fields })
+        )
+      );
+    write('r1', {
+      remoteControlUserEnabled: true,
+      bridgeSessionIds: ['session_01Old', 'session_01UpXXWbbUzh1d3zgVGxQoa5'],
+    });
+    write('r2', { remoteControlUserEnabled: false, bridgeSessionIds: ['session_01Off'] });
+    write('r3', { remoteControlUserEnabled: true, bridgeSessionIds: ['https://evil.example'] });
+    const status = async (id: string) =>
+      (await adapter().status?.({ adapter: 'claude-desktop', id: `local_${id}` })) as {
+        value: { link?: string; remoteLink?: string };
+      };
+    expect((await status('r1')).value).toMatchObject({
+      link: 'claude://claude.ai/epitaxy/local_r1',
+      remoteLink: 'https://claude.ai/code/session_01UpXXWbbUzh1d3zgVGxQoa5',
+    });
+    expect((await status('r2')).value.remoteLink).toBeUndefined();
+    expect((await status('r3')).value.remoteLink).toBeUndefined();
+  });
+
   test('adds archived sessions as stopped when asked for closed work', async () => {
     const groups = await adapter([]).find({
       includeClosed: true,

@@ -135,12 +135,20 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
 
 export function readDriverLive(
   outcome: OperationOutcome
-): { status: WorkStatus; link?: string } | null {
+): { status: WorkStatus; link?: string; remoteLink?: string } | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
   if (!reply.success || !reply.data.ok) return null;
-  const { status, link } = reply.data.value as { status: WorkStatus; link?: unknown };
-  return typeof link === 'string' ? { status, link } : { status };
+  const { status, link, remoteLink } = reply.data.value as {
+    status: WorkStatus;
+    link?: unknown;
+    remoteLink?: unknown;
+  };
+  return {
+    status,
+    ...(typeof link === 'string' ? { link } : {}),
+    ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
+  };
 }
 
 export function readDriverSendBaseline(
