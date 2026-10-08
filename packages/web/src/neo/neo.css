@@ -105,6 +105,12 @@
   visibility: visible;
 }
 
+.neo-shell:is(.neo-sheet-open, [data-sheet-drag])
+  :is(.neo-chat-rail, .neo-float-dock, .neo-composer-dock) {
+  transform: translateX(calc(var(--neo-sheet, 1) * -30%));
+  opacity: calc(1 - var(--neo-sheet, 1) * 0.4);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .neo-public-layout .neo-scene-list.neo-scene-sheet {
     transition:
@@ -113,6 +119,14 @@
   }
   .neo-public-layout .neo-scene-list.neo-scene-sheet.is-open {
     transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  }
+  .neo-public-layout :is(.neo-chat-rail, .neo-float-dock, .neo-composer-dock) {
+    transition:
+      transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      opacity 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  }
+  .neo-shell[data-sheet-drag] :is(.neo-chat-rail, .neo-float-dock, .neo-composer-dock) {
+    transition: none;
   }
 }
 

@@ -19,6 +19,7 @@ import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
 import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
+import { useNeoSheetSwipe } from './useNeoSheetSwipe.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
@@ -48,6 +49,7 @@ export function NeoLive() {
   const footer = useRef<HTMLElement>(null);
   const shell = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLDivElement>(null);
+  const sceneSheet = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
@@ -148,6 +150,13 @@ export function NeoLive() {
   const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
   const columns = !!publicConversation && (workCount > 0 || !!chat);
   const sheet = !!publicConversation && narrow;
+  useNeoSheetSwipe({
+    enabled: sheet && workCount > 0 && !chat,
+    open: scenesOpen,
+    setOpen: setScenesOpen,
+    surface: shell,
+    sheet: sceneSheet,
+  });
   const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
   const ready =
     !!neo.sessionId &&
@@ -325,7 +334,7 @@ export function NeoLive() {
   return (
     <div
       ref={shell}
-      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}`}
+      class={`neo-shell relative flex flex-col overflow-clip text-fg${publicConversation ? ' neo-public-layout' : ''}${columns ? ' neo-has-scenes' : ''}${chat ? ' neo-has-session' : ''}${sheet && scenesOpen ? ' neo-sheet-open' : ''}`}
     >
       {publicConversation &&
         relevant
@@ -523,6 +532,7 @@ export function NeoLive() {
             )}
         </div>
         <div
+          ref={sceneSheet}
           class={`neo-scene-list${sheet ? ` neo-scene-sheet${scenesOpen ? ' is-open' : ''}` : ''}`}
           role="region"
           aria-label="Work scenes"
