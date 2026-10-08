@@ -6100,6 +6100,52 @@ describe('AgentSession', () => {
       }
     });
 
+    it('rejects with a terminal error when the session provider is not registered', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        session.config = {
+          ...session.config,
+          provider: 'custom:removed' as Session['config']['provider'],
+        };
+        db.createSession(session);
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const delivery = agentSession.driveDeliveryTurn(
+          steerUuid,
+          steerContent,
+          null,
+          false,
+          () => true
+        );
+        await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+        await expect(delivery).rejects.toThrow("Provider 'custom:removed' is not registered");
+      } finally {
+        db.close();
+      }
+    });
+
     it('aborts when the session is cleaning up', async () => {
       const db = await createTestDb();
       try {

@@ -151,7 +151,11 @@ import {
   resolveModelAlias,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
-import { getProviderRegistry } from '../providers/factory.js';
+import {
+  getProviderRegistry,
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -2669,6 +2673,16 @@ export class AgentSession
           throwIfDeliveryAborted(signal);
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
+          }
+          const providerId = (this.session.config.provider as string | undefined)?.trim();
+          if (providerId) {
+            const registry = initializeProviders();
+            await waitForOptionalProviderRegistration(registry, true);
+            if (!registry.has(providerId)) {
+              throw new MessageDeliveryTerminalTurnError(
+                `Provider '${providerId}' is not registered`
+              );
+            }
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };
           if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
