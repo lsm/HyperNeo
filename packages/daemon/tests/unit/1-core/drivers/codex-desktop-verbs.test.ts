@@ -3,6 +3,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  codexExchange,
   codexRecentInputs,
   codexTurnState,
   createCodexDesktopAdapter,
@@ -94,6 +95,44 @@ describe('codexRecentInputs and reply time', () => {
       reply: 'working',
       replyAt: Date.parse('2026-10-08T17:50:00.000Z'),
     });
+  });
+});
+
+describe('codexExchange', () => {
+  const at = (iso: string, entry: string) =>
+    JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
+  const t = (second: number) => `2026-10-08T17:00:${String(second).padStart(2, '0')}.000Z`;
+
+  test('lists the messages after since, without injected context or a repeated final message', () => {
+    const lines = [
+      at(t(1), heard('Neo asks: continue')),
+      at(t(2), heard('<environment_context>\n</environment_context>')),
+      at(t(3), said('Checking the tree.')),
+      at(t(4), heard('also the footer')),
+      at(t(5), said('Blocked: two files missing.')),
+      at(
+        t(6),
+        line('event_msg', {
+          type: 'task_complete',
+          last_agent_message: 'Blocked: two files missing.',
+        })
+      ),
+    ];
+    expect(codexExchange(lines, Date.parse(t(1)), false)).toEqual({
+      entries: [
+        { at: Date.parse(t(3)), role: 'agent', text: 'Checking the tree.' },
+        { at: Date.parse(t(4)), role: 'user', text: 'also the footer' },
+        { at: Date.parse(t(5)), role: 'agent', text: 'Blocked: two files missing.' },
+      ],
+      cut: false,
+    });
+  });
+
+  test('marks the exchange cut only when the read tail starts after since', () => {
+    const lines = [at(t(3), said('late'))];
+    expect(codexExchange(lines, Date.parse(t(1)), true).cut).toBe(true);
+    expect(codexExchange(lines, Date.parse(t(4)), true).cut).toBe(false);
+    expect(codexExchange(lines, Date.parse(t(1)), false).cut).toBe(false);
   });
 });
 

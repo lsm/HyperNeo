@@ -33,9 +33,12 @@ const hyperneo: WorkAdapter = {
     ref.id === 'gone' || context.from !== origin
       ? { ok: false, reason: 'not_open', detail: 'archived' }
       : { ok: true, value: { delivered: true } },
-  status: async (ref) => ({
+  status: async (ref, since) => ({
     ok: true,
-    value: { ...summary('hyperneo', ref.id), lastReply: 'done' },
+    value: {
+      ...summary('hyperneo', ref.id),
+      lastReply: since === undefined ? 'done' : `done since ${since}`,
+    },
   }),
   stop: async () => ({ ok: true, value: { stopped: true } }),
 };
@@ -155,6 +158,22 @@ describe('work verb operations', () => {
       ok: false,
       reason: 'unsupported',
     });
+  });
+
+  test('passes since to the adapter or the daemon that owns the work', async () => {
+    expect(
+      await call('work.status', { ref: { adapter: 'hyperneo', id: 's1' }, since: 5 })
+    ).toMatchObject({ ok: true, value: { lastReply: 'done since 5' } });
+    const calls: unknown[] = [];
+    await call(
+      'work.status',
+      { ref: { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' }, since: 5 },
+      async (daemonId, name, input) => {
+        calls.push(input);
+        return { ok: true, value: summary('codex-desktop', 't1') };
+      }
+    );
+    expect(calls).toEqual([{ ref: { adapter: 'codex-desktop', id: 't1' }, since: 5 }]);
   });
 
   test('forwards a ref with a daemon to that daemon and stamps what comes back', async () => {

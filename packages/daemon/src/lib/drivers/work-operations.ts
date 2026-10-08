@@ -52,6 +52,10 @@ export const SendWorkInputSchema = z.object({
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
+export const WorkStatusInputSchema = z.object({
+  ref: WorkRefSchema,
+  since: z.number().int().min(0).optional(),
+});
 
 export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
 export const SendWorkResultSchema = workResultSchema(z.object({ delivered: z.boolean() }));
@@ -61,6 +65,7 @@ export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boole
 type StartInput = z.infer<typeof StartWorkInputSchema>;
 type SendInput = z.infer<typeof SendWorkInputSchema>;
 type RefInput = z.infer<typeof WorkRefInputSchema>;
+type StatusInput = z.infer<typeof WorkStatusInputSchema>;
 type StartResult = z.infer<typeof StartWorkResultSchema>;
 type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
@@ -195,14 +200,14 @@ export function routeStatus(input: RefInput, deps: WorkVerbDeps): Gate<Route<'st
 
 export async function readWorkStatus(
   route: Route<'status'>,
-  input: RefInput,
+  input: StatusInput,
   deps: WorkVerbDeps
 ): Promise<StatusResult> {
-  if ('local' in route) return route.local(input.ref);
+  if ('local' in route) return route.local(input.ref, input.since);
   const result = await forwardWork(
     route.daemon,
     'work.status',
-    { ref: localRef(input.ref) },
+    { ref: localRef(input.ref), ...(input.since !== undefined ? { since: input.since } : {}) },
     WorkStatusResultSchema,
     deps.remote
   );
@@ -258,7 +263,7 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeStatus, ['input', 'deps'], 'result:outcome')
   .pipe(readWorkStatus, ['outcome', 'input', 'deps'], 'outcome')
-  .endAsync('outcome') as (input: RefInput, deps: WorkVerbDeps) => Promise<StatusResult>;
+  .endAsync('outcome') as (input: StatusInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
 const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
@@ -294,8 +299,8 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.status',
       description:
-        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. Use this to follow up on work instead of searching again.',
-      inputSchema: WorkRefInputSchema,
+        'Read the current status of work by ref: queued, running, needs_you, done, failed or stopped, with its last reply and link. With since (epoch ms on that machine), Codex and Claude Code Desktop work also return exchange: the user and agent messages after that time, oldest first; exchangeCut true means earlier ones were not read. Use this to follow up on work instead of searching again.',
+      inputSchema: WorkStatusInputSchema,
       resultSchema: WorkStatusResultSchema,
       policy: { safetyClass: 'read' },
       execute: (input) => runWorkStatus(input, deps),
