@@ -21,7 +21,11 @@ import { renderAddress } from '../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import { createNeoAskOriginResolver, neoDoneCheckMessageId } from './ask-origin.ts';
+import {
+  createNeoAskOriginResolver,
+  neoDoneCheckMessageId,
+  neoStallMessageId,
+} from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
@@ -41,6 +45,9 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
   driverDoneCheckNote,
+  driverStallNote,
+  NEO_WORK_STALL_MS,
+  readDriverActivity,
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
@@ -95,6 +102,7 @@ export class NeoService {
   private readonly processingStatus = new Map<string, string>();
   private readonly interruptedSessions = new Set<string>();
   private readonly continuing = new Set<string>();
+  private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
@@ -583,12 +591,38 @@ export class NeoService {
       Date.now(),
       this.workContinues.get(work.id)?.continuedAt ?? this.driverTargets.readStartedAt(work.id)
     );
-    if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
+    if (!settled) {
+      await this.noteDriverStall(work, outcome);
+      return this.noteDriverNeedsYou(work, ref, outcome);
+    }
+    this.activitySeen.delete(work.id);
     const done = this.repo.transitionWork(work.id, work, {
       status: settled.status,
       report: settled.report.slice(0, 12000),
     });
     if (done) await this.returnReport(done);
+  }
+
+  private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
+    const live = readDriverActivity(outcome);
+    if (live?.status !== 'running') {
+      this.activitySeen.delete(work.id);
+      return;
+    }
+    const now = Date.now();
+    const seen = this.activitySeen.get(work.id);
+    if (seen?.at !== live.lastActivityAt) {
+      this.activitySeen.set(work.id, { at: live.lastActivityAt, seenAt: now });
+      return;
+    }
+    if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
+    const budget = readContinueBudget(this.workContinues.get(work.id), work.createdAt, now);
+    await this.deliver(
+      work.originSessionId,
+      neoStallMessageId(work.id, live.lastActivityAt),
+      driverStallNote(work, this.workGoals.get(work.id), live.lastReply, budget),
+      work.originSessionId
+    );
   }
 
   private async noteDriverNeedsYou(

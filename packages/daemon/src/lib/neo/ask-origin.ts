@@ -36,8 +36,20 @@ export function neoDoneCheckMessageId(workId: string, continued: number): string
   return `${workId}:done-check:${continued}`;
 }
 
+export function neoStallMessageId(workId: string, since: number): string {
+  return `${workId}:stall:${since}`;
+}
+
 function checkedWorkId(messageId: string): string {
-  return /^(.+):done-check:\d+$/.exec(messageId)?.[1] ?? messageId;
+  return /^(.+):(?:done-check|stall):\d+$/.exec(messageId)?.[1] ?? messageId;
+}
+
+function settledOrStalled(work: NeoWork, messageId: string): boolean {
+  return (
+    work.status === 'reported' ||
+    work.status === 'failed' ||
+    (work.status === 'queued' && /:stall:\d+$/.test(messageId))
+  );
 }
 
 function nudgedMessageId(messageId: string): string | null {
@@ -125,7 +137,7 @@ export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence
   if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
   if (!envelope) {
     return work?.id === checkedWorkId(input.messageId) &&
-      (work.status === 'reported' || work.status === 'failed') &&
+      settledOrStalled(work, input.messageId) &&
       (input.sessionId === root.sessionId || input.sessionId === work.originSessionId) &&
       validWorkOrigin(work, evidence) &&
       work.originMessageId
