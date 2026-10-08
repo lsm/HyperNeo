@@ -114,7 +114,7 @@ export function NewChatModelPicker({
           ·
         </span>
         <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
-          <ThinkingLevelIcon level={level} />
+          <ThinkingLevelIcon ring level={level} />
         </span>
         <NeoIcon
           name="chevron"

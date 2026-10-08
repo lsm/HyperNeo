@@ -2947,3 +2947,67 @@ describe('Session RPC Handlers — session.create universal-read operations inje
     expect(fixture.sessionManager.createSession).not.toHaveBeenCalled();
   });
 });
+
+describe('Session RPC Handlers — session.sandbox.switch', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let updateSession: ReturnType<typeof mock>;
+  let config: Record<string, unknown>;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    updateSession = mock(async () => {});
+    config = { model: 'sonnet' };
+    const sessionManager = {
+      getSessionForControl: mock(async () => ({
+        getSessionData: () => ({ id: 's1', config }),
+        isQueryActiveOrStarting: () => false,
+      })),
+      updateSession,
+      getDatabase: () => ({
+        getGlobalSettings: () => ({
+          sandbox: { enabled: false, excludedCommands: ['git'], autoAllowBashIfSandboxed: true },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+  });
+
+  it('turns the sandbox on for a chat created without one, using the global policy', async () => {
+    const handler = messageHubData.handlers.get('session.sandbox.switch');
+    const result = await handler!({ sessionId: 's1', sandboxEnabled: true }, {});
+
+    expect(result).toEqual({ success: true, sandboxEnabled: true, error: undefined });
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: {
+        model: 'sonnet',
+        sandbox: { enabled: true, excludedCommands: ['git'], autoAllowBashIfSandboxed: true },
+      },
+    });
+  });
+
+  it("keeps a chat's own sandbox policy when switching it on", async () => {
+    config = { model: 'sonnet', sandbox: { enabled: false, excludedCommands: [] } };
+    const handler = messageHubData.handlers.get('session.sandbox.switch');
+    await handler!({ sessionId: 's1', sandboxEnabled: true }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { model: 'sonnet', sandbox: { enabled: true, excludedCommands: [] } },
+    });
+  });
+
+  it('treats a chat without a sandbox as already off', async () => {
+    const handler = messageHubData.handlers.get('session.sandbox.switch');
+    const result = await handler!({ sessionId: 's1', sandboxEnabled: false }, {});
+
+    expect(result).toEqual({ success: true, sandboxEnabled: false });
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+});
