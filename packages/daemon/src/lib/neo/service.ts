@@ -21,7 +21,7 @@ import { renderAddress } from '../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import { createNeoAskOriginResolver } from './ask-origin.ts';
+import { createNeoAskOriginResolver, neoDoneCheckMessageId } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
 import { planNeoConsultationReturn } from './consultation-return-route.ts';
@@ -726,7 +726,7 @@ export class NeoService {
     );
     await this.deliver(
       work.originSessionId,
-      `${work.id}:done-check:${continued}`,
+      neoDoneCheckMessageId(work.id, continued),
       driverDoneCheckNote(work, goal, continued, budget),
       work.originSessionId
     );
