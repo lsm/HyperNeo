@@ -56,6 +56,14 @@ export class NeoWorkDriverTargetRepository {
     return row?.startedAt ?? null;
   }
 
+  readInputBefore(workId: string): number | null {
+    if (!this.hasTable()) return null;
+    const row = this.db
+      .prepare('SELECT input_before AS inputBefore FROM neo_work_driver_targets WHERE work_id = ?')
+      .get(workId) as { inputBefore: number | null } | null | undefined;
+    return row?.inputBefore ?? null;
+  }
+
   readNeedsYouSince(workId: string): number | null {
     if (!this.hasTable()) return null;
     const row = this.db
@@ -64,10 +72,18 @@ export class NeoWorkDriverTargetRepository {
     return row?.since ?? null;
   }
 
-  recordStartedAt(workId: string, startedAt: number | null): void {
+  recordStartedAt(workId: string, startedAt: number | null, inputBefore?: number | null): void {
+    if (inputBefore === undefined) {
+      this.db
+        .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
+        .run(startedAt, workId);
+      return;
+    }
     this.db
-      .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
-      .run(startedAt, workId);
+      .prepare(
+        'UPDATE neo_work_driver_targets SET started_at = ?, input_before = ? WHERE work_id = ?'
+      )
+      .run(startedAt, inputBefore, workId);
   }
 
   recordNeedsYouSince(workId: string, since: number | null): void {
@@ -76,12 +92,19 @@ export class NeoWorkDriverTargetRepository {
       .run(since, workId);
   }
 
-  recordRef(workId: string, ref: WorkRef, startedAt?: number, link?: string): void {
+  recordRef(
+    workId: string,
+    ref: WorkRef,
+    startedAt?: number,
+    link?: string,
+    inputBefore?: number | null
+  ): void {
     this.db
       .prepare(
-        'UPDATE neo_work_driver_targets SET ref = ?, started_at = ?, link = ? WHERE work_id = ?'
+        `UPDATE neo_work_driver_targets SET ref = ?, started_at = ?, link = ?, input_before = ?
+          WHERE work_id = ?`
       )
-      .run(JSON.stringify(ref), startedAt ?? null, link ?? null, workId);
+      .run(JSON.stringify(ref), startedAt ?? null, link ?? null, inputBefore ?? null, workId);
   }
 
   recordLive(

@@ -10,6 +10,7 @@ import {
   withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
+  readDriverLanded,
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
@@ -185,6 +186,19 @@ describe('readDriverSendBaseline', () => {
     const unreadable = at({ ok: false, reason: 'unreachable', detail: 'asleep' });
     expect(readDriverSendBaseline(unreadable, 50, false)).toBe(50);
     expect(readDriverSendBaseline(unreadable, 50, true)).toBeNull();
+  });
+});
+
+describe('readDriverLanded', () => {
+  test('reads a message that landed after the send, and nothing without a reading from before it', () => {
+    const at = (value: unknown) => ({ kind: 'completed' as const, value });
+    const status = (lastInputAt?: number) =>
+      at({ ok: true, value: { status: 'done', lastActivityAt: 9, lastInputAt } });
+    expect(readDriverLanded(status(8), 5)).toBe(8);
+    expect(readDriverLanded(status(5), 5)).toBeNull();
+    expect(readDriverLanded(status(8), null)).toBeNull();
+    expect(readDriverLanded(status(), 5)).toBeNull();
+    expect(readDriverLanded(at({ ok: false, reason: 'unreachable', detail: 'x' }), 5)).toBeNull();
   });
 });
 
@@ -602,6 +616,55 @@ describe('Neo work with a drivers target', () => {
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('settles a queued send on the reply after its message lands, a refresh after it lands', async () => {
+    let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1, lastInputAt: 1 } };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    const returned: string[] = [];
+    Object.assign(service, {
+      returnReport: async (settled: { id: string }) => {
+        returned.push(settled.id);
+      },
+    });
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+      expect(service.driverTargets.readInputBefore('work-1')).toBe(1);
+
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 2, lastInputAt: 1, lastReply: 'Older turn.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 4, lastInputAt: 3, lastReply: 'Half an answer' },
+      };
+      await service.refreshDriverWork();
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(3);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 5, lastInputAt: 3, lastReply: 'Blocked on X.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Blocked on X.',
+      });
+      expect(returned).toEqual(['work-1']);
     } finally {
       db.close();
     }

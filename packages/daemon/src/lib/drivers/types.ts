@@ -72,7 +72,10 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
   ]);
 }
 
-export const WorkDetailSchema = WorkSummarySchema.extend({ lastReply: z.string().optional() });
+export const WorkDetailSchema = WorkSummarySchema.extend({
+  lastReply: z.string().optional(),
+  lastInputAt: z.number().optional(),
+});
 
 export type WorkStatus = z.infer<typeof WorkStatusSchema>;
 export type Place = z.infer<typeof PlaceSchema>;

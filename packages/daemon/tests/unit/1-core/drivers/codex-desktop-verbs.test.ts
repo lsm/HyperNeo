@@ -3,6 +3,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  codexLastInputAt,
   codexTurnState,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
@@ -47,6 +48,23 @@ describe('codexTurnState', () => {
 
   test('reports no turn when the tail holds none', () => {
     expect(codexTurnState([said('hello'), 'not json'])).toEqual({ marker: null, reply: 'hello' });
+  });
+});
+
+describe('codexLastInputAt', () => {
+  test('reads when the latest message to the thread landed, or 0 when the tail has none', () => {
+    const at = (iso: string, entry: string) =>
+      JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
+    expect(
+      codexLastInputAt([
+        at('2026-10-08T17:40:00.000Z', heard('first')),
+        at('2026-10-08T17:46:10.074Z', heard('continue')),
+        at('2026-10-08T17:53:57.904Z', said('Blocked.')),
+        at('2026-10-08T17:53:58.000Z', line('event_msg', { type: 'task_complete' })),
+        '{"truncated',
+      ])
+    ).toBe(Date.parse('2026-10-08T17:46:10.074Z'));
+    expect(codexLastInputAt([heard('no time'), said('hi')])).toBe(0);
   });
 });
 
@@ -199,6 +217,7 @@ describe('codex-desktop adapter status and send', () => {
         lastActivityAt: NOW - 600_000,
         link: 'codex://threads/busy',
         lastReply: 'reading the repo',
+        lastInputAt: 0,
       },
     });
     expect(await adapter().status?.(ref('idle'))).toMatchObject({

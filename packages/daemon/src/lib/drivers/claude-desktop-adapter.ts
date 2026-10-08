@@ -347,6 +347,50 @@ export function lastClaudeReply(lines: readonly string[]): string | null {
   return null;
 }
 
+export interface ClaudeTranscriptState {
+  reply: string | null;
+  inputAt: number;
+  lastAt: number;
+}
+
+interface ClaudeTranscriptEntry {
+  type?: unknown;
+  timestamp?: unknown;
+  isMeta?: unknown;
+  turnOrigin?: unknown;
+  origin?: unknown;
+  message?: { content?: unknown };
+}
+
+function isClaudeInput(entry: ClaudeTranscriptEntry): boolean {
+  if (entry.type !== 'user') return false;
+  const content = entry.message?.content;
+  if (
+    Array.isArray(content) &&
+    content.some((part: { type?: unknown }) => part?.type === 'tool_result')
+  )
+    return false;
+  return !entry.isMeta || !!entry.turnOrigin || !!entry.origin;
+}
+
+export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscriptState {
+  let inputAt = 0;
+  let lastAt = 0;
+  for (const line of lines) {
+    let entry: ClaudeTranscriptEntry | null;
+    try {
+      entry = JSON.parse(line) as ClaudeTranscriptEntry | null;
+    } catch {
+      continue;
+    }
+    const at = Date.parse(String(entry?.timestamp));
+    if (!entry || !Number.isFinite(at)) continue;
+    lastAt = Math.max(lastAt, at);
+    if (isClaudeInput(entry)) inputAt = Math.max(inputAt, at);
+  }
+  return { reply: lastClaudeReply(lines), inputAt, lastAt };
+}
+
 export function requireClaudeRecord(
   ref: WorkRef,
   records: readonly ClaudeDesktopRecord[]
@@ -357,14 +401,14 @@ export function requireClaudeRecord(
     : { reason: reject('not_found', `No Claude Code Desktop session ${ref.id}.`) };
 }
 
-export async function readClaudeReply(
+export async function readClaudeTranscript(
   record: ClaudeDesktopRecord,
   deps: ClaudeDesktopAdapterDeps
-): Promise<string | null> {
+): Promise<ClaudeTranscriptState | null> {
   const path = claudeTranscriptPath(deps.projectsDir, record);
   if (!path) return null;
   try {
-    return lastClaudeReply(await readTailLines(path, TRANSCRIPT_TAIL_BYTES));
+    return claudeTranscriptState(await readTailLines(path, TRANSCRIPT_TAIL_BYTES));
   } catch {
     return null;
   }
@@ -373,12 +417,21 @@ export async function readClaudeReply(
 export function describeClaudeSession(
   record: ClaudeDesktopRecord,
   liveSessions: readonly ClaudeLiveSession[],
-  reply: string | null,
+  transcript: ClaudeTranscriptState | null,
   deps: ClaudeDesktopAdapterDeps
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const work = toClaudeWork(record, live, deps.machine);
-  return { ok: true, value: reply ? { ...work, lastReply: reply.slice(0, REPLY_LIMIT) } : work };
+  if (!transcript) return { ok: true, value: work };
+  return {
+    ok: true,
+    value: {
+      ...work,
+      lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
+      ...(transcript.reply ? { lastReply: transcript.reply.slice(0, REPLY_LIMIT) } : {}),
+      lastInputAt: transcript.inputAt,
+    },
+  };
 }
 
 const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as PipelineAPI)
@@ -386,8 +439,8 @@ const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as P
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
   .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(readClaudeReply, ['outcome', 'deps'], 'reply')
-  .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'reply', 'deps'], 'outcome')
+  .pipe(readClaudeTranscript, ['outcome', 'deps'], 'transcript')
+  .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'transcript', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   deps: ClaudeDesktopAdapterDeps,

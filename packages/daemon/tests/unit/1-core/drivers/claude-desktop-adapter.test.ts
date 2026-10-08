@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type ClaudeRecordCache,
+  claudeTranscriptState,
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
@@ -257,6 +258,7 @@ describe('claude-desktop adapter against the app session records', () => {
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
         lastReply: 'Loaded 3 tables.',
+        lastInputAt: 0,
       },
     });
     expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_b2' })).toMatchObject({
@@ -266,6 +268,40 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_zz' })).toMatchObject({
       ok: false,
       reason: 'not_found',
+    });
+  });
+
+  test('status times the latest message to the session and its last activity from the transcript', async () => {
+    const transcripts = join(dir, 'projects', '-focus-dolmen--claude-worktrees-w1');
+    mkdirSync(transcripts, { recursive: true });
+    const entry = (timestamp: string, fields: Record<string, unknown>) =>
+      JSON.stringify({ timestamp, ...fields });
+    writeFileSync(
+      join(transcripts, 'cli-a1.jsonl'),
+      [
+        entry('2026-10-08T11:50:50.394Z', {
+          type: 'user',
+          isMeta: true,
+          origin: { kind: 'peer' },
+          message: { content: '<cross-session-message>go</cross-session-message>' },
+        }),
+        entry('2026-10-08T11:51:00.000Z', {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'Done.' }] },
+        }),
+        entry('2026-10-08T11:52:00.000Z', {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', content: 'ok' }] },
+        }),
+      ].join('\n')
+    );
+    expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_a1' })).toMatchObject({
+      ok: true,
+      value: {
+        lastInputAt: Date.parse('2026-10-08T11:50:50.394Z'),
+        lastActivityAt: Date.parse('2026-10-08T11:52:00.000Z'),
+        lastReply: 'Done.',
+      },
     });
   });
 
@@ -509,5 +545,31 @@ describe('reuseLiveSessions', () => {
     clock = 1_000;
     await live();
     expect(reads).toBe(2);
+  });
+});
+
+describe('claudeTranscriptState', () => {
+  test('counts typed, relayed and notified messages as input, not tool results or bare notes', () => {
+    const user = (timestamp: string, fields: Record<string, unknown>) =>
+      JSON.stringify({ type: 'user', timestamp, ...fields });
+    const state = claudeTranscriptState([
+      user('2026-10-08T10:00:00.000Z', { message: { content: 'typed' } }),
+      user('2026-10-08T10:01:00.000Z', {
+        isMeta: true,
+        turnOrigin: 'system',
+        message: { content: 'notice' },
+      }),
+      user('2026-10-08T10:02:00.000Z', {
+        message: { content: [{ type: 'tool_result', content: 'x' }] },
+      }),
+      user('2026-10-08T10:03:00.000Z', { isMeta: true, message: { content: 'cut off' } }),
+      '{"type":"pr-link"}',
+      'not json',
+    ]);
+    expect(state).toEqual({
+      reply: null,
+      inputAt: Date.parse('2026-10-08T10:01:00.000Z'),
+      lastAt: Date.parse('2026-10-08T10:03:00.000Z'),
+    });
   });
 });

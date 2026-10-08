@@ -85,6 +85,7 @@ export interface CodexThreadDetail {
 export interface CodexTurnState {
   marker: string | null;
   reply: string | null;
+  inputAt?: number;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -302,9 +303,15 @@ export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES):
   }
 }
 
-function parseLine(line: string): { type?: unknown; payload?: Record<string, unknown> } | null {
+function parseLine(
+  line: string
+): { type?: unknown; payload?: Record<string, unknown>; timestamp?: unknown } | null {
   try {
-    const entry = JSON.parse(line) as { type?: unknown; payload?: Record<string, unknown> };
+    const entry = JSON.parse(line) as {
+      type?: unknown;
+      payload?: Record<string, unknown>;
+      timestamp?: unknown;
+    };
     return entry && typeof entry === 'object' ? entry : null;
   } catch {
     return null;
@@ -341,6 +348,16 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
     }
   }
   return { marker: null, reply };
+}
+
+export function codexLastInputAt(lines: readonly string[]): number {
+  for (const line of [...lines].reverse()) {
+    const entry = parseLine(line);
+    if (entry?.type !== 'response_item' || !messageText(entry.payload ?? {}, 'user')) continue;
+    const at = Date.parse(String(entry.timestamp));
+    if (Number.isFinite(at)) return at;
+  }
+  return 0;
 }
 
 export function activeCodexTurn(lines: readonly string[]): string | null | undefined {
@@ -389,7 +406,8 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
 
 export async function readCodexTurn(detail: CodexThreadDetail): Promise<CodexTurnState> {
   try {
-    return codexTurnState(await readRolloutTail(detail.thread.rolloutPath));
+    const lines = await readRolloutTail(detail.thread.rolloutPath);
+    return { ...codexTurnState(lines), inputAt: codexLastInputAt(lines) };
   } catch {
     return { marker: null, reply: null };
   }
@@ -413,6 +431,7 @@ export function describeCodexThread(
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
       ...(state.reply ? { lastReply: state.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(state.inputAt !== undefined ? { lastInputAt: state.inputAt } : {}),
     },
   };
 }

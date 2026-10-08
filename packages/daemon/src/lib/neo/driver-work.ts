@@ -38,7 +38,7 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export const NEO_WORK_CONTINUE_WINDOW_MS = 4 * 60 * 60 * 1000;
+export const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 export function readContinueBudget(
   continued: Pick<NeoWorkContinue, 'count'> | null,
@@ -48,7 +48,7 @@ export function readContinueBudget(
   if ((continued?.count ?? 0) >= NEO_WORK_CONTINUE_LIMIT)
     return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
-    return 'continue_budget_spent: this work started over 4 hours ago; ask the human how to proceed.';
+    return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
   return null;
 }
 
@@ -128,6 +128,7 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         status: WorkStatusSchema,
         lastActivityAt: z.number(),
         lastReply: z.string().optional(),
+        lastInputAt: z.number().optional(),
       })
       .passthrough(),
   }),
@@ -163,6 +164,21 @@ export function readDriverSendBaseline(
   if (!reply.success || !reply.data.ok) return fallback;
   const { status, lastActivityAt } = reply.data.value;
   return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
+}
+
+export function readDriverInputAt(outcome: OperationOutcome): number | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  if (!reply.success || !reply.data.ok) return null;
+  return reply.data.value.lastInputAt ?? null;
+}
+
+export function readDriverLanded(
+  outcome: OperationOutcome,
+  inputBefore: number | null
+): number | null {
+  const inputAt = readDriverInputAt(outcome);
+  return inputBefore !== null && inputAt !== null && inputAt > inputBefore ? inputAt : null;
 }
 
 export function readDriverNeedsYou(
