@@ -143,6 +143,9 @@ export class ErrorManager {
     if (message.includes('model_not_found')) {
       return 'MODEL_NOT_FOUND';
     }
+    if (message.includes('is not registered; cannot prepare environment')) {
+      return 'PROVIDER_NOT_REGISTERED';
+    }
 
     return 'UNKNOWN';
   }
@@ -195,6 +198,8 @@ export class ErrorManager {
         switch (code) {
           case 'MODEL_NOT_FOUND':
             return 'The requested model is not available. Please choose a different model.';
+          case 'PROVIDER_NOT_REGISTERED':
+            return "This chat's model provider is no longer set up. Choose another model to continue.";
           default:
             return 'Model error. Please try a different model.';
         }
@@ -243,7 +248,7 @@ export class ErrorManager {
     if (category === ErrorCategory.PERMISSION) {
       return false;
     }
-    if (code === 'QUOTA_EXCEEDED') {
+    if (code === 'QUOTA_EXCEEDED' || code === 'PROVIDER_NOT_REGISTERED') {
       return false;
     }
 
