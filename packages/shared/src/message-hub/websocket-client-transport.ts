@@ -359,21 +359,7 @@ export class WebSocketClientTransport implements IMessageTransport {
     this.lastPingSentTime = Date.now();
 
     this.pingTimer = setInterval(() => {
-      if (this.isReady()) {
-        const timeSinceLastPong = Date.now() - this.lastPongTime;
-        if (timeSinceLastPong > this.pongTimeout) {
-          log.error(
-            `PONG timeout exceeded (${Math.round(timeSinceLastPong / 1000)}s > ${this.pongTimeout / 1000}s). Connection appears stale.`
-          );
-          if (this.ws) {
-            this.ws.close();
-          }
-          this.handleDisconnect();
-          return;
-        }
-
-        this.sendPing();
-      }
+      if (this.isReady()) this.sendPing();
     }, this.pingInterval);
 
     this.scheduleBackupHeartbeat();
@@ -410,7 +396,24 @@ export class WebSocketClientTransport implements IMessageTransport {
     } catch (error) {
       log.error(`Failed to send PING:`, error);
       this.handleDisconnect();
+      return;
     }
+    this.awaitPong(this.lastPingSentTime);
+  }
+
+  private awaitPong(sentAt: number): void {
+    if (this.pongTimeoutTimer) clearTimeout(this.pongTimeoutTimer);
+    this.pongTimeoutTimer = setTimeout(() => {
+      this.pongTimeoutTimer = null;
+      if (this.lastPongTime >= sentAt || !this.isReady()) return;
+      log.error(`No PONG within ${this.pongTimeout / 1000}s. Connection appears stale.`);
+      this.stopPing();
+      const ws = this.ws;
+      this.ws = null;
+      ws?.close();
+      this.setState('disconnected');
+      this.handleDisconnect();
+    }, this.pongTimeout);
   }
 
   private isPingTimerStalled(): boolean {
