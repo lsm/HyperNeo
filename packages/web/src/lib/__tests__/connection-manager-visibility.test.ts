@@ -373,6 +373,21 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       expect(transport.suspend).toHaveBeenCalledTimes(1);
     });
 
+    it('does not suspend a page that became visible without a visibilitychange', () => {
+      setHidden(true);
+      visibilityChangeHandler?.(new Event('visibilitychange'));
+      setHidden(false);
+      vi.advanceTimersByTime(20_000);
+      expect(transport.suspend).not.toHaveBeenCalled();
+    });
+
+    it('resumes a suspended socket when the page is shown again', () => {
+      transport.isSuspended.mockReturnValue(true);
+      setHidden(false);
+      window.dispatchEvent(new Event('pageshow'));
+      expect(transport.resume).toHaveBeenCalledTimes(1);
+    });
+
     it('resumes a suspended socket without a health check', () => {
       transport.isSuspended.mockReturnValue(true);
       setHidden(false);

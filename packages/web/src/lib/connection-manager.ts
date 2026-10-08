@@ -53,6 +53,7 @@ export class ConnectionManager {
   private connectionPromise: Promise<MessageHub> | null = null;
   private visibilityHandler: (() => void) | null = null;
   private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  private pageShowHandler: (() => void) | null = null;
   private pageHideHandler: (() => void) | null = null;
 
   private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
@@ -275,6 +276,7 @@ export class ConnectionManager {
       if (document.hidden) {
         this.hiddenTimer = setTimeout(() => {
           this.hiddenTimer = null;
+          if (!document.hidden) return;
           this.transport?.suspend();
         }, HIDDEN_GRACE_MS);
         return;
@@ -290,6 +292,10 @@ export class ConnectionManager {
     };
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
+    this.pageShowHandler = () => {
+      if (!document.hidden && this.transport?.isSuspended()) this.transport.resume();
+    };
+    window.addEventListener('pageshow', this.pageShowHandler);
     this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
   }
@@ -387,6 +393,11 @@ export class ConnectionManager {
     if (this.hiddenTimer) {
       clearTimeout(this.hiddenTimer);
       this.hiddenTimer = null;
+    }
+
+    if (this.pageShowHandler) {
+      window.removeEventListener('pageshow', this.pageShowHandler);
+      this.pageShowHandler = null;
     }
 
     if (this.pageHideHandler) {
