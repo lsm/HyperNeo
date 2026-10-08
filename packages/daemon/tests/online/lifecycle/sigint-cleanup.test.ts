@@ -45,7 +45,7 @@ describe('SDK SIGINT Cleanup (Online)', () => {
           status?: string;
         };
         console.log('[TEST] Processing state before SIGINT:', stateBeforeSigint.status);
-        expect(['idle', 'queued', 'processing']).toContain(stateBeforeSigint.status);
+        expect(['idle', 'queued', 'processing']).toContain(stateBeforeSigint.status ?? 'missing');
 
         const cleanupStart = Date.now();
 
