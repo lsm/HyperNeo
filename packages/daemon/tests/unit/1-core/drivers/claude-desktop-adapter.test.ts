@@ -263,13 +263,15 @@ describe('claude-desktop adapter against the app session records', () => {
       ok: true,
       value: { delivered: true },
     });
-    expect(spawned[0].args.slice(0, 9)).toEqual([
+    expect(spawned[0].args.slice(0, 11)).toEqual([
       'claude',
       '-p',
       '--model',
       'haiku',
       '--max-turns',
       '4',
+      '--tools',
+      'SendMessage ListAgents',
       '--allowedTools',
       'SendMessage ListAgents',
       '-n',
@@ -292,6 +294,33 @@ describe('claude-desktop adapter against the app session records', () => {
       reason: 'not_delivered',
     });
     expect(spawned).toEqual([]);
+  });
+
+  test('send relays from the permission class of a session that bypasses permissions', async () => {
+    writeFileSync(
+      join(dir, 'acct-a/scope-1/local_p1.json'),
+      JSON.stringify(
+        record('p1', {
+          cwd: '/focus/ios',
+          title: 'Neo iOS app',
+          permissionMode: 'bypassPermissions',
+        })
+      )
+    );
+    const live = [{ sessionId: 'cli-p1', status: 'idle', name: 'Neo iOS app' }];
+    await adapter(live).send?.({ adapter: 'claude-desktop', id: 'local_p1' }, 'next', user);
+    expect(spawned[0].args.slice(4, 12)).toEqual([
+      '--max-turns',
+      '4',
+      '--permission-mode',
+      'bypassPermissions',
+      '--tools',
+      'SendMessage ListAgents',
+      '--allowedTools',
+      'SendMessage ListAgents',
+    ]);
+    await adapter().send?.({ adapter: 'claude-desktop', id: 'local_a1' }, 'next', user);
+    expect(spawned[0].args).not.toContain('--permission-mode');
   });
 
   test('send refuses to resume when it cannot tell what the app runs, while find carries on', async () => {
