@@ -1338,3 +1338,19 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
     display: none;
   }
 }
+
+.thinking-tone-8k {
+  color: light-dark(#fbbf24, #d97706);
+}
+
+.thinking-tone-16k {
+  color: #f59e0b;
+}
+
+.thinking-tone-24k {
+  color: light-dark(#d97706, #fbbf24);
+}
+
+.thinking-tone-32k {
+  color: light-dark(#b45309, #fde68a);
+}

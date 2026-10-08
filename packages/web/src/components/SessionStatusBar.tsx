@@ -27,51 +27,7 @@ import { Spinner } from './ui/Spinner.tsx';
 import { StatusDot } from './ui/StatusDot.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 
-import { ThinkingLevelIcon } from './ThinkingLevelIcon.tsx';
-
-function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
-  if (level === 'off') return null;
-
-  const size = 32;
-  const strokeWidth = 2;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-
-  const dashPercentMap: Record<ThinkingLevel, number> = {
-    off: 0,
-    think8k: 0.25,
-    think16k: 0.5,
-    think24k: 0.75,
-    think32k: 1,
-  };
-  const dashPercent = dashPercentMap[level];
-  const dashLength = circumference * dashPercent;
-
-  const strokeColor =
-    level === 'think8k'
-      ? '#d97706'
-      : level === 'think16k'
-        ? '#f59e0b'
-        : level === 'think24k'
-          ? '#fbbf24'
-          : '#fde68a';
-
-  return (
-    <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${size} ${size}`}>
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={strokeColor}
-        stroke-width={strokeWidth}
-        stroke-dasharray={`${dashLength} ${circumference - dashLength}`}
-        stroke-dashoffset={circumference * 0.25}
-        stroke-linecap="round"
-      />
-    </svg>
-  );
-}
+import { ThinkingBorderRing, ThinkingLevelIcon } from './ThinkingLevelIcon.tsx';
 
 interface SessionStatusBarProps {
   sessionId: string;

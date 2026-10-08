@@ -572,25 +572,20 @@ describe('SessionStatusBar', () => {
       expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-fg-muted');
     });
 
-    it('should show amber-600 icon for think8k level', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think8k" />);
+    it.each([
+      ['think8k', 2],
+      ['think16k', 3],
+      ['think24k', 4],
+      ['think32k', 5],
+    ])('colors the %s bulb like its ring and lights %i rays', (level, rays) => {
+      const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel={level} />);
 
-      const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
-    });
-
-    it('should show amber-500 icon for think16k level', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
-
-      const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
-    });
-
-    it('should show amber-300 icon for think32k level', () => {
-      const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think32k" />);
-
-      const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
+      const svg = getThinkingIcon(container)!;
+      const ring = svg.parentElement!.querySelector('svg.absolute')!;
+      const tone = `thinking-tone-${level.replace('think', '')}`;
+      expect(svg.getAttribute('class')).toContain(tone);
+      expect(ring.getAttribute('class')).toContain(tone);
+      expect(svg.querySelectorAll('path[data-lit="true"]')).toHaveLength(rays);
     });
   });
 
