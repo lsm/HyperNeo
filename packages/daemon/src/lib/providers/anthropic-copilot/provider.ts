@@ -16,7 +16,7 @@ import {
   RuntimeConnection,
   type ModelInfo as CopilotSdkModelInfo,
 } from '@github/copilot-sdk';
-import { startEmbeddedServer, type EmbeddedServer } from './server.js';
+import { SESSION_HEADER, startEmbeddedServer, type EmbeddedServer } from './server.js';
 import { resolveCopilotCliPath } from './copilot-cli-resolver.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -121,6 +121,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     nativeWebTools: true,
   };
 
+  private readonly sessionThinking = new Map<string, string | undefined>();
   private clientCache: CopilotClient | undefined = undefined;
   private serverCache: EmbeddedServer | undefined = undefined;
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
@@ -301,6 +302,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     return mapped;
   }
 
+  setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    this.sessionThinking.set(sessionId, thinkingLevel);
+  }
+
+  getModelThinkingMode(modelId: string): 'off' | 'granular' | undefined {
+    return this.dynamicModelsCache?.find((m) => m.id === modelId || m.alias === modelId)
+      ?.thinkingModes === 'granular'
+      ? 'granular'
+      : undefined;
+  }
+
   ownsModel(modelId: string): boolean {
     if (COPILOT_ANTHROPIC_MODELS.some((m) => m.alias === modelId || m.id === modelId)) {
       return true;
@@ -359,6 +371,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ANTHROPIC_BASE_URL: this.serverCache.url,
         ANTHROPIC_AUTH_TOKEN: `anthropic-copilot-proxy:${workspacePath}`,
         ANTHROPIC_API_KEY: '',
+        ...(sessionConfig?.sessionId
+          ? { ANTHROPIC_CUSTOM_HEADERS: `${SESSION_HEADER}: ${sessionConfig.sessionId}` }
+          : {}),
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         API_TIMEOUT_MS: '300000',
         ANTHROPIC_DEFAULT_OPUS_MODEL: resolvedId,
@@ -888,13 +903,16 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       description: staticEntry?.description ?? `${m.name ?? m.id} via GitHub Copilot`,
       releaseDate: staticEntry?.releaseDate ?? '2025-01-01',
       available: m.policy?.state !== 'disabled',
+      thinkingModes: m.capabilities?.supports?.reasoningEffort ? 'granular' : 'off',
     };
   }
 
   private async createServer(credentialsVersion: number): Promise<EmbeddedServer> {
     const token = await this.resolveGitHubToken();
     const client = await this.getOrCreateClient(token, credentialsVersion);
-    const server = await startEmbeddedServer(client, this.cwd);
+    const server = await startEmbeddedServer(client, this.cwd, (sessionId) =>
+      this.sessionThinking.get(sessionId)
+    );
     logger.debug(`Embedded Anthropic server started at ${server.url}`);
     return server;
   }

@@ -1,4 +1,5 @@
 import { approveAll, type CopilotClient, type CopilotSession } from '@github/copilot-sdk';
+import type { ReasoningEffort } from './reasoning-effort.js';
 import type { AnthropicMessage, AnthropicTool } from './types.js';
 import {
   extractToolResultIds,
@@ -71,7 +72,8 @@ export class ConversationManager {
     model: string,
     systemMessage: string | undefined,
     tools: AnthropicTool[],
-    cwd: string
+    cwd: string,
+    reasoningEffort?: ReasoningEffort
   ): Promise<ActiveConversation> {
     const registry = new ToolBridgeRegistry();
 
@@ -92,6 +94,7 @@ export class ConversationManager {
       streaming: true,
       infiniteSessions: { enabled: false },
       workingDirectory: cwd,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       tools: sdkTools,
       availableTools: toolNames,
       ...(systemMessage

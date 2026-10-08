@@ -15,6 +15,12 @@ import {
   extractToolResultIds,
 } from './prompt.js';
 import { ConversationManager } from './conversation.js';
+import {
+  createReasoningSupport,
+  fitReasoningEffort,
+  reasoningEffortForLevel,
+  type ReasoningEffort,
+} from './reasoning-effort.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
 import { Logger } from '../../logger.js';
@@ -131,7 +137,8 @@ export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): str
 function buildPlainSessionConfig(
   model: string,
   systemMessage: string | undefined,
-  cwd: string
+  cwd: string,
+  reasoningEffort?: ReasoningEffort
 ): SessionConfig {
   return {
     clientName: 'neokai-anthropic-copilot',
@@ -139,6 +146,7 @@ function buildPlainSessionConfig(
     streaming: true,
     infiniteSessions: { enabled: true },
     workingDirectory: cwd,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     availableTools: [],
     ...(systemMessage
       ? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
@@ -181,7 +189,9 @@ async function handleMessages(
   client: CopilotClient,
   manager: ConversationManager,
   contextUsageStore: ContextUsageStore,
-  cwd: string
+  cwd: string,
+  reasoningSupport: ReturnType<typeof createReasoningSupport>,
+  thinkingFor: (sessionId: string) => string | undefined
 ): Promise<void> {
   let bodyText: string;
   try {
@@ -306,6 +316,13 @@ async function handleMessages(
   const systemMessage = extractSystemText(body.system);
 
   const requestCwd = resolveRequestCwd(req, cwd);
+  const sessionId = req.headers[SESSION_HEADER];
+  const wanted = reasoningEffortForLevel(
+    typeof sessionId === 'string' ? thinkingFor(sessionId) : undefined
+  );
+  const reasoningEffort = wanted
+    ? fitReasoningEffort(wanted, await reasoningSupport(body.model))
+    : undefined;
   if (hasTools) {
     await handleNewToolConversation(
       req,
@@ -316,7 +333,8 @@ async function handleMessages(
       contextUsageStore,
       systemMessage,
       prompt,
-      requestCwd
+      requestCwd,
+      reasoningEffort
     );
   } else {
     await handlePlainRequest(
@@ -327,7 +345,8 @@ async function handleMessages(
       contextUsageStore,
       systemMessage,
       prompt,
-      requestCwd
+      requestCwd,
+      reasoningEffort
     );
   }
 }
@@ -341,11 +360,19 @@ async function handleNewToolConversation(
   contextUsageStore: ContextUsageStore,
   systemMessage: string | undefined,
   prompt: string,
-  cwd: string
+  cwd: string,
+  reasoningEffort?: ReasoningEffort
 ): Promise<void> {
   let conv;
   try {
-    conv = await manager.createConversation(client, body.model, systemMessage, body.tools!, cwd);
+    conv = await manager.createConversation(
+      client,
+      body.model,
+      systemMessage,
+      body.tools!,
+      cwd,
+      reasoningEffort
+    );
   } catch (err) {
     logger.error(`Failed to create tool conversation for model '${body.model}':`, err);
     sendJsonError(
@@ -393,9 +420,10 @@ async function handlePlainRequest(
   contextUsageStore: ContextUsageStore,
   systemMessage: string | undefined,
   prompt: string,
-  cwd: string
+  cwd: string,
+  reasoningEffort?: ReasoningEffort
 ): Promise<void> {
-  const sessionConfig = buildPlainSessionConfig(body.model, systemMessage, cwd);
+  const sessionConfig = buildPlainSessionConfig(body.model, systemMessage, cwd, reasoningEffort);
 
   let session;
   try {
@@ -497,19 +525,32 @@ export interface EmbeddedServer {
   stop(): Promise<void>;
 }
 
+export const SESSION_HEADER = 'x-hyperneo-session';
+
 export function startEmbeddedServer(
   client: CopilotClient,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  thinkingFor: (sessionId: string) => string | undefined = () => undefined
 ): Promise<EmbeddedServer> {
   const manager = new ConversationManager();
   const contextUsageStore = new ContextUsageStore();
+  const reasoningSupport = createReasoningSupport(client);
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? '';
     const method = req.method ?? '';
 
     if (method === 'POST' && (url === '/v1/messages' || url.startsWith('/v1/messages?'))) {
-      handleMessages(req, res, client, manager, contextUsageStore, cwd).catch((err: unknown) => {
+      handleMessages(
+        req,
+        res,
+        client,
+        manager,
+        contextUsageStore,
+        cwd,
+        reasoningSupport,
+        thinkingFor
+      ).catch((err: unknown) => {
         logger.error('Unhandled error in handleMessages:', err);
         if (!res.headersSent) {
           sendJsonError(res, 500, 'api_error', 'Internal server error');
