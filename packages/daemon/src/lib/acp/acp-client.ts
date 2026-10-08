@@ -13,6 +13,8 @@ import type {
   AcpSessionLoadResult,
   AcpSessionResumeParams,
   AcpSessionResumeResult,
+  AcpSessionListParams,
+  AcpSessionListResult,
   AcpConfigOption,
   AcpSessionModeState,
   AcpFsReadParams,
@@ -249,6 +251,19 @@ export class AcpClient {
     if (this.agentCapabilities?.loadSession) return true;
     const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
     return !!sessionCapabilities && 'resume' in sessionCapabilities;
+  }
+
+  canListSessions(): boolean {
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'list' in sessionCapabilities;
+  }
+
+  async listSessions(params: AcpSessionListParams = {}): Promise<AcpSessionListResult> {
+    const response = await this.transport.sendRequest('session/list', params);
+    if ('error' in response) {
+      throw new Error(`session/list failed: ${response.error.message}`);
+    }
+    return response.result as AcpSessionListResult;
   }
 
   canCloseSession(): boolean {

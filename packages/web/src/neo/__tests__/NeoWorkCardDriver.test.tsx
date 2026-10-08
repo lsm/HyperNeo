@@ -45,12 +45,18 @@ describe('neoWorkDriverLabel', () => {
     expect(neoWorkDriverLabel({ ...driver, adapter: 'oap', daemon: null, status: 'done' })).toBe(
       'Finished in oap'
     );
+    expect(neoWorkDriverLabel({ ...driver, adapter: 'copilot-cli', status: 'done' })).toBe(
+      'Finished in GitHub Copilot on laptop'
+    );
   });
 });
 
 describe('neoWorkDriverLink', () => {
   it('keeps app and in-app links and drops anything else', () => {
     expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
+    expect(neoWorkDriverLink({ ...driver, link: 'ghapp://sessions/s1' })).toBe(
+      'ghapp://sessions/s1'
+    );
     expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/space/sp1/task/t1' })).toBe(
       '/space/sp1/task/t1'
     );
