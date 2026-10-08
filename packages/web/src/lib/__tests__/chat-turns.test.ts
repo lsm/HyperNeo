@@ -73,6 +73,17 @@ describe('buildChatTurns', () => {
     ]);
   });
 
+  it('treats a compaction as a finished turn and keeps its synthetic summary inside it', () => {
+    const turns = buildChatTurns([
+      user('u1', 1),
+      { type: 'system', subtype: 'compact_boundary', uuid: 'cb' } as unknown as ChatMessage,
+      { ...user('summary', 2), isSynthetic: true } as unknown as ChatMessage,
+    ]);
+    expect(turns.map((turn) => [turn.key, turn.messages.length, turn.outcome])).toEqual([
+      ['u1', 3, 'done'],
+    ]);
+  });
+
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);

@@ -29,6 +29,7 @@ function startsTurn(message: ChatMessage): boolean {
   return (
     message.type === 'user' &&
     isTopLevel(message) &&
+    (message as { isSynthetic?: unknown }).isSynthetic !== true &&
     !PENDING_DELIVERY.has(String((message as { deliveryStatus?: unknown }).deliveryStatus)) &&
     !contentBlocks(message).some((block) => block?.type === 'tool_result')
   );
@@ -43,6 +44,7 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   let toolCount = 0;
   let errorCount = 0;
   let result: Loose | null = null;
+  let compacted = false;
   for (const message of messages) {
     if (!isTopLevel(message)) continue;
     const blocks = contentBlocks(message);
@@ -53,6 +55,11 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
         (block) => block?.type === 'tool_result' && block.is_error
       ).length;
     if (message.type === 'result') result = message as unknown as Loose;
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: unknown }).subtype === 'compact_boundary'
+    )
+      compacted = true;
   }
   const startedAt = timestampOf(messages[0]);
   const lastAt = timestampOf(messages[messages.length - 1]);
@@ -69,7 +76,15 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
         : startedAt !== null && lastAt !== null
           ? lastAt - startedAt
           : null,
-    outcome: result ? (failed ? 'failed' : 'done') : isLast ? 'running' : 'stopped',
+    outcome: result
+      ? failed
+        ? 'failed'
+        : 'done'
+      : compacted
+        ? 'done'
+        : isLast
+          ? 'running'
+          : 'stopped',
   };
 }
 
