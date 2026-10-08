@@ -266,6 +266,123 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
+  it('detects the keyboard when iOS shrinks window.innerHeight along with the visual viewport', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const scrollSpy = vi.spyOn(window, 'scrollTo');
+    const composer = document.createElement('textarea');
+    document.body.appendChild(composer);
+    try {
+      renderHook(() => useViewportSafety());
+
+      composer.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 468 });
+      mockVV.height = 468;
+      mockVV.offsetTop = 300;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+      expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('468px');
+      expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
+      expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
+
+      composer.blur();
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      mockVV.height = WINDOW_INNER_HEIGHT;
+      mockVV.offsetTop = 0;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      composer.remove();
+      scrollSpy.mockRestore();
+    }
+  });
+
+  it('does not mistake a shrinking desktop window for a keyboard while a field is focused', () => {
+    setNavigator(0, DESKTOP_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    try {
+      renderHook(() => useViewportSafety());
+
+      field.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 468 });
+      mockVV.height = 468;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      field.remove();
+    }
+  });
+
+  it('does not mistake a browser toolbar appearing while a field stays focused for a keyboard', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    try {
+      renderHook(() => useViewportSafety());
+
+      field.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 668 });
+      mockVV.height = 668;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      field.remove();
+    }
+  });
+
+  it('re-checks the keyboard when the focused field blurs without a resize', async () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    try {
+      renderHook(() => useViewportSafety());
+
+      field.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 468 });
+      mockVV.height = 468;
+      mockVV._trigger('resize');
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+
+      field.blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      field.remove();
+    }
+  });
+
   it('detects keyboard close: removes keyboard-open class and restores CSS vars', () => {
     setNavigator(0, DESKTOP_SAFARI_UA);
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
