@@ -36,6 +36,16 @@ export interface CreateWorktreeOptions {
 
 const MAX_REVIEW_FILES = 80;
 const MAX_PATCH_CHARS = 24_000;
+const GIT_QUOTED_PATH = /["\\\x00-\x1f\x7f]/;
+
+function boundPatch(
+  patch: string,
+  maxChars = MAX_PATCH_CHARS
+): { patch: string | null; truncated: boolean } {
+  if (!patch.trim()) return { patch: null, truncated: false };
+  if (patch.length <= maxChars) return { patch, truncated: false };
+  return { patch: patch.slice(0, maxChars), truncated: true };
+}
 const MAX_FULL_PATCH_CHARS = 1_000_000;
 const GH_TIMEOUT_MS = 8_000;
 
@@ -421,10 +431,13 @@ export class WorktreeManager {
       return;
     }
 
-    const stats = await this.getNumstatMap(git, [`${baseBranch}...${branch}`]);
+    const range = `${baseBranch}...${branch}`;
+    const stats = await this.getNumstatMap(git, [range]);
     const entries = nameStatusOutput.split('\0').filter(Boolean);
+    const selected: Array<{ path: string; oldPath?: string; statusLetter: string }> = [];
+    const keys = new Set(reviewFiles.keys());
 
-    for (let index = 0; index < entries.length && reviewFiles.size < MAX_REVIEW_FILES; index++) {
+    for (let index = 0; index < entries.length && keys.size < MAX_REVIEW_FILES; index++) {
       const statusCode = entries[index];
       const statusLetter = statusCode[0];
       let oldPath: string | undefined;
@@ -438,8 +451,18 @@ export class WorktreeManager {
         if (!path) continue;
       }
 
+      keys.add(path);
+      selected.push({ path, oldPath, statusLetter });
+    }
+
+    const patches = await this.getFilePatches(
+      git,
+      [range],
+      selected.map((file) => file.path)
+    );
+    for (const { path, oldPath, statusLetter } of selected) {
       const stat = stats.get(path) ?? { additions: 0, deletions: 0 };
-      const patchResult = await this.getFilePatch(git, [`${baseBranch}...${branch}`, '--', path]);
+      const patchResult = patches.get(path) ?? { patch: null, truncated: false };
       reviewFiles.set(path, {
         path,
         oldPath,
@@ -459,15 +482,22 @@ export class WorktreeManager {
     workingTreeFiles: GitChangedFile[]
   ): Promise<void> {
     const stats = await this.getNumstatMap(git, ['HEAD']);
-
+    const selected: GitChangedFile[] = [];
+    const keys = new Set(reviewFiles.keys());
     for (const file of workingTreeFiles) {
-      if (reviewFiles.size >= MAX_REVIEW_FILES && !reviewFiles.has(file.path)) break;
+      if (keys.size >= MAX_REVIEW_FILES && !keys.has(file.path)) break;
+      keys.add(file.path);
+      selected.push(file);
+    }
+    const patches = await this.getFilePatches(
+      git,
+      ['HEAD'],
+      selected.filter((file) => file.status !== 'untracked').map((file) => file.path)
+    );
 
+    for (const file of selected) {
       const stat = stats.get(file.path) ?? { additions: 0, deletions: 0 };
-      const patchResult =
-        file.status === 'untracked'
-          ? { patch: null, truncated: false }
-          : await this.getFilePatch(git, ['HEAD', '--', file.path]);
+      const patchResult = patches.get(file.path) ?? { patch: null, truncated: false };
       const existing = reviewFiles.get(file.path);
 
       const combinedPatch = this.combinePatches(existing?.patch ?? null, patchResult.patch);
@@ -507,12 +537,49 @@ export class WorktreeManager {
   ): Promise<{ patch: string | null; truncated: boolean }> {
     try {
       const patch = await git.raw(['diff', '--no-ext-diff', '--no-color', ...rangeArgs]);
-      if (!patch.trim()) return { patch: null, truncated: false };
-      if (patch.length <= maxChars) return { patch, truncated: false };
-      return { patch: patch.slice(0, maxChars), truncated: true };
+      return boundPatch(patch, maxChars);
     } catch {
       return { patch: null, truncated: false };
     }
+  }
+
+  private async getFilePatches(
+    git: SimpleGit,
+    rangeArgs: string[],
+    paths: string[]
+  ): Promise<Map<string, { patch: string | null; truncated: boolean }>> {
+    const patches = new Map<string, { patch: string | null; truncated: boolean }>();
+    const headers = new Map(paths.map((path) => [`diff --git a/${path} b/${path}`, path]));
+    const batched = paths.filter((path) => !GIT_QUOTED_PATH.test(path));
+    let fallback = paths.filter((path) => GIT_QUOTED_PATH.test(path));
+    if (batched.length > 0) {
+      try {
+        const output = await git.raw([
+          '-c',
+          'core.quotePath=false',
+          'diff',
+          '--no-ext-diff',
+          '--no-color',
+          '--no-renames',
+          '--src-prefix=a/',
+          '--dst-prefix=b/',
+          ...rangeArgs,
+          '--',
+          ...batched,
+        ]);
+        for (const chunk of output.split(/^(?=diff --(?:git|cc|combined) )/m)) {
+          const path = headers.get(chunk.slice(0, chunk.indexOf('\n')));
+          if (path !== undefined) patches.set(path, boundPatch(chunk));
+        }
+        if (output.trim() && patches.size === 0) fallback = paths;
+      } catch {
+        fallback = paths;
+      }
+    }
+    for (const path of fallback) {
+      patches.set(path, await this.getFilePatch(git, [...rangeArgs, '--', path]));
+    }
+    return patches;
   }
 
   private combinePatches(
