@@ -118,7 +118,11 @@ export function decideProviderTerminalCategory(
   )
     return ErrorCategory.RATE_LIMIT;
   if (signal.isStartupTimeout || /\btimeout\b/.test(raw)) return ErrorCategory.TIMEOUT;
-  if (/\bmodel_not_found\b/.test(raw)) return ErrorCategory.MODEL;
+  if (
+    /\bmodel_not_found\b/.test(raw) ||
+    raw.includes('is not registered; cannot prepare environment')
+  )
+    return ErrorCategory.MODEL;
   if (
     raw.includes('cannot be run as root') ||
     raw.includes('dangerously-skip-permissions') ||

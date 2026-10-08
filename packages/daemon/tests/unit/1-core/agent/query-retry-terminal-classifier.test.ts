@@ -83,7 +83,14 @@ describe('decideProviderTerminalCategory', () => {
       expected: ErrorCategory.RATE_LIMIT,
     },
     { family: 'anthropic', stems: ['timeout'], expected: ErrorCategory.TIMEOUT },
-    { family: 'anthropic', stems: ['model_not_found'], expected: ErrorCategory.MODEL },
+    {
+      family: 'anthropic',
+      stems: [
+        'model_not_found',
+        "provider 'custom:kimi' is not registered; cannot prepare environment",
+      ],
+      expected: ErrorCategory.MODEL,
+    },
     {
       family: 'anthropic',
       stems: [
