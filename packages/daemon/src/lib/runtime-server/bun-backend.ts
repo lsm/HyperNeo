@@ -2,7 +2,7 @@ import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './ty
 
 type BunWebSocket = {
   data: unknown;
-  send(message: string): void;
+  send(message: string): number;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
 };

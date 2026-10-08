@@ -1,6 +1,6 @@
 export interface RuntimeSocket<TData = unknown> {
   data: TData;
-  send(message: string): void;
+  send(message: string): number | void;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
 }
