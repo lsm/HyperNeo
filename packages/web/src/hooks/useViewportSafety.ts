@@ -24,8 +24,8 @@ function updateSafeHeight(vv: VisualViewport): void {
   document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 }
 
-function updateKeyboardHeight(vv: VisualViewport): void {
-  const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+function updateKeyboardHeight(vv: VisualViewport, fullHeight: number): void {
+  const height = Math.max(0, fullHeight - vv.height);
   document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
 }
 
@@ -55,9 +55,14 @@ export function useViewportSafety(): void {
 
     const ipadSafari = isIpadSafari();
     let keyboardOpen = false;
+    const touch = navigator.maxTouchPoints > 0;
     let fullHeight = window.innerHeight;
+    let fullWidth = window.innerWidth;
     const isKeyboardVisible = (viewport: VisualViewport) => {
-      if (!isEditingText()) fullHeight = window.innerHeight;
+      if (!touch || !isEditingText() || window.innerWidth !== fullWidth) {
+        fullHeight = window.innerHeight;
+        fullWidth = window.innerWidth;
+      }
       return fullHeight - viewport.height > KEYBOARD_THRESHOLD;
     };
     let savedBottomBarHeight: string | null = null;
@@ -77,7 +82,7 @@ export function useViewportSafety(): void {
 
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
-        updateKeyboardHeight(vv);
+        updateKeyboardHeight(vv, fullHeight);
 
         savedBottomBarHeight =
           document.documentElement.style.getPropertyValue('--bottom-bar-height');
@@ -85,7 +90,7 @@ export function useViewportSafety(): void {
         resetDocumentPan(vv);
       } else if (kbVisible && keyboardOpen) {
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-        updateKeyboardHeight(vv);
+        updateKeyboardHeight(vv, fullHeight);
         resetDocumentPan(vv);
       } else if (!kbVisible && keyboardOpen) {
         keyboardOpen = false;
@@ -116,7 +121,7 @@ export function useViewportSafety(): void {
       keyboardOpen = true;
       document.documentElement.classList.add('keyboard-open');
       document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-      updateKeyboardHeight(vv);
+      updateKeyboardHeight(vv, fullHeight);
       savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
       document.documentElement.style.setProperty('--bottom-bar-height', '0px');
     }
@@ -125,14 +130,23 @@ export function useViewportSafety(): void {
       if (keyboardOpen && !isZoomed(vv)) resetDocumentPan(vv);
     };
 
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const handleFocusOut = () => {
+      clearTimeout(focusTimer);
+      focusTimer = setTimeout(handleResize, 0);
+    };
+
     vv.addEventListener('resize', handleResize);
     vv.addEventListener('scroll', handleScroll);
     window.addEventListener('resize', handleResize);
+    document.addEventListener('focusout', handleFocusOut);
 
     return () => {
       vv.removeEventListener('resize', handleResize);
       vv.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('focusout', handleFocusOut);
+      clearTimeout(focusTimer);
 
       document.documentElement.classList.remove('keyboard-open');
       document.documentElement.style.removeProperty('--safe-height');
