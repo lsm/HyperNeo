@@ -58,6 +58,7 @@ import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useChatComposerController } from '../hooks/useChatComposerController.ts';
 import { useImageDropZone, type FileDropHandler } from '../hooks';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts';
 import { useRunningToolUseIds } from '../hooks/useRunningToolUseIds.ts';
 import { useModal } from '../hooks/useModal.ts';
 import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
@@ -1011,6 +1012,7 @@ export default function ChatContainer({
   }, [retryAttempts]);
 
   const error = localError || retryStatusMessage || storeError?.message || null;
+  const showRecovering = useDelayedFlag(isRecovering && !error && !isInitialLoad, 2000);
 
   const errorDetails = storeError?.details as StructuredError | undefined;
   const errorCategory = errorDetails?.category;
@@ -1275,7 +1277,7 @@ export default function ChatContainer({
         />
       )}
 
-      {isRecovering && !error && !isInitialLoad && (
+      {showRecovering && (
         <div
           class="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-xs text-accent-soft"
           data-testid="session-recovering-banner"
