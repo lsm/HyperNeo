@@ -109,6 +109,23 @@ describe('useNeoSheetSwipe', () => {
     expect(sheet.dataset.open).toBe('false');
   });
 
+  it('puts everything back when a second finger lands mid-swipe', () => {
+    const view = render(<Harness />);
+    const text = view.getByTestId('text');
+    const sheet = view.getByTestId('sheet');
+    const surface = view.getByTestId('surface');
+    const width = window.innerWidth;
+    fireEvent.touchStart(text, { touches: [touch(width - 20)] });
+    fireEvent.touchMove(text, { touches: [touch(width - 120)] });
+    expect(surface.dataset.sheetDrag).toBe('');
+    fireEvent.touchStart(text, { touches: [touch(width - 120), touch(100)] });
+    expect(sheet.style.transform).toBe('');
+    expect(surface.dataset.sheetDrag).toBeUndefined();
+    expect(surface.style.getPropertyValue('--neo-sheet')).toBe('');
+    fireEvent.touchEnd(text, { changedTouches: [touch(width - 320)] });
+    expect(sheet.dataset.open).toBe('false');
+  });
+
   it('ignores a swipe that starts mid-screen or while text is selected', () => {
     const view = render(<Harness />);
     const text = view.getByTestId('text');

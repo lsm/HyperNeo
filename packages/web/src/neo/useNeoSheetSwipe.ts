@@ -99,6 +99,7 @@ export function useNeoSheetSwipe({
       root.style.removeProperty('--neo-sheet');
     };
     const onStart = (event: TouchEvent) => {
+      if (axis === 'swipe') release();
       start = null;
       axis = 'wait';
       const touch = event.touches.length === 1 ? event.touches[0] : null;
