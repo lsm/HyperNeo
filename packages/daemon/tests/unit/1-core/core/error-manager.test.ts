@@ -132,6 +132,20 @@ describe('ErrorManager', () => {
       expect(structured.code).toBe('MODEL_NOT_FOUND');
     });
 
+    it('explains a missing provider plainly and does not retry it', () => {
+      const structured = errorManager.createError(
+        new Error(
+          "Provider 'custom:kimi' is not registered; cannot prepare environment for session 's1' (model 'kimi-for-coding')"
+        ),
+        ErrorCategory.MODEL
+      );
+      expect(structured.code).toBe('PROVIDER_NOT_REGISTERED');
+      expect(structured.userMessage).toBe(
+        "This chat's model provider is no longer set up. Choose another model to continue."
+      );
+      expect(structured.recoverable).toBe(false);
+    });
+
     it('should extract QUOTA_EXCEEDED code', () => {
       const structured = errorManager.createError(
         new Error('insufficient_quota'),

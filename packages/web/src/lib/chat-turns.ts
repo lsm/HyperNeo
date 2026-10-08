@@ -54,6 +54,7 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   let toolCount = 0;
   let errorCount = 0;
   let result: Loose | null = null;
+  let workedMs = 0;
   let compacted = false;
   let previous: ChatMessage | undefined;
   for (const message of messages) {
@@ -68,7 +69,10 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
       errorCount += blocks.filter(
         (block) => block?.type === 'tool_result' && block.is_error
       ).length;
-    if (message.type === 'result') result = message as unknown as Loose;
+    if (message.type === 'result') {
+      result = message as unknown as Loose;
+      if (typeof result.duration_ms === 'number') workedMs += result.duration_ms;
+    }
   }
   const startedAt = timestampOf(messages[0]);
   const lastAt = timestampOf(messages[messages.length - 1]);
@@ -80,11 +84,7 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
     errorCount,
     startedAt,
     durationMs:
-      typeof result?.duration_ms === 'number'
-        ? result.duration_ms
-        : startedAt !== null && lastAt !== null
-          ? lastAt - startedAt
-          : null,
+      workedMs > 0 ? workedMs : startedAt !== null && lastAt !== null ? lastAt - startedAt : null,
     outcome: result
       ? failed
         ? 'failed'
@@ -97,6 +97,24 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   };
 }
 
+export function countTopLevelTasks(
+  runningToolUseIds: ReadonlySet<string>,
+  messages: ChatMessage[]
+): number {
+  const topLevel = new Set<string>();
+  for (const message of messages) {
+    if (message.type !== 'assistant' || !isTopLevel(message)) continue;
+    for (const block of contentBlocks(message))
+      if (block?.type === 'tool_use' && typeof block.id === 'string') topLevel.add(block.id);
+  }
+  return [...runningToolUseIds].filter((id) => topLevel.has(id)).length;
+}
+
+export function backgroundTasksLabel(count: number): string | undefined {
+  if (count === 0) return undefined;
+  return `${count} background task${count === 1 ? '' : 's'} running`;
+}
+
 export function buildChatTurns(messages: ChatMessage[]): ChatTurn[] {
   const groups: ChatMessage[][] = [];
   let previous: ChatMessage | undefined;
@@ -106,15 +124,6 @@ export function buildChatTurns(messages: ChatMessage[]): ChatTurn[] {
     if (isTopLevel(message)) previous = message;
   }
   return groups.map((group, index) => summarize(group, index === groups.length - 1));
-}
-
-export function displayedTurnOutcome(
-  turn: ChatTurn,
-  isLastTurn: boolean,
-  active: boolean
-): TurnOutcome {
-  if (isLastTurn && active) return 'running';
-  return turn.outcome === 'running' && !active ? 'stopped' : turn.outcome;
 }
 
 export function liveTurnActivity(

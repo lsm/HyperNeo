@@ -143,8 +143,12 @@ export class WebSocketServerTransport implements IMessageTransport {
 
         try {
           this.clientQueues.set(clientId, queueSize + 1);
-          ws.send(data);
+          const sent = ws.send(data);
           this.clientQueues.set(clientId, queueSize);
+          if (sent === 0) {
+            ws.close(1011, 'Message dropped; reconnect to resync');
+            throw new Error(`Message dropped for client ${clientId}; closed it to force a resync`);
+          }
         } catch (error) {
           this.clientQueues.set(clientId, queueSize);
           this.logger.error(`[${this.name}] Failed to send:`, error);

@@ -2699,6 +2699,30 @@ describe('SDKMessageHandler', () => {
       expect(setProcessing).not.toHaveBeenCalled();
     });
 
+    it('marks a turn the SDK starts on its own as processing when its init arrives', async () => {
+      const setProcessing = mock(async () => {});
+      (mockStateManager as unknown as { setProcessing: typeof setProcessing }).setProcessing =
+        setProcessing;
+      const init = (uuid: string, parent: string | null = null) =>
+        ({
+          type: 'system',
+          subtype: 'init',
+          uuid,
+          session_id: 'sdk-session',
+          parent_tool_use_id: parent,
+          capabilities: [],
+        }) as unknown as SDKMessage;
+      getStateSpy.mockImplementation(() => ({ status: 'idle' }));
+      await handler.handleMessage(init('init-1'));
+      expect(setProcessing).toHaveBeenCalledWith('init-1', 'initializing');
+
+      setProcessing.mockClear();
+      await handler.handleMessage(init('init-sub', 'toolu_1'));
+      getStateSpy.mockImplementation(() => ({ status: 'processing' }));
+      await handler.handleMessage(init('init-2'));
+      expect(setProcessing).not.toHaveBeenCalled();
+    });
+
     it('should reset session-state turn mode after idle so later result can finish turn', async () => {
       await handler.handleMessage({
         type: 'system',

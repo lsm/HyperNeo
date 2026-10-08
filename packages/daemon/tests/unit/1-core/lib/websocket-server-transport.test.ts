@@ -88,6 +88,21 @@ describe('WebSocketServerTransport', () => {
       expect(registeredConnection?.send).toBeInstanceOf(Function);
     });
 
+    it('closes the socket when the runtime drops a message so the client resyncs', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'test-session-123');
+
+      (mockWs.send as ReturnType<typeof mock>).mockImplementation(() => 0);
+      expect(() => registeredConnection!.send('{"type":"EVENT"}')).toThrow('Message dropped');
+      expect(mockWs.close).toHaveBeenCalledWith(1011, 'Message dropped; reconnect to resync');
+      expect(registeredConnection!.canAccept()).toBe(true);
+
+      (mockWs.close as ReturnType<typeof mock>).mockClear();
+      (mockWs.send as ReturnType<typeof mock>).mockImplementation(() => -1);
+      registeredConnection!.send('{"type":"EVENT"}');
+      expect(mockWs.close).not.toHaveBeenCalled();
+    });
+
     it('should notify connection handlers on first client', () => {
       const mockWs = createMockWebSocket();
       const connectionHandler = mock(() => {});

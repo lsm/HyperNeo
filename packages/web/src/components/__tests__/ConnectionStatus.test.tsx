@@ -21,6 +21,20 @@ describe('ConnectionStatus', () => {
       expect(container.textContent).toContain('Ready');
     });
 
+    it('shows idle-time activity such as background agents instead of "Ready"', () => {
+      const { container } = render(
+        <ConnectionStatus
+          connectionState="connected"
+          isProcessing={false}
+          activity="2 background tasks running"
+        />
+      );
+
+      expect(container.textContent).toContain('2 background tasks running');
+      expect(container.textContent).not.toContain('Ready');
+      expect(container.querySelector('.animate-pulse')).toBeTruthy();
+    });
+
     it('should show green dot when connected', () => {
       const { container } = render(
         <ConnectionStatus connectionState="connected" isProcessing={false} />
