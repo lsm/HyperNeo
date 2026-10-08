@@ -6,6 +6,7 @@ import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
   neoDoneCheckMessageId,
+  neoStallMessageId,
   neoNudgeMessageId,
   readNeoAskEvidence,
   requireNeoAskCoordinator,
@@ -366,6 +367,17 @@ describe('synchronous bounded ask resolver', () => {
     const elsewhere = { sessionId: 'unrelated', messageId: neoDoneCheckMessageId(work.id, 0) };
     f.put(elsewhere, 'system');
     expect(f.resolve(elsewhere)).toBeNull();
+  });
+  test('a stall note on running work answers the ask that started it', () => {
+    const f = fixtures();
+    f.put(ask);
+    f.works.set(work.id, { ...work, status: 'queued' });
+    const stall = { sessionId: root.sessionId, messageId: neoStallMessageId(work.id, 5) };
+    f.put(stall, 'system');
+    expect(f.resolve(stall)).toEqual(ask);
+    const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
+    f.put(check, 'system');
+    expect(f.resolve(check)).toBeNull();
   });
   test('cycles stop before rereading and limits do not leak across calls', () => {
     const f = fixtures();
