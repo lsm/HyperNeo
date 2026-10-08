@@ -143,6 +143,16 @@ const Snapshot = z.union([
       )
       .max(100)
       .optional(),
+    workGoals: z
+      .array(
+        z.object({
+          workId: z.string(),
+          goal: z.string().nullable(),
+          doneWhen: z.string().nullable(),
+        })
+      )
+      .max(100)
+      .optional(),
     askOrigins: z
       .array(
         z.object({
@@ -177,6 +187,8 @@ const Propose = z.object({
     })
     .optional(),
   work: NeoDriverTargetSchema.optional(),
+  goal: z.string().trim().min(1).max(2000).optional(),
+  doneWhen: z.string().trim().min(1).max(4000).optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -398,6 +410,7 @@ export function createNeoOperations(service: NeoService) {
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
       workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
+      workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
@@ -712,6 +725,7 @@ export function createNeoOperations(service: NeoService) {
             },
             input.work
           );
+          service.workGoals.record(proposed.work.id, input.goal ?? null, input.doneWhen ?? null);
           return JSON.stringify(proposed.target) === JSON.stringify(input.work)
             ? requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null })
             : {
@@ -731,6 +745,7 @@ export function createNeoOperations(service: NeoService) {
           },
           target.agent
         );
+        service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
         if (service.driverTargets.get(receipt.work.id))
           return {
             reason: {
@@ -844,7 +859,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place} to start new work in a place from work.find, or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

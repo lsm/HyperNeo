@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoWorkDriverReceipt, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -63,6 +63,7 @@ function insideUserSelection(scope: Element): boolean {
 export function NeoWorkCard({
   work,
   driver,
+  goal,
   busy,
   disabled,
   onAction,
@@ -73,6 +74,7 @@ export function NeoWorkCard({
 }: {
   work: NeoWork;
   driver?: NeoWorkDriverReceipt;
+  goal?: NeoWorkGoal;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: 'start' | 'cancel') => void;
@@ -202,6 +204,18 @@ export function NeoWorkCard({
         )}
       </div>
       <h3 class="break-words text-base font-medium">{work.title}</h3>
+      {presentation === 'detail' && goal?.goal && (
+        <p class="mt-2 break-words text-sm text-fg-soft">
+          <span class="text-fg-muted">Goal: </span>
+          {goal.goal}
+        </p>
+      )}
+      {presentation === 'detail' && goal?.doneWhen && (
+        <details class="mt-1 text-sm text-fg-muted">
+          <summary class="cursor-pointer select-none">Done when</summary>
+          <p class="mt-1 whitespace-pre-wrap break-words">{goal.doneWhen}</p>
+        </details>
+      )}
       {work.status === 'proposed' && (
         <p class="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-fg-muted">
           {work.instruction}

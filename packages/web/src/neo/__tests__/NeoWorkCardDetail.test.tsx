@@ -211,3 +211,26 @@ describe('NeoWorkCard detail opening', () => {
     outside.remove();
   });
 });
+
+describe('NeoWorkCard goal', () => {
+  afterEach(() => cleanup());
+
+  it('shows the goal and its done checklist on a detailed card, not on a summary', () => {
+    const goal = { workId: 'g1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
+    const props = {
+      work: work('g1', 'queued'),
+      goal,
+      busy: false,
+      disabled: false,
+      onAction: () => {},
+    };
+    const { unmount } = render(<NeoWorkCard {...props} />);
+    expect(screen.getByText('A full iOS app')).toBeTruthy();
+    expect(screen.getByText('Done when')).toBeTruthy();
+    expect(screen.getByText('- runs in the simulator')).toBeTruthy();
+    unmount();
+
+    render(<NeoWorkCard {...props} presentation="summary" />);
+    expect(screen.queryByText('A full iOS app')).toBeNull();
+  });
+});
