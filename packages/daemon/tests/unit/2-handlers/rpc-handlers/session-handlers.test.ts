@@ -2194,10 +2194,18 @@ describe('Session RPC Handlers — session.get voice composition', () => {
   async function setup(metadata: Record<string, unknown>) {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
-    const sessionData = { id: 's1', metadata };
+    const sessionData = {
+      id: 's1',
+      metadata,
+      processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
+    };
+    const live = {
+      getSessionData: () => sessionData,
+      getProcessingState: () => ({ status: 'idle' }),
+    };
     sessionManager = {
-      getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
-      getSessionForControl: mock(async () => ({ getSessionData: () => sessionData })),
+      getSessionAsync: mock(async () => live),
+      getSessionForControl: mock(async () => live),
       updateSession: mock(async () => {}),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
@@ -2206,6 +2214,14 @@ describe('Session RPC Handlers — session.get voice composition', () => {
     setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
     return messageHubData.handlers.get('session.get');
   }
+
+  it('reports the live processing state, not the copy loaded with the session', async () => {
+    const handler = await setup({});
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { processingState: string };
+    };
+    expect(JSON.parse(result.session.processingState)).toEqual({ status: 'idle' });
+  });
 
   it('presents the composition of draft and pending without persisting anything', async () => {
     const handler = await setup({
