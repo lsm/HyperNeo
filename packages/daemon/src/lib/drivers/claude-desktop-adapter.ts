@@ -43,12 +43,21 @@ const RecordSchema = z.object({
   lastActivityAt: z.number().default(0),
 });
 
-const LiveSessionsSchema = z.array(
-  z.object({ sessionId: z.string(), status: z.string(), name: z.string().optional() })
-);
+const LiveSessionSchema = z.object({
+  sessionId: z.string(),
+  status: z.string(),
+  name: z
+    .string()
+    .nullish()
+    .transform((name) => name ?? undefined),
+});
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
-export type ClaudeLiveSession = z.infer<typeof LiveSessionsSchema>[number];
+export interface ClaudeLiveSession {
+  sessionId: string;
+  status: string;
+  name?: string;
+}
 
 export interface ClaudeDesktopAdapterDeps {
   sessionsDir: string;
@@ -129,9 +138,12 @@ export async function readLiveClaudeSessions(spawn: SpawnFn): Promise<ClaudeLive
       } catch {}
     }, LIVE_TIMEOUT_MS);
     const [output] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    const live = LiveSessionsSchema.safeParse(JSON.parse(output));
-    if (!live.success) throw new Error('claude agents --json answered in an unknown shape.');
-    return live.data;
+    const listed = z.array(z.unknown()).safeParse(JSON.parse(output));
+    if (!listed.success) throw new Error('claude agents --json answered in an unknown shape.');
+    return listed.data.flatMap((entry) => {
+      const live = LiveSessionSchema.safeParse(entry);
+      return live.success ? [live.data] : [];
+    });
   } finally {
     clearTimeout(timer);
   }
