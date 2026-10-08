@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -9,11 +9,12 @@ const SECRET = 'sk-ant-oat01-flag-settings-secret';
 
 describe('SDK flag settings file', () => {
   const roots: string[] = [];
-  const writer = () => {
+  const newRoot = () => {
     const root = mkdtempSync(join(tmpdir(), 'flag-settings-test-'));
     roots.push(root);
-    return createFlagSettingsFileWriter(root);
+    return root;
   };
+  const writer = () => createFlagSettingsFileWriter(newRoot());
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -29,7 +30,7 @@ describe('SDK flag settings file', () => {
     expect(JSON.stringify(options)).not.toContain(SECRET);
     expect(options.sandbox).toBeUndefined();
     const path = options.settings as string;
-    expect(path.endsWith('session_1.json')).toBe(true);
+    expect(path).toMatch(/session_1-[\w-]+\.json$/);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       cleanupPeriodDays: 3650,
       env: { CLAUDE_CODE_OAUTH_TOKEN: SECRET },
@@ -66,5 +67,26 @@ describe('SDK flag settings file', () => {
       settings: { cleanupPeriodDays: 3650 },
       sandbox: { enabled: true },
     });
+  });
+
+  it('removes the file when its attempt ends', () => {
+    const options: Options = { settings: { env: { ANTHROPIC_AUTH_TOKEN: SECRET } } };
+    const remove = writer()(options, 'a');
+    const path = options.settings as string;
+    expect(existsSync(path)).toBe(true);
+    remove?.();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('removes directories left by daemons that are no longer running', () => {
+    const root = newRoot();
+    const abandoned = join(root, 'hyperneo-settings-999999999-abc');
+    const live = join(root, `hyperneo-settings-${process.ppid}-abc`);
+    const unrelated = join(root, 'other-dir');
+    for (const dir of [abandoned, live, unrelated]) mkdirSync(dir);
+    createFlagSettingsFileWriter(root)({ settings: { env: { ANTHROPIC_API_KEY: SECRET } } }, 'a');
+    expect(existsSync(abandoned)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+    expect(existsSync(unrelated)).toBe(true);
   });
 });

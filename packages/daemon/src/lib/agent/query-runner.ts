@@ -695,6 +695,7 @@ export class QueryRunner {
     let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
     let processExited = false;
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
+    let removeFlagSettingsFile: (() => void) | undefined;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -989,7 +990,7 @@ export class QueryRunner {
         throw envAbort;
       }
 
-      writeFlagSettingsFile(queryOptions, session.id);
+      removeFlagSettingsFile = writeFlagSettingsFile(queryOptions, session.id);
       recoveryState.startGuard?.();
       const queryObject = query({
         prompt: this.createMessageGeneratorWrapper(
@@ -1657,6 +1658,7 @@ export class QueryRunner {
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
       holderTurn?.dispose();
+      removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');
 
