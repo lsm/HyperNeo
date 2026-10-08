@@ -165,7 +165,8 @@ export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,
   now: number,
-  startedAt: number | null = null
+  startedAt: number | null = null,
+  requireFresh = false
 ): { status: 'reported' | 'failed'; report: string } | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
@@ -177,7 +178,7 @@ export function readDriverSettlement(
   }
   const { status, lastActivityAt, lastReply } = reply.data.value;
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
-  if (!fresh && now - work.updatedAt < SETTLE_GRACE_MS) return null;
+  if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   if (status === 'done') {
     return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
   }

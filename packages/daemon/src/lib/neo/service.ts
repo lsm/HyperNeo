@@ -575,12 +575,13 @@ export class NeoService {
     const live = readDriverLive(outcome);
     if (live && this.driverTargets.recordLive(work.id, live.status, live.link))
       this.notifyChanged();
-    if (this.driverTargets.get(work.id)?.verb !== 'start') return;
+    const continued = this.workContinues.get(work.id);
     const settled = readDriverSettlement(
       work,
       outcome,
       Date.now(),
-      this.workContinues.get(work.id)?.continuedAt ?? this.driverTargets.readStartedAt(work.id)
+      continued?.continuedAt ?? this.driverTargets.readStartedAt(work.id),
+      !!continued || this.driverTargets.get(work.id)?.verb === 'send'
     );
     if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
     const done = this.repo.transitionWork(work.id, work, {

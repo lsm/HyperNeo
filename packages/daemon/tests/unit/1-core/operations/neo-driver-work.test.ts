@@ -397,21 +397,42 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('leaves a message sent to existing work for Neo to follow up', async () => {
-    const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
+  test('settles sent work only once the session replies after the send', async () => {
+    let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
     const { db, service, calls } = await setup(
       { ok: true, value: { delivered: false } },
       undefined,
-      () => done,
+      () => reply,
       sendTarget
     );
+    const returned: string[] = [];
+    Object.assign(service, {
+      returnReport: async (settled: { id: string }) => {
+        returned.push(settled.id);
+      },
+    });
     try {
       const before = Date.now();
       await service.start('work-1');
       expect(service.driverTargets.readStartedAt('work-1')).toBeGreaterThanOrEqual(before);
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
-      expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status']);
+
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: Date.now() + 1_000,
+          lastReply: 'Voice is durable.',
+        },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Voice is durable.',
+      });
+      expect(returned).toEqual(['work-1']);
+      expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status', 'work.status']);
     } finally {
       db.close();
     }
@@ -524,6 +545,17 @@ describe('readDriverSettlement', () => {
     };
     expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
     expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
+  });
+
+  test('never settles on activity older than a send or continue, even after the grace', () => {
+    const work = { updatedAt: 100 };
+    const stale = {
+      kind: 'completed' as const,
+      value: { ok: true, value: { status: 'done', lastActivityAt: 50, lastReply: 'Old reply.' } },
+    };
+    const later = 100 + 10 * 60_000;
+    expect(readDriverSettlement(work, stale, later, 100)).toMatchObject({ status: 'reported' });
+    expect(readDriverSettlement(work, stale, later, 100, true)).toBeNull();
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
