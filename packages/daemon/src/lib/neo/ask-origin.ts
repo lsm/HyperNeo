@@ -32,6 +32,14 @@ export function neoNudgeMessageId(messageId: string): string {
   return `${NUDGE_PREFIX}${messageId}`;
 }
 
+export function neoDoneCheckMessageId(workId: string, continued: number): string {
+  return `${workId}:done-check:${continued}`;
+}
+
+function checkedWorkId(messageId: string): string {
+  return /^(.+):done-check:\d+$/.exec(messageId)?.[1] ?? messageId;
+}
+
 function nudgedMessageId(messageId: string): string | null {
   return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
 }
@@ -85,7 +93,7 @@ export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads
     : null;
   const id = envelope ? input.messageId.slice('neo-consult:'.length, -(envelope.length + 1)) : null;
   const consultation = id ? (reads.getConsultation(id) ?? null) : null;
-  const workId = id ? reviewWorkId(id) : input.messageId;
+  const workId = id ? reviewWorkId(id) : checkedWorkId(input.messageId);
   const work = workId ? (reads.getWork(workId) ?? null) : null;
   return {
     envelope,
@@ -116,7 +124,7 @@ export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence
   const nudged = nudgedMessageId(input.messageId);
   if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
   if (!envelope) {
-    return work?.id === input.messageId &&
+    return work?.id === checkedWorkId(input.messageId) &&
       (work.status === 'reported' || work.status === 'failed') &&
       (input.sessionId === root.sessionId || input.sessionId === work.originSessionId) &&
       validWorkOrigin(work, evidence) &&

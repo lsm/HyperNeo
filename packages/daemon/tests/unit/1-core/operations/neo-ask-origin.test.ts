@@ -5,6 +5,7 @@ import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/type
 import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
+  neoDoneCheckMessageId,
   neoNudgeMessageId,
   readNeoAskEvidence,
   requireNeoAskCoordinator,
@@ -352,6 +353,19 @@ describe('synchronous bounded ask resolver', () => {
     const orphan = { sessionId: ask.sessionId, messageId: neoNudgeMessageId('missing') };
     f.put(orphan, 'system');
     expect(f.resolve(orphan)).toBeNull();
+  });
+  test('a done-check note answers the ask that started its work, never a forged one', () => {
+    const f = fixtures();
+    f.put(ask);
+    const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 2) };
+    f.put(check, 'system');
+    expect(f.resolve(check)).toEqual(ask);
+    const orphan = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId('missing', 0) };
+    f.put(orphan, 'system');
+    expect(f.resolve(orphan)).toBeNull();
+    const elsewhere = { sessionId: 'unrelated', messageId: neoDoneCheckMessageId(work.id, 0) };
+    f.put(elsewhere, 'system');
+    expect(f.resolve(elsewhere)).toBeNull();
   });
   test('cycles stop before rereading and limits do not leak across calls', () => {
     const f = fixtures();
