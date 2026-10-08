@@ -333,7 +333,6 @@ describe('ConnectionManager - Page Visibility Handling', () => {
           refreshApp: vi.fn(async () => {}),
           refreshGlobal: vi.fn(async () => {}),
           refreshSpace: vi.fn(async () => {}),
-          recoverAgents: vi.fn(async () => {}),
         }),
         markSessionsRecovering,
       });

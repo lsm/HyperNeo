@@ -61,14 +61,6 @@ vi.mock('../session-store', () => ({ sessionStore: {} }));
 vi.mock('../space-store', () => ({
   spaceStore: { rejoinChannel: () => fixture.effects.push('rejoin-space') },
 }));
-vi.mock('../space-agent-store', () => ({
-  spaceAgentStore: {
-    recover() {
-      fixture.effects.push('recover-agents');
-      return new Promise(() => {});
-    },
-  },
-}));
 vi.mock('../signals', () => ({ currentSessionIdSignal: {}, slashCommandsSignal: {} }));
 vi.mock('../outbound-queue', () => ({
   startAutoFlush: () => fixture.effects.push('start-actions'),
@@ -104,7 +96,7 @@ describe('real ConnectionManager connection-event effects', () => {
     vi.restoreAllMocks();
   });
 
-  it('runs connected effects synchronously in order without waiting for agent recovery', () => {
+  it('runs connected effects synchronously in order', () => {
     fixture.emit('connected');
     expect(fixture.effects).toEqual([
       'state:connected',
@@ -114,7 +106,6 @@ describe('real ConnectionManager connection-event effects', () => {
       'start-transcripts',
       'rejoin-space',
       'notify',
-      'recover-agents',
     ]);
     expect(fixture.state).toBe('connected');
     expect(fixture.attempts).toBe(0);
@@ -188,11 +179,6 @@ describe('real ConnectionManager connection-event effects', () => {
     manager.onceConnected(() => fixture.effects.push('last-listener'));
     fixture.connected = true;
     fixture.emit('connected');
-    expect(fixture.effects.slice(-4)).toEqual([
-      'notify',
-      'throwing-listener',
-      'last-listener',
-      'recover-agents',
-    ]);
+    expect(fixture.effects.slice(-3)).toEqual(['notify', 'throwing-listener', 'last-listener']);
   });
 });

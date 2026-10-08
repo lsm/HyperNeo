@@ -47,10 +47,6 @@ function fixture(attempts: number | undefined = 3) {
     rejoinSpace: () => {
       calls.push('rejoin-space');
     },
-    recoverAgents: () => {
-      calls.push('recover');
-      return new Promise<void>(() => {});
-    },
     getReconnectAttempts: () => {
       calls.push('read-attempts');
       return attempts;
@@ -68,7 +64,6 @@ const connected = [
   'start-transcripts',
   'rejoin-space',
   'notify',
-  'recover',
 ];
 const auth = ['state:error', 'stop-actions', 'stop-audio', 'stop-transcripts', 'close', 'redirect'];
 
@@ -99,12 +94,6 @@ describe('connection event stages', () => {
     applyConnectedEffects(effects, 'connected', 'resume-connected');
     applyReconnectAttempts(effects, 'connected', 'resume-connected');
     expect(calls).toEqual(['notify']);
-  });
-
-  it('keeps agent recovery detached from the connected callback', () => {
-    const { effects, calls } = fixture();
-    expect(applyConnectedEffects(effects, 'connected', 'normal')).toBeUndefined();
-    expect(calls).toEqual(connected.slice(1));
   });
 
   it.each([0, 3, undefined])('handles transport attempt count %s', (attempts) => {

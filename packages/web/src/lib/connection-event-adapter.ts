@@ -1,6 +1,5 @@
 import type { ConnectionEventEffects } from './connection-event-pipeline';
 import { connectionState, reconnectAttemptCount } from './state';
-import { spaceAgentStore } from './space-agent-store';
 import { spaceStore } from './space-store';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
@@ -43,7 +42,6 @@ export function createDefaultConnectionEventEffects(
     },
     notifyConnected: () => owner.notifyConnected(),
     rejoinSpace: () => spaceStore.rejoinChannel(),
-    recoverAgents: () => spaceAgentStore.recover(),
     getReconnectAttempts: () => owner.getReconnectAttempts(),
   };
 }

@@ -8,7 +8,6 @@ export interface ConnectionResumeEffects {
   refreshApp(): Promise<void>;
   refreshGlobal(): Promise<void>;
   refreshSpace(): Promise<void>;
-  recoverAgents(): Promise<void>;
 }
 
 export function checkResumeHealth(effects: ConnectionResumeEffects): Promise<unknown> {
@@ -30,7 +29,6 @@ export async function refreshResumeStores(effects: ConnectionResumeEffects): Pro
     effects.refreshApp(),
     effects.refreshGlobal(),
     effects.refreshSpace(),
-    effects.recoverAgents(),
   ]);
 }
 
