@@ -93,6 +93,7 @@ export class NeoService {
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly processingStatus = new Map<string, string>();
   private readonly interruptedSessions = new Set<string>();
+  private readonly continuing = new Set<string>();
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
@@ -430,22 +431,34 @@ export class NeoService {
       now
     );
     if (budget) return { ok: false, reason: budget };
-    const outcome = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.send',
-      { ref, message: withWorkGoal(message, this.workGoals.get(id)) },
-      driverWorkCaller(work)
-    );
-    const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
-    if ('failure' in sent) return { ok: false, reason: sent.failure };
-    const continued = this.workContinues.record(id, message, now);
-    const count = continued?.count ?? 1;
-    const current = this.repo.getWork(id) ?? work;
-    const reopened = this.repo.transitionWork(id, current, {
-      status: 'queued',
-      report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
-    });
-    return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
+    if (this.continuing.has(id))
+      return { ok: false, reason: 'This work is already being continued; wait for that first.' };
+    this.continuing.add(id);
+    try {
+      const outcome = await invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.send',
+        { ref, message: withWorkGoal(message, this.workGoals.get(id)) },
+        driverWorkCaller(work)
+      );
+      const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
+      if ('failure' in sent) return { ok: false, reason: sent.failure };
+      const continued = this.workContinues.record(id, message, now);
+      const count = continued?.count ?? 1;
+      const current = this.repo.getWork(id) ?? work;
+      if (current.status !== 'queued' && current.status !== 'reported')
+        return {
+          ok: false,
+          reason: `The message was sent, but this work was ${current.status} meanwhile; it stays ${current.status}.`,
+        };
+      const reopened = this.repo.transitionWork(id, current, {
+        status: 'queued',
+        report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
+      });
+      return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
+    } finally {
+      this.continuing.delete(id);
+    }
   }
 
   async cancel(id: string): Promise<void> {

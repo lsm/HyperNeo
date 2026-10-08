@@ -35,6 +35,7 @@ describe('neo.work.continue', () => {
   let service: NeoService;
   let sent: Array<{ ref: unknown; message: string }>;
   let lastActivityAt: number;
+  let duringSend: () => Promise<void>;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
   beforeEach(async () => {
@@ -42,6 +43,7 @@ describe('neo.work.continue', () => {
     db.createSession({ ...createTestSession('root'), status: 'active' });
     sent = [];
     lastActivityAt = 0;
+    duringSend = async () => {};
     const driverRegistry = createOperationRegistry([
       defineOperation({
         name: 'work.status',
@@ -49,7 +51,7 @@ describe('neo.work.continue', () => {
         inputSchema: z.object({ ref: z.unknown() }),
         resultSchema: z.unknown(),
         policy: { safetyClass: 'read' },
-        execute: () => ({
+        execute: async () => ({
           ok: true,
           value: { status: 'done', lastActivityAt, lastReply: 'Skeleton builds.' },
         }),
@@ -60,8 +62,9 @@ describe('neo.work.continue', () => {
         inputSchema: z.object({ ref: z.unknown(), message: z.string() }),
         resultSchema: z.unknown(),
         policy: { safetyClass: 'mutate' },
-        execute: (input: { ref: unknown; message: string }) => {
+        execute: async (input: { ref: unknown; message: string }) => {
           sent.push(input);
+          await duringSend();
           return { ok: true, value: { delivered: true } };
         },
       }),
@@ -148,6 +151,33 @@ describe('neo.work.continue', () => {
       value: { ok: false, reason: expect.stringContaining('continue_budget_spent') },
     });
     expect(sent).toHaveLength(5);
+  });
+
+  test('lets only one of two overlapping continues through, so five stays the cap', async () => {
+    const work = reportedWork();
+    for (let n = 0; n < 4; n++) service.workContinues.record(work.id, `Step ${n}`, Date.now());
+    const [first, second] = await Promise.all([
+      invoke({ id: work.id, message: 'Step 5' }),
+      invoke({ id: work.id, message: 'Step 6' }),
+    ]);
+    expect([first, second]).toMatchObject([
+      { value: { ok: true } },
+      { value: { ok: false, reason: expect.stringContaining('already being continued') } },
+    ]);
+    expect(service.workContinues.get(work.id)?.count).toBe(5);
+    expect(sent).toHaveLength(1);
+  });
+
+  test('leaves work cancelled while the message was on its way cancelled', async () => {
+    const work = reportedWork();
+    const queued = service.repo.transitionWork(work.id, work, { status: 'queued' })!;
+    duringSend = async () => {
+      await service.cancel(queued.id);
+    };
+    expect(await invoke({ id: work.id, message: 'Go on.' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('cancelled meanwhile') },
+    });
+    expect(service.repo.getWork(work.id)?.status).toBe('cancelled');
   });
 
   test('refuses another Neo session and work that never started', async () => {
