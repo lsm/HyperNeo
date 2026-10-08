@@ -1602,6 +1602,10 @@ export class SDKMessageHandler {
 
     const turnEndPlan = this.routeSessionStateTurnEnd(message.state);
     this.applyTurnEndFlags(turnEndPlan.nextFlags);
+    if (message.state === 'running' && this.ctx.stateManager.getState().status === 'idle') {
+      await this.ctx.stateManager.setProcessing(message.uuid ?? 'sdk-turn', 'initializing');
+      return;
+    }
     if (message.state !== 'idle') {
       return;
     }
