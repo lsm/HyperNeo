@@ -397,7 +397,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('settles sent work only once the session replies after the send', async () => {
+  test('settles sent work once the session acts after the send, on its own clock', async () => {
     let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
     const { db, service, calls } = await setup(
       { ok: true, value: { delivered: false } },
@@ -412,19 +412,14 @@ describe('Neo work with a drivers target', () => {
       },
     });
     try {
-      const before = Date.now();
       await service.start('work-1');
-      expect(service.driverTargets.readStartedAt('work-1')).toBeGreaterThanOrEqual(before);
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(1);
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
 
       reply = {
         ok: true,
-        value: {
-          status: 'done',
-          lastActivityAt: Date.now() + 1_000,
-          lastReply: 'Voice is durable.',
-        },
+        value: { status: 'done', lastActivityAt: 2, lastReply: 'Voice is durable.' },
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')).toMatchObject({
@@ -432,7 +427,28 @@ describe('Neo work with a drivers target', () => {
         report: 'Voice is durable.',
       });
       expect(returned).toEqual(['work-1']);
-      expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status', 'work.status']);
+      expect(calls.map((call) => call.name)).toEqual([
+        'work.status',
+        'work.send',
+        'work.status',
+        'work.status',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('falls back to the time before the send when the target status is unreadable', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => ({ ok: false, reason: 'unreachable', detail: 'asleep' }),
+      sendTarget
+    );
+    try {
+      const before = Date.now();
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeGreaterThanOrEqual(before);
     } finally {
       db.close();
     }

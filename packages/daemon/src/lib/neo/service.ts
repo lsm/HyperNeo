@@ -37,6 +37,7 @@ import {
   type NeoDriverTarget,
   readDriverOutcome,
   readDriverLive,
+  readDriverLastActivity,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -482,6 +483,18 @@ export class NeoService {
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     const call = driverWorkCall(target, queued, this.workGoals.get(queued.id));
+    const sentAt = Date.now();
+    const before =
+      target.verb === 'send'
+        ? readDriverLastActivity(
+            await invokeOperation(
+              this.sessions.getOperationRegistry(),
+              'work.status',
+              { ref: target.ref },
+              driverWorkCaller(queued)
+            )
+          )
+        : null;
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       call.name,
@@ -493,7 +506,7 @@ export class NeoService {
       this.driverTargets.recordRef(
         queued.id,
         result.ref,
-        result.startedAt ?? Date.now(),
+        result.startedAt ?? before ?? sentAt,
         result.link
       );
       const current = this.repo.getWork(queued.id);

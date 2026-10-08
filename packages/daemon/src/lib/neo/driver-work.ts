@@ -143,6 +143,12 @@ export function readDriverLive(
   return typeof link === 'string' ? { status, link } : { status };
 }
 
+export function readDriverLastActivity(outcome: OperationOutcome): number | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  return reply.success && reply.data.ok ? reply.data.value.lastActivityAt : null;
+}
+
 export function readDriverNeedsYou(
   outcome: OperationOutcome
 ): { needsYou: boolean; since: number; lastReply?: string } | null {
