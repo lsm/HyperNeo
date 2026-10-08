@@ -26,11 +26,11 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus
           connectionState="connected"
           isProcessing={false}
-          activity="2 background agents running"
+          activity="2 background tasks running"
         />
       );
 
-      expect(container.textContent).toContain('2 background agents running');
+      expect(container.textContent).toContain('2 background tasks running');
       expect(container.textContent).not.toContain('Ready');
       expect(container.querySelector('.animate-pulse')).toBeTruthy();
     });

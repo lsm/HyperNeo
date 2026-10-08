@@ -35,10 +35,9 @@ import {
 import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
 import {
   type ChatTurn,
-  backgroundAgentsLabel,
+  backgroundTasksLabel,
   buildChatTurns,
   liveTurnActivity,
-  runningBackgroundAgents,
 } from '../lib/chat-turns.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
@@ -947,10 +946,7 @@ export default function ChatContainer({
     agentState.status,
     currentAction
   );
-  const backgroundLabel = useMemo(
-    () => backgroundAgentsLabel(runningBackgroundAgents(messages)),
-    [messages]
-  );
+  const backgroundLabel = backgroundTasksLabel(runningToolUseIds.size);
   const lastTurnKey = turnAt?.[turnAt.length - 1]?.key;
   const turnLabel = turnActive ? turnAction : backgroundLabel;
   const statusActivity = isProcessing ? undefined : turnLabel;

@@ -73,46 +73,9 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   };
 }
 
-function isBackgroundLaunch(block: Loose): boolean {
-  if (block?.type !== 'tool_use' || (block.name !== 'Agent' && block.name !== 'Task')) return false;
-  return (block.input as Loose | undefined)?.run_in_background === true;
-}
-
-function toolResultText(block: Loose): string {
-  const content = block.content;
-  if (typeof content === 'string') return content;
-  return Array.isArray(content)
-    ? (content as Loose[]).map((part) => (typeof part?.text === 'string' ? part.text : '')).join('')
-    : '';
-}
-
-export function runningBackgroundAgents(messages: ChatMessage[]): number {
-  const start = messages.findLastIndex(startsTurn);
-  const launched = new Set<string>();
-  const settled = new Set<string>();
-  for (const message of messages.slice(Math.max(0, start))) {
-    const loose = message as unknown as Loose;
-    if (message.type === 'system' && loose.subtype === 'task_notification') {
-      if (typeof loose.tool_use_id === 'string') settled.add(loose.tool_use_id);
-      continue;
-    }
-    if (!isTopLevel(message)) continue;
-    for (const block of contentBlocks(message)) {
-      if (message.type === 'assistant' && isBackgroundLaunch(block)) launched.add(String(block.id));
-      if (
-        message.type === 'user' &&
-        block?.type === 'tool_result' &&
-        toolResultText(block).startsWith('Async agent launched successfully')
-      )
-        launched.add(String(block.tool_use_id));
-    }
-  }
-  return [...launched].filter((id) => !settled.has(id)).length;
-}
-
-export function backgroundAgentsLabel(count: number): string | undefined {
+export function backgroundTasksLabel(count: number): string | undefined {
   if (count === 0) return undefined;
-  return `${count} background agent${count === 1 ? '' : 's'} running`;
+  return `${count} background task${count === 1 ? '' : 's'} running`;
 }
 
 export function buildChatTurns(messages: ChatMessage[]): ChatTurn[] {
