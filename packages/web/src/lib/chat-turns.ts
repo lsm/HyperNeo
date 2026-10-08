@@ -108,6 +108,15 @@ export function buildChatTurns(messages: ChatMessage[]): ChatTurn[] {
   return groups.map((group, index) => summarize(group, index === groups.length - 1));
 }
 
+export function displayedTurnOutcome(
+  turn: ChatTurn,
+  isLastTurn: boolean,
+  active: boolean
+): TurnOutcome {
+  if (isLastTurn && active) return 'running';
+  return turn.outcome === 'running' && !active ? 'stopped' : turn.outcome;
+}
+
 export function liveTurnActivity(
   agentStatus: string,
   currentAction: string | undefined

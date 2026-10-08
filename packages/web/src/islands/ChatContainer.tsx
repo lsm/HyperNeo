@@ -33,7 +33,12 @@ import {
   resolveChatDisplayMode,
 } from '../components/sdk/chat-display-mode.ts';
 import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
-import { type ChatTurn, buildChatTurns, liveTurnActivity } from '../lib/chat-turns.ts';
+import {
+  type ChatTurn,
+  buildChatTurns,
+  displayedTurnOutcome,
+  liveTurnActivity,
+} from '../lib/chat-turns.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import {
@@ -941,8 +946,9 @@ export default function ChatContainer({
     agentState.status,
     currentAction
   );
+  const lastTurnKey = turnAt?.[turnAt.length - 1]?.key;
   const turnView = (turn: ChatTurn) => {
-    const outcome = turn.outcome === 'running' && !turnActive ? 'stopped' : turn.outcome;
+    const outcome = displayedTurnOutcome(turn, turn.key === lastTurnKey, turnActive);
     return {
       turn: outcome === turn.outcome ? turn : { ...turn, outcome },
       expanded: turnExpansion[turn.key] ?? outcome === 'failed',

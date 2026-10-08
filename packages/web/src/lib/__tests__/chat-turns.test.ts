@@ -1,6 +1,6 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { buildChatTurns, liveTurnActivity } from '../chat-turns.ts';
+import { buildChatTurns, displayedTurnOutcome, liveTurnActivity } from '../chat-turns.ts';
 
 const user = (uuid: string, timestamp: number) =>
   ({
@@ -112,6 +112,20 @@ describe('buildChatTurns', () => {
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
+  });
+});
+
+describe('displayedTurnOutcome', () => {
+  it('shows the last turn as running while the agent works, even right after a compaction', () => {
+    const [compacted] = buildChatTurns([
+      user('u1', 1),
+      { type: 'system', subtype: 'compact_boundary', uuid: 'cb' } as unknown as ChatMessage,
+    ]);
+    expect(compacted.outcome).toBe('done');
+    expect(displayedTurnOutcome(compacted, true, true)).toBe('running');
+    expect(displayedTurnOutcome(compacted, true, false)).toBe('done');
+    expect(displayedTurnOutcome({ ...compacted, outcome: 'running' }, true, false)).toBe('stopped');
+    expect(displayedTurnOutcome({ ...compacted, outcome: 'done' }, false, true)).toBe('done');
   });
 });
 
