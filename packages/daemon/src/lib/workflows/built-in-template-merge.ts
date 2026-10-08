@@ -27,11 +27,35 @@ export function mergeNodeStructuralFieldsFromTemplate(
   const existingAgentNames = new Set(
     existingNodes.flatMap((node) => node.agents.map((agent) => agent.name).filter(Boolean))
   );
+  const claimed = new Set(
+    existingNodes
+      .filter((node) =>
+        templateNodes.some((template) => template.id === node.id || template.name === node.name)
+      )
+      .map((node) => node.id)
+  );
+  const installedUnderNewName = (template: (typeof templateNodes)[number]) => {
+    const match = existingNodes.find(
+      (node) =>
+        !claimed.has(node.id) &&
+        node.agents.some((agent) =>
+          template.agents.some(
+            (templateAgent) =>
+              (!!agent.templateKey && agent.templateKey === templateAgent.templateKey) ||
+              (!!agent.agentId && agent.agentId === templateAgent.agentId)
+          )
+        )
+    );
+    if (match) claimed.add(match.id);
+    return !!match;
+  };
   const missingTemplateNodes = templateNodes
     .filter(
       (node) =>
+        !existingNodes.some((existing) => existing.id === node.id) &&
         !existingNodeNames.has(node.name) &&
-        !node.agents.some((agent) => agent.name && existingAgentNames.has(agent.name))
+        !node.agents.some((agent) => agent.name && existingAgentNames.has(agent.name)) &&
+        !installedUnderNewName(node)
     )
     .map((node) => ({
       ...node,

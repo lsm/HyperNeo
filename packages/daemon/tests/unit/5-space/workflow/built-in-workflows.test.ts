@@ -2359,6 +2359,27 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.find((c) => c.from === 'QA' && c.to === 'Coding')).toBeDefined();
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate pairs a renamed node once and still adds new template nodes', () => {
+    const [coding] = CODING_WORKFLOW.nodes;
+    const agent = coding.agents[0];
+    const extra = {
+      ...coding,
+      id: 'template-extra',
+      name: 'Extra',
+      agents: [{ ...agent, name: 'extra' }],
+    };
+    const renamed = {
+      ...coding,
+      id: 'installed-coding',
+      name: 'Implementation',
+      agents: [{ ...agent, name: 'engineer' }],
+    };
+
+    const result = mergeNodeStructuralFieldsFromTemplate([renamed], [coding, extra]);
+
+    expect(result.map((node) => node.name)).toEqual(['Implementation', 'Extra']);
+  });
+
   test('mergeNodeStructuralFieldsFromTemplate applies template resetContextPerTurn to existing agent slots', () => {
     const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
       node.name === 'Review'
@@ -2494,7 +2515,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.channels!.some((channel) => channel.id === 'custom-c2v')).toBe(true);
   });
 
-  test.skip('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
+  test('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
@@ -2525,6 +2546,9 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.errors).toHaveLength(0);
 
     const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.map((node) => node.id).sort()).toEqual(
+      coding.nodes.map((node) => node.id).sort()
+    );
     const hook = after.hooks!.find((h) => h.id === 'code-pr-ready')!;
     expect(hook.sourceNode).toBe('Implementation');
     expect(hook.targetNode).toBe('Human Review');
