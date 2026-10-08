@@ -214,7 +214,9 @@ export class SessionLifecycle {
         thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
         provider: (params.config?.provider ?? resolvedProvider) as Provider,
-        sandbox: params.config?.sandbox ?? globalSettings.sandbox,
+        sandbox: params.config?.sandbox
+          ? { ...globalSettings.sandbox, ...params.config.sandbox }
+          : globalSettings.sandbox,
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
       },
       metadata: {

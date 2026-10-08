@@ -43,6 +43,7 @@ interface NewChatSelection {
   baseBranch: string | null;
   model: NewChatModelSelection | null;
   thinkingLevel: ThinkingLevel | null;
+  sandbox: boolean | null;
 }
 
 const NEW_CHAT_SELECTION_KEY = 'hyperneo_new_chat_selection';
@@ -52,6 +53,7 @@ const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
   baseBranch: null,
   model: null,
   thinkingLevel: null,
+  sandbox: null,
 };
 
 function loadNewChatSelection(): NewChatSelection {
@@ -79,6 +81,7 @@ function loadNewChatSelection(): NewChatSelection {
         typeof value.thinkingLevel === 'string'
           ? normalizeThinkingLevel(value.thinkingLevel)
           : null,
+      sandbox: typeof value.sandbox === 'boolean' ? value.sandbox : null,
     };
   } catch {
     return DEFAULT_NEW_CHAT_SELECTION;
@@ -140,6 +143,8 @@ export function SessionsPage() {
   const [selectedThinking, setSelectedThinking] = useState<ThinkingLevel | null>(
     initialSelection.thinkingLevel
   );
+  const [sandboxChoice, setSandboxChoice] = useState<boolean | null>(initialSelection.sandbox);
+  const sandbox = sandboxChoice ?? globalSettings.value?.sandbox?.enabled ?? false;
   const thinkingLevel =
     selectedThinking ?? normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
 
@@ -186,8 +191,9 @@ export function SessionsPage() {
       baseBranch,
       model: selectedModel,
       thinkingLevel: selectedThinking,
+      sandbox: sandboxChoice,
     });
-  }, [project, mode, baseBranch, selectedModel, selectedThinking]);
+  }, [project, mode, baseBranch, selectedModel, selectedThinking, sandboxChoice]);
 
   useEffect(() => {
     if (!project) {
@@ -312,6 +318,9 @@ export function SessionsPage() {
         ).some((option) => option.value === selectedThinking);
         req.config = { ...req.config, thinkingLevel: supported ? selectedThinking : 'off' };
       }
+      if (sandboxChoice !== null) {
+        req.config = { ...req.config, sandbox: { enabled: sandboxChoice } };
+      }
       if (project) {
         req.workspacePath = project;
         if (gitInfo?.isGitRepo) {
@@ -379,22 +388,46 @@ export function SessionsPage() {
               class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder:text-fg-faint focus:outline-none disabled:opacity-60"
             />
             <div class="flex items-center justify-between gap-2 pt-1">
-              <NewChatModelPicker
-                activeModelInfo={activeModelInfo}
-                activeModelLabel={activeModelLabel}
-                availableModels={availableModels}
-                loading={modelLoading}
-                thinkingLevel={thinkingLevel}
-                onSelectThinking={setSelectedThinking}
-                onReload={() => void reloadModels()}
-                onSelectModel={(model) => {
-                  if (!model.provider) {
-                    toast.error('Model provider information is missing');
-                    return;
-                  }
-                  setSelectedModel({ id: model.id, provider: model.provider });
-                }}
-              />
+              <div class="flex min-w-0 items-center gap-2">
+                <NewChatModelPicker
+                  activeModelInfo={activeModelInfo}
+                  activeModelLabel={activeModelLabel}
+                  availableModels={availableModels}
+                  loading={modelLoading}
+                  thinkingLevel={thinkingLevel}
+                  onSelectThinking={setSelectedThinking}
+                  onReload={() => void reloadModels()}
+                  onSelectModel={(model) => {
+                    if (!model.provider) {
+                      toast.error('Model provider information is missing');
+                      return;
+                    }
+                    setSelectedModel({ id: model.id, provider: model.provider });
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label="Sandbox"
+                  aria-pressed={sandbox}
+                  onClick={() => setSandboxChoice(!sandbox)}
+                  title={sandbox ? 'Sandbox on: commands run isolated' : 'Sandbox off'}
+                  class={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
+                    sandbox
+                      ? 'border-success/40 bg-success/10 text-success'
+                      : 'border-line text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={2}
+                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                    />
+                  </svg>
+                  Sandbox
+                </button>
+              </div>
               <button
                 type="button"
                 data-testid="landing-send"
