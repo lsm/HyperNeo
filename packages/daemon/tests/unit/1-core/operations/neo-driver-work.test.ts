@@ -6,6 +6,7 @@ import {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
+  driverStartedReport,
   driverWorkCall,
   NEO_WORK_SUMMARY_NOTE,
   withWorkGoal,
@@ -104,6 +105,9 @@ describe('driverWorkCall', () => {
       name: 'work.send',
       input: { ref: { adapter: 'hyperneo', id: 's1' }, message: 'Raise the body font to 16px.' },
     });
+    expect(
+      driverWorkCall({ ...startTarget, adapter: 'hyperneo', model: 'glm-5.3' }, work).input
+    ).toMatchObject({ adapter: 'hyperneo', model: 'glm-5.3' });
   });
 });
 
@@ -142,6 +146,15 @@ describe('readDriverOutcome', () => {
     expect(
       readDriverOutcome(startTarget, { kind: 'completed', value: { ok: true, value: started } })
     ).toEqual({ ref: started.ref });
+    expect(
+      readDriverOutcome(startTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { ...started, model: 'gpt-6-luna' } },
+      })
+    ).toEqual({ ref: started.ref, model: 'gpt-6-luna' });
+    expect(driverStartedReport(started.ref, undefined, 'gpt-6-luna')).toContain(
+      'It runs on gpt-6-luna.'
+    );
     expect(
       readDriverOutcome(sendTarget, {
         kind: 'completed',

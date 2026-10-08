@@ -64,6 +64,8 @@ export interface SessionLifecycleConfig {
   titleGenerationProviderServiceForTesting?: TitleGenerationProviderService;
 }
 
+export class ModelUnavailableError extends Error {}
+
 export interface CreateSessionParams {
   workspacePath?: string | null;
   initialTools?: string[];
@@ -1195,7 +1197,7 @@ export class SessionLifecycle {
     }
 
     if (unavailable) {
-      throw new Error(
+      throw new ModelUnavailableError(
         `Model '${requestedModel}'${requestedProvider ? ` (${requestedProvider})` : ''} is not available and no fallback model is. Choose another default model in Settings.`
       );
     }
