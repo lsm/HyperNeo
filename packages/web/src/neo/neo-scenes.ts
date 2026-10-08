@@ -99,7 +99,6 @@ const driverSceneGroups: Partial<
   Record<NonNullable<NeoWorkDriverReceipt['status']>, NeoSceneGroup>
 > = {
   needs_you: 'attention',
-  done: 'outcomes',
   failed: 'outcomes',
   stopped: 'outcomes',
 };

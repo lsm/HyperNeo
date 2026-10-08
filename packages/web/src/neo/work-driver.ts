@@ -13,7 +13,7 @@ export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
   const app = `${apps[driver.adapter] ?? driver.adapter}${driver.daemon ? ` on ${driver.daemon}` : ''}`;
   if (driver.status === 'needs_you') return `Needs you in ${app}`;
   if (driver.status === 'running') return `Running in ${app}`;
-  if (driver.status === 'done') return `Finished in ${app}`;
+  if (driver.status === 'done') return `Idle in ${app} · Neo is checking`;
   if (driver.status === 'failed' || driver.status === 'stopped') return `Stopped in ${app}`;
   return `Handed to ${app}`;
 }
