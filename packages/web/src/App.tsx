@@ -62,6 +62,8 @@ export function App() {
 
   useEffect(() => {
     const initialSessionId = initializeRouter();
+    let disposed = false;
+    let disposeSelection: (() => void) | undefined;
 
     const init = async () => {
       try {
@@ -72,8 +74,9 @@ export function App() {
         await initializeApplicationState(hub, currentSessionIdSignal);
 
         initSessionStatusTracking();
+        if (disposed) return;
 
-        effect(() => {
+        disposeSelection = effect(() => {
           const sessionId = currentSessionIdSignal.value;
           const spaceSessionId = currentSpaceSessionIdSignal.value;
           if (spaceSessionId) return;
@@ -90,7 +93,7 @@ export function App() {
 
     init();
 
-    return effect(() => {
+    const disposeRouting = effect(() => {
       const sessionId = currentSessionIdSignal.value;
       const spaceId = currentSpaceIdSignal.value;
       const spaceSessionId = currentSpaceSessionIdSignal.value;
@@ -156,6 +159,12 @@ export function App() {
         }
       }
     });
+
+    return () => {
+      disposed = true;
+      disposeSelection?.();
+      disposeRouting();
+    };
   }, []);
 
   return (
