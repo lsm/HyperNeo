@@ -59,7 +59,7 @@ vi.mock('../state', () => ({
 }));
 vi.mock('../global-store', () => ({ globalStore: {} }));
 vi.mock('../session-store', () => ({ sessionStore: {} }));
-vi.mock('../space-store', () => ({ spaceStore: {} }));
+vi.mock('../space-store', () => ({ spaceStore: { rejoinChannel: () => {} } }));
 vi.mock('../space-agent-store', () => ({
   spaceAgentStore: { recover: async () => {} },
 }));

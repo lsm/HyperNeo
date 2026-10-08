@@ -89,6 +89,7 @@ function makeApplication(spaceId: string) {
       ...lifecycle,
       ...owner,
       setReconnectAttempts: vi.fn(),
+      rejoinSpace: vi.fn(),
       redirectExpiredSession: redirect,
       recoverAgents: recover,
     }),

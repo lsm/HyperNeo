@@ -16,6 +16,7 @@ export interface ConnectionEventEffects {
   closeTransport(): void;
   redirectExpiredSession(): void;
   notifyConnected(): void;
+  rejoinSpace(): void;
   recoverAgents(): void | Promise<void>;
   getReconnectAttempts(): number | undefined;
 }
@@ -59,6 +60,7 @@ export function applyConnectedEffects(
   effects.startActions();
   effects.startAudio();
   effects.startTranscripts();
+  effects.rejoinSpace();
   effects.notifyConnected();
   void effects.recoverAgents();
 }

@@ -1174,6 +1174,16 @@ describe('SpaceStore — channel join/leave', () => {
     expect(mockHub.leaveChannel).toHaveBeenCalledWith('space:space-1');
     expect(mockHub.joinChannel).toHaveBeenCalledWith('space:space-2');
   });
+
+  it('rejoins the open space channel on a new connection, and nothing without one', async () => {
+    mockHub.joinChannel.mockResolvedValue(undefined);
+    spaceStore.rejoinChannel();
+    expect(mockHub.joinChannel).not.toHaveBeenCalled();
+    await spaceStore.selectSpace('space-1');
+    mockHub.joinChannel.mockClear();
+    spaceStore.rejoinChannel();
+    expect(mockHub.joinChannel).toHaveBeenCalledWith('space:space-1');
+  });
 });
 
 describe('SpaceStore — event subscriptions auto-cleanup', () => {
