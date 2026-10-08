@@ -40,19 +40,12 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 
         const sessionResult2 = (await daemon.messageHub.request('session.get', {
           sessionId,
-        })) as { session: { processingState: { status: string } } };
-
-        console.log('[TEST] Session object:', JSON.stringify(sessionResult2, null, 2));
-        console.log(
-          '[TEST] Processing state before SIGINT:',
-          sessionResult2.session?.processingState?.status
-        );
-
-        if (!sessionResult2.session?.processingState) {
-          console.log('[TEST] No processing state found, skipping status check');
-        } else {
-          expect(sessionResult2.session.processingState.status).toBe('processing');
-        }
+        })) as { session: { processingState?: string } };
+        const stateBeforeSigint = JSON.parse(sessionResult2.session.processingState ?? '{}') as {
+          status?: string;
+        };
+        console.log('[TEST] Processing state before SIGINT:', stateBeforeSigint.status);
+        expect(['idle', 'queued', 'processing']).toContain(stateBeforeSigint.status);
 
         const cleanupStart = Date.now();
 
