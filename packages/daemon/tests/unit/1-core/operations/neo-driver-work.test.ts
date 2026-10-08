@@ -107,6 +107,12 @@ describe('withWorkGoal', () => {
       'Build the chat screen.\n\nGoal: A full iOS app\nDone when:\n- runs in the simulator\nIf you stop before this is done, say what remains and why.'
     );
     expect(withWorkGoal('Build the chat screen.', null)).toBe('Build the chat screen.');
+    const longest = withWorkGoal('i'.repeat(16000), {
+      workId: 'w1',
+      goal: 'g'.repeat(1000),
+      doneWhen: 'd'.repeat(2000),
+    });
+    expect(longest.length).toBeLessThanOrEqual(20000);
     expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
       'Build it.'
     );

@@ -31,9 +31,12 @@ export class NeoWorkGoalRepository {
   }
 
   list(workIds: readonly string[]): NeoWorkGoal[] {
-    return workIds.flatMap((id) => {
-      const goal = this.get(id);
-      return goal ? [goal] : [];
-    });
+    if (!this.hasTable() || workIds.length === 0) return [];
+    return this.db
+      .prepare(
+        `SELECT work_id AS workId, goal, done_when AS doneWhen FROM neo_work_goals
+           WHERE work_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(workIds)) as NeoWorkGoal[];
   }
 }

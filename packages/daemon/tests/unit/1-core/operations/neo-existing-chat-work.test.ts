@@ -196,6 +196,18 @@ describe('Neo existing chat work', () => {
     });
   });
 
+  test('a re-proposal refused for another target leaves the existing work without a goal', async () => {
+    await propose('R', 'project');
+    expect(
+      await invoke(
+        'neo.work.propose',
+        { ...input('R', 'ordinary'), goal: 'Something else entirely' },
+        source('ask-R')
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(await invoke('neo.snapshot', {})).toMatchObject({ value: { workGoals: [] } });
+  });
+
   test.each([
     ['missing', 'target_session_not_found'],
     ['archived', 'target_session_not_active'],

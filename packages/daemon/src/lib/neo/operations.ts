@@ -187,8 +187,8 @@ const Propose = z.object({
     })
     .optional(),
   work: NeoDriverTargetSchema.optional(),
-  goal: z.string().trim().min(1).max(2000).optional(),
-  doneWhen: z.string().trim().min(1).max(4000).optional(),
+  goal: z.string().trim().min(1).max(1000).optional(),
+  doneWhen: z.string().trim().min(1).max(2000).optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const WorkReport = z.object({
@@ -714,6 +714,11 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
+        const recordGoal = <Gate extends object>(gate: Gate, workId: string): Gate => {
+          if ('value' in gate)
+            service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
+          return gate;
+        };
         if (input.work) {
           const proposed = service.driverTargets.propose(
             service.repo,
@@ -725,15 +730,17 @@ export function createNeoOperations(service: NeoService) {
             },
             input.work
           );
-          service.workGoals.record(proposed.work.id, input.goal ?? null, input.doneWhen ?? null);
-          return JSON.stringify(proposed.target) === JSON.stringify(input.work)
-            ? requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null })
-            : {
-                reason: {
-                  ok: false,
-                  reason: 'This request key belongs to another execution target.',
-                },
-              };
+          if (JSON.stringify(proposed.target) !== JSON.stringify(input.work))
+            return {
+              reason: {
+                ok: false,
+                reason: 'This request key belongs to another execution target.',
+              },
+            };
+          return recordGoal(
+            requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null }),
+            proposed.work.id
+          );
         }
         const receipt = service.agentTargets.propose(
           service.repo,
@@ -745,7 +752,6 @@ export function createNeoOperations(service: NeoService) {
           },
           target.agent
         );
-        service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
         if (service.driverTargets.get(receipt.work.id))
           return {
             reason: {
@@ -753,7 +759,7 @@ export function createNeoOperations(service: NeoService) {
               reason: 'This request key belongs to another execution target.',
             },
           };
-        return requireNeoProposalReceipt(target, origin, receipt);
+        return recordGoal(requireNeoProposalReceipt(target, origin, receipt), receipt.work.id);
       },
       ['input', 'origin', 'caller', 'admission'],
       'result:admission'
