@@ -107,6 +107,8 @@ function awaitServerStartBounded(
   ]);
 }
 
+const SESSION_THINKING_LIMIT = 1000;
+
 export class AnthropicToCopilotBridgeProvider implements Provider {
   readonly id = 'anthropic-copilot';
   readonly displayName = 'GitHub Copilot (Anthropic API)';
@@ -303,7 +305,12 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    this.sessionThinking.delete(sessionId);
     this.sessionThinking.set(sessionId, thinkingLevel);
+    if (this.sessionThinking.size > SESSION_THINKING_LIMIT) {
+      const oldest = this.sessionThinking.keys().next().value;
+      if (oldest !== undefined) this.sessionThinking.delete(oldest);
+    }
   }
 
   getModelThinkingMode(modelId: string): 'off' | 'granular' | undefined {

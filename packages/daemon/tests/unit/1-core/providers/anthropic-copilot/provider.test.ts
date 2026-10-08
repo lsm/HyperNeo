@@ -684,6 +684,19 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       );
     });
 
+    it('keeps the thinking level of at most the 1000 most recently active sessions', () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      const levels = (p as unknown as { sessionThinking: Map<string, string | undefined> })
+        .sessionThinking;
+      for (let n = 0; n < 1000; n++) p.setSessionThinkingConfig(`s${n}`, 'think8k');
+      p.setSessionThinkingConfig('s0', 'think32k');
+      p.setSessionThinkingConfig('s1000', 'think16k');
+      expect(levels.size).toBe(1000);
+      expect(levels.has('s1')).toBe(false);
+      expect(levels.get('s0')).toBe('think32k');
+      expect(levels.get('s1000')).toBe('think16k');
+    });
+
     it('offers thinking levels only on models that support reasoning effort', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
       const internals = p as unknown as Record<string, unknown>;
