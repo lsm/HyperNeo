@@ -181,10 +181,11 @@ try {
   log('Test 5: session.create RPC...');
   const createResult = await rpcCall(ws, 'session.create', {
     workspacePath: workspace,
+    config: { model: 'glm-5.1', provider: 'glm' },
   });
-  const createData = createResult.data as { sessionId: string };
-  if (!createData.sessionId) {
-    throw new SmokeTestError(`Expected sessionId, got: ${JSON.stringify(createData)}`);
+  const createData = createResult.data as { sessionId: string } | null;
+  if (!createData?.sessionId) {
+    throw new SmokeTestError(`Expected sessionId, got: ${JSON.stringify(createResult)}`);
   }
   const sessionId = createData.sessionId;
   log(`  PASS: Session created with ID ${sessionId}`);
