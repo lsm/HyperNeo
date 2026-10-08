@@ -7,8 +7,10 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
+  WorkInputSchema,
   WorkRefSchema,
   WorkStatusSchema,
+  type WorkInput,
   type WorkRef,
   type WorkStatus,
 } from '../drivers/types.ts';
@@ -38,7 +40,7 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export const NEO_WORK_CONTINUE_WINDOW_MS = 4 * 60 * 60 * 1000;
+export const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 export function readContinueBudget(
   continued: Pick<NeoWorkContinue, 'count'> | null,
@@ -48,7 +50,7 @@ export function readContinueBudget(
   if ((continued?.count ?? 0) >= NEO_WORK_CONTINUE_LIMIT)
     return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
-    return 'continue_budget_spent: this work started over 4 hours ago; ask the human how to proceed.';
+    return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
   return null;
 }
 
@@ -128,6 +130,8 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         status: WorkStatusSchema,
         lastActivityAt: z.number(),
         lastReply: z.string().optional(),
+        lastReplyAt: z.number().optional(),
+        recentInputs: z.array(WorkInputSchema).optional(),
       })
       .passthrough(),
   }),
@@ -163,6 +167,40 @@ export function readDriverSendBaseline(
   if (!reply.success || !reply.data.ok) return fallback;
   const { status, lastActivityAt } = reply.data.value;
   return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
+}
+
+export interface DriverSent {
+  inputBefore: number;
+  opening: string;
+}
+
+export function messageOpening(message: string): string {
+  return message.trim().split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  if (!reply.success || !reply.data.ok) return null;
+  return reply.data.value.recentInputs ?? null;
+}
+
+export function readDriverSent(outcome: OperationOutcome, message: string): DriverSent | null {
+  const inputs = readDriverInputs(outcome);
+  const opening = messageOpening(message);
+  if (!inputs || !opening) return null;
+  return { inputBefore: Math.max(0, ...inputs.map((input) => input.at)), opening };
+}
+
+export function readDriverLanded(
+  outcome: OperationOutcome,
+  sent: DriverSent | null
+): number | null {
+  if (!sent) return null;
+  const landed = readDriverInputs(outcome)?.find(
+    (input) => input.at > sent.inputBefore && input.text.includes(sent.opening)
+  );
+  return landed?.at ?? null;
 }
 
 export function readDriverNeedsYou(
@@ -234,11 +272,14 @@ export function readDriverSettlement(
       ? { status: 'failed', report: `The work is gone: ${reply.data.detail}` }
       : null;
   }
-  const { status, lastActivityAt, lastReply } = reply.data.value;
+  const { status, lastActivityAt, lastReply, lastReplyAt } = reply.data.value;
   if (requireFresh && startedAt === null) return null;
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   if (status === 'done') {
+    const staleReply =
+      requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;
+    if (staleReply) return null;
     return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
   }
   if (status === 'failed' || status === 'stopped') {

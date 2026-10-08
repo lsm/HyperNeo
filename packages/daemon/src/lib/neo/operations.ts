@@ -936,7 +936,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.continue',
       description:
-        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed up to 5 continues or until 4 hours after the work started; past that it rejects with continue_budget_spent and you must ask the human. Only the Neo session that proposed the work or the user can continue it.',
+        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed up to 5 continues or until 12 hours after the work started; past that it rejects with continue_budget_spent and you must ask the human. Only the Neo session that proposed the work or the user can continue it.',
       inputSchema: Continue,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

@@ -14,12 +14,14 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkDetail,
+  WorkInput,
   WorkRef,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
 import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
+import { recentWorkInputs, workEntryTime, workInput } from './work-inputs.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -339,12 +341,67 @@ function assistantText(line: string): string | null {
   }
 }
 
-export function lastClaudeReply(lines: readonly string[]): string | null {
-  for (const line of [...lines].reverse()) {
-    const text = assistantText(line);
-    if (text) return text;
+export interface ClaudeTranscriptState {
+  reply: string | null;
+  replyAt?: number;
+  inputs: WorkInput[];
+  lastAt: number;
+}
+
+interface ClaudeTranscriptEntry {
+  type?: unknown;
+  timestamp?: unknown;
+  isMeta?: unknown;
+  turnOrigin?: unknown;
+  origin?: unknown;
+  message?: { content?: unknown };
+}
+
+function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
+  if (entry.type !== 'user' || (entry.isMeta && !entry.turnOrigin && !entry.origin)) return null;
+  const body = (entry.origin as { body?: unknown } | undefined)?.body;
+  if (typeof body === 'string') return body;
+  const content = entry.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  if (content.some((part: { type?: unknown }) => part?.type === 'tool_result')) return null;
+  return content
+    .flatMap((part: { type?: unknown; text?: unknown }) =>
+      part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []
+    )
+    .join('\n');
+}
+
+export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscriptState {
+  const inputs: WorkInput[] = [];
+  let reply: string | null = null;
+  let replyAt: number | undefined;
+  let lastAt = 0;
+  for (const line of lines) {
+    let entry: ClaudeTranscriptEntry | null;
+    try {
+      entry = JSON.parse(line) as ClaudeTranscriptEntry | null;
+    } catch {
+      continue;
+    }
+    if (!entry) continue;
+    const at = workEntryTime(entry.timestamp);
+    if (at !== undefined) lastAt = Math.max(lastAt, at);
+    const said = assistantText(line);
+    if (said) {
+      reply = said;
+      replyAt = at;
+    }
+    const text = claudeInputText(entry);
+    const input = text === null ? null : workInput(at, text);
+    if (input) inputs.push(input);
   }
-  return null;
+  return {
+    reply,
+    ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
+    inputs: recentWorkInputs(inputs),
+    lastAt,
+  };
 }
 
 export function requireClaudeRecord(
@@ -357,14 +414,14 @@ export function requireClaudeRecord(
     : { reason: reject('not_found', `No Claude Code Desktop session ${ref.id}.`) };
 }
 
-export async function readClaudeReply(
+export async function readClaudeTranscript(
   record: ClaudeDesktopRecord,
   deps: ClaudeDesktopAdapterDeps
-): Promise<string | null> {
+): Promise<ClaudeTranscriptState | null> {
   const path = claudeTranscriptPath(deps.projectsDir, record);
   if (!path) return null;
   try {
-    return lastClaudeReply(await readTailLines(path, TRANSCRIPT_TAIL_BYTES));
+    return claudeTranscriptState(await readTailLines(path, TRANSCRIPT_TAIL_BYTES));
   } catch {
     return null;
   }
@@ -373,12 +430,24 @@ export async function readClaudeReply(
 export function describeClaudeSession(
   record: ClaudeDesktopRecord,
   liveSessions: readonly ClaudeLiveSession[],
-  reply: string | null,
+  transcript: ClaudeTranscriptState | null,
   deps: ClaudeDesktopAdapterDeps
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
   const work = toClaudeWork(record, live, deps.machine);
-  return { ok: true, value: reply ? { ...work, lastReply: reply.slice(0, REPLY_LIMIT) } : work };
+  if (!transcript) return { ok: true, value: work };
+  return {
+    ok: true,
+    value: {
+      ...work,
+      lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
+      ...(transcript.reply ? { lastReply: transcript.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(transcript.reply && transcript.replyAt !== undefined
+        ? { lastReplyAt: transcript.replyAt }
+        : {}),
+      recentInputs: transcript.inputs,
+    },
+  };
 }
 
 const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as PipelineAPI)
@@ -386,8 +455,8 @@ const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as P
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
   .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
   .pipe(loadLiveClaudeSessions, ['deps', 'records'], 'liveSessions')
-  .pipe(readClaudeReply, ['outcome', 'deps'], 'reply')
-  .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'reply', 'deps'], 'outcome')
+  .pipe(readClaudeTranscript, ['outcome', 'deps'], 'transcript')
+  .pipe(describeClaudeSession, ['outcome', 'liveSessions', 'transcript', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   deps: ClaudeDesktopAdapterDeps,

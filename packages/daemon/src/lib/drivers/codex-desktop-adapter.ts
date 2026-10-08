@@ -15,12 +15,14 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkDetail,
+  WorkInput,
   WorkRef,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
 import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
+import { recentWorkInputs, workEntryTime, workInput } from './work-inputs.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -34,6 +36,7 @@ const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
 const REPLY_LIMIT = 4_000;
 const QUEUE_TIMEOUT_MS = 30_000;
 const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
+const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
 
 export interface CodexRootRow {
   name: string;
@@ -85,6 +88,8 @@ export interface CodexThreadDetail {
 export interface CodexTurnState {
   marker: string | null;
   reply: string | null;
+  replyAt?: number;
+  inputs?: WorkInput[];
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -302,9 +307,15 @@ export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES):
   }
 }
 
-function parseLine(line: string): { type?: unknown; payload?: Record<string, unknown> } | null {
+function parseLine(
+  line: string
+): { type?: unknown; payload?: Record<string, unknown>; timestamp?: unknown } | null {
   try {
-    const entry = JSON.parse(line) as { type?: unknown; payload?: Record<string, unknown> };
+    const entry = JSON.parse(line) as {
+      type?: unknown;
+      payload?: Record<string, unknown>;
+      timestamp?: unknown;
+    };
     return entry && typeof entry === 'object' ? entry : null;
   } catch {
     return null;
@@ -325,22 +336,41 @@ function messageText(payload: Record<string, unknown>, role: string): string | n
   return text || null;
 }
 
+function withReplyAt(state: CodexTurnState, replyAt: number | undefined): CodexTurnState {
+  return state.reply !== null && replyAt !== undefined ? { ...state, replyAt } : state;
+}
+
 export function codexTurnState(lines: readonly string[]): CodexTurnState {
   let reply: string | null = null;
+  let replyAt: number | undefined;
   for (const line of [...lines].reverse()) {
     const entry = parseLine(line);
     const payload = entry?.payload ?? {};
-    if (reply === null && entry?.type === 'response_item')
+    if (reply === null && entry?.type === 'response_item') {
       reply = messageText(payload, 'assistant');
+      replyAt = workEntryTime(entry.timestamp);
+    }
     if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
-      const finalMessage =
-        payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
-          ? payload.last_agent_message
-          : null;
-      return { marker: String(payload.type), reply: finalMessage ?? reply };
+      const marker = String(payload.type);
+      return payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
+        ? withReplyAt({ marker, reply: payload.last_agent_message }, workEntryTime(entry.timestamp))
+        : withReplyAt({ marker, reply }, replyAt);
     }
   }
-  return { marker: null, reply };
+  return withReplyAt({ marker: null, reply }, replyAt);
+}
+
+export function codexRecentInputs(lines: readonly string[]): WorkInput[] {
+  return recentWorkInputs(
+    lines.flatMap((line) => {
+      const entry = parseLine(line);
+      if (entry?.type !== 'response_item') return [];
+      const text = messageText(entry.payload ?? {}, 'user');
+      if (!text || INJECTED_INPUT.test(text)) return [];
+      const input = workInput(workEntryTime(entry.timestamp), text);
+      return input ? [input] : [];
+    })
+  );
 }
 
 export function activeCodexTurn(lines: readonly string[]): string | null | undefined {
@@ -389,7 +419,8 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
 
 export async function readCodexTurn(detail: CodexThreadDetail): Promise<CodexTurnState> {
   try {
-    return codexTurnState(await readRolloutTail(detail.thread.rolloutPath));
+    const lines = await readRolloutTail(detail.thread.rolloutPath);
+    return { ...codexTurnState(lines), inputs: codexRecentInputs(lines) };
   } catch {
     return { marker: null, reply: null };
   }
@@ -413,6 +444,8 @@ export function describeCodexThread(
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
       ...(state.reply ? { lastReply: state.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
+      ...(state.inputs ? { recentInputs: state.inputs } : {}),
     },
   };
 }

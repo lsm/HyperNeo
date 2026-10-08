@@ -1,6 +1,10 @@
 import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drivers/types.ts';
-import { NeoDriverTargetSchema, type NeoDriverTarget } from '../../lib/neo/driver-work.ts';
+import {
+  NeoDriverTargetSchema,
+  type DriverSent,
+  type NeoDriverTarget,
+} from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
 
@@ -56,6 +60,19 @@ export class NeoWorkDriverTargetRepository {
     return row?.startedAt ?? null;
   }
 
+  readSent(workId: string): DriverSent | null {
+    if (!this.hasTable()) return null;
+    const row = this.db
+      .prepare(
+        `SELECT input_before AS inputBefore, sent_opening AS opening
+           FROM neo_work_driver_targets WHERE work_id = ?`
+      )
+      .get(workId) as { inputBefore: number | null; opening: string | null } | null | undefined;
+    return row && row.inputBefore !== null && row.opening
+      ? { inputBefore: row.inputBefore, opening: row.opening }
+      : null;
+  }
+
   readNeedsYouSince(workId: string): number | null {
     if (!this.hasTable()) return null;
     const row = this.db
@@ -68,6 +85,14 @@ export class NeoWorkDriverTargetRepository {
     this.db
       .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
       .run(startedAt, workId);
+  }
+
+  recordSent(workId: string, sent: DriverSent | null): void {
+    this.db
+      .prepare(
+        'UPDATE neo_work_driver_targets SET input_before = ?, sent_opening = ? WHERE work_id = ?'
+      )
+      .run(sent?.inputBefore ?? null, sent?.opening ?? null, workId);
   }
 
   recordNeedsYouSince(workId: string, since: number | null): void {

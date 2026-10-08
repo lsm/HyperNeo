@@ -10,6 +10,8 @@ import {
   withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
+  readDriverLanded,
+  readDriverSent,
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
@@ -185,6 +187,39 @@ describe('readDriverSendBaseline', () => {
     const unreadable = at({ ok: false, reason: 'unreachable', detail: 'asleep' });
     expect(readDriverSendBaseline(unreadable, 50, false)).toBe(50);
     expect(readDriverSendBaseline(unreadable, 50, true)).toBeNull();
+  });
+});
+
+describe('readDriverSent and readDriverLanded', () => {
+  const at = (value: unknown) => ({ kind: 'completed' as const, value });
+  const status = (recentInputs?: Array<{ at: number; text: string }>) =>
+    at({ ok: true, value: { status: 'done', lastActivityAt: 9, recentInputs } });
+
+  test('notes the latest input before the send and the opening of what Neo sends', () => {
+    expect(
+      readDriverSent(status([{ at: 4, text: 'earlier' }]), '  Raise the  font.\nThen stop.')
+    ).toEqual({ inputBefore: 4, opening: 'Raise the font.' });
+    expect(readDriverSent(status([]), 'Go on.')).toEqual({ inputBefore: 0, opening: 'Go on.' });
+    expect(readDriverSent(status(), 'Go on.')).toBeNull();
+  });
+
+  test('anchors only on Neo’s own message landing after the send, not on one the human typed', () => {
+    const sent = { inputBefore: 4, opening: 'Raise the font.' };
+    expect(
+      readDriverLanded(
+        status([
+          { at: 3, text: 'Raise the font. (an older ask)' },
+          { at: 6, text: 'actually, also fix the footer' },
+          { at: 8, text: 'Raise the font. Neo routed this to you' },
+        ]),
+        sent
+      )
+    ).toBe(8);
+    expect(
+      readDriverLanded(status([{ at: 6, text: 'actually, also fix the footer' }]), sent)
+    ).toBeNull();
+    expect(readDriverLanded(status([{ at: 8, text: 'Raise the font.' }]), null)).toBeNull();
+    expect(readDriverLanded(status(), sent)).toBeNull();
   });
 });
 
@@ -602,6 +637,95 @@ describe('Neo work with a drivers target', () => {
       };
       await service.refreshDriverWork();
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('settles a queued send on the reply after its message lands, a refresh after it lands', async () => {
+    const input = (inputAt: number, text: string) => ({ at: inputAt, text });
+    const older = [input(1, 'hello')];
+    const landed = [...older, input(3, `${work.instruction} Neo routed this`)];
+    let reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: 1, recentInputs: older },
+    };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    const returned: string[] = [];
+    Object.assign(service, {
+      returnReport: async (settled: { id: string }) => {
+        returned.push(settled.id);
+      },
+    });
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+      expect(service.driverTargets.readSent('work-1')).toEqual({
+        inputBefore: 1,
+        opening: work.instruction,
+      });
+
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: 2,
+          recentInputs: [...older, input(2, 'the human typed this')],
+          lastReply: 'Answer to the human.',
+          lastReplyAt: 2,
+        },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: 4,
+          recentInputs: landed,
+          lastReply: 'Half an answer',
+          lastReplyAt: 4,
+        },
+      };
+      await service.refreshDriverWork();
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(3);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: 6,
+          recentInputs: landed,
+          lastReply: 'Answer to the human.',
+          lastReplyAt: 2,
+        },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: 7,
+          recentInputs: landed,
+          lastReply: 'Blocked on X.',
+          lastReplyAt: 7,
+        },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Blocked on X.',
+      });
+      expect(returned).toEqual(['work-1']);
     } finally {
       db.close();
     }

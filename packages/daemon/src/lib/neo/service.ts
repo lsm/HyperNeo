@@ -38,10 +38,13 @@ import {
   driverStartedReport,
   driverWorkCall,
   driverWorkCaller,
+  type DriverSent,
   type NeoDriverTarget,
   readDriverOutcome,
   readDriverLive,
   readDriverSendBaseline,
+  readDriverSent,
+  readDriverLanded,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -441,16 +444,18 @@ export class NeoService {
       return { ok: false, reason: 'This work is already being continued; wait for that first.' };
     this.continuing.add(id);
     try {
-      const baseline = await this.readSendBaseline(ref, work);
+      const sending = withWorkGoal(message, this.workGoals.get(id));
+      const probe = await this.readSendBaseline(ref, work, sending);
       const outcome = await invokeOperation(
         this.sessions.getOperationRegistry(),
         'work.send',
-        { ref, message: withWorkGoal(message, this.workGoals.get(id)) },
+        { ref, message: sending },
         driverWorkCaller(work)
       );
       const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
       if ('failure' in sent) return { ok: false, reason: sent.failure };
-      this.driverTargets.recordStartedAt(id, 'queued' in sent ? null : baseline);
+      this.driverTargets.recordStartedAt(id, 'queued' in sent ? null : probe.baseline);
+      this.driverTargets.recordSent(id, probe.sent);
       const continued = this.workContinues.record(id, message, now);
       const count = continued?.count ?? 1;
       const current = this.repo.getWork(id) ?? work;
@@ -469,18 +474,22 @@ export class NeoService {
     }
   }
 
-  private async readSendBaseline(ref: WorkRef, work: NeoWork): Promise<number | null> {
+  private async readSendBaseline(
+    ref: WorkRef,
+    work: NeoWork,
+    message: string
+  ): Promise<{ baseline: number | null; sent: DriverSent | null }> {
     const sentAt = Date.now();
-    return readDriverSendBaseline(
-      await invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.status',
-        { ref },
-        driverWorkCaller(work)
-      ),
-      sentAt,
-      !!ref.daemon
+    const outcome = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.status',
+      { ref },
+      driverWorkCaller(work)
     );
+    return {
+      baseline: readDriverSendBaseline(outcome, sentAt, !!ref.daemon),
+      sent: readDriverSent(outcome, message),
+    };
   }
 
   async cancel(id: string): Promise<void> {
@@ -504,8 +513,11 @@ export class NeoService {
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
     const call = driverWorkCall(target, queued, this.workGoals.get(queued.id));
-    const baseline =
-      target.verb === 'send' ? await this.readSendBaseline(target.ref, queued) : Date.now();
+    const probe =
+      target.verb === 'send'
+        ? await this.readSendBaseline(target.ref, queued, String(call.input.message))
+        : null;
+    const baseline = probe ? probe.baseline : Date.now();
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       call.name,
@@ -520,6 +532,7 @@ export class NeoService {
         result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
         result.link
       );
+      if (probe) this.driverTargets.recordSent(queued.id, probe.sent);
       const current = this.repo.getWork(queued.id);
       if (current?.status !== 'queued') {
         await this.stopDriverWork(result.ref, queued);
@@ -599,11 +612,15 @@ export class NeoService {
     const live = readDriverLive(outcome);
     if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
       this.notifyChanged();
+    const startedAt = this.driverTargets.readStartedAt(work.id);
+    const landed =
+      startedAt === null ? readDriverLanded(outcome, this.driverTargets.readSent(work.id)) : null;
+    if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
     const settled = readDriverSettlement(
       work,
       outcome,
       Date.now(),
-      this.driverTargets.readStartedAt(work.id),
+      startedAt,
       !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send'
     );
     if (!settled) {
