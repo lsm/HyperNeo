@@ -1,5 +1,29 @@
 import type { ThinkingLevel } from '@hyperneo/shared';
 
+const LEVEL_TONE: Record<ThinkingLevel, string> = {
+  off: 'text-fg-muted',
+  think8k: 'thinking-tone-8k',
+  think16k: 'thinking-tone-16k',
+  think24k: 'thinking-tone-24k',
+  think32k: 'thinking-tone-32k',
+};
+
+const RAYS = [
+  'M12 3v1',
+  'M18.364 5.636l-.707.707',
+  'M21 12h-1',
+  'M4 12H3',
+  'M6.343 6.343l-.707-.707',
+];
+
+const LIT_RAYS: Record<ThinkingLevel, number> = {
+  off: RAYS.length,
+  think8k: 2,
+  think16k: 3,
+  think24k: 4,
+  think32k: RAYS.length,
+};
+
 export function ThinkingLevelIcon({
   level,
   ring = false,
@@ -31,17 +55,6 @@ export function ThinkingLevelIcon({
   };
   const brightness = brightnessMap[level];
 
-  const strokeColor =
-    brightness === 0
-      ? 'text-fg-muted'
-      : brightness === 1
-        ? 'text-warning'
-        : brightness === 2
-          ? 'text-warning'
-          : brightness === 3
-            ? 'text-warning'
-            : 'text-warning';
-
   const fillOpacity =
     brightness === 0
       ? 0
@@ -54,7 +67,7 @@ export function ThinkingLevelIcon({
             : 0.5;
 
   return (
-    <svg class={`${size} ${strokeColor}`} viewBox="0 0 24 24">
+    <svg class={`${size} ${LEVEL_TONE[level]}`} viewBox="0 0 24 24">
       {brightness > 0 && (
         <circle
           cx="12"
@@ -64,14 +77,23 @@ export function ThinkingLevelIcon({
           opacity={fillOpacity}
         />
       )}
-      <path
+      <g
         fill="none"
         stroke="currentColor"
         stroke-linecap="round"
         stroke-linejoin="round"
         stroke-width="2"
-        d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-      />
+      >
+        {RAYS.map((ray, index) => (
+          <path
+            key={ray}
+            d={ray}
+            data-lit={index < LIT_RAYS[level]}
+            opacity={index < LIT_RAYS[level] ? 1 : 0.25}
+          />
+        ))}
+        <path d="M9.663 17h4.673M8.464 15.536a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      </g>
     </svg>
   );
 }
@@ -94,23 +116,17 @@ export function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
   const dashPercent = dashPercentMap[level];
   const dashLength = circumference * dashPercent;
 
-  const strokeColor =
-    level === 'think8k'
-      ? '#d97706'
-      : level === 'think16k'
-        ? '#f59e0b'
-        : level === 'think24k'
-          ? '#fbbf24'
-          : '#fde68a';
-
   return (
-    <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${size} ${size}`}>
+    <svg
+      class={`absolute inset-0 w-full h-full pointer-events-none ${LEVEL_TONE[level]}`}
+      viewBox={`0 0 ${size} ${size}`}
+    >
       <circle
         cx={size / 2}
         cy={size / 2}
         r={radius}
         fill="none"
-        stroke={strokeColor}
+        stroke="currentColor"
         stroke-width={strokeWidth}
         stroke-dasharray={`${dashLength} ${circumference - dashLength}`}
         stroke-dashoffset={circumference * 0.25}
