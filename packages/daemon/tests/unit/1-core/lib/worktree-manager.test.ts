@@ -985,6 +985,11 @@ describe('WorktreeManager', () => {
             if (cmd.includes('symbolic-ref')) return 'origin/main';
             if (cmd.includes('status --porcelain')) return ' M sub/file.ts\0';
             if (cmd.includes('--numstat')) return '1\t0\tsub/file.ts\n';
+            if (cmd.startsWith('-c core.quotePath=false diff')) {
+              return repoPath === '/repo'
+                ? 'diff --git a/sub/file.ts b/sub/file.ts\n+diff body\n'
+                : '';
+            }
             if (cmd.startsWith('diff') && cmd.includes(' -- ')) {
               return repoPath === '/repo' ? '+diff body\n' : '';
             }
