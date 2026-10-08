@@ -44,92 +44,21 @@ describe('ConnectionStatus', () => {
       expect(dot).toBeTruthy();
     });
 
-    it('should show "Connecting..." when connecting', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="connecting" isProcessing={false} />
-      );
+    it.each(['connecting', 'reconnecting', 'disconnected', 'error', 'failed'])(
+      'renders nothing while %s so the app banner is the only connection notice',
+      (state) => {
+        const { container } = render(
+          <ConnectionStatus
+            connectionState={state}
+            isProcessing={true}
+            currentAction="Thinking..."
+            activity="1 background task running"
+          />
+        );
 
-      expect(container.textContent).toContain('Connecting...');
-    });
-
-    it('should show yellow pulsing dot when connecting', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="connecting" isProcessing={false} />
-      );
-
-      const dot = container.querySelector('.bg-warning');
-      expect(dot).toBeTruthy();
-      expect(dot?.className).toContain('animate-pulse');
-    });
-
-    it('should show "Offline" when disconnected', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="disconnected" isProcessing={false} />
-      );
-
-      expect(container.textContent).toContain('Offline');
-    });
-
-    it('should show gray dot when disconnected', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="disconnected" isProcessing={false} />
-      );
-
-      const dot = container.querySelector('.bg-fg-faint');
-      expect(dot).toBeTruthy();
-    });
-
-    it('should show "Reconnecting..." when reconnecting', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="reconnecting" isProcessing={false} />
-      );
-
-      expect(container.textContent).toContain('Reconnecting...');
-    });
-
-    it('should show yellow pulsing dot when reconnecting', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="reconnecting" isProcessing={false} />
-      );
-
-      const dot = container.querySelector('.bg-warning');
-      expect(dot).toBeTruthy();
-      expect(dot?.className).toContain('animate-pulse');
-    });
-
-    it('should show "Connection Failed" when failed', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="failed" isProcessing={false} />
-      );
-
-      expect(container.textContent).toContain('Connection Failed');
-    });
-
-    it('should show red dot when failed', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="failed" isProcessing={false} />
-      );
-
-      const dot = container.querySelector('.bg-danger');
-      expect(dot).toBeTruthy();
-    });
-
-    it('should show "Connection Failed" when error', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="error" isProcessing={false} />
-      );
-
-      expect(container.textContent).toContain('Connection Failed');
-    });
-
-    it('should show red dot when error', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="error" isProcessing={false} />
-      );
-
-      const dot = container.querySelector('.bg-danger');
-      expect(dot).toBeTruthy();
-    });
+        expect(container.innerHTML).toBe('');
+      }
+    );
   });
 
   describe('Processing States', () => {
@@ -253,33 +182,6 @@ describe('ConnectionStatus', () => {
       expect(text).toBeTruthy();
       expect(text?.textContent).toBe('Ready');
     });
-
-    it('should have yellow text when connecting', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="connecting" isProcessing={false} />
-      );
-
-      const text = container.querySelector('.text-warning');
-      expect(text).toBeTruthy();
-    });
-
-    it('should have gray text when disconnected', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="disconnected" isProcessing={false} />
-      );
-
-      const text = container.querySelector('.text-fg-muted');
-      expect(text).toBeTruthy();
-    });
-
-    it('should have red text when failed', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="failed" isProcessing={false} />
-      );
-
-      const text = container.querySelector('.text-danger');
-      expect(text).toBeTruthy();
-    });
   });
 
   describe('Layout', () => {
@@ -301,15 +203,6 @@ describe('ConnectionStatus', () => {
 
       const dot = container.querySelector('.w-2.h-2');
       expect(dot).toBeTruthy();
-    });
-
-    it('should have properly styled text when not connected', () => {
-      const { container } = render(
-        <ConnectionStatus connectionState="disconnected" isProcessing={false} />
-      );
-
-      const text = container.querySelector('.text-xs.font-medium');
-      expect(text).toBeTruthy();
     });
   });
 

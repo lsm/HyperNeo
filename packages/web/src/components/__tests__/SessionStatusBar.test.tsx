@@ -3,6 +3,7 @@
 import type { ContextInfo, ModelInfo } from '@hyperneo/shared';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { connectionState } from '../../lib/state';
 import SessionStatusBar from '../SessionStatusBar';
 
 const mockGetHubIfConnected = vi.fn(() => null);
@@ -79,6 +80,7 @@ describe('SessionStatusBar', () => {
     cleanup();
     mockOnModelSwitch.mockClear();
     mockGetHubIfConnected.mockReturnValue(null);
+    connectionState.value = 'connected';
   });
 
   afterEach(() => {

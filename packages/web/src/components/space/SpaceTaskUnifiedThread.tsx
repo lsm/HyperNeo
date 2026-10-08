@@ -82,17 +82,7 @@ export function SpaceTaskUnifiedThread({
     return () => onScrollerChange?.(null);
   }, [onScrollerChange, parsedRows.length, isLoading, isReconnecting]);
 
-  if (isReconnecting) {
-    return (
-      <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-fg-muted">
-          Reconnecting task thread…
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
+  if (isLoading || isReconnecting) {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-fg-muted">

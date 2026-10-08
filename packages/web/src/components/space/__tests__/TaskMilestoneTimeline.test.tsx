@@ -109,4 +109,11 @@ describe('TaskMilestoneTimeline', () => {
     render(<TaskMilestoneTimeline taskId="task-1" />);
     expect(screen.getByText('Loading task timeline…')).toBeTruthy();
   });
+
+  it('shows the loading placeholder while reconnecting instead of its own reconnect notice', () => {
+    mockUseTaskMilestones.mockReturnValue({ rows: [], isLoading: false, isReconnecting: true });
+    render(<TaskMilestoneTimeline taskId="task-1" />);
+    expect(screen.getByText('Loading task timeline…')).toBeTruthy();
+    expect(screen.queryByText(/Reconnecting/)).toBeNull();
+  });
 });

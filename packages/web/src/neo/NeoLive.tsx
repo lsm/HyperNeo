@@ -406,11 +406,6 @@ export function NeoLive() {
               what matters.
             </p>
           </div>
-          {!connected && (
-            <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
-              Connecting to HyperNeo…
-            </p>
-          )}
           {neo.error && (
             <div
               role="alert"
