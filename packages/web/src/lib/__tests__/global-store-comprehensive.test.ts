@@ -443,6 +443,35 @@ describe('GlobalStore', () => {
       expect(store.sessions.value.find((s) => s.id === '2')).toBeUndefined();
       expect(store.sessions.value.find((s) => s.id === '3')).toBeDefined();
     });
+
+    it('keeps the sessions array for a metadata-only delta while applying counts', async () => {
+      const deltaHandlers: Array<(event: unknown) => void> = [];
+      const mockHub = createMockHub({
+        onEvent: vi.fn((event: string, handler: (event: unknown) => void) => {
+          if (event === 'liveQuery.delta') deltaHandlers.push(handler);
+          return vi.fn();
+        }),
+      });
+      (
+        connectionManager as unknown as {
+          getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+        }
+      ).getHub.mockResolvedValue(mockHub);
+      store.sessions.value = [createMockSession('1')];
+      const before = store.sessions.value;
+
+      await store.initialize();
+      deltaHandlers[0]({
+        subscriptionId: 'sessions-list',
+        added: [],
+        updated: [],
+        metadata: { totalCount: 7, archivedCount: 2 },
+      });
+
+      expect(store.sessions.value).toBe(before);
+      expect(store.sessionsTotalCount.value).toBe(7);
+      expect(store.archivedSessionCount.value).toBe(2);
+    });
   });
 
   describe('Session Helpers', () => {
