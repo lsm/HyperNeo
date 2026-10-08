@@ -91,7 +91,8 @@ export class StateProjectionService {
       (data) => {
         const { session } = data as unknown as { session: Session };
         this.sessionCache.set(session.id, session);
-        this.processingStateCache.set(session.id, { status: 'idle' });
+        if (!this.processingStateCache.has(session.id))
+          this.processingStateCache.set(session.id, { status: 'idle' });
       },
       { subscriberName: 'StateProjectionService.sessionCreated' }
     );

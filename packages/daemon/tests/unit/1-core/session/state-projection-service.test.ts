@@ -260,6 +260,30 @@ describe('StateProjectionService', () => {
       expect(result).toHaveProperty('timestamp');
     });
 
+    it('keeps a running state when session.created is announced again', async () => {
+      const agentSession = {
+        getSessionData: mock(() => ({ id: 'busy-session' })),
+        getProcessingState: mock(() => ({ status: 'idle' as const })),
+        getSlashCommands: mock(async () => []),
+        getContextInfo: mock(() => null),
+      };
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
+        agentSession
+      );
+      const created = eventSubscribers.get('session.created')?.[0];
+      const updated = eventSubscribers.get('session.updated')?.[0];
+      await created!({ session: { id: 'busy-session' } });
+      await updated!({
+        sessionId: 'busy-session',
+        processingState: { status: 'processing', messageId: 'm1', phase: 'thinking' },
+      });
+      await created!({ session: { id: 'busy-session' } });
+
+      const result = await service.getSessionState('busy-session');
+
+      expect(result.agentState.status).toBe('processing');
+    });
+
     it('should prefer processingStateCache over ghost session in-memory state', async () => {
       const pendingQuestion = {
         toolUseId: 'tool-use-123',
