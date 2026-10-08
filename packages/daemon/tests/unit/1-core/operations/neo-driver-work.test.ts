@@ -12,6 +12,7 @@ import {
   type NeoDriverTarget,
   readDriverNeedsYou,
   readDriverOutcome,
+  readDriverSendBaseline,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
 import {
@@ -140,6 +141,12 @@ describe('readDriverOutcome', () => {
         kind: 'completed',
         value: { ok: true, value: { delivered: false } },
       })
+    ).toEqual({ ref: sendTarget.ref, queued: true });
+    expect(
+      readDriverOutcome(sendTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { delivered: true } },
+      })
     ).toEqual({ ref: sendTarget.ref });
     expect(
       readDriverOutcome(sendTarget, {
@@ -153,6 +160,29 @@ describe('readDriverOutcome', () => {
     expect(readDriverOutcome(startTarget, { kind: 'completed', value: 'nope' })).toEqual({
       failure: 'The work operation returned an unusable reply.',
     });
+  });
+});
+
+describe('readDriverSendBaseline', () => {
+  test('takes the send baseline from an idle target, and none from a busy or unreadable remote one', () => {
+    const at = (value: unknown) => ({ kind: 'completed' as const, value });
+    expect(
+      readDriverSendBaseline(
+        at({ ok: true, value: { status: 'done', lastActivityAt: 7 } }),
+        50,
+        true
+      )
+    ).toBe(7);
+    expect(
+      readDriverSendBaseline(
+        at({ ok: true, value: { status: 'running', lastActivityAt: 7 } }),
+        50,
+        false
+      )
+    ).toBeNull();
+    const unreadable = at({ ok: false, reason: 'unreachable', detail: 'asleep' });
+    expect(readDriverSendBaseline(unreadable, 50, false)).toBe(50);
+    expect(readDriverSendBaseline(unreadable, 50, true)).toBeNull();
   });
 });
 
@@ -472,21 +502,95 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('leaves a message sent to existing work for Neo to follow up', async () => {
-    const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
+  test('settles sent work once the session acts after the send, on its own clock', async () => {
+    let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
     const { db, service, calls } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    const returned: string[] = [];
+    Object.assign(service, {
+      returnReport: async (settled: { id: string }) => {
+        returned.push(settled.id);
+      },
+    });
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(1);
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 2, lastReply: 'Voice is durable.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')).toMatchObject({
+        status: 'reported',
+        report: 'Voice is durable.',
+      });
+      expect(returned).toEqual(['work-1']);
+      expect(calls.map((call) => call.name)).toEqual([
+        'work.status',
+        'work.send',
+        'work.status',
+        'work.status',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('leaves work sent behind a running turn for Neo to follow up', async () => {
+    let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 1 } };
+    const { db, service } = await setup(
       { ok: true, value: { delivered: false } },
       undefined,
-      () => done,
+      () => reply,
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 2, lastReply: 'The earlier turn finished.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('leaves work queued behind a turn that started during the send for Neo', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => ({ ok: true, value: { status: 'done', lastActivityAt: 1 } }),
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('falls back to the time before the send when the target status is unreadable', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({ ok: false, reason: 'unreachable', detail: 'asleep' }),
       sendTarget
     );
     try {
       const before = Date.now();
       await service.start('work-1');
       expect(service.driverTargets.readStartedAt('work-1')).toBeGreaterThanOrEqual(before);
-      await service.refreshDriverWork();
-      expect(service.repo.getWork('work-1')?.status).toBe('queued');
-      expect(calls.map((call) => call.name)).toEqual(['work.send', 'work.status']);
     } finally {
       db.close();
     }
@@ -599,6 +703,17 @@ describe('readDriverSettlement', () => {
     };
     expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
     expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
+  });
+
+  test('never settles on activity older than a send or continue, even after the grace', () => {
+    const work = { updatedAt: 100 };
+    const stale = {
+      kind: 'completed' as const,
+      value: { ok: true, value: { status: 'done', lastActivityAt: 50, lastReply: 'Old reply.' } },
+    };
+    const later = 100 + 10 * 60_000;
+    expect(readDriverSettlement(work, stale, later, 100)).toMatchObject({ status: 'reported' });
+    expect(readDriverSettlement(work, stale, later, 100, true)).toBeNull();
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {

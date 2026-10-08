@@ -95,7 +95,7 @@ export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): Operat
 export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
-): { ref: WorkRef; link?: string; startedAt?: number } | { failure: string } {
+): { ref: WorkRef; link?: string; startedAt?: number; queued?: true } | { failure: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
@@ -112,9 +112,9 @@ export function readDriverOutcome(
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
     };
   }
-  return target.verb === 'send'
-    ? { ref: target.ref }
-    : { failure: 'work.start returned no reference.' };
+  if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
+  const { delivered } = reply.data.value as { delivered?: unknown };
+  return delivered === false ? { ref: target.ref, queued: true } : { ref: target.ref };
 }
 
 const SETTLE_GRACE_MS = 10 * 60_000;
@@ -151,6 +151,19 @@ export function readDriverLive(
   };
 }
 
+export function readDriverSendBaseline(
+  outcome: OperationOutcome,
+  sentAt: number,
+  remote: boolean
+): number | null {
+  const fallback = remote ? null : sentAt;
+  if (outcome.kind !== 'completed') return fallback;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  if (!reply.success || !reply.data.ok) return fallback;
+  const { status, lastActivityAt } = reply.data.value;
+  return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
+}
+
 export function readDriverNeedsYou(
   outcome: OperationOutcome
 ): { needsYou: boolean; since: number; lastReply?: string } | null {
@@ -185,7 +198,8 @@ export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,
   now: number,
-  startedAt: number | null = null
+  startedAt: number | null = null,
+  requireFresh = false
 ): { status: 'reported' | 'failed'; report: string } | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
@@ -196,8 +210,9 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReply } = reply.data.value;
+  if (requireFresh && startedAt === null) return null;
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
-  if (!fresh && now - work.updatedAt < SETTLE_GRACE_MS) return null;
+  if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   if (status === 'done') {
     return { status: 'reported', report: lastReply || 'It finished without a written reply.' };
   }

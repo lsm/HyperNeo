@@ -64,6 +64,12 @@ export class NeoWorkDriverTargetRepository {
     return row?.since ?? null;
   }
 
+  recordStartedAt(workId: string, startedAt: number | null): void {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET started_at = ? WHERE work_id = ?')
+      .run(startedAt, workId);
+  }
+
   recordNeedsYouSince(workId: string, since: number | null): void {
     this.db
       .prepare('UPDATE neo_work_driver_targets SET needs_you_since = ? WHERE work_id = ?')
