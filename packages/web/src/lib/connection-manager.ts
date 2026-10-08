@@ -181,7 +181,8 @@ export class ConnectionManager {
       maxReconnectAttempts: Infinity,
       reconnectDelay: 500,
       maxReconnectDelay: 30_000,
-      pingInterval: 30000,
+      pingInterval: 15_000,
+      pongTimeout: 10_000,
     });
 
     this.messageHub.registerTransport(this.transport);
