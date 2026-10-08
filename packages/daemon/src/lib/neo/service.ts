@@ -37,7 +37,7 @@ import {
   type NeoDriverTarget,
   readDriverOutcome,
   readDriverLive,
-  readDriverLastActivity,
+  readDriverSendBaseline,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -428,7 +428,7 @@ export class NeoService {
       return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
     const budget = readContinueBudget(
       this.workContinues.get(id),
-      this.driverTargets.readStartedAt(id),
+      this.driverTargets.readStartedAt(id) ?? work.createdAt,
       now
     );
     if (budget) return { ok: false, reason: budget };
@@ -484,17 +484,18 @@ export class NeoService {
     if (!queued || queued.status !== 'queued') return;
     const call = driverWorkCall(target, queued, this.workGoals.get(queued.id));
     const sentAt = Date.now();
-    const before =
+    const baseline =
       target.verb === 'send'
-        ? readDriverLastActivity(
+        ? readDriverSendBaseline(
             await invokeOperation(
               this.sessions.getOperationRegistry(),
               'work.status',
               { ref: target.ref },
               driverWorkCaller(queued)
-            )
+            ),
+            sentAt
           )
-        : null;
+        : sentAt;
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       call.name,
@@ -506,7 +507,7 @@ export class NeoService {
       this.driverTargets.recordRef(
         queued.id,
         result.ref,
-        result.startedAt ?? before ?? sentAt,
+        result.startedAt ?? baseline ?? undefined,
         result.link
       );
       const current = this.repo.getWork(queued.id);

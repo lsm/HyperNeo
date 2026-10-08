@@ -143,10 +143,12 @@ export function readDriverLive(
   return typeof link === 'string' ? { status, link } : { status };
 }
 
-export function readDriverLastActivity(outcome: OperationOutcome): number | null {
-  if (outcome.kind !== 'completed') return null;
+export function readDriverSendBaseline(outcome: OperationOutcome, sentAt: number): number | null {
+  if (outcome.kind !== 'completed') return sentAt;
   const reply = DriverStatusSchema.safeParse(outcome.value);
-  return reply.success && reply.data.ok ? reply.data.value.lastActivityAt : null;
+  if (!reply.success || !reply.data.ok) return sentAt;
+  const { status, lastActivityAt } = reply.data.value;
+  return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
 }
 
 export function readDriverNeedsYou(
@@ -183,6 +185,7 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReply } = reply.data.value;
+  if (requireFresh && startedAt === null) return null;
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   if (status === 'done') {

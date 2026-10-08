@@ -438,6 +438,28 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('leaves work sent behind a running turn for Neo to follow up', async () => {
+    let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 1 } };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+      reply = {
+        ok: true,
+        value: { status: 'done', lastActivityAt: 2, lastReply: 'The earlier turn finished.' },
+      };
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
   test('falls back to the time before the send when the target status is unreadable', async () => {
     const { db, service } = await setup(
       { ok: true, value: { delivered: false } },
