@@ -428,7 +428,9 @@ export class NeoService {
       return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
     const budget = readContinueBudget(
       this.workContinues.get(id),
-      this.driverTargets.readStartedAt(id) ?? work.createdAt,
+      this.driverTargets.get(id)?.verb === 'start'
+        ? (this.driverTargets.readStartedAt(id) ?? work.createdAt)
+        : work.createdAt,
       now
     );
     if (budget) return { ok: false, reason: budget };
@@ -507,7 +509,7 @@ export class NeoService {
       this.driverTargets.recordRef(
         queued.id,
         result.ref,
-        result.startedAt ?? baseline ?? undefined,
+        result.startedAt ?? ('queued' in result ? undefined : (baseline ?? undefined)),
         result.link
       );
       const current = this.repo.getWork(queued.id);

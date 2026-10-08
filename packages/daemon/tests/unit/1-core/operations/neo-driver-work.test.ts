@@ -140,6 +140,12 @@ describe('readDriverOutcome', () => {
         kind: 'completed',
         value: { ok: true, value: { delivered: false } },
       })
+    ).toEqual({ ref: sendTarget.ref, queued: true });
+    expect(
+      readDriverOutcome(sendTarget, {
+        kind: 'completed',
+        value: { ok: true, value: { delivered: true } },
+      })
     ).toEqual({ ref: sendTarget.ref });
     expect(
       readDriverOutcome(sendTarget, {
@@ -400,7 +406,7 @@ describe('Neo work with a drivers target', () => {
   test('settles sent work once the session acts after the send, on its own clock', async () => {
     let reply: unknown = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
     const { db, service, calls } = await setup(
-      { ok: true, value: { delivered: false } },
+      { ok: true, value: { delivered: true } },
       undefined,
       () => reply,
       sendTarget
@@ -460,9 +466,24 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('falls back to the time before the send when the target status is unreadable', async () => {
+  test('leaves work queued behind a turn that started during the send for Neo', async () => {
     const { db, service } = await setup(
       { ok: true, value: { delivered: false } },
+      undefined,
+      () => ({ ok: true, value: { status: 'done', lastActivityAt: 1 } }),
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      expect(service.driverTargets.readStartedAt('work-1')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('falls back to the time before the send when the target status is unreadable', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
       undefined,
       () => ({ ok: false, reason: 'unreachable', detail: 'asleep' }),
       sendTarget

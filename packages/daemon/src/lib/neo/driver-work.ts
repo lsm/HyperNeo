@@ -95,7 +95,7 @@ export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): Operat
 export function readDriverOutcome(
   target: NeoDriverTarget,
   outcome: OperationOutcome
-): { ref: WorkRef; link?: string; startedAt?: number } | { failure: string } {
+): { ref: WorkRef; link?: string; startedAt?: number; queued?: true } | { failure: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
   const reply = DriverReplySchema.safeParse(outcome.value);
   if (!reply.success) return { failure: 'The work operation returned an unusable reply.' };
@@ -112,9 +112,9 @@ export function readDriverOutcome(
       ...(typeof lastActivityAt === 'number' ? { startedAt: lastActivityAt } : {}),
     };
   }
-  return target.verb === 'send'
-    ? { ref: target.ref }
-    : { failure: 'work.start returned no reference.' };
+  if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
+  const { delivered } = reply.data.value as { delivered?: unknown };
+  return delivered === false ? { ref: target.ref, queued: true } : { ref: target.ref };
 }
 
 const SETTLE_GRACE_MS = 10 * 60_000;

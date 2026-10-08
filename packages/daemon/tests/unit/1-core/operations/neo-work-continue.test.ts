@@ -141,6 +141,27 @@ describe('neo.work.continue', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });
 
+  test('counts the time budget of sent work from the card, not the target session', async () => {
+    const { work } = service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'w-sent',
+        requestKey: 'root:sent',
+        concernId: null,
+        originSessionId: 'root',
+        title: 'Neo iOS app',
+        instruction: 'Make voice durable.',
+      },
+      { verb: 'send', ref }
+    );
+    service.driverTargets.recordRef(work.id, ref, Date.now() - 5 * HOUR);
+    const queued = service.repo.transitionWork(work.id, work, { status: 'queued' })!;
+    service.repo.transitionWork(work.id, queued, { status: 'reported', report: 'Done.' });
+    expect(await invoke({ id: work.id, message: 'Next step.' })).toMatchObject({
+      value: { ok: true },
+    });
+  });
+
   test('stops after five continues and tells Neo to ask the human', async () => {
     const work = reportedWork();
     for (let n = 0; n < 5; n++)
