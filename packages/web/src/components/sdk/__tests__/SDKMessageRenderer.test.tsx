@@ -805,4 +805,10 @@ describe('SDKMessageRenderer in minimal display mode', () => {
     expect(inMinimal(createResultMessage(false)).container.innerHTML).not.toBe('');
     expect(inMinimal(createAuthStatusMessage()).container.innerHTML).not.toBe('');
   });
+
+  it('keeps the compact boundary', () => {
+    expect(inMinimal(createSystemCompactBoundaryMessage()).container.textContent).toContain(
+      'Compact'
+    );
+  });
 });
