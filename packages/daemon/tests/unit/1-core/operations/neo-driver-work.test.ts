@@ -163,6 +163,29 @@ describe('readDriverOutcome', () => {
   });
 });
 
+describe('readDriverSendBaseline', () => {
+  test('takes the send baseline from an idle target, and none from a busy or unreadable remote one', () => {
+    const at = (value: unknown) => ({ kind: 'completed' as const, value });
+    expect(
+      readDriverSendBaseline(
+        at({ ok: true, value: { status: 'done', lastActivityAt: 7 } }),
+        50,
+        true
+      )
+    ).toBe(7);
+    expect(
+      readDriverSendBaseline(
+        at({ ok: true, value: { status: 'running', lastActivityAt: 7 } }),
+        50,
+        false
+      )
+    ).toBeNull();
+    const unreadable = at({ ok: false, reason: 'unreachable', detail: 'asleep' });
+    expect(readDriverSendBaseline(unreadable, 50, false)).toBe(50);
+    expect(readDriverSendBaseline(unreadable, 50, true)).toBeNull();
+  });
+});
+
 describe('Neo work with a drivers target', () => {
   async function setup(
     reply: unknown,
@@ -605,27 +628,6 @@ describe('readDriverSettlement', () => {
     };
     expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
     expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
-  });
-
-  test('takes the send baseline from an idle target, and none from a busy or unreadable remote one', () => {
-    const at = (value: unknown) => ({ kind: 'completed' as const, value });
-    expect(
-      readDriverSendBaseline(
-        at({ ok: true, value: { status: 'done', lastActivityAt: 7 } }),
-        50,
-        true
-      )
-    ).toBe(7);
-    expect(
-      readDriverSendBaseline(
-        at({ ok: true, value: { status: 'running', lastActivityAt: 7 } }),
-        50,
-        false
-      )
-    ).toBeNull();
-    const unreadable = at({ ok: false, reason: 'unreachable', detail: 'asleep' });
-    expect(readDriverSendBaseline(unreadable, 50, false)).toBe(50);
-    expect(readDriverSendBaseline(unreadable, 50, true)).toBeNull();
   });
 
   test('never settles on activity older than a send or continue, even after the grace', () => {
