@@ -397,6 +397,30 @@ describe('readLiveClaudeSessions', () => {
     ).toEqual([{ sessionId: 'cli-a1', status: 'busy', name: 'x' }]);
   });
 
+  test('skips entries without a session or status instead of failing the whole list', async () => {
+    expect(
+      await readLiveClaudeSessions(
+        spawnWith(
+          JSON.stringify([
+            { pid: 1, kind: 'interactive', sessionId: 'cli-a1', name: null, status: 'idle' },
+            { pid: 2, kind: 'interactive', sessionId: 'cli-starting' },
+            { pid: 3, kind: 'bg', jobId: 'job-1', status: 'busy' },
+            {
+              pid: 4,
+              kind: 'interactive',
+              sessionId: 'cli-b2',
+              name: 'Neo iOS app',
+              status: 'busy',
+            },
+          ])
+        )
+      )
+    ).toEqual([
+      { sessionId: 'cli-a1', status: 'idle', name: undefined },
+      { sessionId: 'cli-b2', status: 'busy', name: 'Neo iOS app' },
+    ]);
+  });
+
   test('fails when the CLI is missing or its output is unreadable', async () => {
     await expect(readLiveClaudeSessions(spawnWith('Usage: claude'))).rejects.toThrow();
     await expect(readLiveClaudeSessions(spawnWith('{"sessions":[]}'))).rejects.toThrow(
