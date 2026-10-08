@@ -266,6 +266,46 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
+  it('detects the keyboard when iOS shrinks window.innerHeight along with the visual viewport', () => {
+    setNavigator(5, IPHONE_SAFARI_UA);
+    const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);
+    setVisualViewport(mockVV);
+    const scrollSpy = vi.spyOn(window, 'scrollTo');
+    const composer = document.createElement('textarea');
+    document.body.appendChild(composer);
+    try {
+      renderHook(() => useViewportSafety());
+
+      composer.focus();
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 468 });
+      mockVV.height = 468;
+      mockVV.offsetTop = 300;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
+      expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('468px');
+      expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
+
+      composer.blur();
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      mockVV.height = WINDOW_INNER_HEIGHT;
+      mockVV.offsetTop = 0;
+      mockVV._trigger('resize');
+
+      expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: WINDOW_INNER_HEIGHT,
+      });
+      composer.remove();
+      scrollSpy.mockRestore();
+    }
+  });
+
   it('detects keyboard close: removes keyboard-open class and restores CSS vars', () => {
     setNavigator(0, DESKTOP_SAFARI_UA);
     const mockVV = createMockVisualViewport(WINDOW_INNER_HEIGHT);

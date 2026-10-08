@@ -29,8 +29,13 @@ function updateKeyboardHeight(vv: VisualViewport): void {
   document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
 }
 
-function isKeyboardVisible(vv: VisualViewport): boolean {
-  return window.innerHeight - vv.height > KEYBOARD_THRESHOLD;
+function isEditingText(): boolean {
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLInputElement ||
+    (active instanceof HTMLElement && active.isContentEditable)
+  );
 }
 
 function resetDocumentScroll(): void {
@@ -50,6 +55,11 @@ export function useViewportSafety(): void {
 
     const ipadSafari = isIpadSafari();
     let keyboardOpen = false;
+    let fullHeight = window.innerHeight;
+    const isKeyboardVisible = (viewport: VisualViewport) => {
+      if (!isEditingText()) fullHeight = window.innerHeight;
+      return fullHeight - viewport.height > KEYBOARD_THRESHOLD;
+    };
     let savedBottomBarHeight: string | null = null;
 
     const handleResize = () => {
