@@ -91,6 +91,7 @@ describe('NewChatModelPicker', () => {
     it('shows the chosen level on the trigger and reports a new one from the menu', async () => {
       const { container } = renderPicker({ thinkingLevel: 'think16k' });
       expect(container.querySelector('[aria-label="Thinking: Think 16k"]')).toBeTruthy();
+      expect(container.querySelector('[data-thinking-level="think16k"] svg.absolute')).toBeTruthy();
 
       await openDropdown(container);
       fireEvent.click(container.querySelector('button[aria-label="Think 32k"]')!);
