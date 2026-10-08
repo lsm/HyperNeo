@@ -4,6 +4,7 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import {
   admitNeoPublicSources,
   neoWorkSummaries,
+  neoWorkSummary,
   projectNeoPublicConversation,
   requireNeoPublicIdentities,
 } from '../public-conversation.ts';
@@ -244,17 +245,25 @@ describe('neoWorkSummaries', () => {
       fullText: 'Blocked: two files are missing.',
     };
     const other = { ...publication(3), links: [] };
-    expect([
-      ...neoWorkSummaries([
-        entry(publication(1)),
-        { kind: 'ask', key: 'a', ask: ask() },
-        entry(later),
-        entry(other),
-      ]),
-    ]).toEqual([['work:1', 'Blocked: two files are missing.']]);
-    expect([...neoWorkSummaries([entry(publication(1))])]).toEqual([
-      ['work:1', 'The draft is ready.'],
+    const summaries = neoWorkSummaries([
+      entry(publication(1)),
+      { kind: 'ask', key: 'a', ask: ask() },
+      entry(later),
+      entry(other),
     ]);
+    expect([...summaries]).toEqual([
+      ['work:1', { text: 'Blocked: two files are missing.', at: Date.parse(at) }],
+    ]);
+    expect(neoWorkSummaries([entry(publication(1))]).get('work:1')?.text).toBe(
+      'The draft is ready.'
+    );
     expect([...neoWorkSummaries(undefined)]).toEqual([]);
+  });
+
+  it('ignores what Neo said about a work before its latest change, like the hand-off note', () => {
+    const summaries = new Map([['work:1', { text: 'Handed it to Codex.', at: 100 }]]);
+    expect(neoWorkSummary(summaries, { id: 'work:1', updatedAt: 100 })).toBe('Handed it to Codex.');
+    expect(neoWorkSummary(summaries, { id: 'work:1', updatedAt: 101 })).toBeUndefined();
+    expect(neoWorkSummary(summaries, { id: 'work:2', updatedAt: 0 })).toBeUndefined();
   });
 });

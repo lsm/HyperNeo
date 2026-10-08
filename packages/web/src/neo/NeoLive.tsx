@@ -17,7 +17,7 @@ import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { publicationConversationId } from './useNeoPublications.ts';
-import { neoWorkSummaries } from './public-conversation.ts';
+import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { useInputDraft } from '../hooks/useInputDraft.ts';
@@ -570,7 +570,7 @@ export function NeoLive() {
                       }
                       questionSlot={publicConversation ? attachQuestion : undefined}
                       waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
-                      summary={summaries.get(scene.ref.id)}
+                      summary={neoWorkSummary(summaries, scene.receipt)}
                     />
                   ) : null
                 )}
