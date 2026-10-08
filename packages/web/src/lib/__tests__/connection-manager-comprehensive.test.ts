@@ -57,11 +57,13 @@ const mockTransportObj: {
   close: ReturnType<typeof vi.fn>;
   forceReconnect: ReturnType<typeof vi.fn>;
   resetReconnectState: ReturnType<typeof vi.fn>;
+  isSuspended: ReturnType<typeof vi.fn>;
 } = {
   initialize: vi.fn(() => Promise.resolve()),
   isReady: vi.fn(() => true),
   close: vi.fn(),
   forceReconnect: vi.fn(),
+  isSuspended: vi.fn(() => false),
   resetReconnectState: vi.fn(),
 };
 

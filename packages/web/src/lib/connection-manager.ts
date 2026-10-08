@@ -288,7 +288,7 @@ export class ConnectionManager {
         return;
       }
       if (this.transport?.isSuspended()) {
-        if (navigator.onLine) this.resumeSuspended();
+        if (this.networkReachable()) this.resumeSuspended();
         return;
       }
       if (this.resumeWait) return;
@@ -300,7 +300,7 @@ export class ConnectionManager {
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
     this.pageShowHandler = () => {
-      if (!document.hidden && navigator.onLine && this.transport?.isSuspended())
+      if (!document.hidden && this.networkReachable() && this.transport?.isSuspended())
         this.resumeSuspended();
     };
     window.addEventListener('pageshow', this.pageShowHandler);
@@ -309,15 +309,16 @@ export class ConnectionManager {
         clearTimeout(this.onlineTimer);
         this.onlineTimer = null;
       }
-      if (!navigator.onLine) {
+      if (!this.networkReachable()) {
         this.cancelResumeWait();
         this.transport?.suspend();
         return;
       }
       this.onlineTimer = setTimeout(() => {
         this.onlineTimer = null;
-        if (!document.hidden && navigator.onLine && this.transport?.isSuspended())
-          this.resumeSuspended();
+        if (document.hidden || !this.networkReachable() || !this.transport) return;
+        if (this.transport.isSuspended()) this.resumeSuspended();
+        else if (!this.transport.isReady()) this.transport.forceReconnect();
       }, ONLINE_SETTLE_MS);
     };
     window.addEventListener('online', this.networkHandler);
@@ -334,6 +335,16 @@ export class ConnectionManager {
       void this.validateConnectionOnResume();
     });
     if (!this.isConnected()) this.resumeWait = wait;
+  }
+
+  private networkReachable(): boolean {
+    if (navigator.onLine) return true;
+    try {
+      const host = new URL(this.baseUrl).hostname;
+      return ['localhost', '127.0.0.1', '[::1]'].includes(host) || host.endsWith('.localhost');
+    } catch {
+      return false;
+    }
   }
 
   private cancelResumeWait(): void {
@@ -405,6 +416,10 @@ export class ConnectionManager {
   }
 
   async reconnect(): Promise<void> {
+    if (this.transport?.isSuspended()) {
+      this.resumeSuspended();
+      return;
+    }
     if (this.transport) {
       this.transport.forceReconnect();
       return;
