@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { connectionState } from '../lib/state.ts';
+import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
+import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import ToastContainer from '../islands/ToastContainer.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -164,6 +165,8 @@ export function NeoLive() {
   const conversationReady =
     ready || (!!publicConversation && neo.store.activeSessionId.value === neo.sessionId);
   const connected = connectionState.value === 'connected';
+  const firstConnect =
+    !connected && getBannerLevel(connectionState.value, reconnectAttemptCount.value) === 'hidden';
 
   useLayoutEffect(() => {
     const selectScroll = () => {
@@ -406,6 +409,11 @@ export function NeoLive() {
               what matters.
             </p>
           </div>
+          {firstConnect && (
+            <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
+              Connecting to HyperNeo…
+            </p>
+          )}
           {neo.error && (
             <div
               role="alert"

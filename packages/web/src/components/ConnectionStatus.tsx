@@ -41,7 +41,7 @@ function resolveStatus({
   currentAction,
   activity,
   streamingPhase,
-}: ConnectionStatusProps): StatusResult {
+}: Omit<ConnectionStatusProps, 'connectionState'>): StatusResult {
   if (isProcessing && currentAction) {
     const byPhase = SESSION_PROCESSING_PHASE_CONFIG as Partial<
       Record<string, SessionProcessingConfig>
@@ -64,7 +64,6 @@ export default function ConnectionStatus({
 }: ConnectionStatusProps) {
   if (connectionState !== 'connected') return null;
   const status = resolveStatus({
-    connectionState,
     isProcessing,
     currentAction,
     activity,
