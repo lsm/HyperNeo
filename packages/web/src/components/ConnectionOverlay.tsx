@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
+
+const BANNER_DELAY_MS = 2000;
 
 export type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
 
@@ -20,6 +23,7 @@ export function ConnectionOverlay() {
   const [retrying, setRetrying] = useState(false);
 
   const level = getBannerLevel(state, attempts);
+  const visible = useDelayedFlag(level !== 'hidden', BANNER_DELAY_MS);
 
   const handleReconnect = useCallback(async () => {
     setRetrying(true);
@@ -31,12 +35,18 @@ export function ConnectionOverlay() {
     }
   }, []);
 
-  if (level === 'hidden') return null;
+  if (!visible) return null;
 
-  if (level === 'reconnecting') {
+  if (level === 'reconnecting' || level === 'lost') {
     return (
       <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-        <div class="mt-2 px-4 py-2 rounded-lg bg-warning/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
+        <button
+          type="button"
+          onClick={handleReconnect}
+          disabled={retrying}
+          title="Retry now"
+          class="pointer-events-auto mt-2 px-4 py-2 rounded-lg bg-warning/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg"
+        >
           <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle
               class="opacity-25"
@@ -52,33 +62,8 @@ export function ConnectionOverlay() {
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
             />
           </svg>
-          Reconnecting…
-        </div>
-      </div>
-    );
-  }
-
-  if (level === 'lost') {
-    return (
-      <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-        <div class="mt-2 px-4 py-2 rounded-lg bg-warning/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
-          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            />
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          Connection lost. Retrying…
-        </div>
+          {level === 'reconnecting' ? 'Reconnecting…' : 'Connection lost. Retrying…'}
+        </button>
       </div>
     );
   }
