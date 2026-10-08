@@ -18,6 +18,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
+import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
@@ -62,6 +63,8 @@ export interface HyperneoAdapterDeps {
   sessions: HyperneoSessionControl;
   neoFolder: () => string;
   folderExists: (folder: string) => boolean;
+  makeFolder: (folder: string) => void;
+  homeDir: string;
 }
 
 export interface HyperneoLastResult {
@@ -344,9 +347,7 @@ export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDe
   if (!place.folder) {
     return { reason: reject('invalid_place', 'Start new work in a project folder or a Space.') };
   }
-  return deps.folderExists(place.folder)
-    ? { value: place.folder }
-    : { reason: reject('invalid_place', `${place.folder} does not exist.`) };
+  return ensureStartFolder(place.folder, request.createFolder, deps);
 }
 
 export async function createHyperneoSession(

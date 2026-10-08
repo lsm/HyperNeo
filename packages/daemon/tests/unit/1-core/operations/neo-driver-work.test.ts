@@ -83,6 +83,16 @@ describe('driverWorkCall', () => {
         message: 'Raise the body font to 16px.',
       },
     });
+    expect(driverWorkCall({ ...startTarget, createFolder: true }, work)).toEqual({
+      name: 'work.start',
+      input: {
+        adapter: 'codex-desktop',
+        place,
+        title: 'Bigger font',
+        message: 'Raise the body font to 16px.',
+        createFolder: true,
+      },
+    });
     expect(driverWorkCall(sendTarget, work)).toEqual({
       name: 'work.send',
       input: { ref: { adapter: 'hyperneo', id: 's1' }, message: 'Raise the body font to 16px.' },

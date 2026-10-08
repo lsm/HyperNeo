@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
@@ -122,6 +122,8 @@ function claudeDesktopAdapters(
       liveSessions: () => readLiveClaudeSessions(spawnProcess),
       spawn: spawnProcess,
       folderExists: existsSync,
+      makeFolder: (folder: string) => mkdirSync(folder),
+      homeDir: homedir(),
       gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
       newId: () => crypto.randomUUID(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -165,6 +167,8 @@ function codexDesktopAdapters(
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
       folderExists: existsSync,
+      makeFolder: (folder: string) => mkdirSync(folder),
+      homeDir: homedir(),
       gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
       newId: () => crypto.randomUUID(),
       searchChats: (text) => searchChats(text, ['codex']),
@@ -308,6 +312,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       sessions: hyperneoSessionControl(context),
       neoFolder,
       folderExists: existsSync,
+      makeFolder: (folder: string) => mkdirSync(folder),
+      homeDir: homedir(),
     }),
     createSpaceAdapter({
       db,

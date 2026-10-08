@@ -97,6 +97,7 @@ export interface StartRequest {
   place: Place;
   title: string;
   message: string;
+  createFolder?: boolean;
 }
 
 export interface WorkCallContext {

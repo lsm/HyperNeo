@@ -43,6 +43,7 @@ export const StartWorkInputSchema = z.object({
   place: PlaceSchema,
   title: z.string().trim().min(1).max(200),
   message: MessageSchema,
+  createFolder: z.boolean().optional(),
   from: ForwardedOriginSchema,
 });
 export const SendWorkInputSchema = z.object({
@@ -275,7 +276,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. Returns the new work with its ref and link, or ok false with a reason such as invalid_place, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },

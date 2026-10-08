@@ -25,7 +25,9 @@ describe('selectClaudeStartFolder', () => {
       reason: { reason: 'invalid_place' },
     });
     expect(select({ ...place, folder: '/gone' })).toMatchObject({
-      reason: { detail: '/gone does not exist.' },
+      reason: {
+        detail: '/gone does not exist. To start a new project there, pass createFolder: true.',
+      },
     });
   });
 });
@@ -90,6 +92,8 @@ describe('claude-desktop start', () => {
         };
       },
       folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: '/Users/test',
       gitRoot: async () => options.gitRoot ?? null,
       newId: () => 'u1',
       sleep: async (ms) => {
