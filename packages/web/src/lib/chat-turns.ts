@@ -73,6 +73,19 @@ function summarize(messages: ChatMessage[], isLast: boolean): ChatTurn {
   };
 }
 
+export function countTopLevelTasks(
+  runningToolUseIds: ReadonlySet<string>,
+  messages: ChatMessage[]
+): number {
+  const nested = new Set<string>();
+  for (const message of messages) {
+    if (isTopLevel(message)) continue;
+    for (const block of contentBlocks(message))
+      if (block?.type === 'tool_use' && typeof block.id === 'string') nested.add(block.id);
+  }
+  return [...runningToolUseIds].filter((id) => !nested.has(id)).length;
+}
+
 export function backgroundTasksLabel(count: number): string | undefined {
   if (count === 0) return undefined;
   return `${count} background task${count === 1 ? '' : 's'} running`;

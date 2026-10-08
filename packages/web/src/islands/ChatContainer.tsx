@@ -37,6 +37,7 @@ import {
   type ChatTurn,
   backgroundTasksLabel,
   buildChatTurns,
+  countTopLevelTasks,
   liveTurnActivity,
 } from '../lib/chat-turns.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
@@ -946,7 +947,10 @@ export default function ChatContainer({
     agentState.status,
     currentAction
   );
-  const backgroundLabel = backgroundTasksLabel(runningToolUseIds.size);
+  const backgroundLabel = useMemo(
+    () => backgroundTasksLabel(countTopLevelTasks(runningToolUseIds, messages)),
+    [runningToolUseIds, messages]
+  );
   const lastTurnKey = turnAt?.[turnAt.length - 1]?.key;
   const turnLabel = turnActive ? turnAction : backgroundLabel;
   const statusActivity = isProcessing ? undefined : turnLabel;

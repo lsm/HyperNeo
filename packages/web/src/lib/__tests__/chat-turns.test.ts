@@ -1,6 +1,11 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
-import { backgroundTasksLabel, buildChatTurns, liveTurnActivity } from '../chat-turns.ts';
+import {
+  backgroundTasksLabel,
+  buildChatTurns,
+  countTopLevelTasks,
+  liveTurnActivity,
+} from '../chat-turns.ts';
 
 const user = (uuid: string, timestamp: number) =>
   ({
@@ -88,6 +93,21 @@ describe('buildChatTurns', () => {
   it('keeps messages before the first prompt in their own turn', () => {
     const turns = buildChatTurns([assistant('a0', { type: 'text', text: 'hello' }), user('u1', 5)]);
     expect(turns.map((turn) => turn.key)).toEqual(['a0', 'u1']);
+  });
+});
+
+describe('countTopLevelTasks', () => {
+  it('leaves out tasks that a subagent started inside itself', () => {
+    const nestedBash = {
+      ...assistant('sub', { type: 'tool_use', id: 'bash-in-agent', name: 'Bash' }),
+      parent_tool_use_id: 'agent-a',
+    } as unknown as ChatMessage;
+    const messages = [
+      user('u1', 1),
+      assistant('a1', { type: 'tool_use', id: 'agent-a', name: 'Agent' }),
+      nestedBash,
+    ];
+    expect(countTopLevelTasks(new Set(['agent-a', 'bash-in-agent']), messages)).toBe(1);
   });
 });
 
