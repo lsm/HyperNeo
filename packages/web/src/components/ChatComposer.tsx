@@ -23,6 +23,7 @@ export interface ChatComposerProps {
   thinkingLevel?: ThinkingLevel;
   isProcessing: boolean;
   currentAction?: string;
+  statusActivity?: string;
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
   contextUsage?: ContextInfo;
   features: SessionFeatures;
@@ -70,6 +71,7 @@ export function ChatComposer({
   thinkingLevel,
   isProcessing,
   currentAction,
+  statusActivity,
   streamingPhase,
   contextUsage,
   features,
@@ -123,6 +125,7 @@ export function ChatComposer({
           sessionId={sessionId}
           isProcessing={isProcessing}
           currentAction={currentAction}
+          statusActivity={statusActivity}
           streamingPhase={streamingPhase}
           contextUsage={contextUsage}
           maxContextTokens={currentModelInfo?.contextWindow}
