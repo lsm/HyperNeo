@@ -14,4 +14,6 @@ export function runMigration310(db: Database): void {
   );
   if (!columns.has('input_before'))
     db.exec('ALTER TABLE neo_work_driver_targets ADD COLUMN input_before INTEGER');
+  if (!columns.has('sent_opening'))
+    db.exec('ALTER TABLE neo_work_driver_targets ADD COLUMN sent_opening TEXT');
 }

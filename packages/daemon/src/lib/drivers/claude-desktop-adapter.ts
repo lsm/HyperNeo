@@ -14,12 +14,14 @@ import type {
   StartRequest,
   WorkAdapter,
   WorkDetail,
+  WorkInput,
   WorkRef,
   WorkStatus,
   WorkSummary,
 } from './types.ts';
 import { ensureStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
+import { recentWorkInputs, workEntryTime, workInput } from './work-inputs.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -339,17 +341,10 @@ function assistantText(line: string): string | null {
   }
 }
 
-export function lastClaudeReply(lines: readonly string[]): string | null {
-  for (const line of [...lines].reverse()) {
-    const text = assistantText(line);
-    if (text) return text;
-  }
-  return null;
-}
-
 export interface ClaudeTranscriptState {
   reply: string | null;
-  inputAt: number;
+  replyAt?: number;
+  inputs: WorkInput[];
   lastAt: number;
 }
 
@@ -362,19 +357,25 @@ interface ClaudeTranscriptEntry {
   message?: { content?: unknown };
 }
 
-function isClaudeInput(entry: ClaudeTranscriptEntry): boolean {
-  if (entry.type !== 'user') return false;
+function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
+  if (entry.type !== 'user' || (entry.isMeta && !entry.turnOrigin && !entry.origin)) return null;
+  const body = (entry.origin as { body?: unknown } | undefined)?.body;
+  if (typeof body === 'string') return body;
   const content = entry.message?.content;
-  if (
-    Array.isArray(content) &&
-    content.some((part: { type?: unknown }) => part?.type === 'tool_result')
-  )
-    return false;
-  return !entry.isMeta || !!entry.turnOrigin || !!entry.origin;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+  if (content.some((part: { type?: unknown }) => part?.type === 'tool_result')) return null;
+  return content
+    .flatMap((part: { type?: unknown; text?: unknown }) =>
+      part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []
+    )
+    .join('\n');
 }
 
 export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscriptState {
-  let inputAt = 0;
+  const inputs: WorkInput[] = [];
+  let reply: string | null = null;
+  let replyAt: number | undefined;
   let lastAt = 0;
   for (const line of lines) {
     let entry: ClaudeTranscriptEntry | null;
@@ -383,12 +384,24 @@ export function claudeTranscriptState(lines: readonly string[]): ClaudeTranscrip
     } catch {
       continue;
     }
-    const at = Date.parse(String(entry?.timestamp));
-    if (!entry || !Number.isFinite(at)) continue;
-    lastAt = Math.max(lastAt, at);
-    if (isClaudeInput(entry)) inputAt = Math.max(inputAt, at);
+    if (!entry) continue;
+    const at = workEntryTime(entry.timestamp);
+    if (at !== undefined) lastAt = Math.max(lastAt, at);
+    const said = assistantText(line);
+    if (said) {
+      reply = said;
+      replyAt = at;
+    }
+    const text = claudeInputText(entry);
+    const input = text === null ? null : workInput(at, text);
+    if (input) inputs.push(input);
   }
-  return { reply: lastClaudeReply(lines), inputAt, lastAt };
+  return {
+    reply,
+    ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
+    inputs: recentWorkInputs(inputs),
+    lastAt,
+  };
 }
 
 export function requireClaudeRecord(
@@ -429,7 +442,10 @@ export function describeClaudeSession(
       ...work,
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
       ...(transcript.reply ? { lastReply: transcript.reply.slice(0, REPLY_LIMIT) } : {}),
-      lastInputAt: transcript.inputAt,
+      ...(transcript.reply && transcript.replyAt !== undefined
+        ? { lastReplyAt: transcript.replyAt }
+        : {}),
+      recentInputs: transcript.inputs,
     },
   };
 }

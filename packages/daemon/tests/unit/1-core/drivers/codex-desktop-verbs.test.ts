@@ -3,7 +3,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  codexLastInputAt,
+  codexRecentInputs,
   codexTurnState,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
@@ -51,20 +51,49 @@ describe('codexTurnState', () => {
   });
 });
 
-describe('codexLastInputAt', () => {
-  test('reads when the latest message to the thread landed, or 0 when the tail has none', () => {
-    const at = (iso: string, entry: string) =>
-      JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
+describe('codexRecentInputs and reply time', () => {
+  const at = (iso: string, entry: string) =>
+    JSON.stringify({ ...JSON.parse(entry), timestamp: iso });
+
+  test('lists what reached the thread, without the context Codex injects', () => {
     expect(
-      codexLastInputAt([
-        at('2026-10-08T17:40:00.000Z', heard('first')),
-        at('2026-10-08T17:46:10.074Z', heard('continue')),
+      codexRecentInputs([
+        at(
+          '2026-10-08T17:46:10.051Z',
+          heard('<environment_context>\n  <cwd>/x</cwd>\n</environment_context>')
+        ),
+        at('2026-10-08T17:46:10.074Z', heard('Continue   the\nwork')),
         at('2026-10-08T17:53:57.904Z', said('Blocked.')),
-        at('2026-10-08T17:53:58.000Z', line('event_msg', { type: 'task_complete' })),
+        heard('no time'),
         '{"truncated',
       ])
-    ).toBe(Date.parse('2026-10-08T17:46:10.074Z'));
-    expect(codexLastInputAt([heard('no time'), said('hi')])).toBe(0);
+    ).toEqual([{ at: Date.parse('2026-10-08T17:46:10.074Z'), text: 'Continue the work' }]);
+  });
+
+  test('times the reply by the line it came from', () => {
+    expect(
+      codexTurnState([
+        at('2026-10-08T17:50:00.000Z', said('working')),
+        at(
+          '2026-10-08T17:53:57.904Z',
+          line('event_msg', { type: 'task_complete', last_agent_message: 'Blocked.' })
+        ),
+      ])
+    ).toEqual({
+      marker: 'task_complete',
+      reply: 'Blocked.',
+      replyAt: Date.parse('2026-10-08T17:53:57.904Z'),
+    });
+    expect(
+      codexTurnState([
+        line('event_msg', { type: 'task_started' }),
+        at('2026-10-08T17:50:00.000Z', said('working')),
+      ])
+    ).toEqual({
+      marker: 'task_started',
+      reply: 'working',
+      replyAt: Date.parse('2026-10-08T17:50:00.000Z'),
+    });
   });
 });
 
@@ -217,7 +246,7 @@ describe('codex-desktop adapter status and send', () => {
         lastActivityAt: NOW - 600_000,
         link: 'codex://threads/busy',
         lastReply: 'reading the repo',
-        lastInputAt: 0,
+        recentInputs: [],
       },
     });
     expect(await adapter().status?.(ref('idle'))).toMatchObject({

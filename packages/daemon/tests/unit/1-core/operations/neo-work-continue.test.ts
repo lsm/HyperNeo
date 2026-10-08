@@ -35,7 +35,7 @@ describe('neo.work.continue', () => {
   let service: NeoService;
   let sent: Array<{ ref: unknown; message: string }>;
   let lastActivityAt: number;
-  let lastInputAt: number | undefined;
+  let recentInputs: Array<{ at: number; text: string }> | undefined;
   let duringSend: () => Promise<void>;
   let delivered: boolean;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -45,7 +45,7 @@ describe('neo.work.continue', () => {
     db.createSession({ ...createTestSession('root'), status: 'active' });
     sent = [];
     lastActivityAt = 0;
-    lastInputAt = undefined;
+    recentInputs = undefined;
     duringSend = async () => {};
     delivered = true;
     const driverRegistry = createOperationRegistry([
@@ -57,7 +57,7 @@ describe('neo.work.continue', () => {
         policy: { safetyClass: 'read' },
         execute: async () => ({
           ok: true,
-          value: { status: 'done', lastActivityAt, lastReply: 'Skeleton builds.', lastInputAt },
+          value: { status: 'done', lastActivityAt, lastReply: 'Skeleton builds.', recentInputs },
         }),
       }),
       defineOperation({
@@ -179,20 +179,27 @@ describe('neo.work.continue', () => {
   test('a continue queued behind a running turn settles on the reply after its message lands', async () => {
     const work = reportedWork();
     delivered = false;
-    lastInputAt = 10;
+    recentInputs = [{ at: 10, text: 'Build the skeleton.' }];
     await invoke({ id: work.id, message: 'Now build the chat screen.' });
-    expect(service.driverTargets.readInputBefore(work.id)).toBe(10);
+    expect(service.driverTargets.readSent(work.id)).toEqual({
+      inputBefore: 10,
+      opening: 'Now build the chat screen.',
+    });
     lastActivityAt = Date.now() + 1_000;
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('queued');
 
-    lastInputAt = Date.now() + 2_000;
-    lastActivityAt = lastInputAt;
+    const landedAt = Date.now() + 2_000;
+    recentInputs = [
+      ...recentInputs,
+      { at: landedAt, text: 'Now build the chat screen. Neo routed' },
+    ];
+    lastActivityAt = landedAt;
     await service.refreshDriverWork();
-    expect(service.driverTargets.readStartedAt(work.id)).toBe(lastInputAt);
+    expect(service.driverTargets.readStartedAt(work.id)).toBe(landedAt);
     expect(service.repo.getWork(work.id)?.status).toBe('queued');
 
-    lastActivityAt = lastInputAt + 1_000;
+    lastActivityAt = landedAt + 1_000;
     await service.refreshDriverWork();
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });

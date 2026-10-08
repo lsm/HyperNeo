@@ -258,7 +258,7 @@ describe('claude-desktop adapter against the app session records', () => {
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
         lastReply: 'Loaded 3 tables.',
-        lastInputAt: 0,
+        recentInputs: [],
       },
     });
     expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_b2' })).toMatchObject({
@@ -282,8 +282,8 @@ describe('claude-desktop adapter against the app session records', () => {
         entry('2026-10-08T11:50:50.394Z', {
           type: 'user',
           isMeta: true,
-          origin: { kind: 'peer' },
-          message: { content: '<cross-session-message>go</cross-session-message>' },
+          origin: { kind: 'peer', body: 'Load the  orders.\nNeo routed this to you.' },
+          message: { content: '<cross-session-message>Load the orders.</cross-session-message>' },
         }),
         entry('2026-10-08T11:51:00.000Z', {
           type: 'assistant',
@@ -298,9 +298,15 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(await adapter().status?.({ adapter: 'claude-desktop', id: 'local_a1' })).toMatchObject({
       ok: true,
       value: {
-        lastInputAt: Date.parse('2026-10-08T11:50:50.394Z'),
+        recentInputs: [
+          {
+            at: Date.parse('2026-10-08T11:50:50.394Z'),
+            text: 'Load the orders. Neo routed this to you.',
+          },
+        ],
         lastActivityAt: Date.parse('2026-10-08T11:52:00.000Z'),
         lastReply: 'Done.',
+        lastReplyAt: Date.parse('2026-10-08T11:51:00.000Z'),
       },
     });
   });
@@ -568,7 +574,10 @@ describe('claudeTranscriptState', () => {
     ]);
     expect(state).toEqual({
       reply: null,
-      inputAt: Date.parse('2026-10-08T10:01:00.000Z'),
+      inputs: [
+        { at: Date.parse('2026-10-08T10:00:00.000Z'), text: 'typed' },
+        { at: Date.parse('2026-10-08T10:01:00.000Z'), text: 'notice' },
+      ],
       lastAt: Date.parse('2026-10-08T10:03:00.000Z'),
     });
   });

@@ -72,9 +72,12 @@ export function workResultSchema<Value extends z.ZodType>(value: Value) {
   ]);
 }
 
+export const WorkInputSchema = z.object({ at: z.number(), text: z.string() });
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
   lastReply: z.string().optional(),
-  lastInputAt: z.number().optional(),
+  lastReplyAt: z.number().optional(),
+  recentInputs: z.array(WorkInputSchema).optional(),
 });
 
 export type WorkStatus = z.infer<typeof WorkStatusSchema>;
@@ -84,6 +87,7 @@ export type WorkSummary = z.infer<typeof WorkSummarySchema>;
 export type PlaceGroup = z.infer<typeof PlaceGroupSchema>;
 export type WorkRejection = z.infer<typeof WorkRejectionSchema>;
 export type WorkDetail = z.infer<typeof WorkDetailSchema>;
+export type WorkInput = z.infer<typeof WorkInputSchema>;
 export type Rejected = { ok: false; reason: WorkRejection; detail: string };
 export type Result<T> = { ok: true; value: T } | Rejected;
 

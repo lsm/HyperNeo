@@ -65,7 +65,7 @@ import { runMigration306 } from './m306-sandbox-default-off.ts';
 import { runMigration307 } from './m307-neo-work-goals.ts';
 import { runMigration308 } from './m308-neo-work-continues.ts';
 import { runMigration309 } from './m309-neo-work-driver-remote-link.ts';
-import { runMigration310 } from './m310-neo-work-driver-input-before.ts';
+import { runMigration310 } from './m310-neo-work-driver-sent.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
