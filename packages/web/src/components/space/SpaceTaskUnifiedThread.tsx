@@ -38,6 +38,7 @@ interface SpaceTaskUnifiedThreadProps {
   onScrollToBottomChange?: (scrollToBottom: ((smooth?: boolean) => void) | null) => void;
   onScrollerChange?: (scroller: HTMLDivElement | null) => void;
   header?: ComponentChildren;
+  footer?: ComponentChildren;
 }
 
 export function SpaceTaskUnifiedThread({
@@ -55,6 +56,7 @@ export function SpaceTaskUnifiedThread({
   onScrollToBottomChange,
   onScrollerChange,
   header,
+  footer,
 }: SpaceTaskUnifiedThreadProps) {
   const { rows, activeTurnSummaries, isLoading, error, isReconnecting } = useSpaceTaskMessages(
     taskId,
@@ -166,6 +168,7 @@ export function SpaceTaskUnifiedThread({
             overlayTaskId={overlayTaskId}
             overlayTaskReadonly={overlayTaskReadonly}
           />
+          {footer && <div class="px-4 pb-4">{footer}</div>}
           <div ref={messagesEndRef} />
         </div>
       </div>

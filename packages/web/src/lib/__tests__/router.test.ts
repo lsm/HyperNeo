@@ -126,8 +126,8 @@ describe('router', () => {
     expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(
       `/space/${SPACE_ID}/session/${SESSION_ID}`
     );
-    expect(createSpaceTaskPath(SPACE_ID, TASK_ID, 'artifacts')).toBe(
-      `/space/${SPACE_ID}/task/${TASK_ID}/artifacts`
+    expect(createSpaceTaskPath(SPACE_ID, TASK_ID, 'canvas')).toBe(
+      `/space/${SPACE_ID}/task/${TASK_ID}/canvas`
     );
   });
 
@@ -180,12 +180,12 @@ describe('router', () => {
     expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/timeline`)).toEqual({
       spaceId: SPACE_ID,
       taskId: TASK_ID,
-      view: 'timeline',
+      view: 'thread',
     });
     expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/log`)).toEqual({
       spaceId: SPACE_ID,
       taskId: TASK_ID,
-      view: 'log',
+      view: 'thread',
     });
   });
 
@@ -437,9 +437,9 @@ describe('router', () => {
     );
     finishNavigation();
 
-    navigateToSpaceTask(SPACE_ID, TASK_ID, 'artifacts');
+    navigateToSpaceTask(SPACE_ID, TASK_ID, 'canvas');
     expect(currentSpaceTaskIdSignal.value).toBe(TASK_ID);
-    expect(currentSpaceTaskViewTabSignal.value).toBe('artifacts');
+    expect(currentSpaceTaskViewTabSignal.value).toBe('canvas');
     finishNavigation();
 
     navigateToSpaceSession(SPACE_ID, SESSION_ID);

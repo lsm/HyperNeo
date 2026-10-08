@@ -24,8 +24,6 @@ export { SpaceMemoryEditor } from './SpaceMemoryEditor';
 export { SpaceOverview } from './SpaceOverview';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
-export type { TaskArtifactsPanelProps } from './TaskArtifactsPanel';
-export { TaskArtifactsPanel } from './TaskArtifactsPanel';
 export { WorkflowList } from './WorkflowList';
 export type { ConditionDraft, NodeDraft } from './WorkflowNodeCard';
 export { WorkflowNodeCard } from './WorkflowNodeCard';

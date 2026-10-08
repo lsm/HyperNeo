@@ -40,7 +40,7 @@ export const currentSpaceSettingsTabSignal = signal<SpaceSettingsTab>('general')
 export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'draft' | 'scheduled';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
 
-export type SpaceTaskViewTab = 'thread' | 'timeline' | 'log' | 'canvas' | 'artifacts';
+export type SpaceTaskViewTab = 'thread' | 'canvas';
 export const currentSpaceTaskViewTabSignal = signal<SpaceTaskViewTab>('thread');
 
 export const spaceOverlaySessionIdSignal = signal<string | null>(null);
@@ -82,18 +82,8 @@ export type InspectorSection = 'session' | 'work' | 'changes';
 export type RightPanelTarget =
   | { type: 'inspector'; sessionId: string; section?: InspectorSection }
   | { type: 'goal'; spaceId: string; goalId: string }
-  | { type: 'scope'; spaceId: string; scopeId: string }
-  | { type: 'task'; spaceId: string; taskId: string; tab?: TaskRightPanelTab };
+  | { type: 'scope'; spaceId: string; scopeId: string };
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
-
-export type TaskRightPanelTab =
-  | 'details'
-  | 'workflow'
-  | 'agents'
-  | 'gates'
-  | 'artifacts'
-  | 'timeline'
-  | 'log';
 
 export const currentSpaceGoalIdSignal = signal<string | null>(null);
 export const currentSpaceScopeIdSignal = signal<string | null>(null);

@@ -1,5 +1,4 @@
 import {
-  getWorkflowRunExecutionStatusLabel,
   isWorkflowRecoveryTransition,
   type MessageDeliveryMode,
   type MessageImage,
@@ -7,7 +6,6 @@ import {
   type SpaceTaskActivityState,
   type SpaceTaskStatus,
 } from '@hyperneo/shared';
-import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
@@ -18,17 +16,12 @@ import {
   pushOverlayHistoryForPendingAgent,
 } from '../../lib/router';
 import { resolveNodeClick, type NodeChoice } from '../../lib/node-click-resolver';
-import {
-  currentSpaceIdSignal,
-  currentSpaceTaskViewTabSignal,
-  rightPanelTargetSignal,
-} from '../../lib/signals';
+import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
-import { SectionCard } from '../ui/SectionCard';
 import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
 import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
@@ -40,6 +33,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskBrief } from './TaskBrief';
+import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
@@ -130,15 +124,6 @@ function formatDirectStartRejection(reason: string): string {
 function formatEditTaskError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || 'Failed to update task';
-}
-
-function TaskInfoRow({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div class="flex items-start justify-between gap-3 text-sm">
-      <span class="text-fg-muted">{label}</span>
-      <span class="min-w-0 text-right text-fg-soft">{children}</span>
-    </div>
-  );
 }
 
 export function SpaceTaskPane({
@@ -235,20 +220,6 @@ export function SpaceTaskPane({
   } = useRunHookStates(_runId, _workflowIdForHook);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
-  const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
-
-  useEffect(() => {
-    if (!taskId || !targetSpaceIdForTask) return;
-    const currentTarget = rightPanelTargetSignal.value;
-    if (currentTarget?.type === 'task' && currentTarget.taskId === taskId) return;
-    if (currentTarget === null) return;
-    rightPanelTargetSignal.value = {
-      type: 'task',
-      spaceId: targetSpaceIdForTask,
-      taskId,
-      tab: 'details',
-    };
-  }, [targetSpaceIdForTask, taskId]);
 
   if (!taskId) {
     return (
@@ -268,26 +239,6 @@ export function SpaceTaskPane({
 
   const navigationSpaceId = navigationSpaceIdForTask ?? task.spaceId;
   const runtimeSpaceId = spaceId ?? task.spaceId;
-  const auxiliaryPanelTab =
-    activeView === 'timeline' || activeView === 'log' || activeView === 'artifacts'
-      ? activeView
-      : null;
-
-  useEffect(() => {
-    if (!auxiliaryPanelTab) return;
-    if ((auxiliaryPanelTab === 'log' || auxiliaryPanelTab === 'artifacts') && !task.workflowRunId) {
-      navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
-      return;
-    }
-    if (!targetSpaceIdForTask) return;
-    rightPanelTargetSignal.value = {
-      type: 'task',
-      spaceId: targetSpaceIdForTask,
-      taskId: task.id,
-      tab: auxiliaryPanelTab,
-    };
-    navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
-  }, [auxiliaryPanelTab, navigationSpaceId, targetSpaceIdForTask, task.id, task.workflowRunId]);
 
   const workflowRun = task.workflowRunId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
@@ -311,9 +262,6 @@ export function SpaceTaskPane({
   }, [canvasWorkflowId, workflowVersion]);
 
   const workflow = fullWorkflow;
-  const preferredWorkflowName = task.preferredWorkflowId
-    ? (spaceStore.workflows.value.find((w) => w.id === task.preferredWorkflowId)?.name ?? null)
-    : null;
   const spaceAgents = spaceStore.agents.value;
   const nodeExecutions = spaceStore.nodeExecutions.value;
   const composerTargets: TaskComposerTarget[] = useMemo(() => {
@@ -1181,19 +1129,9 @@ export function SpaceTaskPane({
     !task.taskAgentSessionId &&
     !task.hasActiveDirectAttempt &&
     !task.archivedAt;
-  if (canRunDirectly || filteredTransitionActions.length > 0) {
+  if (filteredTransitionActions.length > 0) {
     if (taskActionItems.length > 0) {
       taskActionItems.push({ type: 'divider' as const });
-    }
-    if (canRunDirectly) {
-      taskActionItems.push({
-        label: 'Run',
-        title: 'Start an agent on this task without a workflow',
-        disabled: statusTransitioning,
-        onClick: () => {
-          handleRunTaskDirectly();
-        },
-      });
     }
     taskActionItems.push(
       ...filteredTransitionActions.map(({ target, label }) => ({
@@ -1360,25 +1298,35 @@ export function SpaceTaskPane({
                   }}
                   onScrollerChange={setThreadScroller}
                   header={taskBrief(true)}
+                  footer={
+                    resolvedTask?.result ? (
+                      <section
+                        class="rounded-xl border border-success/40 bg-success/10 px-4 py-3"
+                        data-testid="task-result-card"
+                      >
+                        <div class="text-[11px] font-semibold uppercase tracking-wide text-success">
+                          Result
+                        </div>
+                        <p class="mt-1 whitespace-pre-wrap break-words text-sm text-fg">
+                          {resolvedTask.result}
+                        </p>
+                      </section>
+                    ) : null
+                  }
                 />
               ) : (
                 <div class="h-full overflow-y-auto" data-testid="task-info-view">
                   <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
                     {taskBrief(false)}
-                    <SectionCard title="Details">
-                      <TaskInfoRow label="Status">{STATUS_LABELS[task.status]}</TaskInfoRow>
-                      <TaskInfoRow label="Workflow">
-                        {workflow?.name ?? preferredWorkflowName ?? 'Auto-select'}
-                      </TaskInfoRow>
-                      {workflowRun && (
-                        <TaskInfoRow label="Run status">
-                          {getWorkflowRunExecutionStatusLabel(workflowRun.status)}
-                        </TaskInfoRow>
-                      )}
-                    </SectionCard>
-                    <p class="text-center text-xs text-fg-faint" data-testid="task-info-view-hint">
-                      This task has no agent activity yet.
-                    </p>
+                    <TaskReadyPanel
+                      task={task}
+                      workspaceLabel={workspaceLabel}
+                      canRunDirectly={canRunDirectly}
+                      busy={statusTransitioning}
+                      onRun={handleRunTaskDirectly}
+                      onPublish={() => handleStatusTransition('open')}
+                      onEdit={() => setShowEditTaskModal(true)}
+                    />
                   </div>
                 </div>
               )}

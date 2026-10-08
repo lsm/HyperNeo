@@ -178,6 +178,7 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
     bottomScrollPaddingClass,
     bottomInsetPx,
     header,
+    footer,
   }: {
     taskId: string;
     topInsetClass?: string;
@@ -185,6 +186,7 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
     bottomScrollPaddingClass?: string;
     bottomInsetPx?: number;
     header?: ComponentChildren;
+    footer?: ComponentChildren;
   }) => (
     <div
       data-testid="space-task-unified-thread"
@@ -195,6 +197,7 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
       data-bottom-inset-px={bottomInsetPx ?? ''}
     >
       {header}
+      {footer}
     </div>
   ),
 }));
@@ -432,18 +435,6 @@ describe('SpaceTaskPane', () => {
     expect(getByTestId('space-task-unified-thread')).toBeTruthy();
   });
 
-  it('redirects log view to thread when task has no workflow run', async () => {
-    mockCurrentSpaceTaskViewTabSignal.value = 'log';
-    mockTasks.value = [makeTask({ workflowRunId: null })];
-
-    render(<SpaceTaskPane taskId="task-1" />);
-
-    await waitFor(() => {
-      expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread', true);
-    });
-    expect(mockCurrentSpaceTaskViewTabSignal.value).toBe('thread');
-  });
-
   it('shows the task information view instead of placeholder copy when the task has no message activity', () => {
     mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
     mockTaskMessageActivity.value = new Map([['task-1', 0]]);
@@ -451,7 +442,7 @@ describe('SpaceTaskPane', () => {
     expect(getByTestId('task-info-view')).toBeTruthy();
     expect(queryByText(/Task thread is not available/)).toBeNull();
     expect(getByText('Task description')).toBeTruthy();
-    expect(getByText('This task has no agent activity yet.')).toBeTruthy();
+    expect(getByTestId('task-ready-panel')).toBeTruthy();
   });
 
   it('keeps the thread view while message activity is still unknown', () => {
@@ -751,42 +742,6 @@ describe('SpaceTaskPane — canvas toggle', () => {
     const canvas = getByTestId('workflow-canvas');
     expect(canvas.getAttribute('data-workflow-id')).toBe('wf-abc');
     expect(canvas.getAttribute('data-run-id')).toBe('run-1');
-  });
-
-  it('routes legacy artifacts view into the right panel and returns to thread', async () => {
-    mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
-    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
-    mockCurrentSpaceTaskViewTabSignal.value = 'artifacts';
-    const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-
-    expect(queryByTestId('canvas-view')).toBeNull();
-    expect(queryByTestId('task-thread-panel')).toBeTruthy();
-    await waitFor(() =>
-      expect(rightPanelTargetSignal.value).toEqual({
-        type: 'task',
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        tab: 'artifacts',
-      })
-    );
-    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread', true);
-  });
-
-  it('keeps canonical right-panel task targets while preserving slug navigation', async () => {
-    mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
-    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
-    mockCurrentSpaceTaskViewTabSignal.value = 'artifacts';
-    render(<SpaceTaskPane taskId="task-1" spaceId="space-1" navigationSpaceId="space-slug" />);
-
-    await waitFor(() =>
-      expect(rightPanelTargetSignal.value).toEqual({
-        type: 'task',
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        tab: 'artifacts',
-      })
-    );
-    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'task-1', 'thread', true);
   });
 
   it('canvas toggle aria-pressed reflects current state', () => {
@@ -1506,40 +1461,38 @@ describe('SpaceTaskPane — canvas toggle', () => {
     });
   });
 
+  it('shows the result at the end of the thread once the task has one', () => {
+    mockTasks.value = [makeTask({ status: 'done', result: 'Added subtract with tests.' })];
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByTestId('task-result-card').textContent).toContain('Added subtract with tests.');
+  });
+
   describe('run task directly', () => {
-    it('shows Run in dropdown for an open, workflow-free, agent-free task', () => {
-      mockTasks.value = [makeTask({ status: 'open' })];
-      const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    const renderNotStarted = (overrides: Partial<SpaceTask> = {}) => {
+      mockTasks.value = [makeTask({ status: 'open', ...overrides })];
+      mockTaskMessageActivity.value = new Map([['task-1', 0]]);
+      return render(<SpaceTaskPane taskId="task-1" />);
+    };
+
+    it('offers Run in the Ready to run panel, not in the actions menu', () => {
+      const { getByTestId, getAllByText } = renderNotStarted();
+      expect(getByTestId('task-run-button').textContent).toBe('Run');
       fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      expect(getByText('Run')).toBeTruthy();
+      expect(getAllByText('Run')).toEqual([getByTestId('task-run-button')]);
     });
 
-    it('hides Run when the task has a workflowRunId', () => {
-      mockTasks.value = [makeTask({ status: 'open', workflowRunId: 'run-1' })];
-      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-      fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      expect(queryByText('Run')).toBeNull();
-    });
-
-    it('hides Run when the task has a taskAgentSessionId', () => {
-      mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-1' })];
-      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-      fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      expect(queryByText('Run')).toBeNull();
-    });
-
-    it('hides Run when the task status is not open', () => {
-      mockTasks.value = [makeTask({ status: 'in_progress' })];
-      const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-      fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      expect(queryByText('Run')).toBeNull();
+    it.each([
+      ['a workflow run', { workflowRunId: 'run-1' }],
+      ['an agent session', { taskAgentSessionId: 'session-1' }],
+      ['a status other than open', { status: 'blocked' as const }],
+    ])('hides Run when the task has %s', (_label, overrides) => {
+      const { queryByTestId } = renderNotStarted(overrides);
+      expect(queryByTestId('task-run-button')).toBeNull();
     });
 
     it('calls spaceStore.runTaskDirectly with the task id when clicked', async () => {
-      mockTasks.value = [makeTask({ status: 'open' })];
-      const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
-      fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      fireEvent.click(getByText('Run'));
+      const { getByTestId } = renderNotStarted();
+      fireEvent.click(getByTestId('task-run-button'));
 
       await waitFor(() => {
         expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1');
@@ -1547,14 +1500,12 @@ describe('SpaceTaskPane — canvas toggle', () => {
     });
 
     it('shows the rejection reason when the operation is declined', async () => {
-      mockTasks.value = [makeTask({ status: 'open' })];
       mockRunTaskDirectly.mockResolvedValueOnce({
         accepted: false,
         reason: 'direct_start_unavailable',
       });
-      const { getByTestId, getByText, findByText } = render(<SpaceTaskPane taskId="task-1" />);
-      fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      fireEvent.click(getByText('Run'));
+      const { getByTestId, findByText } = renderNotStarted();
+      fireEvent.click(getByTestId('task-run-button'));
 
       expect(await findByText('This task cannot be run directly right now.')).toBeTruthy();
     });
