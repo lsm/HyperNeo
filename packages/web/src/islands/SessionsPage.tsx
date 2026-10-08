@@ -43,7 +43,7 @@ interface NewChatSelection {
   baseBranch: string | null;
   model: NewChatModelSelection | null;
   thinkingLevel: ThinkingLevel | null;
-  sandbox: boolean;
+  sandbox: boolean | null;
 }
 
 const NEW_CHAT_SELECTION_KEY = 'hyperneo_new_chat_selection';
@@ -53,7 +53,7 @@ const DEFAULT_NEW_CHAT_SELECTION: NewChatSelection = {
   baseBranch: null,
   model: null,
   thinkingLevel: null,
-  sandbox: false,
+  sandbox: null,
 };
 
 function loadNewChatSelection(): NewChatSelection {
@@ -81,7 +81,7 @@ function loadNewChatSelection(): NewChatSelection {
         typeof value.thinkingLevel === 'string'
           ? normalizeThinkingLevel(value.thinkingLevel)
           : null,
-      sandbox: value.sandbox === true,
+      sandbox: typeof value.sandbox === 'boolean' ? value.sandbox : null,
     };
   } catch {
     return DEFAULT_NEW_CHAT_SELECTION;
@@ -143,7 +143,8 @@ export function SessionsPage() {
   const [selectedThinking, setSelectedThinking] = useState<ThinkingLevel | null>(
     initialSelection.thinkingLevel
   );
-  const [sandbox, setSandbox] = useState(initialSelection.sandbox);
+  const [sandboxChoice, setSandboxChoice] = useState<boolean | null>(initialSelection.sandbox);
+  const sandbox = sandboxChoice ?? globalSettings.value?.sandbox?.enabled ?? false;
   const thinkingLevel =
     selectedThinking ?? normalizeThinkingLevel(globalSettings.value?.thinkingLevel);
 
@@ -190,9 +191,9 @@ export function SessionsPage() {
       baseBranch,
       model: selectedModel,
       thinkingLevel: selectedThinking,
-      sandbox,
+      sandbox: sandboxChoice,
     });
-  }, [project, mode, baseBranch, selectedModel, selectedThinking, sandbox]);
+  }, [project, mode, baseBranch, selectedModel, selectedThinking, sandboxChoice]);
 
   useEffect(() => {
     if (!project) {
@@ -317,10 +318,9 @@ export function SessionsPage() {
         ).some((option) => option.value === selectedThinking);
         req.config = { ...req.config, thinkingLevel: supported ? selectedThinking : 'off' };
       }
-      req.config = {
-        ...req.config,
-        sandbox: { ...globalSettings.value?.sandbox, enabled: sandbox },
-      };
+      if (sandboxChoice !== null) {
+        req.config = { ...req.config, sandbox: { enabled: sandboxChoice } };
+      }
       if (project) {
         req.workspacePath = project;
         if (gitInfo?.isGitRepo) {
@@ -409,7 +409,7 @@ export function SessionsPage() {
                   type="button"
                   aria-label="Sandbox"
                   aria-pressed={sandbox}
-                  onClick={() => setSandbox(!sandbox)}
+                  onClick={() => setSandboxChoice(!sandbox)}
                   title={sandbox ? 'Sandbox on: commands run isolated' : 'Sandbox off'}
                   class={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
                     sandbox

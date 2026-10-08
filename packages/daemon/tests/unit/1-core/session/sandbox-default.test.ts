@@ -280,7 +280,30 @@ describe('Sandbox Default Configuration', () => {
               enabled: true,
               autoAllowBashIfSandboxed: false,
               excludedCommands: ['git', 'npm'],
+              network: {
+                allowedDomains: ['github.com', '*.github.com', '*.npmjs.org', '*.yarnpkg.com'],
+                allowLocalBinding: true,
+                allowAllUnixSockets: true,
+              },
             },
+          }),
+        }),
+        expect.anything()
+      );
+    });
+
+    it('fills a partial sandbox choice from the global sandbox policy', async () => {
+      await lifecycle.create({ config: { sandbox: { enabled: false } } });
+
+      const createSessionSpy = mockDb.createSession as ReturnType<typeof mock>;
+      expect(createSessionSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            sandbox: expect.objectContaining({
+              enabled: false,
+              autoAllowBashIfSandboxed: true,
+              excludedCommands: ['git'],
+            }),
           }),
         }),
         expect.anything()
