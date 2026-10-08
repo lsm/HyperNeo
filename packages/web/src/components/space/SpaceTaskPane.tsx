@@ -5,7 +5,6 @@ import {
   type MessageImage,
   type SpaceTaskActivityMember,
   type SpaceTaskActivityState,
-  type SpaceTaskPriority,
   type SpaceTaskStatus,
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
@@ -27,7 +26,6 @@ import {
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
-import { cn } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { SectionCard } from '../ui/SectionCard';
@@ -41,6 +39,7 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { TaskBrief } from './TaskBrief';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
@@ -70,13 +69,6 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
   stopped: 'Stopped',
 };
 
-const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
-  low: 'Low',
-  normal: 'Normal',
-  high: 'High',
-  urgent: 'Urgent',
-};
-
 const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   active: 'Active',
   queued: 'Queued',
@@ -86,13 +78,6 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   completed: 'Done',
   failed: 'Failed',
   interrupted: 'Interrupted',
-};
-
-const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
-  low: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
-  normal: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
-  high: 'border-orange-500/30 bg-warning/10 text-warning-soft',
-  urgent: 'border-danger/30 bg-danger/10 text-danger-soft',
 };
 
 function getTaskActionLabel(
@@ -124,25 +109,6 @@ function normalizeTargetName(name: string | null | undefined): string {
     .replace(/[\s_-]+/g, '');
 }
 
-function TaskMetaBadge({
-  children,
-  class: className,
-}: {
-  children: ComponentChildren;
-  class?: string;
-}) {
-  return (
-    <span
-      class={cn(
-        'inline-flex h-6 max-w-[8.5rem] items-center rounded-md border px-2 text-[11px] font-medium leading-none whitespace-nowrap',
-        className
-      )}
-    >
-      <span class="truncate">{children}</span>
-    </span>
-  );
-}
-
 function formatTaskThreadError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes('Task Agent session not started')) {
@@ -164,11 +130,6 @@ function formatDirectStartRejection(reason: string): string {
 function formatEditTaskError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || 'Failed to update task';
-}
-
-function formatTaskTimestamp(timestamp: number | null | undefined): string {
-  if (!timestamp) return '—';
-  return new Date(timestamp).toLocaleString();
 }
 
 function TaskInfoRow({ label, children }: { label: string; children: ComponentChildren }) {
@@ -606,6 +567,15 @@ export function SpaceTaskPane({
     task,
     spaceStore.workspaces?.value ?? [],
     spaceStore.space?.value?.workspacePath
+  );
+  const taskBrief = (collapsible: boolean) => (
+    <TaskBrief
+      task={task}
+      description={resolvedTask?.description ?? task.description ?? ''}
+      workspaceLabel={workspaceLabel}
+      routeSpaceId={navigationSpaceId}
+      collapsible={collapsible}
+    />
   );
   const visibleTarget = visibleTargetName
     ? composerTargets.find(
@@ -1262,66 +1232,46 @@ export function SpaceTaskPane({
               </svg>
             </button>
           )}
-          <div class="min-w-0 flex-1" data-tauri-drag-region>
-            <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
-              <h2
-                class="min-w-0 truncate text-base font-semibold leading-6 text-fg"
-                title={task.title}
-                data-tauri-drag-region
-              >
-                {task.title}
-              </h2>
-              {taskActionItems.length > 0 && (
-                <Dropdown
-                  items={taskActionItems}
-                  position="right"
-                  trigger={
-                    <button
-                      type="button"
-                      class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-                      data-testid="task-actions-menu-trigger"
-                      aria-label="Task Actions"
-                      title="Task Actions"
-                    >
-                      <svg
-                        class="h-4 w-4"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        aria-hidden="true"
-                      >
-                        <circle cx="10" cy="4" r="1.75" />
-                        <circle cx="10" cy="10" r="1.75" />
-                        <circle cx="10" cy="16" r="1.75" />
-                      </svg>
-                    </button>
-                  }
-                />
-              )}
-            </div>
-            <div class="mt-2 flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
-              <span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-line-strong bg-surface-raised/60 px-2 font-mono text-[11px] font-medium leading-none text-fg-soft tabular-nums">
-                #{task.taskNumber}
+          <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+            <span
+              class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
+              data-testid="task-number"
+            >
+              #{task.taskNumber}
+            </span>
+            <h2
+              class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-fg"
+              title={task.title}
+              data-tauri-drag-region
+            >
+              {task.title}
+            </h2>
+            {showHeaderStatusBadge && (
+              <span class="flex-shrink-0" data-testid="task-status-label">
+                <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={activitySummary} />
               </span>
-              {showHeaderStatusBadge && (
-                <span data-testid="task-status-label">
-                  <StatusBadge
-                    tone={getTaskStatusConfig(task.status).tone}
-                    label={activitySummary}
-                  />
-                </span>
-              )}
-              <TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
-                {PRIORITY_LABELS[task.priority]} Priority
-              </TaskMetaBadge>
-              {workspaceLabel && (
-                <span
-                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-line-strong bg-fill-strong px-2 text-[11px] font-medium leading-none text-fg-muted whitespace-nowrap"
-                  data-testid="task-workspace-badge"
-                >
-                  <span class="truncate">{workspaceLabel}</span>
-                </span>
-              )}
-            </div>
+            )}
+            {taskActionItems.length > 0 && (
+              <Dropdown
+                items={taskActionItems}
+                position="right"
+                trigger={
+                  <button
+                    type="button"
+                    class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+                    data-testid="task-actions-menu-trigger"
+                    aria-label="Task Actions"
+                    title="Task Actions"
+                  >
+                    <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <circle cx="10" cy="4" r="1.75" />
+                      <circle cx="10" cy="10" r="1.75" />
+                      <circle cx="10" cy="16" r="1.75" />
+                    </svg>
+                  </button>
+                }
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1409,27 +1359,14 @@ export function SpaceTaskPane({
                     scrollToBottomRef.current = scrollToBottom;
                   }}
                   onScrollerChange={setThreadScroller}
+                  header={taskBrief(true)}
                 />
               ) : (
                 <div class="h-full overflow-y-auto" data-testid="task-info-view">
                   <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
-                    <SectionCard title="Description">
-                      {resolvedTask?.description ? (
-                        <p class="whitespace-pre-wrap text-sm text-fg-soft">
-                          {resolvedTask.description}
-                        </p>
-                      ) : (
-                        <p class="text-sm text-fg-faint">No description yet.</p>
-                      )}
-                    </SectionCard>
+                    {taskBrief(false)}
                     <SectionCard title="Details">
                       <TaskInfoRow label="Status">{STATUS_LABELS[task.status]}</TaskInfoRow>
-                      <TaskInfoRow label="Priority">
-                        {PRIORITY_LABELS[task.priority]} Priority
-                      </TaskInfoRow>
-                      <TaskInfoRow label="Created">
-                        {formatTaskTimestamp(task.createdAt)}
-                      </TaskInfoRow>
                       <TaskInfoRow label="Workflow">
                         {workflow?.name ?? preferredWorkflowName ?? 'Auto-select'}
                       </TaskInfoRow>

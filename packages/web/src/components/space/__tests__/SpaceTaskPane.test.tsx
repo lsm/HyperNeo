@@ -8,6 +8,7 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -176,12 +177,14 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
     bottomInsetClass,
     bottomScrollPaddingClass,
     bottomInsetPx,
+    header,
   }: {
     taskId: string;
     topInsetClass?: string;
     bottomInsetClass?: string;
     bottomScrollPaddingClass?: string;
     bottomInsetPx?: number;
+    header?: ComponentChildren;
   }) => (
     <div
       data-testid="space-task-unified-thread"
@@ -190,7 +193,9 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
       data-bottom-inset={bottomInsetClass ?? ''}
       data-bottom-scroll-padding={bottomScrollPaddingClass ?? ''}
       data-bottom-inset-px={bottomInsetPx ?? ''}
-    />
+    >
+      {header}
+    </div>
   ),
 }));
 
@@ -370,10 +375,10 @@ describe('SpaceTaskPane', () => {
 
   it('renders title, status, and high priority badge', () => {
     mockTasks.value = [makeTask({ title: 'My Task', status: 'in_progress', priority: 'high' })];
-    const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByText, getAllByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(getByText('My Task')).toBeTruthy();
     expect(getAllByText('In Progress').length).toBeGreaterThan(0);
-    expect(getByText('High Priority')).toBeTruthy();
+    expect(getByTestId('task-brief-priority').textContent).toBe('High priority');
   });
 
   it('shows workspace badge for non-primary-bound task and hides it for primary-bound task', () => {
@@ -416,7 +421,7 @@ describe('SpaceTaskPane', () => {
     ];
     const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(queryByTestId('task-status-label')).toBeNull();
-    expect(getByText('Normal Priority')).toBeTruthy();
+    expect(getByTestId('task-brief-priority').textContent).toBe('Normal priority');
     expect(getByTestId('pending-task-completion-banner')).toBeTruthy();
   });
 
@@ -3007,10 +3012,10 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
       } as SpaceWorkflow,
     ];
     mockTaskMessageActivity.value = new Map([['task-1', 0]]);
-    const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByText, getAllByText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
     expect(getByText('Task description')).toBeTruthy();
     expect(getByText('Release Workflow')).toBeTruthy();
-    expect(getAllByText('Urgent Priority').length).toBeGreaterThan(0);
+    expect(getByTestId('task-brief-priority').textContent).toBe('Urgent');
     expect(getAllByText('Open').length).toBeGreaterThan(0);
   });
 });
