@@ -92,7 +92,6 @@ afterEach(() => {
   restoreNavigator();
   restoreVisualViewport();
   document.documentElement.style.removeProperty('--safe-height');
-  document.documentElement.style.removeProperty('--keyboard-height');
   document.documentElement.style.removeProperty('--bottom-bar-height');
   document.documentElement.classList.remove('keyboard-open');
 });
@@ -262,7 +261,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
@@ -284,7 +282,6 @@ describe('useViewportSafety — keyboard detection', () => {
 
       expect(document.documentElement.classList.contains('keyboard-open')).toBe(true);
       expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('468px');
-      expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
       expect(scrollSpy).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' });
 
       composer.blur();
@@ -404,7 +401,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('56px');
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
   });
 
   it('does NOT trigger keyboard detection for small viewport changes (below 50px threshold)', () => {
@@ -551,7 +547,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
 
     mockVV.height = WINDOW_INNER_HEIGHT;
@@ -561,7 +556,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
   });
 
   it('detects initial keyboard state on mount', () => {
@@ -575,7 +569,6 @@ describe('useViewportSafety — keyboard detection', () => {
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe(
       `${WINDOW_INNER_HEIGHT - 300}px`
     );
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('300px');
     expect(document.documentElement.style.getPropertyValue('--bottom-bar-height')).toBe('0px');
   });
 
@@ -611,7 +604,6 @@ describe('useViewportSafety — keyboard detection', () => {
 
     expect(document.documentElement.classList.contains('keyboard-open')).toBe(false);
     expect(document.documentElement.style.getPropertyValue('--safe-height')).toBe('');
-    expect(document.documentElement.style.getPropertyValue('--keyboard-height')).toBe('');
   });
 
   it('restores --bottom-bar-height even when it was empty string (desktop)', () => {

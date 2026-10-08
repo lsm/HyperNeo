@@ -25,11 +25,6 @@ function updateSafeHeight(vv: VisualViewport): void {
   document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 }
 
-function updateKeyboardHeight(vv: VisualViewport, fullHeight: number): void {
-  const height = Math.max(0, fullHeight - vv.height);
-  document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
-}
-
 function isEditingText(): boolean {
   const active = document.activeElement;
   return (
@@ -86,15 +81,12 @@ export function useViewportSafety(): void {
 
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
-        updateKeyboardHeight(vv, fullHeight);
-
         savedBottomBarHeight =
           document.documentElement.style.getPropertyValue('--bottom-bar-height');
         document.documentElement.style.setProperty('--bottom-bar-height', '0px');
         resetDocumentPan(vv);
       } else if (kbVisible && keyboardOpen) {
         document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-        updateKeyboardHeight(vv, fullHeight);
         resetDocumentPan(vv);
       } else if (!kbVisible && keyboardOpen) {
         keyboardOpen = false;
@@ -103,8 +95,6 @@ export function useViewportSafety(): void {
         if (!ipadSafari) {
           document.documentElement.style.removeProperty('--safe-height');
         }
-
-        document.documentElement.style.removeProperty('--keyboard-height');
 
         if (savedBottomBarHeight !== null) {
           document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
@@ -125,7 +115,6 @@ export function useViewportSafety(): void {
       keyboardOpen = true;
       document.documentElement.classList.add('keyboard-open');
       document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-      updateKeyboardHeight(vv, fullHeight);
       savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
       document.documentElement.style.setProperty('--bottom-bar-height', '0px');
     }
@@ -154,7 +143,6 @@ export function useViewportSafety(): void {
 
       document.documentElement.classList.remove('keyboard-open');
       document.documentElement.style.removeProperty('--safe-height');
-      document.documentElement.style.removeProperty('--keyboard-height');
       if (savedBottomBarHeight !== null) {
         document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
       }
