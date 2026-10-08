@@ -1,17 +1,19 @@
-import type { SpaceGoal, SpaceTask } from '@hyperneo/shared';
-import { signal } from '@preact/signals';
+import type { SpaceGoal, SpaceTask, TaskSchedule } from '@hyperneo/shared';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGoals, navigateToSpaceGoals } = vi.hoisted(() => ({
+const { mockGoals, mockSchedules, listSchedules, navigateToSpaceGoals } = vi.hoisted(() => ({
   mockGoals: { value: [] as SpaceGoal[] },
+  mockSchedules: { value: [] as TaskSchedule[] },
+  listSchedules: vi.fn(async () => []),
   navigateToSpaceGoals: vi.fn(),
 }));
 
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     goals: mockGoals,
-    schedules: signal([]),
+    schedules: mockSchedules,
+    listSchedules,
     fetchEvolutionScope: vi.fn(async () => null),
   },
 }));
@@ -45,6 +47,43 @@ describe('TaskBrief', () => {
   afterEach(() => {
     cleanup();
     mockGoals.value = [];
+    mockSchedules.value = [];
+    listSchedules.mockClear();
+  });
+
+  it('offers no toggle for a two-line brief, which already fits', () => {
+    const { getByTestId, queryByTestId } = render(
+      <TaskBrief
+        task={makeTask()}
+        description={'First line.\nSecond line.'}
+        routeSpaceId="space-1"
+        collapsible
+      />
+    );
+    expect(getByTestId('task-brief-text').className).not.toContain('line-clamp-2');
+    expect(queryByTestId('task-brief-toggle')).toBeNull();
+  });
+
+  it('loads schedules when the task came from one that is not loaded yet', () => {
+    const { rerender, getByText } = render(
+      <TaskBrief
+        task={makeTask({ createdByTaskScheduleId: 'sched-1' })}
+        description="Short"
+        routeSpaceId="space-1"
+      />
+    );
+    expect(listSchedules).toHaveBeenCalledTimes(1);
+
+    mockSchedules.value = [{ id: 'sched-1', title: 'Nightly cleanup' } as TaskSchedule];
+    rerender(
+      <TaskBrief
+        task={makeTask({ createdByTaskScheduleId: 'sched-1' })}
+        description="Short"
+        routeSpaceId="space-1"
+      />
+    );
+    expect(getByText('From schedule: Nightly cleanup')).toBeTruthy();
+    expect(listSchedules).toHaveBeenCalledTimes(1);
   });
 
   it('clamps a long brief when collapsible and expands it on demand', () => {

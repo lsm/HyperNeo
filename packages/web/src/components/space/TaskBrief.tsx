@@ -63,6 +63,13 @@ export function TaskBrief({
     };
   }, [task.evolutionScopeId]);
 
+  const scheduleId = task.createdByTaskScheduleId ?? null;
+  const scheduleLoaded = spaceStore.schedules.value.some((item) => item.id === scheduleId);
+  useEffect(() => {
+    if (!scheduleId || scheduleLoaded) return;
+    spaceStore.listSchedules().catch(() => {});
+  }, [scheduleId, scheduleLoaded]);
+
   const goal = task.goalId
     ? (spaceStore.goals.value.find((item) => item.id === task.goalId) ?? null)
     : null;
@@ -71,7 +78,7 @@ export function TaskBrief({
     : null;
   const created = formatCreated(task.createdAt);
   const priority = PRIORITY_TEXT[task.priority];
-  const long = description.length > COLLAPSE_AFTER_CHARS || description.includes('\n');
+  const long = description.length > COLLAPSE_AFTER_CHARS || description.split('\n').length > 2;
   const clamped = collapsible && long && !expanded;
 
   return (
