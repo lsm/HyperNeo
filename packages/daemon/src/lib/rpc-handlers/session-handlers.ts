@@ -705,7 +705,7 @@ export function setupSessionHandlers(
     }
 
     const updatedSandbox = {
-      ...session.config.sandbox,
+      ...(session.config.sandbox ?? sessionManager.getDatabase().getGlobalSettings().sandbox),
       enabled: sandboxEnabled,
     };
 

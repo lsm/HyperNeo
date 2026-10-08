@@ -2963,6 +2963,11 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
         isQueryActiveOrStarting: () => false,
       })),
       updateSession,
+      getDatabase: () => ({
+        getGlobalSettings: () => ({
+          sandbox: { enabled: false, excludedCommands: ['git'], autoAllowBashIfSandboxed: true },
+        }),
+      }),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
@@ -2975,13 +2980,26 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
     );
   });
 
-  it('turns the sandbox on for a chat created without one', async () => {
+  it('turns the sandbox on for a chat created without one, using the global policy', async () => {
     const handler = messageHubData.handlers.get('session.sandbox.switch');
     const result = await handler!({ sessionId: 's1', sandboxEnabled: true }, {});
 
     expect(result).toEqual({ success: true, sandboxEnabled: true, error: undefined });
     expect(updateSession).toHaveBeenCalledWith('s1', {
-      config: { model: 'sonnet', sandbox: { enabled: true } },
+      config: {
+        model: 'sonnet',
+        sandbox: { enabled: true, excludedCommands: ['git'], autoAllowBashIfSandboxed: true },
+      },
+    });
+  });
+
+  it("keeps a chat's own sandbox policy when switching it on", async () => {
+    config = { model: 'sonnet', sandbox: { enabled: false, excludedCommands: [] } };
+    const handler = messageHubData.handlers.get('session.sandbox.switch');
+    await handler!({ sessionId: 's1', sandboxEnabled: true }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { model: 'sonnet', sandbox: { enabled: true, excludedCommands: [] } },
     });
   });
 
