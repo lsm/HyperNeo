@@ -55,6 +55,7 @@ export function NeoLive() {
   const relevant = view?.work ?? [];
   const drivers = new Map((view?.workDrivers ?? []).map((driver) => [driver.workId, driver]));
   const goals = new Map((view?.workGoals ?? []).map((goal) => [goal.workId, goal]));
+  const continues = new Map((view?.workContinues ?? []).map((item) => [item.workId, item]));
   const topics = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
       const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
@@ -557,6 +558,7 @@ export function NeoLive() {
                       work={scene.receipt}
                       driver={drivers.get(scene.ref.id)}
                       goal={goals.get(scene.ref.id)}
+                      continued={continues.get(scene.ref.id)}
                       busy={neo.busyWork === scene.ref.id}
                       disabled={!connected || !!neo.busyWork}
                       onAction={(id, action) => void neo.act(id, action)}

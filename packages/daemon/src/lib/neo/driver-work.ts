@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoWorkContinue, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
   WorkRefSchema,
@@ -33,6 +33,21 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
+
+export const NEO_WORK_CONTINUE_LIMIT = 5;
+export const NEO_WORK_CONTINUE_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+export function readContinueBudget(
+  continued: Pick<NeoWorkContinue, 'count'> | null,
+  startedAt: number | null,
+  now: number
+): string | null {
+  if ((continued?.count ?? 0) >= NEO_WORK_CONTINUE_LIMIT)
+    return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
+  if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
+    return 'continue_budget_spent: this work started over 4 hours ago; ask the human how to proceed.';
+  return null;
+}
 
 export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): string {
   if (!goal?.goal && !goal?.doneWhen) return instruction;

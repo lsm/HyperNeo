@@ -20,6 +20,13 @@ export interface NeoWorkGoal {
   doneWhen: string | null;
 }
 
+export interface NeoWorkContinue {
+  workId: string;
+  count: number;
+  continuedAt: number;
+  lastMessage: string;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -38,6 +45,7 @@ export interface NeoSnapshot {
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
   workGoals?: NeoWorkGoal[];
+  workContinues?: NeoWorkContinue[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

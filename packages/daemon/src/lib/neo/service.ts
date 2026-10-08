@@ -10,6 +10,7 @@ import { NeoConversationAskRepository } from '../../storage/repositories/neo-con
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -39,6 +40,8 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
   withWorkGoal,
+  readContinueBudget,
+  NEO_WORK_CONTINUE_LIMIT,
 } from './driver-work.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -78,6 +81,7 @@ export class NeoService {
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
+  readonly workContinues: NeoWorkContinueRepository;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -108,6 +112,7 @@ export class NeoService {
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
+    this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -409,6 +414,40 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
+  async continueWork(
+    id: string,
+    message: string,
+    now = Date.now()
+  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
+    const work = this.repo.getWork(id);
+    const ref = this.driverTargets.readRef(id);
+    if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
+    if (work.status !== 'queued' && work.status !== 'reported')
+      return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
+    const budget = readContinueBudget(
+      this.workContinues.get(id),
+      this.driverTargets.readStartedAt(id),
+      now
+    );
+    if (budget) return { ok: false, reason: budget };
+    const outcome = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.send',
+      { ref, message: withWorkGoal(message, this.workGoals.get(id)) },
+      driverWorkCaller(work)
+    );
+    const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
+    if ('failure' in sent) return { ok: false, reason: sent.failure };
+    const continued = this.workContinues.record(id, message, now);
+    const count = continued?.count ?? 1;
+    const current = this.repo.getWork(id) ?? work;
+    const reopened = this.repo.transitionWork(id, current, {
+      status: 'queued',
+      report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
+    });
+    return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
+  }
+
   async cancel(id: string): Promise<void> {
     const work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
@@ -523,7 +562,7 @@ export class NeoService {
       work,
       outcome,
       Date.now(),
-      this.driverTargets.readStartedAt(work.id)
+      this.workContinues.get(work.id)?.continuedAt ?? this.driverTargets.readStartedAt(work.id)
     );
     if (!settled) return this.noteDriverNeedsYou(work, ref, outcome);
     const done = this.repo.transitionWork(work.id, work, {

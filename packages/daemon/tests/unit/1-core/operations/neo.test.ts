@@ -396,6 +396,7 @@ describe('Neo MVP', () => {
       'neo.work.propose',
       'neo.work.report',
       'neo.work.start',
+      'neo.work.continue',
       'neo.work.cancel',
     ]);
     expect(isOperationAdmitted({ ...definitions[0], name: 'session.create' }, caller)).toBe(true);
