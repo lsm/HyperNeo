@@ -16,7 +16,6 @@ import type {
   SDKTaskNotificationMessage,
   SDKMemoryRecallMessage,
   SDKLocalCommandOutputMessage,
-  SDKStatusMessage,
   SDKWorkerShuttingDownMessage,
 } from '@hyperneo/shared/sdk/sdk.d.ts';
 import {
@@ -46,16 +45,6 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
   }
 
   if (isSDKStatusMessage(message)) {
-    const statusMessage = message as SDKStatusMessage;
-    if (statusMessage.status === 'compacting') {
-      return (
-        <div class="flex items-center gap-3 py-4">
-          <div class="flex-1 h-px bg-warning"></div>
-          <span class="text-xs font-medium text-warning">Compact Boundary</span>
-          <div class="flex-1 h-px bg-warning"></div>
-        </div>
-      );
-    }
     return null;
   }
 
