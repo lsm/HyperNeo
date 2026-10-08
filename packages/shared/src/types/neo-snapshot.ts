@@ -14,6 +14,12 @@ export interface NeoWorkDriverReceipt {
   link: string | null;
 }
 
+export interface NeoWorkGoal {
+  workId: string;
+  goal: string | null;
+  doneWhen: string | null;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -31,6 +37,7 @@ export interface NeoSnapshot {
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
+  workGoals?: NeoWorkGoal[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

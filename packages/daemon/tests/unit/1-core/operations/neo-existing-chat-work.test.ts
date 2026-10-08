@@ -165,6 +165,49 @@ describe('Neo existing chat work', () => {
     }
   );
 
+  test('carries the goal and done checklist with the brief and in the snapshot', async () => {
+    const proposed = await invoke(
+      'neo.work.propose',
+      {
+        ...input('G', 'project'),
+        goal: 'A full-featured native iOS app for Neo',
+        doneWhen: '- chat, work cards and settings screens\n- builds and runs in the simulator',
+      },
+      source('ask-G')
+    );
+    const work = (proposed as { value: { work: NeoWork } }).value.work;
+    await invoke('neo.work.start', { id: work.id });
+    await service.start(work.id);
+
+    const brief = content(jobs('project', work.id)[0]);
+    expect(brief).toContain('Goal: A full-featured native iOS app for Neo');
+    expect(brief).toContain('builds and runs in the simulator');
+    expect(brief).toContain('If you stop before this is done, say what remains and why.');
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: {
+        workGoals: [
+          {
+            workId: work.id,
+            goal: 'A full-featured native iOS app for Neo',
+            doneWhen: '- chat, work cards and settings screens\n- builds and runs in the simulator',
+          },
+        ],
+      },
+    });
+  });
+
+  test('a re-proposal refused for another target leaves the existing work without a goal', async () => {
+    await propose('R', 'project');
+    expect(
+      await invoke(
+        'neo.work.propose',
+        { ...input('R', 'ordinary'), goal: 'Something else entirely' },
+        source('ask-R')
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(await invoke('neo.snapshot', {})).toMatchObject({ value: { workGoals: [] } });
+  });
+
   test.each([
     ['missing', 'target_session_not_found'],
     ['archived', 'target_session_not_active'],

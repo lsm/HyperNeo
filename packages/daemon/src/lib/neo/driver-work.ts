@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
   WorkRefSchema,
@@ -33,10 +34,23 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
+export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): string {
+  if (!goal?.goal && !goal?.doneWhen) return instruction;
+  return [
+    instruction,
+    '',
+    ...(goal.goal ? [`Goal: ${goal.goal}`] : []),
+    ...(goal.doneWhen ? [`Done when:\n${goal.doneWhen}`] : []),
+    'If you stop before this is done, say what remains and why.',
+  ].join('\n');
+}
+
 export function driverWorkCall(
   target: NeoDriverTarget,
-  work: Pick<NeoWork, 'title' | 'instruction'>
+  work: Pick<NeoWork, 'title' | 'instruction'>,
+  goal: NeoWorkGoal | null = null
 ): { name: 'work.start' | 'work.send'; input: Record<string, unknown> } {
+  const message = withWorkGoal(work.instruction, goal);
   return target.verb === 'start'
     ? {
         name: 'work.start',
@@ -44,11 +58,11 @@ export function driverWorkCall(
           adapter: target.adapter,
           place: target.place,
           title: work.title,
-          message: work.instruction,
+          message,
           ...(target.createFolder ? { createFolder: true } : {}),
         },
       }
-    : { name: 'work.send', input: { ref: target.ref, message: work.instruction } };
+    : { name: 'work.send', input: { ref: target.ref, message } };
 }
 
 export function driverStartedReport(ref: WorkRef, link?: string): string {

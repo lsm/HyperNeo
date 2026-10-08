@@ -7,6 +7,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import {
   driverWorkCall,
+  withWorkGoal,
   driverWorkCaller,
   type NeoDriverTarget,
   readDriverNeedsYou,
@@ -66,6 +67,12 @@ describe('requireNeoExecutionChoice', () => {
 });
 
 describe('driverWorkCall', () => {
+  test('sends the goal with a started or continued driver session', () => {
+    const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: null };
+    expect(driverWorkCall(startTarget, work, goal).input.message).toContain('Goal: A full iOS app');
+    expect(driverWorkCall(sendTarget, work, goal).input.message).toContain('Goal: A full iOS app');
+  });
+
   test('starts new work with the title and instruction, or sends the instruction', () => {
     expect(driverWorkCall(startTarget, work)).toEqual({
       name: 'work.start',
@@ -90,6 +97,25 @@ describe('driverWorkCall', () => {
       name: 'work.send',
       input: { ref: { adapter: 'hyperneo', id: 's1' }, message: 'Raise the body font to 16px.' },
     });
+  });
+});
+
+describe('withWorkGoal', () => {
+  test('appends the goal and checklist, and leaves a bare instruction alone', () => {
+    const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
+    expect(withWorkGoal('Build the chat screen.', goal)).toBe(
+      'Build the chat screen.\n\nGoal: A full iOS app\nDone when:\n- runs in the simulator\nIf you stop before this is done, say what remains and why.'
+    );
+    expect(withWorkGoal('Build the chat screen.', null)).toBe('Build the chat screen.');
+    const longest = withWorkGoal('i'.repeat(16000), {
+      workId: 'w1',
+      goal: 'g'.repeat(1000),
+      doneWhen: 'd'.repeat(2000),
+    });
+    expect(longest.length).toBeLessThanOrEqual(20000);
+    expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
+      'Build it.'
+    );
   });
 });
 
