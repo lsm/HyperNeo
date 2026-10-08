@@ -93,10 +93,6 @@ vi.mock('../../components/space/SpaceCreateDialog.tsx', () => ({
     isOpen ? <div role="dialog">Create Space Dialog</div> : null,
 }));
 
-vi.mock('../../components/DaemonStatusIndicator.tsx', () => ({
-  DaemonStatusIndicator: () => <div data-testid="daemon-status" />,
-}));
-
 vi.mock('../../components/ui/Button.tsx', () => ({
   Button: ({
     children,
