@@ -78,13 +78,20 @@ export class NeoWorkDriverTargetRepository {
       .run(JSON.stringify(ref), startedAt ?? null, link ?? null, workId);
   }
 
-  recordLive(workId: string, status: WorkStatus, link: string | undefined): boolean {
+  recordLive(
+    workId: string,
+    status: WorkStatus,
+    link: string | undefined,
+    remoteLink?: string
+  ): boolean {
     const result = this.db
       .prepare(
-        `UPDATE neo_work_driver_targets SET live_status = ?1, link = COALESCE(?2, link)
-          WHERE work_id = ?3 AND (live_status IS NOT ?1 OR (?2 IS NOT NULL AND link IS NOT ?2))`
+        `UPDATE neo_work_driver_targets
+            SET live_status = ?1, link = COALESCE(?2, link), remote_link = ?4
+          WHERE work_id = ?3 AND (live_status IS NOT ?1 OR (?2 IS NOT NULL AND link IS NOT ?2)
+            OR remote_link IS NOT ?4)`
       )
-      .run(status, link ?? null, workId);
+      .run(status, link ?? null, workId, remoteLink ?? null);
     return result.changes > 0;
   }
 
@@ -92,7 +99,8 @@ export class NeoWorkDriverTargetRepository {
     if (!this.hasTable() || workIds.length === 0) return [];
     const rows = this.db
       .prepare(
-        `SELECT work_id AS workId, target, ref, live_status AS status, link
+        `SELECT work_id AS workId, target, ref, live_status AS status, link,
+                remote_link AS remoteLink
            FROM neo_work_driver_targets WHERE work_id IN (SELECT value FROM json_each(?))`
       )
       .all(JSON.stringify(workIds)) as Array<{
@@ -101,6 +109,7 @@ export class NeoWorkDriverTargetRepository {
       ref: string | null;
       status: string | null;
       link: string | null;
+      remoteLink: string | null;
     }>;
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
@@ -122,6 +131,7 @@ export class NeoWorkDriverTargetRepository {
           daemon,
           status: status.success ? status.data : null,
           link: row.link,
+          ...(row.remoteLink ? { remoteLink: row.remoteLink } : {}),
         },
       ];
     });

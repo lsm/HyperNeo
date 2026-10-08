@@ -574,7 +574,7 @@ export class NeoService {
       driverWorkCaller(work)
     );
     const live = readDriverLive(outcome);
-    if (live && this.driverTargets.recordLive(work.id, live.status, live.link))
+    if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
       this.notifyChanged();
     if (this.driverTargets.get(work.id)?.verb !== 'start') return;
     const settled = readDriverSettlement(

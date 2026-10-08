@@ -432,6 +432,46 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('records the remote link of sent work and clears it when Remote Control goes off', async () => {
+    let remoteLink: string | undefined = 'https://claude.ai/code/session_01A';
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: {
+          status: 'running',
+          lastActivityAt: 1,
+          link: 'claude://claude.ai/epitaxy/local_a1',
+          ...(remoteLink ? { remoteLink } : {}),
+        },
+      }),
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0]).toMatchObject({
+        link: 'claude://claude.ai/epitaxy/local_a1',
+        remoteLink: 'https://claude.ai/code/session_01A',
+      });
+      remoteLink = undefined;
+      let changes = 0;
+      Object.assign(service, { notifyChanged: () => changes++ });
+      await service.refreshDriverWork();
+      expect(changes).toBe(1);
+      expect(service.driverTargets.receipts(['work-1'])[0]).toEqual({
+        workId: 'work-1',
+        adapter: 'hyperneo',
+        daemon: null,
+        status: 'running',
+        link: 'claude://claude.ai/epitaxy/local_a1',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('leaves a message sent to existing work for Neo to follow up', async () => {
     const done = { ok: true, value: { status: 'done', lastActivityAt: Date.now() + 1_000 } };
     const { db, service, calls } = await setup(
