@@ -296,7 +296,10 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    let session = agentSession.getSessionData();
+    let session: Session = {
+      ...agentSession.getSessionData(),
+      processingState: JSON.stringify(agentSession.getProcessingState()),
+    };
     const voicePending = session.metadata?.inputDraftVoicePending;
     if (voicePending && voicePending.trim()) {
       const draft = session.metadata?.inputDraft ?? '';
