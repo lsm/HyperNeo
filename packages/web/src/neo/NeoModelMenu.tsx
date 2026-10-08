@@ -9,6 +9,7 @@ import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 
 export function NeoModelMenu({
+  id = 'neo-preferences',
   models,
   current,
   level,
@@ -21,6 +22,7 @@ export function NeoModelMenu({
   onClose,
   onReload,
 }: {
+  id?: string;
   models: ModelInfo[];
   current?: ModelInfo;
   level: ThinkingLevel;
@@ -43,7 +45,7 @@ export function NeoModelMenu({
   const groups = groupModelsByProvider(visible);
   return (
     <div
-      id="neo-preferences"
+      id={id}
       role="group"
       aria-label="Model and thinking settings"
       class="neo-arrive absolute bottom-full -left-10 sm:left-0 z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl"
@@ -125,7 +127,8 @@ export function NeoModelMenu({
                   type="button"
                   aria-label={`${item.name} · ${getProviderLabel(provider)}`}
                   aria-pressed={selected}
-                  disabled={busy}
+                  disabled={busy || item.available === false}
+                  title={item.available === false ? 'Not runnable on this account' : undefined}
                   onClick={() => onModel(item)}
                   class={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline-accent disabled:opacity-50 ${selected ? 'bg-accent/10 text-accent' : 'text-fg-soft hover:bg-fill-soft'}`}
                 >
