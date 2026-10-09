@@ -8,6 +8,7 @@ import {
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { getProviderService } from '../provider-service.ts';
 import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
+import { cosineSimilarity, embedQueryOrNull } from '../../storage/vector-similarity.ts';
 
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
@@ -79,19 +80,6 @@ export interface NeoRouterDeps {
 
 const profileVectors = new Map<string, Float32Array>();
 
-function cosine(left: Float32Array, right: Float32Array): number {
-  if (left.length !== right.length || left.length === 0) return -1;
-  let dot = 0;
-  let leftSize = 0;
-  let rightSize = 0;
-  for (let index = 0; index < left.length; index++) {
-    dot += left[index] * right[index];
-    leftSize += left[index] * left[index];
-    rightSize += right[index] * right[index];
-  }
-  return leftSize === 0 || rightSize === 0 ? -1 : dot / Math.sqrt(leftSize * rightSize);
-}
-
 export function pickNeoHolder(
   scores: readonly { holder: NeoHolder; similarity: number }[]
 ): NeoRouteChoice | null {
@@ -140,7 +128,7 @@ export async function scoreNeoHolders(
   for (const holder of topical) {
     const profile = neoHolderProfile(holder, deps.recentAsks(holder.concernId, PROFILE_ASKS));
     const vector = await profileVector(profile, deps);
-    if (vector) scores.push({ holder, similarity: cosine(message, vector) });
+    if (vector) scores.push({ holder, similarity: cosineSimilarity(message, vector) ?? -1 });
   }
   return scores;
 }
@@ -342,14 +330,8 @@ export function createNeoRouter(
     recentTurns: () => log.recent(RECENT_TURNS),
     topicTurns: () => log.latestPerTopic(),
     recentAsks: (concernId, limit) => log.recentAsks(concernId, limit),
-    embed: async (text) => {
-      if (process.env.NODE_ENV === 'test') return null;
-      try {
-        return Float32Array.from(await db.getEmbedder().embedQuery(text));
-      } catch {
-        return null;
-      }
-    },
+    embed: async (text) =>
+      process.env.NODE_ENV === 'test' ? null : embedQueryOrNull(db.getEmbedder(), text),
     classify: (text, options, context) => {
       const neo = db.getGlobalSettings().neo;
       return classifyNeoRoute(

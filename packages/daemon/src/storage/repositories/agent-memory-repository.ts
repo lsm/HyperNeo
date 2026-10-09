@@ -2,6 +2,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { Logger } from '../../lib/logger.ts';
+import { cosineSimilarity } from '../vector-similarity.ts';
 
 export type { AgentMemoryEntry, AgentMemorySearchResult };
 
@@ -514,7 +515,9 @@ export class AgentMemoryRepository {
 
     return rows
       .map((row) => {
-        const similarity = cosineSimilarity(queryVector, blobToFloat32Array(row.embedding));
+        const similarity =
+          cosineSimilarity(queryVector, blobToFloat32Array(row.embedding)) ??
+          Number.NEGATIVE_INFINITY;
         return {
           row: { ...row, rank: 1 - similarity },
           rank: similarity,
@@ -806,24 +809,6 @@ function blobToFloat32Array(blob: Buffer): Float32Array {
     blob.byteOffset,
     Math.floor(blob.byteLength / Float32Array.BYTES_PER_ELEMENT)
   );
-}
-
-function cosineSimilarity(left: Float32Array, right: Float32Array): number {
-  if (left.length !== right.length || left.length === 0) return Number.NEGATIVE_INFINITY;
-  const length = left.length;
-
-  let dot = 0;
-  let leftMagnitude = 0;
-  let rightMagnitude = 0;
-  for (let index = 0; index < length; index++) {
-    const leftValue = left[index] ?? 0;
-    const rightValue = right[index] ?? 0;
-    dot += leftValue * rightValue;
-    leftMagnitude += leftValue * leftValue;
-    rightMagnitude += rightValue * rightValue;
-  }
-  if (leftMagnitude === 0 || rightMagnitude === 0) return Number.NEGATIVE_INFINITY;
-  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
 }
 
 function embeddingErrorMessage(error: unknown): string {
