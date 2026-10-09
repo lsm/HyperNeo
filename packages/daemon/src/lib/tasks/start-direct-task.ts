@@ -44,6 +44,7 @@ export interface DirectTaskStartInput {
   requestKey: string;
   retryFrom?: { attemptId: string; generation: number };
   reviewRejection?: { expectedPendingCompletionGeneration: number; reason?: string | null };
+  note?: string;
 }
 export type DirectTaskStartResult =
   | { started: true; attempt: DirectTaskAttempt }
@@ -273,6 +274,7 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession, input: Dire
           task,
           space,
           reviewFeedback: input.reviewRejection?.reason,
+          startNote: input.note,
           workspacePath: directTaskWorkspace(
             space,
             task,

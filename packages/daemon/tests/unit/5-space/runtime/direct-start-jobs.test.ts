@@ -183,6 +183,28 @@ test('a superseded cleanup stop notifies so the live-attempt flag clears', async
   expect(changed).toEqual([taskId]);
 });
 
+test('a start note reaches the kickoff message and stays frozen across replays', async () => {
+  const operation = createStartTaskOperation(() => db, jobs, {}, { onTaskReopened: () => {} });
+  const ack = await operation.execute(
+    { taskId, requestKey: 'noted', note: 'Use the staging database.' },
+    { source: 'rpc' }
+  );
+  if (!ack.accepted || !ack.jobId) throw new Error('expected receipt');
+  expect(
+    await operation.execute(
+      { taskId, requestKey: 'noted', note: 'Something else.' },
+      { source: 'rpc' }
+    )
+  ).toEqual(ack);
+  expect(
+    await createDirectStartJobHandler(db, start, jobs, control)(jobs.getJob(ack.jobId)!)
+  ).toMatchObject({ started: true });
+  const content = readDirectKickoffIntent(db, attempts.getActive(taskId)!.id)?.message.message
+    .content;
+  expect(content).toContain('## Note From the User\n\nUse the staging database.');
+  expect(content).not.toContain('Something else.');
+});
+
 test('pruned job receipt is not silently recreated by duplicate request', () => {
   const job = acceptedJob();
   db.prepare('DELETE FROM job_queue WHERE id=?').run(job.id);
