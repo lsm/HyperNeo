@@ -113,6 +113,7 @@ const mockHandoffWorkerSession = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
+const mockApprovePendingCompletion = vi.fn().mockResolvedValue(undefined);
 const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
 const mockUnsubscribeTaskActivity = vi.fn();
 
@@ -143,6 +144,7 @@ vi.mock('../../../lib/space-store', () => ({
       submitForReview: mockSubmitForReview,
       ensureTaskAgentSession: mockEnsureTaskAgentSession,
       sendTaskMessage: mockSendTaskMessage,
+      approvePendingCompletion: mockApprovePendingCompletion,
       subscribeTaskActivity: mockSubscribeTaskActivity,
       unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
       ensureConfigData: vi.fn().mockResolvedValue(undefined),
@@ -492,6 +494,53 @@ describe('SpaceTaskPane — composer', () => {
       )
     );
     expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('sends a review task back with the message, then delivers it to the workflow agent', async () => {
+    mockApprovePendingCompletion.mockClear();
+    setupTaskWithActivity({ status: 'review', pendingCheckpointType: 'task_completion' });
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.input(composerTextarea(getByTestId), {
+      target: { value: 'Cover the conflict case' },
+    });
+    fireEvent.click(getByTestId('send-button'));
+
+    await waitFor(() =>
+      expect(mockSendTaskMessage).toHaveBeenCalledWith(
+        'task-1',
+        'Cover the conflict case',
+        { kind: 'node_agent', agentName: 'coder' },
+        undefined,
+        'immediate'
+      )
+    );
+    expect(mockApprovePendingCompletion).toHaveBeenCalledWith(
+      'task-1',
+      false,
+      'Cover the conflict case'
+    );
+    expect(mockApprovePendingCompletion.mock.invocationCallOrder[0]).toBeLessThan(
+      mockSendTaskMessage.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('sends a direct review task back without a separate message, since its restart carries it', async () => {
+    mockApprovePendingCompletion.mockClear();
+    setupTaskWithActivity({ status: 'review', workflowRunId: null });
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.input(composerTextarea(getByTestId), { target: { value: 'Add a README line' } });
+    fireEvent.click(getByTestId('send-button'));
+
+    await waitFor(() =>
+      expect(mockApprovePendingCompletion).toHaveBeenCalledWith(
+        'task-1',
+        false,
+        'Add a README line'
+      )
+    );
+    expect(mockSendTaskMessage).not.toHaveBeenCalled();
   });
 
   it('shows send error text when sending fails', async () => {

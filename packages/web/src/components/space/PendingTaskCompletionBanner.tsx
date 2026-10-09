@@ -2,7 +2,6 @@ import { useCallback, useState } from 'preact/hooks';
 import type { SpaceTask } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { Modal } from '../ui/Modal.tsx';
-import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
 
 interface PendingTaskCompletionBannerProps {
   task: SpaceTask;
@@ -30,8 +29,6 @@ export function PendingTaskCompletionBanner({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showApproveModal, setShowApproveModal] = useState(false);
-  const [showRejectModal, setShowRejectModal] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
   const [approveReason, setApproveReason] = useState('');
 
   const onApprove = useCallback(async () => {
@@ -49,65 +46,46 @@ export function PendingTaskCompletionBanner({
     }
   }, [task.id, approveReason]);
 
-  const onRejectConfirm = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const reason = rejectReason.trim();
-      await spaceStore.approvePendingCompletion(task.id, false, reason ? reason : null);
-      setShowRejectModal(false);
-      setRejectReason('');
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to reject');
-    } finally {
-      setBusy(false);
-    }
-  }, [task.id, rejectReason]);
-
   if (task.status !== 'review') return null;
 
   const agentReason = task.pendingCompletionReason?.trim();
   const reportedSummary = task.reportedSummary?.trim();
   const submittedAgo = formatPendingSince(task.pendingCompletionSubmittedAt ?? null);
   const meta =
-    task.pendingCheckpointType === 'task_completion'
-      ? submittedAgo && `· ${submittedAgo}`
-      : '· submission record missing';
+    task.pendingCheckpointType === 'task_completion' ? submittedAgo : 'submission record missing';
 
-  const actions: InlineStatusBannerAction[] = [
-    {
-      label: 'Approve',
-      onClick: () => {
-        setError(null);
-        setShowApproveModal(true);
-      },
-      variant: 'primary',
-      disabled: busy,
-      testId: 'pending-task-completion-approve-btn',
-    },
-    {
-      label: 'Send back',
-      onClick: () => {
-        setError(null);
-        setShowRejectModal(true);
-      },
-      variant: 'danger',
-      disabled: busy,
-      testId: 'pending-task-completion-reject-btn',
-    },
-  ];
+  const summary = reportedSummary || agentReason;
 
   return (
     <>
-      <InlineStatusBanner
-        tone="amber"
-        icon={<span aria-hidden="true">⏸</span>}
-        label="Awaiting approval"
-        meta={meta || undefined}
-        actions={actions}
-        testId="pending-task-completion-banner"
-      />
-
+      <div
+        class="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-cat-purple/60 bg-cat-purple/10 px-4 py-3"
+        data-testid="pending-task-completion-banner"
+      >
+        <div class="min-w-0 flex-1">
+          <p
+            class="line-clamp-2 break-words text-sm text-fg"
+            data-testid="pending-task-completion-summary"
+          >
+            {summary ? `Submitted for review: ${summary}` : 'Submitted for review.'}
+          </p>
+          <p class="mt-0.5 text-xs text-fg-muted">
+            {meta ? `${meta} · ` : ''}Approve, or reply below to send it back.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setShowApproveModal(true);
+          }}
+          disabled={busy}
+          data-testid="pending-task-completion-approve-btn"
+          class="flex-shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          Approve
+        </button>
+      </div>
       <Modal
         isOpen={showApproveModal}
         onClose={() => {
@@ -184,95 +162,6 @@ export function PendingTaskCompletionBanner({
               class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-success hover:bg-success text-on-success disabled:bg-success/50 disabled:cursor-not-allowed"
             >
               {busy ? 'Processing...' : 'Approve'}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showRejectModal}
-        onClose={() => {
-          if (!busy) {
-            setShowRejectModal(false);
-            setRejectReason('');
-            setError(null);
-          }
-        }}
-        title="Send task back for revision?"
-        size="md"
-        data-testid="pending-task-completion-reject-modal"
-      >
-        <div class="space-y-4" data-testid="pending-task-completion-reject-modal-content">
-          <p class="text-fg-soft text-sm leading-relaxed">
-            The task will be reopened (status: in_progress) so the end-node agent can revise and
-            re-submit. The pending-completion request will be cleared.
-          </p>
-
-          {reportedSummary && (
-            <div class="text-xs">
-              <p class="text-fg-muted mb-1">Agent's reported outcome:</p>
-              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
-                {reportedSummary}
-              </p>
-            </div>
-          )}
-
-          {agentReason && (
-            <div class="text-xs">
-              <p class="text-fg-muted mb-1">Agent rationale:</p>
-              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
-                {agentReason}
-              </p>
-            </div>
-          )}
-
-          <div>
-            <label
-              class="block text-xs text-fg-muted mb-1"
-              for="task-completion-reject-reason-input"
-            >
-              Reason (optional — shared with the agent as feedback)
-            </label>
-            <textarea
-              id="task-completion-reject-reason-input"
-              data-testid="pending-task-completion-reject-reason"
-              value={rejectReason}
-              onInput={(e) => setRejectReason((e.target as HTMLTextAreaElement).value)}
-              class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1 text-sm text-fg-soft focus:border-danger focus:outline-none"
-              rows={3}
-              disabled={busy}
-            />
-          </div>
-
-          {error && (
-            <p class="text-xs text-danger" data-testid="pending-task-completion-error">
-              {error}
-            </p>
-          )}
-
-          <div class="flex items-center justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                if (!busy) {
-                  setShowRejectModal(false);
-                  setRejectReason('');
-                  setError(null);
-                }
-              }}
-              disabled={busy}
-              class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Keep Pending
-            </button>
-            <button
-              type="button"
-              onClick={() => void onRejectConfirm()}
-              disabled={busy}
-              data-testid="pending-task-completion-reject-confirm"
-              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50 disabled:cursor-not-allowed"
-            >
-              {busy ? 'Processing...' : 'Send back to agent'}
             </button>
           </div>
         </div>

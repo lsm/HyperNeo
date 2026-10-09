@@ -55,7 +55,6 @@ describe('PendingTaskCompletionBanner', () => {
       />
     );
     expect(getByTestId('pending-task-completion-approve-btn')).toBeTruthy();
-    expect(getByTestId('pending-task-completion-reject-btn')).toBeTruthy();
   });
 
   it('says the submission record is missing rather than showing a pending-since time', () => {
@@ -92,22 +91,6 @@ describe('PendingTaskCompletionBanner', () => {
     fireEvent.click(getByTestId('pending-task-completion-approve-confirm'));
 
     await waitFor(() => expect(approveMock).toHaveBeenCalledWith('task-1', true, null));
-  });
-
-  it('sends an orphaned review task back with its reason', async () => {
-    const { getByTestId } = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCheckpointType: null })}
-        spaceId="space-1"
-      />
-    );
-    fireEvent.click(getByTestId('pending-task-completion-reject-btn'));
-    fireEvent.input(getByTestId('pending-task-completion-reject-reason'), {
-      target: { value: '  not done  ' },
-    });
-    fireEvent.click(getByTestId('pending-task-completion-reject-confirm'));
-
-    await waitFor(() => expect(approveMock).toHaveBeenCalledWith('task-1', false, 'not done'));
   });
 
   it('surfaces a rejection from the daemon instead of failing silently', async () => {

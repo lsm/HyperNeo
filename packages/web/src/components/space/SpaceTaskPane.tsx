@@ -861,6 +861,16 @@ export function SpaceTaskPane({
       setSendingThread(true);
       setThreadSendError(null);
 
+      if (task.status === 'review') {
+        await spaceStore.approvePendingCompletion(task.id, false, nextMessage);
+        if (!task.workflowRunId) {
+          setTargetLocked(false);
+          setHasComposerDraft(false);
+          draftWasActiveRef.current = false;
+          return true;
+        }
+      }
+
       const result = await spaceStore.sendTaskMessage(
         task.id,
         nextMessage,
