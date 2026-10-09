@@ -60,27 +60,13 @@ export function TaskHeaderMeta({
     : null;
   const priority = PRIORITY_TEXT[task.priority];
 
-  const items: ComponentChildren[] = [
-    <span key="number" class="font-mono tabular-nums" data-testid="task-number">
-      #{task.taskNumber}
-    </span>,
-    <span key="priority" class={priority.class} data-testid="task-header-priority">
-      {priority.label}
-    </span>,
-  ];
-  if (statusLabel) {
-    items.push(
-      <span key="status" class="flex-shrink-0" data-testid="task-status-label">
-        <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={statusLabel} />
-      </span>
-    );
-  }
+  const items: ComponentChildren[] = [];
   if (goal) {
     items.push(
       <button
         key="goal"
         type="button"
-        class="min-w-0 truncate text-accent-soft hover:underline"
+        class="min-w-0 max-w-[12rem] truncate text-accent-soft hover:underline"
         onClick={() => {
           currentSpaceGoalIdSignal.value = goal.id;
           navigateToSpaceGoals(routeSpaceId);
@@ -96,7 +82,7 @@ export function TaskHeaderMeta({
       <button
         key="scope"
         type="button"
-        class="min-w-0 truncate text-accent-soft hover:underline"
+        class="min-w-0 max-w-[10rem] truncate text-accent-soft hover:underline"
         onClick={() => {
           currentSpaceScopeIdSignal.value = scopeId;
           navigateToSpaceEvolve(routeSpaceId);
@@ -108,22 +94,42 @@ export function TaskHeaderMeta({
   }
   if (schedule) {
     items.push(
-      <span key="schedule" class="min-w-0 truncate">
+      <span key="schedule" class="min-w-0 max-w-[10rem] truncate">
         From schedule: {schedule.title}
       </span>
     );
   }
   if (workspaceLabel) {
     items.push(
-      <span key="workspace" class="min-w-0 truncate" data-testid="task-workspace-badge">
+      <span
+        key="workspace"
+        class="min-w-0 max-w-[10rem] truncate"
+        data-testid="task-workspace-badge"
+      >
         {workspaceLabel}
+      </span>
+    );
+  }
+  items.push(
+    <span
+      key="priority"
+      class={`flex-shrink-0 ${priority.class}`}
+      data-testid="task-header-priority"
+    >
+      {priority.label}
+    </span>
+  );
+  if (statusLabel) {
+    items.push(
+      <span key="status" class="flex-shrink-0" data-testid="task-status-label">
+        <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={statusLabel} />
       </span>
     );
   }
 
   return (
     <div
-      class="flex min-w-0 items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-xs text-fg-muted"
+      class="flex min-w-0 flex-shrink items-center justify-end gap-x-1.5 overflow-hidden whitespace-nowrap text-xs text-fg-muted"
       data-testid="task-header-meta"
     >
       {items.flatMap((item, index) =>

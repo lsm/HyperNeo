@@ -1134,65 +1134,71 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class="flex h-[52px] flex-shrink-0 flex-col justify-center border-b border-line bg-surface-overlay px-4"
+        class="relative flex h-[52px] flex-shrink-0 items-center gap-2 border-b border-line bg-surface-overlay px-4"
       >
-        <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              class="-ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-              aria-label="Back"
-              data-testid="task-back-button"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
-            </button>
-          )}
-          <h2
-            class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-5 text-fg"
-            title={task.title}
-            data-tauri-drag-region
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            class="-ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+            aria-label="Back"
+            data-testid="task-back-button"
           >
-            {task.title}
-          </h2>
-          {task.status === 'review' && <TaskApproveButton task={task} />}
-          {taskActionItems.length > 0 && (
-            <Dropdown
-              items={taskActionItems}
-              position="right"
-              trigger={
-                <button
-                  type="button"
-                  class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-                  data-testid="task-actions-menu-trigger"
-                  aria-label="Task Actions"
-                  title="Task Actions"
-                >
-                  <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <circle cx="10" cy="4" r="1.75" />
-                    <circle cx="10" cy="10" r="1.75" />
-                    <circle cx="10" cy="16" r="1.75" />
-                  </svg>
-                </button>
-              }
-            />
-          )}
-        </div>
-        <div class={onClose ? 'pl-7' : undefined} data-tauri-drag-region>
-          <TaskHeaderMeta
-            task={task}
-            statusLabel={showHeaderStatusBadge ? activitySummary : null}
-            workspaceLabel={workspaceLabel}
-            routeSpaceId={navigationSpaceId}
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M15 19l-7-7 7-7"
+              />
+            </svg>
+          </button>
+        )}
+        <span
+          class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
+          data-testid="task-number"
+        >
+          #{task.taskNumber}
+        </span>
+        <h2
+          class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-5 text-fg"
+          title={task.title}
+          data-tauri-drag-region
+        >
+          {task.title}
+        </h2>
+        <TaskHeaderMeta
+          task={task}
+          statusLabel={showHeaderStatusBadge ? activitySummary : null}
+          workspaceLabel={workspaceLabel}
+          routeSpaceId={navigationSpaceId}
+        />
+        {taskActionItems.length > 0 && (
+          <Dropdown
+            items={taskActionItems}
+            position="right"
+            trigger={
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+                data-testid="task-actions-menu-trigger"
+                aria-label="Task Actions"
+                title="Task Actions"
+              >
+                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <circle cx="10" cy="4" r="1.75" />
+                  <circle cx="10" cy="10" r="1.75" />
+                  <circle cx="10" cy="16" r="1.75" />
+                </svg>
+              </button>
+            }
           />
-        </div>
+        )}
+        {task.status === 'review' && (
+          <div class="absolute right-14 top-full z-30 mt-3">
+            <TaskApproveButton task={task} />
+          </div>
+        )}
       </div>
 
       {(() => {
