@@ -487,7 +487,7 @@ describe('SpaceTaskManager', () => {
   });
 
   describe('cancelTask', () => {
-    it('cancels a task and cascades to open dependents', async () => {
+    it('cancels a task and blocks its open dependents', async () => {
       const t1 = await manager.createTask({ title: 'T1', description: '' });
       const t2 = await manager.createTask({
         title: 'T2',
@@ -498,7 +498,7 @@ describe('SpaceTaskManager', () => {
       await manager.cancelTask(t1.id);
 
       expect((await manager.getTask(t1.id))!.status).toBe('cancelled');
-      expect((await manager.getTask(t2.id))!.status).toBe('cancelled');
+      expect((await manager.getTask(t2.id))!.status).toBe('blocked');
     });
 
     it('cascades cancel to a rate/usage-limited dependent (not just open/in_progress)', async () => {
@@ -1146,138 +1146,70 @@ describe('SpaceTaskManager', () => {
     });
   });
 
-  describe('cancelDependentTasks (cancellation cascade)', () => {
-    it('cancels both open and in_progress dependents when parent is cancelled', async () => {
+  describe('cancelling a task blocks its live dependents', () => {
+    it('blocks open dependents and leaves running ones to the runtime stop path', async () => {
       const a = await manager.createTask({ title: 'A', description: '' });
-      const bOpen = await manager.createTask({
-        title: 'B',
-        description: '',
-        dependsOn: [a.id],
-      });
-      const cInProgress = await manager.createTask({
+      const bOpen = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+      const cRunning = await manager.createTask({
         title: 'C',
         description: '',
         dependsOn: [a.id],
       });
-      await manager.startTask(cInProgress.id);
+      await manager.startTask(cRunning.id);
 
-      await manager.startTask(a.id);
       await manager.setTaskStatus(a.id, 'cancelled');
 
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      const ids = cascaded.map((t) => t.id).sort();
-      expect(ids).toEqual([bOpen.id, cInProgress.id].sort());
-
-      expect((await manager.getTask(bOpen.id))!.status).toBe('cancelled');
-      expect((await manager.getTask(cInProgress.id))!.status).toBe('cancelled');
-    });
-
-    it('cascades recursively through dependency chain', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-      const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
-
-      await manager.startTask(a.id);
-      await manager.setTaskStatus(a.id, 'cancelled');
-
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded).toHaveLength(2);
-      expect((await manager.getTask(b.id))!.status).toBe('cancelled');
-      expect((await manager.getTask(c.id))!.status).toBe('cancelled');
-    });
-
-    it('does not cascade to done tasks', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const done = await manager.createTask({
-        title: 'Done',
-        description: '',
-        dependsOn: [a.id],
+      expect(await manager.getTask(bOpen.id)).toMatchObject({
+        status: 'blocked',
+        blockReason: 'dependency_failed',
+        result: `Dependency task ${a.id} was cancelled`,
       });
+      expect((await manager.getTask(cRunning.id))!.status).toBe('in_progress');
+    });
+
+    it('leaves done dependents and the open tasks further down the chain alone', async () => {
+      const a = await manager.createTask({ title: 'A', description: '' });
+      const done = await manager.createTask({ title: 'D', description: '', dependsOn: [a.id] });
       await manager.startTask(done.id);
       await manager.completeTask(done.id, 'finished');
-
-      await manager.startTask(a.id);
-      await manager.setTaskStatus(a.id, 'cancelled');
-
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
-      expect((await manager.getTask(done.id))!.status).toBe('done');
-    });
-
-    it('traverses through already-cancelled intermediates to reach open descendants', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
       const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
 
-      await manager.startTask(b.id);
-      await manager.setTaskStatus(b.id, 'cancelled');
-
-      await manager.startTask(a.id);
       await manager.setTaskStatus(a.id, 'cancelled');
 
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded.map((t) => t.id)).toContain(c.id);
-      expect((await manager.getTask(c.id))!.status).toBe('cancelled');
-      expect((await manager.getTask(b.id))!.status).toBe('cancelled');
+      expect((await manager.getTask(done.id))!.status).toBe('done');
+      expect((await manager.getTask(b.id))!.status).toBe('blocked');
+      expect((await manager.getTask(c.id))!.status).toBe('open');
     });
 
-    it('does not cascade through done/review/approved/blocked intermediates', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const bDone = await manager.createTask({
-        title: 'B-done',
+    it('refuses a new dependency on a cancelled or archived task but keeps an existing one', async () => {
+      const gone = await manager.createTask({ title: 'Gone', description: '' });
+      const keeper = await manager.createTask({
+        title: 'K',
         description: '',
-        dependsOn: [a.id],
+        dependsOn: [gone.id],
       });
-      const cOpen = await manager.createTask({
-        title: 'C-open',
-        description: '',
-        dependsOn: [bDone.id],
+      await manager.setTaskStatus(gone.id, 'cancelled');
+      await expect(
+        manager.createTask({ title: 'New', description: '', dependsOn: [gone.id] })
+      ).rejects.toThrow(`Dependency task ${gone.id} is cancelled and will never finish`);
+      const updated = await manager.updateTask(keeper.id, {
+        title: 'K2',
+        dependsOn: [gone.id],
       });
-
-      await manager.startTask(bDone.id);
-      await manager.completeTask(bDone.id, 'ok');
-
-      await manager.startTask(a.id);
-      await manager.setTaskStatus(a.id, 'cancelled');
-
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
-      expect((await manager.getTask(bDone.id))!.status).toBe('done');
-      expect((await manager.getTask(cOpen.id))!.status).toBe('open');
+      expect(updated.title).toBe('K2');
     });
 
-    it('does not cascade through a blocked intermediate', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const bBlocked = await manager.createTask({
-        title: 'B-blocked',
-        description: '',
-        dependsOn: [a.id],
-      });
-      const cOpen = await manager.createTask({
-        title: 'C-open',
-        description: '',
-        dependsOn: [bBlocked.id],
-      });
+    it('blocks a rate-limited task that gains an unmet dependency', async () => {
+      const dep = await manager.createTask({ title: 'Dep', description: '' });
+      const limited = await manager.createTask({ title: 'L', description: '' });
+      await manager.startTask(limited.id);
+      db.prepare(`UPDATE space_tasks SET status = 'rate_limited' WHERE id = ?`).run(limited.id);
 
-      await manager.startTask(bBlocked.id);
-      await manager.failTask(bBlocked.id, 'transient');
-
-      await manager.startTask(a.id);
-      await manager.setTaskStatus(a.id, 'cancelled');
-
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
-      expect((await manager.getTask(bBlocked.id))!.status).toBe('blocked');
-      expect((await manager.getTask(cOpen.id))!.status).toBe('open');
-    });
-
-    it('returns empty array when no dependents exist', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const cascaded = await manager.cancelDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
+      const updated = await manager.updateTask(limited.id, { dependsOn: [dep.id] });
+      expect(updated).toMatchObject({ status: 'blocked', blockReason: 'dependency_added' });
     });
   });
-
   describe('taskNumber (numeric task IDs)', () => {
     it('createTask assigns auto-incrementing taskNumber', async () => {
       const t1 = await manager.createTask({ title: 'A', description: '' });

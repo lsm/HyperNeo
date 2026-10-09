@@ -337,10 +337,13 @@ export class SpaceTaskManager {
           );
         }
       }
+    }
+
+    if (newStatus === 'done' || newStatus === 'cancelled') {
       try {
-        const unblocked = await this.unblockDependentTasks(taskId);
-        if (unblocked.length > 0 && options?.onCascadedTasks) {
-          await options.onCascadedTasks(unblocked);
+        const settled = await this.settleDependents(taskId, newStatus);
+        if (settled.length > 0 && options?.onCascadedTasks) {
+          await options.onCascadedTasks(settled);
         }
       } catch {}
     }
@@ -513,7 +516,7 @@ export class SpaceTaskManager {
     this.validateTaskFieldGuards(task, resolvedParams);
 
     if (resolvedParams.dependsOn !== undefined) {
-      await this.validateDependencyIds(resolvedParams.dependsOn, taskId);
+      await this.validateDependencyIds(resolvedParams.dependsOn, taskId, task.dependsOn ?? []);
     }
 
     const { status: _status, ...repoParams } = resolvedParams;
@@ -565,7 +568,7 @@ export class SpaceTaskManager {
 
     if (depsChanged) {
       const depsMet = await this.areDependenciesMet(updated);
-      if (!depsMet && updated.status === 'in_progress') {
+      if (!depsMet && (updated.status === 'in_progress' || isRateOrUsageLimited(updated.status))) {
         const blocked = await this.setTaskStatus(taskId, 'blocked', {
           blockReason: 'dependency_added',
           result: 'Dependency added while task was in progress',
@@ -703,6 +706,26 @@ export class SpaceTaskManager {
     return acc;
   }
 
+  async settleDependents(taskId: string, status: SpaceTaskStatus): Promise<SpaceTask[]> {
+    if (status === 'done') return this.unblockDependentTasks(taskId);
+    if (status === 'cancelled') return this.blockDependentsOfCancelled(taskId);
+    return [];
+  }
+
+  private async blockDependentsOfCancelled(taskId: string): Promise<SpaceTask[]> {
+    const blocked: SpaceTask[] = [];
+    for (const t of await this.listTasks(false)) {
+      if (t.status !== 'open' || !t.dependsOn?.includes(taskId)) continue;
+      blocked.push(
+        await this.setTaskStatus(t.id, 'blocked', {
+          blockReason: 'dependency_failed',
+          result: `Dependency task ${taskId} was cancelled`,
+        })
+      );
+    }
+    return blocked;
+  }
+
   async unblockDependentTasks(taskId: string): Promise<SpaceTask[]> {
     const unblocked: SpaceTask[] = [];
     const allTasks = await this.listTasks(false);
@@ -721,7 +744,11 @@ export class SpaceTaskManager {
     return unblocked;
   }
 
-  private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {
+  private async validateDependencyIds(
+    depIds: string[],
+    taskId?: string,
+    existing: readonly string[] = []
+  ): Promise<void> {
     for (const depId of depIds) {
       if (taskId && depId === taskId) {
         throw new Error('A task cannot depend on itself');
@@ -729,6 +756,9 @@ export class SpaceTaskManager {
       const dep = await this.getTask(depId);
       if (!dep) {
         throw new Error(`Dependency task not found in space: ${depId}`);
+      }
+      if (!existing.includes(depId) && (dep.status === 'cancelled' || dep.status === 'archived')) {
+        throw new Error(`Dependency task ${depId} is ${dep.status} and will never finish`);
       }
     }
 
