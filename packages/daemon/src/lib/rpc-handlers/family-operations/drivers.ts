@@ -47,16 +47,14 @@ import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
 import type { ModelInfo, Provider } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
+import { usableModels } from '../../usable-models.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
 
 export function newestAvailableModel(models: readonly ModelInfo[]): ModelInfo | null {
-  return models.reduce<ModelInfo | null>(
-    (newest, model) =>
-      model.available !== false && (!newest || model.releaseDate > newest.releaseDate)
-        ? model
-        : newest,
+  return usableModels(models).reduce<ModelInfo | null>(
+    (newest, model) => (!newest || model.releaseDate > newest.releaseDate ? model : newest),
     null
   );
 }
@@ -83,8 +81,7 @@ export async function createDriverSession(
     });
   if (model) {
     const { findInModels } = await import('../../model-service.ts');
-    const usable = (await availableModels()).filter((entry) => entry.available !== false);
-    if (!findInModels(usable, model))
+    if (!findInModels(usableModels(await availableModels()), model))
       throw new ModelUnavailableError(`Model '${model}' is not available.`);
   }
   try {

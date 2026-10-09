@@ -3,13 +3,13 @@ import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
-  title, ask, done_when AS doneWhen, done_source AS doneSource, status, outcome,
+  title, ask, done_when AS doneWhen, done_source AS doneSource, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
 
 type NeoAskRow = Omit<NeoAsk, 'workIds'>;
 export type NeoAskInput = Omit<
   NeoAsk,
-  'workIds' | 'status' | 'outcome' | 'createdAt' | 'updatedAt' | 'settledAt'
+  'workIds' | 'status' | 'outcome' | 'evidence' | 'createdAt' | 'updatedAt' | 'settledAt'
 >;
 
 export class NeoAskRepository {
@@ -105,13 +105,14 @@ export class NeoAskRepository {
   settle(
     expected: Pick<NeoAsk, 'id' | 'status'>,
     status: Exclude<NeoAskStatus, 'open' | 'waiting'>,
-    outcome: string
+    outcome: string,
+    evidence: string
   ): NeoAsk | null {
     const now = Date.now();
     const row = this.db
-      .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, updated_at = ?, settled_at = ?
-        WHERE id = ? AND status = ? RETURNING ${askColumns}`)
-      .get(status, outcome, now, now, expected.id, expected.status) as NeoAskRow | null;
+      .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
+        settled_at = ? WHERE id = ? AND status = ? RETURNING ${askColumns}`)
+      .get(status, outcome, evidence, now, now, expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];

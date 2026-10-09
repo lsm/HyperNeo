@@ -537,18 +537,14 @@ export class ProviderService {
   ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
 
-    if (envVars.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
-      original.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
-      if (envVars.CLAUDE_CODE_OAUTH_TOKEN === '') {
-        delete env.CLAUDE_CODE_OAUTH_TOKEN;
-      } else {
-        env.CLAUDE_CODE_OAUTH_TOKEN = envVars.CLAUDE_CODE_OAUTH_TOKEN;
-      }
-    }
-    if (envVars.ANTHROPIC_AUTH_TOKEN !== undefined) {
-      original.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
-      env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
-    }
+    const set = (key: ProviderEnvKey, emptyDeletes: boolean): void => {
+      const value = envVars[key];
+      if (value === undefined) return;
+      original[key] = env[key];
+      if (emptyDeletes && value === '') delete env[key];
+      else env[key] = value;
+    };
+    for (const [key, emptyDeletes] of PROVIDER_AUTH_ENV) set(key, emptyDeletes);
     if (envVars.ANTHROPIC_API_KEY !== undefined) {
       if (envVars.ANTHROPIC_API_KEY === '') {
         original.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
@@ -561,60 +557,7 @@ export class ProviderService {
         env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
       }
     }
-    if (envVars.ANTHROPIC_BASE_URL !== undefined) {
-      original.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
-      env.ANTHROPIC_BASE_URL = envVars.ANTHROPIC_BASE_URL;
-    }
-    if (envVars.ANTHROPIC_MODEL !== undefined) {
-      original.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL;
-      env.ANTHROPIC_MODEL = envVars.ANTHROPIC_MODEL;
-    }
-    if (envVars.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
-      original.CLAUDE_CODE_SUBAGENT_MODEL = env.CLAUDE_CODE_SUBAGENT_MODEL;
-      env.CLAUDE_CODE_SUBAGENT_MODEL = envVars.CLAUDE_CODE_SUBAGENT_MODEL;
-    }
-    if (envVars.ENABLE_TOOL_SEARCH !== undefined) {
-      original.ENABLE_TOOL_SEARCH = env.ENABLE_TOOL_SEARCH;
-      env.ENABLE_TOOL_SEARCH = envVars.ENABLE_TOOL_SEARCH;
-    }
-    if (envVars.API_TIMEOUT_MS !== undefined) {
-      original.API_TIMEOUT_MS = env.API_TIMEOUT_MS;
-      env.API_TIMEOUT_MS = envVars.API_TIMEOUT_MS;
-    }
-    if (envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
-      original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-      env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-        envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-    }
-    if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
-      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      if (envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '') {
-        delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      } else {
-        env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      }
-    }
-    if (envVars.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
-      original.ANTHROPIC_CUSTOM_HEADERS = env.ANTHROPIC_CUSTOM_HEADERS;
-      if (envVars.ANTHROPIC_CUSTOM_HEADERS === '') {
-        delete env.ANTHROPIC_CUSTOM_HEADERS;
-      } else {
-        env.ANTHROPIC_CUSTOM_HEADERS = envVars.ANTHROPIC_CUSTOM_HEADERS;
-      }
-    }
-    if (envVars.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_SONNET_MODEL = env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-      env.ANTHROPIC_DEFAULT_SONNET_MODEL = envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
-    }
-    if (envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-    }
-    if (envVars.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_OPUS_MODEL = env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-      env.ANTHROPIC_DEFAULT_OPUS_MODEL = envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
-    }
+    for (const [key, emptyDeletes] of PROVIDER_ROUTING_ENV) set(key, emptyDeletes);
 
     this.saveClearDaemonPortEnvVars(original, env);
 
@@ -638,137 +581,12 @@ export class ProviderService {
 
     clear('ANTHROPIC_AUTH_TOKEN');
 
-    if (env.ANTHROPIC_MODEL !== undefined) {
-      original.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL;
+    for (const [key, userValue] of userPreservableRoutingEnv()) {
+      const value = env[key];
+      if (value === undefined) continue;
+      original[key] = value;
       changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredAnthropicModel === undefined ||
-        env.ANTHROPIC_MODEL !== userConfiguredAnthropicModel
-      ) {
-        delete env.ANTHROPIC_MODEL;
-      }
-    }
-
-    if (env.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
-      original.CLAUDE_CODE_SUBAGENT_MODEL = env.CLAUDE_CODE_SUBAGENT_MODEL;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredSubagentModel === undefined ||
-        env.CLAUDE_CODE_SUBAGENT_MODEL !== userConfiguredSubagentModel
-      ) {
-        delete env.CLAUDE_CODE_SUBAGENT_MODEL;
-      }
-    }
-    if (env.ENABLE_TOOL_SEARCH !== undefined) {
-      original.ENABLE_TOOL_SEARCH = env.ENABLE_TOOL_SEARCH;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredToolSearch === undefined ||
-        env.ENABLE_TOOL_SEARCH !== userConfiguredToolSearch
-      ) {
-        delete env.ENABLE_TOOL_SEARCH;
-      }
-    }
-
-    if (env.ANTHROPIC_BASE_URL !== undefined) {
-      original.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
-      changed = true;
-      if (
-        !isLocalDevProxyUrl(env.ANTHROPIC_BASE_URL) &&
-        (!options.preserveUserSettings ||
-          userConfiguredBaseUrl === undefined ||
-          env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl)
-      ) {
-        delete env.ANTHROPIC_BASE_URL;
-      }
-    }
-
-    if (env.API_TIMEOUT_MS !== undefined) {
-      original.API_TIMEOUT_MS = env.API_TIMEOUT_MS;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredApiTimeout === undefined ||
-        env.API_TIMEOUT_MS !== userConfiguredApiTimeout
-      ) {
-        delete env.API_TIMEOUT_MS;
-      }
-    }
-
-    if (env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
-      original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredDisableNonEssentialTraffic === undefined ||
-        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== userConfiguredDisableNonEssentialTraffic
-      ) {
-        delete env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-      }
-    }
-
-    if (env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
-      original.CLAUDE_CODE_AUTO_COMPACT_WINDOW = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredAutoCompactWindow === undefined ||
-        env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== userConfiguredAutoCompactWindow
-      ) {
-        delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      }
-    }
-
-    if (env.ANTHROPIC_CUSTOM_HEADERS !== undefined) {
-      original.ANTHROPIC_CUSTOM_HEADERS = env.ANTHROPIC_CUSTOM_HEADERS;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredCustomHeaders === undefined ||
-        env.ANTHROPIC_CUSTOM_HEADERS !== userConfiguredCustomHeaders
-      ) {
-        delete env.ANTHROPIC_CUSTOM_HEADERS;
-      }
-    }
-
-    if (env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_SONNET_MODEL = env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredDefaultSonnetModel === undefined ||
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
-      ) {
-        delete env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-      }
-    }
-
-    if (env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredDefaultHaikuModel === undefined ||
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
-      ) {
-        delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-      }
-    }
-
-    if (env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
-      original.ANTHROPIC_DEFAULT_OPUS_MODEL = env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-      changed = true;
-      if (
-        !options.preserveUserSettings ||
-        userConfiguredDefaultOpusModel === undefined ||
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
-      ) {
-        delete env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-      }
+      if (!keepsRoutingEnv(key, value, userValue, options.preserveUserSettings)) delete env[key];
     }
 
     this.saveClearDaemonPortEnvVars(original, env);
@@ -968,6 +786,53 @@ const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MO
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 const userConfiguredCustomHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
+
+type ProviderEnvKey = keyof OriginalEnvVars & keyof ProviderEnvVars;
+
+const PROVIDER_AUTH_ENV: ReadonlyArray<readonly [ProviderEnvKey, boolean]> = [
+  ['CLAUDE_CODE_OAUTH_TOKEN', true],
+  ['ANTHROPIC_AUTH_TOKEN', false],
+];
+
+const PROVIDER_ROUTING_ENV: ReadonlyArray<readonly [ProviderEnvKey, boolean]> = [
+  ['ANTHROPIC_BASE_URL', false],
+  ['ANTHROPIC_MODEL', false],
+  ['CLAUDE_CODE_SUBAGENT_MODEL', false],
+  ['ENABLE_TOOL_SEARCH', false],
+  ['API_TIMEOUT_MS', false],
+  ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', false],
+  ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', true],
+  ['ANTHROPIC_CUSTOM_HEADERS', true],
+  ['ANTHROPIC_DEFAULT_SONNET_MODEL', false],
+  ['ANTHROPIC_DEFAULT_HAIKU_MODEL', false],
+  ['ANTHROPIC_DEFAULT_OPUS_MODEL', false],
+];
+
+function userPreservableRoutingEnv(): ReadonlyArray<readonly [ProviderEnvKey, string | undefined]> {
+  return [
+    ['ANTHROPIC_MODEL', userConfiguredAnthropicModel],
+    ['CLAUDE_CODE_SUBAGENT_MODEL', userConfiguredSubagentModel],
+    ['ENABLE_TOOL_SEARCH', userConfiguredToolSearch],
+    ['ANTHROPIC_BASE_URL', userConfiguredBaseUrl],
+    ['API_TIMEOUT_MS', userConfiguredApiTimeout],
+    ['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', userConfiguredDisableNonEssentialTraffic],
+    ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', userConfiguredAutoCompactWindow],
+    ['ANTHROPIC_CUSTOM_HEADERS', userConfiguredCustomHeaders],
+    ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
+    ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
+    ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
+  ];
+}
+
+export function keepsRoutingEnv(
+  key: string,
+  value: string,
+  userValue: string | undefined,
+  preserveUserSettings: boolean | undefined
+): boolean {
+  if (key === 'ANTHROPIC_BASE_URL' && isLocalDevProxyUrl(value)) return true;
+  return !!preserveUserSettings && userValue !== undefined && value === userValue;
+}
 
 export function getUserConfiguredAnthropicEnv(): Record<string, string> {
   const snapshot: Record<string, string> = {};
