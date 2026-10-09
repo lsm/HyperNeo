@@ -2627,6 +2627,85 @@ describe('MinimalThreadFeed', () => {
     expect(entries[0].dataset.rosterKind).toBe('tool');
   });
 
+  describe('Task kickoff event', () => {
+    const kickoffText = '## Your Task #7\n\n**Title:** Fix login\n**Description:** Repair the form';
+
+    function kickoffRows() {
+      const t = 1_700_000_000_000;
+      return [
+        makeRow({
+          id: 'k1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: humanUserMessage('k1', kickoffText),
+          messageType: 'user',
+        }),
+        makeRow({
+          id: 'a1',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: assistantText('a1', 'Working on it'),
+        }),
+        makeRow({
+          id: 'k2',
+          label: 'Coder Agent',
+          createdAt: t + 200,
+          message: humanUserMessage('k2', '## Your Task #7\n\nAgain'),
+          messageType: 'user',
+        }),
+      ];
+    }
+
+    it('renders the first kickoff as a collapsed one-line event naming the agent', () => {
+      const { container } = render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+
+      const toggle = screen.getByTestId('minimal-thread-task-kickoff');
+      expect(toggle.textContent).toContain('Task sent to Coder Agent');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
+      expect(container.textContent).not.toContain('Fix login');
+      expect(container.querySelectorAll('[data-turn-state="task_kickoff"]')).toHaveLength(1);
+    });
+
+    it('expands to the full task text on click and collapses again', () => {
+      render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+
+      const toggle = screen.getByTestId('minimal-thread-task-kickoff');
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toBe(kickoffText);
+
+      fireEvent.click(toggle);
+      expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
+    });
+
+    it('renders later Your Task messages as ordinary message bubbles', () => {
+      render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+
+      const bubbles = screen.getAllByTestId('minimal-thread-human-bubble');
+      expect(bubbles).toHaveLength(1);
+      expect(bubbles[0].textContent).toContain('Again');
+    });
+
+    it('leaves a first human message without the kickoff heading as a bubble', () => {
+      const rows = [
+        makeRow({
+          id: 'u1',
+          label: 'Coder Agent',
+          createdAt: 1,
+          message: humanUserMessage('u1', 'Please look at Your Task #7'),
+          messageType: 'user',
+        }),
+      ];
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      expect(screen.queryByTestId('minimal-thread-task-kickoff')).toBeNull();
+      expect(screen.getByTestId('minimal-thread-human-bubble').textContent).toContain(
+        'Please look at Your Task #7'
+      );
+    });
+  });
+
   describe('Action row dropdowns (system:init / result)', () => {
     it('renders the result dropdown trigger under a completed agent turn', () => {
       const t = Date.now();

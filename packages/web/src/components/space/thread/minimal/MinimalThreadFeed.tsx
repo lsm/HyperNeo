@@ -1,5 +1,5 @@
 import { memo } from 'preact/compat';
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { ActiveTurnSummary, ActivityEntry, MessageDeliveryStatus } from '@hyperneo/shared';
 import {
@@ -212,7 +212,16 @@ interface MessageFeedTurn {
   sessionInit?: SystemInitMessage;
 }
 
+interface TaskKickoffFeedTurn {
+  state: 'task_kickoff';
+  id: string;
+  agent: string;
+  body: string;
+  createdAt: number;
+}
+
 type FeedTurn =
+  | TaskKickoffFeedTurn
   | CompletedFeedTurn
   | ActiveFeedTurn
   | CompactBoundaryFeedTurn
@@ -1091,6 +1100,20 @@ function buildMessageTurn(
   };
 }
 
+const TASK_KICKOFF_HEADING = /^##\s+Your Task #\d+/;
+
+function buildTaskKickoffTurn(row: ParsedThreadRow): TaskKickoffFeedTurn | null {
+  const { body } = extractUserMessageText(row);
+  if (!TASK_KICKOFF_HEADING.test(body)) return null;
+  return {
+    state: 'task_kickoff',
+    id: `kickoff-${String(row.id)}`,
+    agent: row.label,
+    body,
+    createdAt: row.createdAt,
+  };
+}
+
 function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
   init: SystemInitMessage | undefined;
   result: ResultMessage | undefined;
@@ -1275,6 +1298,7 @@ function buildFeedTurns(
   };
   const perAgentTrailing = new Map<string, AgentTrailing>();
   let previousAgentLabel: string | null = null;
+  let kickoffFolded = false;
 
   for (const block of blocks) {
     const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
@@ -1336,6 +1360,12 @@ function buildFeedTurns(
       }
       if (isUserRow(row)) {
         flushAgent();
+        const kickoffTurn = kickoffFolded ? null : buildTaskKickoffTurn(row);
+        if (kickoffTurn) {
+          kickoffFolded = true;
+          turns.push(kickoffTurn);
+          continue;
+        }
         turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
         continue;
       }
@@ -2000,6 +2030,49 @@ function AgentTurnRow({
   );
 }
 
+function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
+  const [expanded, setExpanded] = useState(false);
+  const color = getAgentTextColor(turn.agent);
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-turn-state="task_kickoff"
+      data-agent-label={turn.agent}
+      data-agent-color={color}
+    >
+      <button
+        type="button"
+        class="flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-fg-muted/60"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((open) => !open)}
+        data-testid="minimal-thread-task-kickoff"
+      >
+        <svg
+          class={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <span class="truncate">
+          Task sent to <span style={{ color }}>{turn.agent}</span>
+        </span>
+        <span class="shrink-0 text-[11px] text-fg-faint">{formatClock(turn.createdAt)}</span>
+      </button>
+      {expanded ? (
+        <div
+          class={`mt-2 ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS} rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm text-fg-soft`}
+          data-testid="minimal-thread-task-kickoff-body"
+        >
+          <MarkdownRenderer content={turn.body} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
   const recipientColor = getAgentColor(turn.toLabel);
   return (
@@ -2285,6 +2358,9 @@ function MinimalTurnRow({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
+  if (turn.state === 'task_kickoff') {
+    return <TaskKickoffTurn turn={turn} />;
+  }
   if (turn.state === 'compact_boundary') {
     return (
       <CompactBoundaryTurn
