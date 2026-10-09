@@ -62,6 +62,14 @@ export const StartWorkResultSchema = workResultSchema(WorkSummarySchema);
 export const SendWorkResultSchema = workResultSchema(z.object({ delivered: z.boolean() }));
 export const WorkStatusResultSchema = workResultSchema(WorkDetailSchema);
 export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boolean() }));
+export const WorkAdaptersResultSchema = workResultSchema(
+  z.array(
+    z.object({
+      id: z.string(),
+      capabilities: z.array(z.enum(['find', 'start', 'send', 'status', 'stop'])),
+    })
+  )
+);
 
 type StartInput = z.infer<typeof StartWorkInputSchema>;
 type SendInput = z.infer<typeof SendWorkInputSchema>;
@@ -277,12 +285,33 @@ const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
   deps: WorkVerbDeps
 ) => Promise<StopResult>;
 
+async function listWorkAdapters(
+  daemon: string | undefined,
+  deps: WorkVerbDeps
+): Promise<z.infer<typeof WorkAdaptersResultSchema>> {
+  if (daemon && daemon !== deps.daemonName)
+    return forwardWork(daemon, 'work.adapters', {}, WorkAdaptersResultSchema, deps.remote);
+  return {
+    ok: true,
+    value: deps.adapters().map(({ id, capabilities }) => ({ id, capabilities: [...capabilities] })),
+  };
+}
+
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
+      name: 'work.adapters',
+      description:
+        'List the work adapters on this daemon, or on the attached daemon named by daemon, with the verbs each can do: find, start, send, status, stop. Start new work only with an adapter that can start, and send only through one that can send.',
+      inputSchema: z.object({ daemon: z.string().min(1).optional() }),
+      resultSchema: WorkAdaptersResultSchema,
+      policy: { safetyClass: 'read' },
+      execute: ({ daemon }) => listWorkAdapters(daemon, deps),
+    }),
+    defineOperation({
       name: 'work.start',
       description:
-        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness (one of the place group adapters, or another adapter that can work in that folder). A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session; other adapters run on the model their app uses. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo, the model it runs on, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
+        'Start new work in a place returned by work.find: a session, thread or task titled title, opened with message. adapter picks the harness: an adapter whose capabilities include start (see work.adapters); a place group lists adapters that only found work there. A place with a daemon starts the work on that daemon. Only Neo or the user can change work on another daemon; other agents get unsupported. For a new project, give the folder to create in place.folder and set createFolder true: it must be inside the home folder, outside hidden folders, Library and Applications, with an existing parent. model picks the model of a new HyperNeo session; other adapters run on the model their app uses. Without model, a HyperNeo session starts on the default model, or on the newest available one when the default cannot run. Returns the new work with its ref, link and, for HyperNeo, the model it runs on, or ok false with a reason such as invalid_place, claude_cli_login_expired, unsupported or unreachable.',
       inputSchema: StartWorkInputSchema,
       resultSchema: StartWorkResultSchema,
       policy: { safetyClass: 'mutate' },

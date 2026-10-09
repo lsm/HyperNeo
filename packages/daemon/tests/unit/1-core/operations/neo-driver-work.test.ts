@@ -1141,4 +1141,68 @@ describe('neo.work.propose with a drivers target', () => {
       db.close();
     }
   });
+
+  test('refuses a target whose adapter cannot do the verb and names ones that can', async () => {
+    const db = await createTestDb();
+    const asked: unknown[] = [];
+    const drivers = createOperationRegistry([
+      defineOperation({
+        name: 'work.adapters',
+        description: 'test adapters',
+        inputSchema: z.object({ daemon: z.string().optional() }),
+        resultSchema: z.unknown(),
+        policy: { safetyClass: 'read' },
+        execute: async (input: { daemon?: string }) => {
+          asked.push(input);
+          return {
+            ok: true,
+            value: [
+              { id: 'claude-code', capabilities: ['find'] },
+              { id: 'claude-desktop', capabilities: ['find', 'start', 'send', 'status'] },
+            ],
+          };
+        },
+      }),
+    ]);
+    const service = new NeoService(
+      db,
+      { getOperationRegistry: () => drivers } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    db.createSession(createTestSession('root'));
+    service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    const neo: OperationCaller = {
+      source: 'mcp',
+      sessionId: 'root',
+      role: 'neo',
+      neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
+    };
+    const place = { machine: 'laptop', daemon: 'laptop', folder: '/Users/me/app', name: 'app' };
+    const propose = (requestKey: string, adapter: string) =>
+      invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.propose',
+        {
+          requestKey,
+          title: 'Fix it',
+          instruction: 'Fix the bug.',
+          work: { verb: 'start', adapter, place },
+        },
+        neo
+      );
+    try {
+      expect(await propose('cli', 'claude-code')).toMatchObject({
+        value: {
+          ok: false,
+          reason: 'The claude-code adapter cannot start work. Adapters that can: claude-desktop.',
+        },
+      });
+      expect(await propose('desktop', 'claude-desktop')).toMatchObject({ value: { ok: true } });
+      expect(asked).toEqual([{ daemon: 'laptop' }, { daemon: 'laptop' }]);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
 });
