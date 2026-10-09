@@ -12,8 +12,12 @@ import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-se
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { resolveMetadataSessionSpace, resolveSpaceTaskOwner } from './metadata.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { TASK_SLOT_STATUSES, availableTaskSlots } from './capacity.ts';
+import {
+  claimsTaskSlot,
+  readTaskSlotUsage,
+  requireTaskSlot,
+  type TaskSlotUsage,
+} from './capacity.ts';
 import {
   type SpaceTaskManager,
   StaleTaskGuardError,
@@ -79,19 +83,11 @@ export function routeRetry(task: SpaceTask): { value: RetryPlan } | { reason: Re
   };
 }
 
-export function requireRetrySlot(
-  plan: RetryPlan,
-  db: Database
-): { value: RetryPlan } | { reason: Rejection } {
+export function readRetrySlotUsage(plan: RetryPlan, db: Database): TaskSlotUsage | null {
   const { task } = plan;
-  const target = plan.recoverTo ?? retryTargetStatus(task.status);
-  if (target !== 'in_progress' || task.workflowRunId || task.taskAgentSessionId)
-    return { value: plan };
-  const space = new SpaceRepository(db).getSpace(task.spaceId);
-  const running = new SpaceTaskRepository(db).countByStatuses(task.spaceId, TASK_SLOT_STATUSES);
-  return availableTaskSlots(space, running) > 0
-    ? { value: plan }
-    : { reason: 'space_at_task_capacity' };
+  return claimsTaskSlot(plan.recoverTo ?? retryTargetStatus(task.status), task)
+    ? readTaskSlotUsage(db, task.spaceId)
+    : null;
 }
 
 export async function applyRetry(
@@ -144,7 +140,8 @@ export function createRetryTaskOperation(
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitRetrier, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
     .pipe(routeRetry, 'outcome', 'result:outcome')
-    .pipe(requireRetrySlot, ['outcome', 'db'], 'result:outcome')
+    .pipe(readRetrySlotUsage, ['outcome', 'db'], 'slots')
+    .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
     .pipe(applyRetry, ['outcome', 'input', 'tasks'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({

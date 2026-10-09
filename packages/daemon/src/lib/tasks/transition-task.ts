@@ -3,11 +3,14 @@ import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { TASK_SLOT_STATUSES, availableTaskSlots, occupiesTaskSlot } from './capacity.ts';
+import {
+  claimsTaskSlot,
+  readTaskSlotUsage,
+  requireTaskSlot,
+  type TaskSlotUsage,
+} from './capacity.ts';
 import {
   type SpaceTaskManager,
   StaleTaskGuardError,
@@ -275,24 +278,14 @@ export async function decide(
     },
   };
 }
-export function requireFreeTaskSlot(
+export function readTransitionSlotUsage(
   decided: DecidedTask,
   input: In,
   deps: Deps
-): Gate<DecidedTask, Result> {
-  const { spaceId, task } = decided;
-  if (
-    input.status !== 'in_progress' ||
-    occupiesTaskSlot(task.status) ||
-    task.workflowRunId ||
-    task.taskAgentSessionId
-  )
-    return { value: decided };
-  const space = new SpaceRepository(deps.db).getSpace(spaceId);
-  const running = new SpaceTaskRepository(deps.db).countByStatuses(spaceId, TASK_SLOT_STATUSES);
-  return availableTaskSlots(space, running) > 0
-    ? { value: decided }
-    : { reason: 'space_at_task_capacity' };
+): TaskSlotUsage | null {
+  return claimsTaskSlot(input.status, decided.task)
+    ? readTaskSlotUsage(deps.db, decided.spaceId)
+    : null;
 }
 async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promise<void> {
   await deps
@@ -353,7 +346,8 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(requireHandoffBeforeReopen, ['outcome', 'input'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(routeActiveDirectAttempt, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
-    .pipe(requireFreeTaskSlot, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(readTransitionSlotUsage, ['outcome', 'input', 'deps'], 'slots')
+    .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
     .pipe(writeStatus, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: In, caller: Caller) => Promise<Result>;
   return createTransitionTaskOperation(transition, {
