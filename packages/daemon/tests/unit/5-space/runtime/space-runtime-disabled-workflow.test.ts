@@ -164,6 +164,38 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     const run = workflowRunRepo.getRun(updated.workflowRunId!);
     expect(run!.workflowId).toBe(enabledWf.id);
   });
+  test('a preferred workflow from another Space is never run for this Space', async () => {
+    const enabledWf = createWorkflow('Enabled', ['default']);
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+           allowed_models, session_ids, slug, status, created_at, updated_at)
+           VALUES ('space-other', '/tmp/other-ws', 'Other', '', '', '', '[]', '[]', 'space-other', 'active', 1, 1)`
+    ).run();
+    seedAgentRow(db, 'agent-other', 'space-other', 'Other worker');
+    const stepId = 'step-other';
+    const foreign = workflowManager.createWorkflow({
+      spaceId: 'space-other',
+      name: 'Foreign',
+      description: '',
+      nodes: [{ id: stepId, name: 'Step', agentId: 'agent-other' }],
+      startNodeId: stepId,
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Do work',
+      description: '',
+      status: 'open',
+      preferredWorkflowId: foreign.id,
+    });
+
+    await buildRuntime().executeTick();
+
+    const run = workflowRunRepo.getRun(taskRepo.getTask(task.id)!.workflowRunId!);
+    expect(run!.workflowId).toBe(enabledWf.id);
+  });
+
   test('scheduler leaves opted-in direct tasks unattached', async () => {
     createWorkflow('Enabled', ['default']);
     const task = taskRepo.createTask({ spaceId: SPACE_ID, title: 'Direct', description: '' });
