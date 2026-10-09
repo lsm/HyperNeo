@@ -1,6 +1,7 @@
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   NEO_WORK_CLOSED_DONE,
   NEO_WORK_CONTINUE_LIMIT,
@@ -10,6 +11,7 @@ import {
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
+import type { OperationCaller } from '../operations/registry.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
@@ -75,6 +77,7 @@ import {
   readContinueBudget,
 } from './driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
+import { withNeoSavedRules } from './saved-rules.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -142,6 +145,7 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly savedRules = new Map<string, string[]>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -238,7 +242,7 @@ export class NeoService {
         return { accepted: true, created: false, publication };
       },
       append: (input, consultationId) => {
-        if (!consultationId) return this.publications.append(input);
+        if (!consultationId) return this.appendPublication(input);
         const receipt = publicationSettlements.settleWithPublication({
           consultationId,
           answer: input.fullText,
@@ -274,7 +278,7 @@ export class NeoService {
         void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id).catch((error) =>
           this.log.warn('Publish nudge failed', error)
         ),
-      append: (input) => this.publications.append(input),
+      append: (input) => this.appendPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
@@ -329,6 +333,26 @@ export class NeoService {
       offUpdated();
       offDeleted();
     };
+  }
+
+  noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
+    const messageId = caller.neoTurn?.messageId;
+    if (!caller.sessionId || !messageId || !saved.length) return;
+    const key = `${caller.sessionId}:${messageId}`;
+    const noted = [...new Set([...(this.savedRules.get(key) ?? []), ...saved])];
+    this.savedRules.delete(key);
+    this.savedRules.set(key, noted);
+    for (const old of this.savedRules.keys()) {
+      if (this.savedRules.size <= 50) break;
+      this.savedRules.delete(old);
+    }
+  }
+
+  private appendPublication(input: NeoPublicationInput) {
+    const { sessionId, messageId } = input.producerInput;
+    return this.publications.append(
+      withNeoSavedRules(input, this.savedRules.get(`${sessionId}:${messageId}`) ?? [])
+    );
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {

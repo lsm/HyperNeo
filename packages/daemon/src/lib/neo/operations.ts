@@ -74,6 +74,7 @@ import {
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
+import { planNeoSavedRules } from './saved-rules.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -541,10 +542,11 @@ export function createNeoOperations(service: NeoService) {
   const saveRules = path(
     'neo.rule.save',
     (_input: z.infer<typeof SaveRules>) => undefined,
-    ({ rules }) => {
+    ({ rules }, caller) => {
       const neo = service.db.getGlobalSettings().neo;
       const updated = service.db.updateGlobalSettings({ neo: { ...neo, standingRules: rules } });
       service.publishSettings?.(updated);
+      service.noteSavedRules(caller, planNeoSavedRules(neoStandingRules(neo), rules));
       return { ok: true as const, standingRules: rules };
     }
   );
