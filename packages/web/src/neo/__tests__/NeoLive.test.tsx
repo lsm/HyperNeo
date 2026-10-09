@@ -128,7 +128,9 @@ describe('Neo MVP controls', () => {
       />
     );
     expect(screen.getByText('Handed to HyperNeo')).toBeTruthy();
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(
+      screen.queryAllByRole('button').map((button) => button.getAttribute('aria-label'))
+    ).toEqual(['Card actions']);
     expect(action).toHaveBeenCalledTimes(1);
     view.rerender(
       <NeoWorkCard
