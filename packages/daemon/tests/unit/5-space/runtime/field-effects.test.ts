@@ -94,15 +94,15 @@ test.each(['unmet', 'met', 'no-runtime'] as const)(
     };
     const outcome = await updater(mode !== 'no-runtime')(spaceId, target.id, {
       title: 'Edited',
-      dependsOn: [dependency.id, dependency.id],
+      dependsOn: [dependency.id],
       workflowRunId: replacementRunId,
     });
     expect(outcome.task.title).toBe('Edited');
-    expect(outcome.task.dependsOn).toEqual([dependency.id, dependency.id]);
+    expect(outcome.task.dependsOn).toEqual([dependency.id]);
     expect(outcome.handledByRuntime).toBe(mode === 'unmet');
     expect(writes[0]).toEqual({
       title: 'Edited',
-      dependsOn: [dependency.id, dependency.id],
+      dependsOn: [dependency.id],
       workflowRunId: replacementRunId,
     });
     expect(writes).toHaveLength(mode === 'met' ? 2 : 1);
@@ -188,11 +188,11 @@ test('pure completion selection defers pointer write and reports caller event ow
 });
 
 test('task starting during validation preserves its actual run and session for cleanup', async () => {
-  const get = manager.getTask.bind(manager);
+  const list = manager.listTasks.bind(manager);
   let started = false;
-  manager.getTask = async (id) => {
-    const task = await get(id);
-    if (id === dependency.id && !started) {
+  manager.listTasks = async (includeArchived) => {
+    const listed = await list(includeArchived);
+    if (!started) {
       started = true;
       tasks.updateTask(target.id, {
         status: 'in_progress',
@@ -200,7 +200,7 @@ test('task starting during validation preserves its actual run and session for c
         taskAgentSessionId: 'newly-started',
       });
     }
-    return task;
+    return listed;
   };
   let atCleanup: SpaceTask | null = null;
   cleanup.mockImplementation(

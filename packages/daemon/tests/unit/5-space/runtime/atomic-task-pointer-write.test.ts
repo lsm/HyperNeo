@@ -67,12 +67,11 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 function startDuringValidation() {
-  const get = manager.getTask.bind(manager);
-  manager.getTask = async (id) => {
-    const task = await get(id);
-    if (id === dependency.id)
-      tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: runId });
-    return task;
+  const list = manager.listTasks.bind(manager);
+  manager.listTasks = async (includeArchived) => {
+    const listed = await list(includeArchived);
+    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: runId });
+    return listed;
   };
 }
 

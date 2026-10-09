@@ -10,7 +10,7 @@ export const SpaceCreateTaskInputSchema = z
     description: z.string().optional(),
     priority: TaskCoreSchema.shape.priority.optional(),
     labels: z.array(z.string()).optional(),
-    dependsOn: z.array(z.string()).optional(),
+    dependsOn: z.array(z.string().min(1)).optional(),
     draft: z.boolean().optional(),
     preferredWorkflowId: z.string().min(1).optional(),
     workspacePath: z.string().min(1).optional(),

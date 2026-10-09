@@ -62,14 +62,15 @@ test('selector admits only a defined dependency list, retaining empty replacemen
   expect(isTaskDependenciesOnlyUpdate({ dependsOn: [], status: undefined })).toBe(false);
 });
 
-test('retains full task fields, duplicate lists and scoped manager errors', async () => {
-  expect(
-    await editor()({ taskId: target.id, dependsOn: [dependency.id, dependency.id] })
-  ).toMatchObject({
+test('retains full task fields, rejects duplicate lists and scopes manager errors', async () => {
+  expect(await editor()({ taskId: target.id, dependsOn: [dependency.id] })).toMatchObject({
     spaceId,
     description: 'Full task',
-    dependsOn: [dependency.id, dependency.id],
+    dependsOn: [dependency.id],
   });
+  await expect(
+    editor()({ taskId: target.id, dependsOn: [dependency.id, dependency.id] })
+  ).rejects.toThrow('A dependency is listed more than once');
   await expect(editor()({ taskId: 'missing', dependsOn: [] })).rejects.toThrow(
     'Task not found: missing'
   );

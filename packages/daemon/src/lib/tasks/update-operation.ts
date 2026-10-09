@@ -17,7 +17,7 @@ export function createUpdateTaskOperation(
   return defineOperation({
     name: 'task.update',
     description:
-      'Edit available task metadata and dependencies. Space-scoped MCP callers can edit tasks in their owning Space while their session is active. Supply taskId and at least one of title, description, priority, labels or dependsOn. Omitted fields are preserved. dependsOn replaces the whole dependency list rather than adding to it, so send every prerequisite you want to keep; an omitted ID is removed and an empty array clears the list. Dependencies must belong to the same owner as the task; adding an unmet dependency to a running task blocks it and stops its execution. Returns null for missing targets and { accepted: false, reason: "task_update_denied" } when the calling MCP session is not active in the owning Space. Standalone dependency validation returns a rejection code; Space dependency validation raises operation errors and preserves duplicate IDs. dependsOn and the other fields are written together in one update. Does not change lifecycle otherwise.',
+      'Edit available task metadata and dependencies. Space-scoped MCP callers can edit tasks in their owning Space while their session is active. Supply taskId and at least one of title, description, priority, labels or dependsOn. Omitted fields are preserved. dependsOn replaces the whole dependency list rather than adding to it, so send every prerequisite you want to keep; an omitted ID is removed and an empty array clears the list. Dependencies must belong to the same owner as the task; adding an unmet dependency to a running task blocks it and stops its execution. Returns null for missing targets and { accepted: false, reason: "task_update_denied" } when the calling MCP session is not active in the owning Space. Space and standalone tasks share one dependency validator: a self, duplicate or missing dependency, a new dependency on a cancelled or archived task (dependency_ended), and a cycle are rejected. Standalone validation returns the rejection code; Space validation raises it as an operation error. dependsOn and the other fields are written together in one update. Does not change lifecycle otherwise.',
     inputSchema: z
       .object({
         taskId: z.string().min(1),
@@ -43,6 +43,7 @@ export function createUpdateTaskOperation(
         'self_dependency',
         'duplicate_dependency',
         'dependency_not_found',
+        'dependency_ended',
         'dependency_cycle',
       ]),
     ]),
