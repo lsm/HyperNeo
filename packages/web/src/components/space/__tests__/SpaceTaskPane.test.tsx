@@ -1195,6 +1195,20 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
+  it('tells the user how to proceed when the last run cannot be picked up', async () => {
+    mockRunTaskDirectly.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'direct_start_unavailable',
+    });
+    mockTasks.value = [makeTask({ status: 'cancelled', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByText, findByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Run again'));
+    expect(
+      await findByText('This task can’t pick up its last run. Reopen it, then run it.')
+    ).toBeTruthy();
+  });
+
   it('runs a stopped task without a workflow again through task.start', async () => {
     mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
     const { getByTestId, getByText, getByRole } = render(<SpaceTaskPane taskId="task-1" />);

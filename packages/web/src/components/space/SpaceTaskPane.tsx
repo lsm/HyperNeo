@@ -97,9 +97,11 @@ function formatTaskThreadError(err: unknown): string {
   return message || 'Failed to update task thread';
 }
 
-function formatDirectStartRejection(reason: string): string {
+function formatDirectStartRejection(reason: string, rerun = false): string {
   if (reason === 'direct_start_unavailable') {
-    return 'This task cannot be run directly right now.';
+    return rerun
+      ? 'This task can’t pick up its last run. Reopen it, then run it.'
+      : 'This task cannot be run directly right now.';
   }
   return reason;
 }
@@ -695,13 +697,13 @@ export function SpaceTaskPane({
     }
   };
 
-  const handleRunTaskDirectly = async () => {
+  const handleRunTaskDirectly = async (rerun = false) => {
     try {
       setStatusTransitioning(true);
       setThreadSendError(null);
       const result = await spaceStore.runTaskDirectly(task.id);
       if (!result.accepted) {
-        setThreadSendError(formatDirectStartRejection(result.reason));
+        setThreadSendError(formatDirectStartRejection(result.reason, rerun));
       }
     } catch (err) {
       setThreadSendError(formatTaskThreadError(err));
@@ -901,7 +903,7 @@ export function SpaceTaskPane({
   if (canRunAgain(task)) {
     taskActionItems.push({
       label: 'Run again',
-      onClick: () => void handleRunTaskDirectly(),
+      onClick: () => void handleRunTaskDirectly(true),
       disabled: statusTransitioning,
     });
   }
@@ -1059,7 +1061,7 @@ export function SpaceTaskPane({
                     description={resolvedTask?.description ?? task.description ?? ''}
                     canRunDirectly={canRunDirectly}
                     busy={statusTransitioning}
-                    onRun={handleRunTaskDirectly}
+                    onRun={() => void handleRunTaskDirectly()}
                     onPublish={() => handleStatusTransition('open')}
                     onEdit={() => setShowEditTaskModal(true)}
                   />
