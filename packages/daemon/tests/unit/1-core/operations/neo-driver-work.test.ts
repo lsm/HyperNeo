@@ -130,6 +130,16 @@ describe('withWorkGoal', () => {
       'Build it.'
     );
   });
+
+  test('tells a session whose done means merging to run the merge on its own', () => {
+    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    expect(withWorkGoal('Fix it.', merged)).toContain(
+      'run `gh pr merge <number> --squash` as a command of its own'
+    );
+    expect(
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+    ).not.toContain('gh pr merge');
+  });
 });
 
 describe('driverWorkCaller', () => {
