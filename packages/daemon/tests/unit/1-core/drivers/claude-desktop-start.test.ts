@@ -52,7 +52,7 @@ describe('claude-desktop start', () => {
     appearsAfter?: number;
     relayWrites?: boolean;
     twin?: boolean;
-    gitRoot?: string;
+    checkout?: { repo: string; linked: boolean };
   }) {
     const transcripts = join(dir, 'projects', '-focus-dolmen');
     mkdirSync(transcripts, { recursive: true });
@@ -94,7 +94,7 @@ describe('claude-desktop start', () => {
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
-      gitRoot: async () => options.gitRoot ?? null,
+      gitCheckout: async () => options.checkout ?? null,
       newId: () => 'u1',
       sleep: async (ms) => {
         clock += ms;
@@ -154,7 +154,10 @@ describe('claude-desktop start', () => {
   });
 
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
-    await adapter({ appearsAfter: 1, gitRoot: '/focus/dolmen' }).start?.(request, user);
+    await adapter({ appearsAfter: 1, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
+      request,
+      user
+    );
     expect(spawned[0]).toEqual([
       'claude',
       '-p',
@@ -168,6 +171,15 @@ describe('claude-desktop start', () => {
       'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.',
     ]);
     expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
+  });
+
+  test('runs work in a folder that is already a linked worktree without making another', async () => {
+    await adapter({
+      appearsAfter: 1,
+      checkout: { repo: '/focus/main', linked: true },
+    }).start?.(request, user);
+    expect(spawned[0]).not.toContain('--worktree');
+    expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen']);
   });
 
   test('refuses to relay when another live session has the same name', async () => {
