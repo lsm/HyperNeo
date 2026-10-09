@@ -40,9 +40,6 @@ export const currentSpaceSettingsTabSignal = signal<SpaceSettingsTab>('general')
 export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'draft' | 'scheduled';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
 
-export type SpaceTaskViewTab = 'thread';
-export const currentSpaceTaskViewTabSignal = signal<SpaceTaskViewTab>('thread');
-
 export const spaceOverlaySessionIdSignal = signal<string | null>(null);
 export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);

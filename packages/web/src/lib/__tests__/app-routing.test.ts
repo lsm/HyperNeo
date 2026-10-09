@@ -11,7 +11,6 @@ const base: AppRoutingState = {
   spaceViewMode: 'overview',
   spaceConfigureTab: 'general',
   spaceTasksFilterTab: 'active',
-  spaceTaskViewTab: 'thread',
   navSection: 'spaces',
 };
 
@@ -69,7 +68,6 @@ describe('deriveAppExpectedPath', () => {
         ...base,
         spaceViewMode: 'memories',
         spaceTaskId: 't-1',
-        spaceTaskViewTab: 'thread',
       })
     ).toBe('/space/s1/task/t-1');
     expect(deriveAppExpectedPath({ ...base, spaceViewMode: 'memories', sessionId: 'sess-1' })).toBe(

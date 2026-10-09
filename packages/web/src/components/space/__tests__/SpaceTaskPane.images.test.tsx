@@ -16,7 +16,6 @@ const {
   mockSpaceOverlaySessionIdSignal,
   mockSpaceOverlayAgentNameSignal,
   mockSpaceOverlayTaskContextSignal,
-  mockCurrentSpaceTaskViewTabSignal,
   mockCurrentSpaceIdSignal,
   captured,
 } = vi.hoisted(() => ({
@@ -25,7 +24,6 @@ const {
   mockSpaceOverlayTaskContextSignal: {
     value: null as { taskId: string; agentName: string; nodeExecutionId?: string | null } | null,
   },
-  mockCurrentSpaceTaskViewTabSignal: { value: 'thread' as string },
   mockCurrentSpaceIdSignal: { value: null as string | null },
   captured: { onSend: null as unknown },
 }));
@@ -57,9 +55,6 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
     },
     get spaceOverlayPendingTaskIdSignal() {
       return { value: null };
-    },
-    get currentSpaceTaskViewTabSignal() {
-      return mockCurrentSpaceTaskViewTabSignal;
     },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
@@ -151,7 +146,6 @@ describe('SpaceTaskPane — image passthrough', () => {
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayAgentNameSignal.value = null;
     mockSpaceOverlayTaskContextSignal.value = null;
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     mockCurrentSpaceIdSignal.value = null;
   });
 
