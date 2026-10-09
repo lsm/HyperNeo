@@ -9,6 +9,7 @@ import {
 import { getProviderService } from '../provider-service.ts';
 import { classifyNeoRoute, neoRouteTimeoutMs } from './route-classifier.ts';
 import { cosineSimilarity, embedQueryOrNull } from '../../storage/vector-similarity.ts';
+import { fitLines } from './fit-lines.ts';
 
 const MIN_SIMILARITY = 0.55;
 const MIN_MARGIN = 0.05;
@@ -206,14 +207,10 @@ export function renderNeoRouteContext(
     ]),
     ...(withInbox ? [`- ${NEO_INBOX_ID}: ${NEO_INBOX_SUMMARY}`, ...notes(NEO_INBOX_ID)] : []),
   ];
-  const turns: string[] = [];
-  let used = 0;
-  for (const route of recent) {
-    const line = `- ${neoTurnLine(route, titles)}`;
-    if (used + line.length + 1 > TURNS_CHARS) break;
-    turns.push(line);
-    used += line.length + 1;
-  }
+  const turns = fitLines(
+    recent.map((route) => `- ${neoTurnLine(route, titles)}`),
+    TURNS_CHARS
+  );
   return [
     'Topics:',
     ...topics,
