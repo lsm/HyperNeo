@@ -37,7 +37,11 @@ function PublicEntry({
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const publication = entry.kind === 'publication' ? entry.publication : null;
-  const text = ask ? publicAskText(ask.content) : publication!.fullText;
+  const [expanded, setExpanded] = useState(false);
+  const short = publication?.shortText.trim() ?? '';
+  const full = publication?.fullText.trim() ?? '';
+  const hasDetails = !!short && !!full && full !== short;
+  const text = ask ? publicAskText(ask.content) : hasDetails && !expanded ? short : full || short;
   const images =
     ask && Array.isArray(ask.content) ? projectNeoMessageImageSources(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
@@ -98,6 +102,16 @@ function PublicEntry({
             class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
           />
         )}
+        {hasDetails && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+            class="mt-2 text-sm text-fg-muted hover:text-accent hover:underline"
+          >
+            {expanded ? 'Show less' : 'Show details'}
+          </button>
+        )}
         {publication && (
           <>
             {links.length > 0 && (
@@ -127,7 +141,7 @@ function PublicEntry({
       </div>
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
         <CopyButton
-          text={text}
+          text={ask ? text : full || text}
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
           disabled={!text.trim()}
         />
