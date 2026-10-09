@@ -792,11 +792,20 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
-        const recordGoal = <Gate extends object>(gate: Gate, workId: string): Gate => {
-          if ('value' in gate) {
-            service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
-            if (input.askId) service.askRecords.link(input.askId, workId);
-          }
+        const recordGoal = <Gate extends object>(
+          gate: Gate,
+          workId: string
+        ): Gate | { reason: Rejection } => {
+          if (!('value' in gate)) return gate;
+          if (input.askId && service.askRecords.link(input.askId, workId) !== input.askId)
+            return {
+              reason: {
+                ok: false,
+                reason:
+                  'This request key already belongs to work under another ask; use a new one.',
+              },
+            };
+          service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
           return gate;
         };
         if (input.work) {

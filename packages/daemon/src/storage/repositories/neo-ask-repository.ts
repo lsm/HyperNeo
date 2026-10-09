@@ -70,8 +70,8 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
-  link(askId: string, workId: string): void {
-    if (!this.hasTable()) return;
+  link(askId: string, workId: string): string | null {
+    if (!this.hasTable()) return null;
     const linked = this.db.transaction(() => {
       const added = this.db
         .prepare(
@@ -88,6 +88,10 @@ export class NeoAskRepository {
       return true;
     })();
     if (linked) this.notify();
+    const owner = this.db
+      .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')
+      .get(workId) as { askId: string } | undefined;
+    return owner?.askId ?? null;
   }
 
   settle(

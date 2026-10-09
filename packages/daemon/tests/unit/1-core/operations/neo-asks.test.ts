@@ -115,6 +115,19 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('refuses a retried request key under another ask', async () => {
+    const first = await openAsk();
+    const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' })).value!.ask!
+      .id;
+    await propose('card-1', first);
+
+    expect(await propose('card-1', second)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('another ask') },
+    });
+    expect(service.askRecords.get(second)?.workIds).toEqual([]);
+    expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
+  });
+
   test('new work under a blocked ask reopens it', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.settle', { id: askId, outcome: 'blocked', evidence: 'Which API?' });
