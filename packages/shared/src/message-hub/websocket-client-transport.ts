@@ -237,7 +237,7 @@ export class WebSocketClientTransport implements IMessageTransport {
     this.stopPing();
     const ws = this.ws;
     this.ws = null;
-    ws?.close(1001, 'Page hidden');
+    ws?.close(1000, 'Page hidden');
     this.setState('disconnected');
   }
 
