@@ -220,7 +220,8 @@ export function requireReviewBeforeAgentCompletion(
 
 export function requireHandoffBeforeReopen(owned: OwnedTask, input: In): Gate<OwnedTask, Result> {
   const { task } = owned;
-  const reopening = input.status === 'open' || input.status === 'in_progress';
+  const reopening =
+    input.status === 'in_progress' || (input.status === 'open' && task.status !== 'stopped');
   return reopening && task.workflowRunId && task.blockReason === 'agent_handoff_required'
     ? { reason: { accepted: false, reason: 'handoff_required' } }
     : { value: owned };

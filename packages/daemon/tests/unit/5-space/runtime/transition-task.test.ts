@@ -1163,6 +1163,9 @@ describe('requireHandoffBeforeReopen', () => {
         { taskId: task.id, status: 'in_progress' }
       )
     ).toEqual({ reason: { accepted: false, reason: 'handoff_required' } });
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task: parked }, { taskId: task.id, status: 'open' })
+    ).toEqual({ value: { spaceId, task: parked } });
     const unblocked = { ...task, blockReason: 'human_input_requested' as const };
     expect(
       requireHandoffBeforeReopen({ spaceId, task: unblocked }, { taskId: task.id, status: 'open' })
