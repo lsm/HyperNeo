@@ -31,6 +31,26 @@ export interface NeoWorkContinue {
   lastMessage: string;
 }
 
+export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
+
+export interface NeoAsk {
+  id: string;
+  requestKey: string;
+  concernId: string | null;
+  originSessionId: string;
+  originMessageId: string | null;
+  title: string;
+  ask: string;
+  doneWhen: string;
+  doneSource: string;
+  status: NeoAskStatus;
+  outcome: string | null;
+  workIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  settledAt: number | null;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -50,6 +70,7 @@ export interface NeoSnapshot {
   workDrivers?: NeoWorkDriverReceipt[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
+  asks?: NeoAsk[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };
