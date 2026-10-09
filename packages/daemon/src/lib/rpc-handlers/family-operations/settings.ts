@@ -8,6 +8,7 @@ import {
 } from '../../operations/registry.ts';
 import { publishGlobalSettings } from '../settings-handlers.ts';
 import type { FamilyOperationContext } from './context.ts';
+import { usableModels } from '../../usable-models.ts';
 
 export interface DefaultModelDeps {
   readonly read: () => Pick<GlobalSettings, 'model' | 'modelProvider'>;
@@ -28,18 +29,16 @@ const SetInput = z.object({
   provider: z.string().min(1).optional(),
 });
 
-function usableModels(deps: DefaultModelDeps, provider?: string): ModelInfo[] {
-  return deps
-    .models()
-    .filter((entry) => entry.available !== false && (!provider || entry.provider === provider));
-}
-
 export function readDefaultModel(deps: DefaultModelDeps): z.infer<typeof DefaultModel> {
   const settings = deps.read();
   return {
     model: settings.model ?? null,
     provider: settings.modelProvider ?? null,
-    availableModels: usableModels(deps).map(({ id, name, provider }) => ({ id, name, provider })),
+    availableModels: usableModels(deps.models()).map(({ id, name, provider }) => ({
+      id,
+      name,
+      provider,
+    })),
   };
 }
 
@@ -48,7 +47,7 @@ export function admitDefaultModelCaller(caller: OperationCaller): boolean {
 }
 
 export function setDefaultModel(input: z.infer<typeof SetInput>, deps: DefaultModelDeps) {
-  const usable = usableModels(deps, input.provider);
+  const usable = usableModels(deps.models(), input.provider);
   const found = findInModels(usable, input.model);
   if (!found)
     return {
