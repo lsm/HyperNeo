@@ -33,7 +33,12 @@ import {
   createHandoffWorkerSessionOperation,
   type HandoffWorkerSessionDependencies,
 } from './handoff-worker-session.ts';
-import { listScopedTasks, readScopedTask, readScopedTaskByNumber } from './scoped-task-reads.ts';
+import {
+  admitTaskOwner,
+  listScopedTasks,
+  readScopedTask,
+  readScopedTaskByNumber,
+} from './scoped-task-reads.ts';
 import { stampActiveAttempt, stampActiveAttempts } from './direct-attempt-flag.ts';
 import {
   createSetPreferredWorkflowOperation,
@@ -171,6 +176,8 @@ export function createSpaceOperationRegistryProvider(
         members:
           tasks.taskRepo && tasks.nodeExecutionRepo
             ? createListTaskMembersOperation({
+                admitTask: (taskId, caller) =>
+                  'value' in admitTaskOwner(database.getDatabase(), taskId, caller, tasks),
                 taskRepo: tasks.taskRepo,
                 nodeExecutionRepo: tasks.nodeExecutionRepo,
                 readCoreTask: (taskId) => readTaskCore(database.getDatabase(), taskId),

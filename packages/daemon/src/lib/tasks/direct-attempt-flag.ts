@@ -30,7 +30,11 @@ export function stampActiveAttemptList<T extends TaskCore>(db: Database, tasks: 
   );
 }
 
-export function stampActiveAttempts(db: Database, page: TaskListPage): TaskListPage {
+export function stampActiveAttempts<Denial>(
+  db: Database,
+  page: TaskListPage | Denial
+): TaskListPage | Denial {
+  if (!page || typeof page !== 'object' || !('tasks' in page)) return page;
   const tasks = stampActiveAttemptList(db, page.tasks as SpaceTask[]);
   return tasks === page.tasks ? page : { ...page, tasks };
 }

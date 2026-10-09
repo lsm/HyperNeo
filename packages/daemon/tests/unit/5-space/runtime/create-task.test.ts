@@ -113,12 +113,25 @@ test('rpc draft input creates the Space task in draft status', async () => {
   expect((result as { value: SpaceTask }).value.status).toBe('draft');
 });
 
-test('rpc with an unknown spaceId fails with Space not found', async () => {
+test('an agent whose session is no longer active cannot create a Space task', async () => {
+  const caller = worker('ended-member', spaceId, 'Scout');
+  sessions.updateSession('ended-member', { status: 'ended' });
+  const before = tasks.countBySpace(spaceId);
+  expect(await invoke({ title: 'Late' }, caller)).toEqual({
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'Task mutations require an active session in the owning Space',
+    },
+  });
+  expect(tasks.countBySpace(spaceId)).toBe(before);
+});
+
+test('rpc with an unknown spaceId is rejected with Space not found', async () => {
   const result = await invoke({ title: 'X', spaceId: 'missing' }, rpc);
-  expect(result).toMatchObject({
-    kind: 'failed',
-    code: 'execution_failed',
-    message: expect.stringContaining('Space not found'),
+  expect(result).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'Space not found: missing' },
   });
 });
 
@@ -126,10 +139,9 @@ test('a validator rejection fails before any task is created', async () => {
   validateDefaultTaskWorkspace.mockImplementation(async () => 'Workspace unavailable');
   const before = tasks.countBySpace(spaceId);
   const result = await invoke({ title: 'X', spaceId }, rpc);
-  expect(result).toMatchObject({
-    kind: 'failed',
-    code: 'execution_failed',
-    message: 'Workspace unavailable',
+  expect(result).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'Workspace unavailable' },
   });
   expect(tasks.countBySpace(spaceId)).toBe(before);
 });

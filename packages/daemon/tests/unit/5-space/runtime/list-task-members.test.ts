@@ -41,6 +41,7 @@ beforeEach(() => {
     title: 'Task run',
   }).id;
   operation = createListTaskMembersOperation({
+    admitTask: () => true,
     taskRepo,
     nodeExecutionRepo,
     readCoreTask: (id) => readTaskCore(db, id),
@@ -280,6 +281,23 @@ test('a legacy done row from before the idle rename still reads instead of faili
   expect(outcome.kind).toBe('completed');
   const value = (outcome as { value: { members: Array<{ status: string }> } }).value;
   expect(value.members[0].status).toBe('idle');
+});
+
+test('a caller the scope gate refuses reads null, like task.get', async () => {
+  const task = taskRepo.createTask({ spaceId, title: 'T', description: '' });
+  const refused = createListTaskMembersOperation({
+    admitTask: () => false,
+    taskRepo,
+    nodeExecutionRepo,
+    readCoreTask: (id) => readTaskCore(db, id),
+  });
+  const outcome = await invokeOperation(
+    catalog({ members: refused }),
+    'task.member.list',
+    { taskId: task.id },
+    { source: 'mcp', sessionId: 'outsider' }
+  );
+  expect(outcome).toEqual({ kind: 'completed', value: null });
 });
 
 test('an unknown input field is refused rather than silently dropped', async () => {

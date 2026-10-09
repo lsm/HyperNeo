@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 export const NodeExecutionSchema = z.object({
   id: z.string(),
@@ -32,6 +32,7 @@ export interface TaskMemberRepositories {
 }
 
 export interface ListTaskMembersDependencies {
+  admitTask: (taskId: string, caller: OperationCaller) => boolean;
   taskRepo: NonNullable<TaskMemberRepositories['taskRepo']>;
   readCoreTask: (taskId: string) => TaskCore | null;
   nodeExecutionRepo: NonNullable<TaskMemberRepositories['nodeExecutionRepo']>;
@@ -78,7 +79,7 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
   return defineOperation({
     name: 'task.member.list',
     description:
-      'List the workflow members working a task. One record per execution slot, which is a workflow node paired with one agent, so a node configured with several agents contributes several members. Slots come back oldest first by creation time and then by id, each with the agent name, agent id, agent session id, per-slot status, result and timestamps. Returns null when the task does not exist, and an empty list when the task exists but is not backed by a workflow run.',
+      'List the workflow members working a task. One record per execution slot, which is a workflow node paired with one agent, so a node configured with several agents contributes several members. Slots come back oldest first by creation time and then by id, each with the agent name, agent id, agent session id, per-slot status, result and timestamps. Returns null when the task does not exist or belongs to a Space the caller is not in, and an empty list when the task exists but is not backed by a workflow run.',
     inputSchema: z.object({ taskId: z.string().min(1) }).strict(),
     resultSchema: z
       .object({
@@ -87,7 +88,9 @@ export function createListTaskMembersOperation(deps: ListTaskMembersDependencies
         members: z.array(NodeExecutionSchema),
       })
       .nullable(),
-    execute: async (input) =>
-      readTaskMembers(deps.taskRepo, deps.readCoreTask, deps.nodeExecutionRepo, input.taskId),
+    execute: async (input, caller) =>
+      deps.admitTask(input.taskId, caller)
+        ? readTaskMembers(deps.taskRepo, deps.readCoreTask, deps.nodeExecutionRepo, input.taskId)
+        : null,
   });
 }
