@@ -56,6 +56,16 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /```(system|instruction)/i, name: 'code-block-instruction' },
 ];
 
+export function securityAgentEnv(
+  base: Record<string, string | undefined>,
+  apiKeyType: SecurityCheckOptions['apiKeyType'],
+  apiKey: string
+): Record<string, string | undefined> {
+  return apiKeyType === 'oauth'
+    ? { ...base, CLAUDE_CODE_OAUTH_TOKEN: apiKey }
+    : { ...base, ANTHROPIC_API_KEY: apiKey };
+}
+
 export class SecurityAgent {
   private readonly model: string;
   private readonly timeout: number;
@@ -159,46 +169,26 @@ export class SecurityAgent {
         ? `${contextInfo.join('\n')}\n\nContent to analyze:\n${content}`
         : `Analyze the following content:\n${content}`;
 
-    const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    if (this.options.apiKeyType === 'oauth') {
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
-    } else {
-      process.env.ANTHROPIC_API_KEY = this.options.apiKey;
-    }
+    const queryObj = query({
+      prompt: userPrompt,
+      options: {
+        model: this.model,
+        cwd: '/tmp',
+        maxTurns: 1,
+        systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+        env: securityAgentEnv(process.env, this.options.apiKeyType, this.options.apiKey),
+      },
+    });
 
-    let queryObj: ReturnType<typeof query>;
-    try {
-      queryObj = query({
-        prompt: userPrompt,
-        options: {
-          model: this.model,
-          cwd: '/tmp',
-          maxTurns: 1,
-          systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-        },
-      });
-    } finally {
-      if (originalApiKey === undefined) {
-        delete process.env.ANTHROPIC_API_KEY;
-      } else {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
-      }
-      if (originalOAuthToken === undefined) {
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      } else {
-        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
-      }
-    }
-
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       let responseText = '';
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI security check timeout')), this.timeout)
-      );
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('AI security check timeout')), this.timeout);
+      });
 
       const collectPromise = (async () => {
         for await (const message of queryObj) {
@@ -234,6 +224,7 @@ export class SecurityAgent {
         injectionRisk: classification.injectionRisk,
       };
     } finally {
+      clearTimeout(timer);
       queryObj.interrupt().catch(() => {});
     }
   }
