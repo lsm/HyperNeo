@@ -62,6 +62,7 @@ import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
+  isNeoCardAsk,
   NeoAskSchema,
   planNeoCardAsk,
   projectNeoSnapshotAsks,
@@ -891,13 +892,16 @@ export function createNeoOperations(service: NeoService) {
     .pipe(
       (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
         const planned = planNeoCardAsk(input, origin);
+        const filed = service.askRecords.forWork(receipt.work.id);
+        const opened =
+          planned && !filed
+            ? service.askRecords.open({ ...planned, id: crypto.randomUUID() })
+            : null;
         return {
           askId:
             input.askId ??
-            service.askRecords.forWork(receipt.work.id)?.id ??
-            (planned
-              ? service.askRecords.open({ ...planned, id: crypto.randomUUID() })?.id
-              : undefined),
+            filed?.id ??
+            (planned && isNeoCardAsk(opened, planned) ? opened?.id : undefined),
         };
       },
       ['input', 'origin', 'admission'],

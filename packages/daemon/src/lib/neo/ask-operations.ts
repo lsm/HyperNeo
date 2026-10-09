@@ -98,7 +98,7 @@ export function planNeoCardAsk(
 ): Omit<NeoAskInput, 'id'> | null {
   if (input.askId || !input.doneWhen) return null;
   return {
-    requestKey: `${origin.originSessionId}:card:${input.requestKey}`,
+    requestKey: `card:${origin.originSessionId}:${input.requestKey}`,
     concernId: input.concernId,
     originSessionId: origin.originSessionId,
     originMessageId: origin.originMessageId,
@@ -107,6 +107,15 @@ export function planNeoCardAsk(
     doneWhen: input.doneWhen,
     doneSource: 'card',
   };
+}
+
+export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'>): boolean {
+  return (
+    !!ask &&
+    (Object.keys(planned) as (keyof typeof planned)[]).every(
+      (field) => ask[field] === planned[field]
+    )
+  );
 }
 
 export function projectNeoSnapshotAsks(asks: readonly NeoAsk[], settledLimit: number): NeoAsk[] {

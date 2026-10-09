@@ -7,6 +7,7 @@ import {
   isNeoAskReplay,
   planNeoAskWorkStops,
   planNeoCardAsk,
+  isNeoCardAsk,
   requireNeoAskReceipt,
   requireNeoAskSettlement,
   requireNeoAskWritten,
@@ -442,7 +443,7 @@ describe('planNeoCardAsk', () => {
     expect(planNeoCardAsk({ ...card, askId: 'a1' }, origin)).toBe(null);
     expect(planNeoCardAsk({ ...card, doneWhen: undefined }, origin)).toBe(null);
     expect(planNeoCardAsk(card, origin)).toEqual({
-      requestKey: 'root:card:k',
+      requestKey: 'card:root:k',
       concernId: null,
       originSessionId: 'root',
       originMessageId: 'm1',
@@ -452,5 +453,18 @@ describe('planNeoCardAsk', () => {
       doneSource: 'card',
     });
     expect(planNeoCardAsk({ ...card, goal: 'Their words' }, origin)?.ask).toBe('Their words');
+  });
+});
+
+describe('isNeoCardAsk', () => {
+  test('accepts only the ask the card planned, never one that shares its key', () => {
+    const planned = planNeoCardAsk(
+      { requestKey: 'k', concernId: null, title: 'Fix it', doneWhen: '- merged' },
+      { originSessionId: 'root', originMessageId: 'm1' }
+    )!;
+    const opened = { ...ask, ...planned };
+    expect(isNeoCardAsk(opened, planned)).toBe(true);
+    expect(isNeoCardAsk({ ...opened, doneWhen: '- deployed' }, planned)).toBe(false);
+    expect(isNeoCardAsk(null, planned)).toBe(false);
   });
 });
