@@ -511,7 +511,7 @@ describe('Neo work with a drivers target', () => {
 
   test('checks work under an ask against the ask when the card has no checklist', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
-    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
       value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Fixed and merged.' },
     }));
@@ -541,6 +541,9 @@ describe('Neo work with a drivers target', () => {
       expect(notes[0]).toContain('This work belongs to ask ask-1');
       expect(notes[0]).toContain('"doneWhen":"- merged to dev"');
       expect(notes[0]).toContain('"goal":"Fix the login bug"');
+      expect(JSON.stringify(calls.find((call) => call.name === 'work.start')?.input)).toContain(
+        'Done when:\\n- merged to dev'
+      );
     } finally {
       db.close();
     }
