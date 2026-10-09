@@ -81,18 +81,22 @@ export async function firstAssistantText(
   return null;
 }
 
-function readFirstAssistantText(
+async function readFirstAssistantText(
   messages: AsyncIterable<SDKMessage>,
   request: OneShotModelRequest
-): Promise<string | null> {
-  return firstAssistantText(messages, request.separator);
+): Promise<{ text: string | null }> {
+  return { text: await firstAssistantText(messages, request.separator) };
 }
 
-export const runOneShotModel = (superpipe({})('run-one-shot-model') as PipelineAPI)
+const oneShotModel = (superpipe({})('run-one-shot-model') as PipelineAPI)
   .input('request')
   .pipe(readOneShotRuntime, undefined, 'runtime')
   .pipe(buildOneShotQueryOptions, ['request', 'runtime'], 'options')
   .pipe(loadSdkQuery, 'request', 'query')
   .pipe(callOneShotModel, ['query', 'request', 'options'], 'messages')
-  .pipe(readFirstAssistantText, ['messages', 'request'], 'text')
-  .endAsync('text') as (request: OneShotModelRequest) => Promise<string | null>;
+  .pipe(readFirstAssistantText, ['messages', 'request'], 'reply')
+  .endAsync('reply') as (request: OneShotModelRequest) => Promise<{ text: string | null }>;
+
+export async function runOneShotModel(request: OneShotModelRequest): Promise<string | null> {
+  return (await oneShotModel(request)).text;
+}

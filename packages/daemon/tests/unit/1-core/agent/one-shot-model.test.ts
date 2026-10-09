@@ -82,4 +82,14 @@ describe('runOneShotModel', () => {
     expect(text).toBe('answer');
     expect(calls.map(({ prompt, options }) => [prompt, options?.model])).toEqual([['p', 'haiku']]);
   });
+
+  test('returns null, not undefined, when the model sends no text', async () => {
+    const text = await runOneShotModel(
+      request({
+        query: (() =>
+          stream({ type: 'result' } as SDKMessage)) as unknown as OneShotModelRequest['query'],
+      })
+    );
+    expect(text).toBeNull();
+  });
 });
