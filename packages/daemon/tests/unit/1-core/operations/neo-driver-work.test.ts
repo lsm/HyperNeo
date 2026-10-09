@@ -20,7 +20,7 @@ import {
   readDriverSendBaseline,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
-import type { NeoWorkPr } from '../../../../src/lib/neo/work-prs.ts';
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
@@ -543,6 +543,15 @@ describe('Neo work with a drivers target', () => {
 
       await refreshLater();
       expect(notes).toEqual([]);
+      const snapshot = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.snapshot',
+        {},
+        { source: 'rpc', principal: 'local' }
+      );
+      expect(snapshot).toMatchObject({
+        value: { workPrs: [{ workId: 'work-1', prs: [running], waiting: true }] },
+      });
 
       prs = [{ ...running, checks: 'passing', review: 'approved' }];
       await refreshLater();

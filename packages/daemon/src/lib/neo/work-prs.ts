@@ -1,14 +1,9 @@
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { runGhJson } from '../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
 
-export type NeoWorkPr = {
-  url: string;
-  state: 'OPEN' | 'MERGED' | 'CLOSED';
-  checks: 'pending' | 'failing' | 'passing' | 'none';
-  review: 'approved' | 'changes_requested' | 'none';
-};
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;

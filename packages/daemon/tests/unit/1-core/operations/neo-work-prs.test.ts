@@ -6,8 +6,8 @@ import {
   planNeoWorkPrRefresh,
   readGithubPrs,
   summarizeNeoWorkPr,
-  type NeoWorkPr,
 } from '../../../../src/lib/neo/work-prs.ts';
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
 const head = 'abc123';
 const ghPr = (overrides: Record<string, unknown> = {}) => ({

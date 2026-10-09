@@ -1,4 +1,4 @@
-import type { NeoWorkPr } from '../../lib/neo/work-prs.ts';
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
 export interface NeoWorkPrRow {
@@ -43,6 +43,19 @@ export class NeoWorkPrRepository {
       )
       .run(workId, JSON.stringify(prs), prs.some((pr) => pr.state === 'OPEN') ? 1 : 0, at);
     return this.get(workId);
+  }
+
+  list(workIds: readonly string[]): NeoWorkPrRow[] {
+    if (!this.hasTable() || workIds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT ${columns} FROM neo_work_prs WHERE work_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(workIds)) as StoredRow[];
+    return rows.map(({ prsJson, ...rest }) => ({
+      ...rest,
+      prs: JSON.parse(prsJson) as NeoWorkPr[],
+    }));
   }
 
   markDelivered(workId: string, signature: string): void {

@@ -4,6 +4,7 @@ import {
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkContinue,
   type NeoWorkGoal,
+  type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   PlaceSchema,
@@ -18,7 +19,6 @@ import {
 } from '../drivers/types.ts';
 import { WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import type { NeoWorkPr } from './work-prs.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
