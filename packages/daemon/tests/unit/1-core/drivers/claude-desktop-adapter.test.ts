@@ -582,6 +582,39 @@ describe('claudeTranscriptState', () => {
     });
   });
 
+  test('counts a peer message queued while the session was busy as input', () => {
+    const queued = (timestamp: string, origin: Record<string, unknown>) =>
+      JSON.stringify({
+        type: 'attachment',
+        timestamp,
+        attachment: {
+          type: 'queued_command',
+          prompt:
+            '<cross-session-message from="uds:/tmp/cc-socks/55057.sock">…</cross-session-message>',
+          commandMode: 'prompt',
+          origin,
+          timestamp,
+          isMeta: true,
+        },
+      });
+    const state = claudeTranscriptState([
+      queued('2026-10-09T01:31:08.369Z', {
+        kind: 'peer',
+        from: 'uds:/tmp/cc-socks/55057.sock',
+        name: 'HyperNeo relay',
+        body: 'Scope addition from the user: a pushed branch alone does not count as finished.',
+      }),
+      queued('2026-10-09T01:32:00.000Z', { kind: 'human' }),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: 'x' } }),
+    ]);
+    expect(state.inputs).toEqual([
+      {
+        at: Date.parse('2026-10-09T01:31:08.369Z'),
+        text: 'Scope addition from the user: a pushed branch alone does not count as finished.',
+      },
+    ]);
+  });
+
   test('lists the messages after since, typed, relayed and said', () => {
     const entry = (timestamp: string, fields: Record<string, unknown>) =>
       JSON.stringify({ timestamp, ...fields });

@@ -367,10 +367,21 @@ interface ClaudeTranscriptEntry {
   isMeta?: unknown;
   turnOrigin?: unknown;
   origin?: unknown;
+  attachment?: unknown;
   message?: { content?: unknown };
 }
 
+function queuedPeerText(entry: ClaudeTranscriptEntry): string | null {
+  const attachment = entry.attachment as
+    | { type?: unknown; origin?: { kind?: unknown; body?: unknown } }
+    | undefined;
+  if (entry.type !== 'attachment' || attachment?.type !== 'queued_command') return null;
+  if (attachment.origin?.kind !== 'peer') return null;
+  return typeof attachment.origin.body === 'string' ? attachment.origin.body : null;
+}
+
 function claudeInputText(entry: ClaudeTranscriptEntry): string | null {
+  if (entry.type === 'attachment') return queuedPeerText(entry);
   if (entry.type !== 'user' || (entry.isMeta && !entry.turnOrigin && !entry.origin)) return null;
   const body = (entry.origin as { body?: unknown } | undefined)?.body;
   if (typeof body === 'string') return body;
