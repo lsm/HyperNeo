@@ -16,6 +16,7 @@ export interface ModelInfo {
   releaseDate: string;
   available: boolean;
   thinkingModes?: 'off' | 'on' | 'granular';
+  effortLevels?: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>;
 }
 
 export const AUTO_COMPACT_PERCENT_DEFAULT = 90;
