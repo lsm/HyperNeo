@@ -1208,7 +1208,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(dividers.length).toBeGreaterThan(0);
   });
 
-  it('hides done and cancelled transitions when pendingCheckpointType is task_completion', () => {
+  it('leaves done to the Approve button but offers Cancel and Archive for a task in review', () => {
     mockTasks.value = [
       makeTask({
         status: 'review',
@@ -1220,7 +1220,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     const menu = getByRole('menu');
     expect(menu.textContent).not.toContain('Approve');
-    expect(menu.textContent).not.toContain('Cancel');
+    expect(menu.textContent).toContain('Cancel');
     expect(menu.textContent).toContain('Reopen');
     expect(menu.textContent).toContain('Archive');
   });
