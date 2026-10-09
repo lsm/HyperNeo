@@ -608,6 +608,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobProcessor: deps.jobProcessor,
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTaskClaimed: emitClaimedTaskUpdate,
+    onTaskActivated: emitClaimedTaskUpdate,
   });
 
   registerDirectOutcomeJobs({

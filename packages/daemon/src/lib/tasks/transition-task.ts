@@ -7,7 +7,7 @@ import { SpaceRepository } from '../../storage/repositories/space-repository.ts'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { availableTaskSlots, occupiesTaskSlot } from './capacity.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots, occupiesTaskSlot } from './capacity.ts';
 import {
   type SpaceTaskManager,
   StaleTaskGuardError,
@@ -275,8 +275,8 @@ export function requireFreeTaskSlot(
   )
     return { value: decided };
   const space = new SpaceRepository(deps.db).getSpace(spaceId);
-  const tasks = new SpaceTaskRepository(deps.db).listBySpace(spaceId, false);
-  return availableTaskSlots(space, tasks) > 0
+  const running = new SpaceTaskRepository(deps.db).countByStatuses(spaceId, TASK_SLOT_STATUSES);
+  return availableTaskSlots(space, running) > 0
     ? { value: decided }
     : { reason: 'space_at_task_capacity' };
 }
