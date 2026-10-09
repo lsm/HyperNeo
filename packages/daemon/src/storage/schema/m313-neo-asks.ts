@@ -6,7 +6,7 @@ export function runMigration313(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_asks (
     id TEXT PRIMARY KEY,
     request_key TEXT NOT NULL UNIQUE,
-    concern_id TEXT,
+    concern_id TEXT REFERENCES neo_concerns(id),
     origin_session_id TEXT NOT NULL,
     origin_message_id TEXT,
     title TEXT NOT NULL,
