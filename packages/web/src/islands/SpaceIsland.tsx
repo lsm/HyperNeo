@@ -271,7 +271,6 @@ export default function SpaceIsland({
       <>
         <GlassRouteShell
           pageTitle="Tasks"
-          appearance="hero"
           surfaceKey="tasks"
           testId="space-tasks-view"
           baseLayerProps={baseLayerProps}
@@ -327,7 +326,6 @@ export default function SpaceIsland({
       <>
         <GlassRouteShell
           pageTitle="Goals"
-          appearance="hero"
           surfaceKey="goals"
           testId="space-goals-view"
           baseLayerProps={baseLayerProps}
@@ -345,7 +343,6 @@ export default function SpaceIsland({
       <>
         <GlassRouteShell
           pageTitle="Evolve"
-          appearance="hero"
           surfaceKey="forge"
           testId="space-forge-view"
           baseLayerProps={baseLayerProps}
@@ -384,7 +381,6 @@ export default function SpaceIsland({
       <>
         <GlassRouteShell
           pageTitle="Agents"
-          appearance="hero"
           surfaceKey="agents"
           testId="space-agents-view"
           baseLayerProps={baseLayerProps}
@@ -406,7 +402,6 @@ export default function SpaceIsland({
       <>
         <GlassRouteShell
           pageTitle="Memories"
-          appearance="hero"
           surfaceKey="memories"
           testId="space-memories-view"
           baseLayerProps={baseLayerProps}
@@ -427,7 +422,7 @@ export default function SpaceIsland({
           data-testid="space-configure-view"
           {...baseLayerProps}
         >
-          <SpacePageHeader pageTitle="Settings" />
+          <SpacePageHeader pageTitle="Space settings" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceConfigurePage space={space} />
@@ -444,7 +439,6 @@ export default function SpaceIsland({
       {overlay}
       <GlassRouteShell
         pageTitle="Overview"
-        subtitle="Space operations and recent activity"
         surfaceKey="overview"
         testId="space-overview-view"
         baseLayerProps={baseLayerProps}

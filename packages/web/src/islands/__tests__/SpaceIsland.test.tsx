@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const LAZY_LOAD_TIMEOUT = 5000;
@@ -487,7 +487,7 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
 
 describe('SpaceIsland — route-driven views', () => {
   it('renders the overview view without the legacy top tab bar', async () => {
-    const { getByTestId, getByText, queryByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <SpaceIsland spaceId="space-1" viewMode="overview" />
     );
     await waitFor(
@@ -501,7 +501,7 @@ describe('SpaceIsland — route-driven views', () => {
       'glass-workspace'
     );
     expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
-    expect(getByText('Space operations and recent activity')).toBeTruthy();
+    expect(getByTestId('space-page-header').className).toContain('h-[52px]');
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });
 
@@ -522,6 +522,8 @@ describe('SpaceIsland — route-driven views', () => {
     const configureView = getByTestId('space-configure-view');
     expect(configureView).toBeTruthy();
     expect(configureView.hasAttribute('data-overview-surface')).toBe(false);
+    expect(getByTestId('space-page-header').className).toContain('h-[52px]');
+    expect(getByTestId('space-page-header').textContent).toContain('Space settings');
   });
 
   it('renders the configure tabs including both template tabs', async () => {
@@ -811,6 +813,7 @@ describe('SpaceIsland — agents view', () => {
     const agentsView = await findByTestId('space-agents-view');
     expect(agentsView.getAttribute('data-agents-surface')).toBe('glass-workspace');
     expect(getByRole('heading', { name: 'Agents' })).toBeTruthy();
+    expect(within(agentsView).getByTestId('space-page-header').className).toContain('h-[52px]');
   });
 
   it('renders the agent chat for the agent route', async () => {

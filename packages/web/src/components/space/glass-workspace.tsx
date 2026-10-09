@@ -8,8 +8,6 @@ type GlassSurfaceKey = 'overview' | 'agents' | 'goals' | 'memories' | 'forge' | 
 
 interface GlassRouteShellProps {
   pageTitle: string;
-  subtitle?: string;
-  appearance?: 'default' | 'hero';
   surfaceKey: GlassSurfaceKey;
   testId: string;
   baseLayerProps?: { inert?: boolean; 'aria-hidden'?: boolean };
@@ -20,8 +18,6 @@ interface GlassRouteShellProps {
 
 export function GlassRouteShell({
   pageTitle,
-  subtitle,
-  appearance,
   surfaceKey,
   testId,
   baseLayerProps = {},
@@ -36,12 +32,7 @@ export function GlassRouteShell({
       {...{ [`data-${surfaceKey}-surface`]: 'glass-workspace' }}
       {...baseLayerProps}
     >
-      <SpacePageHeader
-        pageTitle={pageTitle}
-        subtitle={subtitle}
-        appearance={appearance}
-        actions={actions}
-      />
+      <SpacePageHeader pageTitle={pageTitle} actions={actions} />
       <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
         <Suspense fallback={fallback}>{children}</Suspense>
       </div>
