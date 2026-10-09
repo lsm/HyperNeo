@@ -56,6 +56,8 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('ask one short clarifying question');
     expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');
+    expect(prompt).toContain('neo.rule.save {rules}');
+    expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
   });
 
   let sqlite: SQLite;
