@@ -886,6 +886,151 @@ describe('OpenAI Chat Completions bridge server', () => {
       ).not.toHaveProperty('reasoning_effort');
     });
 
+    it.each([
+      ['o1', 'low'],
+      ['o3', 'low'],
+      ['o3-mini', 'low'],
+      ['o4-mini-2025-04-16', 'low'],
+      ['gpt-5', 'minimal'],
+      ['gpt-5-mini', 'minimal'],
+      ['gpt-5-nano-2025-08-07', 'minimal'],
+      ['gpt-5.1', 'none'],
+      ['gpt-5.2', 'none'],
+      ['gpt-5.4', 'none'],
+      ['gpt-5.5-2026-04-23', 'none'],
+    ] as const)('sends the lowest effort for %s when thinking is off', (model, effort) => {
+      const build = _openAIChatBridgeTesting.buildChatRequest;
+      for (const thinking of [undefined, { type: 'disabled' as const }]) {
+        const body = { model, messages: [], thinking };
+        expect(build(body, model, true, false, true).reasoning_effort).toBe(effort);
+        expect(build(body, model, true, false, false)).not.toHaveProperty('reasoning_effort');
+      }
+    });
+
+    it.each([
+      'gpt-4o',
+      'unknown-reasoning-model',
+      'glm-5.3',
+      'o1-mini',
+      'o1-preview',
+      'o3-pro',
+      'gpt-5-pro',
+      'gpt-5-chat-latest',
+      'gpt-5.1-codex',
+      'gpt-5.2-custom',
+      'gpt-99',
+      'constructor',
+    ])('omits effort for %s when thinking is off and support is unknown', (model) => {
+      const build = _openAIChatBridgeTesting.buildChatRequest;
+      for (const thinking of [undefined, { type: 'disabled' as const }]) {
+        expect(
+          build({ model, messages: [], thinking }, model, true, false, true)
+        ).not.toHaveProperty('reasoning_effort');
+      }
+    });
+
+    it('preserves explicit thinking-off capability configuration', () => {
+      const build = _openAIChatBridgeTesting.buildChatRequest;
+      expect(
+        build(
+          { model: 'custom', messages: [] },
+          'custom',
+          true,
+          false,
+          true,
+          false,
+          undefined,
+          'low'
+        ).reasoning_effort
+      ).toBe('low');
+      expect(
+        build(
+          { model: 'gpt-5.1', messages: [] },
+          'gpt-5.1',
+          true,
+          false,
+          true,
+          false,
+          undefined,
+          'low'
+        ).reasoning_effort
+      ).toBe('low');
+    });
+
+    it.each(['gpt-5', 'gpt-5.1', 'o3', 'unknown-reasoning-model'])(
+      'keeps enabled thinking unchanged for %s',
+      (model) => {
+        const build = _openAIChatBridgeTesting.buildChatRequest;
+        for (const [budget, effort] of [
+          [8000, 'low'],
+          [16000, 'medium'],
+          [32000, 'high'],
+        ] as const) {
+          const body = {
+            model,
+            messages: [],
+            thinking: { type: 'enabled' as const, budget_tokens: budget },
+          };
+          expect(build(body, model, true, false, true).reasoning_effort).toBe(effort);
+          expect(
+            build(body, model, true, false, true, false, undefined, 'none').reasoning_effort
+          ).toBe(effort);
+          expect(build(body, model, true, false, false)).not.toHaveProperty('reasoning_effort');
+        }
+        const adaptive = { model, messages: [], thinking: { type: 'adaptive' as const } };
+        expect(build(adaptive, model, true, false, true).reasoning_effort).toBe('medium');
+      }
+    );
+
+    it.skipIf(!isBun)(
+      'sends gated thinking-off effort in upstream requests and after clearing session thinking',
+      async () => {
+        const captured: Array<Record<string, unknown>> = [];
+        const server = await createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test/v1',
+          thinkingSupported: true,
+          fetchImpl: mock(async (_url: string, init?: RequestInit) => {
+            captured.push(JSON.parse(String(init?.body)));
+            return new Response(
+              sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+              { status: 200 }
+            );
+          }) as unknown as typeof fetch,
+        });
+        servers.push(server);
+        const call = async (model: string, thinking?: { type: 'disabled' }) => {
+          const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer custom-endpoint:off-test',
+            },
+            body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], thinking }),
+          });
+          expect(response.status).toBe(200);
+          await response.text();
+        };
+        await call('gpt-5', { type: 'disabled' });
+        await call('gpt-4o', { type: 'disabled' });
+        await call('gpt-5.1');
+        await call('unknown-reasoning-model');
+        server.setSessionThinkingConfig?.('off-test', { type: 'enabled', budget_tokens: 16000 });
+        await call('gpt-5.1');
+        server.setSessionThinkingConfig?.('off-test', undefined);
+        await call('gpt-5.1');
+        expect(captured.map((request) => request.reasoning_effort)).toEqual([
+          'minimal',
+          undefined,
+          'none',
+          undefined,
+          'medium',
+          'none',
+        ]);
+        expect(captured[1]).not.toHaveProperty('reasoning_effort');
+        expect(captured[3]).not.toHaveProperty('reasoning_effort');
+      }
+    );
+
     it.skipIf(!isBun)('forwards reasoning_effort when thinkingSupported=true', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
@@ -911,7 +1056,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           thinking: { type: 'enabled', budget_tokens: 8000 },
         }),
       });
-      expect(captured.reasoning_effort).toBe('medium');
+      expect(captured.reasoning_effort).toBe('low');
     });
 
     it.skipIf(!isBun)('omits reasoning_effort when thinkingSupported=false (default)', async () => {
@@ -1303,7 +1448,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           }),
         });
         expect(response.status).toBe(200);
-        expect(capturedRequest.reasoning_effort).toBe('medium');
+        expect(capturedRequest.reasoning_effort).toBe('low');
       }
     );
 
