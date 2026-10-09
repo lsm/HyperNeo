@@ -749,14 +749,16 @@ export class NeoService {
       this.driverTargets.recordLive(work.id, cardStatus, live.link, live.remoteLink)
     )
       this.notifyChanged();
-    const settled = readDriverSettlement(
-      work,
-      outcome,
-      Date.now(),
-      startedAt,
-      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
-      sent?.opening ?? (messageOpening(work.instruction) || null)
-    );
+    const settled =
+      landed === null &&
+      readDriverSettlement(
+        work,
+        outcome,
+        Date.now(),
+        startedAt,
+        !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
+        sent?.opening ?? (messageOpening(work.instruction) || null)
+      );
     if (!settled) {
       await this.noteDriverStall(work, outcome);
       return this.noteDriverNeedsYou(work, ref, outcome);

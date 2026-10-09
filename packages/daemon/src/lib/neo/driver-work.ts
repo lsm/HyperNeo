@@ -391,6 +391,25 @@ export function driverExchangeReport(
   return [...head, parts[0], `(${trimmed} messages in between trimmed.)`, ...tail].join('\n\n');
 }
 
+export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
+
+export const NEO_WORK_UNANCHORED_NOTE =
+  "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the card. Check it against the card before telling the human.";
+
+export function readUnanchoredSettlement(
+  work: Pick<NeoWork, 'updatedAt'>,
+  value: { status: string; lastActivityAt: number; lastReplyAt?: number; lastReply?: string },
+  now: number
+): { status: 'reported'; report: string } | null {
+  if (value.status !== 'done' || value.lastReplyAt === undefined) return null;
+  if (value.lastReplyAt <= work.updatedAt) return null;
+  if (now - value.lastActivityAt < NEO_WORK_UNANCHORED_SETTLE_MS) return null;
+  return {
+    status: 'reported',
+    report: `${NEO_WORK_UNANCHORED_NOTE}\n\n${value.lastReply || 'It finished without a written reply.'}`,
+  };
+}
+
 export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,
@@ -408,7 +427,8 @@ export function readDriverSettlement(
       : null;
   }
   const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.data.value;
-  if (requireFresh && startedAt === null) return null;
+  if (requireFresh && startedAt === null)
+    return readUnanchoredSettlement(work, reply.data.value, now);
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   const said =
