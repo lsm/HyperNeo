@@ -1,7 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import { cleanup, fireEvent, render } from '@testing-library/preact';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskCard } from '../NeoAskCard.tsx';
 import { describeNeoAsk, groupNeoAsks, NEO_ASK_NEEDS_YOU_LABEL } from '../neo-asks.ts';
 import type { NeoConcernBoard } from '../neo-concern-board.ts';
@@ -123,5 +123,22 @@ describe('NeoAskCard', () => {
     expect(card.queryByText('Step card')).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Show steps · 1' }));
     expect(card.getByText('Step card')).toBeTruthy();
+  });
+
+  it('closes an open ask as done or dropped from its menu, and offers nothing once settled', () => {
+    const settle = vi.fn();
+    for (const item of ['Mark done', 'Drop this ask']) {
+      const card = render(
+        <NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} onSettle={settle} />
+      );
+      fireEvent.click(card.getByRole('button', { name: 'Ask actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+      cleanup();
+    }
+    expect(settle.mock.calls).toEqual([['achieved'], ['abandoned']]);
+    const settled = render(
+      <NeoAskCard view={describeNeoAsk(ask('c', 'achieved', []), [])} onSettle={settle} />
+    );
+    expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
   });
 });
