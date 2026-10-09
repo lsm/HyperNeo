@@ -250,6 +250,8 @@ describe('NeoLive durable conversation activation', () => {
     expect(await within(publicView()).findByText('a-reply', { selector: 'strong' })).toBeTruthy();
     expect(screen.queryByText('PRIVATE SDK EXECUTION')).toBeNull();
     expect(screen.queryByText(/Open full history/)).toBeNull();
+    for (const more of within(publicView()).getAllByRole('button', { name: 'Show details' }))
+      fireEvent.click(more);
     expect((await screen.findAllByRole('table')).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: 'Full a-reply' })).toBeTruthy();
     expect(within(publicView()).getAllByRole('img', { name: 'Message accepted' })).toHaveLength(3);

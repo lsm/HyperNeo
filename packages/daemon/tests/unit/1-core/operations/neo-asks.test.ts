@@ -419,6 +419,8 @@ describe('neoPrompt', () => {
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');
+    expect(prompt).toContain('or from precedent: what done meant for the same kind of work');
+    expect(prompt).toContain('corrects you with something lasting');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 });
@@ -478,5 +480,15 @@ describe('neoPrompt reply length', () => {
     expect(neoPrompt(null)).toContain(
       'shortText is one or two short sentences: the outcome for what they asked'
     );
+  });
+});
+
+describe('neoPrompt place resolution', () => {
+  test('tells Neo to find the place with work.find and never guess a folder', () => {
+    for (const prompt of [neoPrompt(null), neoPrompt('book-club')]) {
+      expect(prompt).toContain('call work.find with the project words from the request');
+      expect(prompt).toContain('Never build or guess a folder path yourself.');
+      expect(prompt).toContain('using an adapter that can start work');
+    }
   });
 });

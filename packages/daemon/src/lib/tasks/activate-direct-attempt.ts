@@ -1,5 +1,5 @@
 import { readDirectTaskWorktreePath } from './direct-task-workspace.ts';
-import { TASK_SLOT_STATUSES, availableTaskSlots } from './capacity.ts';
+import { availableTaskSlots, readTaskSlotUsage, type TaskSlotUsage } from './capacity.ts';
 import { readDirectStartRequest } from './direct-start-request.ts';
 import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -14,7 +14,6 @@ import {
   type DirectTaskAttempt,
 } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { assertValidTaskTransition } from './transitions.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
@@ -110,7 +109,7 @@ const unavailable = { reason: { activated: false, reason: 'unavailable' } } as c
 interface DirectActivationTarget {
   attempt: DirectTaskAttempt | null;
   task: SpaceTask | null;
-  slots: { space: Space | null; running: number };
+  slots: TaskSlotUsage;
   admittedGeneration: number | null;
   lifecycleGeneration: number | null;
 }
@@ -125,12 +124,7 @@ function readActivationTarget(
   return {
     attempt,
     task,
-    slots: task
-      ? {
-          space: new SpaceRepository(db).getSpace(task.spaceId),
-          running: tasks.countByStatuses(task.spaceId, TASK_SLOT_STATUSES),
-        }
-      : { space: null, running: 0 },
+    slots: task ? readTaskSlotUsage(db, task.spaceId) : { space: null, running: 0 },
     admittedGeneration: readDirectStartRequest(db, input.attemptId)?.lifecycleGeneration ?? null,
     lifecycleGeneration: task ? tasks.getLifecycleGeneration(task.id) : null,
   };

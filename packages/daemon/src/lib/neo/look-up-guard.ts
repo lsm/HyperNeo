@@ -1,6 +1,7 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { existsSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
 
 export const NEO_LOOKUP_COMMANDS = [
   'cd',
@@ -105,11 +106,38 @@ const CONTENT_TYPES = [
   'svelte',
 ];
 const ALWAYS_ALLOWED = new Set(['WebSearch', 'WebFetch', 'AskUserQuestion']);
+const LOOKUP_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 
 export interface LookUpScope {
   home: string;
   dataDir: string;
   cwd: string;
+}
+
+export interface LookUpPathFacts {
+  realPath(path: string): string;
+  exists(path: string): boolean;
+}
+
+export function readLookUpPathFacts(): LookUpPathFacts {
+  const real = new Map<string, string>();
+  const present = new Map<string, boolean>();
+  return {
+    realPath: (path) => {
+      if (!real.has(path)) {
+        try {
+          real.set(path, realpathSync(path));
+        } catch {
+          real.set(path, path);
+        }
+      }
+      return real.get(path)!;
+    },
+    exists: (path) => {
+      if (!present.has(path)) present.set(path, existsSync(path));
+      return present.get(path)!;
+    },
+  };
 }
 
 export function neoSecretReadRules(scope: Pick<LookUpScope, 'dataDir' | 'home'>): string[] {
@@ -170,17 +198,13 @@ function resolvePath(raw: string, scope: LookUpScope): string {
   return resolve(scope.cwd, expanded);
 }
 
-function realPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-export function isSecretPath(raw: string, scope: LookUpScope): boolean {
+export function isSecretPath(
+  raw: string,
+  scope: LookUpScope,
+  facts: LookUpPathFacts = readLookUpPathFacts()
+): boolean {
   const literal = resolvePath(raw, scope);
-  return [literal, realPath(literal)].some((path) => secretAt(path, scope));
+  return [literal, facts.realPath(literal)].some((path) => secretAt(path, scope));
 }
 
 function secretAt(path: string, scope: LookUpScope): boolean {
@@ -275,7 +299,12 @@ function metadataOnlyDenial(words: readonly string[]): string | null {
   return null;
 }
 
-function secretArgument(words: readonly string[], dir: string, scope: LookUpScope): string | null {
+function secretArgument(
+  words: readonly string[],
+  dir: string,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): string | null {
   const here = { ...scope, cwd: dir };
   return (
     words
@@ -286,13 +315,17 @@ function secretArgument(words: readonly string[], dir: string, scope: LookUpScop
           part &&
           (secretName(basename(part)) ||
             patternNamesSecret(part) ||
-            (/^[/~]/.test(part) && isSecretPath(part, here)) ||
-            (existsSync(resolvePath(part, here)) && isSecretPath(part, here)))
+            (/^[/~]/.test(part) && isSecretPath(part, here, facts)) ||
+            (facts.exists(resolvePath(part, here)) && isSecretPath(part, here, facts)))
       ) ?? null
   );
 }
 
-export function bashDenial(command: string, scope: LookUpScope): string | null {
+export function bashDenial(
+  command: string,
+  scope: LookUpScope,
+  facts: LookUpPathFacts = readLookUpPathFacts()
+): string | null {
   if (UNSAFE_SHELL.test(command))
     return 'redirects, variables, substitutions, background jobs, line breaks and --output are not allowed';
   if (/[*?[\]{}]/.test(command.replace(/'[^']*'|"[^"]*"/g, '')))
@@ -309,39 +342,79 @@ export function bashDenial(command: string, scope: LookUpScope): string | null {
     const words = shellWords(segment);
     if (words[0] === 'cd') {
       dir = resolvePath(words[1] ?? '~', { ...scope, cwd: dir });
-      if (isSecretPath(dir, scope)) return `"${words[1] ?? '~'}" may hold secrets`;
+      if (isSecretPath(dir, scope, facts)) return `"${words[1] ?? '~'}" may hold secrets`;
       continue;
     }
     const metadata = metadataOnlyDenial(words);
     if (metadata) return metadata;
-    const secret = secretArgument(words.slice(1), dir, scope);
+    const secret = secretArgument(words.slice(1), dir, scope, facts);
     if (secret) return `"${secret}" may hold secrets`;
   }
   return null;
 }
+
+interface LookUpVerdict {
+  denial: string | null;
+}
+
+export function requireLookUpTool(
+  tool: string
+): { value: LookUpVerdict } | { reason: LookUpVerdict } {
+  if (ALWAYS_ALLOWED.has(tool) || tool.startsWith('mcp__')) return { reason: { denial: null } };
+  return LOOKUP_TOOLS.has(tool)
+    ? { value: { denial: null } }
+    : { reason: { denial: `${tool} is not a look-up tool` } };
+}
+
+export function decideLookUp(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): string | null {
+  const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
+  if (tool === 'Read')
+    return isSecretPath(text('file_path'), scope, facts) ? 'that file may hold secrets' : null;
+  if (tool === 'Grep' || tool === 'Glob') {
+    const root = text('path') || scope.cwd;
+    const pattern = staticPrefix(text('pattern'));
+    if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
+      return 'search inside a project folder, not home or a secrets folder';
+    if (tool === 'Grep') return grepDenial(input);
+    return patternNamesSecret(text('pattern')) ||
+      (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }, facts))
+      ? 'that pattern points at secrets'
+      : null;
+  }
+  return bashDenial(text('command'), scope, facts);
+}
+
+function lookUpVerdict(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): LookUpVerdict {
+  return { denial: decideLookUp(tool, input, scope, facts) };
+}
+
+const admitNeoLookUp = (superpipe({})('admit-neo-look-up') as PipelineAPI)
+  .input(['tool', 'input', 'scope'])
+  .pipe(requireLookUpTool, 'tool', 'result:verdict')
+  .pipe(readLookUpPathFacts, undefined, 'facts')
+  .pipe(lookUpVerdict, ['tool', 'input', 'scope', 'facts'], 'verdict')
+  .end('verdict') as (
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope
+) => LookUpVerdict;
 
 export function neoLookUpDenial(
   tool: string,
   input: Record<string, unknown>,
   scope: LookUpScope
 ): string | null {
-  if (ALWAYS_ALLOWED.has(tool) || tool.startsWith('mcp__')) return null;
-  const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
-  if (tool === 'Read')
-    return isSecretPath(text('file_path'), scope) ? 'that file may hold secrets' : null;
-  if (tool === 'Grep' || tool === 'Glob') {
-    const root = text('path') || scope.cwd;
-    const pattern = staticPrefix(text('pattern'));
-    if (isSecretPath(root, scope) || tooBroad(root, scope))
-      return 'search inside a project folder, not home or a secrets folder';
-    if (tool === 'Grep') return grepDenial(input);
-    return patternNamesSecret(text('pattern')) ||
-      (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }))
-      ? 'that pattern points at secrets'
-      : null;
-  }
-  if (tool === 'Bash') return bashDenial(text('command'), scope);
-  return `${tool} is not a look-up tool`;
+  return admitNeoLookUp(tool, input, scope).denial;
 }
 
 export function neoLookUpGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {

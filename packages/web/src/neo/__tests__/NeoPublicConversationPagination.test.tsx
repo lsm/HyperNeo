@@ -105,7 +105,7 @@ describe('NeoPublicConversation saved pagination', () => {
       container.querySelector(
         `[data-public-entry='${JSON.stringify([conversationId, 'publication', id(2)])}']`
       );
-    await screen.findByRole('heading', { name: 'Full reply 2' });
+    await screen.findByText('Fictional reply 2');
     const entry = second();
     fireEvent.click(control);
     await screen.findByText('Fictional reply 1');

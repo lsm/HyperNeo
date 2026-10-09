@@ -124,13 +124,13 @@ export function submittingNodeId(task: SpaceTask, evidence: SubmissionEvidence):
 
 async function writeManagedSubmission(
   task: SpaceTask,
-  submittedByNodeId: string | null,
+  evidence: SubmissionEvidence,
   input: Input,
   tasks: ReviewSubmissionDependencies
 ): Promise<Ack> {
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
-      submittedByNodeId,
+      submittedByNodeId: submittingNodeId(task, evidence),
       reason: input.reason ?? null,
       expectedStatus: input.expectedStatus,
     });
@@ -152,8 +152,7 @@ const runManagedSubmission = (superpipe({})('submit-managed-space-task') as Pipe
   .pipe(requireSubmitterInSpace, ['ack', 'evidence', 'caller', 'tasks'], 'result:ack')
   .pipe(requireNoUnownedAttempt, ['ack', 'evidence'], 'result:ack')
   .pipe((task: SpaceTask) => task, 'ack', 'task')
-  .pipe(submittingNodeId, ['task', 'evidence'], 'submittedByNodeId')
-  .pipe(writeManagedSubmission, ['task', 'submittedByNodeId', 'input', 'tasks'], 'ack')
+  .pipe(writeManagedSubmission, ['task', 'evidence', 'input', 'tasks'], 'ack')
   .endAsync('ack') as (
   db: Database,
   input: Input,
