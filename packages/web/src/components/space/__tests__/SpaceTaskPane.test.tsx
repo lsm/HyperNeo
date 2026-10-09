@@ -838,11 +838,14 @@ describe('SpaceTaskPane — task actions', () => {
       return render(<SpaceTaskPane taskId="task-1" />);
     };
 
-    it('offers Run in the Ready to run panel, not in the actions menu', () => {
-      const { getByTestId, getAllByText } = renderNotStarted();
-      expect(getByTestId('task-run-button').textContent).toBe('Run');
+    it('offers Run in the composer with an optional note, not in the panel or actions menu', () => {
+      const { getByTestId, getAllByText, queryByTestId } = renderNotStarted();
+      expect(getByTestId('task-run-composer-button').textContent).toBe('Run');
+      expect(getByTestId('task-run-note')).toBeTruthy();
+      expect(queryByTestId('task-run-button')).toBeNull();
+      expect(queryByTestId('task-session-chat-composer')).toBeNull();
       fireEvent.click(getByTestId('task-actions-menu-trigger'));
-      expect(getAllByText('Run')).toEqual([getByTestId('task-run-button')]);
+      expect(getAllByText('Run')).toEqual([getByTestId('task-run-composer-button')]);
     });
 
     it.each([
@@ -852,14 +855,25 @@ describe('SpaceTaskPane — task actions', () => {
     ])('hides Run when the task has %s', (_label, overrides) => {
       const { queryByTestId } = renderNotStarted(overrides);
       expect(queryByTestId('task-run-button')).toBeNull();
+      expect(queryByTestId('task-run-composer')).toBeNull();
     });
 
-    it('calls spaceStore.runTaskDirectly with the task id when clicked', async () => {
+    it('calls spaceStore.runTaskDirectly with the task id and no note when clicked', async () => {
       const { getByTestId } = renderNotStarted();
-      fireEvent.click(getByTestId('task-run-button'));
+      fireEvent.click(getByTestId('task-run-composer-button'));
 
       await waitFor(() => {
-        expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1');
+        expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1', null);
+      });
+    });
+
+    it('passes the typed note to spaceStore.runTaskDirectly', async () => {
+      const { getByTestId } = renderNotStarted();
+      fireEvent.input(getByTestId('task-run-note'), { target: { value: 'Start with the API.' } });
+      fireEvent.click(getByTestId('task-run-composer-button'));
+
+      await waitFor(() => {
+        expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1', 'Start with the API.');
       });
     });
 
@@ -869,7 +883,7 @@ describe('SpaceTaskPane — task actions', () => {
         reason: 'direct_start_unavailable',
       });
       const { getByTestId, findByText } = renderNotStarted();
-      fireEvent.click(getByTestId('task-run-button'));
+      fireEvent.click(getByTestId('task-run-composer-button'));
 
       expect(await findByText('This task cannot be run directly right now.')).toBeTruthy();
     });
@@ -1192,7 +1206,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByRole('menu').textContent).not.toContain('Resume');
     fireEvent.click(getByText('Run again'));
 
-    await waitFor(() => expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1'));
+    await waitFor(() => expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1', undefined));
     expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 

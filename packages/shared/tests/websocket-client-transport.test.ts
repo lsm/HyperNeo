@@ -45,7 +45,12 @@ class MockWebSocket {
     this.sentMessages.push(data);
   }
 
-  close(): void {
+  close(code?: number): void {
+    if (code !== undefined && code !== 1000 && (code < 3000 || code > 4999))
+      throw new DOMException(
+        `The close code must be either 1000, or between 3000 and 4999. ${code} is neither.`,
+        'InvalidAccessError'
+      );
     this.readyState = MockWebSocket.CLOSING;
     setTimeout(() => {
       this.readyState = MockWebSocket.CLOSED;
@@ -556,15 +561,15 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       const closeCodes: unknown[] = [];
       if (first) {
         const close = first.close.bind(first);
-        first.close = (...args: unknown[]) => {
-          closeCodes.push(args[0]);
-          close();
+        first.close = (code?: number) => {
+          closeCodes.push(code);
+          close(code);
         };
       }
 
       transport.suspend();
       await new Promise((resolve) => setTimeout(resolve, 120));
-      expect(closeCodes).toEqual([1001]);
+      expect(closeCodes).toEqual([1000]);
       expect(transport.isSuspended()).toBe(true);
       expect(transport.isReady()).toBe(false);
       expect(mockWebSocketInstance).toBe(first);
