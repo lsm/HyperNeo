@@ -1036,7 +1036,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Replace the saved standing rules that neo.snapshot returns as standingRules. Save when the human states a lasting rule for how work should go, or answers your question about what done means for a kind of work, without asking whether to save it; read the current list from neo.snapshot first and keep the rules they did not change. Up to 20 rules of up to 500 characters.',
+        'Replace the saved standing rules that neo.snapshot returns as standingRules. Save when the human states or corrects something lasting about how work should go (what done means, where a project lives, which app to use), answers your question about it, or when you reuse precedent from earlier work, without asking whether to save it; read the current list from neo.snapshot first and keep the rules they did not change. Up to 20 rules of up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
