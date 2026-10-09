@@ -161,7 +161,11 @@ function claudeDesktopAdapters(
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
-      gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
+      gitCheckout: async (folder) => {
+        const { gitRoot } = await new WorktreeManager().detectGitSupport(folder);
+        const repo = gitRoot ? gitWorktreeProject(gitRoot) : null;
+        return gitRoot && repo ? { repo, linked: repo !== gitRoot } : null;
+      },
       newId: () => crypto.randomUUID(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,

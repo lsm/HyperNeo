@@ -149,6 +149,27 @@ describe('work verb operations', () => {
     ).toEqual({ ok: false, reason: 'not_open', detail: 'archived' });
   });
 
+  test('lists each adapter with its verbs, here or on the named daemon', async () => {
+    const asked: unknown[] = [];
+    const laptop: Invoke = async (daemonId, name, input) => {
+      asked.push([daemonId, name, input]);
+      return { ok: true, value: [{ id: 'codex-desktop', capabilities: ['find', 'start'] }] };
+    };
+
+    expect(await call('work.adapters', {})).toEqual({
+      ok: true,
+      value: [
+        { id: 'hyperneo', capabilities: ['find', 'start', 'send', 'status', 'stop'] },
+        { id: 'claude-desktop', capabilities: ['find', 'send'] },
+      ],
+    });
+    expect(await call('work.adapters', { daemon: 'laptop' }, laptop)).toEqual({
+      ok: true,
+      value: [{ id: 'codex-desktop', capabilities: ['find', 'start'] }],
+    });
+    expect(asked).toEqual([['laptop', 'work.adapters', {}]]);
+  });
+
   test('rejects an adapter that is not registered or does not declare the verb', async () => {
     expect(await call('work.status', { ref: { adapter: 'oap', id: 'x' } })).toMatchObject({
       ok: false,

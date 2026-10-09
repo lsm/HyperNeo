@@ -16,6 +16,7 @@ import {
   type WorkRef,
   type WorkStatus,
 } from '../drivers/types.ts';
+import { WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
@@ -31,6 +32,43 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
+type NeoDriverAdapter = { id: string; capabilities: readonly string[] };
+
+export function driverTargetDaemon(target: NeoDriverTarget): string | undefined {
+  return target.verb === 'start' ? target.place.daemon : target.ref.daemon;
+}
+
+export async function readNeoDriverAdapters(
+  invoke: () => Promise<OperationOutcome>
+): Promise<NeoDriverAdapter[] | null> {
+  try {
+    const outcome = await invoke();
+    const reply = WorkAdaptersResultSchema.safeParse(
+      outcome.kind === 'completed' ? outcome.value : null
+    );
+    return reply.success && reply.data.ok ? reply.data.value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function requireNeoDriverVerb<T>(
+  target: NeoDriverTarget | undefined,
+  adapters: readonly NeoDriverAdapter[] | null,
+  value: T
+): { value: T } | { reason: { ok: false; reason: string } } {
+  if (!target || !adapters) return { value };
+  const id = target.verb === 'start' ? target.adapter : target.ref.adapter;
+  if (adapters.some((item) => item.id === id && item.capabilities.includes(target.verb)))
+    return { value };
+  const able = adapters.filter((item) => item.capabilities.includes(target.verb));
+  return {
+    reason: {
+      ok: false,
+      reason: `The ${id} adapter cannot ${target.verb} work. Adapters that can: ${able.map((item) => item.id).join(', ') || 'none'}.`,
+    },
+  };
+}
 
 const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({

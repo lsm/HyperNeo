@@ -82,7 +82,7 @@ export interface ClaudeDesktopAdapterDeps {
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
-  gitRoot: (folder: string) => Promise<string | null>;
+  gitCheckout: (folder: string) => Promise<{ repo: string; linked: boolean } | null>;
   newId: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
@@ -756,9 +756,9 @@ export async function startClaudeSession(
 ): Promise<Result<WorkSummary>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
-  const repo = await deps.gitRoot(folder).catch(() => null);
-  const worktree = repo ? `neo-${cliSessionId.slice(0, 8)}` : null;
-  const cwd = repo && worktree ? join(repo, '.claude', 'worktrees', worktree) : folder;
+  const checkout = await deps.gitCheckout(folder).catch(() => null);
+  const worktree = checkout && !checkout.linked ? `neo-${cliSessionId.slice(0, 8)}` : null;
+  const cwd = checkout && worktree ? join(checkout.repo, '.claude', 'worktrees', worktree) : folder;
   try {
     const opened = await runToExit(
       deps,

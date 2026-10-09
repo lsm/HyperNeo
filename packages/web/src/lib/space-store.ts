@@ -2325,10 +2325,14 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return invokeOperation<SpaceTask>(hub, approved ? 'task.approve' : 'task.reject', {
+    const result = await invokeOperation<
+      SpaceTask | { accepted: false; reason: string; detail: string }
+    >(hub, approved ? 'task.approve' : 'task.reject', {
       taskId,
       reason: reason ?? null,
     });
+    if ('accepted' in result) throw new Error(result.detail);
+    return result;
   }
 
   async sendTaskMessage(
