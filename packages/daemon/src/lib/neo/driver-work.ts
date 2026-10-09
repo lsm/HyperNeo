@@ -54,6 +54,33 @@ export async function readNeoDriverAdapters(
   }
 }
 
+export function readNeoStartFolder(
+  target: NeoDriverTarget | null | undefined,
+  exists: (folder: string) => boolean
+): { exists: boolean | null } {
+  return target?.verb === 'start' &&
+    target.place.folder &&
+    !target.place.daemon &&
+    !target.createFolder
+    ? { exists: exists(target.place.folder) }
+    : { exists: null };
+}
+
+export function requireNeoStartFolder<T>(
+  target: NeoDriverTarget | null | undefined,
+  found: { exists: boolean | null },
+  value: T
+): { value: T } | { reason: { ok: false; reason: string } } {
+  return target?.verb === 'start' && found.exists === false
+    ? {
+        reason: {
+          ok: false,
+          reason: `The folder ${target.place.folder} does not exist on ${target.place.machine}. Start work in a place from work.find, such as the repository's own checkout; the session makes its own worktree there. Never invent a folder.`,
+        },
+      }
+    : { value };
+}
+
 export function requireNeoDriverVerb<T>(
   target: NeoDriverTarget | undefined,
   adapters: readonly NeoDriverAdapter[] | null,
