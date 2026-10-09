@@ -19,6 +19,7 @@ import { resolveNodeClick, type NodeChoice } from '../../lib/node-click-resolver
 import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
+import { cn } from '../../lib/utils';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -1195,7 +1196,12 @@ export function SpaceTaskPane({
           />
         )}
         {task.status === 'review' && (
-          <div class="absolute right-14 top-full z-30 mt-3 rounded-lg bg-surface-raised shadow-lg shadow-black/30">
+          <div
+            class={cn(
+              'absolute top-[calc(100%+1px)] z-30 mt-4 rounded-lg bg-surface-raised shadow-lg shadow-black/30',
+              canShowCanvasTab ? 'right-14' : 'right-4'
+            )}
+          >
             <TaskApproveButton task={task} />
           </div>
         )}
