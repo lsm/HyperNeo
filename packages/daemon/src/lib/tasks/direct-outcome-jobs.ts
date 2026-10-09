@@ -52,6 +52,13 @@ function frozenInput(
   return input;
 }
 
+const DEAD_JOB_STATUSES = new Set(['dead', 'failed']);
+
+function receiptIsDead(jobQueue: Pick<JobQueueRepository, 'getJob'>, jobId: string): boolean {
+  const job = jobQueue.getJob(jobId);
+  return !job || DEAD_JOB_STATUSES.has(job.status);
+}
+
 export function enqueueDirectOutcome(
   db: Database,
   jobQueue: JobQueueRepository,
@@ -64,7 +71,7 @@ export function enqueueDirectOutcome(
         ? { accepted: true, jobId: receipt(db, input) }
         : { accepted: false, reason: request.reason.reason };
     const existing = receipt(db, input);
-    if (existing) return { accepted: true, jobId: existing };
+    if (existing && !receiptIsDead(jobQueue, existing)) return { accepted: true, jobId: existing };
     const job = jobQueue.enqueue({
       queue: DIRECT_TASK_OUTCOME,
       payload: {
@@ -170,7 +177,9 @@ export function registerDirectOutcomeJobs(
     .prepare(`SELECT r.attempt_id AS attemptId, r.session_id AS sessionId
     FROM direct_task_stop_requests r JOIN direct_task_execution_attempts a ON a.id = r.attempt_id
     WHERE r.finalization_json IS NOT NULL AND r.finalization_state IS NULL
-      AND r.finalization_job_id IS NULL AND a.phase <> 'stopped'`)
+      AND a.phase <> 'stopped'
+      AND NOT EXISTS (SELECT 1 FROM job_queue j WHERE j.id = r.finalization_job_id
+        AND j.status IN ('pending', 'processing', 'completed'))`)
     .all() as Array<{ attemptId: string; sessionId: string }>;
   for (const target of pending) {
     const input = frozenInput(deps.db, target);
