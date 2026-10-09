@@ -1,13 +1,14 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoService } from './service.ts';
+import { neoWorkReviewId } from './ask-origin.ts';
 
 export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') as PipelineAPI)
   .input(['service', 'work', 'rootId'])
   .pipe(
     (service: NeoService, work: NeoWork, rootId: string) => {
       const retries = service.driverTargets.readRetries(work.id);
-      const id = `neo-work:${work.id}:review${retries ? `:retry:${retries}` : ''}`;
+      const id = neoWorkReviewId(work.id, retries);
       if (service.consultations.get(id)) return { reason: 'already-routed' };
       if (retries) return { value: { id } };
       const messages = service.db.getSDKMessageRepo();

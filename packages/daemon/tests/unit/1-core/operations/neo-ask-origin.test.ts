@@ -7,6 +7,8 @@ import {
   createNeoAskOriginResolver,
   neoDoneCheckMessageId,
   neoStallMessageId,
+  neoWorkReturnMessageId,
+  neoWorkReviewId,
   neoNudgeMessageId,
   readNeoAskEvidence,
   requireNeoAskCoordinator,
@@ -182,6 +184,14 @@ describe('recorded ask lineage gates', () => {
     expect(f.reads.getConsultation).toHaveBeenCalledWith(review.id);
     expect(f.reads.getWork).toHaveBeenCalledWith(work.id);
     expect(readNeoAskEvidence(request(), f.reads).work).toBeNull();
+  });
+  test('reads the work behind a retried review id', () => {
+    const f = fixtures();
+    const review = { ...consultation, id: neoWorkReviewId(work.id, 2) };
+    f.consultations.set(review.id, review);
+    expect(readNeoAskEvidence(request(review), f.reads)).toEqual(
+      evidence({ consultation: review, work })
+    );
   });
   test.each([
     { consultation: null },
@@ -367,6 +377,14 @@ describe('synchronous bounded ask resolver', () => {
     const elsewhere = { sessionId: 'unrelated', messageId: neoDoneCheckMessageId(work.id, 0) };
     f.put(elsewhere, 'system');
     expect(f.resolve(elsewhere)).toBeNull();
+  });
+  test('a retried failure note answers the ask that started its work', () => {
+    const f = fixtures();
+    f.put(ask);
+    f.works.set(work.id, { ...work, status: 'failed' });
+    const returned = { sessionId: root.sessionId, messageId: neoWorkReturnMessageId(work.id, 1) };
+    f.put(returned, 'system');
+    expect(f.resolve(returned)).toEqual(ask);
   });
   test('a stall note on running work answers the ask that started it', () => {
     const f = fixtures();

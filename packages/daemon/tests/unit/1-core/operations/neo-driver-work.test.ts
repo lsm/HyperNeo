@@ -970,6 +970,36 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('a retry waits out a start still finishing instead of reusing it', async () => {
+    const reply: Record<string, unknown> = { ok: false, reason: 'not_delivered', detail: 'down' };
+    const { db, service, calls } = await setup(reply);
+    Object.assign(service, { returnReport: async () => {} });
+    try {
+      await service.start('work-1');
+      let finish: () => void = () => {};
+      const pending = (service as unknown as { workPending: Map<string, Promise<void>> })
+        .workPending;
+      pending.set(
+        'work-1',
+        new Promise<void>((resolve) => {
+          finish = () => {
+            pending.delete('work-1');
+            resolve();
+          };
+        })
+      );
+      Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
+      delete reply.reason;
+      delete reply.detail;
+      const retried = service.retryWork('work-1');
+      finish();
+      expect(await retried).toMatchObject({ ok: true, work: { status: 'queued' } });
+      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a hand-off that failed before it started retries on the same card', async () => {
     const reply: Record<string, unknown> = {
       ok: false,

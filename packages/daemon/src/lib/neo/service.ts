@@ -24,6 +24,7 @@ import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
   neoDoneCheckMessageId,
+  neoWorkReturnMessageId,
   neoStallMessageId,
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
@@ -586,6 +587,7 @@ export class NeoService {
     const proposed = this.repo.transitionWork(id, work, { status: 'proposed', report: null });
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
     this.driverTargets.recordRetry(id);
+    await this.workPending.get(id)?.catch(() => undefined);
     await this.start(id);
     return { ok: true, work: this.repo.getWork(id)! };
   }
@@ -826,7 +828,7 @@ export class NeoService {
       if (this.db.getSession(target))
         await this.deliver(
           target,
-          retries ? `${work.id}:retry:${retries}` : work.id,
+          neoWorkReturnMessageId(work.id, retries),
           content,
           work.sessionId ?? work.originSessionId
         );
