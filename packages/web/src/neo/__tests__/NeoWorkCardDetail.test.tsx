@@ -74,7 +74,7 @@ afterEach(cleanup);
 
 describe('NeoWorkCard detail opening', () => {
   it.each(['queued', 'reported', 'cancelled'] as const)(
-    'makes an action-free %s card one keyboard-reachable opener',
+    'makes a %s card one keyboard-reachable opener with at most its card menu',
     (status) => {
       const open = vi.fn();
       const { card } = show(work('r', status), open);
@@ -82,7 +82,11 @@ describe('NeoWorkCard detail opening', () => {
       expect(card.getAttribute('tabindex')).toBe('0');
       expect(within(card).getByRole('heading').textContent).toBe('Title r');
       expect(card.querySelector('details, a')).toBeNull();
-      expect(within(card).queryAllByRole('button')).toHaveLength(0);
+      expect(
+        within(card)
+          .queryAllByRole('button')
+          .map((button) => button.getAttribute('aria-label'))
+      ).toEqual(status === 'queued' ? ['Card actions'] : []);
       expect(within(card).queryByText('Report r')).toBeNull();
       fireEvent.keyDown(card, { key: 'Enter' });
       expect(open).toHaveBeenCalledExactlyOnceWith('r');
@@ -115,10 +119,30 @@ describe('NeoWorkCard detail opening', () => {
     expect(action).not.toHaveBeenCalled();
   });
 
-  it('makes a failed card an action-free opener', () => {
+  it('closes queued work as done or cancelled from its card menu without opening it', () => {
+    const open = vi.fn();
+    const action = vi.fn();
+    for (const item of ['Mark done', 'Cancel work']) {
+      const { card } = show(work('q', 'queued'), open, action);
+      fireEvent.click(within(card).getByRole('button', { name: 'Card actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: item }));
+      cleanup();
+    }
+    expect(action.mock.calls).toEqual([
+      ['q', 'done'],
+      ['q', 'close'],
+    ]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('makes a failed card an opener with only its card menu', () => {
     const open = vi.fn();
     const { card } = show(work('f', 'failed', { sessionId: 'f-session' }), open);
-    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    expect(
+      within(card)
+        .queryAllByRole('button')
+        .map((button) => button.getAttribute('aria-label'))
+    ).toEqual(['Card actions']);
     expect(within(card).getByText('Failed')).toBeTruthy();
     fireEvent.keyDown(card, { key: 'Enter' });
     expect(open).toHaveBeenCalledExactlyOnceWith('f');

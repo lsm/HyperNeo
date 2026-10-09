@@ -18,6 +18,10 @@ import {
   SpaceCreateTaskInputSchema,
 } from './create-task-target.ts';
 import { requireActiveMetadataCallerSession, resolveMetadataSessionSpace } from './metadata.ts';
+import {
+  validateWorkflowSelection,
+  type SetPreferredWorkflowDependencies,
+} from './set-preferred-workflow.ts';
 
 const log = new Logger('SpaceCreateTask');
 export interface SpaceCreateTaskDependencies extends SpaceMcpSessionPolicyContext {
@@ -28,6 +32,7 @@ export interface SpaceCreateTaskDependencies extends SpaceMcpSessionPolicyContex
   emitTaskCreated: (spaceId: string, task: SpaceTask) => Promise<void>;
   getSpace: (spaceId: string) => Promise<Space | null> | Space | null;
   validateDefaultTaskWorkspace: (spaceId: string) => Promise<string | null>;
+  getWorkflow?: SetPreferredWorkflowDependencies['getWorkflow'];
 }
 type Deps = SpaceCreateTaskDependencies;
 type In = SpaceCreateTaskInput;
@@ -72,6 +77,13 @@ async function requireSpace(spaceId: string, deps: Deps): Promise<TargetGate> {
     ? { value: spaceId }
     : { reason: { accepted: false, reason: `Space not found: ${spaceId}` } };
 }
+function requireSpaceWorkflow(spaceId: string, input: In, deps: Deps): TargetGate {
+  if (!input.preferredWorkflowId || !deps.getWorkflow) return { value: spaceId };
+  const rejection = validateWorkflowSelection(input.preferredWorkflowId, spaceId, {
+    getWorkflow: deps.getWorkflow,
+  });
+  return rejection ? { reason: { accepted: false, reason: rejection } } : { value: spaceId };
+}
 async function requireUsableWorkspace(spaceId: string, input: In, deps: Deps): Promise<TargetGate> {
   if (input.workspacePath !== undefined) return { value: spaceId };
   const error = await deps.validateDefaultTaskWorkspace(spaceId);
@@ -109,6 +121,7 @@ export function createSpaceCreateTaskOperation(deps: Deps) {
     .pipe(createStandaloneWhenUnowned, ['task', 'input', 'caller', 'deps'], 'result:task')
     .pipe(requireActiveCaller, ['task', 'caller', 'session'], 'result:task')
     .pipe(requireSpace, ['task', 'deps'], 'result:task')
+    .pipe(requireSpaceWorkflow, ['task', 'input', 'deps'], 'result:task')
     .pipe(requireUsableWorkspace, ['task', 'input', 'deps'], 'result:task')
     .pipe(createSpaceTask, ['task', 'input', 'caller', 'session', 'deps'], 'task')
     .pipe(publishCreated, ['task', 'deps'], 'task')
@@ -116,6 +129,6 @@ export function createSpaceCreateTaskOperation(deps: Deps) {
   return createCreateTaskOperation(createTask, {
     inputSchema: SpaceCreateTaskInputSchema,
     description:
-      'Create a task. Pass spaceId to create it in that Space; a session already scoped to a Space creates there by default and cannot target another Space, which returns { accepted: false, reason }. With no spaceId and no Space of its own the caller gets an independent task, reported as standalone: true on the result. dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; when workspacePath is omitted the Space needs a usable default workspace. An agent caller needs an active session. A missing Space, an unusable default workspace or an inactive caller session returns { accepted: false, reason }. Returns core task data, or a rejection.',
+      'Create a task. Pass spaceId to create it in that Space; a session already scoped to a Space creates there by default and cannot target another Space, which returns { accepted: false, reason }. With no spaceId and no Space of its own the caller gets an independent task, reported as standalone: true on the result. dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; preferredWorkflowId must name an enabled workflow of that Space, else workflow_not_found or workflow_disabled; when workspacePath is omitted the Space needs a usable default workspace. An agent caller needs an active session. A missing Space, an unusable default workspace or an inactive caller session returns { accepted: false, reason }. Returns core task data, or a rejection.',
   });
 }

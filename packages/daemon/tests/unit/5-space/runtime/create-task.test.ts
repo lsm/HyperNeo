@@ -96,6 +96,31 @@ test('rpc without spaceId creates a standalone task and skips Space effects', as
   expect(validateDefaultTaskWorkspace).not.toHaveBeenCalled();
 });
 
+test('a preferred workflow must be an enabled workflow of the same Space', async () => {
+  const workflows: Record<string, { spaceId: string; disabled?: boolean }> = {
+    own: { spaceId },
+    foreign: { spaceId: 'space-other' },
+    off: { spaceId, disabled: true },
+  };
+  const ops = registry({
+    getWorkflow: (id) => (workflows[id] ?? null) as never,
+  });
+  const create = (preferredWorkflowId: string) =>
+    invokeOperation(ops, 'task.create', { title: 'T', spaceId, preferredWorkflowId }, rpc);
+  expect(await create('foreign')).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'workflow_not_found' },
+  });
+  expect(await create('off')).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'workflow_disabled' },
+  });
+  expect(await create('own')).toMatchObject({
+    kind: 'completed',
+    value: { spaceId, preferredWorkflowId: 'own' },
+  });
+});
+
 test('rpc with spaceId creates a numbered Space task and emits once', async () => {
   tasks.createTask({ spaceId, title: 'First', description: '' });
   const result = await invoke({ title: 'Second', spaceId }, rpc);

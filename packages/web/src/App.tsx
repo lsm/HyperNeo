@@ -21,7 +21,6 @@ import {
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
   currentSpaceTasksFilterTabSignal,
-  currentSpaceTaskViewTabSignal,
   navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -102,7 +101,6 @@ export function App() {
       const spaceViewMode = currentSpaceViewModeSignal.value;
       const spaceConfigureTab = currentSpaceSettingsTabSignal.value;
       const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
-      const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
       const navSection = navSectionSignal.value;
       const currentPath = window.location.pathname;
       const expectedPath = deriveAppExpectedPath({
@@ -114,7 +112,6 @@ export function App() {
         spaceViewMode,
         spaceConfigureTab,
         spaceTasksFilterTab,
-        spaceTaskViewTab,
         navSection,
       });
 
@@ -122,12 +119,7 @@ export function App() {
         if (sessionId) {
           navigateToSession(sessionId, true);
         } else if (spaceTaskId && spaceId) {
-          navigateToSpaceTask(
-            spaceId,
-            spaceTaskId,
-            spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
-            true
-          );
+          navigateToSpaceTask(spaceId, spaceTaskId, true);
         } else if (spaceId && spaceViewMode === 'agents') {
           navigateToSpaceAgent(spaceId, spaceAgentHandle ?? true, true);
         } else if (spaceSessionId && spaceId) {

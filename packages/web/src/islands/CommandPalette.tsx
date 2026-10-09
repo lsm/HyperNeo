@@ -426,12 +426,12 @@ export function CommandPalette() {
         return;
       }
       if (item.type === 'space-task') {
-        navigateToSpaceTask(item.spaceId, item.taskId, 'thread');
+        navigateToSpaceTask(item.spaceId, item.taskId);
         return;
       }
       const result = item.result;
       if (result.kind === 'task' && result.spaceId && result.taskId) {
-        navigateToSpaceTask(result.spaceId, result.taskId, 'thread');
+        navigateToSpaceTask(result.spaceId, result.taskId);
         return;
       }
       if (!result.sessionId || !result.messageId) return;

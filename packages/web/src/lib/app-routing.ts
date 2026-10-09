@@ -21,7 +21,6 @@ export interface AppRoutingState {
   spaceViewMode: SpaceViewMode;
   spaceConfigureTab: string;
   spaceTasksFilterTab: string;
-  spaceTaskViewTab: string;
   navSection: string;
 }
 
@@ -35,17 +34,12 @@ export function deriveAppExpectedPath(state: AppRoutingState): string {
     spaceViewMode,
     spaceConfigureTab,
     spaceTasksFilterTab,
-    spaceTaskViewTab,
     navSection,
   } = state;
 
   if (sessionId) return createSessionPath(sessionId);
   if (spaceTaskId && spaceId) {
-    return createSpaceTaskPath(
-      spaceId,
-      spaceTaskId,
-      spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
-    );
+    return createSpaceTaskPath(spaceId, spaceTaskId);
   }
   if (spaceId && spaceViewMode === 'agents') {
     return createSpaceAgentPath(spaceId, spaceAgentHandle ?? undefined);
