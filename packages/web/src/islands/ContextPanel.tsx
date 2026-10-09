@@ -403,15 +403,11 @@ export function ContextPanel() {
           <SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
         </div>
         <div class="desktop-standard-switcher">
-          <SectionSwitcher
-            onClose={handlePanelClose}
-            showDivider={!isSpaceDetail}
-            compact={isSpaceDetail}
-          />
+          <SectionSwitcher onClose={handlePanelClose} showDivider compact={isSpaceDetail} />
         </div>
 
         {isSpaceDetail && (
-          <div class="hidden h-9 items-center gap-1 border-b px-4 md:flex border-line">
+          <div class="hidden h-9 items-center gap-1 px-4 pt-1 md:flex">
             <button
               type="button"
               onClick={() => navigateToSpaces()}

@@ -40,7 +40,7 @@ export function TaskApproveButton({ task }: { task: SpaceTask }) {
         disabled={busy}
         data-testid="pending-task-completion-approve-btn"
         title="Approve, or reply in the composer to send it back"
-        class="h-7 flex-shrink-0 rounded-md bg-accent px-3 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
+        class="h-6 flex-shrink-0 rounded-md bg-accent px-2.5 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         Approve
       </button>

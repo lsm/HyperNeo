@@ -1134,14 +1134,14 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class="flex h-[88px] flex-shrink-0 flex-col justify-center gap-1 border-b border-line bg-surface-overlay px-4"
+        class="flex h-[52px] flex-shrink-0 flex-col justify-center border-b border-line bg-surface-overlay px-4"
       >
         <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+              class="-ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
               aria-label="Back"
               data-testid="task-back-button"
             >
@@ -1156,7 +1156,7 @@ export function SpaceTaskPane({
             </button>
           )}
           <h2
-            class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-6 text-fg"
+            class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-5 text-fg"
             title={task.title}
             data-tauri-drag-region
           >
@@ -1170,7 +1170,7 @@ export function SpaceTaskPane({
               trigger={
                 <button
                   type="button"
-                  class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+                  class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
                   data-testid="task-actions-menu-trigger"
                   aria-label="Task Actions"
                   title="Task Actions"
@@ -1185,7 +1185,7 @@ export function SpaceTaskPane({
             />
           )}
         </div>
-        <div class={onClose ? 'pl-10' : undefined} data-tauri-drag-region>
+        <div class={onClose ? 'pl-7' : undefined} data-tauri-drag-region>
           <TaskHeaderMeta
             task={task}
             statusLabel={showHeaderStatusBadge ? activitySummary : null}
