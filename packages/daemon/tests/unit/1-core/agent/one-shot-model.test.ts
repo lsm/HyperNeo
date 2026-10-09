@@ -63,6 +63,12 @@ describe('firstAssistantText', () => {
     ['joins with a custom separator', [assistant('a', 'b')], '\n', 'a\nb'],
     ['skips blank assistant messages', [assistant(' '), assistant('next')], undefined, 'next'],
     ['returns null without assistant text', [{ type: 'result' } as SDKMessage], undefined, null],
+    [
+      'skips an assistant message without content',
+      [{ type: 'assistant', message: {} } as unknown as SDKMessage, assistant('next')],
+      undefined,
+      'next',
+    ],
   ] as const)('%s', async (_label, messages, separator, expected) => {
     expect(await firstAssistantText(stream(...messages), separator)).toBe(expected);
   });
