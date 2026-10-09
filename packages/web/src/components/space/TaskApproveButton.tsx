@@ -3,29 +3,7 @@ import type { SpaceTask } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import { Modal } from '../ui/Modal.tsx';
 
-interface PendingTaskCompletionBannerProps {
-  task: SpaceTask;
-  spaceId: string;
-}
-
-function formatPendingSince(submittedAt: number | null | undefined): string | null {
-  if (!submittedAt) return null;
-  const delta = Date.now() - submittedAt;
-  if (delta < 0) return null;
-  const seconds = Math.floor(delta / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-export function PendingTaskCompletionBanner({
-  task,
-  spaceId: _spaceId,
-}: PendingTaskCompletionBannerProps) {
+export function TaskApproveButton({ task }: { task: SpaceTask }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showApproveModal, setShowApproveModal] = useState(false);
@@ -50,42 +28,22 @@ export function PendingTaskCompletionBanner({
 
   const agentReason = task.pendingCompletionReason?.trim();
   const reportedSummary = task.reportedSummary?.trim();
-  const submittedAgo = formatPendingSince(task.pendingCompletionSubmittedAt ?? null);
-  const meta =
-    task.pendingCheckpointType === 'task_completion' ? submittedAgo : 'submission record missing';
-
-  const summary = reportedSummary || agentReason;
 
   return (
     <>
-      <div
-        class="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-cat-purple/60 bg-cat-purple/10 px-4 py-3"
-        data-testid="pending-task-completion-banner"
+      <button
+        type="button"
+        onClick={() => {
+          setError(null);
+          setShowApproveModal(true);
+        }}
+        disabled={busy}
+        data-testid="pending-task-completion-approve-btn"
+        title="Approve, or reply in the composer to send it back"
+        class="h-8 flex-shrink-0 rounded-lg bg-accent px-3.5 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        <div class="min-w-0 flex-1">
-          <p
-            class="line-clamp-2 break-words text-sm text-fg"
-            data-testid="pending-task-completion-summary"
-          >
-            {summary ? `Submitted for review: ${summary}` : 'Submitted for review.'}
-          </p>
-          <p class="mt-0.5 text-xs text-fg-muted">
-            {meta ? `${meta} · ` : ''}Approve, or reply below to send it back.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setError(null);
-            setShowApproveModal(true);
-          }}
-          disabled={busy}
-          data-testid="pending-task-completion-approve-btn"
-          class="flex-shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Approve
-        </button>
-      </div>
+        Approve
+      </button>
       <Modal
         isOpen={showApproveModal}
         onClose={() => {

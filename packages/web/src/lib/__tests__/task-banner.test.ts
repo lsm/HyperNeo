@@ -57,13 +57,14 @@ describe('resolveActiveTaskBanner — precedence order', () => {
     });
   });
 
-  test('task_completion checkpoint fires before any hook signal', () => {
+  test('a review task shows a waiting hook, since approval lives in the header', () => {
     const task = makeTask({
       status: 'review',
       pendingCheckpointType: 'task_completion',
     });
     expect(resolveActiveTaskBanner(task, [hook('blocked_by_hook')])).toEqual({
-      kind: 'task_completion_pending',
+      kind: 'hook_pending',
+      runId: 'run-1',
     });
   });
 
@@ -89,7 +90,7 @@ describe('post_approval_blocked branch', () => {
       expect(resolveActiveTaskBanner(task)).toBeNull();
     }
     const inReview = makeTask({ status: 'review', postApprovalBlockedReason: 'stale reason' });
-    expect(resolveActiveTaskBanner(inReview)).toEqual({ kind: 'task_completion_pending' });
+    expect(resolveActiveTaskBanner(inReview)).toBeNull();
   });
 
   test('requires a non-empty reason (null / undefined / whitespace fall through)', () => {
@@ -114,53 +115,8 @@ describe('post_approval_blocked branch', () => {
   });
 });
 
-describe('task_completion_pending branch', () => {
-  test("fires ONLY when status is 'review' (the checkpoint is paused)", () => {
-    const task = makeTask({
-      status: 'review',
-      pendingCheckpointType: 'task_completion',
-    });
-    expect(resolveActiveTaskBanner(task)).toEqual({ kind: 'task_completion_pending' });
-  });
-
-  test("does NOT fire once status has left 'review' — even with the checkpoint field still set", () => {
-    for (const status of ['open', 'in_progress', 'approved', 'done'] as const) {
-      const task = makeTask({
-        status,
-        pendingCheckpointType: 'task_completion',
-        postApprovalBlockedReason: null,
-      });
-      expect(resolveActiveTaskBanner(task, undefined)).toBeNull();
-    }
-  });
-
-  test("'blocked' status short-circuits to the blocked banner even with a task_completion checkpoint", () => {
-    const task = makeTask({
-      status: 'blocked',
-      pendingCheckpointType: 'task_completion',
-    });
-    expect(resolveActiveTaskBanner(task)).toEqual({ kind: 'blocked' });
-  });
-
-  test('no checkpoint value triggers it outside review', () => {
-    for (const pendingCheckpointType of [
-      null,
-      'task_completion',
-      'legacy_unknown' as unknown as SpaceTask['pendingCheckpointType'],
-    ] as const) {
-      expect(
-        resolveActiveTaskBanner(makeTask({ status: 'in_progress', pendingCheckpointType }))
-      ).toBeNull();
-    }
-  });
-
-  test('a task orphaned in review still gets the banner (#4033)', () => {
-    expect(
-      resolveActiveTaskBanner(makeTask({ status: 'review', pendingCheckpointType: null }))
-    ).toEqual({ kind: 'task_completion_pending' });
-  });
-
-  test('review alone decides it, whatever the checkpoint column says (#4033)', () => {
+describe('review', () => {
+  test('has no banner of its own, whatever the checkpoint column says', () => {
     for (const pendingCheckpointType of [
       null,
       'task_completion',
@@ -168,16 +124,16 @@ describe('task_completion_pending branch', () => {
     ] as const) {
       expect(
         resolveActiveTaskBanner(makeTask({ status: 'review', pendingCheckpointType }))
-      ).toEqual({ kind: 'task_completion_pending' });
+      ).toBeNull();
     }
   });
 
-  test('a review task with waiting hooks still shows approval, not the hook banner', () => {
-    expect(
-      resolveActiveTaskBanner(makeTask({ status: 'review', pendingCheckpointType: null }), [
-        hook('blocked_by_hook'),
-      ])
-    ).toEqual({ kind: 'task_completion_pending' });
+  test("'blocked' status still shows the blocked banner with a task_completion checkpoint", () => {
+    const task = makeTask({
+      status: 'blocked',
+      pendingCheckpointType: 'task_completion',
+    });
+    expect(resolveActiveTaskBanner(task)).toEqual({ kind: 'blocked' });
   });
 });
 

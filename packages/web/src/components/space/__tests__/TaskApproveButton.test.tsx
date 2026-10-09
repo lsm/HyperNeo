@@ -10,7 +10,7 @@ vi.mock('../../../lib/space-store', () => ({
   },
 }));
 
-import { PendingTaskCompletionBanner } from '../PendingTaskCompletionBanner';
+import { TaskApproveButton } from '../TaskApproveButton';
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return {
@@ -30,7 +30,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   } as SpaceTask;
 }
 
-describe('PendingTaskCompletionBanner', () => {
+describe('TaskApproveButton', () => {
   beforeEach(() => {
     cleanup();
     approveMock.mockReset();
@@ -42,50 +42,21 @@ describe('PendingTaskCompletionBanner', () => {
 
   it('hidden when the task is not in review', () => {
     const { queryByTestId } = render(
-      <PendingTaskCompletionBanner task={makeTask({ status: 'in_progress' })} spaceId="space-1" />
+      <TaskApproveButton task={makeTask({ status: 'in_progress' })} spaceId="space-1" />
     );
     expect(queryByTestId('pending-task-completion-banner')).toBeNull();
   });
 
   it('renders for a review task whose checkpoint record is missing (#4033)', () => {
     const { getByTestId } = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCheckpointType: null })}
-        spaceId="space-1"
-      />
+      <TaskApproveButton task={makeTask({ pendingCheckpointType: null })} />
     );
     expect(getByTestId('pending-task-completion-approve-btn')).toBeTruthy();
   });
 
-  it('says the submission record is missing rather than showing a pending-since time', () => {
-    const orphan = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCheckpointType: null, pendingCompletionSubmittedAt: null })}
-        spaceId="space-1"
-      />
-    );
-    expect(orphan.getByTestId('pending-task-completion-banner').textContent).toContain(
-      'submission record missing'
-    );
-    cleanup();
-
-    const healthy = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCompletionSubmittedAt: Date.now() - 5000 })}
-        spaceId="space-1"
-      />
-    );
-    const text = healthy.getByTestId('pending-task-completion-banner').textContent;
-    expect(text).toContain('5s ago');
-    expect(text).not.toContain('submission record missing');
-  });
-
   it('approves an orphaned review task through the same operation', async () => {
     const { getByTestId } = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCheckpointType: null })}
-        spaceId="space-1"
-      />
+      <TaskApproveButton task={makeTask({ pendingCheckpointType: null })} />
     );
     fireEvent.click(getByTestId('pending-task-completion-approve-btn'));
     fireEvent.click(getByTestId('pending-task-completion-approve-confirm'));
@@ -96,10 +67,7 @@ describe('PendingTaskCompletionBanner', () => {
   it('surfaces a rejection from the daemon instead of failing silently', async () => {
     approveMock.mockRejectedValue(new Error('not awaiting submit_for_approval review'));
     const { getByTestId } = render(
-      <PendingTaskCompletionBanner
-        task={makeTask({ pendingCheckpointType: null })}
-        spaceId="space-1"
-      />
+      <TaskApproveButton task={makeTask({ pendingCheckpointType: null })} />
     );
     fireEvent.click(getByTestId('pending-task-completion-approve-btn'));
     fireEvent.click(getByTestId('pending-task-completion-approve-confirm'));

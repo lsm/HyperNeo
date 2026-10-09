@@ -414,7 +414,7 @@ describe('SpaceTaskPane', () => {
     expect(getByText((_content, element) => element?.textContent === '#173')).toBeTruthy();
   });
 
-  it('omits review status from the header when the approval action bar is active', () => {
+  it('shows the review status and Approve in the header for a task in review', () => {
     mockTasks.value = [
       makeTask({
         status: 'review',
@@ -422,9 +422,9 @@ describe('SpaceTaskPane', () => {
         taskAgentSessionId: 'session-abc',
       }),
     ];
-    const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-    expect(queryByTestId('task-status-label')).toBeNull();
-    expect(getByTestId('pending-task-completion-banner')).toBeTruthy();
+    const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByTestId('task-status-label')).toBeTruthy();
+    expect(getByTestId('pending-task-completion-approve-btn').textContent).toBe('Approve');
   });
 
   it('renders unified task thread component when workflow run exists', () => {

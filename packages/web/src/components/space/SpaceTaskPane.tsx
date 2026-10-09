@@ -27,7 +27,7 @@ import { EditTaskModal } from './EditTaskModal';
 import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
-import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
+import { TaskApproveButton } from './TaskApproveButton';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
@@ -1201,6 +1201,7 @@ export function SpaceTaskPane({
               routeSpaceId={navigationSpaceId}
             />
           </div>
+          {task.status === 'review' && <TaskApproveButton task={task} />}
           {taskActionItems.length > 0 && (
             <Dropdown
               items={taskActionItems}
@@ -1238,8 +1239,6 @@ export function SpaceTaskPane({
             />
           ) : banner.kind === 'post_approval_blocked' ? (
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
-          ) : banner.kind === 'task_completion_pending' ? (
-            <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
           ) : (
             <PendingHookBanner
               runId={banner.runId}
