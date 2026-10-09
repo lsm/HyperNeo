@@ -319,6 +319,23 @@ test('an rpc caller never gets a submitting node id even without deriving one', 
   });
 });
 
+test('an rpc submission clears a node id left by an earlier node submission', async () => {
+  markTaskWorkflowOwned();
+  tasks.updateTask(taskId, {
+    pendingCompletionSubmittedByNodeId: 'stale-node',
+    postApprovalSourceNodeId: 'stale-node',
+  });
+  expect(await submit({ taskId, reason: 'Ready' }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(taskId)).toMatchObject({
+    status: 'review',
+    pendingCompletionSubmittedByNodeId: null,
+    postApprovalSourceNodeId: null,
+  });
+});
+
 test('workflow-owned task via MCP caller in the owning Space is admitted', async () => {
   markTaskWorkflowOwned();
   const worker = sessions.getSession(sessionId)!;
