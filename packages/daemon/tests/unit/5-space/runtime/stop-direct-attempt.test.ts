@@ -11,6 +11,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { createSpaceTables } from '../../helpers/space-test-db';
 import {
   bringDirectSessionDown,
+  confirmDirectSessionGone,
   createDirectAttemptStopper,
   directSessionIsDown,
   requireDirectStopTarget,
@@ -631,3 +632,29 @@ test('a session still alive after the interrupt gets a second interrupt, then it
   } as unknown as AgentSession;
   expect(await bringDirectSessionDown(leaking)).toBe(false);
 });
+
+test.each([
+  ['loading', true, null, false],
+  ['cached', false, 'cached', false],
+  ['gone', false, null, true],
+] as const)(
+  'confirmDirectSessionGone clears proof only when the session is %s and not gone',
+  (_label, isLoading, inCache, expected) => {
+    const clearStopVerification = mock((..._args: string[]) => true);
+    const attempt = { id: 'attempt', sessionId: 'session' } as Parameters<
+      typeof confirmDirectSessionGone
+    >[2]['attempt'];
+    const gone = confirmDirectSessionGone(
+      { clearStopVerification },
+      {
+        isSessionLoading: () => isLoading,
+        getCachedSession: () => (inCache ? agent() : undefined),
+      } as unknown as Parameters<typeof confirmDirectSessionGone>[1],
+      { attempt, session: null, token: 'proof' }
+    );
+    expect(gone).toBe(expected);
+    expect(clearStopVerification.mock.calls).toEqual(
+      expected ? [] : [['attempt', 'session', 'proof']]
+    );
+  }
+);

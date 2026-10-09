@@ -15,7 +15,7 @@ import {
   isTerminalTaskStatus,
 } from './status-preparation.ts';
 import {
-  directSessionIsDown,
+  confirmDirectSessionGone,
   verifyDirectAttemptStop,
   type DirectAttemptStopDependencies,
   type VerifiedDirectStop,
@@ -150,21 +150,10 @@ export function commitDirectTaskFinalization(
   verified: VerifiedDirectStop,
   onAttemptRetired?: DirectTaskFinalizerDependencies['onAttemptRetired']
 ): DirectFinalizationResult {
-  const { attempt, session, token } = verified;
+  const { attempt, token } = verified;
   const attempts = new DirectTaskExecutionRepository(db);
-  try {
-    if (
-      sessionManager.isSessionLoading(attempt.sessionId) ||
-      sessionManager.getCachedSession(attempt.sessionId) ||
-      (session && !directSessionIsDown(session))
-    ) {
-      attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
-      return { finalized: false, reason: 'unverified' };
-    }
-  } catch {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
+  if (!confirmDirectSessionGone(attempts, sessionManager, verified))
     return { finalized: false, reason: 'unverified' };
-  }
   let retiredTaskId: string | undefined;
   reactiveDb?.beginTransaction();
   try {
