@@ -4,7 +4,7 @@ import { reopenDirectCompletion } from './reopen-pending-completion.ts';
 import type { PendingCompletionReopenResult } from './pending-completion.ts';
 import {
   prepareSpaceTaskStatusUpdate,
-  prepareSpaceTaskReviewUpdate,
+  prepareSpaceTaskReviewSubmission,
   isTerminalTaskStatus,
 } from './status-preparation.ts';
 import { PendingCompletionSupersededError } from './pending-completion-guard.ts';
@@ -407,22 +407,17 @@ export class SpaceTaskManager {
       );
     }
 
+    const { updates, reopened } = prepareSpaceTaskReviewSubmission(task, opts, Date.now());
     const updated = this.db.transaction(() => {
       if (new DirectTaskExecutionRepository(this.db).getActive(taskId)?.phase === 'reserved')
         throw new Error(
           `Task ${taskId} cannot be submitted for review while its direct start is queued`
         );
-      return this.taskRepo.updateTask(
-        taskId,
-        prepareSpaceTaskReviewUpdate(opts, Date.now()),
-        opts.expectedStatus
-      );
+      const written = this.taskRepo.updateTask(taskId, updates, task.status);
+      if (written && reopened) this.onTaskReopened?.(taskId);
+      return written;
     }, 'immediate')();
-    if (!updated) {
-      if (opts.expectedStatus !== undefined)
-        throw new StaleTaskGuardError(`Task ${taskId} is no longer '${opts.expectedStatus}'`);
-      throw new Error(`Failed to submit task for review: ${taskId}`);
-    }
+    if (!updated) throw new StaleTaskGuardError(`Task ${taskId} is no longer '${task.status}'`);
     return updated;
   }
 

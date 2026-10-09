@@ -11,7 +11,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { isValidTaskTransition } from './transitions.ts';
 import {
   prepareSpaceTaskStatusUpdate,
-  prepareSpaceTaskReviewUpdate,
+  prepareSpaceTaskReviewSubmission,
   isTerminalTaskStatus,
 } from './status-preparation.ts';
 import {
@@ -215,24 +215,19 @@ export function commitDirectTaskFinalization(
         retiredTaskId = current.taskId;
         return { finalized: false, reason: 'superseded' };
       }
-      const { updates, reopened } = prepareSpaceTaskStatusUpdate(
-        task,
-        request.status,
-        request.options,
-        Date.now()
-      );
-      if (request.status === 'review')
-        Object.assign(
-          updates,
-          prepareSpaceTaskReviewUpdate(
-            {
-              submittedByNodeId: null,
-              reason: request.reviewReason ?? null,
-              reportedSummary: request.options?.reportedSummary,
-            },
-            Date.now()
-          )
-        );
+      const { updates, reopened } =
+        request.status === 'review'
+          ? prepareSpaceTaskReviewSubmission(
+              task,
+              {
+                submittedByNodeId: null,
+                reason: request.reviewReason ?? null,
+                reportedSummary: request.options?.reportedSummary,
+              },
+              Date.now(),
+              request.options
+            )
+          : prepareSpaceTaskStatusUpdate(task, request.status, request.options, Date.now());
       const updated = tasks.updateTask(task.id, updates, request.fromStatus);
       if (!updated) throw new Error('Direct finalization lost its transaction admission');
       if (reopened) onTaskReopened?.(task.id);

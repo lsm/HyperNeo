@@ -127,6 +127,16 @@ export function isTerminalTaskStatus(status: SpaceTaskStatus): boolean {
   );
 }
 
+export function prepareSpaceTaskReviewSubmission(
+  task: SpaceTask,
+  review: Parameters<typeof prepareSpaceTaskReviewUpdate>[0],
+  now: number,
+  statusOptions?: Parameters<typeof prepareSpaceTaskStatusUpdate>[2]
+): ReturnType<typeof prepareSpaceTaskStatusUpdate> {
+  const { updates, reopened } = prepareSpaceTaskStatusUpdate(task, 'review', statusOptions, now);
+  return { updates: { ...updates, ...prepareSpaceTaskReviewUpdate(review, now) }, reopened };
+}
+
 export function prepareSpaceTaskReviewUpdate(
   options: {
     submittedByNodeId: string | null;
