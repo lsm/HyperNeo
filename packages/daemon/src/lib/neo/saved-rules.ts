@@ -1,4 +1,9 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import { nudgedMessageId } from './ask-origin.ts';
+
+export function neoSavedRulesKey(sessionId: string, messageId: string): string {
+  return `${sessionId}:${nudgedMessageId(messageId) ?? messageId}`;
+}
 
 export function planNeoSavedRules(before: readonly string[], after: readonly string[]): string[] {
   return after.filter((rule) => !before.includes(rule));

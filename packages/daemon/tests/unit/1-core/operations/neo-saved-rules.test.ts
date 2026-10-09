@@ -4,7 +4,11 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { planNeoSavedRules, withNeoSavedRules } from '../../../../src/lib/neo/saved-rules.ts';
+import {
+  neoSavedRulesKey,
+  planNeoSavedRules,
+  withNeoSavedRules,
+} from '../../../../src/lib/neo/saved-rules.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -38,6 +42,16 @@ describe('planNeoSavedRules', () => {
     ['only removals', ['Keep A.', 'Keep B.'], ['Keep A.'], []],
   ])('%s', (_label, before, after, saved) => {
     expect(planNeoSavedRules(before, after)).toEqual(saved);
+  });
+});
+
+describe('neoSavedRulesKey', () => {
+  test.each<[string, string, string]>([
+    ['a human turn', 'ask-1', `${root}:ask-1`],
+    ['the publish nudge for that turn', 'neo-nudge:ask-1', `${root}:ask-1`],
+    ['a done-check turn', 'w1:done-check:1', `${root}:w1:done-check:1`],
+  ])('%s', (_label, messageId, key) => {
+    expect(neoSavedRulesKey(root, messageId)).toBe(key);
   });
 });
 
@@ -121,6 +135,28 @@ describe('Neo reply after a rule save', () => {
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       value: { accepted: true, created: false },
     });
+  });
+
+  test('a reply published after the publish nudge still names the rule', async () => {
+    await invoke('neo.rule.save', { rules: [rule] });
+    db.getSDKMessageRepo().saveSDKMessage(root, {
+      type: 'user',
+      uuid: 'neo-nudge:ask-1',
+      session_id: root,
+      parent_tool_use_id: null,
+      inputKind: 'system',
+      message: { role: 'user', content: 'Publish your answer.' },
+    } as unknown as SDKUserMessage);
+    const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
+    expect(
+      await invoke('neo.publication.publish', draft, {
+        ...caller,
+        neoTurn: { ...caller.neoTurn!, messageId: 'neo-nudge:ask-1', human: false },
+      })
+    ).toMatchObject({ value: { accepted: true } });
+    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+      `${reply.shortText}\n\nSaved: ${rule}`
+    );
   });
 
   test('a turn that saved nothing publishes its reply unchanged', async () => {

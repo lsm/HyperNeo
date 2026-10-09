@@ -64,7 +64,7 @@ function settledOrStalled(work: NeoWork, messageId: string): boolean {
   );
 }
 
-function nudgedMessageId(messageId: string): string | null {
+export function nudgedMessageId(messageId: string): string | null {
   return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
 }
 

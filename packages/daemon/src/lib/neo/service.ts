@@ -77,7 +77,7 @@ import {
   readContinueBudget,
 } from './driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import { withNeoSavedRules } from './saved-rules.ts';
+import { neoSavedRulesKey, withNeoSavedRules } from './saved-rules.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -338,7 +338,7 @@ export class NeoService {
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
     const messageId = caller.neoTurn?.messageId;
     if (!caller.sessionId || !messageId || !saved.length) return;
-    const key = `${caller.sessionId}:${messageId}`;
+    const key = neoSavedRulesKey(caller.sessionId, messageId);
     const noted = [...new Set([...(this.savedRules.get(key) ?? []), ...saved])];
     this.savedRules.delete(key);
     this.savedRules.set(key, noted);
@@ -351,7 +351,7 @@ export class NeoService {
   private appendPublication(input: NeoPublicationInput) {
     const { sessionId, messageId } = input.producerInput;
     return this.publications.append(
-      withNeoSavedRules(input, this.savedRules.get(`${sessionId}:${messageId}`) ?? [])
+      withNeoSavedRules(input, this.savedRules.get(neoSavedRulesKey(sessionId, messageId)) ?? [])
     );
   }
 
