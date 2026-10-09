@@ -122,6 +122,14 @@ export class DirectTaskExecutionRepository {
       .get(id, sessionId);
   }
 
+  isRetiringStopRequested(id: string, sessionId: string): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ? AND outcome IN ('start_superseded', 'cancelled')"
+      )
+      .get(id, sessionId);
+  }
+
   beginStopVerification(id: string, sessionId: string, generation: number, token: string): boolean {
     return (
       this.db
