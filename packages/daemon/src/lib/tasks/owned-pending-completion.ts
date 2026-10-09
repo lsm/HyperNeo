@@ -8,6 +8,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import { PendingCompletionSupersededError } from './pending-completion-guard.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
@@ -32,7 +33,20 @@ import {
 
 const log = new Logger('OwnedPendingCompletion');
 
-type Gate<T> = { value: T } | { reason: Error };
+type DecisionRejection = {
+  accepted: false;
+  reason:
+    | 'pending_completion_denied'
+    | 'pending_completion_unavailable'
+    | 'pending_completion_superseded'
+    | 'task_not_found'
+    | 'task_not_in_review';
+  detail: string;
+};
+type Gate<T> = { value: T } | { reason: DecisionRejection };
+const reject = (reason: DecisionRejection['reason'], detail: string) => ({
+  reason: { accepted: false as const, reason, detail },
+});
 type CompletionActor = {
   source: OperationCaller['source'];
   session?: Session;
@@ -73,11 +87,10 @@ export function resolveCompletionActor(
 ): Gate<CompletionActor> {
   if (caller.source !== 'mcp') return { value: { source: caller.source } };
   const session = caller.sessionId ? getSession(caller.sessionId) : null;
-  const denied = {
-    reason: new Error(
-      'Pending completion decisions require a Space agent session in the owning space'
-    ),
-  };
+  const denied = reject(
+    'pending_completion_denied',
+    'Pending completion decisions require a Space agent session in the owning space'
+  );
   if (!session) return denied;
   const policy = resolveSpaceMcpSessionPolicy(session, policyContext);
   const spaceId = resolveSessionSpaceId(session, policyContext, policy);
@@ -103,11 +116,10 @@ export async function requireCompletionAutonomy(
     ? (policyContext.longHorizonAgentRepo?.getById(actor.agentId) ?? null)
     : null;
   if (!agent || agent.status !== 'active') {
-    return {
-      reason: new Error(
-        'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
-      ),
-    };
+    return reject(
+      'pending_completion_denied',
+      'Pending completion decisions require an active Space agent identity; the provenance agent is missing or inactive.'
+    );
   }
   const agentLevel = agent.autonomyLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
@@ -118,7 +130,9 @@ export async function requireCompletionAutonomy(
     agentLevel,
     spaceLevel,
   });
-  return admission.action === 'allow' ? { value: actor } : { reason: new Error(admission.message) };
+  return admission.action === 'allow'
+    ? { value: actor }
+    : reject('pending_completion_denied', admission.message);
 }
 
 export function requireCompletionTarget(
@@ -126,18 +140,23 @@ export function requireCompletionTarget(
   input: PendingCompletionInput,
   actor: CompletionActor
 ): Gate<SpaceTask> {
-  if (!task) return { reason: new Error(`Task not found: ${input.taskId}`) };
+  if (!task) return reject('task_not_found', `Task not found: ${input.taskId}`);
   if (!task.spaceId)
-    return { reason: new Error('Pending completion decisions require a Space-owned task') };
+    return reject(
+      'pending_completion_unavailable',
+      'Pending completion decisions require a Space-owned task'
+    );
   if (actor.source === 'mcp' && task.spaceId !== actor.spaceId)
-    return { reason: new Error(`Task ${input.taskId} does not belong to this space.`) };
+    return reject(
+      'pending_completion_denied',
+      `Task ${input.taskId} does not belong to this space.`
+    );
   return task.status === 'review'
     ? { value: task }
-    : {
-        reason: new Error(
-          `Task ${input.taskId} is not in 'review' status (current: ${task.status}).`
-        ),
-      };
+    : reject(
+        'task_not_in_review',
+        `Task ${input.taskId} is not in 'review' status (current: ${task.status}).`
+      );
 }
 
 export async function restageOrphanedCheckpoint(
@@ -269,7 +288,7 @@ export function createOwnedPendingCompletionOperations(
     input: PendingCompletionInput,
     caller: OperationCaller,
     operationName: string
-  ) => Promise<SpaceTask | Error>;
+  ) => Promise<SpaceTask | DecisionRejection>;
   const PendingCompletionResultSchema = TaskWithSpaceFieldsSchema.extend({
     pendingCheckpointType: z.literal('task_completion').nullable(),
     approvalSource: z.enum(['human', 'agent', 'auto_policy']).nullable(),
@@ -282,8 +301,20 @@ export function createOwnedPendingCompletionOperations(
     .object({ taskId: z.string().min(1), reason: z.string().nullable().optional() })
     .strict();
 
+  const DecisionRejectionSchema = z.object({
+    accepted: z.literal(false),
+    reason: z.enum([
+      'pending_completion_denied',
+      'pending_completion_unavailable',
+      'pending_completion_superseded',
+      'task_not_found',
+      'task_not_in_review',
+    ]),
+    detail: z.string(),
+  });
+
   const DECISION_ADMISSION_DOC =
-    'MCP requires a Space agent session in the owning space, and the caller needs the human-only autonomy level. Standalone tasks are unsupported.';
+    'MCP requires a Space agent session in the owning space, and the caller needs the human-only autonomy level; otherwise it rejects { accepted: false, reason: "pending_completion_denied", detail }. It also rejects task_not_found, pending_completion_unavailable for a standalone task, task_not_in_review, and pending_completion_superseded when the checkpoint was refreshed or decided by someone else first.';
 
   const decide = async (
     input: { taskId: string; reason?: string | null },
@@ -291,9 +322,12 @@ export function createOwnedPendingCompletionOperations(
     approved: boolean,
     operationName: string
   ) => {
-    const result = await resolve({ ...input, approved }, caller, operationName);
-    if (result instanceof Error) throw result;
-    return result;
+    try {
+      return await resolve({ ...input, approved }, caller, operationName);
+    } catch (error) {
+      if (!(error instanceof PendingCompletionSupersededError)) throw error;
+      return reject('pending_completion_superseded', error.message).reason;
+    }
   };
 
   return [
@@ -301,14 +335,14 @@ export function createOwnedPendingCompletionOperations(
       name: 'task.approve',
       description: `Approve a Space task awaiting completion review, moving it out of review and dispatching the post-approval work. ${DECISION_ADMISSION_DOC} The approval records who made it: approvalSource is agent for an MCP caller and human for an RPC or internal one. May return postApprovalBlockedReason when the approval committed but the post-approval work could not dispatch.`,
       inputSchema: DecisionInputSchema,
-      resultSchema: PendingCompletionResultSchema,
+      resultSchema: z.union([PendingCompletionResultSchema, DecisionRejectionSchema]),
       execute: async (input, caller) => decide(input, caller, true, 'task.approve'),
     }),
     defineOperation({
       name: 'task.reject',
       description: `Send a Space task awaiting completion review back to in_progress with an optional reason, so the worker can continue. ${DECISION_ADMISSION_DOC} A rejection records no provenance: approvalSource stays null.`,
       inputSchema: DecisionInputSchema,
-      resultSchema: PendingCompletionResultSchema,
+      resultSchema: z.union([PendingCompletionResultSchema, DecisionRejectionSchema]),
       execute: async (input, caller) => decide(input, caller, false, 'task.reject'),
     }),
   ];
