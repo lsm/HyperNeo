@@ -50,10 +50,10 @@ function admitStart(
   if (existing) return existing.input.reviewRejection ? unavailable : { value: existing.input };
   if (!['blocked', 'cancelled', 'stopped'].includes(task.status)) return { value: input };
   if (!task.taskAgentSessionId) return unavailable;
-  const row = db
-    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
-    .get(task.id, task.taskAgentSessionId) as { id: string } | null;
-  const attempt = row ? new DirectTaskExecutionRepository(db).get(row.id) : null;
+  const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(
+    task.id,
+    task.taskAgentSessionId
+  );
   return attempt?.phase === 'stopped'
     ? { value: { ...input, retryFrom: { attemptId: attempt.id, generation: attempt.generation } } }
     : unavailable;
