@@ -73,6 +73,21 @@ export class NeoWorkDriverTargetRepository {
       : null;
   }
 
+  readRetries(workId: string): number {
+    if (!this.hasTable()) return 0;
+    const row = this.db
+      .prepare('SELECT retries FROM neo_work_driver_targets WHERE work_id = ?')
+      .get(workId) as { retries: number } | null | undefined;
+    return row?.retries ?? 0;
+  }
+
+  recordRetry(workId: string): number {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET retries = retries + 1 WHERE work_id = ?')
+      .run(workId);
+    return this.readRetries(workId);
+  }
+
   readNeedsYouSince(workId: string): number | null {
     if (!this.hasTable()) return null;
     const row = this.db

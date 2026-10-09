@@ -828,6 +828,17 @@ export function createNeoOperations(service: NeoService) {
       return service.continueWork(id, message);
     }
   );
+  const retry = path(
+    'neo.work.retry',
+    (_input: z.infer<typeof WorkId>) => undefined,
+    async ({ id }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      const admission = requireNeoWorkContinuation(work, caller);
+      if ('reason' in admission) return admission.reason;
+      return service.retryWork(id);
+    }
+  );
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
@@ -947,6 +958,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: continueWork,
+    }),
+    defineOperation({
+      name: 'neo.work.retry',
+      description:
+        'Try a failed hand-off again on the same work card: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The card goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. Only the Neo session that proposed the work or the user can retry it.',
+      inputSchema: WorkId,
+      resultSchema: WorkResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: retry,
     }),
     defineOperation({
       name: 'neo.work.close',
