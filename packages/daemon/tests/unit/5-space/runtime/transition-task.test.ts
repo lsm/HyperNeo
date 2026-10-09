@@ -10,6 +10,7 @@ import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks
 import {
   createSpaceTransitionTaskOperation,
   decide,
+  requireHandoffBeforeReopen,
   type SpaceTransitionTaskDependencies,
   writeStatus,
 } from '../../../../src/lib/tasks/transition-task';
@@ -844,20 +845,21 @@ describe('decide', () => {
     expect(parkStopped).not.toHaveBeenCalled();
   });
 
-  test('reopening a task that awaits a manual handoff is a typed rejection, not a throw', async () => {
+  test('reopening a task that awaits a manual handoff is a typed rejection, not a throw', () => {
     const owned = createOwned('blocked', createWorkflowRun().id);
     const task = tasks.updateTask(owned.task.id, { blockReason: 'agent_handoff_required' })!;
-    const recoverTransition = mock(async () => task);
-    const result = await decide(
-      { spaceId, task },
-      { taskId: task.id, status: 'in_progress' },
-      rpc,
-      deps({ recoverTransition })
-    );
-    expect(result).toEqual({
-      reason: expect.objectContaining({ accepted: false, reason: 'handoff_required' }),
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task }, { taskId: task.id, status: 'open' })
+    ).toEqual({
+      reason: { accepted: false, reason: 'handoff_required' },
     });
-    expect(recoverTransition).not.toHaveBeenCalled();
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task }, { taskId: task.id, status: 'cancelled' })
+    ).toEqual({ value: { spaceId, task } });
+    const unblocked = { ...task, blockReason: 'human_input_requested' as const };
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task: unblocked }, { taskId: task.id, status: 'open' })
+    ).toEqual({ value: { spaceId, task: unblocked } });
   });
 
   test('a string rejection from recover_transition becomes the operation rejection', async () => {
