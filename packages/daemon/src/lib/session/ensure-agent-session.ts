@@ -68,10 +68,10 @@ const runEnsureAgentSessionPipeline = (superpipe({})('ensure-agent-session') as 
   .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolution')
   .pipe(admitAgentStage, 'resolution', 'result:outcome')
   .pipe(provisionAgentSessionStage, ['spaceId', 'agentId', 'deps'], 'ensuredSession')
-  .pipe(readSpaceStage, ['deps', 'spaceId'], 'space')
-  .pipe(admitSpaceStage, 'space', 'result:outcome')
-  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolution')
-  .pipe(admitAgentStage, 'resolution', 'result:outcome')
+  .pipe(readSpaceStage, ['deps', 'spaceId'], 'spaceAfterProvision')
+  .pipe(admitSpaceStage, 'spaceAfterProvision', 'result:outcome')
+  .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], 'resolutionAfterProvision')
+  .pipe(admitAgentStage, 'resolutionAfterProvision', 'result:outcome')
   .pipe(gateEnsuredSessionStage, 'ensuredSession', 'result:outcome')
   .endAsync('outcome') as (
   spaceId: string,

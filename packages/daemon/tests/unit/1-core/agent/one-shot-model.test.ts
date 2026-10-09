@@ -49,6 +49,11 @@ describe('buildOneShotQueryOptions', () => {
     expect(thinking('moonshot-v1')).toEqual({ type: 'disabled' });
   });
 
+  test('sets a working directory only when one is given', () => {
+    expect(buildOneShotQueryOptions(request(), runtime).cwd).toBeUndefined();
+    expect(buildOneShotQueryOptions(request({ cwd: '/lean' }), runtime).cwd).toBe('/lean');
+  });
+
   test('passes an abort controller through', () => {
     const abortController = new AbortController();
     expect(buildOneShotQueryOptions(request({ abortController }), runtime).abortController).toBe(
@@ -63,6 +68,12 @@ describe('firstAssistantText', () => {
     ['joins with a custom separator', [assistant('a', 'b')], '\n', 'a\nb'],
     ['skips blank assistant messages', [assistant(' '), assistant('next')], undefined, 'next'],
     ['returns null without assistant text', [{ type: 'result' } as SDKMessage], undefined, null],
+    [
+      'skips an assistant message without content',
+      [{ type: 'assistant', message: {} } as unknown as SDKMessage, assistant('next')],
+      undefined,
+      'next',
+    ],
   ] as const)('%s', async (_label, messages, separator, expected) => {
     expect(await firstAssistantText(stream(...messages), separator)).toBe(expected);
   });

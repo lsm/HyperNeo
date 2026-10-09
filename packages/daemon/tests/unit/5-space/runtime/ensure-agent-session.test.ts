@@ -214,3 +214,13 @@ describe('ensure-agent-session gates', () => {
     );
   });
 });
+
+describe('runEnsureAgentSession space re-check', () => {
+  test('rejects a space deleted while its agent session was provisioning', async () => {
+    const { deps, calls } = makeDeps({ longHorizonAgents: [makeAgent('agent-1')] });
+    const reads = [makeSpace(), null];
+    deps.getSpace = async () => reads.shift() ?? null;
+    expect(await runEnsureAgentSession(SPACE_ID, 'agent-1', deps)).toBe('space_inactive');
+    expect(calls).toEqual({ provisioned: [`${SPACE_ID}:agent-1`] });
+  });
+});

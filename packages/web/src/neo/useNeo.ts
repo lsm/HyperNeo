@@ -180,6 +180,7 @@ export function useNeo() {
     setError,
     busyWork,
     open,
+    refresh,
     act,
     settleAsk,
     send: intake.send,

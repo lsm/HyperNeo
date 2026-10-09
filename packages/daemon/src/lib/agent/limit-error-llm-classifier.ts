@@ -1,8 +1,6 @@
 import { getProviderService } from '../provider-service.ts';
-import { KimiProvider } from '../providers/kimi-provider.js';
 import { Logger } from '../logger.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
+import { runOneShotModel } from './one-shot-model.ts';
 import { normalizeEpochMs } from './limit-error-classifier.ts';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
@@ -246,47 +244,15 @@ export class LimitErrorLlmClassifier {
         deadline
       );
       if (!mergedEnv) return null;
-      const query =
-        this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
-      const agentQuery = query({
+      const reply = await runOneShotModel({
         prompt: buildPrompt(rawText, now),
-        options: {
-          model: models.sdkModelId,
-          maxTurns: 1,
-          permissionMode: 'acceptEdits',
-          allowDangerouslySkipPermissions: false,
-          mcpServers: {},
-          settingSources: [],
-          tools: [],
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-          env: mergedEnv,
-          thinking:
-            providerId === 'kimi'
-              ? KimiProvider.resolveKimiTitleThinkingConfig(models.providerModelId)
-              : { type: 'disabled' },
-          abortController,
-        },
+        provider: providerId,
+        model: models.sdkModelId,
+        thinkingModelId: models.providerModelId,
+        env: mergedEnv,
+        abortController,
+        query: this.deps.queryForTesting,
       });
-
-      let reply = '';
-      for await (const message of agentQuery) {
-        const assistant = message as {
-          type: string;
-          message?: { content?: Array<{ type: string; text?: string }> };
-        };
-        if (assistant.type !== 'assistant' || !assistant.message) continue;
-        const text = (assistant.message.content ?? [])
-          .filter((block) => block.type === 'text')
-          .map((block) => block.text ?? '')
-          .join(' ')
-          .trim();
-        if (text) {
-          reply = text;
-          break;
-        }
-      }
       if (!reply) return null;
       const payload = extractJsonObject(reply);
       if (!payload) return null;

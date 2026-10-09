@@ -15,6 +15,7 @@ export interface OneShotModelRequest {
   env: Record<string, string | undefined>;
   separator?: string;
   abortController?: AbortController;
+  cwd?: string;
   query?: SdkQueryFunction;
 }
 
@@ -48,6 +49,7 @@ export function buildOneShotQueryOptions(
         ? KimiProvider.resolveKimiTitleThinkingConfig(request.thinkingModelId)
         : { type: 'disabled' },
     ...(request.abortController ? { abortController: request.abortController } : {}),
+    ...(request.cwd ? { cwd: request.cwd } : {}),
   };
 }
 
@@ -69,9 +71,8 @@ export async function firstAssistantText(
 ): Promise<string | null> {
   for await (const message of messages) {
     if (!isSDKAssistantMessage(message)) continue;
-    const blocks = message.message.content.filter(
-      (block: { type: string }) => block.type === 'text'
-    ) as Array<{ text?: string }>;
+    const content = (message.message?.content ?? []) as Array<{ type: string; text?: string }>;
+    const blocks = content.filter((block) => block.type === 'text');
     const text = blocks
       .map((block) => block.text ?? '')
       .join(separator)

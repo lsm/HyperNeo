@@ -9,13 +9,11 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.js';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
+import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
-import { KimiProvider } from '../providers/kimi-provider.js';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
@@ -43,14 +41,6 @@ type TitleGenerationProviderService = Pick<
   | 'getTitleGenerationModels'
   | 'getIsolatedEnvForModel'
 >;
-
-function isAssistantMessageWithContent(
-  message: unknown
-): message is { type: 'assistant'; message: { content: Array<{ type: string; text?: string }> } } {
-  if (!message || typeof message !== 'object') return false;
-  const candidate = message as { type?: unknown; message?: { content?: unknown } };
-  return candidate.type === 'assistant' && Array.isArray(candidate.message?.content);
-}
 
 export interface SessionLifecycleConfig {
   defaultModel: string;
@@ -1047,9 +1037,7 @@ export class SessionLifecycle {
     modelId: string,
     messageText: string
   ): Promise<string | null> {
-    const query =
-      this.config.titleGenerationQueryForTesting ??
-      (await import('@anthropic-ai/claude-agent-sdk')).query;
+    const query = this.config.titleGenerationQueryForTesting;
     const providerService =
       this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
@@ -1063,51 +1051,15 @@ export class SessionLifecycle {
 
     const prompt = buildTitleGenerationPrompt(messageText);
 
-    const cliPath = resolveSDKCliPath();
-
-    const mergedEnv = await providerService.getIsolatedEnvForModel(
-      provider,
-      titleModels.providerModelId
-    );
-
-    const agentQuery = query({
-      prompt,
-      options: {
+    let title =
+      (await runOneShotModel({
+        prompt,
+        provider,
         model: titleModels.sdkModelId,
-        maxTurns: 1,
-        permissionMode: 'acceptEdits',
-        allowDangerouslySkipPermissions: false,
-        mcpServers: {},
-        settingSources: [],
-        tools: [],
-        pathToClaudeCodeExecutable: cliPath,
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-        settings: withSdkTranscriptRetention(),
-        env: mergedEnv,
-        thinking:
-          provider === 'kimi'
-            ? KimiProvider.resolveKimiTitleThinkingConfig(titleModels.providerModelId)
-            : { type: 'disabled' },
-      },
-    });
-
-    let title = '';
-
-    for await (const message of agentQuery) {
-      if (isAssistantMessageWithContent(message)) {
-        const textBlocks = message.message.content.filter(
-          (b: { type: string }) => b.type === 'text'
-        ) as Array<{ text?: string }>;
-        title = textBlocks
-          .map((b) => b.text ?? '')
-          .join(' ')
-          .trim();
-
-        if (title) {
-          break;
-        }
-      }
-    }
+        thinkingModelId: titleModels.providerModelId,
+        env: await providerService.getIsolatedEnvForModel(provider, titleModels.providerModelId),
+        query,
+      })) ?? '';
 
     if (!title) {
       throw new Error('No text content in SDK response');

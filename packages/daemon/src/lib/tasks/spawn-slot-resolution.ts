@@ -223,6 +223,19 @@ export function resolveSpawnWorkspace(input: {
   };
 }
 
+export type WorktreeFailureDecision =
+  | { kind: 'own_folder'; path: string }
+  | { kind: 'permanent' }
+  | { kind: 'retryable' };
+
+export function decideWorktreeFailure(input: {
+  notGitRepository: boolean;
+  ownFolder: string | undefined;
+}): WorktreeFailureDecision {
+  if (!input.notGitRepository) return { kind: 'retryable' };
+  return input.ownFolder ? { kind: 'own_folder', path: input.ownFolder } : { kind: 'permanent' };
+}
+
 export function explicitTaskWorkspace(task: Pick<SpaceTask, 'workspacePath'>): string | undefined {
   const raw = task.workspacePath;
   if (raw === undefined || raw === null) return undefined;

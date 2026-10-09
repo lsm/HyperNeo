@@ -29,21 +29,26 @@ function removeAbandonedDirs(root: string): void {
   }
 }
 
+export function buildFlagSettings(
+  options: Pick<Options, 'settings' | 'sandbox'>
+): Record<string, unknown> | null {
+  const { settings, sandbox } = options;
+  if (!settings || typeof settings !== 'object' || !settings.env) return null;
+  if (!sandbox) return { ...settings };
+  return {
+    ...settings,
+    sandbox:
+      sandbox.enabled === true && sandbox.failIfUnavailable === undefined
+        ? { ...sandbox, failIfUnavailable: true }
+        : sandbox,
+  };
+}
+
 export function createFlagSettingsFileWriter(root: string = tmpdir()) {
   let dir: string | undefined;
   return (options: Options, sessionId: string): (() => void) | undefined => {
-    const settings = options.settings;
-    if (!settings || typeof settings !== 'object' || !settings.env) return undefined;
-    const sandbox = options.sandbox;
-    const content = sandbox
-      ? {
-          ...settings,
-          sandbox:
-            sandbox.enabled === true && sandbox.failIfUnavailable === undefined
-              ? { ...sandbox, failIfUnavailable: true }
-              : sandbox,
-        }
-      : settings;
+    const content = buildFlagSettings(options);
+    if (!content) return undefined;
     if (!dir) {
       removeAbandonedDirs(root);
       dir = mkdtempSync(join(root, `hyperneo-settings-${process.pid}-`));

@@ -2,6 +2,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import { registerAgentOperations } from './agents.ts';
 import { registerArtifactOperations } from './artifacts.ts';
 import { registerAuditOperations } from './audit.ts';
+import { registerClientOperations } from './clients.ts';
 import { registerDriverOperations } from './drivers.ts';
 import type { FamilyOperationContext } from './context.ts';
 import { registerEvolutionOperations } from './evolution.ts';
@@ -21,6 +22,7 @@ export function collectFamilyOperations(context: FamilyOperationContext): Operat
     ...registerAgentOperations(context),
     ...registerArtifactOperations(context),
     ...registerAuditOperations(context),
+    ...registerClientOperations(context),
     ...registerDriverOperations(context),
     ...registerEvolutionOperations(context),
     ...registerExternalEventOperations(context),

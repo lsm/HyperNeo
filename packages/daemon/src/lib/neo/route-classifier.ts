@@ -2,8 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
-import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
+import { runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
@@ -214,34 +213,16 @@ async function askNeoRouteModel(
       return readNeoRouteDecision(readNeoRouteStream(await response.text()), candidates);
     }
     leanCwd ??= mkdtempSync(join(tmpdir(), 'neo-route-'));
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
-    const run = query({
+    const raw = await runOneShotModel({
       prompt,
-      options: {
-        cwd: leanCwd,
-        model: provider === 'glm' ? 'haiku' : config.modelId,
-        maxTurns: 1,
-        mcpServers: {},
-        settingSources: [],
-        tools: [],
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-        settings: withSdkTranscriptRetention(),
-        env: { ...env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
-        abortController,
-        thinking,
-      },
+      provider,
+      model: provider === 'glm' ? 'haiku' : config.modelId,
+      thinkingModelId: config.modelId,
+      env: { ...env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+      abortController,
+      cwd: leanCwd,
     });
-    for await (const message of run) {
-      if (!isSDKAssistantMessage(message)) continue;
-      const raw = (message.message.content as Array<{ type: string; text?: string }>)
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text ?? '')
-        .join(' ');
-      if (raw.trim()) return readNeoRouteDecision(raw, candidates);
-    }
-    return null;
+    return raw ? readNeoRouteDecision(raw, candidates) : null;
   } catch (error) {
     log.warn('Neo route classification failed:', error);
     return 'failed';
