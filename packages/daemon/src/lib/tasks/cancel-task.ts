@@ -130,10 +130,10 @@ export function admitCancellation(
     return unavailable;
   if (input.expectedStatus !== undefined && task.status !== input.expectedStatus)
     return { reason: { accepted: false, reason: 'invalid_transition' } };
-  const row = db
-    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
-    .get(task.id, task.taskAgentSessionId) as { id: string } | null;
-  const attempt = row ? new DirectTaskExecutionRepository(db).get(row.id) : null;
+  const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(
+    task.id,
+    task.taskAgentSessionId
+  );
   if (!attempt) return unavailable;
   const target: DirectFinalizationInput = {
     attemptId: attempt.id,

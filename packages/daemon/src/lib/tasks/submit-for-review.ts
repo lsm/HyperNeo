@@ -39,11 +39,11 @@ function resolveWorkflowSubmissionRejection(error: unknown): string | undefined 
 }
 
 function reviewBackedByFrozenDirectRequest(db: Database, taskId: string, sessionId: string) {
-  const row = db
-    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
-    .get(taskId, sessionId) as { id: string } | null;
-  if (!row) return false;
-  return readDirectFinalizationRequest(db, { attemptId: row.id, sessionId })?.status === 'review';
+  const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(taskId, sessionId);
+  if (!attempt) return false;
+  return (
+    readDirectFinalizationRequest(db, { attemptId: attempt.id, sessionId })?.status === 'review'
+  );
 }
 
 export async function admitManagedSubmission(
@@ -115,10 +115,7 @@ export function admitSubmission(
   if (input.expectedStatus !== undefined && task.status !== input.expectedStatus)
     return { reason: { accepted: false, reason: 'invalid_transition' } };
   const attempts = new DirectTaskExecutionRepository(db);
-  const row = db
-    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
-    .get(task.id, task.taskAgentSessionId) as { id: string } | null;
-  const attempt = row ? attempts.get(row.id) : null;
+  const attempt = attempts.getByTaskAndSession(task.id, task.taskAgentSessionId);
   if (!attempt) return unavailable;
   const target: DirectFinalizationInput = {
     attemptId: attempt.id,
