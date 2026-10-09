@@ -1,4 +1,4 @@
-import type { NeoAsk, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
@@ -79,12 +79,7 @@ export class NeoAskRepository {
         )
         .run(workId, askId);
       if (added.changes === 0) return false;
-      this.db
-        .prepare(`UPDATE neo_asks SET updated_at = ?,
-          status = CASE WHEN status IN ('waiting', 'blocked') THEN 'open' ELSE status END,
-          settled_at = CASE WHEN status = 'blocked' THEN NULL ELSE settled_at END
-          WHERE id = ?`)
-        .run(Date.now(), askId);
+      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(Date.now(), askId);
       return true;
     })();
     if (linked) this.notify();
@@ -92,21 +87,6 @@ export class NeoAskRepository {
       .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')
       .get(workId) as { askId: string } | undefined;
     return owner?.askId ?? null;
-  }
-
-  settle(
-    expected: Pick<NeoAsk, 'id' | 'status'>,
-    status: Exclude<NeoAskStatus, 'open' | 'waiting'>,
-    outcome: string
-  ): NeoAsk | null {
-    const now = Date.now();
-    const row = this.db
-      .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, updated_at = ?, settled_at = ?
-        WHERE id = ? AND status = ? RETURNING ${askColumns}`)
-      .get(status, outcome, now, now, expected.id, expected.status) as NeoAskRow | null;
-    if (!row) return null;
-    this.notify();
-    return this.withWork([row])[0];
   }
 
   private withWork(rows: NeoAskRow[]): NeoAsk[] {

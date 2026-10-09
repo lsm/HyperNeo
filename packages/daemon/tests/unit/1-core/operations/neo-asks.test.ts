@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  projectNeoSnapshotAsks,
+  requireNeoAskConcern,
+  requireNeoAskReceipt,
+  requireNeoWorkAsk,
+  requireNeoWorkAskLink,
+} from '../../../../src/lib/neo/ask-operations.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -96,25 +103,6 @@ describe('neo.ask operations', () => {
     ]);
   });
 
-  test('refuses work under a missing or achieved ask, and settling is final', async () => {
-    const askId = await openAsk();
-    expect(await propose('card-1', 'nope')).toMatchObject({
-      value: { ok: false, reason: 'ask_not_found' },
-    });
-
-    const settle = { id: askId, outcome: 'achieved', evidence: 'PR #12 merged, CI green.' };
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
-      value: { ok: true, ask: { status: 'achieved', outcome: settle.evidence } },
-    });
-    expect(await invoke('neo.ask.settle', settle)).toMatchObject({ value: { ok: true } });
-    expect(
-      await invoke('neo.ask.settle', { ...settle, outcome: 'blocked', evidence: 'x' })
-    ).toMatchObject({ value: { ok: false, reason: 'ask_settled: this ask is already achieved.' } });
-    expect(await propose('card-2', askId)).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('ask_settled') },
-    });
-  });
-
   test('refuses a retried request key under another ask', async () => {
     const first = await openAsk();
     const second = (await invoke('neo.ask.open', { ...opening, requestKey: 'other' })).value!.ask!
@@ -127,13 +115,105 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(second)?.workIds).toEqual([]);
     expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
   });
+});
 
-  test('new work under a blocked ask reopens it', async () => {
-    const askId = await openAsk();
-    await invoke('neo.ask.settle', { id: askId, outcome: 'blocked', evidence: 'Which API?' });
+const ask: NeoAsk = {
+  id: 'a1',
+  requestKey: 'root:fix',
+  concernId: null,
+  originSessionId: 'root',
+  originMessageId: 'm1',
+  title: opening.title,
+  ask: opening.ask,
+  doneWhen: opening.doneWhen,
+  doneSource: 'human',
+  status: 'open',
+  outcome: null,
+  workIds: [],
+  createdAt: 1,
+  updatedAt: 1,
+  settledAt: null,
+};
+const openInput = { ...opening, concernId: null };
 
-    await propose('card-1', askId);
+describe('requireNeoAskReceipt', () => {
+  test.each([
+    ['no ask table', null, 'Asks are not available on this daemon yet.'],
+    [
+      'another done rule',
+      { ...ask, doneWhen: '- PR open' },
+      'This request key already belongs to another ask.',
+    ],
+    [
+      'another concern',
+      { ...ask, concernId: 'c1' },
+      'This request key already belongs to another ask.',
+    ],
+  ])('refuses %s', (_case, opened, reason) => {
+    expect(requireNeoAskReceipt(openInput, { ask: opened })).toEqual({
+      reason: { ok: false, reason },
+    });
+  });
 
-    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+  test('accepts the same ask', () => {
+    expect(requireNeoAskReceipt(openInput, { ask })).toEqual({ value: { ok: true, ask } });
+  });
+});
+
+describe('requireNeoAskConcern', () => {
+  test('refuses a missing concern and passes the value otherwise', () => {
+    expect(requireNeoAskConcern({ concernId: 'c1' }, { concern: null }, 'v')).toEqual({
+      reason: { ok: false, reason: 'Concern not found.' },
+    });
+    expect(requireNeoAskConcern({ concernId: null }, { concern: null }, 'v')).toEqual({
+      value: 'v',
+    });
+  });
+});
+
+describe('requireNeoWorkAsk', () => {
+  const input = { askId: 'a1', concernId: null };
+
+  test.each([
+    ['a missing ask', null, 'ask_not_found'],
+    [
+      'another concern',
+      { ...ask, concernId: 'c1' },
+      'This ask belongs to another concern; propose under its concernId.',
+    ],
+    [
+      'an achieved ask',
+      { ...ask, status: 'achieved' as const },
+      'ask_settled: this ask is already achieved; open a new ask.',
+    ],
+  ])('refuses work under %s', (_case, current, reason) => {
+    expect(requireNeoWorkAsk(current, input, 'v')).toEqual({ reason: { ok: false, reason } });
+  });
+
+  test('passes work with no ask or under an active one', () => {
+    expect(requireNeoWorkAsk(null, { concernId: null }, 'v')).toEqual({ value: 'v' });
+    expect(requireNeoWorkAsk({ ...ask, status: 'blocked' }, input, 'v')).toEqual({ value: 'v' });
+  });
+});
+
+describe('requireNeoWorkAskLink', () => {
+  test('passes work with no ask or linked to its ask, refuses work owned by another', () => {
+    expect(requireNeoWorkAskLink({}, { owner: null }, 'r')).toEqual({ value: 'r' });
+    expect(requireNeoWorkAskLink({ askId: 'a1' }, { owner: 'a1' }, 'r')).toEqual({ value: 'r' });
+    expect(requireNeoWorkAskLink({ askId: 'a1' }, { owner: 'a2' }, 'r')).toMatchObject({
+      reason: { ok: false },
+    });
+  });
+});
+
+describe('projectNeoSnapshotAsks', () => {
+  test('keeps every active ask ahead of the most recent settled ones', () => {
+    const asks = [
+      { ...ask, id: 's1', status: 'achieved' as const },
+      { ...ask, id: 'o1' },
+      { ...ask, id: 's2', status: 'abandoned' as const },
+      { ...ask, id: 'b1', status: 'blocked' as const },
+    ];
+    expect(projectNeoSnapshotAsks(asks, 1).map((item) => item.id)).toEqual(['o1', 'b1', 's1']);
   });
 });

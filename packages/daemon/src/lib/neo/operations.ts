@@ -65,6 +65,7 @@ import {
   NeoAskSchema,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
+  requireNeoWorkAskLink,
 } from './ask-operations.ts';
 
 const Concern = z.object({
@@ -823,20 +824,9 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
-        const recordGoal = <Gate extends object>(
-          gate: Gate,
-          workId: string
-        ): Gate | { reason: Rejection } => {
-          if (!('value' in gate)) return gate;
-          if (input.askId && service.askRecords.link(input.askId, workId) !== input.askId)
-            return {
-              reason: {
-                ok: false,
-                reason:
-                  'This request key already belongs to work under another ask; use a new one.',
-              },
-            };
-          service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
+        const recordGoal = <Gate extends object>(gate: Gate, workId: string): Gate => {
+          if ('value' in gate)
+            service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
           return gate;
         };
         if (input.work) {
@@ -884,6 +874,14 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'origin', 'caller', 'admission'],
       'result:admission'
     )
+    .pipe(
+      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => ({
+        owner: input.askId ? service.askRecords.link(input.askId, receipt.work.id) : null,
+      }),
+      ['input', 'admission'],
+      'askLink'
+    )
+    .pipe(requireNeoWorkAskLink, ['input', 'askLink', 'admission'], 'result:admission')
     .endAsync('admission') as (
     input: z.infer<typeof Propose>,
     caller: OperationCaller
@@ -956,7 +954,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
-    ...createNeoAskOperations(service, path),
+    ...createNeoAskOperations(service, (caller, name, concernId) =>
+      admitNeoCaller(service, caller, name, concernId)
+    ),
     defineOperation({
       name: 'neo.concern.cancel',
       description:

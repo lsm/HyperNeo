@@ -1,15 +1,19 @@
+import type { NeoConcern } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
-import { admitNeoWorkOrigin } from './work-origin.ts';
+import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
 type Rejection = { ok: false; reason: string };
-type NeoPath = <I, O>(
+type Gate<T> = { value: T } | { reason: Rejection };
+type NeoAdmit = (
+  caller: OperationCaller,
   name: string,
-  scope: (input: I) => string | null | undefined,
-  action: (input: I, caller: OperationCaller) => O | Promise<O>
-) => (input: I, caller: OperationCaller) => Promise<O | Rejection>;
+  concernId?: string | null
+) => Gate<OperationCaller>;
+type AskReceipt = { ok: true; ask: NeoAsk };
 
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
@@ -38,11 +42,6 @@ const Open = z.object({
   doneWhen: z.string().trim().min(1).max(2000),
   doneSource: z.string().trim().min(1).max(160),
 });
-const Settle = z.object({
-  id: z.string().min(1),
-  outcome: z.enum(['achieved', 'abandoned', 'blocked']),
-  evidence: z.string().trim().min(1).max(4000),
-});
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
 const isFinal = (ask: NeoAsk) => ask.status === 'achieved' || ask.status === 'abandoned';
@@ -52,7 +51,7 @@ export function requireNeoWorkAsk<T>(
   ask: NeoAsk | null,
   input: { askId?: string; concernId: string | null },
   value: T
-): { value: T } | { reason: Rejection } {
+): Gate<T> {
   if (!input.askId) return { value };
   if (!ask) return { reason: fail('ask_not_found') };
   if (ask.concernId !== input.concernId)
@@ -62,54 +61,88 @@ export function requireNeoWorkAsk<T>(
     : { value };
 }
 
+export function requireNeoWorkAskLink<T>(
+  input: { askId?: string },
+  link: { owner: string | null },
+  value: T
+): Gate<T> {
+  return !input.askId || link.owner === input.askId
+    ? { value }
+    : {
+        reason: fail('This request key already belongs to work under another ask; use a new one.'),
+      };
+}
+
 export function projectNeoSnapshotAsks(asks: readonly NeoAsk[], settledLimit: number): NeoAsk[] {
   const active = asks.filter((ask) => !isFinal(ask)).slice(0, ACTIVE_ASK_LIMIT);
   return [...active, ...asks.filter(isFinal).slice(0, settledLimit)];
 }
 
-export function createNeoAskOperations(service: NeoService, path: NeoPath) {
-  const open = path(
-    'neo.ask.open',
-    (input: z.infer<typeof Open>) => input.concernId,
-    (input, caller) => {
-      if (input.concernId && !service.repo.getConcern(input.concernId))
-        return fail('Concern not found.');
-      const origin = admitNeoWorkOrigin(
-        caller,
-        caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
-      );
-      if ('reason' in origin) return origin.reason;
-      const ask = service.askRecords.open({
-        ...input,
-        ...origin.value,
-        id: crypto.randomUUID(),
-        requestKey: `${origin.value.originSessionId}:${input.requestKey}`,
-      });
-      if (!ask) return fail('Asks are not available on this daemon yet.');
-      const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
-        (field) => ask[field] === input[field]
-      );
-      return same
-        ? { ok: true as const, ask }
-        : fail('This request key already belongs to another ask.');
-    }
+export function requireNeoAskConcern<T>(
+  input: { concernId: string | null },
+  found: { concern: NeoConcern | null },
+  value: T
+): Gate<T> {
+  return input.concernId && !found.concern ? { reason: fail('Concern not found.') } : { value };
+}
+
+export function requireNeoAskReceipt(
+  input: z.infer<typeof Open>,
+  opened: { ask: NeoAsk | null }
+): Gate<AskReceipt> {
+  const { ask } = opened;
+  if (!ask) return { reason: fail('Asks are not available on this daemon yet.') };
+  const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
+    (field) => ask[field] === input[field]
   );
-  const settle = path(
-    'neo.ask.settle',
-    (input: z.infer<typeof Settle>) => service.askRecords.get(input.id)?.concernId,
-    ({ id, outcome, evidence }, caller) => {
-      const ask = service.askRecords.get(id);
-      if (!ask) return fail('ask_not_found');
-      if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-        return fail('Only the Neo session that opened this ask or the user can settle it.');
-      if (ask.status === outcome && ask.outcome === evidence) return { ok: true as const, ask };
-      if (isFinal(ask)) return fail(`ask_settled: this ask is already ${ask.status}.`);
-      const settled = service.askRecords.settle(ask, outcome, evidence);
-      return settled
-        ? { ok: true as const, ask: settled }
-        : fail('This ask changed; read it again.');
-    }
-  );
+  return same
+    ? { value: { ok: true, ask } }
+    : { reason: fail('This request key already belongs to another ask.') };
+}
+
+export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
+  const open = (superpipe({})('neo.ask.open') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Open>, caller: OperationCaller) =>
+        admit(caller, 'neo.ask.open', input.concernId),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Open>) => ({
+        concern: input.concernId ? service.repo.getConcern(input.concernId) : null,
+      }),
+      'input',
+      'concern'
+    )
+    .pipe(requireNeoAskConcern, ['input', 'concern', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Open>, caller: OperationCaller) =>
+        admitNeoWorkOrigin(
+          caller,
+          caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
+        ),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Open>, origin: NeoWorkOrigin) => ({
+        ask: service.askRecords.open({
+          ...input,
+          ...origin,
+          id: crypto.randomUUID(),
+          requestKey: `${origin.originSessionId}:${input.requestKey}`,
+        }),
+      }),
+      ['input', 'admission'],
+      'opened'
+    )
+    .pipe(requireNeoAskReceipt, ['input', 'opened'], 'result:admission')
+    .end('admission') as (
+    input: z.infer<typeof Open>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
   return [
     defineOperation({
       name: 'neo.ask.open',
@@ -118,16 +151,7 @@ export function createNeoAskOperations(service: NeoService, path: NeoPath) {
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: open,
-    }),
-    defineOperation({
-      name: 'neo.ask.settle',
-      description:
-        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met, with evidence; blocked when only the human can unblock it, saying what they need to decide; abandoned when it is no longer wanted. Achieved and abandoned are final. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it.',
-      inputSchema: Settle,
-      resultSchema: AskResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: settle,
+      execute: async (input, caller) => open(input, caller),
     }),
   ];
 }
