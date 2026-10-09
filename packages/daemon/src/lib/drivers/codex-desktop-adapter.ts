@@ -1,4 +1,3 @@
-import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
@@ -32,6 +31,7 @@ import {
   workEntryTime,
   workInput,
 } from './work-messages.ts';
+import { readTailLines } from './transcript-tail.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -303,25 +303,8 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   });
 }
 
-async function readRolloutWindow(
-  path: string,
-  bytes = ROLLOUT_TAIL_BYTES
-): Promise<{ lines: string[]; truncated: boolean }> {
-  const handle = await open(path, 'r');
-  try {
-    const { size } = await handle.stat();
-    const start = Math.max(0, size - bytes);
-    const buffer = Buffer.alloc(size - start);
-    await handle.read(buffer, 0, buffer.length, start);
-    const lines = buffer.toString('utf8').split('\n');
-    return { lines: start > 0 ? lines.slice(1) : lines, truncated: start > 0 };
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
-  return (await readRolloutWindow(path, bytes)).lines;
+  return (await readTailLines(path, bytes)).lines;
 }
 
 function parseLine(
@@ -476,7 +459,7 @@ export async function readCodexTurn(
   since?: number
 ): Promise<CodexTurnState> {
   try {
-    const { lines, truncated } = await readRolloutWindow(detail.thread.rolloutPath);
+    const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
     return {
       ...codexTurnState(lines),
       inputs: codexRecentInputs(lines, since),
