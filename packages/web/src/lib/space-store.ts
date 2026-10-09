@@ -2219,16 +2219,6 @@ class SpaceStore {
     return result.scope ?? null;
   }
 
-  async recoverWorkflowTask(taskId: string, status: 'open' | 'in_progress'): Promise<SpaceTask> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    return requireSynchronousTransition(await transitionTask(hub, { taskId, status }));
-  }
-
   async handoffWorkerSession(taskId: string): Promise<SpaceTask> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');

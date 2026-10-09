@@ -50,9 +50,16 @@ export async function editTaskMetadata(
     labels?: string[];
   }
 ): Promise<SpaceTask> {
-  const result = await invokeOperation<SpaceTask | null>(hub, 'task.update', input);
+  const result = await invokeOperation<SpaceTask | { accepted: false; reason: string } | null>(
+    hub,
+    'task.update',
+    input
+  );
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
-  return result;
+  if ('accepted' in result && result.accepted === false) {
+    throw new Error(`Cannot edit task ${input.taskId}: ${result.reason}`);
+  }
+  return result as SpaceTask;
 }
 
 const PREFERRED_WORKFLOW_REJECTIONS: Record<string, string> = {

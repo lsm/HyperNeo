@@ -108,7 +108,7 @@ function TabButton({
     amber: 'bg-warning/15 text-warning-soft',
     purple: 'bg-cat-purple/15 text-cat-purple',
     green: 'bg-success/15 text-success-soft',
-    red: 'bg-red-400/15 text-danger-soft',
+    red: 'bg-danger/15 text-danger-soft',
     gray: 'bg-fill text-fg-soft',
   };
   return (
@@ -239,7 +239,7 @@ function MoreTabsDropdown({
               type="button"
               role="menuitem"
               aria-current={activeTab === tab.key ? 'page' : undefined}
-              class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-fg-soft transition-colors hover:bg-white/[0.07] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50"
+              class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-fg-soft transition-colors hover:bg-fill-soft hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50"
               onClick={() => {
                 triggerRef.current?.focus();
                 setIsOpen(false);
@@ -419,11 +419,11 @@ function TaskGroup({
   error?: { message: string; onRetry?: () => void } | null;
 }) {
   const accentStyles: Record<string, string> = {
-    default: 'bg-sky-300/80',
+    default: 'bg-info-soft/80',
     yellow: 'bg-warning/80',
-    purple: 'bg-purple-300/80',
+    purple: 'bg-cat-purple/80',
     green: 'bg-success-soft/80',
-    red: 'bg-red-300/80',
+    red: 'bg-danger-soft/80',
     gray: 'bg-fg-muted/80',
   };
 
@@ -894,7 +894,7 @@ function ScheduleList({
   return (
     <section class="space-y-2" aria-labelledby="scheduled-tasks-heading">
       <div class="flex items-center gap-2 px-1">
-        <span class="h-1.5 w-1.5 rounded-full bg-sky-300/80" aria-hidden="true" />
+        <span class="h-1.5 w-1.5 rounded-full bg-info-soft/80" aria-hidden="true" />
         <h3
           id="scheduled-tasks-heading"
           class="text-xs font-semibold uppercase tracking-[0.14em] text-fg-soft"
@@ -914,7 +914,7 @@ function ScheduleList({
                   <span
                     class={`rounded px-1.5 py-0.5 text-[11px] font-medium capitalize ${
                       s.status === 'active'
-                        ? 'bg-emerald-400/10 text-success-soft'
+                        ? 'bg-success/10 text-success-soft'
                         : s.status === 'paused'
                           ? 'bg-warning/10 text-warning-soft'
                           : 'bg-fill-soft text-fg-muted'
@@ -946,7 +946,7 @@ function ScheduleList({
                 {s.status === 'paused' && (
                   <button
                     type="button"
-                    class="rounded-lg px-2.5 py-1.5 text-xs text-success-soft transition hover:bg-emerald-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200/50 disabled:opacity-40"
+                    class="rounded-lg px-2.5 py-1.5 text-xs text-success-soft transition hover:bg-success/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success-soft/50 disabled:opacity-40"
                     onClick={() => runAction(s.id, 'resume', () => onResume(s.id))}
                     disabled={isPending}
                     aria-label={`Resume schedule ${s.title}`}
@@ -956,7 +956,7 @@ function ScheduleList({
                 )}
                 <button
                   type="button"
-                  class="rounded-lg px-2.5 py-1.5 text-xs text-danger-soft transition hover:bg-red-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-soft/50 disabled:opacity-40"
+                  class="rounded-lg px-2.5 py-1.5 text-xs text-danger-soft transition hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-soft/50 disabled:opacity-40"
                   onClick={() => runAction(s.id, 'delete', () => onDelete(s.id))}
                   disabled={isPending}
                   aria-label={`Delete schedule ${s.title}`}
