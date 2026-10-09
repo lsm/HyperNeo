@@ -58,6 +58,7 @@ function stopper(repository = attempts) {
       coalesceDirectStopVerification,
       getCachedSession: () => cached,
       isSessionLoading: () => loading,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     },
   });
@@ -161,6 +162,35 @@ test('running ownership survives deferred cleanup and releases only after verifi
   expect(attempts.claim(taskId, 'next', 'next-session')).not.toBeNull();
 });
 
+test('a running attempt whose session is not cached loads it and verifies the stop', async () => {
+  attempts.activate('attempt', 'session');
+  cached = null;
+  const loaded = agent();
+  const load = mock(async () => loaded);
+  const result = await createDirectAttemptStopper({
+    attempts,
+    tasks,
+    sessionManager: {
+      coalesceDirectStopVerification,
+      getCachedSession: () => cached,
+      isSessionLoading: () => loading,
+      getSessionForControl: load,
+      unregisterSession: unregister,
+    },
+  })(input);
+  expect(load).toHaveBeenCalledWith('session');
+  expect(result).toHaveProperty('stopped', true);
+  expect(interrupt).toHaveBeenCalledWith({ skipDeferredReplay: true });
+  expect(unregister).toHaveBeenCalledWith('session', loaded);
+});
+
+test('a running attempt whose session cannot be loaded stays unverified', async () => {
+  attempts.activate('attempt', 'session');
+  cached = null;
+  expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+});
+
 test('live processes and failed cleanup retain ownership for a safe retry', async () => {
   attempts.activate('attempt', 'session');
   cached = agent();
@@ -237,6 +267,7 @@ test('verification requires a durable fence and retains ownership after exact se
     coalesceDirectStopVerification,
     getCachedSession: () => cached,
     isSessionLoading: () => loading,
+    getSessionForControl: async () => null,
     unregisterSession: unregister,
   };
   const attempt = attempts.get('attempt')!;
@@ -264,6 +295,7 @@ test('verification rechecks persisted phase rather than trusting a stale reserve
     coalesceDirectStopVerification,
     getCachedSession: () => cached,
     isSessionLoading: () => loading,
+    getSessionForControl: async () => null,
     unregisterSession: unregister,
   };
   expect(await verifyDirectAttemptStop(attempts, tasks, manager, reserved)).toEqual({
@@ -290,6 +322,7 @@ test('release rechecks cache after verification yields to the next pipeline stag
         return cached;
       },
       isSessionLoading: () => loading,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     },
   });
@@ -322,6 +355,7 @@ test('a reloaded live session invalidates prior proof before failed verification
     coalesceDirectStopVerification,
     getCachedSession: () => cached,
     isSessionLoading: () => loading,
+    getSessionForControl: async () => null,
     unregisterSession: unregister,
   };
   expect(
@@ -368,6 +402,7 @@ test('successful verification survives database reopen without trusting arbitrar
       coalesceDirectStopVerification,
       getCachedSession: () => loaded,
       isSessionLoading: () => false,
+      getSessionForControl: async () => null,
       unregisterSession: async () => {
         loaded = null;
       },
@@ -428,6 +463,7 @@ test.each(['replacement', 'loading', 'live', 'throw', 'probe-throw'] as const)(
       coalesceDirectStopVerification,
       getCachedSession: () => cached,
       isSessionLoading: () => loading,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     };
     expect(
@@ -469,6 +505,7 @@ test('proof invalidated between verification and release prevents empty-cache fi
         return cached;
       },
       isSessionLoading: () => loading,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     },
   });
@@ -505,6 +542,7 @@ test('separate stoppers and exported verification share ownership without blocki
       coalesceDirectStopVerification,
       getCachedSession: () => cached,
       isSessionLoading: () => loading,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     },
     attempts.get('attempt')!
@@ -519,6 +557,7 @@ test('separate stoppers and exported verification share ownership without blocki
       coalesceDirectStopVerification,
       getCachedSession: () => null,
       isSessionLoading: () => false,
+      getSessionForControl: async () => null,
       unregisterSession: unregister,
     },
   });
