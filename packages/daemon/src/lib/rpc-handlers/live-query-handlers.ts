@@ -417,6 +417,40 @@ WHERE workflow_run_id = ?
 ORDER BY created_at ASC, id ASC
 `.trim();
 
+const NODE_EXECUTION_RELEVANCE_ORDER = `CASE ne.status
+               WHEN 'in_progress' THEN 0
+               WHEN 'waiting_rebind' THEN 1
+               WHEN 'blocked' THEN 2
+               WHEN 'pending' THEN 3
+               ELSE 4
+             END,
+             ne.updated_at DESC,
+             ne.created_at DESC,
+             ne.id DESC`;
+
+const TASK_AGENT_SESSION_PREDICATE = `sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id)`;
+
+const ACTIVE_DELIVERY_RETRYING_CTE_SQL = `active_delivery_retrying AS MATERIALIZED (
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
+  FROM active_delivery_candidates
+  GROUP BY message_uuid, session_id
+)`;
+
+const HOOK_SUBTYPE_NAMES = `'hook_started', 'hook_progress', 'hook_response'`;
+const HOOK_SUBTYPES = `(${HOOK_SUBTYPE_NAMES})`;
+
+function deliveryStateCase(alias: string): string {
+  return `CASE
+      WHEN ${alias}.message_type != 'user' THEN NULL
+      WHEN COALESCE(${alias}.send_status, 'consumed') = 'failed' THEN 'failed'
+      WHEN adr.retrying THEN 'retrying'
+      WHEN COALESCE(${alias}.send_status, 'consumed') = 'consumed' THEN 'delivered'
+      WHEN COALESCE(${alias}.send_status, 'consumed') = 'submitted' THEN 'processing'
+      ELSE 'queued'
+    END AS deliveryState`;
+}
+
 const TASK_SHUTDOWN_BOUNDARY_CTE_SQL = `
 -- Newest settled top-level row per contributing session of the task. A
 -- worker_shutting_down banner stays visible only while nothing newer has
@@ -699,16 +733,7 @@ session_node_exec AS (
          ROW_NUMBER() OVER (
            PARTITION BY cs.task_id, cs.session_id
            ORDER BY
-             CASE ne.status
-               WHEN 'in_progress' THEN 0
-               WHEN 'waiting_rebind' THEN 1
-               WHEN 'blocked' THEN 2
-               WHEN 'pending' THEN 3
-               ELSE 4
-             END,
-             ne.updated_at DESC,
-             ne.created_at DESC,
-             ne.id DESC
+             ${NODE_EXECUTION_RELEVANCE_ORDER}
          ) AS rn
   FROM contributing_sessions cs
   JOIN target_task tt ON tt.id = cs.task_id
@@ -727,18 +752,15 @@ all_sessions AS (
     -- A direct-task worker has neither, so the provenance table is what
     -- separates it from the task-level agent: it is never the Task Agent.
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     cs.task_id,
@@ -891,20 +913,9 @@ const ACTIVE_DELIVERY_RETRYING_CTE = `${activeDeliveryJobsCtes(`AND json_extract
     FROM sdk_messages
     WHERE task_id = (SELECT id FROM target_task)
   )`)},
-active_delivery_retrying AS MATERIALIZED (
-  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
-  FROM active_delivery_candidates
-  GROUP BY message_uuid, session_id
-)`;
+${ACTIVE_DELIVERY_RETRYING_CTE_SQL}`;
 
-const SPACE_TASK_DELIVERY_STATE_CASE = `CASE
-      WHEN sm.message_type != 'user' THEN NULL
-      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN adr.retrying THEN 'retrying'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
-      ELSE 'queued'
-    END AS deliveryState,`;
+const SPACE_TASK_DELIVERY_STATE_CASE = `${deliveryStateCase('sm')},`;
 
 const SPACE_TASK_MESSAGES_BASE_CTE = `
 WITH target_task AS (
@@ -954,16 +965,7 @@ session_node_exec AS (
          ROW_NUMBER() OVER (
            PARTITION BY tt.id, ne.agent_session_id
            ORDER BY
-             CASE ne.status
-               WHEN 'in_progress' THEN 0
-               WHEN 'waiting_rebind' THEN 1
-               WHEN 'blocked' THEN 2
-               WHEN 'pending' THEN 3
-               ELSE 4
-             END,
-             ne.updated_at DESC,
-             ne.created_at DESC,
-             ne.id DESC
+             ${NODE_EXECUTION_RELEVANCE_ORDER}
          ) AS rn
   FROM target_task tt
   JOIN node_executions ne
@@ -984,18 +986,15 @@ sdk_rows_raw AS (
     -- is not the task's agent: its messages stay unlabelled rather than
     -- borrowing the Task Agent identity.
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
@@ -1218,8 +1217,6 @@ artifact_state_rows AS (
 ),
 `;
 
-const HOOK_SUBTYPES = `('hook_started', 'hook_progress', 'hook_response')`;
-
 function spaceTaskFlagRowsBaseCte(admitArtifactState: boolean): string {
   return `
 WITH target_task AS (
@@ -1233,11 +1230,7 @@ task_sessions AS MATERIALIZED (
   WHERE task_id = (SELECT id FROM target_task)
 ),
 ${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') IN (SELECT session_id FROM task_sessions)`)},
-active_delivery_retrying AS MATERIALIZED (
-  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
-  FROM active_delivery_candidates
-  GROUP BY message_uuid, session_id
-),
+${ACTIVE_DELIVERY_RETRYING_CTE_SQL},
 github_events AS (
   SELECT
     ge.id AS id,
@@ -1277,16 +1270,7 @@ session_node_exec AS (
          ROW_NUMBER() OVER (
            PARTITION BY tt.id, ne.agent_session_id
            ORDER BY
-             CASE ne.status
-               WHEN 'in_progress' THEN 0
-               WHEN 'waiting_rebind' THEN 1
-               WHEN 'blocked' THEN 2
-               WHEN 'pending' THEN 3
-               ELSE 4
-             END,
-             ne.updated_at DESC,
-             ne.created_at DESC,
-             ne.id DESC
+             ${NODE_EXECUTION_RELEVANCE_ORDER}
          ) AS rn
   FROM target_task tt
   JOIN node_executions ne
@@ -1298,18 +1282,15 @@ session_labels AS MATERIALIZED (
     ts.session_id AS sessionId,
     sne.node_execution_id AS nodeExecutionId,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task_agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task_agent'
       ELSE 'node_agent'
     END AS kind,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'task-agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'task-agent'
       ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
-      WHEN sne.node_execution_id IS NULL AND json_extract(s_kind.metadata, '$.promptProvenance.nodeId') IS NULL
-        AND NOT EXISTS (SELECT 1 FROM direct_task_session_provenance dtp WHERE dtp.session_id = s_kind.id) THEN 'Task Agent'
+      WHEN ${TASK_AGENT_SESSION_PREDICATE} THEN 'Task Agent'
       ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label
   FROM task_sessions ts
@@ -1362,14 +1343,7 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
     tt.title AS taskTitle,
     tm.message_type AS messageType,
     NULL AS githubContent,
-    CASE
-      WHEN tm.message_type != 'user' THEN NULL
-      WHEN COALESCE(tm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN adr.retrying THEN 'retrying'
-      WHEN COALESCE(tm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(tm.send_status, 'consumed') = 'submitted' THEN 'processing'
-      ELSE 'queued'
-    END AS deliveryState,
+    ${deliveryStateCase('tm')},
     tm.created_at AS createdAt,
     tm.parent_tool_use_id AS parentToolUseId,
     tm.is_renderable AS isRenderable,
@@ -1533,7 +1507,7 @@ session_candidates AS MATERIALIZED (
         messageType IN ('assistant', 'result')
         OR (
           messageType = 'system'
-          AND subtype IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+          AND subtype IN ('api_retry', ${HOOK_SUBTYPE_NAMES})
         )
       )
   )
@@ -1631,7 +1605,7 @@ active_turn AS MATERIALIZED (
         j.messageType IN ('assistant', 'result')
         OR (
           j.messageType = 'system'
-          AND COALESCE(j.jsonSubtype, '') IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+          AND COALESCE(j.jsonSubtype, '') IN ('api_retry', ${HOOK_SUBTYPE_NAMES})
         )
       )
   ) c
@@ -1795,7 +1769,7 @@ hook_runs AS (
     -- sdk_message blob can't raise 'malformed JSON' and break the active-turn
     -- subscription. Malformed rows simply don't qualify as hook runs.
     AND json_valid(ar.content)
-    AND json_extract(ar.content, '$.subtype') IN ('hook_started', 'hook_progress', 'hook_response')
+    AND json_extract(ar.content, '$.subtype') IN ${HOOK_SUBTYPES}
     AND json_extract(ar.content, '$.hook_id') IS NOT NULL
 ),
 hook_entries AS (
