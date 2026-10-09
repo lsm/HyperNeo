@@ -38,6 +38,15 @@ export function neoWorkPrimaryAction(
   return { kind: 'none' };
 }
 
+export function neoWorkPresentation(
+  work: NeoWork,
+  driver: NeoWorkDriverReceipt | undefined,
+  { compact, attention }: { compact: boolean; attention: boolean }
+): 'summary' | 'detail' {
+  if (!compact || attention) return 'detail';
+  return neoWorkPrimaryAction(work, driver).kind === 'retry' ? 'detail' : 'summary';
+}
+
 export function neoWorkMeta(
   work: NeoWork,
   prs: NeoWorkPrReceipt | undefined,

@@ -25,6 +25,7 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { neoWorkPresentation } from './work-actions.ts';
 import { NeoAskCard } from './NeoAskCard.tsx';
 import { groupNeoAsks } from './neo-asks.ts';
 import {
@@ -193,7 +194,10 @@ export function NeoLive() {
         disabled={!connected || !!neo.busyWork}
         onAction={(id, action) => void neo.act(id, action)}
         onOpen={() => openScene(scene.ref)}
-        presentation={publicConversation && groupKey !== 'attention' ? 'summary' : 'detail'}
+        presentation={neoWorkPresentation(scene.receipt, drivers.get(scene.ref.id), {
+          compact: !!publicConversation,
+          attention: groupKey === 'attention',
+        })}
         questionSlot={publicConversation ? attachQuestion : undefined}
         waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
         summary={neoWorkSummary(summaries, scene.receipt)}

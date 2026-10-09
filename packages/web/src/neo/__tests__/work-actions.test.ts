@@ -1,6 +1,11 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { describe, expect, it } from 'vitest';
-import { neoWorkMeta, neoWorkOpenLabel, neoWorkPrimaryAction } from '../work-actions.ts';
+import {
+  neoWorkMeta,
+  neoWorkOpenLabel,
+  neoWorkPresentation,
+  neoWorkPrimaryAction,
+} from '../work-actions.ts';
 
 const work = (status: NeoWork['status'], extra: Partial<NeoWork> = {}): NeoWork => ({
   id: 'w1',
@@ -111,5 +116,23 @@ describe('neoWorkMeta', () => {
         now
       )
     ).toBe('PR #6013');
+  });
+});
+
+describe('neoWorkPresentation', () => {
+  it('keeps a retryable failure in detail so its Retry stays reachable in the compact list', () => {
+    const failed = work('failed', { report: 'Could not start the execution: login expired' });
+    const compact = { compact: true, attention: false };
+    expect(neoWorkPresentation(failed, undefined, compact)).toBe('detail');
+    expect(neoWorkPresentation(work('reported'), undefined, compact)).toBe('summary');
+    expect(
+      neoWorkPresentation(work('failed', { report: 'The agent gave up.' }), undefined, compact)
+    ).toBe('summary');
+    expect(neoWorkPresentation(work('queued'), undefined, { compact: true, attention: true })).toBe(
+      'detail'
+    );
+    expect(
+      neoWorkPresentation(work('reported'), undefined, { compact: false, attention: false })
+    ).toBe('detail');
   });
 });
