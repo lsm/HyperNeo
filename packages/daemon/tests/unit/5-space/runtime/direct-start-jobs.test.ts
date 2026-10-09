@@ -201,14 +201,33 @@ test('a replay of the same request revives a dead start job under a fresh receip
 test('a dead start job retires its reservation so a new request can start', async () => {
   const job = acceptedJob();
   const changed: string[] = [];
-  const retire = createDirectStartDeadHandler(db, control, (id) => changed.push(id));
-  expect(await retire({ ...job, queue: 'other' })).toBe(false);
-  expect(await retire(job)).toBe(true);
+  const retire = createDirectStartDeadHandler(db, jobs, control, (id) => changed.push(id));
+  expect(await retire({ ...job, queue: 'other' })).toBe('not_reserved');
+  expect(await retire(job)).toBe('retired');
   expect(attempts.getActive(taskId)).toBeNull();
   expect(tasks.getTask(taskId)?.status).toBe('open');
   expect(changed).toEqual([taskId]);
-  expect(await retire(job)).toBe(false);
+  expect(await retire(job)).toBe('not_reserved');
   expect(request({ taskId, requestKey: 'after-dead' })).toMatchObject({ accepted: true });
+});
+
+test('a dead start job whose stop cannot verify yet is revived so cleanup retries', async () => {
+  const job = acceptedJob();
+  const attemptId = attempts.getActive(taskId)!.id;
+  loading = true;
+  const retire = createDirectStartDeadHandler(db, jobs, control);
+  expect(await retire(job)).toBe('revived');
+  const revivedId = readDirectStartRequest(db, attemptId)!.jobId;
+  expect(revivedId).not.toBe(job.id);
+  expect(jobs.getJob(revivedId)?.status).toBe('pending');
+  loading = false;
+  expect(
+    await createDirectStartJobHandler(db, start, jobs, control)(jobs.getJob(revivedId)!)
+  ).toEqual({
+    started: false,
+    reason: 'superseded',
+  });
+  expect(attempts.getActive(taskId)).toBeNull();
 });
 
 test('pruned job receipt is not silently recreated by duplicate request', () => {
