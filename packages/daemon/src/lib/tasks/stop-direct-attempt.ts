@@ -8,7 +8,14 @@ import type {
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
-import { inspectSessionLiveness } from './stop-verification-gates.ts';
+import {
+  decideStopVerification,
+  inspectSessionLiveness,
+  isStopDownProcessingStatus,
+} from './stop-verification-gates.ts';
+
+const DIRECT_STOP_EXIT_SETTLE_MS = 500;
+const DIRECT_STOP_FORCE_KILL_MS = 2000;
 
 export interface DirectAttemptStopInput {
   attemptId: string;
@@ -66,6 +73,42 @@ export function directSessionIsDown(session: AgentSession): boolean {
     interruptInProgress: session.isInterruptInProgress(),
     livePids: session.getTrackedAgentRootPidsSplit().live,
   }).down;
+}
+
+async function settleProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
+  const exited = session.processExitedPromise;
+  if (!exited) return;
+  await Promise.race([
+    exited,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs).unref?.()),
+  ]);
+}
+
+export async function bringDirectSessionDown(session: AgentSession): Promise<boolean> {
+  let interrupts = 1;
+  let escalated = false;
+  for (;;) {
+    if (isStopDownProcessingStatus(session.getProcessingState().status))
+      await settleProcessExit(session, DIRECT_STOP_EXIT_SETTLE_MS);
+    const decision = decideStopVerification({
+      sessionPresent: true,
+      processingStatus: session.getProcessingState().status,
+      interruptInProgress: session.isInterruptInProgress(),
+      livePids: session.getTrackedAgentRootPidsSplit().live,
+      interruptAttemptsSoFar: interrupts,
+      escalationDone: escalated,
+    });
+    if (decision.action === 'down') return true;
+    if (decision.action === 'report_leak') return false;
+    if (decision.action === 'retry_interrupt') {
+      interrupts += 1;
+      await session.handleInterrupt({ skipDeferredReplay: true });
+      continue;
+    }
+    escalated = true;
+    session.terminateTrackedAgentProcesses({ forceDelayMs: DIRECT_STOP_FORCE_KILL_MS });
+    await settleProcessExit(session, DIRECT_STOP_FORCE_KILL_MS + DIRECT_STOP_EXIT_SETTLE_MS);
+  }
 }
 
 export interface VerifiedDirectStop {
@@ -126,7 +169,7 @@ async function verifyDirectAttemptStopOwned(
       } finally {
         await session.cleanup();
       }
-      if (!directSessionIsDown(session))
+      if (!(await bringDirectSessionDown(session)))
         return { reason: { stopped: false, reason: 'unverified' } };
       if (
         !attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation, token)
