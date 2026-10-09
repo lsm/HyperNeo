@@ -10,6 +10,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { NeoAskOrigin } from './ask-origin.ts';
 import { NeoPublicationSchema } from './publication.ts';
 import { CONSULTATION_TIMEOUT_MS } from './consultation-policy.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 const Draft = NeoPublicationSchema.omit({
   conversationId: true,
@@ -68,12 +69,9 @@ export function requirePublicationProducer(
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
-    root?.kind === 'neo' &&
-    root.concernId === null &&
+    isMainNeoBinding(root) &&
     root.sessionId.startsWith('neo:') &&
-    ((binding.kind === 'neo' &&
-      binding.sessionId === root.sessionId &&
-      binding.concernId === null) ||
+    ((isMainNeoBinding(binding) && binding.sessionId === root.sessionId) ||
       (binding.kind === 'concern' && binding.concernId !== null)) &&
     turn?.messageId &&
     turn.isLive()
@@ -147,9 +145,8 @@ export function requirePublicationLifetime(
     binding?.kind === proof.binding.kind &&
     binding.concernId === proof.binding.concernId &&
     binding.sessionId === proof.binding.sessionId &&
-    root?.sessionId === proof.root.sessionId &&
-    root.kind === 'neo' &&
-    root.concernId === null
+    isMainNeoBinding(root) &&
+    root.sessionId === proof.root.sessionId
     ? { value: proof }
     : { reason: { accepted: false, reason: 'publication_superseded' } };
 }
