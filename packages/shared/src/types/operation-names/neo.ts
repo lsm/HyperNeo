@@ -15,5 +15,6 @@ export const NEO_OPERATION_NAMES = [
   'neo.work.continue',
   'neo.work.propose',
   'neo.work.report',
+  'neo.work.retry',
   'neo.work.start',
 ] as const;

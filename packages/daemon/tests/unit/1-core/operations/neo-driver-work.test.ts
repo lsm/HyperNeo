@@ -941,6 +941,48 @@ describe('Neo work with a drivers target', () => {
       db.close();
     }
   });
+
+  test('a hand-off that failed before it started retries on the same card', async () => {
+    const reply: Record<string, unknown> = {
+      ok: false,
+      reason: 'claude_cli_login_expired',
+      detail: 'Run `claude auth login`, then try again.',
+    };
+    const { db, service, calls } = await setup(reply);
+    const delivered: Array<[string, string, string]> = [];
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (target: string, messageId: string, content: string) => {
+        delivered.push([target, messageId, content]);
+      },
+    });
+    try {
+      await service.start('work-1');
+      expect(delivered.map(([, id]) => id)).toEqual(['work-1']);
+      expect(delivered[0][2]).toContain('call neo.work.retry {id} on this same work');
+
+      expect(await service.retryWork('work-1')).toMatchObject({
+        ok: true,
+        work: { id: 'work-1', status: 'failed' },
+      });
+      expect(delivered.map(([, id]) => id)).toEqual(['work-1', 'work-1:retry:1']);
+      expect(delivered[1][2]).toContain('it has been retried 1 time');
+
+      delete reply.reason;
+      delete reply.detail;
+      Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
+      expect(await service.retryWork('work-1')).toMatchObject({
+        ok: true,
+        work: { id: 'work-1', status: 'queued' },
+      });
+      expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(3);
+      expect(service.repo.listWork()).toHaveLength(1);
+      expect(await service.retryWork('work-1')).toMatchObject({ ok: false });
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('readDriverNeedsYou', () => {
