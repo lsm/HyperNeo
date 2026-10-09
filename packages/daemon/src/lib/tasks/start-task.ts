@@ -1,3 +1,4 @@
+import { isDirectRerunStatus } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -52,7 +53,7 @@ function admitStart(
   }
   const existing = readDirectStartRequest(db, directTaskStartIdentity(input).attemptId);
   if (existing) return existing.input.reviewRejection ? unavailable : { value: existing.input };
-  if (!['blocked', 'cancelled', 'stopped'].includes(task.status)) return { value: input };
+  if (!isDirectRerunStatus(task.status)) return { value: input };
   if (!task.taskAgentSessionId) return unavailable;
   const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(
     task.id,

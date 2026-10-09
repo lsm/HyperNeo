@@ -1,5 +1,7 @@
 import {
+  DIRECT_OUTCOME_STATUSES,
   humanTaskTransitionTargets,
+  isDirectRerunStatus,
   isWorkflowRecoveryTransition,
   type SpaceTask,
   type SpaceTaskStatus,
@@ -83,8 +85,8 @@ export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }
   task: { hasActiveDirectAttempt?: boolean; taskAgentSessionId?: string | null }
 ): T[] {
   if (!task.hasActiveDirectAttempt) return actions;
-  const allowed: SpaceTaskStatus[] = task.taskAgentSessionId
-    ? ['review', 'done', 'blocked', 'cancelled', 'stopped', 'archived']
+  const allowed: readonly SpaceTaskStatus[] = task.taskAgentSessionId
+    ? DIRECT_OUTCOME_STATUSES
     : ['cancelled'];
   return actions.filter(({ target }) => allowed.includes(target));
 }
@@ -111,6 +113,6 @@ export function canRunAgain(
     !!task.taskAgentSessionId &&
     !task.hasActiveDirectAttempt &&
     !task.archivedAt &&
-    (task.status === 'blocked' || task.status === 'cancelled' || task.status === 'stopped')
+    isDirectRerunStatus(task.status)
   );
 }

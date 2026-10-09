@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
+import {
+  isDirectOutcomeStatus,
+  type DirectOutcomeStatus,
+  type SpaceTask,
+  type SpaceTaskStatus,
+} from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
@@ -21,7 +26,7 @@ import {
   type VerifiedDirectStop,
 } from './stop-direct-attempt.ts';
 
-type OutcomeStatus = 'review' | 'done' | 'blocked' | 'cancelled' | 'stopped' | 'archived';
+type OutcomeStatus = DirectOutcomeStatus;
 type StatusOptions = Parameters<typeof prepareSpaceTaskStatusUpdate>[2];
 export interface DirectFinalizationInput {
   attemptId: string;
@@ -123,7 +128,7 @@ export function requestDirectTaskFinalization(db: Database, input: DirectFinaliz
       !task ||
       attempt.phase !== 'running' ||
       attempts.isStopRequested(attempt.id, attempt.sessionId) ||
-      !['review', 'done', 'blocked', 'cancelled', 'stopped', 'archived'].includes(input.status) ||
+      !isDirectOutcomeStatus(input.status) ||
       !isValidTaskTransition(task.status, input.status)
     )
       return unavailable;

@@ -59,3 +59,23 @@ export function humanTaskTransitionTargets(from: TaskLifecycleStatus): TaskLifec
     (target) => !RUNTIME_OWNED_TARGETS.includes(target)
   );
 }
+
+export const DIRECT_OUTCOME_STATUSES = [
+  'review',
+  'done',
+  'blocked',
+  'cancelled',
+  'stopped',
+  'archived',
+] as const satisfies readonly TaskLifecycleStatus[];
+export type DirectOutcomeStatus = (typeof DIRECT_OUTCOME_STATUSES)[number];
+
+export function isDirectOutcomeStatus(status: string): status is DirectOutcomeStatus {
+  return (DIRECT_OUTCOME_STATUSES as readonly string[]).includes(status);
+}
+
+const DIRECT_RERUN_STATUSES: readonly TaskLifecycleStatus[] = ['blocked', 'cancelled', 'stopped'];
+
+export function isDirectRerunStatus(status: TaskLifecycleStatus): boolean {
+  return DIRECT_RERUN_STATUSES.includes(status);
+}
