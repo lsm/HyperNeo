@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ListTasksInput, TaskListPage } from '../../storage/tasks/list-tasks.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { BlockReasonSchema, TaskCoreSchema, TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import type { TaskListDenial } from './scoped-task-reads.ts';
 
 const cursorSchema = z.object({ createdAt: z.number(), id: z.string().min(1) }).strict();
 
@@ -28,12 +29,12 @@ export function createListTasksOperation(
   listTasks: (
     input: ListTasksInput,
     caller: OperationCaller
-  ) => TaskListPage | Promise<TaskListPage>
+  ) => TaskListPage | TaskListDenial | Promise<TaskListPage | TaskListDenial>
 ) {
   return defineOperation({
     name: 'task.list',
     description:
-      'List task data, newest first, excluding archived tasks. With no spaceId a caller that belongs to a Space lists that Space; a caller outside every Space lists standalone tasks. scope on the result names the scope that answered, either { spaceId } or { standalone: true }. Supply spaceId to list tasks owned by a Space, status to filter, and before with nextCursor to continue. Default limit is 50; maximum is 100. total is the count of every task matching the filters, ignoring all pagination (limit, offset and before). Ordering is newest-first by creation time; pass orderBy updatedAt for most-recently-touched first, which pages by offset only and always returns nextCursor null. Prefer before with nextCursor for sequential paging; offset exists for random-access page jumps and skips that many matches. blockReason narrows to tasks blocked for that reason, or to tasks with no reason recorded when null; blockReasonNotIn excludes the listed reasons and keeps tasks with no reason. Both require status blocked, and the two are mutually exclusive. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.',
+      'List task data, newest first, excluding archived tasks. With no spaceId a caller that belongs to a Space lists that Space; a caller outside every Space lists standalone tasks. scope on the result names the scope that answered, either { spaceId } or { standalone: true }. Supply spaceId to list tasks owned by a Space, status to filter, and before with nextCursor to continue. Default limit is 50; maximum is 100. total is the count of every task matching the filters, ignoring all pagination (limit, offset and before). Ordering is newest-first by creation time; pass orderBy updatedAt for most-recently-touched first, which pages by offset only and always returns nextCursor null. Prefer before with nextCursor for sequential paging; offset exists for random-access page jumps and skips that many matches. blockReason narrows to tasks blocked for that reason, or to tasks with no reason recorded when null; blockReasonNotIn excludes the listed reasons and keeps tasks with no reason. Both require status blocked, and the two are mutually exclusive. Listing a Space the caller does not belong to rejects with task_list_denied. A Space-owned task includes its Space fields (ownership, workflow, approval, and pending-completion state); a standalone task returns only core fields.',
     inputSchema: z
       .object({
         spaceId: z.string().min(1).optional(),
@@ -67,15 +68,19 @@ export function createListTasksOperation(
         }
       )
       .default({}),
-    resultSchema: z.object({
-      tasks: z.array(TaskWithSpaceFieldsSchema),
-      total: z.number().int().min(0),
-      nextCursor: cursorSchema.nullable(),
-      scope: scopeSchema,
-    }),
+    resultSchema: z.union([
+      z.object({ accepted: z.literal(false), reason: z.literal('task_list_denied') }).strict(),
+      z.object({
+        tasks: z.array(TaskWithSpaceFieldsSchema),
+        total: z.number().int().min(0),
+        nextCursor: cursorSchema.nullable(),
+        scope: scopeSchema,
+      }),
+    ]),
     execute: async (input, caller) => {
       const scope = resolveListScope(input.spaceId, caller);
-      return { ...(await listTasks(scopedInput(input, scope), caller)), scope };
+      const page = await listTasks(scopedInput(input, scope), caller);
+      return 'accepted' in page ? page : { ...page, scope };
     },
   });
 }

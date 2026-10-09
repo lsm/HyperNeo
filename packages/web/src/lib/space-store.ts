@@ -2088,7 +2088,13 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    return invokeOperation<TaskCore>(hub, 'task.create', { ...params, spaceId });
+    const result = await invokeOperation<TaskCore | { accepted: false; reason: string }>(
+      hub,
+      'task.create',
+      { ...params, spaceId }
+    );
+    if ('accepted' in result && result.accepted === false) throw new Error(result.reason);
+    return result as TaskCore;
   }
 
   async listWorkspaces(): Promise<SpaceWorkspace[]> {

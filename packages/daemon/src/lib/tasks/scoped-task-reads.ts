@@ -17,7 +17,9 @@ type TaskReader = (taskId: string) => TaskCore | null;
 type TaskNumberReader = (spaceId: string, taskNumber: number) => TaskCore | null;
 type TaskPageReader = (input: ListTasksInput) => TaskListPage;
 
-const EMPTY_PAGE: TaskListPage = { tasks: [], total: 0, nextCursor: null };
+export type TaskListDenial = { accepted: false; reason: 'task_list_denied' };
+
+const TASK_LIST_DENIED: TaskListDenial = { accepted: false, reason: 'task_list_denied' };
 
 export function admitTaskOwner(
   db: Database,
@@ -46,10 +48,10 @@ export function admitListedScope(
   input: ListTasksInput,
   caller: OperationCaller,
   admission: TaskReadAdmission
-): { value: true } | { reason: TaskListPage } {
+): { value: true } | { reason: TaskListDenial } {
   return 'value' in admitSpaceScope(input.spaceId, caller, admission)
     ? { value: true }
-    : { reason: EMPTY_PAGE };
+    : { reason: TASK_LIST_DENIED };
 }
 
 function loadTask(readTask: TaskReader, taskId: string): { value: TaskCore } | { reason: null } {
@@ -102,4 +104,4 @@ export const listScopedTasks = (superpipe({})('list-scoped-tasks') as PipelineAP
   admission: TaskReadAdmission,
   listTasks: TaskPageReader,
   input: ListTasksInput
-) => TaskListPage;
+) => TaskListPage | TaskListDenial;
