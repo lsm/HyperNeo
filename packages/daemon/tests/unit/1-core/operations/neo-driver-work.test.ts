@@ -942,6 +942,34 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('an interrupted start is not offered or allowed a retry, since it may have started', async () => {
+    const { db, service, calls } = await setup({ ok: true, value: { ref: null } });
+    const delivered: string[] = [];
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (_target: string, _id: string, content: string) => {
+        delivered.push(content);
+      },
+    });
+    try {
+      const proposed = service.repo.getWork('work-1');
+      if (proposed) service.repo.transitionWork('work-1', proposed, { status: 'queued' });
+      await service.start('work-1');
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]).not.toContain('neo.work.retry');
+      expect(await service.retryWork('work-1')).toEqual({
+        ok: false,
+        reason:
+          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+      });
+      expect(calls).toEqual([]);
+      expect(service.repo.getWork('work-1')?.status).toBe('failed');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a hand-off that failed before it started retries on the same card', async () => {
     const reply: Record<string, unknown> = {
       ok: false,
