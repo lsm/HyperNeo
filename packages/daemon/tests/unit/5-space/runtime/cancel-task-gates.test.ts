@@ -46,7 +46,13 @@ describe('requireManagedCancellation', () => {
     ],
     ['done for an agent', task({ status: 'done' }), { kind: 'plain' as const }, mcp, unavailable],
   ] as Array<
-    [string, SpaceTask | null, CancellationRoute | null, typeof rpc | typeof mcp, unknown]
+    [
+      string,
+      SpaceTask | null,
+      CancellationRoute | null,
+      typeof rpc | typeof mcp,
+      ReturnType<typeof requireManagedCancellation>,
+    ]
   >)('rejects or defers %s', (_label, t, route, caller, expected) => {
     expect(requireManagedCancellation(evidence(t), route, caller)).toEqual(expected);
   });
@@ -91,7 +97,7 @@ describe('requireCancellerInSpace', () => {
 });
 
 describe('requireDirectCancelTask', () => {
-  const directUnavailable = {
+  const directUnavailable: ReturnType<typeof requireDirectCancelTask> = {
     reason: { accepted: false, reason: 'direct_cancellation_unavailable' },
   };
   test.each([
@@ -105,7 +111,7 @@ describe('requireDirectCancelTask', () => {
   });
 
   test('admits a Space task with a worker session', () => {
-    const t = task({ taskAgentSessionId: 'w' });
+    const t = task({ taskAgentSessionId: 'w' }) as SpaceTask & { taskAgentSessionId: string };
     expect(requireDirectCancelTask(t)).toEqual({ value: t });
   });
 });
