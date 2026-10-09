@@ -2249,7 +2249,7 @@ class SpaceStore {
     );
   }
 
-  async runTaskDirectly(taskId: string): Promise<DirectTaskStartResult> {
+  async runTaskDirectly(taskId: string, note?: string | null): Promise<DirectTaskStartResult> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
@@ -2259,6 +2259,7 @@ class SpaceStore {
     return invokeOperation<DirectTaskStartResult>(hub, 'task.start', {
       taskId,
       requestKey: generateUUID(),
+      ...(note ? { note } : {}),
     });
   }
 
