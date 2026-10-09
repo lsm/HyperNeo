@@ -163,10 +163,7 @@ export function registerSettingsHandlers(
           const { clearModelsCache } = await import('../model-service.ts');
           clearModelsCache();
         }
-        internalEventBus.publishAsync('settings.updated', {
-          namespaceId: 'global',
-          settings: sanitizeGlobalSettings(updated, credentialManager),
-        });
+        publishGlobalSettings(internalEventBus, updated, credentialManager);
         if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
           internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
         }
@@ -381,6 +378,17 @@ export function keepStandingRules(
   const { standingRules: _ignored, ...neo } = updates.neo;
   const standingRules = current.neo?.standingRules;
   return { ...updates, neo: standingRules ? { ...neo, standingRules } : neo };
+}
+
+export function publishGlobalSettings(
+  internalEventBus: Pick<InternalEventBus<DaemonInternalEventMap>, 'publishAsync'>,
+  settings: GlobalSettings,
+  credentialManager?: ProviderCredentialManager
+): void {
+  internalEventBus.publishAsync('settings.updated', {
+    namespaceId: 'global',
+    settings: sanitizeGlobalSettings(settings, credentialManager),
+  });
 }
 
 export function sanitizeGlobalSettings(

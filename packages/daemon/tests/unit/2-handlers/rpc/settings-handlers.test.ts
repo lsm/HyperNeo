@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type GlobalSettings, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import {
   applyProviderModelAllowlistsToEnv,
+  publishGlobalSettings,
   registerSettingsHandlers,
 } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -720,5 +721,26 @@ describe('Settings RPC Handlers', () => {
       expect(messageHubData.handlers.has('settings.session.get')).toBe(false);
       expect(messageHubData.handlers.has('settings.session.update')).toBe(false);
     });
+  });
+});
+
+describe('publishGlobalSettings', () => {
+  it('publishes sanitized global settings without inline API keys', () => {
+    const publishAsync = mock((..._args: unknown[]) => {});
+    publishGlobalSettings(
+      { publishAsync } as never,
+      {
+        ...DEFAULT_GLOBAL_SETTINGS,
+        voice: { apiKey: 'inline' },
+      } as GlobalSettings
+    );
+    const [event, payload] = publishAsync.mock.calls[0] as [
+      string,
+      { namespaceId: string; settings: GlobalSettings },
+    ];
+    expect(event).toBe('settings.updated');
+    expect(payload.namespaceId).toBe('global');
+    expect(payload.settings.voice?.apiKey).toBeUndefined();
+    expect(payload.settings.voice?.hasApiKey).toBe(true);
   });
 });

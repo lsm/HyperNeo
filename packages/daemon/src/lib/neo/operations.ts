@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -53,7 +54,9 @@ import {
   driverTargetDaemon,
   NeoDriverTargetSchema,
   readNeoDriverAdapters,
+  readNeoStartFolder,
   requireNeoDriverVerb,
+  requireNeoStartFolder,
   type NeoDriverTarget,
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
@@ -756,6 +759,20 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
+      (input: z.infer<typeof Propose>) => readNeoStartFolder(input.work, existsSync),
+      'input',
+      'startFolder'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Propose>,
+        found: { exists: boolean | null },
+        caller: OperationCaller
+      ) => requireNeoStartFolder(input.work, found, caller),
+      ['input', 'startFolder', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         input.concernId && !service.repo.getConcern(input.concernId)
           ? { reason: { ok: false, reason: 'Concern not found.' } }
@@ -963,6 +980,9 @@ export function createNeoOperations(service: NeoService) {
       if (!work) return { ok: false as const, reason: 'work_not_found' };
       const admission = requireNeoWorkContinuation(work, caller);
       if ('reason' in admission) return admission.reason;
+      const target = service.driverTargets.get(id);
+      const folder = requireNeoStartFolder(target, readNeoStartFolder(target, existsSync), work);
+      if ('reason' in folder) return folder.reason;
       return service.retryWork(id);
     }
   );

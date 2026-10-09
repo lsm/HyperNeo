@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { tmpdir } from 'node:os';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -36,7 +37,7 @@ const neo: OperationCaller = {
   role: 'neo',
   neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
 };
-const place = { machine: 'laptop', folder: '/Users/me/app', name: 'app' };
+const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
 const opening = {
   requestKey: 'fix',
   title: 'Fix the login bug',
