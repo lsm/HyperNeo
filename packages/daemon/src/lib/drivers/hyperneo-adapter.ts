@@ -18,7 +18,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { ensureStartFolder } from './start-folder.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
@@ -338,17 +338,7 @@ export async function deliverToHyperneo(
 }
 
 export function selectStartFolder(request: StartRequest, deps: HyperneoAdapterDeps): Gate<string> {
-  const { place } = request;
-  if (place.spaceId) {
-    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
-  }
-  if (place.machine !== deps.machine) {
-    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
-  }
-  if (!place.folder) {
-    return { reason: reject('invalid_place', 'Start new work in a project folder or a Space.') };
-  }
-  return ensureStartFolder(place.folder, request.createFolder, deps);
+  return selectLocalStartFolder(request, deps, 'Start new work in a project folder or a Space.');
 }
 
 export async function createHyperneoSession(
