@@ -7,6 +7,7 @@ import type { SpaceTask, TaskSchedule } from '@hyperneo/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 const mockSchedules = signal<unknown[]>([]);
+const mockArchivedTaskCount = signal(0);
 const mockWorkspaces = signal<unknown[]>([]);
 const mockListSchedules = vi.fn(async () => {});
 
@@ -57,6 +58,7 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       tasks: mockTasks,
+      archivedTaskCount: mockArchivedTaskCount,
       schedules: mockSchedules,
       workspaces: mockWorkspaces,
       listSchedules: mockListSchedules,
@@ -161,6 +163,7 @@ describe('SpaceTasks', () => {
   beforeEach(() => {
     cleanup();
     mockTasks.value = [];
+    mockArchivedTaskCount.value = 0;
     mockSchedules.value = [];
     mockWorkspaces.value = [];
     mockCurrentSpaceTasksFilterTabSignal.value = 'active';
@@ -289,6 +292,22 @@ describe('SpaceTasks', () => {
     expect(await findByText('Task t2')).toBeTruthy();
     expect(await findByText('Task t3')).toBeTruthy();
     expect(getByText(/Archived \(1\)/)).toBeTruthy();
+  });
+
+  it('keeps archived tasks the server reports after a reload, when none are loaded locally', async () => {
+    mockTasks.value = [makeTask('t1', 'open')];
+    mockArchivedTaskCount.value = 2;
+    mockFetchTaskGroup.mockImplementation(async (status: SpaceTask['status']) =>
+      status === 'archived'
+        ? { tasks: [makeTask('a1', 'archived'), makeTask('a2', 'archived')], total: 2 }
+        : { tasks: [], total: 0 }
+    );
+    const { getAllByText, findByText, container } = render(<SpaceTasks spaceId="space-1" />);
+    const tabs = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
+    expect(tabs.some((t) => t.includes('Completed') && t.includes('2'))).toBe(true);
+    fireEvent.click(getAllByText('Completed')[0]);
+    expect(await findByText('Task a1')).toBeTruthy();
+    expect(await findByText(/Archived \(2\)/)).toBeTruthy();
   });
 
   it('shows correct tab counts', () => {
