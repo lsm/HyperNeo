@@ -1,21 +1,21 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { useCoarsePointer } from './useCoarsePointer.ts';
-import type { SessionStore } from '../lib/session-store.ts';
-import { connectionManager } from '../lib/connection-manager.ts';
-import { connectionState } from '../lib/state.ts';
 import { Button } from '../components/ui/Button.tsx';
-import { NeoIcon } from './NeoIcon.tsx';
-import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
-import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
-import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
-import { NeoAttachments } from './NeoAttachments.tsx';
-import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
+import type { SessionStore } from '../lib/session-store.ts';
+import { connectionState } from '../lib/state.ts';
 import {
   combineVoiceSubmission,
   submitVoiceSendIntent,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
+import { getVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
+import { NeoAttachments } from './NeoAttachments.tsx';
+import { NeoIcon } from './NeoIcon.tsx';
+import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
+import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
+import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
 import type { createNeoIntakeClient } from './neo-intake.ts';
+import { useCoarsePointer } from './useCoarsePointer.ts';
 
 export function neoEnterSends(
   keyboard: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
@@ -198,7 +198,7 @@ export function NeoComposer({
             ? 'Return adds a line · Tap the arrow to send'
             : 'Enter to send · Shift + Enter for a new line'
         }
-        class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
+        class={`w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none${voiceBusy ? ' invisible' : ''}`}
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-1">
