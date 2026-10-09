@@ -610,8 +610,8 @@ export class NeoService {
       };
     const proposed = this.repo.transitionWork(id, work, { status: 'proposed', report: null });
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
-    this.driverTargets.recordRetry(id);
     await this.workPending.get(id)?.catch(() => undefined);
+    this.driverTargets.recordRetry(id);
     await this.start(id);
     return { ok: true, work: this.repo.getWork(id)! };
   }
