@@ -29,6 +29,7 @@ import {
   type TaskMemberRepositories,
 } from './list-task-members.ts';
 import { createRetryTaskOperation, type RetryTaskDependencies } from './retry-task.ts';
+import { expediteDirectStart } from './direct-start-request.ts';
 import {
   createHandoffWorkerSessionOperation,
   type HandoffWorkerSessionDependencies,
@@ -191,6 +192,9 @@ export function createSpaceOperationRegistryProvider(
               },
               requestDirectOutcome: (input) =>
                 enqueueDirectOutcome(database.getDatabase(), jobQueue, input),
+              expediteDirectStart: (attemptId) => {
+                expediteDirectStart(database.getDatabase(), jobQueue, attemptId);
+              },
               completeTask: createTaskCompletion(() => database.getDatabase(), tasks),
             })
           : undefined,

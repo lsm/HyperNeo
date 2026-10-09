@@ -622,9 +622,11 @@ test('a plain task with a reserved direct attempt and no session yet is fenced t
   const reserved = attempts.claim(plainTaskId, 'direct-reserved', 'reserved-session');
   expect(reserved).not.toBeNull();
   const emitTaskUpdated = mock(async () => {});
+  const expediteDirectStart = mock(() => {});
   const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
     emitTaskUpdated,
+    expediteDirectStart,
   });
   expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toEqual({
     accepted: true,
@@ -634,6 +636,7 @@ test('a plain task with a reserved direct attempt and no session yet is fenced t
   expect(attempts.isStopRequested(reserved!.id, reserved!.sessionId)).toBe(true);
   expect(attempts.get(reserved!.id)?.phase).toBe('reserved');
   expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
+  expect(expediteDirectStart).toHaveBeenCalledWith(reserved!.id);
 });
 
 test('a person can cancel a plain done task', async () => {

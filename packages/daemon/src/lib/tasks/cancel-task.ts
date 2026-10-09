@@ -23,6 +23,7 @@ export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
   Pick<SpaceTaskDependencyDependencies, 'stopForStatus'> & {
     getTaskManager?: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
     emitTaskUpdated?: (spaceId: string, task: SpaceTask) => Promise<void>;
+    expediteDirectStart?: (attemptId: string) => void;
   };
 
 const WORKFLOW_CANCELLATION_REJECTIONS: [substring: string, reason: string][] = [
@@ -103,6 +104,7 @@ export async function admitManagedCancellation(
     await policy.emitTaskUpdated?.(task.spaceId, updated).catch((error: unknown) => {
       log.warn('Failed to emit space.task.updated:', error);
     });
+    if (route.kind === 'reserved') policy.expediteDirectStart?.(route.attempt.id);
     return { reason: { accepted: true, jobId: null } };
   } catch (error) {
     if (error instanceof StaleTaskGuardError) {

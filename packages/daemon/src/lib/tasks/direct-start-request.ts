@@ -18,6 +18,15 @@ export function readDirectStartRequest(db: Database, attemptId: string) {
       }
     : null;
 }
+export function expediteDirectStart(
+  db: Database,
+  jobs: Pick<JobQueueRepository, 'reschedulePending'>,
+  attemptId: string
+): boolean {
+  const request = readDirectStartRequest(db, attemptId);
+  return request ? jobs.reschedulePending(request.jobId, Date.now()) : false;
+}
+
 export function reviveDirectStartJob(
   db: Database,
   jobs: Pick<JobQueueRepository, 'enqueue'>,
