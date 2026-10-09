@@ -117,6 +117,7 @@ import { POST_APPROVAL_TASK_AGENT_TARGET } from '../../workflows/post-approval-v
 import { runTemplateSnapshotRecord } from '../../workflows/run-template-snapshot.ts';
 import {
   decideActivationRouting,
+  resolveNodeAgentName,
   selectWorkflowNodeForAgent,
 } from '../../tasks/activation-routing.ts';
 import {
@@ -1700,13 +1701,7 @@ export class TaskAgentManager {
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
     const node = workflow.nodes.find((n) => n.id === workflowNodeId);
-    if (!node) return false;
-    try {
-      const slots = resolveNodeAgents(node);
-      return slots.some((slot) => slot.name === agentName);
-    } catch {
-      return false;
-    }
+    return !!node && resolveNodeAgentName(node, agentName) !== null;
   }
 
   getWorkflowDeclaredAgentNamesForTask(taskId: string): string[] {
@@ -2372,11 +2367,13 @@ export class TaskAgentManager {
     await this.tryResumeNodeAgentSession(workflowRunId, agentName, options?.workflowNodeId);
     const matchesNode = (workflowNodeId: string) =>
       !options?.workflowNodeId || workflowNodeId === options.workflowNodeId;
+    const slotName = this.resolveAgentNameOnNode(taskId, agentName, options?.workflowNodeId);
+    const matchesAgent = (name: string) => name === agentName || name === slotName;
     const existing = this.config.nodeExecutionRepo
       .listByWorkflowRun(workflowRunId)
       .filter(
         (execution) =>
-          execution.agentName === agentName &&
+          matchesAgent(execution.agentName) &&
           matchesNode(execution.workflowNodeId) &&
           (execution.status === 'in_progress' || execution.status === 'blocked')
       )
@@ -2414,15 +2411,11 @@ export class TaskAgentManager {
 
     const gateRoute = decideActivationRouting({
       workflowNodeId: options?.workflowNodeId,
-      agentDeclaredOnNode: this.resolveAgentDeclaredOnNode(
-        taskId,
-        agentName,
-        options?.workflowNodeId
-      ),
+      agentDeclaredOnNode: slotName !== null,
     });
-    if (gateRoute.action === 'reject_undeclared') return [];
+    if (gateRoute.action === 'reject_undeclared' || slotName === null) return [];
 
-    await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
+    await this.ensureWorkflowNodeActivationForAgent(taskId, slotName, options);
 
     const task = this.config.taskRepo.getTask(taskId);
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
@@ -2433,7 +2426,7 @@ export class TaskAgentManager {
     const execution = this.config.nodeExecutionRepo
       .listByWorkflowRun(workflowRunId)
       .find(
-        (candidate) => candidate.agentName === agentName && matchesNode(candidate.workflowNodeId)
+        (candidate) => matchesAgent(candidate.agentName) && matchesNode(candidate.workflowNodeId)
       );
     const postRoute = decideActivationRouting({
       taskRunWorkflowResolvable: !!(task && run && workflow && space),
@@ -2503,19 +2496,18 @@ export class TaskAgentManager {
     return [{ agentName, sessionId }];
   }
 
-  private resolveAgentDeclaredOnNode(
+  private resolveAgentNameOnNode(
     taskId: string,
     agentName: string,
     workflowNodeId: string | undefined
-  ): boolean {
-    if (!workflowNodeId) return true;
+  ): string | null {
+    if (!workflowNodeId) return agentName;
     const task = this.config.taskRepo.getTask(taskId);
     const run = task?.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
-    if (!run?.workflowId) return true;
+    if (!run?.workflowId) return agentName;
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const node = workflow?.nodes.find((candidate) => candidate.id === workflowNodeId);
-    const slots = node ? resolveNodeAgents(node) : [];
-    return slots.some((slot) => slot.name === agentName);
+    return node ? resolveNodeAgentName(node, agentName) : null;
   }
 
   async ensureWorkflowNodeActivationForAgent(

@@ -50,6 +50,12 @@ function nodeSlots(node: WorkflowNode): ReturnType<typeof resolveNodeAgents> {
   }
 }
 
+export function resolveNodeAgentName(node: WorkflowNode, agentName: string): string | null {
+  const slots = nodeSlots(node);
+  if (slots.some((slot) => slot.name === agentName)) return agentName;
+  return slots.length === 1 ? slots[0].name : null;
+}
+
 export function selectWorkflowNodeForAgent(
   nodes: readonly WorkflowNode[],
   agentName: string,
@@ -57,9 +63,7 @@ export function selectWorkflowNodeForAgent(
 ): WorkflowNode | null {
   if (workflowNodeId) {
     const node = nodes.find((candidate) => candidate.id === workflowNodeId);
-    if (!node) return null;
-    const slots = nodeSlots(node);
-    return slots.length === 1 || slots.some((slot) => slot.name === agentName) ? node : null;
+    return node && resolveNodeAgentName(node, agentName) ? node : null;
   }
   return nodes.find((node) => nodeSlots(node).some((slot) => slot.name === agentName)) ?? null;
 }
