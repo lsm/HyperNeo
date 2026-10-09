@@ -587,7 +587,10 @@ export class SpaceTaskManager {
     return updated;
   }
 
-  async retryTask(taskId: string, options?: { description?: string }): Promise<SpaceTask> {
+  async retryTask(
+    taskId: string,
+    options?: { description?: string; expectedStatus?: SpaceTaskStatus }
+  ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
@@ -602,7 +605,9 @@ export class SpaceTaskManager {
 
     const targetStatus: SpaceTaskStatus =
       task.status === 'done' || task.status === 'cancelled' ? 'in_progress' : 'open';
-    const retried = await this.setTaskStatus(taskId, targetStatus);
+    const retried = await this.setTaskStatus(taskId, targetStatus, {
+      expectedStatus: options?.expectedStatus,
+    });
 
     if (options?.description !== undefined) {
       return this.updateTask(taskId, { description: options.description });
