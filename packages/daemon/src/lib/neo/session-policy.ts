@@ -4,6 +4,7 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
+import { readNeoCatchUp, readNeoHolderView } from './catch-up.ts';
 import { neoFolderPath } from './folder.ts';
 import { NEO_LOOKUP_COMMANDS, neoLookUpGuard, neoSecretReadRules } from './look-up-guard.ts';
 import { neoPrompt } from './prompt.ts';
@@ -34,6 +35,12 @@ export function neoCoordinatorBinding(
     )
     .get(sessionId) as NeoBinding | null;
   return row ?? null;
+}
+
+export function neoQueryContext(binding: NeoBinding, db: Database | undefined): string {
+  const neoDb = db?.getDatabase();
+  if (!neoDb) return '';
+  return binding.kind === 'neo' ? readNeoCatchUp(neoDb) : readNeoHolderView(neoDb);
 }
 
 const NEO_LOOKUP_TOOLS = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
