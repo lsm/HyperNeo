@@ -943,6 +943,29 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('Neo cannot close a work card; only the user can', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } });
+    try {
+      await service.start('work-1');
+      db.createSession(createTestSession('neo:root'));
+      service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+      const outcome = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.close',
+        { id: 'work-1', outcome: 'done' },
+        { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+      );
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'This action needs the user.' },
+      });
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
   test('a person closes started work as done or cancelled and the driver work stops', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service, calls } = await setup({ ok: true, value: { ref } });

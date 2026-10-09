@@ -386,7 +386,7 @@ export function admitNeoCaller(
     )
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
-  if (['neo.open', 'neo.concern.cancel'].includes(name))
+  if (['neo.open', 'neo.concern.cancel', 'neo.work.close'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
