@@ -13,11 +13,23 @@ export function neoWorkPrSetback(receipt: NeoWorkPrReceipt | undefined): boolean
   return prs.some(stuck) || prs.some((pr) => pr.state === 'CLOSED');
 }
 
+function headlinePr(receipt: NeoWorkPrReceipt | undefined): NeoWorkPr | undefined {
+  const prs = receipt?.prs ?? [];
+  return prs.find(stuck) ?? prs.find((candidate) => candidate.state === 'OPEN') ?? prs[0];
+}
+
+const prNumber = (pr: NeoWorkPr) => `#${pr.url.split('/').pop() ?? pr.url}`;
+
+export function neoWorkPrNumber(receipt: NeoWorkPrReceipt | undefined): string | null {
+  const pr = headlinePr(receipt);
+  return pr ? prNumber(pr) : null;
+}
+
 export function neoWorkPrLabel(receipt: NeoWorkPrReceipt | undefined): string | null {
   const prs = receipt?.prs ?? [];
-  const pr = prs.find(stuck) ?? prs.find((candidate) => candidate.state === 'OPEN') ?? prs[0];
+  const pr = headlinePr(receipt);
   if (!pr) return null;
-  const number = `#${pr.url.split('/').pop() ?? pr.url}`;
+  const number = prNumber(pr);
   const more = prs.length > 1 ? ` +${prs.length - 1}` : '';
   const state =
     pr.state === 'MERGED'

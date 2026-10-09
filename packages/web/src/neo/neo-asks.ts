@@ -1,5 +1,17 @@
-import type { NeoAsk, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoScene, NeoSceneGroup, NeoSceneGroups, NeoScenePrs } from './neo-scenes.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type {
+  NeoAsk,
+  NeoAskStatus,
+  NeoWorkDriverReceipt,
+} from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoScene,
+  NeoSceneDrivers,
+  NeoSceneGroup,
+  NeoSceneGroups,
+  NeoScenePrs,
+} from './neo-scenes.ts';
+import { neoWorkDriverLink } from './work-driver.ts';
 import { neoWorkPrSetback } from './work-prs.ts';
 
 export type NeoAskView = {
@@ -7,8 +19,15 @@ export type NeoAskView = {
   readonly group: NeoSceneGroup;
   readonly label: string;
   readonly done: number;
+  readonly doneIds: ReadonlySet<string>;
   readonly total: number;
   readonly scenes: readonly NeoScene[];
+};
+
+export type NeoAskOpenTarget = {
+  readonly work: NeoWork;
+  readonly driver: NeoWorkDriverReceipt | undefined;
+  readonly link: string | null;
 };
 
 export type NeoAskGroups = {
@@ -36,18 +55,23 @@ export function describeNeoAsk(
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
   const needsYou = !settled && scenes.some((scene) => scene.group === 'attention');
-  const done = scenes.filter(
-    (scene) =>
-      scene.group === 'outcomes' &&
-      scene.receipt.kind === 'work' &&
-      scene.receipt.status === 'reported' &&
-      !neoWorkPrSetback(prs.get(scene.ref.id))
-  ).length;
+  const doneIds = new Set(
+    scenes
+      .filter(
+        (scene) =>
+          scene.group === 'outcomes' &&
+          scene.receipt.kind === 'work' &&
+          scene.receipt.status === 'reported' &&
+          !neoWorkPrSetback(prs.get(scene.ref.id))
+      )
+      .map((scene) => scene.ref.id)
+  );
   return {
     ask,
     group: needsYou ? 'attention' : truth.group,
     label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : truth.label,
-    done,
+    done: doneIds.size,
+    doneIds,
     total: Math.max(ask.workIds.length, scenes.length),
     scenes,
   };
@@ -83,4 +107,20 @@ export function groupNeoAsks(
       outcomes: loose('outcomes'),
     },
   };
+}
+
+export function neoAskOpenTarget(
+  view: NeoAskView,
+  drivers: NeoSceneDrivers = new Map()
+): NeoAskOpenTarget | null {
+  const reachable = view.scenes.flatMap((scene): NeoAskOpenTarget[] => {
+    const work = scene.receipt;
+    if (work.kind !== 'work') return [];
+    const driver = drivers.get(work.id);
+    const link = work.sessionId ? null : neoWorkDriverLink(driver);
+    return work.sessionId || link ? [{ work, driver, link }] : [];
+  });
+  return (
+    reachable.findLast((target) => target.work.status === 'queued') ?? reachable.at(-1) ?? null
+  );
 }

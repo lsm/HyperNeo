@@ -61,8 +61,8 @@ export function formatRelativeTime(date: Date): string {
   }
 }
 
-export function getRelativeTime(ts: number): string {
-  const diff = Date.now() - ts;
+export function getRelativeTime(ts: number, now = Date.now()): string {
+  const diff = now - ts;
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;

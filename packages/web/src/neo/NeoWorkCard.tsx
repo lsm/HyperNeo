@@ -7,14 +7,23 @@ import {
   type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
-import { ProviderLogo } from '../components/ProviderLogo.tsx';
-import { Button } from '../components/ui/Button.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
-import { providerLogoColor } from '../lib/provider-brand.ts';
+import {
+  NeoAppMark,
+  NeoChatMark,
+  NeoMoreIcon,
+  NeoStatusChip,
+  neoCardClass,
+  neoFooterClass,
+  neoPlainClass,
+  neoPrimaryClass,
+  neoSecondaryClass,
+} from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
-import { neoWorkDriverLabel, neoWorkDriverLink } from './work-driver.ts';
+import { neoWorkMeta, neoWorkPrimaryAction } from './work-actions.ts';
+import { neoWorkDriverLabel, neoWorkDriverLogo } from './work-driver.ts';
 import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
 
 const labels: Record<NeoWork['status'], string> = {
@@ -23,11 +32,6 @@ const labels: Record<NeoWork['status'], string> = {
   reported: 'Response ready',
   failed: 'Failed',
   cancelled: 'Stopped',
-};
-
-const appLogos: Record<string, string> = {
-  'claude-desktop': 'anthropic',
-  'codex-desktop': 'anthropic-codex',
 };
 
 const tones = {
@@ -62,7 +66,7 @@ function neoWorkTone(
 const interactive =
   'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
 
-export type NeoWorkAction = 'start' | 'cancel' | 'done' | 'close';
+export type NeoWorkAction = 'start' | 'cancel' | 'done' | 'close' | 'retry';
 
 export function sceneOpenSelector(id: string): string {
   return `[data-scene-open="${id.replace(/["\\]/g, '\\$&')}"]`;
@@ -116,70 +120,139 @@ export function NeoWorkCard({
       ? neoWorkDriverLabel(driver)
       : (work.status === 'reported' && neoWorkPrLabel(prs)) || labels[work.status];
   const tone = neoWorkTone(work, driver, waiting, prs);
-  const icon = tone === 'success' ? 'check' : 'work';
-  const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
-  const appLogo = driver ? appLogos[driver.adapter] : undefined;
-  const openLink = driverLink && (
-    <a
-      href={driverLink}
-      class="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
-      aria-label={`Open ${work.title}`}
-    >
-      Open
-      {appLogo ? (
-        <span data-app-logo={appLogo} class="flex" style={{ color: providerLogoColor(appLogo) }}>
-          <ProviderLogo provider={appLogo} class="h-3.5 w-3.5" />
-        </span>
-      ) : (
-        <NeoIcon name="external" class="!h-3.5 !w-3.5" />
-      )}
-    </a>
+  const active = work.status === 'queued';
+  const primary = neoWorkPrimaryAction(work, driver, { waiting, chat: !!onOpen });
+  const answering = primary.kind === 'answer' && !primary.link;
+  const meta = neoWorkMeta(work, prs);
+  const note =
+    work.status === 'proposed'
+      ? work.instruction
+      : summary || (work.status === 'failed' ? work.report : null);
+  const chip = (
+    <NeoStatusChip
+      tone={tone}
+      colors={tones[tone]}
+      label={answering ? 'Waiting for your answer' : label}
+      pulse={active}
+    />
   );
+  const metaText = meta && <span class="shrink-0 text-xs text-fg-faint">{meta}</span>;
+  const link =
+    (primary.kind === 'open' || primary.kind === 'answer') && primary.link ? (
+      <a
+        href={primary.link}
+        class={primary.kind === 'answer' ? neoPrimaryClass : neoSecondaryClass}
+        aria-label={`Open ${work.title}`}
+      >
+        <NeoAppMark logo={neoWorkDriverLogo(driver)} />
+        {primary.label}
+      </a>
+    ) : null;
   if (presentation === 'summary' && onOpen)
     return (
-      <div class="flex min-h-11 w-full items-center gap-2 rounded-xl border border-line bg-surface pr-2 hover:border-accent/40">
+      <div class="rounded-2xl border border-line bg-surface hover:border-accent/40">
         <button
           type="button"
           data-scene-open={work.id}
           disabled={!work.sessionId}
           onClick={() => onOpen(work.id)}
-          class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left focus-visible:outline-accent disabled:cursor-default"
+          class={`grid w-full gap-2 px-4 pt-3.5 text-left focus-visible:outline-accent disabled:cursor-default${
+            link ? '' : ' pb-3.5'
+          }`}
           aria-label={work.sessionId ? `Open chat for ${work.title}` : work.title}
         >
-          <span
-            aria-hidden="true"
-            data-tone={tone}
-            class={`shrink-0 rounded-lg p-1.5 ${tones[tone]}`}
-          >
-            <NeoIcon name={icon} />
+          <span class="flex min-w-0 items-center">{chip}</span>
+          <span class="line-clamp-3 break-words text-[15px] font-semibold leading-snug">
+            {work.title}
           </span>
-          <span class="min-w-0 flex-1">
-            <span class="block break-words text-sm font-medium">{work.title}</span>
-            <span class="mt-1 block text-xs text-fg-muted">{label}</span>
-          </span>
-          {work.sessionId && (
-            <span aria-hidden="true" class="shrink-0 text-fg-faint">
-              <NeoIcon name="external" />
+          {note && <span class="line-clamp-2 break-words text-sm text-fg-muted">{note}</span>}
+          {!link && (work.sessionId || meta) && (
+            <span class="mt-1 flex items-center gap-2 border-t border-line pt-3">
+              {work.sessionId && (
+                <span class={neoSecondaryClass}>
+                  <NeoChatMark />
+                  {answering ? 'Answer in chat' : 'Open chat'}
+                </span>
+              )}
+              <span class="flex-1" />
+              {metaText}
             </span>
           )}
         </button>
-        {openLink}
+        {link && (
+          <div class="mx-4 mb-3.5 mt-3 flex items-center gap-2 border-t border-line pt-3">
+            {link}
+            <span class="flex-1" />
+            {metaText}
+          </div>
+        )}
       </div>
     );
-  const active = work.status === 'queued';
-  const answering = active && waiting && !!work.sessionId && !!onOpen;
-  const hasActions = work.status === 'proposed' || answering;
-  const openable = !!onOpen && !!work.sessionId && !hasActions;
-  const openChat = !openable && !answering && !!onOpen && !!work.sessionId;
+  const openable = !!onOpen && !!work.sessionId && work.status !== 'proposed' && !answering;
   const closable = presentation === 'detail' && !answering && (active || work.status === 'failed');
+  const chatButton = onOpen && work.sessionId && (
+    <button type="button" onClick={() => onOpen(work.id)} class={neoSecondaryClass}>
+      <NeoChatMark />
+      Open chat
+    </button>
+  );
+  const lead =
+    primary.kind === 'retry' ? (
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={() => onAction(work.id, 'retry')}
+        class={neoPrimaryClass}
+      >
+        <NeoIcon name="retry" class="!h-3.5 !w-3.5" />
+        {busy ? 'Retrying…' : primary.label}
+      </button>
+    ) : answering ? (
+      <button type="button" onClick={() => onOpen!(work.id)} class={neoPrimaryClass}>
+        <NeoIcon name="external" class="!h-3.5 !w-3.5" />
+        Answer in chat
+      </button>
+    ) : (
+      link || (primary.kind === 'chat' && chatButton)
+    );
+  const footer =
+    primary.kind === 'start' ? (
+      <div class={neoFooterClass}>
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={() => onAction(work.id, 'cancel')}
+          class={`${neoPlainClass} hover:!bg-danger/10 hover:!text-danger`}
+        >
+          {busy ? 'Declining…' : 'Decline'}
+        </button>
+        <span class="flex-1" />
+        {chatButton}
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={() => onAction(work.id, 'start')}
+          class={neoPrimaryClass}
+        >
+          <NeoIcon name="arrow" class="!h-3.5 !w-3.5" />
+          {busy ? 'Starting…' : primary.label}
+        </button>
+      </div>
+    ) : (
+      (lead || meta) && (
+        <div class={neoFooterClass}>
+          {lead}
+          <span class="flex-1" />
+          {metaText}
+        </div>
+      )
+    );
   return (
     <article
       aria-label={work.title}
       data-scene-open={openable ? work.id : undefined}
       tabIndex={openable ? 0 : undefined}
-      class={`neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm${
-        openable ? ' cursor-pointer transition-colors hover:border-accent/40' : ''
-      }`}
+      class={`${neoCardClass}${openable ? ' cursor-pointer transition-colors hover:border-accent/40' : ''}`}
       onClick={
         openable
           ? (event) => {
@@ -198,39 +271,12 @@ export function NeoWorkCard({
           : undefined
       }
     >
-      <div class="mb-3 flex items-center gap-3">
-        <span data-tone={tone} class={`rounded-xl p-2 ${tones[tone]}`}>
-          <NeoIcon name={icon} />
-        </span>
-        <span class="text-xs font-medium text-fg-muted">
-          {answering ? 'Waiting for your answer' : label}
-        </span>
-        {active && (
-          <span
-            aria-hidden="true"
-            class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
-          />
-        )}
-        {openLink}
-        {openable && (
-          <span aria-hidden="true" class="ml-auto text-fg-faint">
-            <NeoIcon name="external" />
-          </span>
-        )}
-        {openChat && (
-          <button
-            type="button"
-            onClick={() => onOpen(work.id)}
-            class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
-          >
-            Open chat
-            <NeoIcon name="external" class="!h-3.5 !w-3.5" />
-          </button>
-        )}
+      <div class="flex min-h-7 items-center gap-2">
+        {chip}
+        <span class="flex-1" />
         {closable && (
           <Dropdown
             position="right"
-            class={openable || openChat ? '' : 'ml-auto'}
             items={[
               {
                 label: 'Mark done',
@@ -246,17 +292,24 @@ export function NeoWorkCard({
             ]}
             trigger={
               <IconButton title="Card actions" size="sm" class="text-fg-faint">
-                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="5" cy="12" r="1.75" />
-                  <circle cx="12" cy="12" r="1.75" />
-                  <circle cx="19" cy="12" r="1.75" />
-                </svg>
+                <NeoMoreIcon />
               </IconButton>
             }
           />
         )}
       </div>
-      <h3 class="break-words text-base font-medium">{work.title}</h3>
+      <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
+        {work.title}
+      </h3>
+      {note && (
+        <p
+          class={`mt-1.5 line-clamp-2 break-words text-sm text-fg-muted${
+            work.status === 'proposed' ? ' whitespace-pre-wrap' : ''
+          }`}
+        >
+          {note}
+        </p>
+      )}
       {presentation === 'detail' && goal?.goal && (
         <p class="mt-2 break-words text-sm text-fg-soft">
           <span class="text-fg-muted">Goal: </span>
@@ -274,14 +327,6 @@ export function NeoWorkCard({
           <p class="mt-1 whitespace-pre-wrap break-words">{goal.doneWhen}</p>
         </details>
       )}
-      {work.status === 'proposed' && (
-        <p class="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm text-fg-muted">
-          {work.instruction}
-        </p>
-      )}
-      {work.status !== 'proposed' && (summary || (work.status === 'failed' && work.report)) && (
-        <p class="mt-2 line-clamp-3 break-words text-sm text-fg-muted">{summary || work.report}</p>
-      )}
       {active &&
         work.sessionId &&
         (questionSlot ? (
@@ -289,34 +334,7 @@ export function NeoWorkCard({
         ) : (
           <NeoWorkQuestion key={work.id} work={work} />
         ))}
-      {hasActions && (
-        <div class="mt-4 flex flex-wrap items-center justify-end gap-4">
-          {work.status === 'proposed' && (
-            <Button
-              variant="ghost"
-              disabled={disabled || busy}
-              class="hover:!bg-danger/10 hover:!text-danger"
-              onClick={() => onAction(work.id, 'cancel')}
-            >
-              {busy ? 'Declining…' : 'Decline'}
-            </Button>
-          )}
-          {answering && (
-            <Button icon={<NeoIcon name="external" />} onClick={() => onOpen!(work.id)}>
-              Answer in chat
-            </Button>
-          )}
-          {work.status === 'proposed' && (
-            <Button
-              disabled={disabled || busy}
-              onClick={() => onAction(work.id, 'start')}
-              icon={<NeoIcon name="arrow" />}
-            >
-              {busy ? 'Starting…' : 'Start work'}
-            </Button>
-          )}
-        </div>
-      )}
+      {footer}
     </article>
   );
 }

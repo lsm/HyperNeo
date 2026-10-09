@@ -2,8 +2,21 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
+import {
+  NeoAppMark,
+  NeoChatMark,
+  NeoMoreIcon,
+  NeoStatusChip,
+  neoCardClass,
+  neoFooterClass,
+  neoPlainClass,
+  neoSecondaryClass,
+} from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import type { NeoAskOutcome, NeoAskView } from './neo-asks.ts';
+import { type NeoAskOutcome, type NeoAskView, neoAskOpenTarget } from './neo-asks.ts';
+import type { NeoScene, NeoSceneDrivers } from './neo-scenes.ts';
+import { neoWorkOpenLabel } from './work-actions.ts';
+import { neoWorkDriverLogo } from './work-driver.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -12,16 +25,45 @@ const tones = {
   ended: 'text-fg-muted bg-fill-soft',
 };
 
+function stepGlyph(scene: NeoScene, done: boolean): { mark: string; color: string } {
+  if (done) return { mark: '✓', color: 'text-success' };
+  if (scene.group === 'attention') return { mark: '!', color: 'text-warning' };
+  if (scene.group === 'running') return { mark: '●', color: 'text-accent' };
+  if (scene.receipt.kind === 'work' && scene.receipt.status === 'cancelled')
+    return { mark: '–', color: 'text-fg-faint' };
+  return { mark: '!', color: 'text-warning' };
+}
+
+function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
+  const glyph = stepGlyph(scene, done);
+  const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
+  return (
+    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-center gap-2 text-sm">
+      <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
+        {glyph.mark}
+      </span>
+      <span class="min-w-0 flex-1 truncate" title={title}>
+        {title}
+      </span>
+      <span class="max-w-[45%] shrink-0 truncate text-xs text-fg-faint">{scene.label}</span>
+    </div>
+  );
+}
+
 export function NeoAskCard({
   view,
-  children,
+  drivers,
   disabled = false,
   onSettle,
+  onOpen,
+  renderCard,
 }: {
   view: NeoAskView;
-  children?: ComponentChildren;
+  drivers?: NeoSceneDrivers;
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
+  onOpen?: (workId: string) => void;
+  renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(view.group === 'attention');
   const { ask } = view;
@@ -33,28 +75,42 @@ export function NeoAskCard({
         : view.group === 'outcomes'
           ? 'ended'
           : 'running';
-  const icon = tone === 'attention' ? 'alert' : tone === 'achieved' ? 'check' : 'work';
   const steps = view.scenes.length;
+  const several = steps > 1;
+  const target = neoAskOpenTarget(view, drivers);
+  const openName = `Open ${ask.title}`;
+  const openControl =
+    target &&
+    (target.link ? (
+      <a href={target.link} class={neoSecondaryClass} aria-label={openName}>
+        <NeoAppMark logo={neoWorkDriverLogo(target.driver)} />
+        {neoWorkOpenLabel(target.driver)}
+      </a>
+    ) : (
+      onOpen && (
+        <button
+          type="button"
+          class={neoSecondaryClass}
+          aria-label={openName}
+          onClick={() => onOpen(target.work.id)}
+        >
+          <NeoChatMark />
+          Open chat
+        </button>
+      )
+    ));
   return (
-    <article
-      aria-label={ask.title}
-      data-ask={ask.id}
-      class="neo-arrive rounded-2xl border border-line bg-surface p-5 shadow-sm"
-    >
-      <div class="mb-3 flex items-center gap-3">
-        <span data-tone={tone} class={`rounded-xl p-2 ${tones[tone]}`}>
-          <NeoIcon name={icon} />
-        </span>
-        <span class="text-xs font-medium text-fg-muted">{view.label}</span>
-        {tone === 'running' && (
-          <span
-            aria-hidden="true"
-            class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
-          />
-        )}
-        <span class="ml-auto" />
+    <article aria-label={ask.title} data-ask={ask.id} class={neoCardClass}>
+      <div class="flex min-h-7 items-center gap-2">
+        <NeoStatusChip
+          tone={tone}
+          colors={tones[tone]}
+          label={view.label}
+          pulse={tone === 'running'}
+        />
+        <span class="flex-1" />
         {view.total > 0 && (
-          <span class="text-xs text-fg-muted">
+          <span class="shrink-0 text-xs text-fg-muted">
             {view.done} of {view.total} done
           </span>
         )}
@@ -72,41 +128,53 @@ export function NeoAskCard({
             ]}
             trigger={
               <IconButton title="Ask actions" size="sm" class="text-fg-faint">
-                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="5" cy="12" r="1.75" />
-                  <circle cx="12" cy="12" r="1.75" />
-                  <circle cx="19" cy="12" r="1.75" />
-                </svg>
+                <NeoMoreIcon />
               </IconButton>
             }
           />
         )}
       </div>
-      <h3 class="break-words text-base font-medium">{ask.title}</h3>
+      <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
+        {ask.title}
+      </h3>
       {ask.outcome && (
-        <p class="mt-2 line-clamp-3 break-words text-sm text-fg-muted">{ask.outcome}</p>
+        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{ask.outcome}</p>
       )}
-      <details class="mt-1 text-sm text-fg-muted">
-        <summary class="cursor-pointer select-none">Done when</summary>
-        <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
-      </details>
-      {steps > 0 && (
-        <div class="mt-3">
-          <button
-            type="button"
-            aria-expanded={open}
-            onClick={() => setOpen(!open)}
-            class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 -ml-2 text-xs text-fg-muted hover:bg-fill-soft hover:text-accent"
-          >
-            <NeoIcon
-              name="chevron"
-              class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
-            />
-            {open ? 'Hide steps' : `Show steps · ${steps}`}
-          </button>
-          {open && <div class="mt-3 space-y-3 border-l border-line pl-3">{children}</div>}
+      {open && (
+        <div data-ask-details class="mt-3 space-y-3">
+          <div class="text-sm text-fg-muted">
+            <p class="text-xs font-medium text-fg-faint">Done when</p>
+            <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
+          </div>
+          {steps > 0 && (
+            <div class="space-y-2 border-l-2 border-line pl-3">
+              {view.scenes.map((scene) =>
+                several && scene.group !== 'attention' ? (
+                  <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
+                ) : (
+                  renderCard?.(scene)
+                )
+              )}
+            </div>
+          )}
         </div>
       )}
+      <div class={neoFooterClass}>
+        {openControl}
+        <span class="flex-1" />
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          class={neoPlainClass}
+        >
+          {several ? 'Steps' : 'Details'}
+          <NeoIcon
+            name="chevron"
+            class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
+          />
+        </button>
+      </div>
     </article>
   );
 }

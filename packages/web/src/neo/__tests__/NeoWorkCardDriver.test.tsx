@@ -84,9 +84,11 @@ describe('NeoWorkCard with drivers work', () => {
       />
     );
     expect(screen.getByText('Needs you in Codex Desktop on laptop')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open Bigger font' }).getAttribute('href')).toBe(
-      'codex://threads/t1'
-    );
+    const link = screen.getByRole('link', { name: 'Open Bigger font' });
+    expect([link.getAttribute('href'), link.textContent]).toEqual([
+      'codex://threads/t1',
+      'Answer in Codex',
+    ]);
   });
 
   it('keeps the summary row openable through the link', () => {
@@ -102,7 +104,9 @@ describe('NeoWorkCard with drivers work', () => {
       />
     );
     expect(screen.getByText('Running in Codex Desktop on laptop')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open Bigger font' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Bigger font' }).textContent).toBe(
+      'Open in Codex'
+    );
   });
 
   it('tints each summary row by where its work stands', () => {
