@@ -32,6 +32,7 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { TaskHeaderMeta } from './TaskHeaderMeta';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
@@ -1139,14 +1140,14 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class={`flex h-14 flex-shrink-0 items-center bg-surface-overlay border-b px-3 border-line`}
+        class={`flex h-[88px] flex-shrink-0 items-center bg-surface-overlay border-b px-4 border-line`}
       >
-        <div class="flex w-full items-center gap-1.5" data-tauri-drag-region>
+        <div class="flex w-full items-center gap-2" data-tauri-drag-region>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
               aria-label="Back"
               data-testid="task-back-button"
             >
@@ -1160,48 +1161,57 @@ export function SpaceTaskPane({
               </svg>
             </button>
           )}
-          <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
-            <span
-              class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
-              data-testid="task-number"
-            >
-              #{task.taskNumber}
-            </span>
-            <h2
-              class="min-w-0 truncate text-[15px] font-semibold leading-6 text-fg"
-              title={task.title}
-              data-tauri-drag-region
-            >
-              {task.title}
-            </h2>
-            {showHeaderStatusBadge && (
-              <span class="flex-shrink-0" data-testid="task-status-label">
-                <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={activitySummary} />
+          <div class="flex min-w-0 flex-1 flex-col gap-1" data-tauri-drag-region>
+            <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
+              <span
+                class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
+                data-testid="task-number"
+              >
+                #{task.taskNumber}
               </span>
-            )}
-            <span class="flex-1" data-tauri-drag-region />
-            {taskActionItems.length > 0 && (
-              <Dropdown
-                items={taskActionItems}
-                position="right"
-                trigger={
-                  <button
-                    type="button"
-                    class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-                    data-testid="task-actions-menu-trigger"
-                    aria-label="Task Actions"
-                    title="Task Actions"
-                  >
-                    <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                      <circle cx="10" cy="4" r="1.75" />
-                      <circle cx="10" cy="10" r="1.75" />
-                      <circle cx="10" cy="16" r="1.75" />
-                    </svg>
-                  </button>
-                }
-              />
-            )}
+              <h2
+                class="min-w-0 truncate text-[15px] font-semibold leading-6 text-fg"
+                title={task.title}
+                data-tauri-drag-region
+              >
+                {task.title}
+              </h2>
+              {showHeaderStatusBadge && (
+                <span class="flex-shrink-0" data-testid="task-status-label">
+                  <StatusBadge
+                    tone={getTaskStatusConfig(task.status).tone}
+                    label={activitySummary}
+                  />
+                </span>
+              )}
+            </div>
+            <TaskHeaderMeta
+              task={task}
+              workspaceLabel={workspaceLabel}
+              routeSpaceId={navigationSpaceId}
+            />
           </div>
+          {taskActionItems.length > 0 && (
+            <Dropdown
+              items={taskActionItems}
+              position="right"
+              trigger={
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+                  data-testid="task-actions-menu-trigger"
+                  aria-label="Task Actions"
+                  title="Task Actions"
+                >
+                  <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <circle cx="10" cy="4" r="1.75" />
+                    <circle cx="10" cy="10" r="1.75" />
+                    <circle cx="10" cy="16" r="1.75" />
+                  </svg>
+                </button>
+              }
+            />
+          )}
         </div>
       </div>
 
