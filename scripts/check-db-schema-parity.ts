@@ -105,7 +105,6 @@ export const HELPER_SCHEMA_TABLES = [
   'task_schedules',
   'workflow_hook_result_artifacts',
   'workflow_hook_state',
-  'workflow_run_artifact_cache',
   'workflow_run_artifacts',
 ];
 
