@@ -61,6 +61,14 @@ export class NeoAskRepository {
     return row ? this.withWork([row])[0] : null;
   }
 
+  forWork(workId: string): NeoAsk | null {
+    if (!this.hasTable()) return null;
+    const link = this.db
+      .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')
+      .get(workId) as { askId: string } | undefined;
+    return link ? this.get(link.askId) : null;
+  }
+
   list(concernId?: string | null): NeoAsk[] {
     if (!this.hasTable()) return [];
     const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';

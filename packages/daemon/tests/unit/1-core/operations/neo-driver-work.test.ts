@@ -509,6 +509,46 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('checks work under an ask against the ask when the card has no checklist', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Fixed and merged.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const ask = service.askRecords.open({
+      id: 'ask-1',
+      requestKey: 'neo:root:fix',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: null,
+      title: 'Fix the bug',
+      ask: 'Fix the login bug',
+      doneWhen: '- merged to dev',
+      doneSource: 'human',
+    })!;
+    service.askRecords.link(ask.id, 'work-1');
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toContain('This work belongs to ask ask-1');
+      expect(notes[0]).toContain('"doneWhen":"- merged to dev"');
+      expect(notes[0]).toContain('"goal":"Fix the login bug"');
+      expect(JSON.stringify(calls.find((call) => call.name === 'work.start')?.input)).toContain(
+        'Done when:\\n- merged to dev'
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test('waits while its pull request runs CI, then checks it with the live state', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/42';
