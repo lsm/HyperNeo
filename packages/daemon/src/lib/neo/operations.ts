@@ -203,6 +203,7 @@ const Propose = z.object({
   doneWhen: z.string().trim().min(1).max(2000).optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
+const Close = z.object({ id: z.string().min(1), outcome: z.enum(['done', 'cancelled']) });
 const Continue = z.object({
   id: z.string().min(1),
   message: z.string().trim().min(1).max(16000),
@@ -827,6 +828,11 @@ export function createNeoOperations(service: NeoService) {
       return service.continueWork(id, message);
     }
   );
+  const close = path(
+    'neo.work.close',
+    (_input: z.infer<typeof Close>) => undefined,
+    async ({ id, outcome }) => service.close(id, outcome)
+  );
   const cancel = path(
     'neo.work.cancel',
     (_input: z.infer<typeof WorkId>) => undefined,
@@ -941,6 +947,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: continueWork,
+    }),
+    defineOperation({
+      name: 'neo.work.close',
+      description:
+        'Close a work card as done or cancelled from any state, for the user only. Closing queued work stops the Codex or Claude work behind it. Done is recorded as a report saying the user closed it; cancelled work stays cancelled. Neo cannot close cards: when a card looks stale, propose closing it to the user instead.',
+      inputSchema: Close,
+      resultSchema: WorkResult,
+      policy: { safetyClass: 'human_only' },
+      execute: close,
     }),
     defineOperation({
       name: 'neo.work.cancel',
