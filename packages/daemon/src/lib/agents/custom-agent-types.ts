@@ -40,6 +40,7 @@ export type UnifiedSpaceAgent = SpaceLongHorizonAgent;
 
 export interface TaskMessageContext {
   reviewFeedback?: string | null;
+  startNote?: string | null;
   task: SpaceTask;
   workflowRun?: SpaceWorkflowRun | null;
   workflow?: SpaceWorkflow | null;

@@ -84,6 +84,7 @@ export function prepareSpaceTaskStatusUpdate(
 
   if (
     (task.status === 'review' && newStatus !== 'review' && newStatus !== 'stopped') ||
+    (task.status === 'stopped' && newStatus !== 'review' && newStatus !== 'stopped') ||
     newStatus === 'approved'
   ) {
     updates.pendingCheckpointType = null;
@@ -124,6 +125,16 @@ export function isTerminalTaskStatus(status: SpaceTaskStatus): boolean {
   return (
     status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
   );
+}
+
+export function prepareSpaceTaskReviewSubmission(
+  task: SpaceTask,
+  review: Parameters<typeof prepareSpaceTaskReviewUpdate>[0],
+  now: number,
+  statusOptions?: Parameters<typeof prepareSpaceTaskStatusUpdate>[2]
+): ReturnType<typeof prepareSpaceTaskStatusUpdate> {
+  const { updates, reopened } = prepareSpaceTaskStatusUpdate(task, 'review', statusOptions, now);
+  return { updates: { ...updates, ...prepareSpaceTaskReviewUpdate(review, now) }, reopened };
 }
 
 export function prepareSpaceTaskReviewUpdate(

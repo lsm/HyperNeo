@@ -238,10 +238,8 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { concerns: [{ context: '' }] } });
   });
 
-  test('standing rules start with the PR-opened rule, and only root Neo can replace them', async () => {
-    expect(await invoke('neo.snapshot')).toMatchObject({
-      value: { standingRules: [expect.stringContaining('a pull request is open')] },
-    });
+  test('standing rules start empty, and only root Neo can replace them', async () => {
+    expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: [] } });
     const root = await service.open(null);
     const rules = ['Ask before deleting anything.'];
     expect(

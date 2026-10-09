@@ -5,6 +5,8 @@ import {
   type RetryTaskDependencies,
 } from '../../../../src/lib/tasks/retry-task.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { StaleTaskGuardError } from '../../../../src/lib/tasks/task-manager.ts';
+import { MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -91,7 +93,10 @@ describe('task.retry operation', () => {
         { source: 'rpc' }
       );
       expect((result as SpaceTask).id).toBe(task.id);
-      expect(harness.retryTask).toHaveBeenCalledWith(task.id, { description: 'try again' });
+      expect(harness.retryTask).toHaveBeenCalledWith(task.id, {
+        description: 'try again',
+        expectedStatus: 'blocked',
+      });
       expect(harness.recoverWorkflowTask).not.toHaveBeenCalled();
     } finally {
       harness.db.close();
@@ -240,6 +245,8 @@ describe('task.retry operation', () => {
       expect((result as SpaceTask).id).toBe(task.id);
       expect(harness.recoverWorkflowTask).toHaveBeenCalledWith(SPACE_ID, task.id, 'open', {
         description: 'new brief',
+        expectedStatus: 'blocked',
+        expectedWorkflowRunId: 'run-1',
       });
       expect(harness.retryTask).not.toHaveBeenCalled();
     } finally {
@@ -264,7 +271,62 @@ describe('task.retry operation', () => {
       expect(result).toBe('retry_unavailable');
       expect(harness.recoverWorkflowTask).toHaveBeenCalledWith(SPACE_ID, task.id, 'in_progress', {
         description: undefined,
+        expectedStatus: 'done',
+        expectedWorkflowRunId: 'run-1',
       });
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  test('rejects resuming a plain task as in_progress when the Space has no free slot', async () => {
+    const harness = makeHarness();
+    try {
+      for (let n = 0; n < MIN_SPACE_CONCURRENT_TASKS; n++)
+        harness.taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title: `Running ${n}`,
+          description: '',
+          status: 'in_progress',
+        });
+      const cancelled = harness.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Cancelled work',
+        description: '',
+        status: 'cancelled',
+      });
+      const blocked = harness.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Blocked work',
+        description: '',
+        status: 'blocked',
+      });
+      expect(await harness.operation.execute({ taskId: cancelled.id }, { source: 'rpc' })).toBe(
+        'space_at_task_capacity'
+      );
+      expect(harness.retryTask).not.toHaveBeenCalled();
+      await harness.operation.execute({ taskId: blocked.id }, { source: 'rpc' });
+      expect(harness.retryTask).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  test('reports invalid_transition when the task changes status before the retry is written', async () => {
+    const harness = makeHarness();
+    try {
+      const task = harness.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Blocked work',
+        description: '',
+        status: 'blocked',
+      });
+      harness.retryTask.mockImplementation(async () => {
+        throw new StaleTaskGuardError('stale');
+      });
+      expect(await harness.operation.execute({ taskId: task.id }, { source: 'rpc' })).toBe(
+        'invalid_transition'
+      );
     } finally {
       harness.db.close();
     }

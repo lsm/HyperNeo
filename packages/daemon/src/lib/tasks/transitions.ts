@@ -18,6 +18,16 @@ export function assertValidTaskTransition(
   }
 }
 
+const RETRYABLE_TASK_STATUSES: ReadonlySet<string> = new Set(['blocked', 'cancelled', 'done']);
+
+export function isRetryableTaskStatus(status: string): boolean {
+  return RETRYABLE_TASK_STATUSES.has(status);
+}
+
+export function retryTargetStatus(status: string): 'open' | 'in_progress' {
+  return status === 'blocked' ? 'open' : 'in_progress';
+}
+
 export function assertQueuedTaskRetryTransition(from: TaskLifecycleStatus): void {
   if (from === 'review') return;
   assertValidTaskTransition(from, 'open');

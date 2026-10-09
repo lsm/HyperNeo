@@ -18,7 +18,11 @@ import { readDirectStartRequest } from './direct-start-request.ts';
 import { acknowledgeDirectStart, type DirectStartAcknowledgement } from './direct-start-jobs.ts';
 
 const inputSchema = z
-  .object({ taskId: z.string().min(1), requestKey: z.string().trim().min(1) })
+  .object({
+    taskId: z.string().min(1),
+    requestKey: z.string().trim().min(1),
+    note: z.string().trim().min(1).max(4000).optional(),
+  })
   .strict();
 type Input = z.infer<typeof inputSchema>;
 export interface DirectStartOperationDependencies {
@@ -50,10 +54,10 @@ function admitStart(
   if (existing) return existing.input.reviewRejection ? unavailable : { value: existing.input };
   if (!['blocked', 'cancelled', 'stopped'].includes(task.status)) return { value: input };
   if (!task.taskAgentSessionId) return unavailable;
-  const row = db
-    .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
-    .get(task.id, task.taskAgentSessionId) as { id: string } | null;
-  const attempt = row ? new DirectTaskExecutionRepository(db).get(row.id) : null;
+  const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(
+    task.id,
+    task.taskAgentSessionId
+  );
   return attempt?.phase === 'stopped'
     ? { value: { ...input, retryFrom: { attemptId: attempt.id, generation: attempt.generation } } }
     : unavailable;
@@ -82,7 +86,7 @@ export function createStartTaskOperation(
   return defineOperation({
     name: 'task.start',
     description:
-      'Persist a direct task start or verified terminal-task retry and return its durable job acknowledgement. Use a stable requestKey for retries of the same request and a new key for a new execution. Rejects direct_start_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, review-rejected, or no verified stopped attempt to retry — retry after state changes), and direct_start_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean execution has started.',
+      'Persist a direct task start or verified terminal-task retry and return its durable job acknowledgement. Use a stable requestKey for retries of the same request and a new key for a new execution. Rejects direct_start_unavailable when the task or its direct-execution state does not support this binding (workflow-owned, archived, review-rejected, or no verified stopped attempt to retry — retry after state changes), and direct_start_denied when the calling MCP session is not active in the owning Space (do not retry). Acceptance does not mean execution has started. An optional note is added to the kickoff message of the worker; a retry with the same requestKey keeps the note it was first accepted with.',
     inputSchema,
     resultSchema: z.union([
       z.object({ accepted: z.literal(true), jobId: z.string().nullable() }),
