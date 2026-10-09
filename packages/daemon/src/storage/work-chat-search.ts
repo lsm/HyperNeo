@@ -106,10 +106,30 @@ export function vectorWorkChats(
        AND COALESCE(msc.task_id, msc.session_id) IS NOT NULL
        AND (msc.kind != 'message' OR (1 = 1 ${policy.where}))`
   );
-  const scanned = kinds.flatMap(
-    (kind) => scan.all(kind, model, vector.length) as Array<{ id: number; embedding: Uint8Array }>
+  const top = rankVectorTurns(
+    vector,
+    kinds.flatMap((kind) => scan.all(kind, model, vector.length) as ScannedVectorTurn[])
   );
-  const top = scanned
+  if (top.length === 0) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
+         COALESCE(message_id, source_id) AS messageId, COALESCE(message_type, kind) AS role,
+         timestamp AS at, body FROM message_search_content
+        WHERE id IN (${top.map(() => '?').join(', ')})`
+    )
+    .all(...top.map((row) => row.id)) as VectorTurnRow[];
+  return groupVectorTurns(top, rows, limit);
+}
+
+type ScannedVectorTurn = { id: number; embedding: Uint8Array };
+type VectorTurnRow = Omit<WorkChatHitRow, 'hits' | 'lastHitAt'> & { body: string | null };
+
+export function rankVectorTurns(
+  vector: Float32Array,
+  scanned: readonly ScannedVectorTurn[]
+): Array<{ id: number; similarity: number }> {
+  return scanned
     .map((row) => {
       const stored = new Float32Array(
         row.embedding.buffer,
@@ -121,17 +141,13 @@ export function vectorWorkChats(
     .filter((row) => row.similarity >= MIN_SIMILARITY)
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, VECTOR_TOP_TURNS);
-  if (top.length === 0) return [];
-  const rows = db
-    .prepare(
-      `SELECT id, kind, COALESCE(task_id, session_id) AS chat, session_id AS sessionId, task_id AS taskId,
-         COALESCE(message_id, source_id) AS messageId, COALESCE(message_type, kind) AS role,
-         timestamp AS at, body FROM message_search_content
-        WHERE id IN (${top.map(() => '?').join(', ')})`
-    )
-    .all(...top.map((row) => row.id)) as Array<
-    Omit<WorkChatHitRow, 'hits' | 'lastHitAt'> & { body: string | null }
-  >;
+}
+
+export function groupVectorTurns(
+  top: readonly { id: number }[],
+  rows: readonly VectorTurnRow[],
+  limit: number
+): ChatCandidate[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const chats = new Map<string, ChatCandidate>();
   for (const { id } of top) {
