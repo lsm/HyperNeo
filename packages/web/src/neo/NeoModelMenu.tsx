@@ -21,6 +21,7 @@ export function NeoModelMenu({
   onThinking,
   onClose,
   onReload,
+  align = 'left',
 }: {
   id?: string;
   models: ModelInfo[];
@@ -33,7 +34,8 @@ export function NeoModelMenu({
   onModel: (model: ModelInfo) => void;
   onThinking: (level: ThinkingLevel) => void;
   onClose: () => void;
-  onReload: () => void;
+  onReload?: () => void;
+  align?: 'left' | 'right';
 }) {
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
@@ -48,7 +50,7 @@ export function NeoModelMenu({
       id={id}
       role="group"
       aria-label="Model and thinking settings"
-      class="neo-arrive absolute bottom-full -left-10 sm:left-0 z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl"
+      class={`neo-arrive absolute bottom-full ${align === 'right' ? 'right-0' : '-left-10 sm:left-0'} z-30 mb-3 flex w-[360px] max-w-[calc(100vw-64px)] flex-col overflow-hidden rounded-2xl border border-line-strong bg-surface-raised shadow-xl`}
       style={{ maxHeight: 'min(580px, calc(100dvh - var(--neo-composer-height, 190px) - 90px))' }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -150,7 +152,7 @@ export function NeoModelMenu({
                 : 'No models available.'}
           </p>
         )}
-        {!loading && !models.length && (
+        {!loading && !models.length && onReload && (
           <button type="button" onClick={onReload} class="w-full p-2 text-sm text-accent">
             Retry loading models
           </button>

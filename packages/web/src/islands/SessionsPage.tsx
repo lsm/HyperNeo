@@ -27,7 +27,7 @@ import {
 } from '../lib/runtime-capabilities.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { WorkspaceChips } from '../components/WorkspaceChips.tsx';
-import { NewChatModelPicker } from '../components/NewChatModelPicker.tsx';
+import { ModelPicker } from '../components/ModelPicker.tsx';
 import { findDefaultModel, useModelSwitcher } from '../hooks/useModelSwitcher.ts';
 
 type NewChatWorktreeMode = 'worktree' | 'direct';
@@ -389,7 +389,8 @@ export function SessionsPage() {
             />
             <div class="flex items-center justify-between gap-2 pt-1">
               <div class="flex min-w-0 items-center gap-2">
-                <NewChatModelPicker
+                <ModelPicker
+                  menuId="new-chat-preferences"
                   activeModelInfo={activeModelInfo}
                   activeModelLabel={activeModelLabel}
                   availableModels={availableModels}
