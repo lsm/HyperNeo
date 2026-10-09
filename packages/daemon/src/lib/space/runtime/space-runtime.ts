@@ -8702,8 +8702,8 @@ export class SpaceRuntime {
     if (workflows.length === 0) return null;
 
     if (task.preferredWorkflowId) {
-      const explicit = this.config.spaceWorkflowManager.getWorkflow(task.preferredWorkflowId);
-      if (explicit && !explicit.disabled) return explicit;
+      const explicit = workflows.find((workflow) => workflow.id === task.preferredWorkflowId);
+      if (explicit) return explicit;
       log.warn(
         `SpaceRuntime: preferred_workflow_id "${task.preferredWorkflowId}" not found or disabled for task ${task.id}; selecting a workflow automatically`
       );
