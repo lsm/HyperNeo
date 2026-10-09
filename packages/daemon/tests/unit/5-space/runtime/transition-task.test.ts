@@ -856,6 +856,13 @@ describe('decide', () => {
     expect(
       requireHandoffBeforeReopen({ spaceId, task }, { taskId: task.id, status: 'cancelled' })
     ).toEqual({ value: { spaceId, task } });
+    const parked = { ...task, status: 'stopped' as const };
+    expect(
+      requireHandoffBeforeReopen(
+        { spaceId, task: parked },
+        { taskId: task.id, status: 'in_progress' }
+      )
+    ).toEqual({ reason: { accepted: false, reason: 'handoff_required' } });
     const unblocked = { ...task, blockReason: 'human_input_requested' as const };
     expect(
       requireHandoffBeforeReopen({ spaceId, task: unblocked }, { taskId: task.id, status: 'open' })
