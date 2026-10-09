@@ -21,12 +21,13 @@ function selectDependencyScope(
     .get(input.taskId);
   if (!target) return { reason: null };
   const rows = db
-    .prepare('SELECT id, depends_on FROM space_tasks WHERE space_id IS NULL')
-    .all() as { id: string; depends_on: string | null }[];
+    .prepare('SELECT id, depends_on, status FROM space_tasks WHERE space_id IS NULL')
+    .all() as { id: string; depends_on: string | null; status: string }[];
   return {
     value: rows.map((row) => ({
       id: row.id,
       dependsOn: JSON.parse(row.depends_on ?? '[]') as string[],
+      status: row.status,
     })),
   };
 }

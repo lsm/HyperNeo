@@ -5,6 +5,9 @@ import {
   requireDistinctDependencies,
   requireExistingDependencies,
   requireAcyclicDependencies,
+  requireLiveDependencies,
+  planNewTaskDependencies,
+  dependencyRejectionMessage,
 } from '../../../../src/lib/tasks/dependency-plan';
 
 const graph = [
@@ -51,6 +54,41 @@ describe('dependency gate decision tables', () => {
   ] as const)('checks cycles for %s with %j', (id, ids, acyclic) => {
     expect(requireAcyclicDependencies(graph, id, ids)).toEqual(
       acyclic ? { value: ids } : { reason: 'dependency_cycle' }
+    );
+  });
+});
+
+describe('ended dependencies and new tasks', () => {
+  const statused = [
+    { id: 'a', dependsOn: ['x'], status: 'open' },
+    { id: 'x', status: 'cancelled' },
+    { id: 'y', status: 'archived' },
+    { id: 'z', status: 'done' },
+  ];
+
+  test.each([
+    [['z'], undefined],
+    [['x'], undefined],
+    [['x', 'y'], 'dependency_ended'],
+  ] as const)('rejects only newly added ended dependencies %j', (ids, reason) => {
+    expect(requireLiveDependencies(statused, 'a', ids)).toEqual(
+      reason ? { reason } : { value: ids }
+    );
+  });
+
+  test('a new task is validated by the same pipeline', () => {
+    expect(planNewTaskDependencies(statused, ['z'])).toEqual(['z']);
+    expect(planNewTaskDependencies(statused, ['x'])).toBe('dependency_ended');
+    expect(planNewTaskDependencies(statused, ['z', 'z'])).toBe('duplicate_dependency');
+    expect(planNewTaskDependencies(statused, ['absent'])).toBe('dependency_not_found');
+  });
+
+  test('rejections read as manager errors', () => {
+    expect(dependencyRejectionMessage('dependency_ended', statused, ['x', 'y'], 'a')).toBe(
+      'Dependency task y is archived and will never finish'
+    );
+    expect(dependencyRejectionMessage('dependency_not_found', statused, ['z', 'q'])).toBe(
+      'Dependency task not found in space: q'
     );
   });
 });

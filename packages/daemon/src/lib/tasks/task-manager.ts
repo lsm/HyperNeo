@@ -45,7 +45,11 @@ export class StaleTaskGuardError extends Error {
   }
 }
 
-import { buildTaskDependencyGraph, hasTaskDependencyCycle } from './dependency-graph.ts';
+import {
+  dependencyRejectionMessage,
+  planNewTaskDependencies,
+  planTaskDependencies,
+} from './dependency-plan.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   InternalCreateSpaceTaskParams,
@@ -521,7 +525,7 @@ export class SpaceTaskManager {
     this.validateTaskFieldGuards(task, resolvedParams);
 
     if (resolvedParams.dependsOn !== undefined) {
-      await this.validateDependencyIds(resolvedParams.dependsOn, taskId, task.dependsOn ?? []);
+      await this.validateDependencyIds(resolvedParams.dependsOn, taskId);
     }
 
     const { status: _status, ...repoParams } = resolvedParams;
@@ -751,30 +755,12 @@ export class SpaceTaskManager {
     return unblocked;
   }
 
-  private async validateDependencyIds(
-    depIds: string[],
-    taskId?: string,
-    existing: readonly string[] = []
-  ): Promise<void> {
-    for (const depId of depIds) {
-      if (taskId && depId === taskId) {
-        throw new Error('A task cannot depend on itself');
-      }
-      const dep = await this.getTask(depId);
-      if (!dep) {
-        throw new Error(`Dependency task not found in space: ${depId}`);
-      }
-      if (!existing.includes(depId) && (dep.status === 'cancelled' || dep.status === 'archived')) {
-        throw new Error(`Dependency task ${depId} is ${dep.status} and will never finish`);
-      }
-    }
-
-    if (taskId && depIds.length > 0) {
-      const allTasks = await this.listTasks(true);
-      const adj = buildTaskDependencyGraph(allTasks, taskId, depIds);
-      if (hasTaskDependencyCycle(adj)) {
-        throw new Error('Adding these dependencies would create a circular dependency');
-      }
-    }
+  private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {
+    const tasks = await this.listTasks(true);
+    const planned = taskId
+      ? planTaskDependencies(tasks, taskId, depIds)
+      : planNewTaskDependencies(tasks, depIds);
+    if (typeof planned === 'string')
+      throw new Error(dependencyRejectionMessage(planned, tasks, depIds, taskId));
   }
 }

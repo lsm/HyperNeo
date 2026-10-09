@@ -1,6 +1,7 @@
 export interface TaskDependencyNode {
   id: string;
   dependsOn?: readonly string[];
+  status?: string;
 }
 
 export function buildTaskDependencyGraph(
