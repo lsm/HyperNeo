@@ -24,6 +24,8 @@ import {
   PROVIDER_THINKING_MODES,
   resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
+  effortForThinkingLevel,
+  type ThinkingEffort,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
@@ -612,6 +614,7 @@ export class QueryOptionsBuilder {
     const providerId = this.ctx.session.config.provider;
     let thinkingModes: 'off' | 'on' | 'granular' =
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
+    let effortLevels: ThinkingEffort[] | undefined;
     try {
       if (providerId) {
         const provider = getProviderRegistry().get(providerId);
@@ -622,10 +625,17 @@ export class QueryOptionsBuilder {
           ? provider?.getModelThinkingMode?.(selectedModel)
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
+        effortLevels = selectedModel ? provider?.getModelEffortLevels?.(selectedModel) : undefined;
       }
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
-    let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+    const effort =
+      thinkingModes === 'granular' && effortLevels?.length
+        ? effortForThinkingLevel(thinkingLevel, effortLevels)
+        : undefined;
+    let thinkingConfig: ThinkingConfig | undefined = effort
+      ? { type: 'adaptive' }
+      : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {
@@ -664,6 +674,11 @@ export class QueryOptionsBuilder {
       result.thinking = thinkingConfig;
     } else {
       delete (result as Record<string, unknown>).thinking;
+    }
+    if (effort) {
+      result.effort = effort;
+    } else {
+      delete (result as Record<string, unknown>).effort;
     }
 
     return result as Options;

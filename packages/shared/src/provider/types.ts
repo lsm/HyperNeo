@@ -138,6 +138,9 @@ export interface Provider {
   setCuratedModels?(models: CuratedModel[] | undefined): void;
 
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
+  getModelEffortLevels?(
+    modelId: string
+  ): Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> | undefined;
 }
 
 export interface ProviderContext {

@@ -1404,6 +1404,28 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
     });
 
+    it('sends adaptive thinking with an effort level to models that support effort', async () => {
+      const provider = getProviderRegistry().get('anthropic')!;
+      const original = provider.getModelEffortLevels;
+      provider.getModelEffortLevels = () => ['low', 'medium', 'high', 'max'];
+      try {
+        mockSession.config.provider = 'anthropic';
+        mockSession.config.thinkingLevel = 'think32k';
+        const options = await builder.build();
+        const result = builder.addSessionStateOptions(options);
+        expect(result.thinking).toEqual({ type: 'adaptive' });
+        expect(result.effort).toBe('high');
+        mockSession.config.thinkingLevel = 'think64k';
+        expect(builder.addSessionStateOptions(options).effort).toBe('max');
+        mockSession.config.thinkingLevel = 'off';
+        const off = builder.addSessionStateOptions({ ...options, effort: 'max' });
+        expect(off.thinking).toEqual({ type: 'disabled' });
+        expect(off.effort).toBeUndefined();
+      } finally {
+        provider.getModelEffortLevels = original;
+      }
+    });
+
     it('should use global thinking level when session has no override', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({ thinkingLevel: 'think16k' })) as never;
       const options = await builder.build();
