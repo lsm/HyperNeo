@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator.ts';
-import { MAX_NODE_HANDOFF_TRANSITIONS, modelPoolEntryKey } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS, THINKING_LEVELS, modelPoolEntryKey } from '@hyperneo/shared';
 import type {
   SpaceLongHorizonAgent,
   SpaceWorkflow,
@@ -77,7 +77,7 @@ const eventInterestSchema = z
 
 const thinkingLevelSchema = z.preprocess(
   (val) => (val === 'auto' ? 'off' : val),
-  z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
+  z.enum(THINKING_LEVELS)
 );
 
 const exportedModelPoolSchema = z

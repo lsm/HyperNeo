@@ -10,10 +10,12 @@ describe('ThinkingLevelIcon', () => {
   afterEach(() => cleanup());
 
   it.each([
-    ['think8k', 0.25],
-    ['think16k', 0.5],
-    ['think24k', 0.75],
-    ['think32k', 1],
+    ['think8k', 1 / 6],
+    ['think16k', 2 / 6],
+    ['think24k', 3 / 6],
+    ['think32k', 4 / 6],
+    ['think48k', 5 / 6],
+    ['think64k', 1],
   ] as const)('ring lights %s as a %s share around the glowing bulb', (level, share) => {
     const { container } = render(<ThinkingLevelIcon ring level={level} />);
     const [lit, rest] = ringArc(container)!

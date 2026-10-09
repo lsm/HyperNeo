@@ -57,7 +57,7 @@ describe('Neo preferences', () => {
     expect(screen.queryByLabelText('Thinking')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
     expect(screen.getAllByRole('button', { name: 'Sonnet · Anthropic' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Think 16k', exact: true }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
     await waitFor(() =>
       expect(api.request).toHaveBeenCalledWith('session.thinking.set', {
         sessionId: 'neo:root',
@@ -85,9 +85,9 @@ describe('Neo preferences', () => {
     expect(
       (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
     ).toBe(true);
-    expect(
-      (screen.getByRole('button', { name: 'Think 16k', exact: true }) as HTMLButtonElement).disabled
-    ).toBe(true);
+    expect((screen.getByRole('slider', { name: 'Thinking' }) as HTMLInputElement).disabled).toBe(
+      true
+    );
   });
   it('shows unsupported thinking honestly and keeps failed updates out of the label', async () => {
     const onError = vi.fn();
@@ -96,12 +96,12 @@ describe('Neo preferences', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
     api.request.mockRejectedValue(new Error('Connection lost'));
-    fireEvent.click(screen.getByRole('button', { name: 'Think 16k', exact: true }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
     await waitFor(() => expect(onError).toHaveBeenCalledWith('Connection lost'));
     expect(screen.getByRole('img', { name: 'Thinking: Off' })).toBeTruthy();
     api.mode = 'off';
     view.rerender(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={onError} />);
-    expect(screen.queryByRole('button', { name: 'Think 16k', exact: true })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Thinking' })).toBeNull();
     expect(screen.getByText('Not available for this model')).toBeTruthy();
   });
   it('filters models, shows no matches, supports arrow keys and restores focus on Escape', () => {

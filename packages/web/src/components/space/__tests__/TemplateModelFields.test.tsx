@@ -185,7 +185,7 @@ describe('TemplateModelFields', () => {
     );
     const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe('think8k'));
-    expect(select.textContent).toContain('Think 8k');
+    expect(select.textContent).toContain('Low');
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -200,7 +200,16 @@ describe('TemplateModelFields', () => {
     const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     const options = Array.from(thinkingSelect.options).map((option) => option.value);
     expect(options).toContain('think8k');
-    expect(options).toEqual(['', 'off', 'think8k', 'think16k', 'think24k', 'think32k']);
+    expect(options).toEqual([
+      '',
+      'off',
+      'think8k',
+      'think16k',
+      'think24k',
+      'think32k',
+      'think48k',
+      'think64k',
+    ]);
   });
 
   it('associates labels with their selects via htmlFor/id', () => {
@@ -332,7 +341,16 @@ describe('TemplateModelFields', () => {
     const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
     await waitFor(() => {
       const values = Array.from(select.options).map((option) => option.value);
-      expect(values).toEqual(['', 'off', 'think8k', 'think16k', 'think24k', 'think32k']);
+      expect(values).toEqual([
+        '',
+        'off',
+        'think8k',
+        'think16k',
+        'think24k',
+        'think32k',
+        'think48k',
+        'think64k',
+      ]);
     });
     expect(onChange).not.toHaveBeenCalled();
   });

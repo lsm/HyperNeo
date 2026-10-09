@@ -25,6 +25,14 @@ describe('firstAgentFieldError', () => {
     ).toBeNull();
   });
 
+  test('accepts every thinking level from Low to Ultra and rejects unknown ones', () => {
+    for (const thinkingLevel of ['think8k', 'think24k', 'think32k', 'think48k', 'think64k'])
+      expect(firstAgentFieldError({ thinkingLevel })).toBeNull();
+    expect(firstAgentFieldError({ thinkingLevel: 'think128k' })).toBe(
+      'Invalid thinkingLevel: think128k'
+    );
+  });
+
   test('treats null as clearing rather than blank', () => {
     expect(
       firstAgentFieldError({ description: null, model: null, provider: null, sessionId: null })

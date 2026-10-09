@@ -649,7 +649,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
         thinking: { type: 'enabled' as const, budget_tokens: 8000 },
       };
       const withThinking = _openAIChatBridgeTesting.buildChatRequest(body, 'm', true, false, true);
-      expect(withThinking.reasoning_effort).toBe('medium');
+      expect(withThinking.reasoning_effort).toBe('low');
 
       const withoutFlag = _openAIChatBridgeTesting.buildChatRequest(body, 'm', true, false, false);
       expect(withoutFlag.reasoning_effort).toBeUndefined();
@@ -666,7 +666,7 @@ describe('provider-bridge conformance replay — OpenAI Chat Completions bridge'
       const req = _openAIChatBridgeTesting.buildChatRequest(body, 'm', false, false, true);
       expect(req.tools).toBeUndefined();
       expect(req.tool_choice).toBeUndefined();
-      expect(req.reasoning_effort).toBe('medium');
+      expect(req.reasoning_effort).toBe('low');
     });
 
     it('omits stream_options unless streamUsageSupported=true', () => {
@@ -1189,6 +1189,8 @@ describe.skipIf(!isBun)(
         [24000, 'high', 'gpt-5.3-codex'],
         [32000, 'xhigh', 'gpt-5.3-codex'],
         [32000, 'high', 'gpt-4o'],
+        [48000, 'xhigh', 'gpt-5.3-codex'],
+        [63999, 'high', 'gpt-4o'],
       ] as Array<[number, string, string]>) {
         it(`budget_tokens=${budget} on ${model} → effort=${expected}`, async () => {
           const caps = await captureUpstreamRequest(

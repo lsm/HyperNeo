@@ -1,4 +1,4 @@
-import type { Session, Space, ThinkingLevel } from '@hyperneo/shared';
+import { THINKING_LEVELS, type Session, type Space, type ThinkingLevel } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -12,8 +12,6 @@ import {
 import { stripRejectedSessionConfig } from './create-session-config.ts';
 import { admitSpaceStage } from './ensure-agent-session.ts';
 import type { CreateSessionParams } from './session-lifecycle.ts';
-
-const THINKING_LEVELS = ['off', 'think8k', 'think16k', 'think24k', 'think32k'] as const;
 
 const SpawnInputSchema = z
   .object({

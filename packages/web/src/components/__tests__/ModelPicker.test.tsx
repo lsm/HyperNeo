@@ -90,11 +90,25 @@ describe('ModelPicker', () => {
   describe('thinking', () => {
     it('shows the chosen level on the trigger and reports a new one from the menu', async () => {
       const { container } = renderPicker({ thinkingLevel: 'think16k' });
-      expect(container.querySelector('[aria-label="Thinking: Think 16k"]')).toBeTruthy();
+      expect(container.querySelector('[aria-label="Thinking: Medium"]')).toBeTruthy();
       expect(container.querySelector('[data-thinking-level="think16k"] svg.absolute')).toBeTruthy();
 
       await openDropdown(container);
-      fireEvent.click(container.querySelector('button[aria-label="Think 32k"]')!);
+      const slider = container.querySelector('input[type="range"][aria-label="Thinking"]')!;
+      expect(slider.getAttribute('aria-valuetext')).toBe('Medium');
+      fireEvent.change(slider, { target: { value: '6' } });
+
+      expect(onSelectThinking).toHaveBeenCalledWith('think64k');
+    });
+
+    it('keeps two-option thinking as buttons', async () => {
+      const { container } = renderPicker({
+        thinkingLevel: 'off',
+        activeModelInfo: { ...activeModelInfo, thinkingModes: 'on' },
+      });
+      await openDropdown(container);
+      expect(container.querySelector('input[type="range"]')).toBeNull();
+      fireEvent.click(container.querySelector('button[aria-label="On"]')!);
 
       expect(onSelectThinking).toHaveBeenCalledWith('think32k');
     });
