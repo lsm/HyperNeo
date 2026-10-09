@@ -27,6 +27,16 @@ export function expandIncludes(
   });
 }
 
+const placeholderPattern = /\{\{([a-z_]+)\}\}/g;
+
+export function fillPrompt(template: string, values: Readonly<Record<string, string>>): string {
+  return template.replace(placeholderPattern, (_all, key: string) => {
+    const value = values[key];
+    if (value === undefined) throw new Error(`missing prompt value ${key}`);
+    return value;
+  });
+}
+
 export function buildPromptRegistry(files: Record<string, string>): Record<string, string> {
   const prompts: Record<string, string> = {};
   for (const rel of Object.keys(files).sort()) {

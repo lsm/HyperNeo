@@ -3,6 +3,7 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { neoNudgeMessageId } from './ask-origin.ts';
+export { NEO_PUBLISH_NUDGE } from '@hyperneo/prompts';
 
 export type NeoTurnReply = {
   status: 'missing' | 'open' | 'failed' | 'ended';
@@ -37,8 +38,6 @@ const skip: { reason: Skip } = { reason: { skipped: true } };
 const recheck: { reason: Skip } = { reason: { skipped: true, recheck: true } };
 
 export const NEO_UNFINISHED_REPLY = 'I couldn’t finish answering that. Please ask again.';
-export const NEO_PUBLISH_NUDGE =
-  'Your last turn ended without publishing an answer to the human’s message. Publish your answer to that message now with neo.publication.publish, in the human’s language. Do not start new work.';
 
 export function requireNeoReplySession(
   sessionId: string,
