@@ -258,12 +258,20 @@ describe('requireNeoWorkAsk', () => {
       'ask_settled: this ask is already achieved; open a new ask.',
     ],
   ])('refuses work under %s', (_case, current, reason) => {
-    expect(requireNeoWorkAsk(current, input, 'v')).toEqual({ reason: { ok: false, reason } });
+    expect(requireNeoWorkAsk(current, input, neo)).toEqual({ reason: { ok: false, reason } });
+  });
+
+  test('refuses another Neo session filing work under the ask, but not the user', () => {
+    expect(requireNeoWorkAsk(ask, input, { ...neo, sessionId: 'holder' })).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining('open your own ask') },
+    });
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    expect(requireNeoWorkAsk(ask, input, user)).toEqual({ value: user });
   });
 
   test('passes work with no ask or under an active one', () => {
-    expect(requireNeoWorkAsk(null, { concernId: null }, 'v')).toEqual({ value: 'v' });
-    expect(requireNeoWorkAsk({ ...ask, status: 'blocked' }, input, 'v')).toEqual({ value: 'v' });
+    expect(requireNeoWorkAsk(null, { concernId: null }, neo)).toEqual({ value: neo });
+    expect(requireNeoWorkAsk({ ...ask, status: 'blocked' }, input, neo)).toEqual({ value: neo });
   });
 });
 
