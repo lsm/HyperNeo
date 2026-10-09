@@ -471,3 +471,11 @@ describe('isNeoCardAsk', () => {
     expect(isNeoCardAsk(null, planned)).toBe(false);
   });
 });
+
+describe('neoPrompt reply length', () => {
+  test('keeps shortText to the outcome and the next action', () => {
+    expect(neoPrompt(null)).toContain(
+      'shortText is one or two short sentences: the outcome for what they asked'
+    );
+  });
+});

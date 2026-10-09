@@ -118,6 +118,14 @@ describe('driverWorkCall', () => {
   });
 });
 
+describe('NEO_WORK_SUMMARY_NOTE', () => {
+  test('asks for the outcome and any action in one or two sentences, evidence in fullText', () => {
+    expect(NEO_WORK_SUMMARY_NOTE).toContain('shortText is one or two short sentences');
+    expect(NEO_WORK_SUMMARY_NOTE).toContain('Keep evidence, commit ids, CI runs');
+    expect(NEO_WORK_SUMMARY_NOTE).not.toContain('2 to 4 plain lines');
+  });
+});
+
 describe('withWorkGoal', () => {
   test('appends the goal and checklist, and leaves a bare instruction alone', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
