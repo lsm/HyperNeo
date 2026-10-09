@@ -61,10 +61,13 @@ export function planNeoSavedRules(before: readonly string[], after: readonly str
   return after.filter((rule) => !before.includes(rule));
 }
 
+const clip = (value: string, max: number) =>
+  value.length > max ? `${value.slice(0, max - 1)}…` : value;
+
 function withSavedLines(text: string, saved: readonly string[], limit: number): string {
   if (text.includes('Saved:')) return text;
-  const next = `${text}\n\n${saved.map((rule) => `Saved: ${rule}`).join('\n')}`;
-  return next.length > limit ? `${next.slice(0, limit - 1)}…` : next;
+  const lines = clip(saved.map((rule) => `Saved: ${rule}`).join('\n'), Math.floor(limit / 2));
+  return `${clip(text, limit - lines.length - 2)}\n\n${lines}`;
 }
 
 export function withNeoSavedRules(

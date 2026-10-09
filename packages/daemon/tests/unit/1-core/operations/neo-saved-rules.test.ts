@@ -143,10 +143,18 @@ describe('withNeoSavedRules', () => {
     expect(withNeoSavedRules(input, saved)).toMatchObject({ shortText, fullText });
   });
 
-  test('keeps the short text within its limit', () => {
-    const long = withNeoSavedRules({ ...reply, shortText: 'x'.repeat(1990) }, [rule]).shortText;
+  test('makes room for the saved lines when the reply fills its limit', () => {
+    const long = withNeoSavedRules({ ...reply, shortText: 'x'.repeat(2000) }, [rule]).shortText;
     expect(long).toHaveLength(2000);
-    expect(long.endsWith('…')).toBe(true);
+    expect(long.endsWith(`…\n\nSaved: ${rule}`)).toBe(true);
+  });
+
+  test('keeps both the reply and the saved lines when many long rules were saved', () => {
+    const rules = Array.from({ length: 20 }, (_, i) => `${i} ${'r'.repeat(495)}`);
+    const short = withNeoSavedRules(reply, rules).shortText;
+    expect(short.length).toBeLessThanOrEqual(2000);
+    expect(short.startsWith(reply.shortText)).toBe(true);
+    expect(short).toContain('Saved: 0 r');
   });
 });
 
