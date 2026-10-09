@@ -85,34 +85,52 @@ export interface RunningDirectQuery {
   queryState: DirectTaskQueryState;
 }
 
-export function admitRunningDirectQuery(
-  lookups: DirectTaskQueryLookups,
-  sessionId: string,
-  expected?: DirectTaskQueryAdmissionInput
+function expectedRunningQuery(
+  expected: DirectTaskQueryAdmissionInput | undefined,
+  identity: DirectTaskWorkerIdentity
+): DirectTaskQueryAdmissionInput {
+  return expected ?? identity;
+}
+
+function runningDirectQuery(
+  identity: DirectTaskWorkerIdentity,
+  evidence: DirectTaskWorkerEvidence,
+  queryState: DirectTaskQueryState
+): RunningDirectQuery {
+  return { identity, evidence, queryState };
+}
+
+export function requireRunningDirectQuery(
+  running: RunningDirectQuery | null
 ): { value: RunningDirectQuery } | { reason: null } {
-  const evidence = loadDirectTaskWorkerEvidence(
-    sessionId,
-    lookups.getSession,
-    lookups.getTask,
-    lookups.getActiveAttempt
-  );
-  const worker = requireDirectTaskWorkerIdentity(sessionId, evidence);
-  if ('reason' in worker) return worker;
-  const queryState = loadDirectTaskQueryState(
-    worker.value,
-    lookups.getSpace,
-    lookups.isStopRequested,
-    lookups.getTaskWorktreePath
-  );
-  const running = requireRunningDirectTaskQuery(
-    expected ?? worker.value,
-    worker.value,
-    evidence,
-    queryState
-  );
-  return 'reason' in running
-    ? running
-    : { value: { identity: running.value, evidence, queryState } };
+  return running ? { value: running } : { reason: null };
+}
+
+export function createRunningDirectQueryReader(lookups: DirectTaskQueryLookups) {
+  return (superpipe({ ...lookups })('read-running-direct-query') as PipelineAPI)
+    .input(['sessionId', 'expected'])
+    .pipe(
+      loadDirectTaskWorkerEvidence,
+      ['sessionId', 'getSession', 'getTask', 'getActiveAttempt'],
+      'evidence'
+    )
+    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:running')
+    .pipe(
+      loadDirectTaskQueryState,
+      ['running', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
+      'queryState'
+    )
+    .pipe(expectedRunningQuery, ['expected', 'running'], 'admission')
+    .pipe(
+      requireRunningDirectTaskQuery,
+      ['admission', 'running', 'evidence', 'queryState'],
+      'result:running'
+    )
+    .pipe(runningDirectQuery, ['running', 'evidence', 'queryState'], 'running')
+    .end('running') as (
+    sessionId: string,
+    expected?: DirectTaskQueryAdmissionInput
+  ) => RunningDirectQuery | null;
 }
 
 export function databaseDirectTaskQueryLookups(db: Database): DirectTaskQueryLookups {
@@ -131,10 +149,12 @@ export function databaseDirectTaskQueryLookups(db: Database): DirectTaskQueryLoo
 }
 
 export function createDirectTaskQueryAdmission(lookups: DirectTaskQueryLookups) {
-  return (superpipe({ lookups })('admit-running-direct-task-query') as PipelineAPI)
+  const readRunning = createRunningDirectQueryReader(lookups);
+  return (superpipe({})('admit-running-direct-task-query') as PipelineAPI)
     .input('input')
     .pipe(directQuerySessionId, ['input'], 'sessionId')
-    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId', 'input'], 'result:identity')
+    .pipe(readRunning, ['sessionId', 'input'], 'running')
+    .pipe(requireRunningDirectQuery, 'running', 'result:identity')
     .pipe((running: RunningDirectQuery) => running.identity, 'identity', 'identity')
     .end('identity') as (input: DirectTaskQueryAdmissionInput) => DirectTaskWorkerIdentity | null;
 }

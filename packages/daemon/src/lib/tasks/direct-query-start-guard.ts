@@ -11,7 +11,8 @@ import type {
   DirectTaskWorkerIdentity,
 } from './direct-task-worker-identity.ts';
 import {
-  admitRunningDirectQuery,
+  createRunningDirectQueryReader,
+  requireRunningDirectQuery,
   databaseDirectTaskQueryLookups,
   type DirectTaskQueryState,
   type RunningDirectQuery,
@@ -106,15 +107,16 @@ export function createDirectQueryStartGuard(
   const sessionId = getSession().id;
   const attempts = new DirectTaskExecutionRepository(db);
   if (!attempts.hasSessionProvenance(sessionId)) return undefined;
+  const readRunning = createRunningDirectQueryReader(databaseDirectTaskQueryLookups(db));
   const read = (
     superpipe({
       db,
       messages: new SDKMessageRepository(db),
-      lookups: databaseDirectTaskQueryLookups(db),
     })('guard-direct-query-start') as PipelineAPI
   )
     .input(['sessionId', 'session', 'expected'])
-    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId'], 'result:start')
+    .pipe(readRunning, ['sessionId'], 'running')
+    .pipe(requireRunningDirectQuery, 'running', 'result:start')
     .pipe((running: RunningDirectQuery) => running, 'start', [
       'identity:start',
       'evidence',

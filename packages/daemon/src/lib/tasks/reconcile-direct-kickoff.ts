@@ -7,7 +7,8 @@ import { enqueueMailboxEntry, MAILBOX_LANE } from '../mailbox/enqueue.ts';
 import { mailboxEntryExpired, parseMailboxEntry, type MailboxEntry } from '../mailbox/entry.ts';
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
 import {
-  admitRunningDirectQuery,
+  createRunningDirectQueryReader,
+  requireRunningDirectQuery,
   databaseDirectTaskQueryLookups,
   directQuerySessionId,
   type DirectTaskQueryAdmissionInput,
@@ -96,16 +97,17 @@ export function enqueueFrozenKickoff(
 }
 
 export function createDirectKickoffReconciler(db: Database) {
+  const readRunning = createRunningDirectQueryReader(databaseDirectTaskQueryLookups(db));
   const dependencies = {
     db,
     jobs: new JobQueueRepository(db),
     messages: new SDKMessageRepository(db),
-    lookups: databaseDirectTaskQueryLookups(db),
   };
   const reconcile = (superpipe(dependencies)('reconcile-direct-task-kickoff') as PipelineAPI)
     .input('input')
     .pipe(directQuerySessionId, ['input'], 'sessionId')
-    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId', 'input'], 'result:dispatch')
+    .pipe(readRunning, ['sessionId', 'input'], 'running')
+    .pipe(requireRunningDirectQuery, 'running', 'result:dispatch')
     .pipe((running: RunningDirectQuery) => running, 'dispatch', [
       'identity:dispatch',
       'evidence',

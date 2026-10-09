@@ -10,7 +10,8 @@ import type {
   DirectTaskWorkerIdentity,
 } from './direct-task-worker-identity.ts';
 import {
-  admitRunningDirectQuery,
+  createRunningDirectQueryReader,
+  requireRunningDirectQuery,
   databaseDirectTaskQueryLookups,
   type DirectTaskQueryState,
   type RunningDirectQuery,
@@ -91,17 +92,18 @@ export function captureDirectMailboxAdmission(
   const sessionId = entry.to.sessionId;
   const attempts = new DirectTaskExecutionRepository(db);
   if (!attempts.hasSessionProvenance(sessionId)) return undefined;
+  const readRunning = createRunningDirectQueryReader(databaseDirectTaskQueryLookups(db));
   const read = (
     superpipe({
       db,
       sessionId,
       entry,
       messages: new SDKMessageRepository(db),
-      lookups: databaseDirectTaskQueryLookups(db),
     })('admit-direct-mailbox-delivery') as PipelineAPI
   )
     .input('expected')
-    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId'], 'result:admission')
+    .pipe(readRunning, ['sessionId'], 'running')
+    .pipe(requireRunningDirectQuery, 'running', 'result:admission')
     .pipe((running: RunningDirectQuery) => running, 'admission', [
       'identity:admission',
       'evidence',
