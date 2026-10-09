@@ -34,10 +34,8 @@ describe('SpaceTaskRepository.countByStatuses', () => {
       tasks.createTask({ spaceId, title: status, description: '', status });
     expect(tasks.countByStatuses(spaceId, TASK_SLOT_STATUSES)).toBe(2);
     expect(tasks.countByStatuses(spaceId, [])).toBe(0);
-    const space = new SpaceRepository(db).getSpace(spaceId);
-    expect(availableTaskSlots(space, tasks.countByStatuses(spaceId, TASK_SLOT_STATUSES))).toBe(
-      Math.max(0, availableTaskSlots(space, 0) - 2)
-    );
+    const space = { ...new SpaceRepository(db).getSpace(spaceId)!, maxConcurrentTasks: 5 };
+    expect(availableTaskSlots(space, tasks.countByStatuses(spaceId, TASK_SLOT_STATUSES))).toBe(3);
   });
 });
 
