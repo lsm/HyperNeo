@@ -558,6 +558,24 @@ async function readLinesAfter(path: string, offset: number): Promise<string[]> {
   }
 }
 
+const CLAUDE_LOGIN_FAILURE =
+  /OAuth session expired|Failed to authenticate|not logged in|Please run \/login|Invalid API key/i;
+
+export function claudeCliFailure(output: { stdout?: string; stderr?: string }, fallback: string) {
+  const text = [output.stderr, output.stdout]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join('\n');
+  if (CLAUDE_LOGIN_FAILURE.test(text)) {
+    const said = text.split('\n').find((line) => CLAUDE_LOGIN_FAILURE.test(line)) ?? text;
+    return reject(
+      'claude_cli_login_expired',
+      `The claude CLI on this Mac is not logged in (${said.trim()}). Run \`claude auth login\`, then try again.`
+    );
+  }
+  return reject('not_delivered', text || fallback);
+}
+
 async function relayToLiveSession(
   record: ClaudeDesktopRecord,
   name: string,
@@ -587,12 +605,15 @@ async function relayToLiveSession(
         'HyperNeo relay',
         claudeRelayPrompt(name, message),
       ],
-      { stdout: 'ignore', stderr: 'pipe' }
+      { stdout: 'pipe', stderr: 'pipe' }
     );
     timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    if (code !== 0)
-      return reject('not_delivered', stderr.trim() || `The relay exited with ${code}.`);
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (code !== 0) return claudeCliFailure({ stdout, stderr }, `The relay exited with ${code}.`);
     const appended = path ? await readLinesAfter(path, before).catch(() => []) : [];
     return { ok: true, value: { delivered: transcriptHasRelayedMessage(appended, message) } };
   } catch (error) {
@@ -635,10 +656,11 @@ export async function resumeClaudeSession(
   try {
     const proc = deps.spawn(['claude', '-p', '--resume', record.cliSessionId, '--', message], {
       cwd: folder,
-      stdout: 'ignore',
+      stdout: 'pipe',
       stderr: 'pipe',
       detached: true,
     });
+    const stdout = new Response(proc.stdout).text().catch(() => '');
     const stderr = new Response(proc.stderr).text().catch(() => '');
     const early = await Promise.race([
       proc.exited.catch(() => -1),
@@ -648,9 +670,9 @@ export async function resumeClaudeSession(
     ]);
     if (early === null) return { ok: true, value: { delivered: false } };
     if (early === 0) return { ok: true, value: { delivered: true } };
-    return reject(
-      'not_delivered',
-      (await stderr).trim() || `claude --resume exited with ${early}.`
+    return claudeCliFailure(
+      { stdout: await stdout, stderr: await stderr },
+      `claude --resume exited with ${early}.`
     );
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
@@ -696,13 +718,17 @@ async function runToExit(
   deps: ClaudeDesktopAdapterDeps,
   args: string[],
   cwd: string
-): Promise<{ code: number; stderr: string }> {
+): Promise<{ code: number; stdout: string; stderr: string }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const proc = deps.spawn(args, { cwd, stdout: 'ignore', stderr: 'pipe' });
+    const proc = deps.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });
     timer = setTimeout(() => proc.kill('SIGKILL'), RELAY_TIMEOUT_MS);
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    return { code, stderr: stderr.trim() };
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, stdout: stdout.trim(), stderr: stderr.trim() };
   } finally {
     clearTimeout(timer);
   }
@@ -750,7 +776,7 @@ export async function startClaudeSession(
       folder
     );
     if (opened.code !== 0) {
-      return reject('not_delivered', opened.stderr || `claude -p exited with ${opened.code}.`);
+      return claudeCliFailure(opened, `claude -p exited with ${opened.code}.`);
     }
     deps
       .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
