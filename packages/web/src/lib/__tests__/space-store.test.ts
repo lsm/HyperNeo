@@ -1852,6 +1852,20 @@ describe('SpaceStore — CRUD methods', () => {
     expect(task.id).toBe('new-task');
   });
 
+  it('createTask throws a daemon rejection instead of returning it as a task', async () => {
+    await spaceStore.selectSpace('space-1');
+    const request = mockHub.request.getMockImplementation()!;
+    mockHub.request.mockImplementation(async (method: string, params?: Record<string, unknown>) =>
+      method === 'operation.invoke' &&
+      (params as { name?: string } | undefined)?.name === 'task.create'
+        ? { accepted: false, reason: 'Workspace unavailable' }
+        : request(method, params)
+    );
+    await expect(spaceStore.createTask({ title: 'T', description: 'D' })).rejects.toThrow(
+      'Workspace unavailable'
+    );
+  });
+
   it('listWorkspaces calls space.workspace.list RPC and returns workspaces', async () => {
     await spaceStore.selectSpace('space-1');
     const workspaces = await spaceStore.listWorkspaces();
