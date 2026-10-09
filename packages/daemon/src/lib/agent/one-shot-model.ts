@@ -15,6 +15,7 @@ export interface OneShotModelRequest {
   env: Record<string, string | undefined>;
   separator?: string;
   abortController?: AbortController;
+  cwd?: string;
   query?: SdkQueryFunction;
 }
 
@@ -48,6 +49,7 @@ export function buildOneShotQueryOptions(
         ? KimiProvider.resolveKimiTitleThinkingConfig(request.thinkingModelId)
         : { type: 'disabled' },
     ...(request.abortController ? { abortController: request.abortController } : {}),
+    ...(request.cwd ? { cwd: request.cwd } : {}),
   };
 }
 
