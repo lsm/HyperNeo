@@ -24,6 +24,8 @@ import {
   NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
   readDriverSettlement,
+  readNeoStartFolder,
+  requireNeoStartFolder,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -115,6 +117,50 @@ describe('driverWorkCall', () => {
     expect(
       driverWorkCall({ ...startTarget, adapter: 'hyperneo', model: 'glm-5.3' }, work).input
     ).toMatchObject({ adapter: 'hyperneo', model: 'glm-5.3' });
+  });
+});
+
+describe('requireNeoStartFolder', () => {
+  const start = (folder: string, extra: Record<string, unknown> = {}): NeoDriverTarget => ({
+    verb: 'start',
+    adapter: 'claude-desktop',
+    place: { machine: 'laptop', folder, name: 'hn', ...extra },
+  });
+
+  test('refuses a local start in a folder that does not exist, and nothing else', () => {
+    const missing = start('/Users/lsm/focus/hn-neo-test-5554');
+    expect(
+      requireNeoStartFolder(
+        missing,
+        readNeoStartFolder(missing, () => false),
+        'v'
+      )
+    ).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining('Never invent a folder') },
+    });
+    expect(
+      requireNeoStartFolder(
+        missing,
+        readNeoStartFolder(missing, () => true),
+        'v'
+      )
+    ).toEqual({
+      value: 'v',
+    });
+    const remote = start('/elsewhere', { daemon: 'tts' });
+    expect(readNeoStartFolder(remote, () => false)).toEqual({ exists: null });
+    const created = { ...start('/Users/lsm/new-app'), createFolder: true };
+    expect(readNeoStartFolder(created, () => false)).toEqual({ exists: null });
+    const send: NeoDriverTarget = { verb: 'send', ref: { adapter: 'claude-desktop', id: 'x' } };
+    expect(
+      requireNeoStartFolder(
+        send,
+        readNeoStartFolder(send, () => false),
+        'v'
+      )
+    ).toEqual({
+      value: 'v',
+    });
   });
 });
 
@@ -481,6 +527,42 @@ describe('Neo work with a drivers target', () => {
         status: 'reported',
         report: 'Agent: Font is 16px.',
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('refuses to retry a start into a folder that does not exist', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } });
+    service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'work-2',
+        requestKey: 'root:invented',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-2',
+        title: 'Fix #5554',
+        instruction: 'Fix it.',
+      },
+      {
+        verb: 'start',
+        adapter: 'claude-desktop',
+        place: { machine: 'laptop', folder: '/nowhere/hn-neo-test-5554', name: 'hn' },
+      }
+    );
+    try {
+      const retried = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.retry',
+        { id: 'work-2' },
+        { source: 'rpc', principal: 'local' }
+      );
+      expect(retried).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('does not exist') },
+      });
+      expect(calls.filter((call) => call.name === 'work.start')).toEqual([]);
     } finally {
       db.close();
     }
