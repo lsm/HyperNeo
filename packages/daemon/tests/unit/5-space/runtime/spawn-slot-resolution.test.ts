@@ -16,7 +16,9 @@ import {
   findAvailableSessionId,
   resolveNodeAgentConfig,
   resolveSlotCustomPrompt,
+  decideWorktreeFailure,
   resolveSpawnWorkspace,
+  type WorktreeFailureDecision,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
@@ -751,5 +753,15 @@ describe('resolveSlotCustomPrompt', () => {
       systemPrompt: { value: 'ignored legacy' },
     };
     expect(resolveSlotCustomPrompt(slot as never)).toBeUndefined();
+  });
+});
+
+describe('decideWorktreeFailure', () => {
+  test.each<[string, boolean, string | undefined, WorktreeFailureDecision]>([
+    ['a retryable failure', false, '/own', { kind: 'retryable' }],
+    ['a non-git space folder', true, undefined, { kind: 'permanent' }],
+    ['a non-git folder the task chose', true, '/own', { kind: 'own_folder', path: '/own' }],
+  ])('%s', (_label, notGitRepository, ownFolder, expected) => {
+    expect(decideWorktreeFailure({ notGitRepository, ownFolder })).toEqual(expected);
   });
 });
