@@ -6,6 +6,11 @@ import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { runConnectionEvent } from './connection-event-pipeline';
 import { runConnectionResume } from './connection-resume-pipeline';
 import {
+  decideConnectionWake,
+  type ConnectionWakeEvent,
+  type ConnectionWakeState,
+} from './connection-wake';
+import {
   createDefaultConnectionApplication,
   type ConnectionApplication,
 } from './connection-application';
@@ -279,53 +284,71 @@ export class ConnectionManager {
         clearTimeout(this.hiddenTimer);
         this.hiddenTimer = null;
       }
-      if (document.hidden) {
-        this.cancelResumeWait();
-        this.hiddenTimer = setTimeout(() => {
-          this.hiddenTimer = null;
-          if (!document.hidden) return;
-          this.transport?.suspend();
-        }, HIDDEN_GRACE_MS);
-        return;
-      }
-      if (this.transport?.isSuspended()) {
-        if (this.networkReachable()) this.resumeSuspended();
-        return;
-      }
-      if (this.resumeWait) return;
-      if (this.transport) {
-        this.transport.resetReconnectState();
-      }
-      this.validateConnectionOnResume();
+      this.applyWake(document.hidden ? 'hidden' : 'visible');
     };
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
-    this.pageShowHandler = () => {
-      if (!document.hidden && this.networkReachable() && this.transport?.isSuspended())
-        this.resumeSuspended();
-    };
+    this.pageShowHandler = () => this.applyWake('pageshow');
     window.addEventListener('pageshow', this.pageShowHandler);
     this.networkHandler = () => {
       if (this.onlineTimer) {
         clearTimeout(this.onlineTimer);
         this.onlineTimer = null;
       }
-      if (!this.networkReachable()) {
-        this.cancelResumeWait();
-        this.transport?.suspend();
-        return;
-      }
-      this.onlineTimer = setTimeout(() => {
-        this.onlineTimer = null;
-        if (document.hidden || !this.networkReachable() || !this.transport) return;
-        if (this.transport.isSuspended()) this.resumeSuspended();
-        else if (!this.transport.isReady()) this.transport.forceReconnect();
-      }, ONLINE_SETTLE_MS);
+      this.applyWake('network');
     };
     window.addEventListener('online', this.networkHandler);
     window.addEventListener('offline', this.networkHandler);
     this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
+  }
+
+  private wakeState(): ConnectionWakeState {
+    return {
+      hidden: document.hidden,
+      reachable: this.networkReachable(),
+      hasTransport: !!this.transport,
+      suspended: !!this.transport?.isSuspended(),
+      ready: !!this.transport?.isReady(),
+      resumeWaiting: !!this.resumeWait,
+    };
+  }
+
+  private applyWake(event: ConnectionWakeEvent): void {
+    switch (decideConnectionWake(event, this.wakeState())) {
+      case 'schedule_suspend':
+        this.cancelResumeWait();
+        this.hiddenTimer = setTimeout(() => {
+          this.hiddenTimer = null;
+          this.applyWake('hidden_settled');
+        }, HIDDEN_GRACE_MS);
+        return;
+      case 'suspend':
+        this.transport?.suspend();
+        return;
+      case 'suspend_now':
+        this.cancelResumeWait();
+        this.transport?.suspend();
+        return;
+      case 'resume':
+        this.resumeSuspended();
+        return;
+      case 'validate':
+        this.transport?.resetReconnectState();
+        this.validateConnectionOnResume();
+        return;
+      case 'schedule_online':
+        this.onlineTimer = setTimeout(() => {
+          this.onlineTimer = null;
+          this.applyWake('online_settled');
+        }, ONLINE_SETTLE_MS);
+        return;
+      case 'force_reconnect':
+        this.transport?.forceReconnect();
+        return;
+      case 'none':
+        return;
+    }
   }
 
   private resumeSuspended(): void {
