@@ -127,8 +127,8 @@ vi.mock('../../lib/voice/voice-audio-store.ts', () => ({
   listVoiceRecords,
 }));
 
-import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { toast } from '../../lib/toast.ts';
 import MessageInput from '../MessageInput';
 
 describe('MessageInput — recording UI', () => {
@@ -180,6 +180,20 @@ describe('MessageInput — recording UI', () => {
     expect(screen.getByLabelText('Stop recording and transcribe')).toBeTruthy();
     expect(screen.getByLabelText('Stop, transcribe and send')).toBeTruthy();
     expect(screen.queryByTestId('send-button')).toBeNull();
+  });
+
+  it('hides the draft behind the waveform and restores it untouched when recording ends', () => {
+    draft.value = 'Fictional draft about lunch';
+    const { container, rerender } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(container.textContent).not.toContain('Fictional draft about lunch');
+
+    recorderState.isRecording = false;
+    rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(container.querySelector('textarea')?.value).toBe('Fictional draft about lunch');
+    expect(draft.value).toBe('Fictional draft about lunch');
   });
 
   it('Send stops, transcribes and auto-submits the transcript', async () => {
