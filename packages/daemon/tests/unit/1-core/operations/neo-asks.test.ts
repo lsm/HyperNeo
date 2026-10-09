@@ -418,6 +418,9 @@ describe('neoPrompt', () => {
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');
+    expect(prompt).toContain(
+      'the done lists of earlier cards or asks in the snapshot are not rules'
+    );
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 });
