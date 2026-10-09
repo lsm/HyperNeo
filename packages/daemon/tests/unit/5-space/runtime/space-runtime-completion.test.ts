@@ -793,7 +793,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(completedEvents).toHaveLength(1);
     });
 
-    test('cascade-cancelling an in_progress dependent also cancels its workflow run', async () => {
+    test('cancelling a task blocks its running dependent and its workflow run instead of cancelling them', async () => {
       const rt = makeRuntimeWithTam();
       const workflowA = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'node-cascade-a', name: 'A', agentId: AGENT_A },
@@ -821,9 +821,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
       expect(taskRepo.getTask(tasksA[0].id)?.status).toBe('cancelled');
 
-      expect(taskRepo.getTask(tasksB[0].id)?.status).toBe('cancelled');
+      expect(taskRepo.getTask(tasksB[0].id)).toMatchObject({
+        status: 'blocked',
+        blockReason: 'dependency_failed',
+      });
 
-      expect(workflowRunRepo.getRun(runB.id)?.status).toBe('cancelled');
+      expect(workflowRunRepo.getRun(runB.id)?.status).toBe('blocked');
     });
   });
 

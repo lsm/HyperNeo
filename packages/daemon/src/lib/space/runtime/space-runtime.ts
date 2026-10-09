@@ -3531,12 +3531,25 @@ export class SpaceRuntime {
       } else if (previous.status === 'stopped') {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
+      if (nextStatus === 'cancelled') await this.blockRunningDependents(spaceId, taskId);
       return updated;
     }
 
     const updated = this.config.taskRepo.updateTask(taskId, params);
     if (updated) await this.safeOnTaskUpdated(spaceId, updated);
     return updated;
+  }
+
+  private async blockRunningDependents(spaceId: string, taskId: string): Promise<void> {
+    for (const dependent of this.config.taskRepo.listBySpace(spaceId, false)) {
+      if (!dependent.dependsOn?.includes(taskId) || !dependent.workflowRunId) continue;
+      if (dependent.status !== 'in_progress' && !isRateOrUsageLimited(dependent.status)) continue;
+      await this.stopWorkflowBackedTaskForStatus(spaceId, dependent.id, {
+        status: 'blocked',
+        blockReason: 'dependency_failed',
+        result: `Dependency task ${taskId} was cancelled`,
+      }).catch((error) => log.warn(`Failed to block dependent ${dependent.id}:`, error));
+    }
   }
 
   async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
@@ -3651,16 +3664,11 @@ export class SpaceRuntime {
         }
       } else if (params.status === 'cancelled') {
         const taskManager = this.getOrCreateTaskManager(spaceId);
-        const cascaded = await taskManager.cancelDependentTasks(taskId);
-        for (const cancelled of cascaded) {
-          await this.safeOnTaskUpdated(spaceId, cancelled);
-          if (cancelled.workflowRunId) {
-            const run = this.config.workflowRunRepo.getRun(cancelled.workflowRunId);
-            if (run && canTransitionRunStatus(run.status, 'cancelled')) {
-              await this.transitionRunStatusAndEmit(cancelled.workflowRunId, 'cancelled');
-            }
-          }
+        const cascaded = await taskManager.settleDependents(taskId, 'cancelled');
+        for (const blocked of cascaded) {
+          await this.safeOnTaskUpdated(spaceId, blocked);
         }
+        await this.blockRunningDependents(spaceId, taskId);
       }
       if (emitUpdated) {
         await this.safeOnTaskUpdated(spaceId, updated, {
