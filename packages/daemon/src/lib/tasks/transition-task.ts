@@ -74,6 +74,7 @@ export interface SpaceTransitionTaskDependencies extends SpaceTransitionAdmissio
     expected: TaskTransitionExpectation
   ) => Promise<SpaceTask>;
   completeTask?: TaskCompletion;
+  expediteDirectStart?: (attemptId: string) => void;
 }
 type Deps = SpaceTransitionTaskDependencies;
 type DecidedTask = OwnedTask & {

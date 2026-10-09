@@ -31,6 +31,7 @@ import {
   createDirectStartJobHandler,
 } from '../../../../src/lib/tasks/direct-start-jobs';
 import {
+  expediteDirectStart,
   readDirectStartRequest,
   DIRECT_TASK_START,
 } from '../../../../src/lib/tasks/direct-start-request';
@@ -203,6 +204,22 @@ test('a start note reaches the kickoff message and stays frozen across replays',
     .content;
   expect(content).toContain('## Note From the User\n\nUse the staging database.');
   expect(content).not.toContain('Something else.');
+});
+
+test('a cancelled reservation is retired as soon as its expedited start job runs', async () => {
+  const job = acceptedJob();
+  const attempt = attempts.getActive(taskId)!;
+  jobs.reschedulePending(job.id, Date.now() + 60_000);
+  attempts.requestStop(attempt.id, attempt.sessionId, 'cancelled');
+  tasks.updateTask(taskId, { status: 'cancelled' });
+  expect(expediteDirectStart(db, jobs, attempt.id)).toBe(true);
+  expect(jobs.getJob(job.id)!.runAt).toBeLessThanOrEqual(Date.now());
+  expect(expediteDirectStart(db, jobs, 'missing')).toBe(false);
+  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toEqual({
+    started: false,
+    reason: 'superseded',
+  });
+  expect(attempts.getActive(taskId)).toBeNull();
 });
 
 test('pruned job receipt is not silently recreated by duplicate request', () => {
