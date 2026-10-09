@@ -2809,6 +2809,31 @@ describe('setupSpaceTaskMessageHandlers', () => {
       ]);
     });
 
+    it('activates a named single-agent node under its slot name, and rejects a node that does not resolve', async () => {
+      const setup = setupActivate({
+        resolutionOutcome: { kind: 'resolved', sessionId: 'sess-coder', created: true },
+      });
+      setup.taskAgentManager.resolveAgentNameOnNode = mock(
+        (_taskId: string, agentName: string, nodeId: string | undefined) =>
+          nodeId === 'node-single' ? 'coder' : nodeId === 'node-multi' ? null : agentName
+      );
+      await (setup.handlers.get('space.task.activateNodeAgent') as RequestHandler)({
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        agentName: 'legacy-name',
+        workflowNodeId: 'node-single',
+      });
+      expect(setup.resolutionCalls[0]).toMatchObject({ agentName: 'coder' });
+      await expect(
+        (setup.handlers.get('space.task.activateNodeAgent') as RequestHandler)({
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          agentName: 'legacy-name',
+          workflowNodeId: 'node-multi',
+        })
+      ).rejects.toThrow('Node node-multi does not declare agent "legacy-name"');
+    });
+
     it('throws when ensureSession reports activation failure', async () => {
       const { handlers: h, resolutionCalls } = setupActivate({
         resolutionOutcome: { kind: 'unresolved', reason: 'activate_failed' },

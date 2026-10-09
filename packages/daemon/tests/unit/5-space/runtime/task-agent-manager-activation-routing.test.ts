@@ -104,7 +104,10 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
       executionStatus: 'in_progress',
       agentSessionId: DEAD_SESSION_ID,
       sessionAlive: false,
-      nodeAgents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+      nodeAgents: [
+        { agentId: 'agent-reviewer', name: 'reviewer' },
+        { agentId: 'agent-tester', name: 'tester' },
+      ],
     });
     const result = await harness.manager.activateTargetSessionsForMessage(
       TASK_ID,
@@ -125,7 +128,10 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
       executionStatus: null,
       agentSessionId: null,
       sessionAlive: false,
-      nodeAgents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+      nodeAgents: [
+        { agentId: 'agent-reviewer', name: 'reviewer' },
+        { agentId: 'agent-tester', name: 'tester' },
+      ],
     });
     const result = await harness.manager.activateTargetSessionsForMessage(
       TASK_ID,
@@ -158,6 +164,24 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
     expect(harness.activationCalls()).toBe(1);
     expect(harness.spawnCalls()).toBe(1);
     expect(harness.requeuedRunIds()).toEqual([RUN_ID]);
+  });
+
+  test('a single-agent node accepts another name and activates its only slot', async () => {
+    const harness = makeManager({
+      executionStatus: 'blocked',
+      agentSessionId: DEAD_SESSION_ID,
+      sessionAlive: false,
+      nodeAgents: [{ agentId: 'agent-coder', name: AGENT_NAME }],
+    });
+    const result = await harness.manager.activateTargetSessionsForMessage(
+      TASK_ID,
+      RUN_ID,
+      'legacy-name',
+      { workflowNodeId: NODE_ID }
+    );
+    expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: LIVE_SESSION_ID }]);
+    expect(harness.activationCalls()).toBe(1);
+    expect(harness.spawnCalls()).toBe(1);
   });
 
   test('a live session is reused before the node declaration lookup can throw', async () => {

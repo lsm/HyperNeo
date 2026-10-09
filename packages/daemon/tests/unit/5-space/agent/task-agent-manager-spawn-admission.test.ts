@@ -977,7 +977,13 @@ describe('activateTargetSessionsForMessage — admission', () => {
     const h = makeActivateHarness({
       executions: [makeExecution()],
       workflow: makeWorkflow([
-        { id: NODE_ID, agents: [{ agentId: 'agent-other', name: 'other' }] },
+        {
+          id: NODE_ID,
+          agents: [
+            { agentId: 'agent-other', name: 'other' },
+            { agentId: 'agent-second', name: 'second' },
+          ],
+        },
       ]),
     });
 

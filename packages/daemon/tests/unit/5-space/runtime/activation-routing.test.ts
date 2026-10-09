@@ -288,14 +288,29 @@ describe('selectWorkflowNodeForAgent', () => {
     expect(selectWorkflowNodeForAgent([first, second], 'coder', 'node-coder-2')).toBe(second);
   });
 
-  test('returns null when the filtered node is not the one declaring the agent', () => {
+  test('a named multi-agent node must declare the agent', () => {
+    const first = makeNode();
+    const other = makeNode({
+      id: 'node-review',
+      name: 'review',
+      agents: [
+        { agentId: 'a', name: 'reviewer' },
+        { agentId: 'b', name: 'second-reviewer' },
+      ],
+    });
+    expect(selectWorkflowNodeForAgent([first, other], 'coder', 'node-review')).toBeNull();
+    expect(selectWorkflowNodeForAgent([first, other], 'coder', 'node-missing')).toBeNull();
+  });
+
+  test('a named single-agent node falls back to its only slot, as spawn does', () => {
     const first = makeNode();
     const other = makeNode({
       id: 'node-review',
       name: 'review',
       agents: [{ agentId: 'a', name: 'reviewer' }],
     });
-    expect(selectWorkflowNodeForAgent([first, other], 'coder', 'node-review')).toBeNull();
+    expect(selectWorkflowNodeForAgent([first, other], 'coder', 'node-review')).toBe(other);
+    expect(selectWorkflowNodeForAgent([other], 'coder')).toBeNull();
   });
 
   test('without a filter the first declaring node wins', () => {

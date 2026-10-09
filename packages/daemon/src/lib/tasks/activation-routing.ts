@@ -42,21 +42,28 @@ export function decideActivationRouting(input: ActivationRoutingInput): Activati
   return { action: 'spawn_with_timeout' };
 }
 
+function nodeSlots(node: WorkflowNode): ReturnType<typeof resolveNodeAgents> {
+  try {
+    return resolveNodeAgents(node);
+  } catch {
+    return [];
+  }
+}
+
+export function resolveNodeAgentName(node: WorkflowNode, agentName: string): string | null {
+  const slots = nodeSlots(node);
+  if (slots.some((slot) => slot.name === agentName)) return agentName;
+  return slots.length === 1 ? slots[0].name : null;
+}
+
 export function selectWorkflowNodeForAgent(
   nodes: readonly WorkflowNode[],
   agentName: string,
   workflowNodeId?: string
 ): WorkflowNode | null {
-  for (const node of nodes) {
-    let slots: ReturnType<typeof resolveNodeAgents>;
-    try {
-      slots = resolveNodeAgents(node);
-    } catch {
-      continue;
-    }
-    if (!slots.some((slot) => slot.name === agentName)) continue;
-    if (workflowNodeId && node.id !== workflowNodeId) continue;
-    return node;
+  if (workflowNodeId) {
+    const node = nodes.find((candidate) => candidate.id === workflowNodeId);
+    return node && resolveNodeAgentName(node, agentName) ? node : null;
   }
-  return null;
+  return nodes.find((node) => nodeSlots(node).some((slot) => slot.name === agentName)) ?? null;
 }
