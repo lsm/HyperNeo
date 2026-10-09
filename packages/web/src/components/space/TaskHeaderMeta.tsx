@@ -4,6 +4,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceEvolve, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
+import { getTaskStatusConfig } from '../../lib/task-status';
+import { StatusBadge } from '../ui/StatusBadge';
 
 const PRIORITY_TEXT: Record<SpaceTaskPriority, { label: string; class: string }> = {
   low: { label: 'Low priority', class: 'text-fg-muted' },
@@ -68,8 +70,8 @@ export function TaskHeaderMeta({
   ];
   if (statusLabel) {
     items.push(
-      <span key="status" class="text-fg-soft" data-testid="task-status-label">
-        {statusLabel}
+      <span key="status" class="flex-shrink-0" data-testid="task-status-label">
+        <StatusBadge tone={getTaskStatusConfig(task.status).tone} label={statusLabel} />
       </span>
     );
   }
