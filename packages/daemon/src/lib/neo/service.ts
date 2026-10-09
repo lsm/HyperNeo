@@ -77,7 +77,7 @@ import {
   readContinueBudget,
 } from './driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import { neoSavedRulesKey, withNeoSavedRules } from './saved-rules.ts';
+import { neoSavedRulesKey, planNeoSavedRulesNote, withNeoSavedRules } from './saved-rules.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -336,16 +336,14 @@ export class NeoService {
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
-    const messageId = caller.neoTurn?.messageId;
-    if (!caller.sessionId || !messageId || !saved.length) return;
-    const key = neoSavedRulesKey(caller.sessionId, messageId);
-    const noted = [...new Set([...(this.savedRules.get(key) ?? []), ...saved])];
-    this.savedRules.delete(key);
-    this.savedRules.set(key, noted);
-    for (const old of this.savedRules.keys()) {
-      if (this.savedRules.size <= 50) break;
-      this.savedRules.delete(old);
-    }
+    const note = planNeoSavedRulesNote(
+      { sessionId: caller.sessionId, messageId: caller.neoTurn?.messageId },
+      saved,
+      this.savedRules
+    );
+    if (!note) return;
+    for (const key of [...note.evict, note.key]) this.savedRules.delete(key);
+    this.savedRules.set(note.key, note.rules);
   }
 
   private appendPublication(input: NeoPublicationInput) {

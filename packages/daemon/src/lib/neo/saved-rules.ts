@@ -5,6 +5,23 @@ export function neoSavedRulesKey(sessionId: string, messageId: string): string {
   return `${sessionId}:${nudgedMessageId(messageId) ?? messageId}`;
 }
 
+const NEO_SAVED_RULE_TURNS = 50;
+
+export function planNeoSavedRulesNote(
+  turn: { sessionId?: string; messageId?: string },
+  saved: readonly string[],
+  noted: ReadonlyMap<string, readonly string[]>
+): { key: string; rules: string[]; evict: string[] } | null {
+  if (!turn.sessionId || !turn.messageId || !saved.length) return null;
+  const key = neoSavedRulesKey(turn.sessionId, turn.messageId);
+  const others = [...noted.keys()].filter((existing) => existing !== key);
+  return {
+    key,
+    rules: [...new Set([...(noted.get(key) ?? []), ...saved])],
+    evict: others.slice(0, Math.max(0, others.length + 1 - NEO_SAVED_RULE_TURNS)),
+  };
+}
+
 export function planNeoSavedRules(before: readonly string[], after: readonly string[]): string[] {
   return after.filter((rule) => !before.includes(rule));
 }

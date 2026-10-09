@@ -16,6 +16,7 @@ import {
   NEO_STANDING_RULE_MAX_CHARS,
   NEO_STANDING_RULES_MAX,
   neoStandingRules,
+  type NeoSettings,
 } from '@hyperneo/shared/types/settings';
 import {
   requireNeoWorkTargetSession,
@@ -539,17 +540,42 @@ export function createNeoOperations(service: NeoService) {
       ),
     };
   }
-  const saveRules = path(
-    'neo.rule.save',
-    (_input: z.infer<typeof SaveRules>) => undefined,
-    ({ rules }, caller) => {
-      const neo = service.db.getGlobalSettings().neo;
-      const updated = service.db.updateGlobalSettings({ neo: { ...neo, standingRules: rules } });
-      service.publishSettings?.(updated);
-      service.noteSavedRules(caller, planNeoSavedRules(neoStandingRules(neo), rules));
-      return { ok: true as const, standingRules: rules };
-    }
-  );
+  const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.rule.save'),
+      'caller',
+      'result:admission'
+    )
+    .pipe(() => ({ neo: service.db.getGlobalSettings().neo }), 'input', 'current')
+    .pipe(
+      (input: z.infer<typeof SaveRules>, current: { neo?: NeoSettings }) =>
+        planNeoSavedRules(neoStandingRules(current.neo), input.rules),
+      ['input', 'current'],
+      'saved'
+    )
+    .pipe(
+      (input: z.infer<typeof SaveRules>, current: { neo?: NeoSettings }) => {
+        const updated = service.db.updateGlobalSettings({
+          neo: { ...current.neo, standingRules: input.rules },
+        });
+        service.publishSettings?.(updated);
+      },
+      ['input', 'current']
+    )
+    .pipe(
+      (caller: OperationCaller, saved: string[]) => service.noteSavedRules(caller, saved),
+      ['admission', 'saved']
+    )
+    .pipe(
+      (input: z.infer<typeof SaveRules>) => ({ ok: true as const, standingRules: input.rules }),
+      'input',
+      'admission'
+    )
+    .end('admission') as (
+    input: z.infer<typeof SaveRules>,
+    caller: OperationCaller
+  ) => z.infer<typeof RulesResult>;
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) => input.concernId,
@@ -1074,7 +1100,7 @@ export function createNeoOperations(service: NeoService) {
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: saveRules,
+      execute: async (input, caller) => saveRules(input, caller),
     }),
     defineOperation({
       name: 'neo.snapshot',

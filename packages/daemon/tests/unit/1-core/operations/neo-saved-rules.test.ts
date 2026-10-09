@@ -7,6 +7,7 @@ import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
   neoSavedRulesKey,
   planNeoSavedRules,
+  planNeoSavedRulesNote,
   withNeoSavedRules,
 } from '../../../../src/lib/neo/saved-rules.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -52,6 +53,40 @@ describe('neoSavedRulesKey', () => {
     ['a done-check turn', 'w1:done-check:1', `${root}:w1:done-check:1`],
   ])('%s', (_label, messageId, key) => {
     expect(neoSavedRulesKey(root, messageId)).toBe(key);
+  });
+});
+
+describe('planNeoSavedRulesNote', () => {
+  const turn = { sessionId: root, messageId: 'ask-1' };
+  const full = new Map(Array.from({ length: 50 }, (_, i) => [`${root}:old-${i}`, ['Old.']]));
+  test.each<
+    [
+      string,
+      Parameters<typeof planNeoSavedRulesNote>[0],
+      string[],
+      Map<string, string[]>,
+      ReturnType<typeof planNeoSavedRulesNote>,
+    ]
+  >([
+    ['a call outside a Neo turn', { sessionId: root }, [rule], new Map(), null],
+    ['a turn that saved nothing', turn, [], new Map(), null],
+    ['a first save', turn, [rule], new Map(), { key: `${root}:ask-1`, rules: [rule], evict: [] }],
+    [
+      'a second save in the same turn',
+      turn,
+      [rule, 'Keep B.'],
+      new Map([[`${root}:ask-1`, [rule]]]),
+      { key: `${root}:ask-1`, rules: [rule, 'Keep B.'], evict: [] },
+    ],
+    [
+      'a new turn past the cap',
+      turn,
+      [rule],
+      full,
+      { key: `${root}:ask-1`, rules: [rule], evict: [`${root}:old-0`] },
+    ],
+  ])('%s', (_label, at, saved, noted, plan) => {
+    expect(planNeoSavedRulesNote(at, saved, noted)).toEqual(plan);
   });
 });
 
