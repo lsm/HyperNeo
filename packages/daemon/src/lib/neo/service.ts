@@ -58,6 +58,7 @@ import {
   readDriverSent,
   messageOpening,
   readDriverLanded,
+  decideCardLiveStatus,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -736,11 +737,18 @@ export class NeoService {
       { ref, ...(since !== null ? { since } : {}) },
       driverWorkCaller(work)
     );
-    const live = readDriverLive(outcome);
-    if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
-      this.notifyChanged();
     const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
     if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
+    const live = readDriverLive(outcome);
+    const cardStatus = live
+      ? decideCardLiveStatus(live, startedAt ?? landed, this.driverTargets.readLiveStatus(work.id))
+      : null;
+    if (
+      live &&
+      cardStatus &&
+      this.driverTargets.recordLive(work.id, cardStatus, live.link, live.remoteLink)
+    )
+      this.notifyChanged();
     const settled = readDriverSettlement(
       work,
       outcome,
