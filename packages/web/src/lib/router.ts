@@ -226,7 +226,7 @@ export function getSpaceTaskViewFromPath(
   return {
     spaceId: match[1],
     taskId: match[2],
-    view: match[3] === 'canvas' ? 'canvas' : 'thread',
+    view: 'thread',
   };
 }
 
@@ -631,7 +631,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 export function navigateToSpaceTask(
   spaceId: string,
   taskId: string,
-  view?: 'thread' | 'canvas',
+  view?: SpaceTaskViewTab,
   replace = false
 ): void {
   if (routerState.isNavigating) return;

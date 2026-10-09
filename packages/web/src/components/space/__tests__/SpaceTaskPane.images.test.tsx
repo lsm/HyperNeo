@@ -109,10 +109,6 @@ vi.mock('../SpaceTaskUnifiedThread', () => ({
   SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
 }));
 
-vi.mock('../ReadOnlyWorkflowCanvas', () => ({
-  ReadOnlyWorkflowCanvas: () => <div data-testid="workflow-canvas" />,
-}));
-
 vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));

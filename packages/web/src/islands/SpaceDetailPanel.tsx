@@ -25,7 +25,6 @@ import {
   currentSpaceAgentHandleSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
-  currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
   spaceOverlayPendingTaskIdSignal,
   spaceOverlaySessionIdSignal,
@@ -146,9 +145,7 @@ export function SpaceDetailPanel({
       selectedSessionId ??
       agents.find((agent) => agent.handle === selectedAgentHandle)?.sessionId);
   const viewedTaskId =
-    !spaceOverlaySessionIdSignal.value &&
-    !spaceOverlayPendingTaskIdSignal.value &&
-    currentSpaceTaskViewTabSignal.value !== 'canvas'
+    !spaceOverlaySessionIdSignal.value && !spaceOverlayPendingTaskIdSignal.value
       ? selectedTaskId
       : null;
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());

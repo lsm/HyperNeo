@@ -10,13 +10,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
 import { getTaskStatusConfig } from '../../lib/task-status';
-import {
-  navigateToSpaceTask,
-  pushOverlayHistory,
-  pushOverlayHistoryForPendingAgent,
-} from '../../lib/router';
-import { resolveNodeClick, type NodeChoice } from '../../lib/node-click-resolver';
-import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
+import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/router';
+import { currentSpaceIdSignal } from '../../lib/signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
@@ -24,11 +19,9 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { EditTaskModal } from './EditTaskModal';
-import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { TaskApproveButton } from './TaskApproveButton';
-import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
@@ -36,7 +29,7 @@ import { TaskHeaderMeta } from './TaskHeaderMeta';
 import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
-import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { filterDirectAttemptTargets, getTransitionActions } from './TaskStatusActions';
 import { useRunHookStates } from './use-run-hook-states.ts';
@@ -145,7 +138,6 @@ export function SpaceTaskPane({
   const draftWasActiveRef = useRef(false);
   const currentTaskIdRef = useRef<string | null>(taskId);
   currentTaskIdRef.current = taskId;
-  const nodeClickGenRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -157,16 +149,9 @@ export function SpaceTaskPane({
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
   const [editTaskBusy, setEditTaskBusy] = useState(false);
   const [editTaskError, setEditTaskError] = useState<string | null>(null);
-  const [nodeChoice, setNodeChoice] = useState<{
-    taskId: string;
-    nodeName: string;
-    nodeId: string;
-    choices: NodeChoice[];
-  } | null>(null);
   const [fullWorkflow, setFullWorkflow] = useState<import('@hyperneo/shared').SpaceWorkflow | null>(
     null
   );
-  const activeView = currentSpaceTaskViewTabSignal.value;
 
   useEffect(() => {
     setThreadSendError(null);
@@ -181,7 +166,6 @@ export function SpaceTaskPane({
     setShowEditTaskModal(false);
     setEditTaskBusy(false);
     setEditTaskError(null);
-    setNodeChoice(null);
   }, [taskId]);
 
   useEffect(() => {
@@ -485,7 +469,6 @@ export function SpaceTaskPane({
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
   }, canSendThreadMessage);
-  const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
   const activitySummary = getTaskStatusConfig(task.status).label;
   const resolvedBanner = resolveActiveTaskBanner(
     task,
@@ -539,7 +522,7 @@ export function SpaceTaskPane({
   }, [composerTargets, voiceReturnTargetSession]);
 
   useEffect(() => {
-    if (activeView !== 'thread' || !showInlineComposer) return;
+    if (!showInlineComposer) return;
     const root = threadPanelRef.current;
     if (!root) return;
     const scroller =
@@ -594,20 +577,7 @@ export function SpaceTaskPane({
       observer.disconnect();
       scroller.removeEventListener('scroll', handleScroll);
     };
-  }, [
-    activeView,
-    hasComposerDraft,
-    sendingThread,
-    showInlineComposer,
-    targetLocked,
-    threadScroller,
-  ]);
-
-  useEffect(() => {
-    if (activeView === 'canvas' && !canShowCanvasTab) {
-      navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
-    }
-  }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
+  }, [hasComposerDraft, sendingThread, showInlineComposer, targetLocked, threadScroller]);
 
   useEffect(() => {
     spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
@@ -618,216 +588,6 @@ export function SpaceTaskPane({
       spaceStore.ensureNodeExecutions(null).catch(() => {});
     };
   }, []);
-
-  const handleCanvasToggle = useCallback(() => {
-    if (!canShowCanvasTab) return;
-    if (activeView === 'canvas') {
-      navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
-      return;
-    }
-    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
-    navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
-  }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
-
-  const handleNodeClick = async (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
-    const clickGen = ++nodeClickGenRef.current;
-    let wf = workflow;
-    if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
-      wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
-      if (
-        !mountedRef.current ||
-        currentTaskIdRef.current !== task.id ||
-        nodeClickGenRef.current !== clickGen
-      )
-        return;
-    }
-    const currentTask = taskId
-      ? (spaceStore.tasks.value.find((t) => t.id === taskId) ?? null)
-      : null;
-    if (!currentTask) return;
-    const currentActivityMembers: SpaceTaskActivityMember[] = taskId
-      ? (spaceStore.taskActivity.value.get(taskId) ?? [])
-      : [];
-    const currentNodeExecutions = spaceStore.nodeExecutions.value;
-    const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
-    const slotLabel = (agentName: string): string => {
-      const slot = clickedNode?.agents.find((a) => a.name === agentName) ?? null;
-      const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
-      return spaceAgent?.displayName ?? formatAgentSlotLabel(agentName);
-    };
-    const currentWorkerMember = currentActivityMembers.find(
-      (m) =>
-        m.kind === 'node_agent' &&
-        m.nodeExecution?.isCurrentPostApproval === true &&
-        (!currentTask.postApprovalSessionId || m.sessionId === currentTask.postApprovalSessionId)
-    );
-    let postApprovalTargetAgent: string | null =
-      currentWorkerMember?.nodeExecution?.agentName ?? null;
-    if (!postApprovalTargetAgent && wf) {
-      for (const node of wf.nodes) {
-        const target = node.postApproval?.targetAgent;
-        if (target && target !== 'task-agent') {
-          postApprovalTargetAgent = target;
-          break;
-        }
-      }
-      if (!postApprovalTargetAgent) {
-        const target = wf.postApproval?.targetAgent;
-        if (target && target !== 'task-agent') {
-          postApprovalTargetAgent = target;
-        }
-      }
-    }
-    const postApprovalNodeId =
-      currentWorkerMember?.nodeExecution?.nodeId ??
-      (postApprovalTargetAgent
-        ? (wf?.nodes.find((n) => n.agents.some((a) => a.name === postApprovalTargetAgent))?.id ??
-          null)
-        : null);
-
-    const outcome = resolveNodeClick({
-      taskId: currentTask.id,
-      nodeId,
-      nodeName,
-      agentSlotNames,
-      workflowRunId: currentTask.workflowRunId,
-      nodeExecutions: currentNodeExecutions,
-      activityMembers: currentActivityMembers,
-      postApprovalSessionId: currentTask.postApprovalSessionId,
-      postApprovalTargetAgent,
-      postApprovalNodeId,
-      resolveLabel: slotLabel,
-      normalizeSlotName: normalizeTargetName,
-    });
-
-    switch (outcome.type) {
-      case 'open_session': {
-        const currentOverlayReadonly =
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped';
-        const taskContext = {
-          taskId: currentTask.id,
-          agentName: outcome.session.agentName,
-          workflowNodeId: nodeId,
-          sessionId: outcome.session.sessionId,
-          ...(currentOverlayReadonly ? { readonly: true } : {}),
-          ...(outcome.session.nodeExecutionId
-            ? { nodeExecutionId: outcome.session.nodeExecutionId }
-            : {}),
-        };
-        pushOverlayHistory(
-          outcome.session.sessionId,
-          outcome.session.label,
-          undefined,
-          taskContext
-        );
-        return;
-      }
-      case 'activate_slot':
-        if (
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped'
-        ) {
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-          return;
-        }
-        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-          return;
-        }
-        pushOverlayHistoryForPendingAgent(currentTask.id, outcome.agentName, outcome.nodeId);
-        return;
-      case 'choose':
-        if (
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped'
-        ) {
-          setNodeChoice({
-            taskId: currentTask.id,
-            nodeName,
-            nodeId,
-            choices: outcome.choices.filter((c) => c.kind === 'live'),
-          });
-          return;
-        }
-        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
-          const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: safeChoices });
-          return;
-        }
-        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: outcome.choices });
-        return;
-      case 'empty':
-        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-        return;
-    }
-  };
-
-  const handleNodeChoiceSelect = (choice: NodeChoice) => {
-    const clickedNodeId = nodeChoice?.nodeId;
-    setNodeChoice(null);
-    if (choice.kind === 'live') {
-      const taskContext: {
-        taskId: string;
-        agentName: string;
-        workflowNodeId?: string;
-        nodeExecutionId?: string;
-        sessionId?: string;
-        readonly?: boolean;
-      } = {
-        taskId: task.id,
-        agentName: choice.agentName,
-        ...(isTerminalTask || task.status === 'stopped' ? { readonly: true } : {}),
-        ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
-        ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
-      };
-      let liveSessionId: string;
-      if (choice.nodeExecutionId) {
-        const liveExec = nodeExecutions.find((e) => e.id === choice.nodeExecutionId);
-        if (
-          !liveExec?.agentSessionId ||
-          liveExec.status === 'cancelled' ||
-          liveExec.status === 'pending'
-        )
-          return;
-        liveSessionId = liveExec.agentSessionId;
-      } else {
-        if (task.postApprovalSessionId) {
-          const currentWorkerForSlot = activityMembers.find(
-            (m) =>
-              m.kind === 'node_agent' &&
-              m.nodeExecution?.isCurrentPostApproval === true &&
-              m.sessionId === task.postApprovalSessionId &&
-              m.role === choice.agentName &&
-              (!clickedNodeId || m.nodeExecution?.nodeId === clickedNodeId)
-          );
-          if (!currentWorkerForSlot) return;
-          liveSessionId = task.postApprovalSessionId;
-        } else if (isTerminalTask || task.status === 'stopped') {
-          liveSessionId = choice.sessionId;
-          pushOverlayHistory(liveSessionId, choice.label, undefined, {
-            taskId: task.id,
-            agentName: choice.agentName,
-            sessionId: liveSessionId,
-            readonly: true,
-          });
-          return;
-        } else {
-          return;
-        }
-      }
-      taskContext.sessionId = liveSessionId;
-      pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
-    } else {
-      pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);
-    }
-  };
 
   const sendThreadMessage = async (
     nextMessage: string,
@@ -1199,7 +959,7 @@ export function SpaceTaskPane({
           <div
             class={cn(
               'absolute top-[calc(100%+1px)] z-30 mt-4 rounded-lg bg-surface-raised shadow-lg shadow-black/30',
-              canShowCanvasTab ? 'right-14' : 'right-4'
+              'right-4'
             )}
           >
             <TaskApproveButton task={task} />
@@ -1238,151 +998,121 @@ export function SpaceTaskPane({
       })()}
 
       <div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
-        {activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
-          <div class="relative h-full" data-testid="canvas-view">
-            <ReadOnlyWorkflowCanvas
-              workflowId={canvasWorkflowId}
-              runId={task.workflowRunId}
-              spaceId={spaceId}
-              onNodeClick={handleNodeClick}
-              class="h-full"
-            />
-            {canShowCanvasTab && (
-              <div class="pointer-events-none absolute top-4 right-4 z-20">
-                <TaskCanvasToggleButton
-                  active={true}
-                  onClick={handleCanvasToggle}
-                  class="pointer-events-auto shadow-lg shadow-black/30"
-                />
-              </div>
-            )}
-          </div>
-        ) : (
-          <div
-            class="h-full flex flex-col relative"
-            style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
-            {...dragHandlers}
-          >
-            {isDragging && <ImageDropOverlay />}
-            {canShowCanvasTab && (
-              <div class="pointer-events-none absolute top-4 right-4 z-20">
-                <TaskCanvasToggleButton
-                  active={false}
-                  onClick={handleCanvasToggle}
-                  class="pointer-events-auto shadow-lg shadow-black/30"
-                />
-              </div>
-            )}
-            <div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
-              {hasUnifiedWorkflowThread ? (
-                <SpaceTaskUnifiedThread
-                  taskId={task.id}
-                  bottomInsetPx={taskComposerPaddingPx}
-                  activeAgentLabels={activeAgentLabels}
-                  overlayTaskId={task.id}
-                  overlayTaskReadonly={!taskAgentsLive}
-                  cooldownBannerMembers={cooldownBannerMembers}
-                  authErrorBannerMembers={authErrorBannerMembers}
-                  onShowScrollButtonChange={setShowScrollButton}
-                  onScrollToBottomChange={(scrollToBottom) => {
-                    scrollToBottomRef.current = scrollToBottom;
-                  }}
-                  onScrollerChange={setThreadScroller}
-                  footer={
-                    resolvedTask?.result ? (
-                      <section
-                        class="rounded-xl border border-success/40 bg-success/10 px-4 py-3"
-                        data-testid="task-result-card"
-                      >
-                        <div class="text-[11px] font-semibold uppercase tracking-wide text-success">
-                          Result
-                        </div>
-                        <p class="mt-1 whitespace-pre-wrap break-words text-sm text-fg">
-                          {resolvedTask.result}
-                        </p>
-                      </section>
-                    ) : null
-                  }
-                />
-              ) : (
-                <div class="h-full overflow-y-auto" data-testid="task-info-view">
-                  <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
-                    <TaskReadyPanel
-                      task={task}
-                      workspaceLabel={workspaceLabel}
-                      description={resolvedTask?.description ?? task.description ?? ''}
-                      canRunDirectly={canRunDirectly}
-                      busy={statusTransitioning}
-                      onRun={handleRunTaskDirectly}
-                      onPublish={() => handleStatusTransition('open')}
-                      onEdit={() => setShowEditTaskModal(true)}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {showScrollButton && (
-              <ScrollToBottomButton
-                onClick={handleScrollToBottom}
-                bottomClass="bottom-[var(--task-composer-offset)]"
-              />
-            )}
-
-            {task.status === 'stopped' && (
-              <div
-                class="flex-shrink-0 border-t border-line bg-scrim-soft px-4 py-2 text-center text-xs text-fg-muted"
-                data-testid="task-stopped-footer"
-                role="status"
-              >
-                Task stopped — resume it to continue working with its agents.
-              </div>
-            )}
-            {!showInlineComposer && threadSendError && (
-              <div
-                class="flex-shrink-0 border-t border-red-400/30 bg-danger/10 px-4 py-2 text-center text-xs text-danger-soft"
-                data-testid="task-pane-transition-error"
-                role="alert"
-              >
-                {threadSendError}
-              </div>
-            )}
-
-            {showInlineComposer && (
-              <VoiceSurfaceContext.Provider
-                value={{
-                  surfaceId: 'primary',
-                  spaceId: spaceId ?? null,
-                  taskId: task.id,
+        <div
+          class="h-full flex flex-col relative"
+          style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
+          {...dragHandlers}
+        >
+          {isDragging && <ImageDropOverlay />}
+          <div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
+            {hasUnifiedWorkflowThread ? (
+              <SpaceTaskUnifiedThread
+                taskId={task.id}
+                bottomInsetPx={taskComposerPaddingPx}
+                activeAgentLabels={activeAgentLabels}
+                overlayTaskId={task.id}
+                overlayTaskReadonly={!taskAgentsLive}
+                cooldownBannerMembers={cooldownBannerMembers}
+                authErrorBannerMembers={authErrorBannerMembers}
+                onShowScrollButtonChange={setShowScrollButton}
+                onScrollToBottomChange={(scrollToBottom) => {
+                  scrollToBottomRef.current = scrollToBottom;
                 }}
-              >
-                <TaskSessionChatComposer
-                  mentionCandidates={mentionCandidates}
-                  targets={composerTargets}
-                  selectedTargetId={selectedTarget?.id ?? null}
-                  canSend={canSendThreadMessage}
-                  isSending={sendingThread}
-                  errorMessage={threadSendError}
-                  activityMembers={activityMembers}
-                  defaultAgentModels={defaultAgentModels}
-                  taskId={task.id}
-                  onTargetSelect={(targetId) => {
-                    setSelectedTargetId(targetId);
-                    setTargetLocked(true);
-                  }}
-                  onDraftActiveChange={(hasDraft) => {
-                    setHasComposerDraft(hasDraft);
-                    if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
-                    draftWasActiveRef.current = hasDraft;
-                  }}
-                  onComposerRef={setTaskComposerElement}
-                  onSend={sendThreadMessage}
-                  registerDropTarget={registerDropTarget}
-                />
-              </VoiceSurfaceContext.Provider>
+                onScrollerChange={setThreadScroller}
+                footer={
+                  resolvedTask?.result ? (
+                    <section
+                      class="rounded-xl border border-success/40 bg-success/10 px-4 py-3"
+                      data-testid="task-result-card"
+                    >
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-success">
+                        Result
+                      </div>
+                      <p class="mt-1 whitespace-pre-wrap break-words text-sm text-fg">
+                        {resolvedTask.result}
+                      </p>
+                    </section>
+                  ) : null
+                }
+              />
+            ) : (
+              <div class="h-full overflow-y-auto" data-testid="task-info-view">
+                <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
+                  <TaskReadyPanel
+                    task={task}
+                    workspaceLabel={workspaceLabel}
+                    description={resolvedTask?.description ?? task.description ?? ''}
+                    canRunDirectly={canRunDirectly}
+                    busy={statusTransitioning}
+                    onRun={handleRunTaskDirectly}
+                    onPublish={() => handleStatusTransition('open')}
+                    onEdit={() => setShowEditTaskModal(true)}
+                  />
+                </div>
+              </div>
             )}
           </div>
-        )}
+
+          {showScrollButton && (
+            <ScrollToBottomButton
+              onClick={handleScrollToBottom}
+              bottomClass="bottom-[var(--task-composer-offset)]"
+            />
+          )}
+
+          {task.status === 'stopped' && (
+            <div
+              class="flex-shrink-0 border-t border-line bg-scrim-soft px-4 py-2 text-center text-xs text-fg-muted"
+              data-testid="task-stopped-footer"
+              role="status"
+            >
+              Task stopped — resume it to continue working with its agents.
+            </div>
+          )}
+          {!showInlineComposer && threadSendError && (
+            <div
+              class="flex-shrink-0 border-t border-red-400/30 bg-danger/10 px-4 py-2 text-center text-xs text-danger-soft"
+              data-testid="task-pane-transition-error"
+              role="alert"
+            >
+              {threadSendError}
+            </div>
+          )}
+
+          {showInlineComposer && (
+            <VoiceSurfaceContext.Provider
+              value={{
+                surfaceId: 'primary',
+                spaceId: spaceId ?? null,
+                taskId: task.id,
+              }}
+            >
+              <TaskSessionChatComposer
+                mentionCandidates={mentionCandidates}
+                targets={composerTargets}
+                selectedTargetId={selectedTarget?.id ?? null}
+                canSend={canSendThreadMessage}
+                isSending={sendingThread}
+                errorMessage={threadSendError}
+                activityMembers={activityMembers}
+                defaultAgentModels={defaultAgentModels}
+                taskId={task.id}
+                onTargetSelect={(targetId) => {
+                  setSelectedTargetId(targetId);
+                  setTargetLocked(true);
+                }}
+                onDraftActiveChange={(hasDraft) => {
+                  setHasComposerDraft(hasDraft);
+                  if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+                  draftWasActiveRef.current = hasDraft;
+                }}
+                onComposerRef={setTaskComposerElement}
+                onSend={sendThreadMessage}
+                registerDropTarget={registerDropTarget}
+              />
+            </VoiceSurfaceContext.Provider>
+          )}
+        </div>
       </div>
       <SubmitForReviewModal
         isOpen={showSubmitForReviewModal}
@@ -1404,13 +1134,6 @@ export function SpaceTaskPane({
         }}
         onConfirm={handleEditTaskConfirm}
         error={editTaskError}
-      />
-      <NodeAgentChoiceOverlay
-        isOpen={nodeChoice !== null && nodeChoice.taskId === taskId}
-        nodeName={nodeChoice?.nodeName ?? ''}
-        choices={nodeChoice?.choices ?? []}
-        onSelect={handleNodeChoiceSelect}
-        onClose={() => setNodeChoice(null)}
       />
     </div>
   );

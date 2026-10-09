@@ -35,50 +35,6 @@ interface TaskSessionChatComposerProps {
   registerDropTarget?: RegisterFileDropTarget;
 }
 
-export function TaskCanvasToggleButton({
-  active,
-  onClick,
-  class: className,
-}: {
-  active: boolean;
-  onClick: () => void;
-  class?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      class={cn(
-        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-info/60 active:scale-95',
-        active
-          ? 'border-sky-400/40 bg-sky-500/15 text-info-soft ring-1 ring-info/30'
-          : 'border-line-strong bg-surface-overlay/90 text-fg-muted hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-info-soft',
-        className
-      )}
-      data-testid="canvas-toggle"
-      aria-label={active ? 'Hide canvas' : 'Show canvas'}
-      aria-pressed={active}
-      title={active ? 'Hide canvas' : 'Show canvas'}
-    >
-      <svg
-        class="h-4 w-4"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width={2}
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <rect x="3" y="4" width="6" height="5" rx="1.5" />
-        <rect x="15" y="4" width="6" height="5" rx="1.5" />
-        <rect x="9" y="15" width="6" height="5" rx="1.5" />
-        <path d="M9 6.5h6M6 9v2.5a1.5 1.5 0 0 0 1.5 1.5H12v2M18 9v2.5a1.5 1.5 0 0 1-1.5 1.5H12" />
-      </svg>
-    </button>
-  );
-}
-
 export function TaskSessionChatComposer({
   mentionCandidates,
   targets,

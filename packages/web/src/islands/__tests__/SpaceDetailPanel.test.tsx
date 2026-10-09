@@ -590,48 +590,45 @@ describe('SpaceDetailPanel', () => {
     ).toBeNull();
   });
 
-  it.each(['overlay', 'pending overlay', 'canvas'])(
-    'retains task unread output behind %s',
-    async (cover) => {
-      mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked', { updatedAt: 2 })];
-      spaceTaskLastSeen.value = new Map([['t1', 1]]);
-      mockSessionsSignal.value = [
-        {
-          id: 'worker',
-          title: 'Worker',
-          taskId: 't1',
-          status: 'active',
-          messageCount: 3,
-          lastActiveAt: 5,
-        },
-        {
-          id: 'other',
-          title: 'Other',
-          taskId: 't2',
-          status: 'active',
-          messageCount: 6,
-          lastActiveAt: 5,
-        },
-      ];
-      mockCurrentSpaceTaskIdSignal.value = 't1';
-      if (cover === 'overlay') mockSpaceOverlaySessionIdSignal.value = 'other';
-      if (cover === 'pending overlay') mockSpaceOverlayPendingTaskIdSignal.value = 't2';
-      if (cover === 'canvas') mockCurrentSpaceTaskViewTabSignal.value = 'canvas';
-      const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
-      const row = screen.getByText('Task thread').closest('button')!;
-      expect(within(row).getByLabelText('3 unread messages')).toBeTruthy();
-      expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
-      expect(spaceSessionLastSeen.value.has('worker')).toBe(false);
+  it.each(['overlay', 'pending overlay'])('retains task unread output behind %s', async (cover) => {
+    mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked', { updatedAt: 2 })];
+    spaceTaskLastSeen.value = new Map([['t1', 1]]);
+    mockSessionsSignal.value = [
+      {
+        id: 'worker',
+        title: 'Worker',
+        taskId: 't1',
+        status: 'active',
+        messageCount: 3,
+        lastActiveAt: 5,
+      },
+      {
+        id: 'other',
+        title: 'Other',
+        taskId: 't2',
+        status: 'active',
+        messageCount: 6,
+        lastActiveAt: 5,
+      },
+    ];
+    mockCurrentSpaceTaskIdSignal.value = 't1';
+    if (cover === 'overlay') mockSpaceOverlaySessionIdSignal.value = 'other';
+    if (cover === 'pending overlay') mockSpaceOverlayPendingTaskIdSignal.value = 't2';
+    if (cover === 'canvas') mockCurrentSpaceTaskViewTabSignal.value = 'canvas';
+    const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+    const row = screen.getByText('Task thread').closest('button')!;
+    expect(within(row).getByLabelText('3 unread messages')).toBeTruthy();
+    expect(within(row).queryByRole('img', { name: 'Has updates' })).toBeNull();
+    expect(spaceSessionLastSeen.value.has('worker')).toBe(false);
 
-      mockSpaceOverlaySessionIdSignal.value = null;
-      mockSpaceOverlayPendingTaskIdSignal.value = null;
-      mockCurrentSpaceTaskViewTabSignal.value = 'thread';
-      rerender(<SpaceDetailPanel spaceId="space-1" />);
-      await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(3));
-      expect(spaceTaskLastSeen.value.get('t1')).toBe(2);
-      expect(within(row).queryByLabelText(/unread messages/)).toBeNull();
-    }
-  );
+    mockSpaceOverlaySessionIdSignal.value = null;
+    mockSpaceOverlayPendingTaskIdSignal.value = null;
+    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+    rerender(<SpaceDetailPanel spaceId="space-1" />);
+    await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(3));
+    expect(spaceTaskLastSeen.value.get('t1')).toBe(2);
+    expect(within(row).queryByLabelText(/unread messages/)).toBeNull();
+  });
 
   it('keeps blocked task lifecycle in the leading slot over worker activity', () => {
     mockTasksSignal.value = [makeTask('t1', 'Task thread', 'blocked')];
