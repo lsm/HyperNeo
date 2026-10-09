@@ -134,8 +134,10 @@ describe('planNeoWorkPrRefresh', () => {
   ])('%s', (_case, row, read, now, plan) => {
     expect(planNeoWorkPrRefresh(row, read, now)).toBe(plan);
   });
+});
 
-  test('isNeoWorkPrWaiting means an open PR still runs checks', () => {
+describe('isNeoWorkPrWaiting', () => {
+  test('means an open PR still runs checks', () => {
     expect(isNeoWorkPrWaiting([{ ...pr, checks: 'pending' }])).toBe(true);
     expect(isNeoWorkPrWaiting([{ ...pr, state: 'MERGED', checks: 'pending' }])).toBe(false);
   });
