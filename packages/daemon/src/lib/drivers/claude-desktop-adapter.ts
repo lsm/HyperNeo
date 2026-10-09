@@ -31,6 +31,7 @@ import {
   workEntryTime,
   workInput,
 } from './work-messages.ts';
+import { matchChatsBy } from './match-chats.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -207,11 +208,7 @@ function toClaudeWork(
 export function matchClaudeSessions(
   chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  return new Map(
-    chats.flatMap((chat) =>
-      chat.kind === 'claude' && chat.sessionId ? [[chat.sessionId, chat] as const] : []
-    )
-  );
+  return matchChatsBy(chats, (chat) => (chat.kind === 'claude' ? chat.sessionId : null));
 }
 
 export function buildClaudeDesktopGroups(

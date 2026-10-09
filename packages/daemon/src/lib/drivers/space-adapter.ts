@@ -18,6 +18,7 @@ import type {
   WorkSummary,
 } from './types.ts';
 import { reject } from './work-operations.ts';
+import { matchChatsBy } from './match-chats.ts';
 
 const OPEN_TASK = `status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'blocked', 'rate_limited', 'usage_limited')`;
 const TASKS_PER_SPACE = 20;
@@ -281,12 +282,7 @@ export function loadSpaceTasks(
 export function matchSpaceTasks(
   chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  return new Map(
-    chats.flatMap((chat) => {
-      const key = chat.taskId ?? chat.sessionId;
-      return key ? [[key, chat] as const] : [];
-    })
-  );
+  return matchChatsBy(chats, (chat) => chat.taskId ?? chat.sessionId);
 }
 
 export function loadSpaceAgents(query: FindQuery, deps: SpaceAdapterDeps): SpaceAgentRow[] {
