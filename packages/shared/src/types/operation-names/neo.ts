@@ -10,6 +10,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.publication.publish',
   'neo.publication.read',
   'neo.route.correct',
+  'neo.rule.save',
   'neo.snapshot',
   'neo.work.cancel',
   'neo.work.close',

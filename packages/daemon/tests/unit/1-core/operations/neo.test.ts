@@ -55,6 +55,9 @@ describe('Neo MVP', () => {
     expect(prompt).toContain('Start work button is the approval to execute');
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('ask one short clarifying question');
+    expect(prompt).toContain('Apply them whenever you propose work and write doneWhen');
+    expect(prompt).toContain('neo.rule.save {rules}');
+    expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
   });
 
   let sqlite: SQLite;
@@ -70,6 +73,8 @@ describe('Neo MVP', () => {
   let failed: string | null;
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
+  let settings: { neo?: { standingRules?: string[] } };
+  let published: unknown[];
 
   beforeEach(async () => {
     const real = await createTestDb();
@@ -83,6 +88,8 @@ describe('Neo MVP', () => {
     failed = null;
     delivered = new Set();
     interrupt = mock(async () => {});
+    settings = {};
+    published = [];
     const queue = {
       listActiveByPayload: (_queue: string, match: Record<string, unknown>) =>
         jobs.filter(
@@ -97,6 +104,11 @@ describe('Neo MVP', () => {
     };
     db = {
       getDatabase: () => sqlite,
+      getGlobalSettings: () => settings,
+      updateGlobalSettings: (updates: typeof settings) => {
+        settings = { ...settings, ...updates };
+        return settings;
+      },
       getSession: (id: string) => (active.has(id) ? { id } : null),
       getJobQueueRepo: () => queue,
       getSDKMessageRepo: () => ({
@@ -130,7 +142,8 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events
+      events,
+      (updated) => published.push(updated)
     );
   });
   afterEach(() => {
@@ -223,6 +236,29 @@ describe('Neo MVP', () => {
     expect(
       await invoke('neo.snapshot', {}, { source: 'mcp', role: 'neo', sessionId: root })
     ).toMatchObject({ value: { concerns: [{ context: '' }] } });
+  });
+
+  test('standing rules start with the PR-opened rule, and only root Neo can replace them', async () => {
+    expect(await invoke('neo.snapshot')).toMatchObject({
+      value: { standingRules: [expect.stringContaining('a pull request is open')] },
+    });
+    const root = await service.open(null);
+    const rules = ['Ask before deleting anything.'];
+    expect(
+      await invoke('neo.rule.save', { rules }, { source: 'mcp', role: 'neo', sessionId: root })
+    ).toMatchObject({ value: { ok: true, standingRules: rules } });
+    expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: rules } });
+    expect(published).toEqual([expect.objectContaining({ neo: { standingRules: rules } })]);
+    service.repo.saveConcern({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
+    const holder = await service.open('book-club');
+    expect(
+      await invoke(
+        'neo.rule.save',
+        { rules: [] },
+        { source: 'mcp', role: 'neo', sessionId: holder }
+      )
+    ).toMatchObject({ value: { ok: false, reason: 'Only root Neo can save standing rules.' } });
+    expect(settings.neo?.standingRules).toEqual(rules);
   });
 
   test('work origin message ids survive the snapshot boundary in every state', async () => {
@@ -391,6 +427,7 @@ describe('Neo MVP', () => {
       'neo.concern.consult',
       'neo.concern.respond',
       'neo.open',
+      'neo.rule.save',
       'neo.snapshot',
       'neo.concern.save',
       'neo.work.propose',

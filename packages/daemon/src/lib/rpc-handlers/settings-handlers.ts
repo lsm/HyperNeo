@@ -113,7 +113,9 @@ export function registerSettingsHandlers(
             needsCredentialSnapshot && (exaMutation.storeKey || exaMutation.remove)
               ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
               : null;
-          const result = settingsManager.updateGlobalSettings(updates);
+          const result = settingsManager.updateGlobalSettings(
+            keepStandingRules(updates, settingsManager.getGlobalSettings())
+          );
           try {
             await applyCredentialMutation(
               voiceMutation,
@@ -369,6 +371,16 @@ function normalizeEndpoint(endpoint: string): string {
   } catch {
     return endpoint;
   }
+}
+
+export function keepStandingRules(
+  updates: Partial<GlobalSettings>,
+  current: GlobalSettings
+): Partial<GlobalSettings> {
+  if (!updates.neo) return updates;
+  const { standingRules: _ignored, ...neo } = updates.neo;
+  const standingRules = current.neo?.standingRules;
+  return { ...updates, neo: standingRules ? { ...neo, standingRules } : neo };
 }
 
 export function sanitizeGlobalSettings(
