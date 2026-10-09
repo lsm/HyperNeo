@@ -1,5 +1,6 @@
 import { assertQueuedTaskRetryTransition } from '../../../../src/lib/tasks/transitions';
 import { describe, expect, test } from 'bun:test';
+import { isDirectOutcomeStatus, isDirectRerunStatus } from '@hyperneo/shared';
 import {
   VALID_TASK_TRANSITIONS,
   isValidTaskTransition,
@@ -65,4 +66,33 @@ test('review can queue a guarded task retry without enabling generic review-to-o
   expect(isValidTaskTransition('review', 'open')).toBe(false);
   expect(() => assertQueuedTaskRetryTransition('review')).not.toThrow();
   expect(() => assertQueuedTaskRetryTransition('archived')).toThrow();
+});
+
+describe('isDirectOutcomeStatus', () => {
+  test.each([
+    ['review', true],
+    ['done', true],
+    ['blocked', true],
+    ['cancelled', true],
+    ['stopped', true],
+    ['archived', true],
+    ['open', false],
+    ['in_progress', false],
+    ['approved', false],
+  ])('%s → %s', (status, expected) => {
+    expect(isDirectOutcomeStatus(status)).toBe(expected);
+  });
+});
+
+describe('isDirectRerunStatus', () => {
+  test.each([
+    ['blocked', true],
+    ['cancelled', true],
+    ['stopped', true],
+    ['done', false],
+    ['open', false],
+    ['review', false],
+  ] as const)('%s → %s', (status, expected) => {
+    expect(isDirectRerunStatus(status)).toBe(expected);
+  });
 });

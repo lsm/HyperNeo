@@ -1,3 +1,4 @@
+import { isDirectRerunStatus } from '@hyperneo/shared';
 import { readDirectFinalizationRequest } from './finalize-direct-attempt.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { enqueueDirectStartRequest, readDirectStartRequest } from './direct-start-request.ts';
@@ -146,7 +147,7 @@ export function claimDirectStart(
                 task.pendingCheckpointType === 'task_completion' &&
                 task.pendingCompletionGeneration ===
                   input.reviewRejection.expectedPendingCompletionGeneration
-              : ['blocked', 'cancelled', 'stopped'].includes(task.status)) ||
+              : isDirectRerunStatus(task.status)) ||
             tasks.getLifecycleGeneration(task.id) !==
               finalization.lifecycleGeneration + (manualReview ? 2 : 1) ||
             task.taskAgentSessionId !== previous.sessionId
