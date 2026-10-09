@@ -156,7 +156,17 @@ export interface ProviderInfo {
   available: boolean;
 }
 
-export type ThinkingLevel = 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k';
+export const THINKING_LEVELS = [
+  'off',
+  'think8k',
+  'think16k',
+  'think24k',
+  'think32k',
+  'think48k',
+  'think64k',
+] as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = {
   off: undefined,
@@ -164,14 +174,18 @@ export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = 
   think16k: 16000,
   think24k: 24000,
   think32k: 31999,
+  think48k: 48000,
+  think64k: 63999,
 };
 
 export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
   off: 'Off',
-  think8k: 'Think 8k',
-  think16k: 'Think 16k',
-  think24k: 'Think 24k',
-  think32k: 'Think 32k',
+  think8k: 'Low',
+  think16k: 'Medium',
+  think24k: 'High',
+  think32k: 'Extra High',
+  think48k: 'Max',
+  think64k: 'Ultra',
 };
 
 export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'> = {
@@ -191,8 +205,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
 
 export function normalizeThinkingLevel(level: string | undefined | null): ThinkingLevel {
   if (level === 'auto') return 'off';
-  const valid: ThinkingLevel[] = ['off', 'think8k', 'think16k', 'think24k', 'think32k'];
-  if (valid.includes(level as ThinkingLevel)) return level as ThinkingLevel;
+  if ((THINKING_LEVELS as readonly string[]).includes(level ?? '')) return level as ThinkingLevel;
   return 'off';
 }
 
@@ -210,13 +223,7 @@ export function getThinkingOptionsForProvider(
         { value: 'think32k', label: 'On' },
       ];
     case 'granular':
-      return [
-        { value: 'off', label: 'Off' },
-        { value: 'think8k', label: 'Think 8k' },
-        { value: 'think16k', label: 'Think 16k' },
-        { value: 'think24k', label: 'Think 24k' },
-        { value: 'think32k', label: 'Think 32k' },
-      ];
+      return THINKING_LEVELS.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }));
   }
 }
 

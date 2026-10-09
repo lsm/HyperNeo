@@ -7,7 +7,12 @@ import type {
   WorkflowHook,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
-import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
+import {
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
+  generateUUID,
+  normalizeThinkingLevel,
+} from '@hyperneo/shared';
 import { useComputed } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { skillsStore } from '../../../lib/skills-store';
@@ -32,11 +37,7 @@ function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Inherit' },
-  { value: 'off', label: 'Off' },
-  { value: 'think8k', label: 'Think 8k' },
-  { value: 'think16k', label: 'Think 16k' },
-  { value: 'think24k', label: 'Think 24k' },
-  { value: 'think32k', label: 'Think 32k' },
+  ...THINKING_LEVELS.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] })),
 ];
 
 function safeNodeThinkingLevel(level: string | undefined): ThinkingLevel | undefined {

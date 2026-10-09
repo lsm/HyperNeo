@@ -314,8 +314,8 @@ function thinkingToReasoningEffort(
   if (thinking.type === 'enabled') {
     const budget = thinking.budget_tokens;
     if (!Number.isFinite(budget) || budget <= 0) return undefined;
-    if (budget < 4000) return 'low';
-    if (budget < 16000) return 'medium';
+    if (budget <= 8000) return 'low';
+    if (budget <= 16000) return 'medium';
     return 'high';
   }
   return undefined;

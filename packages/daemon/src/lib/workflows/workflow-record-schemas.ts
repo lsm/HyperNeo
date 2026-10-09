@@ -1,8 +1,9 @@
-import type {
-  NodeExecution,
-  SpaceWorkflow,
-  SpaceWorkflowRun,
-  SpaceWorkflowSummary,
+import {
+  THINKING_LEVELS,
+  type NodeExecution,
+  type SpaceWorkflow,
+  type SpaceWorkflowRun,
+  type SpaceWorkflowSummary,
 } from '@hyperneo/shared';
 import { z } from 'zod';
 
@@ -30,7 +31,7 @@ export const WorkflowSummarySchema = z.object({
   updatedAt: z.number(),
 }) satisfies z.ZodType<SpaceWorkflowSummary>;
 
-const ThinkingLevelSchema = z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
+const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 const HeaderMapSchema = z.record(z.string(), z.string());
 

@@ -77,7 +77,8 @@ describe('claude-desktop adapter against the app session records', () => {
       { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
     ],
     exitCode = 0,
-    onSpawn = () => {}
+    onSpawn = () => {},
+    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' }
   ) {
     spawned = [];
     return createClaudeDesktopAdapter({
@@ -100,8 +101,8 @@ describe('claude-desktop adapter against the app session records', () => {
         spawned.push({ args, cwd: options?.cwd });
         onSpawn();
         return {
-          stdout: null,
-          stderr: new Response(exitCode ? 'relay failed' : '').body,
+          stdout: new Response(output.stdout ?? '').body,
+          stderr: new Response(output.stderr ?? (exitCode ? 'relay failed' : '')).body,
           exited: Promise.resolve(exitCode),
           exitCode,
           kill: () => {},
@@ -365,6 +366,32 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(spawned).toEqual([]);
   });
 
+  test('a send that fails because the claude CLI login expired says how to fix it', async () => {
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    const expired = {
+      stdout: 'Failed to authenticate: OAuth session expired and could not be refreshed\n',
+      stderr: '',
+    };
+    const result = await adapter(undefined, 1, () => {}, expired).send?.(ref, 'hi', user);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'claude_cli_login_expired',
+      detail:
+        'The claude CLI on this Mac is not logged in (Failed to authenticate: OAuth session expired and could not be refreshed). Run `claude auth login`, then try again.',
+    });
+    const b2 = { adapter: 'claude-desktop', id: 'local_b2' };
+    expect(await adapter([], 1, () => {}, expired).send?.(b2, 'next', user)).toMatchObject({
+      reason: 'claude_cli_login_expired',
+    });
+    expect(
+      await adapter(undefined, 1, () => {}, { stdout: 'Error: rate limited', stderr: '' }).send?.(
+        ref,
+        'hi',
+        user
+      )
+    ).toEqual({ ok: false, reason: 'not_delivered', detail: 'Error: rate limited' });
+  });
+
   test('send relays from the permission class of a session that bypasses permissions', async () => {
     writeFileSync(
       join(dir, 'acct-a/scope-1/local_p1.json'),
@@ -580,6 +607,39 @@ describe('claudeTranscriptState', () => {
       ],
       lastAt: Date.parse('2026-10-08T10:03:00.000Z'),
     });
+  });
+
+  test('counts a peer message queued while the session was busy as input', () => {
+    const queued = (timestamp: string, origin: Record<string, unknown>) =>
+      JSON.stringify({
+        type: 'attachment',
+        timestamp,
+        attachment: {
+          type: 'queued_command',
+          prompt:
+            '<cross-session-message from="uds:/tmp/cc-socks/55057.sock">…</cross-session-message>',
+          commandMode: 'prompt',
+          origin,
+          timestamp,
+          isMeta: true,
+        },
+      });
+    const state = claudeTranscriptState([
+      queued('2026-10-09T01:31:08.369Z', {
+        kind: 'peer',
+        from: 'uds:/tmp/cc-socks/55057.sock',
+        name: 'HyperNeo relay',
+        body: 'Scope addition from the user: a pushed branch alone does not count as finished.',
+      }),
+      queued('2026-10-09T01:32:00.000Z', { kind: 'human' }),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: 'x' } }),
+    ]);
+    expect(state.inputs).toEqual([
+      {
+        at: Date.parse('2026-10-09T01:31:08.369Z'),
+        text: 'Scope addition from the user: a pushed branch alone does not count as finished.',
+      },
+    ]);
   });
 
   test('lists the messages after since, typed, relayed and said', () => {

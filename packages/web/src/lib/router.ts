@@ -8,13 +8,11 @@ import {
   currentSpaceSettingsTabSignal,
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
-  currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
   type SettingsSection,
   type SpaceSettingsTab,
   type SpaceOverlayTaskContext,
-  type SpaceTaskViewTab,
   settingsSectionSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayHighlightMessageIdSignal,
@@ -218,16 +216,10 @@ export function getSpaceTaskIdFromPath(path: string): { spaceId: string; taskId:
   return { spaceId: match[1], taskId: match[2] };
 }
 
-export function getSpaceTaskViewFromPath(
-  path: string
-): { spaceId: string; taskId: string; view: SpaceTaskViewTab } | null {
+export function getSpaceTaskViewFromPath(path: string): { spaceId: string; taskId: string } | null {
   const match = path.match(SPACE_TASK_VIEW_ROUTE_PATTERN);
   if (!match) return null;
-  return {
-    spaceId: match[1],
-    taskId: match[2],
-    view: 'thread',
-  };
+  return { spaceId: match[1], taskId: match[2] };
 }
 
 export function getCurrentPath(): string {
@@ -284,8 +276,8 @@ export function createSpaceSessionPath(spaceId: string, sessionId: string): stri
   return `/space/${spaceId}/session/${sessionId}`;
 }
 
-export function createSpaceTaskPath(spaceId: string, taskId: string, view?: string): string {
-  return view ? `/space/${spaceId}/task/${taskId}/${view}` : `/space/${spaceId}/task/${taskId}`;
+export function createSpaceTaskPath(spaceId: string, taskId: string): string {
+  return `/space/${spaceId}/task/${taskId}`;
 }
 
 export function createSpaceAgentPath(spaceId: string, handle?: string): string {
@@ -327,7 +319,6 @@ function clearSpaceRouteState(): void {
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
 }
 
@@ -453,7 +444,6 @@ export function navigateToSpace(spaceId: string, replace = false): void {
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
-    currentSpaceTaskViewTabSignal.value = 'thread';
     currentSpaceAgentHandleSignal.value = null;
     currentSessionIdSignal.value = null;
     navSectionSignal.value = 'spaces';
@@ -467,7 +457,6 @@ export function navigateToSpace(spaceId: string, replace = false): void {
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
-    currentSpaceTaskViewTabSignal.value = 'thread';
     currentSpaceAgentHandleSignal.value = null;
     currentSessionIdSignal.value = null;
     navSectionSignal.value = 'spaces';
@@ -498,7 +487,6 @@ export function navigateToSpaceConfigure(
   currentSpaceSettingsTabSignal.value = tab ?? 'general';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -521,7 +509,6 @@ export function navigateToSpaceGoals(spaceId: string, replace = false): void {
   currentSpaceViewModeSignal.value = 'goals';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -544,7 +531,6 @@ export function navigateToSpaceMemories(spaceId: string, replace = false): void 
   currentSpaceViewModeSignal.value = 'memories';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -567,7 +553,6 @@ export function navigateToSpaceEvolve(spaceId: string, replace = false): void {
   currentSpaceViewModeSignal.value = 'forge';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -599,7 +584,6 @@ export function navigateToSpaceTasks(
   currentSpaceTasksFilterTabSignal.value = tab ?? 'active';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -622,21 +606,15 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceSessionIdSignal.value = sessionId;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
 
-export function navigateToSpaceTask(
-  spaceId: string,
-  taskId: string,
-  view?: SpaceTaskViewTab,
-  replace = false
-): void {
+export function navigateToSpaceTask(spaceId: string, taskId: string, replace = false): void {
   if (routerState.isNavigating) return;
 
-  const targetPath = createSpaceTaskPath(spaceId, taskId, view);
+  const targetPath = createSpaceTaskPath(spaceId, taskId);
   if (getCurrentPath() !== targetPath) {
     routerState.isNavigating = true;
     try {
@@ -649,7 +627,6 @@ export function navigateToSpaceTask(
   setCurrentSpaceRouteId(spaceId);
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceTaskIdSignal.value = taskId;
-  currentSpaceTaskViewTabSignal.value = view ?? 'thread';
   currentSpaceAgentHandleSignal.value = null;
   currentSpaceSessionIdSignal.value = null;
   currentSessionIdSignal.value = null;
@@ -679,7 +656,6 @@ export function navigateToSpaceAgent(
   currentSpaceViewModeSignal.value = 'agents';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
-  currentSpaceTaskViewTabSignal.value = 'thread';
   currentSpaceAgentHandleSignal.value = handle ?? null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -757,7 +733,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       setCurrentSpaceRouteId(spaceTask.spaceId);
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceTaskIdSignal.value = spaceTask.taskId;
-      currentSpaceTaskViewTabSignal.value = spaceTaskView?.view ?? 'thread';
       currentSpaceSessionIdSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -766,7 +741,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceSessionIdSignal.value = spaceSession.sessionId;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -775,7 +749,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'agents';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = spaceAgentDetail.handle;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -784,7 +757,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'agents';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -793,7 +765,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'goals';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -802,7 +773,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'memories';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -811,7 +781,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'forge';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -821,7 +790,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceTasksFilterTabSignal.value = spaceTasksTab?.tab ?? 'active';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -832,7 +800,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
         (spaceConfigureTab?.tab as SpaceSettingsTab | undefined) ?? 'general';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
@@ -841,7 +808,6 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
-      currentSpaceTaskViewTabSignal.value = 'thread';
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';

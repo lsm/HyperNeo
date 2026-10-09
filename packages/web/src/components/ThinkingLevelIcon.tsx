@@ -6,6 +6,8 @@ const LEVEL_TONE: Record<ThinkingLevel, string> = {
   think16k: 'thinking-tone-16k',
   think24k: 'thinking-tone-24k',
   think32k: 'thinking-tone-32k',
+  think48k: 'thinking-tone-48k',
+  think64k: 'thinking-tone-64k',
 };
 
 const RAYS = [
@@ -22,6 +24,8 @@ const LIT_RAYS: Record<ThinkingLevel, number> = {
   think16k: 3,
   think24k: 4,
   think32k: RAYS.length,
+  think48k: RAYS.length,
+  think64k: RAYS.length,
 };
 
 export function ThinkingLevelIcon({
@@ -52,19 +56,12 @@ export function ThinkingLevelIcon({
     think16k: 2,
     think24k: 3,
     think32k: 4,
+    think48k: 5,
+    think64k: 6,
   };
   const brightness = brightnessMap[level];
 
-  const fillOpacity =
-    brightness === 0
-      ? 0
-      : brightness === 1
-        ? 0.15
-        : brightness === 2
-          ? 0.3
-          : brightness === 3
-            ? 0.4
-            : 0.5;
+  const fillOpacity = [0, 0.15, 0.3, 0.4, 0.5, 0.6, 0.7][brightness];
 
   return (
     <svg class={`${size} ${LEVEL_TONE[level]}`} viewBox="0 0 24 24">
@@ -72,7 +69,7 @@ export function ThinkingLevelIcon({
         <circle
           cx="12"
           cy="10"
-          r={brightness === 1 ? 4 : brightness === 2 ? 5 : brightness === 3 ? 5.5 : 6}
+          r={[0, 4, 5, 5.5, 6, 6.25, 6.5][brightness]}
           fill="currentColor"
           opacity={fillOpacity}
         />
@@ -108,10 +105,12 @@ export function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
 
   const dashPercentMap: Record<ThinkingLevel, number> = {
     off: 0,
-    think8k: 0.25,
-    think16k: 0.5,
-    think24k: 0.75,
-    think32k: 1,
+    think8k: 1 / 6,
+    think16k: 2 / 6,
+    think24k: 3 / 6,
+    think32k: 4 / 6,
+    think48k: 5 / 6,
+    think64k: 1,
   };
   const dashPercent = dashPercentMap[level];
   const dashLength = circumference * dashPercent;

@@ -4,11 +4,13 @@ import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { resolveChatDisplayMode } from '../sdk/chat-display-mode.ts';
 import { FORM_CHECKBOX_CLASS } from '../ui/FormField.tsx';
-import type {
-  ChatDisplayMode,
-  PermissionMode,
-  ThinkingLevel,
-  SettingSource,
+import {
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
+  type ChatDisplayMode,
+  type PermissionMode,
+  type ThinkingLevel,
+  type SettingSource,
 } from '@hyperneo/shared';
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
 import {
@@ -32,13 +34,10 @@ const CHAT_DISPLAY_MODE_OPTIONS = [
   { value: 'minimal', label: 'Minimal' },
 ];
 
-const THINKING_LEVEL_OPTIONS = [
-  { value: 'off', label: 'Off' },
-  { value: 'think8k', label: 'Think 8k' },
-  { value: 'think16k', label: 'Think 16k' },
-  { value: 'think24k', label: 'Think 24k' },
-  { value: 'think32k', label: 'Think 32k' },
-];
+const THINKING_LEVEL_OPTIONS = THINKING_LEVELS.map((value) => ({
+  value,
+  label: THINKING_LEVEL_LABELS[value],
+}));
 
 export function GeneralSettings() {
   const settings = globalSettings.value;

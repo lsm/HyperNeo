@@ -9,8 +9,10 @@ import {
 describe('reasoningEffortForLevel', () => {
   it('maps each HyperNeo thinking level to an effort, and nothing without a level', () => {
     expect(
-      ['off', 'think8k', 'think16k', 'think24k', 'think32k'].map(reasoningEffortForLevel)
-    ).toEqual(['low', 'low', 'medium', 'high', 'xhigh']);
+      ['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k'].map(
+        reasoningEffortForLevel
+      )
+    ).toEqual(['low', 'low', 'medium', 'high', 'xhigh', 'xhigh', 'xhigh']);
     expect(reasoningEffortForLevel(undefined)).toBeUndefined();
   });
 });

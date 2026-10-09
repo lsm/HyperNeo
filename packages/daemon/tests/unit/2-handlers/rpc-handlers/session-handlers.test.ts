@@ -227,6 +227,32 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
   });
 
+  it('lists the thinking levels each model accepts', async () => {
+    const models = [
+      { id: 'sonnet', name: 'Sonnet', provider: 'anthropic', contextWindow: 200_000 },
+      { id: 'kimi-k3', name: 'Kimi', provider: 'kimi', contextWindow: 200_000 },
+      {
+        id: 'quiet',
+        name: 'Quiet',
+        provider: 'anthropic',
+        contextWindow: 200_000,
+        thinkingModes: 'off',
+      },
+    ] as ModelInfo[];
+    setModelsCache(new Map([['global', models]]));
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ useCache: true }, {})) as {
+      models: Array<{ id: string; thinkingLevels: string[] }>;
+    };
+
+    expect(Object.fromEntries(result.models.map((m) => [m.id, m.thinkingLevels]))).toEqual({
+      sonnet: ['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k'],
+      'kimi-k3': ['off', 'think32k'],
+      quiet: [],
+    });
+  });
+
   it('returns the providers that answered first while a slow provider is still loading', async () => {
     let releaseSlow: () => void = () => {};
     const slowGate = new Promise<void>((resolve) => {

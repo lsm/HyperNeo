@@ -38,6 +38,7 @@ export interface SpaceOverviewResult {
   tasks: Array<SpaceTask & { descriptionTruncated?: boolean; resultTruncated?: boolean }>;
   workflowRuns: SpaceWorkflowRun[];
   sessions: string[];
+  archivedTaskCount: number;
 }
 
 function validateConcurrentLimit(limit: unknown): number {
@@ -450,6 +451,7 @@ export function setupSpaceHandlers(
       tasks: params.summary ? tasks.map(toSummaryTask) : tasks,
       workflowRuns,
       sessions: space.sessionIds,
+      archivedTaskCount: taskRepo.countBySpace(space.id, 'archived'),
     };
 
     return result;

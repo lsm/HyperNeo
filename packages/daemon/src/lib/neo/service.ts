@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CLOSED_DONE, NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
@@ -496,6 +496,30 @@ export class NeoService {
     };
   }
 
+  async close(
+    id: string,
+    outcome: 'done' | 'cancelled'
+  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
+    const work = this.repo.getWork(id);
+    if (!work) return { ok: false, reason: 'work_not_found' };
+    if (work.status === 'cancelled')
+      return outcome === 'cancelled'
+        ? { ok: true, work }
+        : { ok: false, reason: 'work_closed: cancelled work stays cancelled' };
+    if (outcome === 'done' && work.status === 'reported') return { ok: true, work };
+    const closed = this.repo.transitionWork(
+      id,
+      work,
+      outcome === 'done'
+        ? { status: 'reported', report: NEO_WORK_CLOSED_DONE }
+        : { status: 'cancelled' }
+    );
+    if (!closed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
+    const ref = this.driverTargets.readRef(id);
+    if (ref && work.status === 'queued') await this.stopDriverWork(ref, closed);
+    return { ok: true, work: closed };
+  }
+
   async cancel(id: string): Promise<void> {
     const work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
@@ -811,6 +835,7 @@ export class NeoService {
   }
 
   private async returnReport(work: NeoWork): Promise<void> {
+    if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
     if (await this.askDoneCheck(work)) return;
     const rootId = await this.open(null);
     if (work.concernId) {

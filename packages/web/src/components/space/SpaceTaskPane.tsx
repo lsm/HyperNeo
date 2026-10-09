@@ -31,7 +31,7 @@ import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
-import { filterDirectAttemptTargets, getTransitionActions } from './TaskStatusActions';
+import { filterDirectAttemptTargets, getTransitionActions } from '../../lib/task-actions';
 import { useRunHookStates } from './use-run-hook-states.ts';
 
 interface SpaceTaskPaneProps {
@@ -747,7 +747,7 @@ export function SpaceTaskPane({
   const allTransitionActions = filterDirectAttemptTargets(getTransitionActions(task.status), task);
   const filteredTransitionActions =
     task.status === 'review' || task.pendingCheckpointType === 'task_completion'
-      ? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
+      ? allTransitionActions.filter(({ target }) => target !== 'done')
       : task.blockReason === 'agent_handoff_required'
         ? allTransitionActions.filter(({ target }) => target !== 'open' && target !== 'in_progress')
         : allTransitionActions;

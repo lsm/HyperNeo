@@ -44,7 +44,6 @@ vi.mock('../lib/signals.ts', async () => {
     currentSpaceTaskIdSignal: make(null),
     currentSpaceViewModeSignal: make(null),
     currentSpaceTasksFilterTabSignal: make(null),
-    currentSpaceTaskViewTabSignal: make(null),
     navSectionSignal: make('chats'),
   };
 });

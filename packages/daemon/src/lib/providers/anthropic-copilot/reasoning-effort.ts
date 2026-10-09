@@ -10,6 +10,8 @@ const LEVEL_EFFORTS: Record<string, ReasoningEffort> = {
   think16k: 'medium',
   think24k: 'high',
   think32k: 'xhigh',
+  think48k: 'xhigh',
+  think64k: 'xhigh',
 };
 
 export function reasoningEffortForLevel(level: string | undefined): ReasoningEffort | undefined {

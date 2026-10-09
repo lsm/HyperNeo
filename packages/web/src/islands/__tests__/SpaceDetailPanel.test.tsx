@@ -41,7 +41,6 @@ let mockActiveRunsSignal!: Signal<Array<{ id: string }>>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceAgentHandleSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
-let mockCurrentSpaceTaskViewTabSignal!: Signal<string>;
 let mockSpaceOverlayPendingTaskIdSignal!: Signal<string | null>;
 let mockCurrentSpaceViewModeSignal!: Signal<string>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
@@ -59,7 +58,6 @@ function initSignals() {
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceAgentHandleSignal = signal(null);
   mockCurrentSpaceTaskIdSignal = signal(null);
-  mockCurrentSpaceTaskViewTabSignal = signal('thread');
   mockSpaceOverlayPendingTaskIdSignal = signal(null);
   mockCurrentSpaceViewModeSignal = signal('overview');
   mockSpaceOverlaySessionIdSignal = signal(null);
@@ -106,9 +104,6 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
     get currentSpaceTaskIdSignal() {
       return mockCurrentSpaceTaskIdSignal;
-    },
-    get currentSpaceTaskViewTabSignal() {
-      return mockCurrentSpaceTaskViewTabSignal;
     },
     get spaceOverlayPendingTaskIdSignal() {
       return mockSpaceOverlayPendingTaskIdSignal;
@@ -614,7 +609,6 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceTaskIdSignal.value = 't1';
     if (cover === 'overlay') mockSpaceOverlaySessionIdSignal.value = 'other';
     if (cover === 'pending overlay') mockSpaceOverlayPendingTaskIdSignal.value = 't2';
-    if (cover === 'canvas') mockCurrentSpaceTaskViewTabSignal.value = 'canvas';
     const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
     const row = screen.getByText('Task thread').closest('button')!;
     expect(within(row).getByLabelText('3 unread messages')).toBeTruthy();
@@ -623,7 +617,6 @@ describe('SpaceDetailPanel', () => {
 
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayPendingTaskIdSignal.value = null;
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     rerender(<SpaceDetailPanel spaceId="space-1" />);
     await waitFor(() => expect(spaceSessionLastSeen.value.get('worker')).toBe(3));
     expect(spaceTaskLastSeen.value.get('t1')).toBe(2);
