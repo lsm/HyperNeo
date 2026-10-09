@@ -9,7 +9,6 @@ import {
   type OperationCallerRole,
 } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
-import { routeRetryTask } from '../space/tools/task-transition-routing.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { resolveMetadataSessionSpace, resolveSpaceTaskOwner } from './metadata.ts';
@@ -74,17 +73,9 @@ export function admitRetrier(
 
 export function routeRetry(task: SpaceTask): { value: RetryPlan } | { reason: Rejection } {
   if (!isRetryableTaskStatus(task.status)) return { reason: 'status_not_retryable' };
-  const plan = routeRetryTask({
-    taskExists: true,
-    taskInSpace: true,
-    currentStatus: task.status,
-    hasWorkflowRun: task.workflowRunId != null,
-    taskId: task.id,
-  });
-  if (plan.action === 'reject') return { reason: 'status_not_retryable' };
   return {
     value:
-      plan.action === 'recover_workflow_task' ? { task, recoverTo: plan.targetStatus } : { task },
+      task.workflowRunId != null ? { task, recoverTo: retryTargetStatus(task.status) } : { task },
   };
 }
 
