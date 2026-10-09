@@ -624,11 +624,10 @@ export async function prepareCodexWorkFolder(
   };
 }
 
-export async function startCodexThread(
-  folder: string,
-  request: StartRequest,
-  deps: CodexDesktopAdapterDeps
-): Promise<Result<WorkSummary>> {
+export async function withCodexAppServer<Value>(
+  deps: Pick<CodexDesktopAdapterDeps, 'appServer'>,
+  use: (server: CodexAppServer) => Promise<Result<Value>>
+): Promise<Result<Value>> {
   let server: CodexAppServer;
   try {
     server = await deps.appServer();
@@ -638,40 +637,53 @@ export async function startCodexThread(
       `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  let threadId: string | null = null;
-  let workFolder: CodexWorkFolder | null = null;
   try {
-    const prepared = await prepareCodexWorkFolder(folder, deps);
-    if (!prepared.ok) return prepared;
-    workFolder = prepared.value;
-    threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
-    if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
-    await server.call('thread/name/set', { threadId, name: request.title });
-    await server.call('turn/start', {
-      threadId,
-      input: [{ type: 'text', text: request.message }],
-    });
-    return {
-      ok: true,
-      value: {
-        ref: { adapter: 'codex-desktop', id: threadId },
-        title: request.title,
-        place: { machine: deps.machine, folder, name: request.place.name },
-        status: 'running',
-        lastActivityAt: deps.now(),
-        link: `codex://threads/${threadId}`,
-      },
-    };
-  } catch (error) {
-    const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
-    return reject(
-      'not_delivered',
-      `${error instanceof Error ? error.message : String(error)}${made}`
-    );
+    return await use(server);
   } finally {
     server.close();
-    if (!threadId) await workFolder?.release();
   }
+}
+
+export async function startCodexThread(
+  folder: string,
+  request: StartRequest,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkSummary>> {
+  return withCodexAppServer(deps, async (server) => {
+    let threadId: string | null = null;
+    let workFolder: CodexWorkFolder | null = null;
+    try {
+      const prepared = await prepareCodexWorkFolder(folder, deps);
+      if (!prepared.ok) return prepared;
+      workFolder = prepared.value;
+      threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
+      if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+      await server.call('thread/name/set', { threadId, name: request.title });
+      await server.call('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: request.message }],
+      });
+      return {
+        ok: true,
+        value: {
+          ref: { adapter: 'codex-desktop', id: threadId },
+          title: request.title,
+          place: { machine: deps.machine, folder, name: request.place.name },
+          status: 'running',
+          lastActivityAt: deps.now(),
+          link: `codex://threads/${threadId}`,
+        },
+      };
+    } catch (error) {
+      const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
+      return reject(
+        'not_delivered',
+        `${error instanceof Error ? error.message : String(error)}${made}`
+      );
+    } finally {
+      if (!threadId) await workFolder?.release();
+    }
+  });
 }
 
 const runCodexStart = (superpipe({})('codex-start-work') as PipelineAPI)
@@ -690,32 +702,23 @@ export async function interruptCodexTurn(
   const threadId = detail.thread.id;
   const turnId = await readActiveCodexTurn(detail.thread.rolloutPath);
   if (!turnId) return { ok: true, value: { stopped: false } };
-  let server: CodexAppServer;
-  try {
-    server = await deps.appServer();
-  } catch (error) {
-    return reject(
-      'unreachable',
-      `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  try {
-    await server.call('turn/interrupt', { threadId, turnId });
-    return { ok: true, value: { stopped: true } };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('thread not found')) {
-      return reject(
-        'unsupported',
-        `Codex Desktop runs thread ${threadId} itself; stop it in the app.`
-      );
+  return withCodexAppServer<{ stopped: boolean }>(deps, async (server) => {
+    try {
+      await server.call('turn/interrupt', { threadId, turnId });
+      return { ok: true, value: { stopped: true } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('thread not found')) {
+        return reject(
+          'unsupported',
+          `Codex Desktop runs thread ${threadId} itself; stop it in the app.`
+        );
+      }
+      return (await readActiveCodexTurn(detail.thread.rolloutPath)) === turnId
+        ? reject('not_delivered', message)
+        : { ok: true, value: { stopped: false } };
     }
-    return (await readActiveCodexTurn(detail.thread.rolloutPath)) === turnId
-      ? reject('not_delivered', message)
-      : { ok: true, value: { stopped: false } };
-  } finally {
-    server.close();
-  }
+  });
 }
 
 const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
