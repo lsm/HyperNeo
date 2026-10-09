@@ -390,6 +390,7 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('record it with neo.ask.open before proposing its work');
     expect(prompt).toContain('Propose every card for that request with its askId');
     expect(prompt).toContain('neo.ask.settle {id,outcome,evidence}');
+    expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
   });
 });
 
