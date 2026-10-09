@@ -489,7 +489,7 @@ export function SpaceDetailPanel({
           }
         />
         <SpaceNavItem
-          label="Settings"
+          label="Space settings"
           active={currentSpaceViewModeSignal.value === 'configure'}
           onClick={() => navigateToSpaceConfigure(routeSpaceId)}
           testId="space-detail-settings"

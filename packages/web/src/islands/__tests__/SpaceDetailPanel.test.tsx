@@ -783,6 +783,7 @@ describe('SpaceDetailPanel', () => {
       render(<SpaceDetailPanel spaceId="space-1" />);
       const nav = screen.getByTestId('space-detail-settings');
       expect(screen.getByTestId('space-detail-tasks').nextElementSibling).toBe(nav);
+      expect(nav.textContent).toContain('Space settings');
 
       fireEvent.click(nav);
 
