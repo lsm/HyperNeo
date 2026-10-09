@@ -179,7 +179,7 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
       'legacy-name',
       { workflowNodeId: NODE_ID }
     );
-    expect(result).toEqual([{ agentName: 'legacy-name', sessionId: LIVE_SESSION_ID }]);
+    expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: LIVE_SESSION_ID }]);
     expect(harness.activationCalls()).toBe(1);
     expect(harness.spawnCalls()).toBe(1);
   });

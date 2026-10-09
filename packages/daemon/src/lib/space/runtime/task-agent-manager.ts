@@ -1693,17 +1693,6 @@ export class TaskAgentManager {
     return [...names];
   }
 
-  isAgentDeclaredOnNode(taskId: string, workflowNodeId: string, agentName: string): boolean {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return false;
-    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
-    if (!run?.workflowId) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-    if (!workflow) return false;
-    const node = workflow.nodes.find((n) => n.id === workflowNodeId);
-    return !!node && resolveNodeAgentName(node, agentName) !== null;
-  }
-
   getWorkflowDeclaredAgentNamesForTask(taskId: string): string[] {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return [];
@@ -2364,10 +2353,11 @@ export class TaskAgentManager {
     agentName: string,
     options?: { reopenReason?: string; reopenBy?: string; workflowNodeId?: string }
   ): Promise<Array<{ agentName: string; sessionId: string }>> {
-    await this.tryResumeNodeAgentSession(workflowRunId, agentName, options?.workflowNodeId);
+    const slotName = this.resolveAgentNameOnNode(taskId, agentName, options?.workflowNodeId);
+    const resolvedName = slotName ?? agentName;
+    await this.tryResumeNodeAgentSession(workflowRunId, resolvedName, options?.workflowNodeId);
     const matchesNode = (workflowNodeId: string) =>
       !options?.workflowNodeId || workflowNodeId === options.workflowNodeId;
-    const slotName = this.resolveAgentNameOnNode(taskId, agentName, options?.workflowNodeId);
     const matchesAgent = (name: string) => name === agentName || name === slotName;
     const existing = this.config.nodeExecutionRepo
       .listByWorkflowRun(workflowRunId)
@@ -2390,7 +2380,7 @@ export class TaskAgentManager {
         : null,
     });
     if (route.action === 'reuse_existing') {
-      return [{ agentName, sessionId: route.sessionId }];
+      return [{ agentName: existing?.agentName ?? resolvedName, sessionId: route.sessionId }];
     }
     if (route.action === 'reset_pending_and_continue' && existing) {
       if (existing.agentSessionId) {
@@ -2493,10 +2483,10 @@ export class TaskAgentManager {
       );
       return [];
     }
-    return [{ agentName, sessionId }];
+    return [{ agentName: resolvedName, sessionId }];
   }
 
-  private resolveAgentNameOnNode(
+  resolveAgentNameOnNode(
     taskId: string,
     agentName: string,
     workflowNodeId: string | undefined

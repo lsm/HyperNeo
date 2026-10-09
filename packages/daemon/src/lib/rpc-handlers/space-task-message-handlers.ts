@@ -105,7 +105,11 @@ export interface TaskAgentManagerInterface {
     options?: { reopenReason?: string; reopenBy?: string; workflowNodeId?: string }
   ): Promise<boolean>;
   getWorkflowDeclaredAgentNamesForTask?(taskId: string): string[];
-  isAgentDeclaredOnNode?(taskId: string, workflowNodeId: string, agentName: string): boolean;
+  resolveAgentNameOnNode?(
+    taskId: string,
+    agentName: string,
+    workflowNodeId: string | undefined
+  ): string | null;
   getSubSessionByAgentName?(
     taskId: string,
     agentName: string,
@@ -807,33 +811,30 @@ export function setupSpaceTaskMessageHandlers(
 
     const workflowRunId = task.workflowRunId;
 
+    const resolvedName = taskAgentManager.resolveAgentNameOnNode
+      ? taskAgentManager.resolveAgentNameOnNode(
+          params.taskId,
+          params.agentName,
+          params.workflowNodeId
+        )
+      : params.agentName;
+    if (resolvedName === null) {
+      throw new Error(`Node ${params.workflowNodeId} does not declare agent "${params.agentName}"`);
+    }
+    const agentName = resolvedName;
     const declaredNames =
       taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(params.taskId) ?? [];
-    if (!declaredNames.includes(params.agentName)) {
+    if (!declaredNames.includes(agentName)) {
       throw new Error(
-        `Agent "${params.agentName}" is not declared in this task's workflow. ` +
+        `Agent "${agentName}" is not declared in this task's workflow. ` +
           (declaredNames.length > 0
             ? `Declared agents: ${declaredNames.join(', ')}.`
             : 'No agents are declared for this task.')
       );
     }
 
-    if (params.workflowNodeId && taskAgentManager.isAgentDeclaredOnNode) {
-      if (
-        !taskAgentManager.isAgentDeclaredOnNode(
-          params.taskId,
-          params.workflowNodeId,
-          params.agentName
-        )
-      ) {
-        throw new Error(
-          `Node ${params.workflowNodeId} does not declare agent "${params.agentName}"`
-        );
-      }
-    }
-
-    const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId, {
-      reopenReason: `web client lazy activation of "${params.agentName}"`,
+    const outcome = await ensureWorker(params.taskId, agentName, params.workflowNodeId, {
+      reopenReason: `web client lazy activation of "${agentName}"`,
       reopenBy: 'web-client',
     });
     const retryableReasons = new Set([
@@ -847,17 +848,17 @@ export function setupSpaceTaskMessageHandlers(
         await injectResolvedSession(
           params.taskId,
           outcome.sessionId,
-          params.agentName,
+          agentName,
           `[Message from human]: ${params.message}`,
           undefined,
           undefined,
           params.clientMessageId
-            ? `human:${params.taskId}:${params.agentName}:${params.clientMessageId}`
+            ? `human:${params.taskId}:${agentName}:${params.clientMessageId}`
             : undefined
         );
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
-            `(agent=${params.agentName}, task=${params.taskId})`
+            `(agent=${agentName}, task=${params.taskId})`
         );
       }
       if (outcome.created || params.message) {
@@ -865,7 +866,7 @@ export function setupSpaceTaskMessageHandlers(
       }
       return {
         ok: true,
-        agentName: params.agentName,
+        agentName: agentName,
         sessionId: outcome.sessionId,
         activated: outcome.created,
       };
@@ -873,7 +874,7 @@ export function setupSpaceTaskMessageHandlers(
 
     if (!retryableReasons.has(outcome.reason)) {
       throw new Error(
-        `Could not activate "${params.agentName}"` +
+        `Could not activate "${agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
           '. The node may not declare this agent, or activation is temporarily unavailable.'
       );
@@ -881,13 +882,13 @@ export function setupSpaceTaskMessageHandlers(
 
     if (params.message) {
       throw new Error(
-        `"${params.agentName}" is still starting (${outcome.reason}) and the message was not delivered. ` +
+        `"${agentName}" is still starting (${outcome.reason}) and the message was not delivered. ` +
           'Send it again once the agent is online.'
       );
     }
 
     log.info(
-      `space.task.activateNodeAgent: agent=${params.agentName} task=${params.taskId} ` +
+      `space.task.activateNodeAgent: agent=${agentName} task=${params.taskId} ` +
         `node=${params.workflowNodeId ?? 'any'} activated=true`
     );
 
@@ -895,7 +896,7 @@ export function setupSpaceTaskMessageHandlers(
 
     return {
       ok: true,
-      agentName: params.agentName,
+      agentName: agentName,
       sessionId: null,
       activated: true,
     };
