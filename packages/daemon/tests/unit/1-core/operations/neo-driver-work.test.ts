@@ -20,6 +20,7 @@ import {
   readDriverSendBaseline,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
@@ -503,6 +504,125 @@ describe('Neo work with a drivers target', () => {
       expect(notes[1][2]).toContain('continue_budget_spent');
       expect(notes[1][2]).toContain('Do not continue it.');
       expect(notes[1][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('waits while its pull request runs CI, then checks it with the live state', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/42';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: `Opened ${url}; I will squash-merge once it is approved.`,
+      },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+    let prs = [running];
+    service.readPrs = async () => prs;
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        notes.push([messageId, content]);
+      },
+    });
+    const refreshLater = async () => {
+      service.workPrs.recordFailedRead('work-1', 0);
+      await service.refreshDriverWork();
+    };
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      expect(notes).toEqual([]);
+
+      await refreshLater();
+      expect(notes).toEqual([]);
+      service.readPrs = async () => null;
+      await service.reconcile('work-1');
+      await refreshLater();
+      expect(notes).toEqual([]);
+      expect(service.workPrs.get('work-1')?.readAt).toBeGreaterThan(0);
+      service.readPrs = async () => prs;
+      const snapshot = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.snapshot',
+        {},
+        { source: 'rpc', principal: 'local' }
+      );
+      expect(snapshot).toMatchObject({
+        value: { workPrs: [{ workId: 'work-1', prs: [running], waiting: true }] },
+      });
+
+      prs = [{ ...running, checks: 'passing', review: 'approved' }];
+      const changed = spyOn(service, 'notifyChanged');
+      await refreshLater();
+      expect(changed).toHaveBeenCalledTimes(1);
+      await refreshLater();
+      expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:2']);
+      expect(notes[0][1]).toContain('trust it over the report');
+      expect(notes[0][1]).toContain('"checks":"passing","review":"approved"');
+
+      let reads = 0;
+      service.readPrs = async () => {
+        reads++;
+        return prs;
+      };
+      const getSession = db.getSession.bind(db);
+      spyOn(db, 'getSession').mockImplementation((id: string) =>
+        id === 'neo:root' ? null : getSession(id)
+      );
+      await refreshLater();
+      expect(reads).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('skips cards checked before PR tracking and tells Neo once when PRs stay unreadable', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/42';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+    let reads = 0;
+    let readable = true;
+    service.readPrs = async () => {
+      reads++;
+      return readable ? [running] : null;
+    };
+    const notes: string[] = [];
+    Object.assign(service, {
+      hasDelivery: () => true,
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(reads).toBe(0);
+      Reflect.deleteProperty(service, 'hasDelivery');
+
+      await service.reconcile('work-1');
+      expect([reads, notes.length]).toEqual([1, 0]);
+
+      readable = false;
+      service.workPrs.record('work-1', [running], 0);
+      await service.refreshDriverWork();
+      service.workPrs.recordFailedRead('work-1', 0);
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toContain('may be out of date');
     } finally {
       db.close();
     }

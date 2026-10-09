@@ -60,6 +60,7 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
+import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -164,6 +165,23 @@ const Snapshot = z.union([
           count: z.number().int().nonnegative(),
           continuedAt: z.number(),
           lastMessage: z.string(),
+        })
+      )
+      .max(100)
+      .optional(),
+    workPrs: z
+      .array(
+        z.object({
+          workId: z.string(),
+          prs: z.array(
+            z.object({
+              url: z.string(),
+              state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
+              checks: z.enum(['pending', 'failing', 'passing', 'none']),
+              review: z.enum(['approved', 'changes_requested', 'none']),
+            })
+          ),
+          waiting: z.boolean(),
         })
       )
       .max(100)
@@ -468,6 +486,9 @@ export function createNeoOperations(service: NeoService) {
       workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
+      workPrs: service.workPrs
+        .list(visibleWork.map((item) => item.id))
+        .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) })),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
