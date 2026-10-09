@@ -1,25 +1,17 @@
-import { readDirectTaskWorktreePath } from './direct-task-workspace.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { JobQueueRepository, type Job } from '../../storage/repositories/job-queue-repository.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
-import { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { canonicalJson } from '../agent/prompt-comparison.ts';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../mailbox/enqueue.ts';
 import { mailboxEntryExpired, parseMailboxEntry, type MailboxEntry } from '../mailbox/entry.ts';
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
 import {
-  loadDirectTaskWorkerEvidence,
-  requireDirectTaskWorkerIdentity,
-} from './direct-task-worker-identity.ts';
-import {
+  admitRunningDirectQuery,
+  databaseDirectTaskQueryLookups,
   directQuerySessionId,
-  loadDirectTaskQueryState,
-  requireRunningDirectTaskQuery,
   type DirectTaskQueryAdmissionInput,
+  type RunningDirectQuery,
 } from './direct-task-query-admission.ts';
 
 type Outcome =
@@ -104,40 +96,21 @@ export function enqueueFrozenKickoff(
 }
 
 export function createDirectKickoffReconciler(db: Database) {
-  const attempts = new DirectTaskExecutionRepository(db);
-  const tasks = new SpaceTaskRepository(db);
-  const spaces = new SpaceRepository(db);
-  const sessions = new SessionRepository(db);
   const dependencies = {
     db,
     jobs: new JobQueueRepository(db),
     messages: new SDKMessageRepository(db),
-    getSession: (id: string) => sessions.getSession(id),
-    getTask: (id: string) => tasks.getTask(id),
-    getActiveAttempt: (id: string) => attempts.getActive(id),
-    getSpace: (id: string) => spaces.getSpace(id),
-    isStopRequested: (id: string, sessionId: string) => attempts.isStopRequested(id, sessionId),
-    getTaskWorktreePath: readDirectTaskWorktreePath(db),
+    lookups: databaseDirectTaskQueryLookups(db),
   };
   const reconcile = (superpipe(dependencies)('reconcile-direct-task-kickoff') as PipelineAPI)
     .input('input')
     .pipe(directQuerySessionId, ['input'], 'sessionId')
-    .pipe(
-      loadDirectTaskWorkerEvidence,
-      ['sessionId', 'getSession', 'getTask', 'getActiveAttempt'],
-      'evidence'
-    )
-    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:dispatch')
-    .pipe(
-      loadDirectTaskQueryState,
-      ['dispatch', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
-      'queryState'
-    )
-    .pipe(
-      requireRunningDirectTaskQuery,
-      ['input', 'dispatch', 'evidence', 'queryState'],
-      'result:dispatch'
-    )
+    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId', 'input'], 'result:dispatch')
+    .pipe((running: RunningDirectQuery) => running, 'dispatch', [
+      'identity:dispatch',
+      'evidence',
+      'queryState',
+    ])
     .pipe(requireKickoffEntry, ['db', 'input'], 'result:dispatch')
     .pipe(inspectDispatch, ['db', 'jobs', 'messages', 'input', 'dispatch'], 'dispatchState')
     .pipe(Date.now, undefined, 'now')

@@ -79,40 +79,66 @@ export function requireRunningDirectTaskQuery(
   return { value: identity };
 }
 
-export function createDirectTaskQueryAdmission(lookups: DirectTaskQueryLookups) {
-  return (superpipe({ ...lookups })('admit-running-direct-task-query') as PipelineAPI)
-    .input('input')
-    .pipe(directQuerySessionId, ['input'], 'sessionId')
-    .pipe(
-      loadDirectTaskWorkerEvidence,
-      ['sessionId', 'getSession', 'getTask', 'getActiveAttempt'],
-      'evidence'
-    )
-    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:identity')
-    .pipe(
-      loadDirectTaskQueryState,
-      ['identity', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
-      'queryState'
-    )
-    .pipe(
-      requireRunningDirectTaskQuery,
-      ['input', 'identity', 'evidence', 'queryState'],
-      'result:identity'
-    )
-    .end('identity') as (input: DirectTaskQueryAdmissionInput) => DirectTaskWorkerIdentity | null;
+export interface RunningDirectQuery {
+  identity: DirectTaskWorkerIdentity;
+  evidence: DirectTaskWorkerEvidence;
+  queryState: DirectTaskQueryState;
 }
 
-export function createDatabaseDirectTaskQueryAdmission(db: Database) {
+export function admitRunningDirectQuery(
+  lookups: DirectTaskQueryLookups,
+  sessionId: string,
+  expected?: DirectTaskQueryAdmissionInput
+): { value: RunningDirectQuery } | { reason: null } {
+  const evidence = loadDirectTaskWorkerEvidence(
+    sessionId,
+    lookups.getSession,
+    lookups.getTask,
+    lookups.getActiveAttempt
+  );
+  const worker = requireDirectTaskWorkerIdentity(sessionId, evidence);
+  if ('reason' in worker) return worker;
+  const queryState = loadDirectTaskQueryState(
+    worker.value,
+    lookups.getSpace,
+    lookups.isStopRequested,
+    lookups.getTaskWorktreePath
+  );
+  const running = requireRunningDirectTaskQuery(
+    expected ?? worker.value,
+    worker.value,
+    evidence,
+    queryState
+  );
+  return 'reason' in running
+    ? running
+    : { value: { identity: running.value, evidence, queryState } };
+}
+
+export function databaseDirectTaskQueryLookups(db: Database): DirectTaskQueryLookups {
   const sessions = new SessionRepository(db);
   const tasks = new SpaceTaskRepository(db);
   const spaces = new SpaceRepository(db);
   const attempts = new DirectTaskExecutionRepository(db);
-  return createDirectTaskQueryAdmission({
+  return {
     getSession: (id) => sessions.getSession(id),
     getTask: (id) => tasks.getTask(id),
     getActiveAttempt: (id) => attempts.getActive(id),
     getSpace: (id) => spaces.getSpace(id),
     isStopRequested: (attemptId, sessionId) => attempts.isStopRequested(attemptId, sessionId),
     getTaskWorktreePath: readDirectTaskWorktreePath(db),
-  });
+  };
+}
+
+export function createDirectTaskQueryAdmission(lookups: DirectTaskQueryLookups) {
+  return (superpipe({ lookups })('admit-running-direct-task-query') as PipelineAPI)
+    .input('input')
+    .pipe(directQuerySessionId, ['input'], 'sessionId')
+    .pipe(admitRunningDirectQuery, ['lookups', 'sessionId', 'input'], 'result:identity')
+    .pipe((running: RunningDirectQuery) => running.identity, 'identity', 'identity')
+    .end('identity') as (input: DirectTaskQueryAdmissionInput) => DirectTaskWorkerIdentity | null;
+}
+
+export function createDatabaseDirectTaskQueryAdmission(db: Database) {
+  return createDirectTaskQueryAdmission(databaseDirectTaskQueryLookups(db));
 }
