@@ -363,6 +363,16 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
+  countByStatuses(spaceId: string, statuses: readonly SpaceTaskStatus[]): number {
+    if (statuses.length === 0) return 0;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ? AND status IN (${statuses.map(() => '?').join(', ')})`
+      )
+      .get(spaceId, ...statuses) as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
   countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {
     let query = `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ?`;
     const params: SQLiteValue[] = [spaceId];
@@ -426,8 +436,10 @@ export class SpaceTaskRepository {
         params.status === 'blocked' ||
         params.status === 'cancelled'
       ) {
-        fields.push('completed_at = ?');
-        values.push(Date.now());
+        if (params.completedAt === undefined) {
+          fields.push('completed_at = ?');
+          values.push(Date.now());
+        }
       } else if (params.status === 'archived') {
         fields.push('archived_at = ?');
         values.push(Date.now());

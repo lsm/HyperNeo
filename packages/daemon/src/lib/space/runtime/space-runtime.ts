@@ -5,7 +5,7 @@ import {
 } from '../../tasks/task-manager.ts';
 import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { availableTaskSlots } from '../../tasks/capacity.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../tasks/capacity.ts';
 import { selectOrphanedInProgressTasks } from '../../tasks/orphaned-task-recovery.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { PendingCompletionSupersededError } from '../../tasks/pending-completion-guard.ts';
@@ -8569,7 +8569,7 @@ export class SpaceRuntime {
   private getAvailableTaskSlots(space: Space | null): number {
     return availableTaskSlots(
       space,
-      space ? this.config.taskRepo.listBySpace(space.id, false) : []
+      space ? this.config.taskRepo.countByStatuses(space.id, TASK_SLOT_STATUSES) : 0
     );
   }
 
