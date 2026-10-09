@@ -46,6 +46,7 @@ import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
 import type { ModelInfo, Provider } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
+import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
@@ -297,12 +298,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const embedQuery = async (text: string) => {
     const embedder = context.deps.db.getEmbedder();
     if (!context.deps.db.getSDKMessageRepo().hasTurnVectors(embedder.model)) return undefined;
-    try {
-      const vector = Float32Array.from(await embedder.embedQuery(text));
-      return { vector, model: embedder.model };
-    } catch {
-      return undefined;
-    }
+    const vector = await embedQueryOrNull(embedder, text);
+    return vector ? { vector, model: embedder.model } : undefined;
   };
   const recent = <Value>(
     cache: Map<string, { at: number } & Value>,

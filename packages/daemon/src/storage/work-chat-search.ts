@@ -1,5 +1,6 @@
 import { buildFtsQuery, messageSearchPolicy } from './message-search.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
+import { cosineSimilarity } from './vector-similarity.ts';
 
 const MATCH_CAP = 2_000;
 const SNIPPETS_PER_CHAT = 2;
@@ -86,19 +87,6 @@ export function fuseWorkChats(
     .sort((a, b) => b.score - a.score || b.lastHitAt - a.lastHitAt);
 }
 
-function cosine(left: Float32Array, right: Float32Array): number {
-  if (left.length !== right.length || left.length === 0) return -1;
-  let dot = 0;
-  let leftSize = 0;
-  let rightSize = 0;
-  for (let index = 0; index < left.length; index++) {
-    dot += left[index] * right[index];
-    leftSize += left[index] * left[index];
-    rightSize += right[index] * right[index];
-  }
-  return leftSize === 0 || rightSize === 0 ? -1 : dot / Math.sqrt(leftSize * rightSize);
-}
-
 export function vectorWorkChats(
   db: BunDatabase,
   tables: { sessions: boolean; spaceTasks: boolean },
@@ -128,7 +116,7 @@ export function vectorWorkChats(
         row.embedding.byteOffset,
         Math.floor(row.embedding.byteLength / 4)
       );
-      return { id: row.id, similarity: cosine(vector, stored) };
+      return { id: row.id, similarity: cosineSimilarity(vector, stored) ?? -1 };
     })
     .filter((row) => row.similarity >= MIN_SIMILARITY)
     .sort((a, b) => b.similarity - a.similarity)
