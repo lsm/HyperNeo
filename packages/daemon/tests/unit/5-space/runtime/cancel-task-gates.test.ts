@@ -8,6 +8,10 @@ import {
   requireManagedCancellation,
 } from '../../../../src/lib/tasks/cancel-task';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import type { SpaceMcpSessionPolicyContext } from '../../../../src/lib/space/runtime/space-mcp-session-policy';
+import type { CancellationRoute } from '../../../../src/lib/tasks/cancel-route';
+
+const policy = {} as SpaceMcpSessionPolicyContext;
 
 const task = (extra: Partial<SpaceTask> = {}) =>
   ({ id: 't1', spaceId: 's1', status: 'open', archivedAt: null, ...extra }) as SpaceTask;
@@ -39,7 +43,9 @@ describe('requireManagedCancellation', () => {
       unavailable,
     ],
     ['done for an agent', task({ status: 'done' }), { kind: 'plain' as const }, mcp, unavailable],
-  ])('rejects or defers %s', (_label, t, route, caller, expected) => {
+  ] as Array<
+    [string, SpaceTask | null, CancellationRoute | null, typeof rpc | typeof mcp, unknown]
+  >)('rejects or defers %s', (_label, t, route, caller, expected) => {
     expect(requireManagedCancellation(evidence(t), route, caller)).toEqual(expected);
   });
 
@@ -71,12 +77,12 @@ describe('requireExpectedCancelStatus', () => {
 describe('requireCancellerInSpace', () => {
   test('admits RPC callers and denies agents without an active session', () => {
     const t = task();
-    expect(requireCancellerInSpace(t, evidence(t), rpc, {}, 'denied')).toEqual({ value: t });
-    expect(requireCancellerInSpace(t, evidence(t), mcp, {}, 'denied')).toEqual({
+    expect(requireCancellerInSpace(t, evidence(t), rpc, policy, 'denied')).toEqual({ value: t });
+    expect(requireCancellerInSpace(t, evidence(t), mcp, policy, 'denied')).toEqual({
       reason: { accepted: false, reason: 'denied' },
     });
     const ended = { id: 'caller', status: 'ended' } as unknown as Session;
-    expect(requireCancellerInSpace(t, evidence(t, ended), mcp, {}, 'denied')).toEqual({
+    expect(requireCancellerInSpace(t, evidence(t, ended), mcp, policy, 'denied')).toEqual({
       reason: { accepted: false, reason: 'denied' },
     });
   });
@@ -106,12 +112,12 @@ describe('requireDirectCanceller', () => {
   const target = { attemptId: 'a1', sessionId: 'w', generation: 1, status: 'cancelled' as const };
   const t = task({ taskAgentSessionId: 'w' });
   test('rejects a missing attempt and admits RPC callers', () => {
-    expect(requireDirectCanceller(t, null, evidence(t), rpc, {})).toEqual({
+    expect(requireDirectCanceller(t, null, evidence(t), rpc, policy)).toEqual({
       reason: { accepted: false, reason: 'direct_cancellation_unavailable' },
     });
-    expect(requireDirectCanceller(t, { target, frozenStatus: null }, evidence(t), rpc, {})).toEqual(
-      { value: target }
-    );
+    expect(
+      requireDirectCanceller(t, { target, frozenStatus: null }, evidence(t), rpc, policy)
+    ).toEqual({ value: target });
   });
 
   test('lets the worker repeat its own frozen cancel and denies other agents', () => {
@@ -122,10 +128,16 @@ describe('requireDirectCanceller', () => {
       context: { taskId: 't1', spaceId: 's1' },
     } as unknown as Session;
     expect(
-      requireDirectCanceller(t, { target, frozenStatus: 'cancelled' }, evidence(t, worker), mcp, {})
+      requireDirectCanceller(
+        t,
+        { target, frozenStatus: 'cancelled' },
+        evidence(t, worker),
+        mcp,
+        policy
+      )
     ).toEqual({ value: target });
     expect(
-      requireDirectCanceller(t, { target, frozenStatus: null }, evidence(t, worker), mcp, {})
+      requireDirectCanceller(t, { target, frozenStatus: null }, evidence(t, worker), mcp, policy)
     ).toEqual({ reason: { accepted: false, reason: 'direct_cancellation_denied' } });
   });
 });
