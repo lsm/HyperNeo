@@ -25,6 +25,7 @@ export * from './types/message-delivery.ts';
 export * from './types/evolution.ts';
 export * from './evolution-preflight.ts';
 export * from './types/space-utils.ts';
+export * from './types/task-transitions.ts';
 export * from './space/workflow-autonomy.ts';
 export * from './types/tools.ts';
 export * from './types/app-mcp-server.ts';

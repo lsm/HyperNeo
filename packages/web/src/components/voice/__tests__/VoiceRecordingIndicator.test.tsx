@@ -235,7 +235,7 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceId = 'space-9';
     renderBase();
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
-    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', false);
+    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', false);
     expect(navigateToSpaceSession).not.toHaveBeenCalled();
     expect(navigateToSession).not.toHaveBeenCalled();
     expect(voiceReturnTaskTargetSessionSignal.value).toBe('task-agent-session');
@@ -383,12 +383,12 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
     routerState.overlaySessionId = 'overlay-session-7';
-    routerState.currentPath = '/space/space-9/task/task-42/thread';
+    routerState.currentPath = '/space/space-9/task/task-42';
     renderInOverlay();
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
     expect(closeOverlayHistory).toHaveBeenCalledTimes(1);
     expect(clearOverlaySignals).not.toHaveBeenCalled();
-    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', true);
+    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', true);
   });
 
   it('routes through the Space surface when only spaceId remains (overview/task pages)', () => {

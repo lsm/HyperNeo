@@ -197,7 +197,11 @@ describe('NeoLive work scene groups', () => {
     shared.work = [work('shared', 'queued', 80, 'a', { targetSessionId: 'project-chat' })];
     const { state, model } = renderLive({ snapshot: shared });
     const card = within(group('In progress')).getByRole('article', { name: 'Title shared' });
-    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+    expect(
+      within(card)
+        .queryAllByRole('button')
+        .map((button) => button.getAttribute('aria-label'))
+    ).toEqual(['Card actions']);
     fireEvent.click(within(card).getByText('Handed to HyperNeo'));
     expect(screen.getByTestId('neo-chat-panel').dataset.sessionId).toBe('shared-session');
     expect(model.act).not.toHaveBeenCalled();

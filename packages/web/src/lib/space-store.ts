@@ -361,6 +361,7 @@ class SpaceStore {
   readonly space = signal<Space | null>(null);
 
   readonly tasks = signal<SummarySpaceTask[]>([]);
+  readonly archivedTaskCount = signal(0);
 
   readonly taskDetails = signal<ReadonlyMap<string, SpaceTask>>(new Map());
 
@@ -717,6 +718,7 @@ class SpaceStore {
 
     this.space.value = null;
     this.tasks.value = [];
+    this.archivedTaskCount.value = 0;
     this.taskDetails.value = new Map();
     this.taskDetailPromises.clear();
     this.selectGeneration += 1;
@@ -1057,6 +1059,7 @@ class SpaceStore {
       tasks: SummarySpaceTask[];
       workflowRuns: SpaceWorkflowRun[];
       sessions: string[];
+      archivedTaskCount?: number;
     }>('space.overview', {
       ...(isUUID(spaceIdOrSlug) ? { id: spaceIdOrSlug } : { slug: spaceIdOrSlug }),
       summary: true,
@@ -1071,6 +1074,7 @@ class SpaceStore {
     this.updateRuntimeState(overview.space);
     this.workflowRuns.value = overview.workflowRuns ?? [];
     this.tasks.value = overview.tasks ?? [];
+    this.archivedTaskCount.value = overview.archivedTaskCount ?? 0;
     return overview.space.id;
   }
 

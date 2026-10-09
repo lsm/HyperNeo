@@ -62,7 +62,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     }
     const targetPath =
       recordingTaskId !== null && recordingSpaceId !== null
-        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId, 'thread')
+        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId)
         : recordingSpaceId !== null
           ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
           : createSessionPath(recordingSessionId);
@@ -76,7 +76,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     const replace = overlayOpen;
     if (recordingTaskId !== null && recordingSpaceId !== null) {
       voiceReturnTaskTargetSessionSignal.value = recordingSessionId;
-      navigateToSpaceTask(recordingSpaceId, recordingTaskId, 'thread', replace);
+      navigateToSpaceTask(recordingSpaceId, recordingTaskId, replace);
     } else if (recordingSpaceId !== null) {
       navigateToSpaceSession(recordingSpaceId, recordingSessionId, replace);
     } else {

@@ -77,7 +77,8 @@ describe('claude-desktop adapter against the app session records', () => {
       { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader' },
     ],
     exitCode = 0,
-    onSpawn = () => {}
+    onSpawn = () => {},
+    output: { stdout?: string; stderr?: string } = { stderr: exitCode ? 'relay failed' : '' }
   ) {
     spawned = [];
     return createClaudeDesktopAdapter({
@@ -100,8 +101,8 @@ describe('claude-desktop adapter against the app session records', () => {
         spawned.push({ args, cwd: options?.cwd });
         onSpawn();
         return {
-          stdout: null,
-          stderr: new Response(exitCode ? 'relay failed' : '').body,
+          stdout: new Response(output.stdout ?? '').body,
+          stderr: new Response(output.stderr ?? (exitCode ? 'relay failed' : '')).body,
           exited: Promise.resolve(exitCode),
           exitCode,
           kill: () => {},
@@ -363,6 +364,32 @@ describe('claude-desktop adapter against the app session records', () => {
       reason: 'not_delivered',
     });
     expect(spawned).toEqual([]);
+  });
+
+  test('a send that fails because the claude CLI login expired says how to fix it', async () => {
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    const expired = {
+      stdout: 'Failed to authenticate: OAuth session expired and could not be refreshed\n',
+      stderr: '',
+    };
+    const result = await adapter(undefined, 1, () => {}, expired).send?.(ref, 'hi', user);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'claude_cli_login_expired',
+      detail:
+        'The claude CLI on this Mac is not logged in (Failed to authenticate: OAuth session expired and could not be refreshed). Run `claude auth login`, then try again.',
+    });
+    const b2 = { adapter: 'claude-desktop', id: 'local_b2' };
+    expect(await adapter([], 1, () => {}, expired).send?.(b2, 'next', user)).toMatchObject({
+      reason: 'claude_cli_login_expired',
+    });
+    expect(
+      await adapter(undefined, 1, () => {}, { stdout: 'Error: rate limited', stderr: '' }).send?.(
+        ref,
+        'hi',
+        user
+      )
+    ).toEqual({ ok: false, reason: 'not_delivered', detail: 'Error: rate limited' });
   });
 
   test('send relays from the permission class of a session that bypasses permissions', async () => {

@@ -685,6 +685,7 @@ export function SpaceTasks({
   onCreateTask,
 }: SpaceTasksProps) {
   const tasks = spaceStore.tasks.value;
+  const archivedTaskCount = spaceStore.archivedTaskCount?.value ?? 0;
   const schedules = spaceStore.schedules.value;
   const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
   const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
@@ -715,8 +716,10 @@ export function SpaceTasks({
         }
       }
     }
+    const localArchived = tasks.filter((task) => task.status === 'archived').length;
+    c.completed += Math.max(0, archivedTaskCount - localArchived);
     return c;
-  }, [tasks, schedules]);
+  }, [tasks, schedules, archivedTaskCount]);
 
   const filteredTasks = useMemo(() => {
     if (activeTab === 'scheduled') return [];
@@ -731,7 +734,8 @@ export function SpaceTasks({
     return map;
   }, [tasks]);
 
-  const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
+  const showGlobalEmpty =
+    tasks.length === 0 && archivedTaskCount === 0 && activeTab !== 'scheduled';
 
   const draftTab: TabConfig | null =
     counts.draft > 0 ? { key: 'draft', label: 'Drafts', count: counts.draft } : null;
@@ -833,11 +837,12 @@ export function SpaceTasks({
               onDelete={(id) => spaceStore.deleteSchedule(id)}
             />
           )
-        ) : filteredTasks.length === 0 ? (
+        ) : filteredTasks.length === 0 && !(activeTab === 'completed' && archivedTaskCount > 0) ? (
           <EmptyTabState tab={activeTab} />
         ) : (
           <TaskGroupList
             tasks={tasks}
+            archivedTaskCount={archivedTaskCount}
             taskById={taskById}
             tab={activeTab as Exclude<TaskFilterTab, 'scheduled'>}
             spaceId={spaceId}
@@ -971,12 +976,14 @@ function ScheduleList({
 
 function TaskGroupList({
   tasks,
+  archivedTaskCount,
   taskById,
   tab,
   spaceId,
   onTaskClick,
 }: {
   tasks: SummarySpaceTask[];
+  archivedTaskCount: number;
   taskById: ReadonlyMap<string, SpaceTask>;
   tab: Exclude<TaskFilterTab, 'scheduled'>;
   spaceId: string;
@@ -990,8 +997,9 @@ function TaskGroupList({
         const matchFn = group.matchFn ?? ((t: SpaceTask) => t.status === group.status);
         const matching = tasks.filter(matchFn);
         const localCount = matching.length;
+        const serverOnlyCount = group.status === 'archived' ? archivedTaskCount : 0;
 
-        if (localCount === 0) return null;
+        if (localCount === 0 && serverOnlyCount === 0) return null;
 
         const contentSig = matching
           .map((t) =>

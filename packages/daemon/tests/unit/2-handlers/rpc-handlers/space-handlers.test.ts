@@ -171,6 +171,7 @@ function registrationError(
 function createMockTaskRepo(tasks: SpaceTask[] = [mockTask]): SpaceTaskRepository {
   return {
     listBySpace: mock(() => tasks),
+    countBySpace: mock(() => 0),
   } as unknown as SpaceTaskRepository;
 }
 
@@ -992,6 +993,15 @@ describe('space-handlers', () => {
       expect(result.tasks).toEqual([mockTask]);
       expect(result.workflowRuns).toEqual([mockRun]);
       expect(result.sessions).toEqual(mockSpace.sessionIds);
+    });
+
+    it('counts archived tasks it leaves out of the task list', async () => {
+      taskRepo.countBySpace = mock(() => 4);
+      const result = (await call('space.overview', { id: 'space-1' })) as {
+        archivedTaskCount: number;
+      };
+      expect(result.archivedTaskCount).toBe(4);
+      expect(taskRepo.countBySpace).toHaveBeenCalledWith('space-1', 'archived');
     });
 
     it('throws when id and slug are both missing', async () => {

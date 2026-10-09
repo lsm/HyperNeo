@@ -17,7 +17,6 @@ const {
   mockSpaceOverlaySessionIdSignal,
   mockSpaceOverlayAgentNameSignal,
   mockSpaceOverlayTaskContextSignal,
-  viewTabBridge,
   idBridge,
 } = vi.hoisted(() => ({
   mockSpaceOverlaySessionIdSignal: { value: null as string | null },
@@ -25,7 +24,6 @@ const {
   mockSpaceOverlayTaskContextSignal: {
     value: null as { taskId: string; agentName: string; nodeExecutionId?: string | null } | null,
   },
-  viewTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
   idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
@@ -49,20 +47,15 @@ const {
     }
   ),
   mockPushOverlayHistoryForPendingAgent: vi.fn(),
-  mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-    if (viewTabBridge.signal) {
-      viewTabBridge.signal.value = view ?? 'thread';
-    }
+  mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string) => {
     if (idBridge.signal) {
       idBridge.signal.value = _spaceId;
     }
   }),
 }));
 
-const mockCurrentSpaceTaskViewTabSignal = signal<string>('thread');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
 
-viewTabBridge.signal = mockCurrentSpaceTaskViewTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
 vi.mock('../../../lib/router', () => ({
@@ -84,9 +77,6 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
     },
     get spaceOverlayTaskContextSignal() {
       return mockSpaceOverlayTaskContextSignal;
-    },
-    get currentSpaceTaskViewTabSignal() {
-      return mockCurrentSpaceTaskViewTabSignal;
     },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
@@ -327,7 +317,6 @@ describe('SpaceTaskPane', () => {
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayAgentNameSignal.value = null;
     mockSpaceOverlayTaskContextSignal.value = null;
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     mockCurrentSpaceIdSignal.value = null;
     rightPanelTargetSignal.value = null;
     mockWorkflowCanvasOnNodeClick.mockClear();
@@ -691,7 +680,6 @@ describe('SpaceTaskPane — task actions', () => {
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayAgentNameSignal.value = null;
     mockSpaceOverlayTaskContextSignal.value = null;
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     mockCurrentSpaceIdSignal.value = null;
     rightPanelTargetSignal.value = null;
   });
@@ -986,7 +974,6 @@ describe('SpaceTaskPane — activity members actions', () => {
     mockSpaceOverlaySessionIdSignal.value = null;
     mockSpaceOverlayAgentNameSignal.value = null;
     mockSpaceOverlayTaskContextSignal.value = null;
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     mockCurrentSpaceIdSignal.value = null;
   });
 
@@ -1208,7 +1195,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(dividers.length).toBeGreaterThan(0);
   });
 
-  it('hides done and cancelled transitions when pendingCheckpointType is task_completion', () => {
+  it('leaves done to the Approve button but offers Cancel and Archive for a task in review', () => {
     mockTasks.value = [
       makeTask({
         status: 'review',
@@ -1220,7 +1207,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     const menu = getByRole('menu');
     expect(menu.textContent).not.toContain('Approve');
-    expect(menu.textContent).not.toContain('Cancel');
+    expect(menu.textContent).toContain('Cancel');
     expect(menu.textContent).toContain('Reopen');
     expect(menu.textContent).toContain('Archive');
   });
@@ -1927,7 +1914,6 @@ describe('SpaceTaskPane — composer layout', () => {
       makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
     );
     mockNavigateToSpaceTask.mockClear();
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     mockCurrentSpaceIdSignal.value = null;
     rightPanelTargetSignal.value = null;
   });
@@ -2037,7 +2023,6 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
     mockTaskActivity.value = new Map();
     mockTaskMessageActivity.value = new Map();
     mockNodeExecutions.value = [];
-    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
     rightPanelTargetSignal.value = null;
   });
 

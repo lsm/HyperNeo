@@ -62,6 +62,7 @@ export const WorkRejectionSchema = z.enum([
   'not_found',
   'not_open',
   'not_delivered',
+  'claude_cli_login_expired',
   'unreachable',
   'invalid_place',
 ]);
