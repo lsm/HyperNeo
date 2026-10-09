@@ -152,7 +152,7 @@ export function NeoLive() {
     drivers,
     prs
   );
-  const askGroups = groupNeoAsks(view?.asks, scenes);
+  const askGroups = groupNeoAsks(view?.asks, scenes, prs);
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention' },
     { key: 'running', label: 'In progress' },

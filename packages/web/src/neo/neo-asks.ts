@@ -1,5 +1,6 @@
 import type { NeoAsk, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoScene, NeoSceneGroup, NeoSceneGroups } from './neo-scenes.ts';
+import type { NeoScene, NeoSceneGroup, NeoSceneGroups, NeoScenePrs } from './neo-scenes.ts';
+import { neoWorkPrSetback } from './work-prs.ts';
 
 export type NeoAskView = {
   readonly ask: NeoAsk;
@@ -25,7 +26,11 @@ const askScenes: Record<NeoAskStatus, { group: NeoSceneGroup; label: string }> =
 
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
-export function describeNeoAsk(ask: NeoAsk, scenes: readonly NeoScene[]): NeoAskView {
+export function describeNeoAsk(
+  ask: NeoAsk,
+  scenes: readonly NeoScene[],
+  prs: NeoScenePrs = new Map()
+): NeoAskView {
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
   const needsYou = !settled && scenes.some((scene) => scene.group === 'attention');
@@ -33,7 +38,8 @@ export function describeNeoAsk(ask: NeoAsk, scenes: readonly NeoScene[]): NeoAsk
     (scene) =>
       scene.group === 'outcomes' &&
       scene.receipt.kind === 'work' &&
-      scene.receipt.status === 'reported'
+      scene.receipt.status === 'reported' &&
+      !neoWorkPrSetback(prs.get(scene.ref.id))
   ).length;
   return {
     ask,
@@ -47,7 +53,8 @@ export function describeNeoAsk(ask: NeoAsk, scenes: readonly NeoScene[]): NeoAsk
 
 export function groupNeoAsks(
   asks: readonly NeoAsk[] | undefined,
-  groups: NeoSceneGroups | null
+  groups: NeoSceneGroups | null,
+  prs: NeoScenePrs = new Map()
 ): NeoAskGroups {
   const all = groups ? [...groups.attention, ...groups.running, ...groups.outcomes] : [];
   const byWork = new Map(
@@ -61,7 +68,7 @@ export function groupNeoAsks(
       owned.add(id);
       return [scene];
     });
-    return describeNeoAsk(ask, scenes);
+    return describeNeoAsk(ask, scenes, prs);
   });
   const pick = (group: NeoSceneGroup) => views.filter((view) => view.group === group);
   const loose = (group: NeoSceneGroup) =>
