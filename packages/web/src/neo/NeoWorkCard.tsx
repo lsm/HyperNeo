@@ -15,7 +15,7 @@ import { providerLogoColor } from '../lib/provider-brand.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoWorkDriverLabel, neoWorkDriverLink } from './work-driver.ts';
-import { neoWorkPrInProgress, neoWorkPrLabel } from './work-prs.ts';
+import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
 
 const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
@@ -43,7 +43,10 @@ function neoWorkTone(
   prs?: NeoWorkPrReceipt
 ): keyof typeof tones {
   const status = work.status === 'queued' ? driver?.status : null;
-  if (work.status === 'reported') return neoWorkPrInProgress(prs) ? 'accent' : 'success';
+  if (work.status === 'reported') {
+    if (neoWorkPrInProgress(prs)) return 'accent';
+    return neoWorkPrSetback(prs) ? 'warning' : 'success';
+  }
   if (
     (work.status === 'queued' && waiting) ||
     work.status === 'failed' ||

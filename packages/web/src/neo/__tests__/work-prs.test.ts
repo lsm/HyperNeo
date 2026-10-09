@@ -1,6 +1,6 @@
 import type { NeoWorkPr, NeoWorkPrReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
-import { neoWorkPrInProgress, neoWorkPrLabel } from '../work-prs.ts';
+import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from '../work-prs.ts';
 
 const pr = (n: number, change: Partial<NeoWorkPr> = {}): NeoWorkPr => ({
   url: `https://github.com/lsm/HyperNeo/pull/${n}`,
@@ -47,5 +47,20 @@ describe('neoWorkPrInProgress', () => {
       [receipt(pr(1, { state: 'MERGED' }), pr(2)), true],
     ];
     expect(rows.map(([input]) => neoWorkPrInProgress(input))).toEqual(rows.map(([, v]) => v));
+  });
+});
+
+describe('neoWorkPrSetback', () => {
+  it('flags failing checks, requested changes and closed PRs, not merged or moving ones', () => {
+    const rows: [NeoWorkPrReceipt | undefined, boolean][] = [
+      [undefined, false],
+      [receipt(pr(1, { state: 'MERGED' })), false],
+      [receipt(pr(1, { checks: 'pending' })), false],
+      [receipt(pr(1, { checks: 'failing' })), true],
+      [receipt(pr(1, { review: 'changes_requested' })), true],
+      [receipt(pr(1, { state: 'CLOSED' })), true],
+      [receipt(pr(1, { state: 'MERGED' }), pr(2, { state: 'CLOSED' })), true],
+    ];
+    expect(rows.map(([input]) => neoWorkPrSetback(input))).toEqual(rows.map(([, v]) => v));
   });
 });

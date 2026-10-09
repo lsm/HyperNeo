@@ -8,6 +8,11 @@ export function neoWorkPrInProgress(receipt: NeoWorkPrReceipt | undefined): bool
   return prs.some((pr) => pr.state === 'OPEN') && !prs.some(stuck);
 }
 
+export function neoWorkPrSetback(receipt: NeoWorkPrReceipt | undefined): boolean {
+  const prs = receipt?.prs ?? [];
+  return prs.some(stuck) || prs.some((pr) => pr.state === 'CLOSED');
+}
+
 export function neoWorkPrLabel(receipt: NeoWorkPrReceipt | undefined): string | null {
   const prs = receipt?.prs ?? [];
   const pr = prs.find(stuck) ?? prs.find((candidate) => candidate.state === 'OPEN') ?? prs[0];
