@@ -79,9 +79,11 @@ describe('groupNeoAsks', () => {
 });
 
 describe('describeNeoAsk', () => {
-  it('counts cards the daemon has not sent yet and never raises a settled ask', () => {
+  it('counts cards the daemon has not sent yet, not cards still waiting on a PR, and never raises a settled ask', () => {
     const view = describeNeoAsk(ask('a', 'open', ['a1', 'gone']), scenes.outcomes.slice(0, 1));
     expect([view.done, view.total]).toEqual([1, 2]);
+    const waitingOnPr = { ...scenes.outcomes[0]!, group: 'running' as const };
+    expect(describeNeoAsk(ask('a', 'waiting', ['a1']), [waitingOnPr]).done).toBe(0);
     const settled = describeNeoAsk(ask('b', 'abandoned', ['b1']), scenes.attention);
     expect([settled.group, settled.label]).toEqual(['outcomes', 'Dropped']);
   });

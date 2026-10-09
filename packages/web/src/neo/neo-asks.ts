@@ -30,7 +30,10 @@ export function describeNeoAsk(ask: NeoAsk, scenes: readonly NeoScene[]): NeoAsk
   const settled = truth.group === 'outcomes';
   const needsYou = !settled && scenes.some((scene) => scene.group === 'attention');
   const done = scenes.filter(
-    (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'reported'
+    (scene) =>
+      scene.group === 'outcomes' &&
+      scene.receipt.kind === 'work' &&
+      scene.receipt.status === 'reported'
   ).length;
   return {
     ask,
