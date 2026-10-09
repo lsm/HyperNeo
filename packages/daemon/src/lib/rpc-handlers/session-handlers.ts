@@ -16,6 +16,7 @@ import type {
 import {
   composeDraftWhole,
   generateUUID,
+  getThinkingOptionsForProvider,
   matchesDraftOrComposition,
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
@@ -837,6 +838,9 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
+          thinkingLevels: getThinkingOptionsForProvider(m.provider, m.thinkingModes).map(
+            (option) => option.value
+          ),
           available: m.available !== false,
           type: 'model' as const,
         })),
