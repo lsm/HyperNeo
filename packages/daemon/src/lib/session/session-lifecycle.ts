@@ -1,6 +1,5 @@
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import type {
-  GlobalSettings,
   MessageHub,
   Provider,
   Session,
@@ -15,11 +14,9 @@ import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
-import { resolveFallbackChain } from '../agent/fallback-recovery.ts';
-import { canonicalModelId, findInModels } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { inferProviderForModel } from '../providers/registry.ts';
+import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
@@ -1133,82 +1130,29 @@ export class SessionLifecycle {
   private async getValidatedModelId(
     explicitModel: string | undefined,
     explicitProvider: string | undefined,
-    settings: Pick<
-      GlobalSettings,
-      'model' | 'modelProvider' | 'fallbackModels' | 'modelFallbackMap'
-    >
+    settings: NewSessionModelSettings
   ): Promise<{ id: string; provider?: string }> {
-    const defaultModel = settings.model || this.config.defaultModel;
-    const defaultProvider =
-      settings.modelProvider ?? (explicitModel ? undefined : explicitProvider);
-    const requestedModel = explicitModel ?? defaultModel;
-    const requestedProvider = explicitModel ? explicitProvider : defaultProvider;
-    const { isCuratedOutModel, getAvailableModels } = await import('../model-service.ts');
-    if (requestedProvider && isCuratedOutModel(requestedModel, requestedProvider)) {
+    const { catalog, decision } = await resolveNewSessionModel(
+      explicitModel,
+      explicitProvider,
+      settings,
+      this.config.defaultModel
+    );
+    if (catalog.error !== undefined)
+      this.logger.error('[SessionLifecycle] Error getting models:', catalog.error);
+    if (decision.kind === 'curated_out')
       throw new Error(
-        `Model '${requestedModel}' is curated out for provider '${requestedProvider}' and cannot be used for a new session`
+        `Model '${decision.model}' is curated out for provider '${decision.provider}' and cannot be used for a new session`
       );
-    }
-
-    let unavailable = false;
-    try {
-      const availableModels = getAvailableModels('global');
-
-      if (availableModels.length > 0) {
-        const pick = (model: string, provider: string | undefined) => {
-          const found = findInModels(
-            provider ? availableModels.filter((m) => m.provider === provider) : availableModels,
-            model
-          );
-          if (!found) return null;
-          return /\[1m\]$/i.test(model.trim()) &&
-            !/\[1m\]$/i.test(found.id) &&
-            KimiProvider.isKimiK3OneMModel(found.id)
-            ? { id: `${found.id}[1m]`, provider: found.provider }
-            : { id: found.id, provider: found.provider };
-        };
-        if (explicitModel) {
-          const requested = pick(explicitModel, explicitProvider);
-          if (requested) return requested;
-          if (explicitProvider) return { id: explicitModel, provider: explicitProvider };
-        }
-        const byDefault = pick(defaultModel, defaultProvider);
-        if (byDefault) return byDefault;
-        const chainProvider = defaultProvider ?? inferProviderForModel(defaultModel);
-        const chain = resolveFallbackChain(
-          chainProvider,
-          canonicalModelId(chainProvider, defaultModel),
-          settings.modelFallbackMap,
-          settings.fallbackModels
-        );
-        for (const entry of chain) {
-          const fallback = pick(entry.model, entry.provider);
-          if (fallback) {
-            this.logger.warn(
-              `[SessionLifecycle] Model '${requestedModel}' is not available; using fallback '${fallback.id}' (${fallback.provider})`
-            );
-            return fallback;
-          }
-        }
-        unavailable = true;
-      }
-    } catch (error) {
-      this.logger.error('[SessionLifecycle] Error getting models:', error);
-    }
-
-    if (unavailable) {
+    if (decision.kind === 'unavailable')
       throw new ModelUnavailableError(
-        `Model '${requestedModel}'${requestedProvider ? ` (${requestedProvider})` : ''} is not available and no fallback model is. Choose another default model in Settings.`
+        `Model '${decision.model}'${decision.provider ? ` (${decision.provider})` : ''} is not available and no fallback model is. Choose another default model in Settings.`
       );
-    }
-
-    const providerId = requestedProvider ?? inferProviderForModel(requestedModel);
-    if (isCuratedOutModel(requestedModel, providerId)) {
-      throw new Error(
-        `Model '${requestedModel}' is curated out for provider '${providerId}' and cannot be used for a new session`
+    if (decision.fallbackFrom)
+      this.logger.warn(
+        `[SessionLifecycle] Model '${decision.fallbackFrom}' is not available; using fallback '${decision.id}' (${decision.provider})`
       );
-    }
-    return { id: requestedModel, ...(requestedProvider ? { provider: requestedProvider } : {}) };
+    return { id: decision.id, ...(decision.provider ? { provider: decision.provider } : {}) };
   }
 }
 
