@@ -559,6 +559,18 @@ describe('Neo work with a drivers target', () => {
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:2']);
       expect(notes[0][1]).toContain('trust it over the report');
       expect(notes[0][1]).toContain('"checks":"passing","review":"approved"');
+
+      let reads = 0;
+      service.readPrs = async () => {
+        reads++;
+        return prs;
+      };
+      const getSession = db.getSession.bind(db);
+      spyOn(db, 'getSession').mockImplementation((id: string) =>
+        id === 'neo:root' ? null : getSession(id)
+      );
+      await refreshLater();
+      expect(reads).toBe(0);
     } finally {
       db.close();
     }

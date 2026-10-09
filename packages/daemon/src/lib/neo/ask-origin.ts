@@ -32,8 +32,12 @@ export function neoNudgeMessageId(messageId: string): string {
   return `${NUDGE_PREFIX}${messageId}`;
 }
 
-export function neoDoneCheckMessageId(workId: string, continued: number): string {
-  return `${workId}:done-check:${continued}`;
+export function neoDoneCheckMessageId(
+  workId: string,
+  continued: number,
+  prRevision?: number
+): string {
+  return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}`;
 }
 
 export function neoStallMessageId(workId: string, since: number): string {
@@ -49,7 +53,7 @@ export function neoWorkReviewId(workId: string, retries: number): string {
 }
 
 function checkedWorkId(messageId: string): string {
-  return /^(.+):(?:done-check|stall|retry):\d+$/.exec(messageId)?.[1] ?? messageId;
+  return /^(.+):(?:done-check|stall|retry):\d+(?::pr:\d+)?$/.exec(messageId)?.[1] ?? messageId;
 }
 
 function settledOrStalled(work: NeoWork, messageId: string): boolean {

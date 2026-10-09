@@ -699,14 +699,11 @@ export class NeoService {
     const row = this.workPrs.get(workId);
     if (work?.status !== 'reported' || work.report === NEO_WORK_CLOSED_DONE || !goal || !row)
       return;
-    if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS) return;
+    if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS || !this.db.getSession(work.originSessionId))
+      return;
     const prs = await this.readPrs(row.prs.map((pr) => pr.url));
     const next = prs && this.workPrs.record(workId, prs, Date.now());
-    if (
-      next &&
-      planNeoWorkPrRefresh(next) === 'deliver' &&
-      this.db.getSession(work.originSessionId)
-    )
+    if (next && planNeoWorkPrRefresh(next) === 'deliver')
       await this.deliverDoneCheck(work, goal, next);
   }
 
@@ -921,10 +918,9 @@ export class NeoService {
     row: NeoWorkPrRow | null
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
-    const id = neoDoneCheckMessageId(work.id, continued);
     await this.deliver(
       work.originSessionId,
-      row ? `${id}:pr:${row.revision}` : id,
+      neoDoneCheckMessageId(work.id, continued, row?.revision),
       driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), row?.prs),
       work.originSessionId
     );

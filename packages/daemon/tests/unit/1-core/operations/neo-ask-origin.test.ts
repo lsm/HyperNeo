@@ -371,6 +371,10 @@ describe('synchronous bounded ask resolver', () => {
     const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 2) };
     f.put(check, 'system');
     expect(f.resolve(check)).toEqual(ask);
+    const withPrs = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 2, 3) };
+    f.put(withPrs, 'system');
+    expect(withPrs.messageId).toBe(`${work.id}:done-check:2:pr:3`);
+    expect(f.resolve(withPrs)).toEqual(ask);
     const orphan = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId('missing', 0) };
     f.put(orphan, 'system');
     expect(f.resolve(orphan)).toBeNull();
