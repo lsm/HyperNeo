@@ -9,6 +9,7 @@ import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
 import type { NeoWorkAction } from './NeoWorkCard.tsx';
+import type { NeoAskOutcome } from './neo-asks.ts';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
@@ -133,6 +134,27 @@ export function useNeo() {
     }
   }
 
+  async function settleAsk(id: string, outcome: NeoAskOutcome) {
+    if (busyWork) return;
+    setBusyWork(id);
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.settle', {
+        id,
+        outcome,
+        evidence: 'Closed by the user.',
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That ask could not be closed.');
+    } finally {
+      if (alive.current) setBusyWork(null);
+    }
+  }
+
   const publicConversation = projectNeoPublicConversation(
     snapshot?.sessionId ?? null,
     asks,
@@ -159,6 +181,7 @@ export function useNeo() {
     busyWork,
     open,
     act,
+    settleAsk,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,

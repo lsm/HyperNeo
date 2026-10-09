@@ -24,6 +24,8 @@ const askScenes: Record<NeoAskStatus, { group: NeoSceneGroup; label: string }> =
   abandoned: { group: 'outcomes', label: 'Dropped' },
 };
 
+export type NeoAskOutcome = 'achieved' | 'abandoned';
+
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
 export function describeNeoAsk(

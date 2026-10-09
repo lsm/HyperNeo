@@ -602,7 +602,12 @@ export function NeoLive() {
                   {group.label} · {group.asks.length + group.scenes.length}
                 </h2>
                 {group.asks.map((ask) => (
-                  <NeoAskCard key={ask.ask.id} view={ask}>
+                  <NeoAskCard
+                    key={ask.ask.id}
+                    view={ask}
+                    disabled={!connected || !!neo.busyWork}
+                    onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
+                  >
                     {ask.scenes.map((scene) => renderScene(scene, ask.group))}
                   </NeoAskCard>
                 ))}

@@ -1,7 +1,9 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
+import { Dropdown } from '../components/ui/Dropdown.tsx';
+import { IconButton } from '../components/ui/IconButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import type { NeoAskView } from './neo-asks.ts';
+import type { NeoAskOutcome, NeoAskView } from './neo-asks.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -10,7 +12,17 @@ const tones = {
   ended: 'text-fg-muted bg-fill-soft',
 };
 
-export function NeoAskCard({ view, children }: { view: NeoAskView; children?: ComponentChildren }) {
+export function NeoAskCard({
+  view,
+  children,
+  disabled = false,
+  onSettle,
+}: {
+  view: NeoAskView;
+  children?: ComponentChildren;
+  disabled?: boolean;
+  onSettle?: (outcome: NeoAskOutcome) => void;
+}) {
   const [open, setOpen] = useState(view.group === 'attention');
   const { ask } = view;
   const tone =
@@ -40,10 +52,34 @@ export function NeoAskCard({ view, children }: { view: NeoAskView; children?: Co
             class="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
           />
         )}
+        <span class="ml-auto" />
         {view.total > 0 && (
-          <span class="ml-auto text-xs text-fg-muted">
+          <span class="text-xs text-fg-muted">
             {view.done} of {view.total} done
           </span>
+        )}
+        {onSettle && ask.status !== 'achieved' && ask.status !== 'abandoned' && (
+          <Dropdown
+            position="right"
+            items={[
+              { label: 'Mark done', onClick: () => onSettle('achieved'), disabled },
+              {
+                label: 'Drop this ask',
+                onClick: () => onSettle('abandoned'),
+                danger: true,
+                disabled,
+              },
+            ]}
+            trigger={
+              <IconButton title="Ask actions" size="sm" class="text-fg-faint">
+                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.75" />
+                  <circle cx="12" cy="12" r="1.75" />
+                  <circle cx="19" cy="12" r="1.75" />
+                </svg>
+              </IconButton>
+            }
+          />
         )}
       </div>
       <h3 class="break-words text-base font-medium">{ask.title}</h3>
