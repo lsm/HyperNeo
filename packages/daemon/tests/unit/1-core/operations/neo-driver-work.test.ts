@@ -20,6 +20,7 @@ import {
   readDriverSendBaseline,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoWorkPr } from '../../../../src/lib/neo/work-prs.ts';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
@@ -503,6 +504,52 @@ describe('Neo work with a drivers target', () => {
       expect(notes[1][2]).toContain('continue_budget_spent');
       expect(notes[1][2]).toContain('Do not continue it.');
       expect(notes[1][2]).toContain(NEO_WORK_SUMMARY_NOTE);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('waits while its pull request runs CI, then checks it with the live state', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/42';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: `Opened ${url}; I will squash-merge once it is approved.`,
+      },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+    let prs = [running];
+    service.readPrs = async () => prs;
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        notes.push([messageId, content]);
+      },
+    });
+    const refreshLater = async () => {
+      service.workPrs.record('work-1', service.workPrs.get('work-1')!.prs, 0);
+      await service.refreshDriverWork();
+    };
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      expect(notes).toEqual([]);
+
+      await refreshLater();
+      expect(notes).toEqual([]);
+
+      prs = [{ ...running, checks: 'passing', review: 'approved' }];
+      await refreshLater();
+      await refreshLater();
+      expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:2']);
+      expect(notes[0][1]).toContain('trust it over the report');
+      expect(notes[0][1]).toContain('"checks":"passing","review":"approved"');
     } finally {
       db.close();
     }

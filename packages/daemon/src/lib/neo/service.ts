@@ -1,6 +1,10 @@
 import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CLOSED_DONE, NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_WORK_CLOSED_DONE,
+  NEO_WORK_CONTINUE_LIMIT,
+  type NeoWorkGoal,
+} from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
@@ -13,6 +17,10 @@ import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
+import {
+  NeoWorkPrRepository,
+  type NeoWorkPrRow,
+} from '../../storage/repositories/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -65,6 +73,15 @@ import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
+import {
+  extractNeoWorkPrUrls,
+  isNeoWorkPrWaiting,
+  NEO_WORK_PR_READ_MS,
+  neoWorkPrSignature,
+  planNeoWorkPrRefresh,
+  readGithubPrs,
+  type NeoWorkPrReader,
+} from './work-prs.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -98,6 +115,8 @@ export class NeoService {
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
   readonly workContinues: NeoWorkContinueRepository;
+  readonly workPrs: NeoWorkPrRepository;
+  readPrs: NeoWorkPrReader = readGithubPrs;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -132,6 +151,7 @@ export class NeoService {
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
+    this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -666,6 +686,28 @@ export class NeoService {
         this.log.warn('Driver work refresh pending', error)
       );
     }
+    for (const workId of this.workPrs.listOpen()) {
+      await this.refreshWorkPrs(workId).catch((error) =>
+        this.log.warn('Work pull request refresh pending', error)
+      );
+    }
+  }
+
+  private async refreshWorkPrs(workId: string): Promise<void> {
+    const work = this.repo.getWork(workId);
+    const goal = this.workGoals.get(workId);
+    const row = this.workPrs.get(workId);
+    if (work?.status !== 'reported' || work.report === NEO_WORK_CLOSED_DONE || !goal || !row)
+      return;
+    if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS) return;
+    const prs = await this.readPrs(row.prs.map((pr) => pr.url));
+    const next = prs && this.workPrs.record(workId, prs, Date.now());
+    if (
+      next &&
+      planNeoWorkPrRefresh(next) === 'deliver' &&
+      this.db.getSession(work.originSessionId)
+    )
+      await this.deliverDoneCheck(work, goal, next);
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
@@ -866,15 +908,27 @@ export class NeoService {
     if (work.status !== 'reported' || !goal?.doneWhen || !this.driverTargets.get(work.id))
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
+    const urls = extractNeoWorkPrUrls(work.report);
+    const prs = urls.length ? await this.readPrs(urls) : null;
+    const row = prs && this.workPrs.record(work.id, prs, Date.now());
+    if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row);
+    return true;
+  }
+
+  private async deliverDoneCheck(
+    work: NeoWork,
+    goal: NeoWorkGoal,
+    row: NeoWorkPrRow | null
+  ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
-    const budget = this.continueBudget(work, Date.now());
+    const id = neoDoneCheckMessageId(work.id, continued);
     await this.deliver(
       work.originSessionId,
-      neoDoneCheckMessageId(work.id, continued),
-      driverDoneCheckNote(work, goal, continued, budget),
+      row ? `${id}:pr:${row.revision}` : id,
+      driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), row?.prs),
       work.originSessionId
     );
-    return true;
+    if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs));
   }
 
   private hasDelivery(sessionId: string, messageId: string): boolean {
