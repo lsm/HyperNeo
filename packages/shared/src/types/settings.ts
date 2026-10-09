@@ -91,10 +91,17 @@ export interface VoiceSettings {
 
 export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
 
+export interface NeoModelPreference {
+  model: string;
+  provider: string;
+  thinkingLevel: ThinkingLevel;
+}
+
 export interface NeoSettings {
   routeModel?: { provider: string; model: string };
   routeTimeoutMs?: number;
   standingRules?: string[];
+  preferences?: NeoModelPreference;
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

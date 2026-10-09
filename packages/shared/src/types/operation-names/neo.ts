@@ -9,6 +9,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.draft.recover',
   'neo.message.send',
   'neo.open',
+  'neo.preferences.set',
   'neo.publication.publish',
   'neo.publication.read',
   'neo.route.correct',

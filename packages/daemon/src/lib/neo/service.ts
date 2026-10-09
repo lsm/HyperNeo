@@ -1,4 +1,5 @@
-import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
+import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
+import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   NEO_WORK_CLOSED_DONE,
@@ -73,6 +74,7 @@ import {
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
+import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -292,6 +294,10 @@ export class NeoService {
           );
         }
         const binding = this.repo.getBindingBySession(sessionId);
+        if (binding && binding.kind !== 'worker')
+          await this.alignModelPreference(sessionId).catch((error) =>
+            this.log.warn('Neo model preference not applied', error)
+          );
         if (binding && binding.kind !== 'worker') {
           try {
             publishNeoDirectReplyFallback(sessionId, directReplies, {
@@ -323,6 +329,47 @@ export class NeoService {
       offUpdated();
       offDeleted();
     };
+  }
+
+  modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
+    const root = this.repo.getBindingForConcern(null)?.sessionId;
+    return effectiveNeoPreference(
+      this.db.getGlobalSettings?.().neo?.preferences,
+      root ? (this.db.getSession(root)?.config ?? null) : null
+    );
+  }
+
+  async saveModelPreference(preferences: NeoModelPreference): Promise<void> {
+    const neo = this.db.getGlobalSettings().neo;
+    const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
+    this.publishSettings?.(updated);
+    for (const binding of [
+      this.repo.getBindingForConcern(null),
+      ...this.repo.listConcernBindings(),
+    ]) {
+      if (binding)
+        await this.alignModelPreference(binding.sessionId).catch((error) =>
+          this.log.warn('Neo model preference not applied', error)
+        );
+    }
+  }
+
+  private async alignModelPreference(sessionId: string): Promise<void> {
+    const preference = this.modelPreference();
+    const config = this.db.getSession(sessionId)?.config;
+    const plan = preference && config ? planNeoAlignment(config, preference) : null;
+    if (!preference || !plan) return;
+    const live = await this.sessions.getSessionForControl(sessionId);
+    if (!live) return;
+    if (plan.model) {
+      const switched = await live.handleModelSwitch(preference.model, preference.provider, true);
+      if (!switched.success)
+        return this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
+    }
+    if (plan.thinking)
+      await this.sessions.updateSession(sessionId, {
+        config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
+      });
   }
 
   private forgetSession(sessionId: string): void {
@@ -384,6 +431,7 @@ export class NeoService {
     if (!this.db.getSession(binding.sessionId)) {
       const root = concernId ? this.repo.getBindingForConcern(null)?.sessionId : undefined;
       const rootSession = root ? this.db.getSession(root) : null;
+      const preference = this.modelPreference();
       await this.sessions.createSession({
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
@@ -395,9 +443,15 @@ export class NeoService {
           permissionMode: 'dontAsk',
           allowedTools: neoCoordinatorAllowedTools(concernId),
           maxTurns: 32,
-          ...(rootSession?.config?.model
-            ? { model: rootSession.config.model, provider: rootSession.config.provider }
-            : {}),
+          ...(preference
+            ? {
+                model: preference.model,
+                provider: preference.provider as Provider,
+                thinkingLevel: preference.thinkingLevel,
+              }
+            : rootSession?.config?.model
+              ? { model: rootSession.config.model, provider: rootSession.config.provider }
+              : {}),
         },
       });
     }

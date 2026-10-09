@@ -1,5 +1,6 @@
 import type { NeoConcern, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
+import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
   workId: string;
@@ -86,6 +87,7 @@ export interface NeoSnapshot {
   workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];
+  preferences?: (NeoModelPreference & { saved: boolean }) | null;
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };
