@@ -416,6 +416,9 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('Propose every card for that request with its askId');
     expect(prompt).toContain('neo.ask.settle {id,outcome,evidence}');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
+    expect(prompt).toContain('save it straight away with neo.rule.save');
+    expect(prompt).toContain('Never ask whether to save it.');
+    expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 });
 
