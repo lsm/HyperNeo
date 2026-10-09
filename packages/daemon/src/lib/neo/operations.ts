@@ -49,7 +49,14 @@ import {
   requireLiveNeoConsultationOrigin,
   type NeoConsultationOrigin,
 } from './consultation-origin.ts';
-import { NeoDriverTargetSchema, type NeoDriverTarget } from './driver-work.ts';
+import {
+  driverTargetDaemon,
+  NeoDriverTargetSchema,
+  readNeoDriverAdapters,
+  requireNeoDriverVerb,
+  type NeoDriverTarget,
+} from './driver-work.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
@@ -688,6 +695,30 @@ export function createNeoOperations(service: NeoService) {
       'owned'
     )
     .pipe(adoptOwnedNeoTarget, ['input', 'owned'], 'input')
+    .pipe(
+      ({ work }: z.infer<typeof Propose>, caller: OperationCaller) =>
+        work
+          ? readNeoDriverAdapters(() =>
+              invokeOperation(
+                service.sessions.getOperationRegistry(),
+                'work.adapters',
+                { daemon: driverTargetDaemon(work) },
+                caller
+              )
+            )
+          : null,
+      ['input', 'admission'],
+      'driverAdapters'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Propose>,
+        adapters: Parameters<typeof requireNeoDriverVerb>[1],
+        caller: OperationCaller
+      ) => requireNeoDriverVerb(input.work, adapters, caller),
+      ['input', 'driverAdapters', 'admission'],
+      'result:admission'
+    )
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         input.concernId && !service.repo.getConcern(input.concernId)
