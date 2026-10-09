@@ -12,7 +12,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import {
-  sanitizeGlobalSettings,
+  publishGlobalSettings,
   VOICE_CREDENTIAL_PROVIDER_ID,
   EXA_CREDENTIAL_PROVIDER_ID,
 } from './settings-handlers.ts';
@@ -265,10 +265,7 @@ async function persistAndSync(
   await syncCustomEndpointProviders(syncEndpoints);
   const { clearModelsCache } = await import('../model-service.js');
   clearModelsCache();
-  internalEventBus.publishAsync('settings.updated', {
-    namespaceId: 'global',
-    settings: sanitizeGlobalSettings(updated, credentialManager),
-  });
+  publishGlobalSettings(internalEventBus, updated, credentialManager);
   internalEventBus.publishAsync('providers.changed', {
     sessionId: 'global',
   });

@@ -6,7 +6,7 @@ import {
   type OperationCaller,
   type OperationDefinition,
 } from '../../operations/registry.ts';
-import { sanitizeGlobalSettings } from '../settings-handlers.ts';
+import { publishGlobalSettings } from '../settings-handlers.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 export interface DefaultModelDeps {
@@ -118,10 +118,7 @@ export function registerSettingsOperations(context: FamilyOperationContext): Ope
     read: () => settingsManager.getGlobalSettings(),
     write: (model, provider) => {
       const updated = settingsManager.updateGlobalSettings({ model, modelProvider: provider });
-      internalEventBus.publishAsync('settings.updated', {
-        namespaceId: 'global',
-        settings: sanitizeGlobalSettings(updated, credentialManager),
-      });
+      publishGlobalSettings(internalEventBus, updated, credentialManager);
     },
     models: () => getAvailableModels('global'),
   });
