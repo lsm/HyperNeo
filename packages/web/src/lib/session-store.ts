@@ -251,8 +251,6 @@ export class SessionStore {
 
   private sessionSwitchTime: number = 0;
 
-  private readonly _initialMessageCount = signal(0);
-
   private readonly _hasMoreMessages = signal(false);
 
   private readonly _contextInfo = signal<ContextInfo | null>(null);
@@ -335,7 +333,6 @@ export class SessionStore {
     this.sdkMessages.value = [];
     this.backgroundTaskMessages.value = [];
     this.retryAttempts.value = [];
-    this._initialMessageCount.value = 0;
     this._hasMoreMessages.value = false;
     this._contextInfo.value = null;
     this.lastAppliedRevision = 0;
@@ -591,7 +588,6 @@ export class SessionStore {
     this.sdkMessages.value = merged;
     this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(metadata);
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
-    this._initialMessageCount.value = rows.length;
     this.messagesLoaded.value = true;
     this.messagesResyncPending = false;
     this._syncCommandsFromSDKMessages(merged);
