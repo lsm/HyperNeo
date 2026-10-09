@@ -18,15 +18,13 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
     'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 };
 
-export function mergeNodeStructuralFieldsFromTemplate(
+type TemplateNodeMatch = Pick<WorkflowNode, 'id' | 'name' | 'agents'>;
+
+export function findRenamedTemplateInstalls<Template extends TemplateNodeMatch>(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[]
-): WorkflowNode[] {
-  const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
-  const existingNodeNames = new Set(existingNodes.map((node) => node.name));
-  const existingAgentNames = new Set(
-    existingNodes.flatMap((node) => node.agents.map((agent) => agent.name).filter(Boolean))
-  );
+  templateNodes: readonly TemplateNodeMatch[],
+  candidates: readonly Template[]
+): Set<Template> {
   const claimed = new Set(
     existingNodes
       .filter((node) =>
@@ -34,7 +32,8 @@ export function mergeNodeStructuralFieldsFromTemplate(
       )
       .map((node) => node.id)
   );
-  const installedUnderNewName = (template: (typeof templateNodes)[number]) => {
+  const renamed = new Set<Template>();
+  for (const template of candidates) {
     const match = existingNodes.find(
       (node) =>
         !claimed.has(node.id) &&
@@ -46,17 +45,31 @@ export function mergeNodeStructuralFieldsFromTemplate(
           )
         )
     );
-    if (match) claimed.add(match.id);
-    return !!match;
-  };
-  const missingTemplateNodes = templateNodes
-    .filter(
-      (node) =>
-        !existingNodes.some((existing) => existing.id === node.id) &&
-        !existingNodeNames.has(node.name) &&
-        !node.agents.some((agent) => agent.name && existingAgentNames.has(agent.name)) &&
-        !installedUnderNewName(node)
-    )
+    if (!match) continue;
+    claimed.add(match.id);
+    renamed.add(template);
+  }
+  return renamed;
+}
+
+export function mergeNodeStructuralFieldsFromTemplate(
+  existingNodes: WorkflowNode[],
+  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[]
+): WorkflowNode[] {
+  const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
+  const existingNodeNames = new Set(existingNodes.map((node) => node.name));
+  const existingAgentNames = new Set(
+    existingNodes.flatMap((node) => node.agents.map((agent) => agent.name).filter(Boolean))
+  );
+  const unmatched = templateNodes.filter(
+    (node) =>
+      !existingNodes.some((existing) => existing.id === node.id) &&
+      !existingNodeNames.has(node.name) &&
+      !node.agents.some((agent) => agent.name && existingAgentNames.has(agent.name))
+  );
+  const renamed = findRenamedTemplateInstalls(existingNodes, templateNodes, unmatched);
+  const missingTemplateNodes = unmatched
+    .filter((node) => !renamed.has(node))
     .map((node) => ({
       ...node,
       id: generateUUID(),
