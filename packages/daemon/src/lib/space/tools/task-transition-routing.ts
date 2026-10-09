@@ -1,5 +1,6 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
+import { isRetryableTaskStatus, retryTargetStatus } from '../../tasks/transitions.ts';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;
@@ -223,8 +224,7 @@ export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
     return target;
   }
   if (input.hasWorkflowRun) {
-    const retryableStatuses = ['blocked', 'cancelled', 'done'];
-    if (!retryableStatuses.includes(input.currentStatus)) {
+    if (!isRetryableTaskStatus(input.currentStatus)) {
       return {
         action: 'reject',
         reason: 'status_not_retryable',
@@ -233,7 +233,7 @@ export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
     }
     return {
       action: 'recover_workflow_task',
-      targetStatus: input.currentStatus === 'blocked' ? 'open' : 'in_progress',
+      targetStatus: retryTargetStatus(input.currentStatus),
     };
   }
   return { action: 'retry_task' };

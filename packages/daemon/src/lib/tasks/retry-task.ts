@@ -11,6 +11,7 @@ import {
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { routeRetryTask } from '../space/tools/task-transition-routing.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import { isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { resolveMetadataSessionSpace, resolveSpaceTaskOwner } from './metadata.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { TASK_SLOT_STATUSES, availableTaskSlots } from './capacity.ts';
@@ -37,7 +38,6 @@ type Result = SpaceTask | Rejection;
 type RetryPlan = { task: SpaceTask; recoverTo?: 'open' | 'in_progress' };
 
 const RETRY_ROLES: readonly OperationCallerRole[] = ['long_term_agent'];
-const RETRYABLE_STATUSES: ReadonlySet<string> = new Set(['blocked', 'cancelled', 'done']);
 
 export interface RetryTaskDependencies extends SpaceMcpSessionPolicyContext {
   getSession: (sessionId: string) => Session | null;
@@ -73,7 +73,7 @@ export function admitRetrier(
 }
 
 export function routeRetry(task: SpaceTask): { value: RetryPlan } | { reason: Rejection } {
-  if (!RETRYABLE_STATUSES.has(task.status)) return { reason: 'status_not_retryable' };
+  if (!isRetryableTaskStatus(task.status)) return { reason: 'status_not_retryable' };
   const plan = routeRetryTask({
     taskExists: true,
     taskInSpace: true,
@@ -93,7 +93,7 @@ export function requireRetrySlot(
   db: Database
 ): { value: RetryPlan } | { reason: Rejection } {
   const { task } = plan;
-  const target = plan.recoverTo ?? (task.status === 'blocked' ? 'open' : 'in_progress');
+  const target = plan.recoverTo ?? retryTargetStatus(task.status);
   if (target !== 'in_progress' || task.workflowRunId || task.taskAgentSessionId)
     return { value: plan };
   const space = new SpaceRepository(db).getSpace(task.spaceId);

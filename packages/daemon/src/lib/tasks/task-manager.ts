@@ -13,6 +13,8 @@ import {
   VALID_TASK_TRANSITIONS as VALID_SPACE_TASK_TRANSITIONS,
   isValidTaskTransition as isValidSpaceTaskTransition,
   assertValidTaskTransition as assertValidSpaceTaskTransition,
+  isRetryableTaskStatus,
+  retryTargetStatus,
 } from './transitions.ts';
 
 export { VALID_SPACE_TASK_TRANSITIONS, isValidSpaceTaskTransition, assertValidSpaceTaskTransition };
@@ -607,16 +609,13 @@ export class SpaceTaskManager {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
-    if (!retryableStatuses.includes(task.status)) {
+    if (!isRetryableTaskStatus(task.status)) {
       throw new Error(
         `Cannot retry task in '${task.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`
       );
     }
 
-    const targetStatus: SpaceTaskStatus =
-      task.status === 'done' || task.status === 'cancelled' ? 'in_progress' : 'open';
-    const retried = await this.setTaskStatus(taskId, targetStatus, {
+    const retried = await this.setTaskStatus(taskId, retryTargetStatus(task.status), {
       expectedStatus: options?.expectedStatus,
     });
 
