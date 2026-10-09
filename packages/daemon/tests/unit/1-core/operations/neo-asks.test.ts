@@ -12,7 +12,7 @@ import {
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
-import { neoWorkDoneGoal } from '../../../../src/lib/neo/driver-work.ts';
+import { driverDoneCheckNote, neoWorkDoneGoal } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -390,5 +390,21 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('record it with neo.ask.open before proposing its work');
     expect(prompt).toContain('Propose every card for that request with its askId');
     expect(prompt).toContain('neo.ask.settle {id,outcome,evidence}');
+  });
+});
+
+describe('driverDoneCheckNote', () => {
+  const goal = { workId: 'w', goal: 'Fix it', doneWhen: '- merged' };
+  const work = { id: 'w', title: 'Fix it', report: 'Merged.', originSessionId: 'root' };
+
+  test('asks the session that opened the ask to settle it, and only that session', () => {
+    expect(driverDoneCheckNote(work, goal, 0, null, { ask })).toContain(
+      'settle it with neo.ask.settle'
+    );
+    const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
+      ask,
+    });
+    expect(other).toContain('do not settle the ask');
+    expect(other).not.toContain('settle it with neo.ask.settle');
   });
 });
