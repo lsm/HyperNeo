@@ -9,7 +9,6 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
-import { getTaskStatusConfig } from '../../lib/task-status';
 import {
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -22,7 +21,6 @@ import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
-import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
 import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
 import { PendingHookBanner } from './PendingHookBanner';
@@ -1150,9 +1148,9 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class={`flex h-[88px] flex-shrink-0 items-center bg-surface-overlay border-b px-4 border-line`}
+        class="flex h-[88px] flex-shrink-0 flex-col justify-center gap-1 border-b border-line bg-surface-overlay px-4"
       >
-        <div class="flex w-full items-center gap-2" data-tauri-drag-region>
+        <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
           {onClose && (
             <button
               type="button"
@@ -1171,36 +1169,13 @@ export function SpaceTaskPane({
               </svg>
             </button>
           )}
-          <div class="flex min-w-0 flex-1 flex-col gap-1" data-tauri-drag-region>
-            <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
-              <span
-                class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
-                data-testid="task-number"
-              >
-                #{task.taskNumber}
-              </span>
-              <h2
-                class="min-w-0 truncate text-[15px] font-semibold leading-6 text-fg"
-                title={task.title}
-                data-tauri-drag-region
-              >
-                {task.title}
-              </h2>
-              {showHeaderStatusBadge && (
-                <span class="flex-shrink-0" data-testid="task-status-label">
-                  <StatusBadge
-                    tone={getTaskStatusConfig(task.status).tone}
-                    label={activitySummary}
-                  />
-                </span>
-              )}
-            </div>
-            <TaskHeaderMeta
-              task={task}
-              workspaceLabel={workspaceLabel}
-              routeSpaceId={navigationSpaceId}
-            />
-          </div>
+          <h2
+            class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-6 text-fg"
+            title={task.title}
+            data-tauri-drag-region
+          >
+            {task.title}
+          </h2>
           {task.status === 'review' && <TaskApproveButton task={task} />}
           {taskActionItems.length > 0 && (
             <Dropdown
@@ -1223,6 +1198,14 @@ export function SpaceTaskPane({
               }
             />
           )}
+        </div>
+        <div class={onClose ? 'pl-10' : undefined} data-tauri-drag-region>
+          <TaskHeaderMeta
+            task={task}
+            statusLabel={showHeaderStatusBadge ? activitySummary : null}
+            workspaceLabel={workspaceLabel}
+            routeSpaceId={navigationSpaceId}
+          />
         </div>
       </div>
 

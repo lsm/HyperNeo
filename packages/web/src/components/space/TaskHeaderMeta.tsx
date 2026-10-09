@@ -1,4 +1,5 @@
 import type { SpaceTask, SpaceTaskPriority } from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceEvolve, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
@@ -13,10 +14,12 @@ const PRIORITY_TEXT: Record<SpaceTaskPriority, { label: string; class: string }>
 
 export function TaskHeaderMeta({
   task,
+  statusLabel,
   workspaceLabel,
   routeSpaceId,
 }: {
   task: SpaceTask;
+  statusLabel?: string | null;
   workspaceLabel?: string | null;
   routeSpaceId: string;
 }) {
@@ -55,43 +58,81 @@ export function TaskHeaderMeta({
     : null;
   const priority = PRIORITY_TEXT[task.priority];
 
+  const items: ComponentChildren[] = [
+    <span key="number" class="font-mono tabular-nums" data-testid="task-number">
+      #{task.taskNumber}
+    </span>,
+    <span key="priority" class={priority.class} data-testid="task-header-priority">
+      {priority.label}
+    </span>,
+  ];
+  if (statusLabel) {
+    items.push(
+      <span key="status" class="text-fg-soft" data-testid="task-status-label">
+        {statusLabel}
+      </span>
+    );
+  }
+  if (goal) {
+    items.push(
+      <button
+        key="goal"
+        type="button"
+        class="min-w-0 truncate text-accent-soft hover:underline"
+        onClick={() => {
+          currentSpaceGoalIdSignal.value = goal.id;
+          navigateToSpaceGoals(routeSpaceId);
+        }}
+      >
+        Goal: {goal.title}
+      </button>
+    );
+  }
+  if (task.evolutionScopeId) {
+    const scopeId = task.evolutionScopeId;
+    items.push(
+      <button
+        key="scope"
+        type="button"
+        class="min-w-0 truncate text-accent-soft hover:underline"
+        onClick={() => {
+          currentSpaceScopeIdSignal.value = scopeId;
+          navigateToSpaceEvolve(routeSpaceId);
+        }}
+      >
+        Scope: {scopeName ?? scopeId}
+      </button>
+    );
+  }
+  if (schedule) {
+    items.push(
+      <span key="schedule" class="min-w-0 truncate">
+        From schedule: {schedule.title}
+      </span>
+    );
+  }
+  if (workspaceLabel) {
+    items.push(
+      <span key="workspace" class="min-w-0 truncate" data-testid="task-workspace-badge">
+        {workspaceLabel}
+      </span>
+    );
+  }
+
   return (
     <div
-      class="flex min-w-0 items-center gap-x-3 overflow-hidden whitespace-nowrap text-xs text-fg-muted"
+      class="flex min-w-0 items-center gap-x-1.5 overflow-hidden whitespace-nowrap text-xs text-fg-muted"
       data-testid="task-header-meta"
     >
-      <span class={priority.class} data-testid="task-header-priority">
-        {priority.label}
-      </span>
-      {goal && (
-        <button
-          type="button"
-          class="min-w-0 truncate text-accent-soft hover:underline"
-          onClick={() => {
-            currentSpaceGoalIdSignal.value = goal.id;
-            navigateToSpaceGoals(routeSpaceId);
-          }}
-        >
-          Goal: {goal.title}
-        </button>
-      )}
-      {task.evolutionScopeId && (
-        <button
-          type="button"
-          class="min-w-0 truncate text-accent-soft hover:underline"
-          onClick={() => {
-            currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
-            navigateToSpaceEvolve(routeSpaceId);
-          }}
-        >
-          Scope: {scopeName ?? task.evolutionScopeId}
-        </button>
-      )}
-      {schedule && <span class="min-w-0 truncate">From schedule: {schedule.title}</span>}
-      {workspaceLabel && (
-        <span class="min-w-0 truncate" data-testid="task-workspace-badge">
-          {workspaceLabel}
-        </span>
+      {items.flatMap((item, index) =>
+        index === 0
+          ? [item]
+          : [
+              <span key={`sep-${index}`} aria-hidden="true" class="text-fg-faint">
+                ·
+              </span>,
+              item,
+            ]
       )}
     </div>
   );
