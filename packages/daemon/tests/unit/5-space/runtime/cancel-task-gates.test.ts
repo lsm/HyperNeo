@@ -21,7 +21,9 @@ const evidence = (t: SpaceTask | null, callerSession: Session | null = null) => 
   task: t,
   callerSession,
 });
-const unavailable = { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+const unavailable: ReturnType<typeof requireManagedCancellation> = {
+  reason: { accepted: false, reason: 'cancellation_unavailable' },
+};
 
 describe('requireManagedCancellation', () => {
   test.each([
