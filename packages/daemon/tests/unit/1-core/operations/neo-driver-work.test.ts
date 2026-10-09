@@ -543,6 +543,12 @@ describe('Neo work with a drivers target', () => {
 
       await refreshLater();
       expect(notes).toEqual([]);
+      service.readPrs = async () => null;
+      await service.reconcile('work-1');
+      await refreshLater();
+      expect(notes).toEqual([]);
+      expect(service.workPrs.get('work-1')?.readAt).toBeGreaterThan(0);
+      service.readPrs = async () => prs;
       const snapshot = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.snapshot',
@@ -554,7 +560,9 @@ describe('Neo work with a drivers target', () => {
       });
 
       prs = [{ ...running, checks: 'passing', review: 'approved' }];
+      const changed = spyOn(service, 'notifyChanged');
       await refreshLater();
+      expect(changed).toHaveBeenCalledTimes(1);
       await refreshLater();
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:2']);
       expect(notes[0][1]).toContain('trust it over the report');

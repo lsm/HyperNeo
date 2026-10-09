@@ -4,6 +4,7 @@ import {
   NEO_WORK_CLOSED_DONE,
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkGoal,
+  type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
@@ -702,9 +703,19 @@ export class NeoService {
     if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS || !this.db.getSession(work.originSessionId))
       return;
     const prs = await this.readPrs(row.prs.map((pr) => pr.url));
-    const next = prs && this.workPrs.record(workId, prs, Date.now());
-    if (next && planNeoWorkPrRefresh(next) === 'deliver')
+    const next = this.recordWorkPrs(workId, prs ?? row.prs, row);
+    if (prs && next && planNeoWorkPrRefresh(next) === 'deliver')
       await this.deliverDoneCheck(work, goal, next);
+  }
+
+  private recordWorkPrs(
+    workId: string,
+    prs: readonly NeoWorkPr[],
+    before: NeoWorkPrRow | null
+  ): NeoWorkPrRow | null {
+    const row = this.workPrs.record(workId, prs, Date.now());
+    if (row && row.revision !== before?.revision) this.notifyChanged();
+    return row;
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
@@ -905,9 +916,10 @@ export class NeoService {
     if (work.status !== 'reported' || !goal?.doneWhen || !this.driverTargets.get(work.id))
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
+    const stored = this.workPrs.get(work.id);
     const urls = extractNeoWorkPrUrls(work.report);
     const prs = urls.length ? await this.readPrs(urls) : null;
-    const row = prs && this.workPrs.record(work.id, prs, Date.now());
+    const row = prs ? this.recordWorkPrs(work.id, prs, stored) : stored;
     if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row);
     return true;
   }
