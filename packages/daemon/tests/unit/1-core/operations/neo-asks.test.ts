@@ -6,6 +6,7 @@ import {
   requireNeoAskConcern,
   isNeoAskReplay,
   planNeoAskWorkStops,
+  planNeoCardAsk,
   requireNeoAskReceipt,
   requireNeoAskSettlement,
   requireNeoAskWritten,
@@ -162,6 +163,29 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
     expect(service.repo.getWork(running)?.status).toBe('cancelled');
     expect(service.repo.getWork(idle)?.status).toBe('cancelled');
+  });
+
+  test('opens an ask from a card proposed with a done list and no ask', async () => {
+    const card = {
+      title: 'Fix #5555',
+      instruction: 'Fix it.',
+      work: { verb: 'start', adapter: 'claude-desktop', place },
+      goal: 'Remove the write-only field',
+      doneWhen: '- merged to dev',
+    };
+    const first = await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
+    await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
+    await invoke('neo.work.propose', { ...card, requestKey: 'card-2', doneWhen: undefined });
+
+    const asks = service.askRecords.list();
+    expect(asks).toEqual([
+      expect.objectContaining({
+        ask: 'Remove the write-only field',
+        doneWhen: '- merged to dev',
+        doneSource: 'card',
+        workIds: [first.value!.work!.id],
+      }),
+    ]);
   });
 
   test('refuses a retried request key under another ask', async () => {
@@ -407,5 +431,26 @@ describe('driverDoneCheckNote', () => {
     });
     expect(other).toContain('do not settle the ask');
     expect(other).not.toContain('settle it with neo.ask.settle');
+  });
+});
+
+describe('planNeoCardAsk', () => {
+  const origin = { originSessionId: 'root', originMessageId: 'm1' };
+  const card = { requestKey: 'k', concernId: null, title: 'Fix it', doneWhen: '- merged' };
+
+  test('plans an ask only for a card with a done list and no ask', () => {
+    expect(planNeoCardAsk({ ...card, askId: 'a1' }, origin)).toBe(null);
+    expect(planNeoCardAsk({ ...card, doneWhen: undefined }, origin)).toBe(null);
+    expect(planNeoCardAsk(card, origin)).toEqual({
+      requestKey: 'root:card:k',
+      concernId: null,
+      originSessionId: 'root',
+      originMessageId: 'm1',
+      title: 'Fix it',
+      ask: 'Fix it',
+      doneWhen: '- merged',
+      doneSource: 'card',
+    });
+    expect(planNeoCardAsk({ ...card, goal: 'Their words' }, origin)?.ask).toBe('Their words');
   });
 });
