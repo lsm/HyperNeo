@@ -1,10 +1,8 @@
 import { WORKFLOW_SELECTOR_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
+import { runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService } from '../provider-service.ts';
-import { KimiProvider } from '../providers/kimi-provider.js';
 
 const log = new Logger('llm-workflow-selector');
 
@@ -48,45 +46,13 @@ export async function selectWorkflowWithLlmDefault(
   const prompt = buildSelectionPrompt(task, workflows);
 
   try {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const mergedEnv = await providerService.getIsolatedEnvForModel(provider, modelId);
-    const cliPath = resolveSDKCliPath();
-
-    const agentQuery = query({
+    const raw = await runOneShotModel({
       prompt,
-      options: {
-        model: provider === 'glm' ? 'haiku' : modelId,
-        maxTurns: 1,
-        permissionMode: 'acceptEdits',
-        allowDangerouslySkipPermissions: false,
-        mcpServers: {},
-        settingSources: [],
-        tools: [],
-        pathToClaudeCodeExecutable: cliPath,
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-        settings: withSdkTranscriptRetention(),
-        env: mergedEnv,
-        thinking:
-          provider === 'kimi'
-            ? KimiProvider.resolveKimiTitleThinkingConfig(modelId)
-            : { type: 'disabled' },
-      },
+      provider,
+      model: provider === 'glm' ? 'haiku' : modelId,
+      thinkingModelId: modelId,
+      env: await providerService.getIsolatedEnvForModel(provider, modelId),
     });
-
-    const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
-    let raw = '';
-    for await (const message of agentQuery) {
-      if (isSDKAssistantMessage(message)) {
-        const textBlocks = message.message.content.filter(
-          (b: { type: string }) => b.type === 'text'
-        ) as Array<{ text?: string }>;
-        raw = textBlocks
-          .map((b) => b.text ?? '')
-          .join(' ')
-          .trim();
-        if (raw) break;
-      }
-    }
 
     if (!raw) return null;
 
