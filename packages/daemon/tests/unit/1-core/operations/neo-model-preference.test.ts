@@ -101,6 +101,19 @@ describe('effectiveNeoPreference', () => {
       thinkingLevel: 'off',
       saved: false,
     });
+    expect(
+      effectiveNeoPreference(undefined, { model: 'r', provider: 'q' }, 'think8k')
+    ).toMatchObject({
+      thinkingLevel: 'think8k',
+      saved: false,
+    });
+    expect(
+      effectiveNeoPreference(
+        undefined,
+        { model: 'r', provider: 'q', thinkingLevel: 'off' },
+        'think8k'
+      )
+    ).toMatchObject({ thinkingLevel: 'off' });
     expect(effectiveNeoPreference(undefined, null)).toBe(null);
   });
 });

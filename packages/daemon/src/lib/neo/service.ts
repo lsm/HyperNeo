@@ -333,9 +333,11 @@ export class NeoService {
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
     const root = this.repo.getBindingForConcern(null)?.sessionId;
+    const settings = this.db.getGlobalSettings?.();
     return effectiveNeoPreference(
-      this.db.getGlobalSettings?.().neo?.preferences,
-      root ? (this.db.getSession(root)?.config ?? null) : null
+      settings?.neo?.preferences,
+      root ? (this.db.getSession(root)?.config ?? null) : null,
+      settings?.thinkingLevel
     );
   }
 
