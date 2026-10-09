@@ -110,7 +110,7 @@ async function cancelTask(
   deps: Deps
 ): Promise<Result> {
   const policy = cancelPolicy(owned, deps);
-  const request = { taskId: owned.task.id };
+  const request = { taskId: owned.task.id, expectedStatus: owned.task.status };
   const managed = await admitManagedCancellation(deps.db, request, caller, policy);
   if ('reason' in managed) return managed.reason;
   const direct = admitCancellation(deps.db, request, caller, policy);
@@ -126,7 +126,11 @@ async function submitForReview(
   caller: Caller,
   deps: Deps
 ): Promise<Result> {
-  const request = { taskId: task.id, reason: input.reviewReason ?? null };
+  const request = {
+    taskId: task.id,
+    reason: input.reviewReason ?? null,
+    expectedStatus: task.status,
+  };
   const managed = await admitManagedSubmission(deps.db, request, caller, deps);
   if ('reason' in managed) return managed.reason;
   const direct = admitSubmission(deps.db, request, caller);

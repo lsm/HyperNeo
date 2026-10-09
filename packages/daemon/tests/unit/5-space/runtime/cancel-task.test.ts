@@ -74,7 +74,10 @@ function createAgentSession(base: Session, id: string, type: Session['type'], sp
 }
 function canceller(policy: CancelPolicyContext) {
   return {
-    execute: async (input: { taskId: string }, caller: OperationCaller) => {
+    execute: async (
+      input: { taskId: string; expectedStatus?: 'open' | 'in_progress' },
+      caller: OperationCaller
+    ) => {
       const context = { ...sessionPolicy(), ...policy };
       const managed = await admitManagedCancellation(db, input, caller, context);
       if ('reason' in managed) return managed.reason;
@@ -130,6 +133,28 @@ function outcomeCount() {
     }
   ).n;
 }
+
+test('a stale expectedStatus rejects cancellation on the direct and managed routes', async () => {
+  expect(await operation.execute({ taskId, expectedStatus: 'open' }, { source: 'rpc' })).toEqual({
+    accepted: false,
+    reason: 'invalid_transition',
+  });
+  expect(outcomeCount()).toBe(0);
+  const plainId = tasks.createTask({
+    spaceId: tasks.getTask(taskId)!.spaceId,
+    title: 'Plain',
+    description: '',
+  }).id;
+  const managed = canceller({ getTaskManager: (id) => new SpaceTaskManager(db, id) });
+  expect(
+    await managed.execute({ taskId: plainId, expectedStatus: 'in_progress' }, { source: 'rpc' })
+  ).toEqual({ accepted: false, reason: 'invalid_transition' });
+  expect(tasks.getTask(plainId)?.status).toBe('open');
+  expect(
+    await managed.execute({ taskId: plainId, expectedStatus: 'open' }, { source: 'rpc' })
+  ).toEqual({ accepted: true, jobId: null });
+  expect(tasks.getTask(plainId)?.status).toBe('cancelled');
+});
 
 test.each(['rpc', 'internal', 'mcp'] as const)(
   '%s invocation returns a durable acknowledgement before shutdown, and repeating it while the stop is merely requested (attempt still running) replays the same ack idempotently',

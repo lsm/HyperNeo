@@ -381,12 +381,14 @@ export class SpaceTaskManager {
     opts: {
       submittedByNodeId: string | null;
       reason: string | null;
+      expectedStatus?: SpaceTaskStatus;
     }
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
+    assertTaskTransitionSnapshot(task, { expectedStatus: opts.expectedStatus });
 
     if (task.status === 'review') {
       if (task.pendingCheckpointType !== 'task_completion' && task.pendingCheckpointType != null) {
@@ -407,9 +409,15 @@ export class SpaceTaskManager {
         throw new Error(
           `Task ${taskId} cannot be submitted for review while its direct start is queued`
         );
-      return this.taskRepo.updateTask(taskId, prepareSpaceTaskReviewUpdate(opts, Date.now()));
+      return this.taskRepo.updateTask(
+        taskId,
+        prepareSpaceTaskReviewUpdate(opts, Date.now()),
+        opts.expectedStatus
+      );
     }, 'immediate')();
     if (!updated) {
+      if (opts.expectedStatus !== undefined)
+        throw new StaleTaskGuardError(`Task ${taskId} is no longer '${opts.expectedStatus}'`);
       throw new Error(`Failed to submit task for review: ${taskId}`);
     }
     return updated;

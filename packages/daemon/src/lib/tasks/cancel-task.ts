@@ -18,7 +18,7 @@ import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import { stopTaskExecution, type TaskStoppingExecutor } from './stop-task-execution.ts';
 
 const log = new Logger('CancelTask');
-type Input = { taskId: string };
+type Input = { taskId: string; expectedStatus?: SpaceTask['status'] };
 export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
   Pick<SpaceTaskDependencyDependencies, 'stopForStatus'> & {
     getTaskManager?: (spaceId: string) => Pick<SpaceTaskManager, 'setTaskStatus'>;
@@ -48,6 +48,8 @@ export async function admitManagedCancellation(
     status === 'cancelled' || (status === 'done' && caller.source !== 'rpc');
   if (task.archivedAt || finished(task.status))
     return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
+  if (input.expectedStatus !== undefined && task.status !== input.expectedStatus)
+    return { reason: { accepted: false, reason: 'invalid_transition' } };
   if (caller.source === 'mcp') {
     const session = caller.sessionId
       ? new SessionRepository(db).getSession(caller.sessionId)
@@ -126,6 +128,8 @@ export function admitCancellation(
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   if (!task?.spaceId || task.workflowRunId || !task.taskAgentSessionId || task.archivedAt)
     return unavailable;
+  if (input.expectedStatus !== undefined && task.status !== input.expectedStatus)
+    return { reason: { accepted: false, reason: 'invalid_transition' } };
   const row = db
     .prepare('SELECT id FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ?')
     .get(task.id, task.taskAgentSessionId) as { id: string } | null;
