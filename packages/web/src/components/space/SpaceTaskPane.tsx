@@ -1195,7 +1195,7 @@ export function SpaceTaskPane({
           />
         )}
         {task.status === 'review' && (
-          <div class="absolute right-14 top-full z-30 mt-3">
+          <div class="absolute right-14 top-full z-30 mt-3 rounded-lg bg-surface-raised shadow-lg shadow-black/30">
             <TaskApproveButton task={task} />
           </div>
         )}
