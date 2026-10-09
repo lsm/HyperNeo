@@ -1,4 +1,9 @@
-import { humanTaskTransitionTargets, type SpaceTaskStatus } from '@hyperneo/shared';
+import {
+  humanTaskTransitionTargets,
+  isWorkflowRecoveryTransition,
+  type SpaceTask,
+  type SpaceTaskStatus,
+} from '@hyperneo/shared';
 
 const TRANSITION_LABELS: Record<string, string> = {
   'draft->open': 'Publish',
@@ -27,8 +32,8 @@ const TRANSITION_LABELS: Record<string, string> = {
   'approved->in_progress': 'Reopen',
   'approved->archived': 'Archive',
   'approved->cancelled': 'Cancel',
-  'done->open': 'Reopen as Open',
-  'done->in_progress': 'Reopen',
+  'done->open': 'Reopen',
+  'done->in_progress': 'Resume',
   'done->cancelled': 'Cancel',
   'done->archived': 'Archive',
   'blocked->open': 'Reopen',
@@ -82,4 +87,30 @@ export function filterDirectAttemptTargets<T extends { target: SpaceTaskStatus }
     ? ['review', 'done', 'blocked', 'cancelled', 'stopped', 'archived']
     : ['cancelled'];
   return actions.filter(({ target }) => allowed.includes(target));
+}
+
+export function dropStatusOnlyStarts<T extends { target: SpaceTaskStatus }>(
+  actions: T[],
+  task: Pick<SpaceTask, 'status' | 'workflowRunId'>
+): T[] {
+  return actions.filter(
+    ({ target }) =>
+      target !== 'in_progress' ||
+      (!!task.workflowRunId && isWorkflowRecoveryTransition(task.status, target))
+  );
+}
+
+export function canRunAgain(
+  task: Pick<
+    SpaceTask,
+    'status' | 'workflowRunId' | 'taskAgentSessionId' | 'hasActiveDirectAttempt' | 'archivedAt'
+  >
+): boolean {
+  return (
+    !task.workflowRunId &&
+    !!task.taskAgentSessionId &&
+    !task.hasActiveDirectAttempt &&
+    !task.archivedAt &&
+    (task.status === 'blocked' || task.status === 'cancelled' || task.status === 'stopped')
+  );
 }

@@ -31,7 +31,12 @@ import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
-import { filterDirectAttemptTargets, getTransitionActions } from '../../lib/task-actions';
+import {
+  canRunAgain,
+  dropStatusOnlyStarts,
+  filterDirectAttemptTargets,
+  getTransitionActions,
+} from '../../lib/task-actions';
 import { useRunHookStates } from './use-run-hook-states.ts';
 
 interface SpaceTaskPaneProps {
@@ -744,7 +749,10 @@ export function SpaceTaskPane({
     }
   };
 
-  const allTransitionActions = filterDirectAttemptTargets(getTransitionActions(task.status), task);
+  const allTransitionActions = dropStatusOnlyStarts(
+    filterDirectAttemptTargets(getTransitionActions(task.status), task),
+    task
+  );
   const filteredTransitionActions =
     task.status === 'review' || task.pendingCheckpointType === 'task_completion'
       ? allTransitionActions.filter(({ target }) => target !== 'done')
@@ -889,6 +897,13 @@ export function SpaceTaskPane({
         danger: target === 'cancelled' || target === 'archived',
       }))
     );
+  }
+  if (canRunAgain(task)) {
+    taskActionItems.push({
+      label: 'Run again',
+      onClick: () => void handleRunTaskDirectly(),
+      disabled: statusTransitioning,
+    });
   }
 
   return (
