@@ -464,63 +464,6 @@ export class ProviderService {
     );
   }
 
-  async applyEnvVarsToProcess(modelId: string, providerId: string): Promise<OriginalEnvVars> {
-    const envVars = await this.getEnvVarsForModel(modelId, providerId);
-    const cleared = this.clearProviderRoutingEnvVars({
-      preserveUserSettings: providerId === 'anthropic',
-    });
-
-    if (Object.keys(envVars).length === 0) {
-      return cleared;
-    }
-
-    return mergeOriginalEnvVars(
-      cleared,
-      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
-    );
-  }
-
-  async applyEnvVarsToProcessForProvider(
-    providerId: string,
-    modelId?: string
-  ): Promise<OriginalEnvVars> {
-    await this.getReadyRegistry();
-    const registry = this.getRegistry();
-    const provider = registry.get(providerId);
-
-    if (!provider) {
-      return {};
-    }
-    if (providerId === 'anthropic') {
-      const envVars = sdkConfigToEnvVars(provider.buildSdkConfig(modelId || 'default'));
-      const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: true });
-      if (Object.keys(envVars).length === 0) {
-        return cleared;
-      }
-      return mergeOriginalEnvVars(cleared, this.applyEnvVars(envVars, { preserveApiKey: true }));
-    }
-
-    const sessionConfig = modelId ? { apiKey: undefined } : undefined;
-    let sdkConfig: ProviderSdkConfig;
-    try {
-      await this.ensureProviderBridges(provider, modelId || 'default', sessionConfig);
-      sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
-    } catch {
-      return {};
-    }
-    const envVars = sdkConfigToEnvVars(sdkConfig);
-    const cleared = this.clearProviderRoutingEnvVars({ preserveUserSettings: false });
-
-    if (Object.keys(envVars).length === 0) {
-      return cleared;
-    }
-
-    return mergeOriginalEnvVars(
-      cleared,
-      this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' })
-    );
-  }
-
   async getIsolatedEnvForModel(providerId: string, modelId: string): Promise<NodeJS.ProcessEnv> {
     const preserve = providerId === 'anthropic';
     const providerEnvVars = await this.getEnvVarsForModel(modelId, providerId);
@@ -748,10 +691,6 @@ export class ProviderService {
   async isGlmAvailable(): Promise<boolean> {
     return this.isProviderAvailable('glm');
   }
-}
-
-export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.ProcessEnv {
-  return { ...process.env, ...providerEnvVars };
 }
 
 const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');

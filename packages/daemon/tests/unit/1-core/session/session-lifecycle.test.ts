@@ -61,7 +61,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
     getDefaultProvider: async () => 'anthropic',
     getProviderApiKey: (_provider: string) => process.env.ANTHROPIC_API_KEY || undefined,
     isProviderAvailable: async () => false,
-    mergeProviderEnvVars: (s: object) => s,
     getIsolatedEnvForModel: async (provider: string, modelId: string) => ({
       ...process.env,
       ...(provider === 'glm'
@@ -80,7 +79,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
       sdkModelId: provider === 'glm' ? 'default' : sessionModelId,
     }),
   }),
-  mergeProviderEnvVars: (session: object) => session,
 }));
 
 const mockKimiModels: ModelInfo[] = [

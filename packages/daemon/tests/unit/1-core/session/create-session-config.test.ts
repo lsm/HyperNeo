@@ -36,8 +36,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
     getDefaultProvider: async () => 'anthropic',
     getProviderApiKey: () => undefined,
     isProviderAvailable: async () => false,
-    mergeProviderEnvVars: (s: object) => s,
-    applyEnvVarsToProcessForProvider: () => ({}),
     getTitleGenerationConfig: async () => ({ modelId: 'claude-sonnet-4-20250514' }),
     getTitleGenerationModels: async (_p: string, sessionModelId: string) => ({
       providerModelId: sessionModelId,
@@ -46,7 +44,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
     getEnvVarsForModel: () => ({}),
     restoreEnvVars: () => {},
   }),
-  mergeProviderEnvVars: (s: object) => s,
 }));
 
 import type { MessageHub, Session, SessionConfig } from '@hyperneo/shared';
