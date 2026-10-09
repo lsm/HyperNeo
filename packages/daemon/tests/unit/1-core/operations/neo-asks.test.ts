@@ -109,9 +109,19 @@ describe('neo.ask operations', () => {
       .id;
     await propose('card-1', first);
 
-    expect(await propose('card-1', second)).toMatchObject({
+    const refused = await invoke('neo.work.propose', {
+      requestKey: 'card-1',
+      title: 'Fix it',
+      instruction: 'Fix the login bug.',
+      work: { verb: 'start', adapter: 'claude-desktop', place },
+      askId: second,
+      goal: 'Something else',
+      doneWhen: '- deployed',
+    });
+    expect(refused).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('another ask') },
     });
+    expect(service.workGoals.get(service.askRecords.get(first)!.workIds[0])).toBe(null);
     expect(service.askRecords.get(second)?.workIds).toEqual([]);
     expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
   });

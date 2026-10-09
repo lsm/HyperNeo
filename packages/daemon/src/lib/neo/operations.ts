@@ -845,11 +845,6 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
-        const recordGoal = <Gate extends object>(gate: Gate, workId: string): Gate => {
-          if ('value' in gate)
-            service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
-          return gate;
-        };
         if (input.work) {
           const proposed = service.driverTargets.propose(
             service.repo,
@@ -868,10 +863,7 @@ export function createNeoOperations(service: NeoService) {
                 reason: 'This request key belongs to another execution target.',
               },
             };
-          return recordGoal(
-            requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null }),
-            proposed.work.id
-          );
+          return requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null });
         }
         const receipt = service.agentTargets.propose(
           service.repo,
@@ -890,7 +882,7 @@ export function createNeoOperations(service: NeoService) {
               reason: 'This request key belongs to another execution target.',
             },
           };
-        return recordGoal(requireNeoProposalReceipt(target, origin, receipt), receipt.work.id);
+        return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
       'result:admission'
@@ -903,6 +895,14 @@ export function createNeoOperations(service: NeoService) {
       'askLink'
     )
     .pipe(requireNeoWorkAskLink, ['input', 'askLink', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
+        service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
+        return true;
+      },
+      ['input', 'admission'],
+      'goalRecorded'
+    )
     .endAsync('admission') as (
     input: z.infer<typeof Propose>,
     caller: OperationCaller
