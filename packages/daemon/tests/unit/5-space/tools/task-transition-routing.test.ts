@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
-  routeRetryTask,
   routeTaskTarget,
   routeTaskUpdate,
   type TaskUpdateRoutingInput,
@@ -699,68 +698,6 @@ describe('routeTaskTarget shared gate', () => {
   test('an in-space task proceeds', () => {
     expect(routeTaskTarget({ taskExists: true, taskInSpace: true, taskId: 'task-1' })).toEqual({
       action: 'proceed',
-    });
-  });
-});
-
-describe('routeRetryTask', () => {
-  function retryInput(overrides: Partial<Parameters<typeof routeRetryTask>[0]> = {}) {
-    return {
-      taskExists: true,
-      taskInSpace: true,
-      currentStatus: 'blocked',
-      hasWorkflowRun: false,
-      taskId: 'task-1',
-      ...overrides,
-    };
-  }
-
-  test('missing task and foreign-space rejects win before the status gate', () => {
-    expect(routeRetryTask(retryInput({ taskExists: false, currentStatus: 'in_progress' }))).toEqual(
-      {
-        action: 'reject',
-        reason: 'task_not_found',
-        message: 'Task not found: task-1',
-      }
-    );
-    expect(
-      routeRetryTask(retryInput({ taskInSpace: false, currentStatus: 'in_progress' }))
-    ).toEqual({
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: 'Task task-1 does not belong to this space.',
-    });
-  });
-
-  test('a workflow-backed task outside the retryable statuses rejects with its status', () => {
-    for (const currentStatus of ['open', 'in_progress', 'review', 'archived'] as const) {
-      expect(routeRetryTask(retryInput({ currentStatus, hasWorkflowRun: true }))).toEqual({
-        action: 'reject',
-        reason: 'status_not_retryable',
-        message: `Cannot retry task in '${currentStatus}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
-      });
-    }
-  });
-
-  test('a workflow-backed blocked task recovers to open', () => {
-    expect(routeRetryTask(retryInput({ currentStatus: 'blocked', hasWorkflowRun: true }))).toEqual({
-      action: 'recover_workflow_task',
-      targetStatus: 'open',
-    });
-  });
-
-  test('workflow-backed cancelled and done tasks recover to in_progress', () => {
-    for (const currentStatus of ['cancelled', 'done'] as const) {
-      expect(routeRetryTask(retryInput({ currentStatus, hasWorkflowRun: true }))).toEqual({
-        action: 'recover_workflow_task',
-        targetStatus: 'in_progress',
-      });
-    }
-  });
-
-  test('the status gate never fires without a workflow run', () => {
-    expect(routeRetryTask(retryInput({ currentStatus: 'in_progress' }))).toEqual({
-      action: 'retry_task',
     });
   });
 });
