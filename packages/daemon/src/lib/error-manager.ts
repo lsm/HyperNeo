@@ -1,3 +1,4 @@
+import { isProviderNotRegisteredMessage } from './providers/session-provider-env-pipeline.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 import { Logger } from './logger.ts';
@@ -143,7 +144,7 @@ export class ErrorManager {
     if (message.includes('model_not_found')) {
       return 'MODEL_NOT_FOUND';
     }
-    if (message.includes('is not registered; cannot prepare environment')) {
+    if (isProviderNotRegisteredMessage(message)) {
       return 'PROVIDER_NOT_REGISTERED';
     }
 
