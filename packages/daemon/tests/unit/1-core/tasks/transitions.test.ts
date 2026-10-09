@@ -1,4 +1,7 @@
-import { assertQueuedTaskRetryTransition } from '../../../../src/lib/tasks/transitions';
+import {
+  assertQueuedTaskRetryTransition,
+  taskRejectionKind,
+} from '../../../../src/lib/tasks/transitions';
 import { describe, expect, test } from 'bun:test';
 import { isDirectOutcomeStatus, isDirectRerunStatus } from '@hyperneo/shared';
 import {
@@ -94,5 +97,18 @@ describe('isDirectRerunStatus', () => {
     ['review', false],
   ] as const)('%s → %s', (status, expected) => {
     expect(isDirectRerunStatus(status)).toBe(expected);
+  });
+});
+
+describe('taskRejectionKind', () => {
+  test('names the typed rejection an invalid transition throws, and nothing for other errors', () => {
+    let thrown: unknown;
+    try {
+      assertValidTaskTransition('archived', 'open');
+    } catch (error) {
+      thrown = error;
+    }
+    expect(taskRejectionKind(thrown)).toBe('invalid_transition');
+    expect(taskRejectionKind(new Error('Invalid status transition from x'))).toBeUndefined();
   });
 });

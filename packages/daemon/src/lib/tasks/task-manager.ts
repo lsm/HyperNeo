@@ -14,6 +14,7 @@ import {
   isValidTaskTransition as isValidSpaceTaskTransition,
   assertValidTaskTransition as assertValidSpaceTaskTransition,
   isRetryableTaskStatus,
+  TaskRejection,
   retryTargetStatus,
 } from './transitions.ts';
 
@@ -205,7 +206,7 @@ export class SpaceTaskManager {
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
+      throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
     }
 
     const expectedStatus = options?.expectedStatus;
@@ -257,7 +258,7 @@ export class SpaceTaskManager {
         if (options?.guardWrite) {
           const current = this.taskRepo.getTask(taskId);
           if (!current) {
-            throw new Error(`Task not found: ${taskId}`);
+            throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
           }
           const rejectionReason = options.guardWrite(current);
           if (rejectionReason !== undefined) {
@@ -296,7 +297,7 @@ export class SpaceTaskManager {
       if (err instanceof StaleGuardCasMiss) {
         const current = await this.getTask(taskId);
         if (!current) {
-          throw new Error(`Task not found: ${taskId}`);
+          throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
         }
         const generationMismatch =
           expectedGeneration !== undefined &&
@@ -395,19 +396,21 @@ export class SpaceTaskManager {
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
+      throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
     }
     assertTaskTransitionSnapshot(task, { expectedStatus: opts.expectedStatus });
 
     if (task.status === 'review') {
       if (task.pendingCheckpointType !== 'task_completion' && task.pendingCheckpointType != null) {
-        throw new Error(
+        throw new TaskRejection(
+          'checkpoint_not_refreshable',
           `Cannot re-submit task in 'review' with pendingCheckpointType '${task.pendingCheckpointType}'. ` +
             `Only 'task_completion' checkpoints can be refreshed.`
         );
       }
     } else if (!isValidSpaceTaskTransition(task.status, 'review')) {
-      throw new Error(
+      throw new TaskRejection(
+        'invalid_transition',
         `Invalid status transition from '${task.status}' to 'review'. ` +
           `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
       );
@@ -416,7 +419,8 @@ export class SpaceTaskManager {
     const { updates, reopened } = prepareSpaceTaskReviewSubmission(task, opts, Date.now());
     const updated = this.db.transaction(() => {
       if (new DirectTaskExecutionRepository(this.db).getActive(taskId)?.phase === 'reserved')
-        throw new Error(
+        throw new TaskRejection(
+          'direct_start_queued',
           `Task ${taskId} cannot be submitted for review while its direct start is queued`
         );
       const written = this.taskRepo.updateTask(taskId, updates, task.status);
@@ -519,7 +523,7 @@ export class SpaceTaskManager {
 
     let task = await this.getTask(taskId);
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
+      throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
     }
 
     this.validateTaskFieldGuards(task, resolvedParams);
@@ -536,7 +540,7 @@ export class SpaceTaskManager {
       const written = this.db.transaction(() => {
         const current = quietRepo.getTask(taskId);
         if (!current || current.spaceId !== this.spaceId)
-          throw new Error(`Task not found: ${taskId}`);
+          throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
         this.validateTaskFieldGuards(current, resolvedParams);
         const { workflowRunId, taskAgentSessionId, ...fields } = repoParams;
         const pointers = prepare(current, { workflowRunId, taskAgentSessionId });
@@ -557,7 +561,7 @@ export class SpaceTaskManager {
       updated = this.db.transaction(() => {
         const current = quietRepo.getTask(taskId);
         if (!current || current.spaceId !== this.spaceId)
-          throw new Error(`Task not found: ${taskId}`);
+          throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
         const rejectionReason = guardWrite(current);
         if (rejectionReason)
           throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
@@ -605,7 +609,7 @@ export class SpaceTaskManager {
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
+      throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
     }
 
     if (!isRetryableTaskStatus(task.status)) {
@@ -632,7 +636,7 @@ export class SpaceTaskManager {
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
+      throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
     }
 
     const allowedStatuses: SpaceTaskStatus[] = ['open', 'blocked', 'cancelled', 'done'];

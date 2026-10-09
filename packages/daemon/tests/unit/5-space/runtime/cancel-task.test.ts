@@ -8,6 +8,7 @@ import type { Database as AppDatabase } from '../../../../src/storage/database';
 import { createSpaceOperationRegistryProvider } from '../../../../src/lib/tasks/operations';
 import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/database-catalog';
 import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks/task-manager';
+import { TaskRejection } from '../../../../src/lib/tasks/transitions';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
@@ -539,13 +540,27 @@ test('a stop rejection naming an invalid transition surfaces cancellation_invali
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
   const stopForStatus = mock(async () => {
-    throw new Error("Invalid status transition from 'in_progress' to 'cancelled'. Allowed: none");
+    throw new TaskRejection(
+      'invalid_transition',
+      "Invalid status transition from 'in_progress' to 'cancelled'. Allowed: none"
+    );
   });
   const workflowOp = canceller({ stopForStatus });
   expect(await workflowOp.execute({ taskId }, { source: 'rpc' })).toMatchObject({
     accepted: false,
     reason: 'cancellation_invalid_transition',
   });
+});
+
+test('an untyped error that merely names an invalid transition propagates', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  tasks.updateTask(taskId, { workflowRunId: createWorkflowRunId(spaceId) });
+  const stopForStatus = mock(async () => {
+    throw new Error("Invalid status transition from 'in_progress' to 'cancelled'.");
+  });
+  await expect(canceller({ stopForStatus }).execute({ taskId }, { source: 'rpc' })).rejects.toThrow(
+    'Invalid status transition'
+  );
 });
 
 test('a stale workflow stop guard surfaces cancellation_unavailable', async () => {
@@ -702,7 +717,10 @@ test('a plain-task transition rejection surfaces cancellation_invalid_transition
   const plainOp = canceller({
     getTaskManager: () => ({
       setTaskStatus: async () => {
-        throw new Error("Invalid status transition from 'open' to 'cancelled'. Allowed: none");
+        throw new TaskRejection(
+          'invalid_transition',
+          "Invalid status transition from 'open' to 'cancelled'. Allowed: none"
+        );
       },
     }),
     emitTaskUpdated: async () => {},

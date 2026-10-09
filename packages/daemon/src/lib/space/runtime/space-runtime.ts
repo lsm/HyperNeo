@@ -89,6 +89,7 @@ import {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../tasks/task-manager.ts';
+import { TaskRejection } from '../../tasks/transitions.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -3337,7 +3338,10 @@ export class SpaceRuntime {
     if (!task || task.spaceId !== spaceId) return null;
     assertTaskTransitionSnapshot(task, expected);
     if (!isValidSpaceTaskTransition(task.status, 'stopped')) {
-      throw new Error(`Invalid status transition from '${task.status}' to 'stopped'.`);
+      throw new TaskRejection(
+        'invalid_transition',
+        `Invalid status transition from '${task.status}' to 'stopped'.`
+      );
     }
 
     const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(
@@ -4403,7 +4407,10 @@ export class SpaceRuntime {
         throw new Error(`Task ${taskId} requires an explicit handoff to a new worker session`);
       }
       if (task.status !== targetStatus && !isValidSpaceTaskTransition(task.status, targetStatus)) {
-        throw new Error(`Invalid status transition from '${task.status}' to '${targetStatus}'.`);
+        throw new TaskRejection(
+          'invalid_transition',
+          `Invalid status transition from '${task.status}' to '${targetStatus}'.`
+        );
       }
 
       const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
