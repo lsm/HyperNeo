@@ -8,6 +8,7 @@ import {
   NeoRoutingLogRepository,
 } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 const Input = z.object({ messageId: z.string().min(1), concernId: z.string().min(1) });
 const Result = z.discriminatedUnion('ok', [
@@ -27,7 +28,7 @@ export function requireMainNeo(
   repo: NeoRepository
 ): Gate<Input> {
   const binding = caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null;
-  return binding?.kind === 'neo' && binding.concernId === null
+  return isMainNeoBinding(binding)
     ? { value: input }
     : { reason: { ok: false, reason: 'main_neo_only' } };
 }
