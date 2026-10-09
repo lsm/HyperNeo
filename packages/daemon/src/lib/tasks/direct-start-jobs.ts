@@ -20,6 +20,9 @@ import {
 } from './start-direct-task.ts';
 import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
 import { DIRECT_TASK_START, readDirectStartRequest } from './direct-start-request.ts';
+import { Logger } from '../logger.ts';
+
+const log = new Logger('DirectStartJobs');
 
 export type DirectStartAcknowledgement =
   | { accepted: true; jobId: string | null }
@@ -126,6 +129,33 @@ export function createDirectStartJobHandler(
   };
 }
 
+export function createDirectStartDeadHandler(
+  db: Database,
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  onTaskAttemptChanged?: (taskId: string) => void
+) {
+  const attempts = new DirectTaskExecutionRepository(db);
+  const stop = createDirectAttemptStopper({
+    attempts,
+    tasks: new SpaceTaskRepository(db),
+    sessionManager,
+  });
+  return async (job: Job): Promise<boolean> => {
+    const attemptId = job.payload.attemptId;
+    if (job.queue !== DIRECT_TASK_START || typeof attemptId !== 'string') return false;
+    const attempt = attempts.get(attemptId);
+    if (attempt?.phase !== 'reserved' || readDirectStartRequest(db, attemptId)?.jobId !== job.id)
+      return false;
+    const stopped = await stop({
+      attemptId,
+      sessionId: attempt.sessionId,
+      outcome: 'start_superseded',
+    });
+    if (stopped.stopped) onTaskAttemptChanged?.(attempt.taskId);
+    return stopped.stopped;
+  };
+}
+
 export function registerDirectStartJobs(
   deps: Parameters<typeof createDirectTaskStarter>[0] & {
     sessionManager: DirectAttemptStopDependencies['sessionManager'];
@@ -133,6 +163,7 @@ export function registerDirectStartJobs(
     jobProcessor: Pick<JobQueueProcessor, 'register'>;
   }
 ): void {
+  const retire = createDirectStartDeadHandler(deps.db, deps.sessionManager, deps.onTaskClaimed);
   deps.jobProcessor.register(
     DIRECT_TASK_START,
     createDirectStartJobHandler(
@@ -141,6 +172,13 @@ export function registerDirectStartJobs(
       deps.jobQueue,
       deps.sessionManager,
       deps.onTaskClaimed
-    )
+    ),
+    {
+      onDead: (job) => {
+        retire(job).catch((error: unknown) =>
+          log.warn('Failed to retire a dead direct start reservation:', error)
+        );
+      },
+    }
   );
 }

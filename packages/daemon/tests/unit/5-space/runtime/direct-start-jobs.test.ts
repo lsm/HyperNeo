@@ -28,6 +28,7 @@ import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-
 import {
   registerDirectStartJobs,
   createDirectStartRequester,
+  createDirectStartDeadHandler,
   createDirectStartJobHandler,
 } from '../../../../src/lib/tasks/direct-start-jobs';
 import {
@@ -181,6 +182,33 @@ test('a superseded cleanup stop notifies so the live-attempt flag clears', async
   await handler(job);
   expect(attempts.getActive(taskId)).toBeNull();
   expect(changed).toEqual([taskId]);
+});
+
+test('a replay of the same request revives a dead start job under a fresh receipt', async () => {
+  const job = acceptedJob();
+  db.prepare("UPDATE job_queue SET status = 'dead' WHERE id = ?").run(job.id);
+  const ack = request({ taskId, requestKey: inputKey });
+  if (!ack.accepted || !ack.jobId) throw new Error('expected receipt');
+  expect(ack.jobId).not.toBe(job.id);
+  expect(jobs.getJob(ack.jobId)?.status).toBe('pending');
+  expect(readDirectStartRequest(db, attempts.getActive(taskId)!.id)?.jobId).toBe(ack.jobId);
+  expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toEqual({
+    started: false,
+    reason: 'superseded',
+  });
+});
+
+test('a dead start job retires its reservation so a new request can start', async () => {
+  const job = acceptedJob();
+  const changed: string[] = [];
+  const retire = createDirectStartDeadHandler(db, control, (id) => changed.push(id));
+  expect(await retire({ ...job, queue: 'other' })).toBe(false);
+  expect(await retire(job)).toBe(true);
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(tasks.getTask(taskId)?.status).toBe('open');
+  expect(changed).toEqual([taskId]);
+  expect(await retire(job)).toBe(false);
+  expect(request({ taskId, requestKey: 'after-dead' })).toMatchObject({ accepted: true });
 });
 
 test('pruned job receipt is not silently recreated by duplicate request', () => {
@@ -481,7 +509,9 @@ test('configured worker resumes the durable request without eager loading or ord
     jobProcessor: { register },
   });
   expect(register).toHaveBeenCalledTimes(1);
-  expect(register).toHaveBeenCalledWith(DIRECT_TASK_START, expect.any(Function));
+  expect(register).toHaveBeenCalledWith(DIRECT_TASK_START, expect.any(Function), {
+    onDead: expect.any(Function),
+  });
   expect(load).not.toHaveBeenCalled();
   expect(attempts.getActive(taskId)?.phase).toBe('reserved');
   const handler = register.mock.calls[0][1] as ReturnType<typeof createDirectStartJobHandler>;

@@ -41,6 +41,13 @@ export function enqueueDirectStartRequest(
   if (existing) {
     if (canonicalJson(existing.input) !== frozen)
       throw new Error('Direct start request conflicts with frozen input');
+    const status = jobs.getJob(existing.jobId)?.status;
+    if (status !== 'dead' && status !== 'failed') return;
+    const revived = jobs.enqueue({ queue: DIRECT_TASK_START, payload: { attemptId } });
+    db.prepare('UPDATE direct_task_start_requests SET job_id = ? WHERE attempt_id = ?').run(
+      revived.id,
+      attemptId
+    );
     return;
   }
   const job = jobs.enqueue({ queue: DIRECT_TASK_START, payload: { attemptId } });
