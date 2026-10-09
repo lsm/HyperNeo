@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   isValidSpaceTaskTransition,
   SpaceTaskManager,
+  StaleTaskGuardError,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/tasks/task-manager';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -1340,6 +1341,33 @@ describe('SpaceTaskManager', () => {
       const after = await manager.getTask(task.id);
       expect(after?.status).toBe('review');
       expect(after?.pendingCheckpointType).toBe('gate');
+    });
+
+    it('applies expectedStatus at the read and again at the write', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.startTask(task.id);
+      const running = await manager.getTask(task.id);
+
+      await expect(
+        manager.submitTaskForReview(task.id, {
+          submittedByNodeId: null,
+          reason: null,
+          expectedStatus: 'open',
+        })
+      ).rejects.toBeInstanceOf(StaleTaskGuardError);
+
+      await manager.failTask(task.id, 'stuck');
+      spyOn(manager, 'getTask').mockResolvedValueOnce(running);
+      await expect(
+        manager.submitTaskForReview(task.id, {
+          submittedByNodeId: null,
+          reason: null,
+          expectedStatus: 'in_progress',
+        })
+      ).rejects.toBeInstanceOf(StaleTaskGuardError);
+      const after = await manager.getTask(task.id);
+      expect(after?.status).toBe('blocked');
+      expect(after?.pendingCheckpointType).toBeFalsy();
     });
 
     it('rejects illegal source statuses before any pending-* fields get written', async () => {
