@@ -82,7 +82,7 @@ describe('Neo empty-conversation admission guidance', () => {
       });
       render(<NeoLive />);
       expect(screen.getByText(/A clear work request can start work/).textContent).toContain(
-        'Proposal-only requests wait for the card’s Start work button.'
+        'Proposal-only requests wait for their Start work button.'
       );
       expect(screen.queryByText(/Work starts when you approve its card/)).toBeNull();
       expect(screen.queryByRole('button', { name: 'Start work', exact: true })).toBeNull();

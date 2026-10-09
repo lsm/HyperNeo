@@ -567,8 +567,8 @@ export function NeoLive() {
                   ongoing.
                 </p>
                 <p class="mt-2 text-xs">
-                  A clear work request can start work. Proposal-only requests wait for the card’s
-                  Start work button.
+                  A clear work request can start work. Proposal-only requests wait for their Start
+                  work button.
                 </p>
               </div>
             )}
