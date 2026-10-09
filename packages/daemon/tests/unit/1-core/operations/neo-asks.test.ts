@@ -12,7 +12,9 @@ import {
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
+import { neoWorkDoneGoal } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -355,5 +357,30 @@ describe('planNeoAskWorkStops', () => {
     ]
   )('%s', (_case, outcome, stops) => {
     expect(planNeoAskWorkStops(works, outcome)).toEqual(stops);
+  });
+});
+
+describe('neoWorkDoneGoal', () => {
+  test('prefers the card checklist and falls back to its ask', () => {
+    expect(neoWorkDoneGoal('w', { workId: 'w', goal: 'Card', doneWhen: '- card' }, ask)).toEqual({
+      workId: 'w',
+      goal: 'Card',
+      doneWhen: '- card',
+    });
+    expect(neoWorkDoneGoal('w', null, ask)).toEqual({
+      workId: 'w',
+      goal: ask.ask,
+      doneWhen: ask.doneWhen,
+    });
+    expect(neoWorkDoneGoal('w', null, null)).toBe(null);
+  });
+});
+
+describe('neoPrompt', () => {
+  test('tells root Neo to open, file under and settle asks', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('record it with neo.ask.open before proposing its work');
+    expect(prompt).toContain('Propose every card for that request with its askId');
+    expect(prompt).toContain('neo.ask.settle {id,outcome,evidence}');
   });
 });

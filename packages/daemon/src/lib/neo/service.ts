@@ -3,6 +3,7 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import {
   NEO_WORK_CLOSED_DONE,
   NEO_WORK_CONTINUE_LIMIT,
+  type NeoAsk,
   type NeoWorkGoal,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
@@ -61,6 +62,7 @@ import {
   readDriverSettlement,
   driverNeedsYouNote,
   driverDoneCheckNote,
+  neoWorkDoneGoal,
   NEO_WORK_SUMMARY_NOTE,
   driverStallNote,
   NEO_WORK_STALL_MS,
@@ -700,7 +702,8 @@ export class NeoService {
 
   private async refreshWorkPrs(workId: string): Promise<void> {
     const work = this.repo.getWork(workId);
-    const goal = this.workGoals.get(workId);
+    const ask = this.askRecords.forWork(workId);
+    const goal = neoWorkDoneGoal(workId, this.workGoals.get(workId), ask);
     const row = this.workPrs.get(workId);
     if (work?.status !== 'reported' || work.report === NEO_WORK_CLOSED_DONE || !goal || !row)
       return;
@@ -710,7 +713,7 @@ export class NeoService {
     if (!prs) this.workPrs.recordFailedRead(workId, Date.now());
     const next = prs ? this.recordWorkPrs(workId, prs, row) : row;
     if (next && planNeoWorkPrRefresh(next, !!prs, Date.now()) === 'deliver')
-      await this.deliverDoneCheck(work, goal, next, !prs);
+      await this.deliverDoneCheck(work, goal, next, { stale: !prs, ask });
   }
 
   private recordWorkPrs(
@@ -917,7 +920,8 @@ export class NeoService {
   }
 
   private async askDoneCheck(work: NeoWork): Promise<boolean> {
-    const goal = this.workGoals.get(work.id);
+    const ask = this.askRecords.forWork(work.id);
+    const goal = neoWorkDoneGoal(work.id, this.workGoals.get(work.id), ask);
     if (work.status !== 'reported' || !goal?.doneWhen || !this.driverTargets.get(work.id))
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
@@ -931,7 +935,7 @@ export class NeoService {
     const urls = extractNeoWorkPrUrls(work.report);
     const prs = shouldReadNeoWorkPrs(stored, urls, Date.now()) ? await this.readPrs(urls) : null;
     const row = prs ? this.recordWorkPrs(work.id, prs, stored) : stored;
-    if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row);
+    if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row, { ask });
     return true;
   }
 
@@ -939,20 +943,17 @@ export class NeoService {
     work: NeoWork,
     goal: NeoWorkGoal,
     row: NeoWorkPrRow | null,
-    stale = false
+    { stale = false, ask }: { stale?: boolean; ask?: NeoAsk | null } = {}
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
     await this.deliver(
       work.originSessionId,
       neoDoneCheckMessageId(work.id, continued, row?.revision),
-      driverDoneCheckNote(
-        work,
-        goal,
-        continued,
-        this.continueBudget(work, Date.now()),
-        row?.prs,
-        stale
-      ),
+      driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), {
+        prs: row?.prs,
+        stale,
+        ask,
+      }),
       work.originSessionId
     );
     if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs));
