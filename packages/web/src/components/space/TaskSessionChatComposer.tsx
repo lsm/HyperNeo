@@ -60,13 +60,20 @@ export function TaskCanvasToggleButton({
       aria-pressed={active}
       title={active ? 'Hide canvas' : 'Show canvas'}
     >
-      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width={2}
-          d="M5.5 5.5h13v13h-13z"
-        />
+      <svg
+        class="h-4 w-4"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        stroke-width={2}
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="3" y="4" width="6" height="5" rx="1.5" />
+        <rect x="15" y="4" width="6" height="5" rx="1.5" />
+        <rect x="9" y="15" width="6" height="5" rx="1.5" />
+        <path d="M9 6.5h6M6 9v2.5a1.5 1.5 0 0 0 1.5 1.5H12v2M18 9v2.5a1.5 1.5 0 0 1-1.5 1.5H12" />
       </svg>
     </button>
   );
