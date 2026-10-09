@@ -73,6 +73,7 @@ import {
   requireNeoWorkAskLink,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
+import { createNeoPreferenceOperation } from './model-preference.ts';
 
 const Concern = z.object({
   id: z.string(),
@@ -209,6 +210,15 @@ const Snapshot = z.union([
       .max(100)
       .optional(),
     asks: z.array(NeoAskSchema).optional(),
+    preferences: z
+      .object({
+        model: z.string(),
+        provider: z.string(),
+        thinkingLevel: z.string(),
+        saved: z.boolean(),
+      })
+      .nullable()
+      .optional(),
     askOrigins: z
       .array(
         z.object({
@@ -500,6 +510,7 @@ export function createNeoOperations(service: NeoService) {
       workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
+      preferences: service.modelPreference(),
       asks: projectNeoSnapshotAsks(
         service.askRecords.list(scope === undefined ? undefined : scope),
         caller.source === 'rpc' ? 50 : 10
@@ -1015,6 +1026,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
+    createNeoPreferenceOperation(service),
     ...createNeoAskOperations(service, (caller, name, concernId) =>
       admitNeoCaller(service, caller, name, concernId)
     ),

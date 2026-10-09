@@ -114,7 +114,7 @@ export function registerSettingsHandlers(
               ? ((await credentialManager?.getCredentials(EXA_CREDENTIAL_PROVIDER_ID)) ?? null)
               : null;
           const result = settingsManager.updateGlobalSettings(
-            keepStandingRules(updates, settingsManager.getGlobalSettings())
+            keepNeoOwnedSettings(updates, settingsManager.getGlobalSettings())
           );
           try {
             await applyCredentialMutation(
@@ -370,14 +370,21 @@ function normalizeEndpoint(endpoint: string): string {
   }
 }
 
-export function keepStandingRules(
+export function keepNeoOwnedSettings(
   updates: Partial<GlobalSettings>,
   current: GlobalSettings
 ): Partial<GlobalSettings> {
   if (!updates.neo) return updates;
-  const { standingRules: _ignored, ...neo } = updates.neo;
-  const standingRules = current.neo?.standingRules;
-  return { ...updates, neo: standingRules ? { ...neo, standingRules } : neo };
+  const { standingRules: _rules, preferences: _preferences, ...neo } = updates.neo;
+  const { standingRules, preferences } = current.neo ?? {};
+  return {
+    ...updates,
+    neo: {
+      ...neo,
+      ...(standingRules ? { standingRules } : {}),
+      ...(preferences ? { preferences } : {}),
+    },
+  };
 }
 
 export function publishGlobalSettings(
