@@ -84,6 +84,7 @@ export function prepareSpaceTaskStatusUpdate(
 
   if (
     (task.status === 'review' && newStatus !== 'review' && newStatus !== 'stopped') ||
+    (task.status === 'stopped' && newStatus !== 'review' && newStatus !== 'stopped') ||
     newStatus === 'approved'
   ) {
     updates.pendingCheckpointType = null;

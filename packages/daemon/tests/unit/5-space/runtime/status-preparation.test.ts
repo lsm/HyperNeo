@@ -114,12 +114,32 @@ test('stopped recovery clears its report without inventing terminal-reopen field
       reportedSummary: null,
       result: null,
       blockReason: null,
+      pendingCheckpointType: null,
+      pendingCompletionSubmittedByNodeId: null,
+      pendingCompletionSubmittedAt: null,
+      pendingCompletionReason: null,
     },
     reopened: false,
   });
   expect(
     prepareSpaceTaskStatusUpdate(task('blocked'), 'stopped', undefined, 123).updates
   ).not.toHaveProperty('blockReason');
+});
+
+test('a review checkpoint survives a stop but not leaving stopped for anything but review', () => {
+  const reviewed = {
+    pendingCheckpointType: 'task_completion' as const,
+    pendingCompletionReason: 'r',
+  };
+  expect(
+    prepareSpaceTaskStatusUpdate(task('review', reviewed), 'stopped', undefined, 1).updates
+  ).not.toHaveProperty('pendingCheckpointType');
+  expect(
+    prepareSpaceTaskStatusUpdate(task('stopped', reviewed), 'in_progress', undefined, 1).updates
+  ).toMatchObject({ pendingCheckpointType: null, pendingCompletionReason: null });
+  expect(
+    prepareSpaceTaskStatusUpdate(task('stopped', reviewed), 'review', undefined, 1).updates
+  ).not.toHaveProperty('pendingCheckpointType');
 });
 
 test('terminal classification retains blocked and excludes review and stopped', () => {
