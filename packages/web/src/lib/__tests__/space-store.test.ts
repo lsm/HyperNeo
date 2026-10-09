@@ -1951,6 +1951,15 @@ describe('SpaceStore — CRUD methods', () => {
     );
   });
 
+  it('editTaskMetadata throws a typed rejection instead of returning it as a task', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskUpdateResult = { accepted: false, reason: 'task_update_denied' } as never;
+
+    await expect(spaceStore.editTaskMetadata('t1', { description: 'x' })).rejects.toThrow(
+      'Cannot edit task t1: task_update_denied'
+    );
+  });
+
   it('setPreferredWorkflow selects a workflow through its own operation', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockClear();
@@ -2004,31 +2013,11 @@ describe('SpaceStore — CRUD methods', () => {
     );
   });
 
-  it('recoverWorkflowTask transitions through the operations door without a spaceId', async () => {
-    await spaceStore.selectSpace('space-1');
-    const task = await spaceStore.recoverWorkflowTask('t1', 'in_progress');
-
-    expect(mockHub.request).toHaveBeenCalledWith('operation.invoke', {
-      name: 'task.transition',
-      input: { taskId: 't1', status: 'in_progress' },
-    });
-    expect(task.status).toBe('in_progress');
-  });
-
-  it('recoverWorkflowTask throws when the door returns a typed rejection', async () => {
-    await spaceStore.selectSpace('space-1');
-    transitionResult = 'invalid_transition';
-
-    await expect(spaceStore.recoverWorkflowTask('t1', 'in_progress')).rejects.toThrow(
-      'Cannot move task t1 to in_progress: invalid_transition'
-    );
-  });
-
-  it('recoverWorkflowTask throws when the door returns null', async () => {
+  it('setTaskStatus throws when the door returns null', async () => {
     await spaceStore.selectSpace('space-1');
     transitionResult = null;
 
-    await expect(spaceStore.recoverWorkflowTask('t1', 'in_progress')).rejects.toThrow(
+    await expect(spaceStore.setTaskStatus('t1', 'in_progress')).rejects.toThrow(
       'Task t1 is unavailable'
     );
   });

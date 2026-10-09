@@ -673,8 +673,6 @@ export function SpaceTaskPane({
         await spaceStore.publishTask(task.id);
       } else if (newStatus === 'cancelled') {
         await spaceStore.cancelTask(task.id);
-      } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
-        await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else {
         await spaceStore.setTaskStatus(task.id, newStatus);
       }
