@@ -35,8 +35,10 @@ export const DIRECT_ACTIVATION_WAITS: ReadonlySet<string> = new Set<DirectActiva
   'awaiting_capacity',
   'awaiting_dependencies',
 ]);
-class ActivationRejected {
-  constructor(readonly result: DirectAttemptActivationResult) {}
+class ActivationRejected extends Error {
+  constructor(readonly result: DirectAttemptActivationResult) {
+    super('Direct activation rejected');
+  }
 }
 export interface DirectAttemptActivationEvidence {
   attempt: DirectTaskAttempt | null;
@@ -103,85 +105,162 @@ export function requireDirectActivation(
   return { value: { attempt, task: prepared.value.task } };
 }
 
+type ActivationGate<T> = { value: T } | { reason: DirectAttemptActivationResult };
+const unavailable = { reason: { activated: false, reason: 'unavailable' } } as const;
+interface DirectActivationTarget {
+  attempt: DirectTaskAttempt | null;
+  task: SpaceTask | null;
+  slots: { space: Space | null; running: number };
+  admittedGeneration: number | null;
+  lifecycleGeneration: number | null;
+}
+
+function readActivationTarget(
+  db: Database,
+  input: DirectAttemptActivationInput
+): DirectActivationTarget {
+  const tasks = new SpaceTaskRepository(db);
+  const attempt = new DirectTaskExecutionRepository(db).get(input.attemptId);
+  const task = attempt ? tasks.getTask(attempt.taskId) : null;
+  return {
+    attempt,
+    task,
+    slots: task
+      ? {
+          space: new SpaceRepository(db).getSpace(task.spaceId),
+          running: tasks.countByStatuses(task.spaceId, TASK_SLOT_STATUSES),
+        }
+      : { space: null, running: 0 },
+    admittedGeneration: readDirectStartRequest(db, input.attemptId)?.lifecycleGeneration ?? null,
+    lifecycleGeneration: task ? tasks.getLifecycleGeneration(task.id) : null,
+  };
+}
+
+export function requireActivationCapacity(
+  target: DirectActivationTarget
+): ActivationGate<DirectActivationTarget> {
+  const { attempt, task, slots } = target;
+  if (availableTaskSlots(slots.space, slots.running) > 0) return { value: target };
+  return task && slots.space && attempt?.phase === 'reserved'
+    ? { reason: { activated: false, reason: 'awaiting_capacity' } }
+    : unavailable;
+}
+
+export function requireAdmittedGeneration(
+  target: DirectActivationTarget
+): ActivationGate<DirectActivationTarget> {
+  return target.admittedGeneration !== null &&
+    target.lifecycleGeneration !== target.admittedGeneration
+    ? unavailable
+    : { value: target };
+}
+
+function recordActivationKickoff(
+  db: Database,
+  input: DirectAttemptActivationInput,
+  kickoffMessage: MailboxMessage | undefined
+): ActivationGate<boolean> {
+  return kickoffMessage &&
+    !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
+    ? unavailable
+    : { value: true };
+}
+
+function readActivationEvidence(
+  db: Database,
+  input: DirectAttemptActivationInput,
+  { attempt, task, slots }: DirectActivationTarget
+): DirectAttemptActivationEvidence {
+  const attempts = new DirectTaskExecutionRepository(db);
+  const tasks = new SpaceTaskRepository(db);
+  return {
+    attempt,
+    active: task ? attempts.getActive(task.id) : null,
+    task,
+    space: slots.space,
+    session: new SessionRepository(db).getSession(input.sessionId),
+    selected: !!task && attempts.isSelected(task.id),
+    stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
+    kickoff: readDirectKickoffIntent(db, input.attemptId),
+    dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
+    worktreePath: task ? readDirectTaskWorktreePath(db)(task.spaceId, task.id) : null,
+  };
+}
+
+function rollBackRejectedKickoff<T>(
+  admission: ActivationGate<T>,
+  kickoffMessage: MailboxMessage | undefined
+): ActivationGate<T> {
+  if ('reason' in admission && kickoffMessage) throw new ActivationRejected(admission.reason);
+  return admission;
+}
+
+function commitActivation(
+  db: Database,
+  reactiveDb: ReactiveDatabase | undefined,
+  input: DirectAttemptActivationInput,
+  kickoffMessage: MailboxMessage | undefined,
+  admitted: { attempt: DirectTaskAttempt; task: SpaceTask }
+): DirectAttemptActivationResult {
+  const attempts = new DirectTaskExecutionRepository(db);
+  assertValidTaskTransition(admitted.task.status, 'in_progress');
+  const updated = new SpaceTaskRepository(db, reactiveDb).updateTask(
+    admitted.task.id,
+    {
+      status: 'in_progress',
+      taskAgentSessionId: input.sessionId,
+    },
+    'open'
+  );
+  const activated = attempts.activate(input.attemptId, input.sessionId);
+  if (!updated || !activated) throw new Error('Direct activation lost its transaction admission');
+  if (kickoffMessage)
+    enqueueFrozenKickoff(
+      db,
+      new JobQueueRepository(db),
+      {
+        ...input,
+        generation: activated.generation,
+      },
+      readDirectKickoffIntent(db, activated.id)!
+    );
+  return { activated: true, attempt: activated, task: updated };
+}
+
+const runActivation = (superpipe({})('activate-direct-attempt-in-transaction') as PipelineAPI)
+  .input(['db', 'reactiveDb', 'input', 'kickoffMessage'])
+  .pipe(readActivationTarget, ['db', 'input'], 'target')
+  .pipe(requireActivationCapacity, 'target', 'result:activation')
+  .pipe(requireAdmittedGeneration, 'target', 'result:activation')
+  .pipe(recordActivationKickoff, ['db', 'input', 'kickoffMessage'], 'result:activation')
+  .pipe(readActivationEvidence, ['db', 'input', 'target'], 'evidence')
+  .pipe(() => Date.now(), undefined, 'now')
+  .pipe(requireDirectActivation, ['input', 'evidence', 'now'], 'admission')
+  .pipe(rollBackRejectedKickoff, ['admission', 'kickoffMessage'], 'result:activation')
+  .pipe(
+    commitActivation,
+    ['db', 'reactiveDb', 'input', 'kickoffMessage', 'activation'],
+    'activation'
+  )
+  .end('activation') as (
+  db: Database,
+  reactiveDb: ReactiveDatabase | undefined,
+  input: DirectAttemptActivationInput,
+  kickoffMessage: MailboxMessage | undefined
+) => DirectAttemptActivationResult;
+
 export function activateDirectAttemptAtomically(
   db: Database,
   reactiveDb: ReactiveDatabase | undefined,
   input: DirectAttemptActivationInput,
   kickoffMessage?: MailboxMessage
 ): DirectAttemptActivationResult {
-  const rejected = new ActivationRejected({ activated: false, reason: 'unavailable' });
   reactiveDb?.beginTransaction();
   try {
-    const result = db.transaction((): DirectAttemptActivationResult => {
-      const attempts = new DirectTaskExecutionRepository(db);
-      const tasks = new SpaceTaskRepository(db, reactiveDb);
-      const attempt = attempts.get(input.attemptId);
-      const task = attempt ? tasks.getTask(attempt.taskId) : null;
-      const space = task ? new SpaceRepository(db).getSpace(task.spaceId) : null;
-      if (
-        availableTaskSlots(
-          space,
-          space ? tasks.countByStatuses(space.id, TASK_SLOT_STATUSES) : 0
-        ) <= 0
-      )
-        return task && space && attempt?.phase === 'reserved'
-          ? { activated: false, reason: 'awaiting_capacity' }
-          : rejected.result;
-      const admitted = readDirectStartRequest(db, input.attemptId);
-      if (
-        admitted &&
-        (!task || tasks.getLifecycleGeneration(task.id) !== admitted.lifecycleGeneration)
-      )
-        return rejected.result;
-      if (
-        kickoffMessage &&
-        !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
-      )
-        throw rejected;
-      const admission = requireDirectActivation(
-        input,
-        {
-          attempt,
-          active: task ? attempts.getActive(task.id) : null,
-          task,
-          space,
-          session: new SessionRepository(db).getSession(input.sessionId),
-          selected: !!task && attempts.isSelected(task.id),
-          stopRequested: attempts.isStopRequested(input.attemptId, input.sessionId),
-          kickoff: readDirectKickoffIntent(db, input.attemptId),
-          dependencies: (task?.dependsOn ?? []).map((id) => tasks.getTask(id)),
-          worktreePath: task ? readDirectTaskWorktreePath(db)(task.spaceId, task.id) : null,
-        },
-        Date.now()
-      );
-      if ('reason' in admission) {
-        if (kickoffMessage) throw new ActivationRejected(admission.reason);
-        return admission.reason;
-      }
-      assertValidTaskTransition(admission.value.task.status, 'in_progress');
-      const updated = tasks.updateTask(
-        admission.value.task.id,
-        {
-          status: 'in_progress',
-          taskAgentSessionId: input.sessionId,
-        },
-        'open'
-      );
-      const activated = attempts.activate(input.attemptId, input.sessionId);
-      if (!updated || !activated)
-        throw new Error('Direct activation lost its transaction admission');
-      if (kickoffMessage)
-        enqueueFrozenKickoff(
-          db,
-          new JobQueueRepository(db),
-          {
-            ...input,
-            generation: activated.generation,
-          },
-          readDirectKickoffIntent(db, activated.id)!
-        );
-      return { activated: true, attempt: activated, task: updated };
-    }, 'immediate')();
+    const result = db.transaction(
+      () => runActivation(db, reactiveDb, input, kickoffMessage),
+      'immediate'
+    )();
     reactiveDb?.commitTransaction();
     return result;
   } catch (error) {
