@@ -217,12 +217,7 @@ export class WebSocketClientTransport implements IMessageTransport {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.stopPing();
-
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.dropSocket();
 
     this.setState('disconnected');
   }
@@ -234,10 +229,7 @@ export class WebSocketClientTransport implements IMessageTransport {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.stopPing();
-    const ws = this.ws;
-    this.ws = null;
-    ws?.close(1000, 'Page hidden');
+    this.dropSocket({ code: 1000, reason: 'Page hidden' });
     this.setState('disconnected');
   }
 
@@ -277,12 +269,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
     this.resetReconnectState();
 
-    this.stopPing();
-
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.dropSocket();
 
     this.handleDisconnect();
     if (this.state !== 'failed') {
@@ -401,16 +388,21 @@ export class WebSocketClientTransport implements IMessageTransport {
     this.awaitPong(this.lastPingSentTime);
   }
 
+  private dropSocket(close?: { code: number; reason: string }): void {
+    this.stopPing();
+    const ws = this.ws;
+    this.ws = null;
+    if (close) ws?.close(close.code, close.reason);
+    else ws?.close();
+  }
+
   private awaitPong(sentAt: number): void {
     if (this.pongTimeoutTimer) clearTimeout(this.pongTimeoutTimer);
     this.pongTimeoutTimer = setTimeout(() => {
       this.pongTimeoutTimer = null;
       if (this.lastPongTime >= sentAt || !this.isReady()) return;
       log.error(`No PONG within ${this.pongTimeout / 1000}s. Connection appears stale.`);
-      this.stopPing();
-      const ws = this.ws;
-      this.ws = null;
-      ws?.close();
+      this.dropSocket();
       this.setState('disconnected');
       this.handleDisconnect();
     }, this.pongTimeout);
