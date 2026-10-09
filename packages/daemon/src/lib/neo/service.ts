@@ -10,6 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
+import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -117,6 +118,7 @@ export class NeoService {
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
   readonly workContinues: NeoWorkContinueRepository;
+  readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
   readPrs: NeoWorkPrReader = readGithubPrs;
   readonly consultations: NeoConsultationRepository;
@@ -153,6 +155,7 @@ export class NeoService {
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
+    this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})

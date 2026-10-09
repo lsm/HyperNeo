@@ -60,6 +60,13 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
+import {
+  createNeoAskOperations,
+  NeoAskSchema,
+  projectNeoSnapshotAsks,
+  requireNeoWorkAsk,
+  requireNeoWorkAskLink,
+} from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 const Concern = z.object({
@@ -196,6 +203,7 @@ const Snapshot = z.union([
       )
       .max(100)
       .optional(),
+    asks: z.array(NeoAskSchema).optional(),
     askOrigins: z
       .array(
         z.object({
@@ -232,6 +240,7 @@ const Propose = z.object({
   work: NeoDriverTargetSchema.optional(),
   goal: z.string().trim().min(1).max(1000).optional(),
   doneWhen: z.string().trim().min(1).max(2000).optional(),
+  askId: z.string().min(1).max(160).optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const SaveRules = z.object({
@@ -486,6 +495,10 @@ export function createNeoOperations(service: NeoService) {
       workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
+      asks: projectNeoSnapshotAsks(
+        service.askRecords.list(scope === undefined ? undefined : scope),
+        caller.source === 'rpc' ? 50 : 10
+      ),
       workPrs: service.workPrs
         .list(visibleWork.map((item) => item.id))
         .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) })),
@@ -750,6 +763,12 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAsk(input.askId ? service.askRecords.get(input.askId) : null, input, caller),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
           caller.sessionId ?? service.repo.getBindingForConcern(input.concernId)?.sessionId
@@ -826,11 +845,6 @@ export function createNeoOperations(service: NeoService) {
       ) => {
         const live = requireLiveNeoWorkOrigin(origin, caller);
         if ('reason' in live) return live;
-        const recordGoal = <Gate extends object>(gate: Gate, workId: string): Gate => {
-          if ('value' in gate)
-            service.workGoals.record(workId, input.goal ?? null, input.doneWhen ?? null);
-          return gate;
-        };
         if (input.work) {
           const proposed = service.driverTargets.propose(
             service.repo,
@@ -849,10 +863,7 @@ export function createNeoOperations(service: NeoService) {
                 reason: 'This request key belongs to another execution target.',
               },
             };
-          return recordGoal(
-            requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null }),
-            proposed.work.id
-          );
+          return requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null });
         }
         const receipt = service.agentTargets.propose(
           service.repo,
@@ -871,10 +882,26 @@ export function createNeoOperations(service: NeoService) {
               reason: 'This request key belongs to another execution target.',
             },
           };
-        return recordGoal(requireNeoProposalReceipt(target, origin, receipt), receipt.work.id);
+        return requireNeoProposalReceipt(target, origin, receipt);
       },
       ['input', 'origin', 'caller', 'admission'],
       'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => ({
+        owner: input.askId ? service.askRecords.link(input.askId, receipt.work.id) : null,
+      }),
+      ['input', 'admission'],
+      'askLink'
+    )
+    .pipe(requireNeoWorkAskLink, ['input', 'askLink', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
+        service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);
+        return true;
+      },
+      ['input', 'admission'],
+      'goalRecorded'
     )
     .endAsync('admission') as (
     input: z.infer<typeof Propose>,
@@ -948,6 +975,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
+    ...createNeoAskOperations(service, (caller, name, concernId) =>
+      admitNeoCaller(service, caller, name, concernId)
+    ),
     defineOperation({
       name: 'neo.concern.cancel',
       description:

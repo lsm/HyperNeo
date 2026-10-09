@@ -1,4 +1,5 @@
 export const NEO_OPERATION_NAMES = [
+  'neo.ask.open',
   'neo.concern.cancel',
   'neo.concern.consult',
   'neo.concern.respond',
