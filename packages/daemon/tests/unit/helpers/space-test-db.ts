@@ -719,30 +719,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_node ON workflow_run_artifacts(run_id, node_id)`);
 
   db.exec(`
-		CREATE TABLE IF NOT EXISTS workflow_run_artifact_cache (
-			id TEXT PRIMARY KEY NOT NULL,
-			run_id TEXT NOT NULL,
-			task_id TEXT NOT NULL DEFAULT '',
-			cache_key TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'ok'
-				CHECK(status IN ('ok', 'syncing', 'error')),
-			data TEXT NOT NULL DEFAULT '{}',
-			error TEXT,
-			synced_at INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			UNIQUE(run_id, task_id, cache_key),
-			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_wrac_run_task ON workflow_run_artifact_cache(run_id, task_id)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_wrac_run_task_key ON workflow_run_artifact_cache(run_id, task_id, cache_key)`
-  );
-
-  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
 			space_id TEXT NOT NULL,
 			source TEXT NOT NULL,
