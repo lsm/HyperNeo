@@ -1,5 +1,5 @@
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
-import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
+import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
@@ -363,7 +363,10 @@ export class NeoService {
   }
 
   private appendPublication(input: NeoPublicationInput) {
-    const plan = planNeoSavedRulesAppend(input, this.savedRules);
+    const plan = planNeoSavedRulesAppend(input, this.savedRules, {
+      standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
+      stored: !!this.publications.get(input.conversationId, input.publicationId),
+    });
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     return receipt;

@@ -103,18 +103,44 @@ describe('planNeoSavedRulesNote', () => {
 
 describe('planNeoSavedRulesAppend', () => {
   const key = `${root}:ask-1`;
+  const kept = { standingRules: [rule, 'Keep B.'], stored: false };
   const pending = new Map([[key, { pending: [rule], published: {} }]]);
   const sent = new Map([
     [key, { pending: ['Keep B.'], published: { [reply.publicationId]: [rule] } }],
   ]);
-  test.each<[string, NeoPublicationInput, Map<string, NeoSavedRulesNote>, string[], boolean]>([
-    ['an interim update', { ...reply, interim: true }, pending, [], false],
-    ['the first final reply', reply, pending, [rule], true],
-    ['a retry of that reply after another save', reply, sent, [rule], false],
-    ['a later reply in the same turn', { ...reply, publicationId: 'p2' }, sent, ['Keep B.'], true],
-    ['a turn with no saves', reply, new Map(), [], true],
-  ])('%s', (_label, input, notes, rules, keeps) => {
-    const plan = planNeoSavedRulesAppend(input, notes);
+  test.each<
+    [
+      string,
+      NeoPublicationInput,
+      Map<string, NeoSavedRulesNote>,
+      Parameters<typeof planNeoSavedRulesAppend>[2],
+      string[],
+      boolean,
+    ]
+  >([
+    ['an interim update', { ...reply, interim: true }, pending, kept, [], false],
+    ['the first final reply', reply, pending, kept, [rule], true],
+    ['a rule the turn removed again', reply, pending, { ...kept, standingRules: [] }, [], false],
+    ['a retry of that reply after another save', reply, sent, kept, [rule], false],
+    [
+      'a later reply in the same turn',
+      { ...reply, publicationId: 'p2' },
+      sent,
+      kept,
+      ['Keep B.'],
+      true,
+    ],
+    [
+      'a retry of a reply stored without lines',
+      reply,
+      pending,
+      { ...kept, stored: true },
+      [],
+      false,
+    ],
+    ['a turn with no saves', reply, new Map(), kept, [], false],
+  ])('%s', (_label, input, notes, current, rules, keeps) => {
+    const plan = planNeoSavedRulesAppend(input, notes, current);
     expect(plan.rules).toEqual(rules);
     expect(plan.keep !== null).toBe(keeps);
     if (plan.keep) expect(plan.keep.note.published[input.publicationId]).toEqual(rules);
@@ -224,6 +250,16 @@ describe('Neo reply after a rule save', () => {
     await invoke('neo.publication.publish', next);
     expect(service.publications.get(conversationId, next.publicationId)?.shortText).toBe(
       `${reply.shortText}\n\nSaved: Keep B.`
+    );
+  });
+
+  test('a rule removed again in the same turn is not announced', async () => {
+    await invoke('neo.rule.save', { rules: [rule, 'Keep B.'] });
+    await invoke('neo.rule.save', { rules: [rule] });
+    const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
+    await invoke('neo.publication.publish', draft);
+    expect(service.publications.get(conversationId, reply.publicationId)?.shortText).toBe(
+      `${reply.shortText}\n\nSaved: ${rule}`
     );
   });
 

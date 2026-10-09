@@ -39,20 +39,23 @@ export function planNeoSavedRulesNote(
 
 export function planNeoSavedRulesAppend(
   input: NeoPublicationInput,
-  notes: NeoSavedRulesNotes
+  notes: NeoSavedRulesNotes,
+  current: { standingRules: readonly string[]; stored: boolean }
 ): { rules: string[]; keep: NeoSavedRulesKeep | null } {
   if (input.interim) return { rules: [], keep: null };
   const key = neoSavedRulesKey(input.producerInput.sessionId, input.producerInput.messageId);
-  const current = notes.get(key);
-  const replay = current?.published[input.publicationId];
+  const note = notes.get(key);
+  const replay = note?.published[input.publicationId];
   if (replay !== undefined) return { rules: replay, keep: null };
-  const rules = current?.pending ?? [];
+  if (current.stored || !note) return { rules: [], keep: null };
+  const rules = note.pending.filter((rule) => current.standingRules.includes(rule));
+  if (!rules.length) return { rules, keep: null };
   return {
     rules,
     keep: {
       key,
-      note: { pending: [], published: { ...current?.published, [input.publicationId]: rules } },
-      evict: evictNeoSavedRules(notes, key),
+      note: { pending: [], published: { ...note.published, [input.publicationId]: rules } },
+      evict: [],
     },
   };
 }
