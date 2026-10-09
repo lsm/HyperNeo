@@ -61,6 +61,8 @@ import {
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
+  driverStuckNote,
+  decideStuckReminder,
   driverDoneCheckNote,
   neoWorkDoneGoal,
   NEO_WORK_SUMMARY_NOTE,
@@ -750,6 +752,7 @@ export class NeoService {
     );
     if (!settled) {
       await this.noteDriverStall(work, outcome);
+      await this.noteDriverStuck(work);
       return this.noteDriverNeedsYou(work, ref, outcome);
     }
     this.activitySeen.delete(work.id);
@@ -786,6 +789,18 @@ export class NeoService {
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
       driverStallNote(work, this.workDoneGoal(work.id), live.lastReply, budget),
+      work.originSessionId
+    );
+  }
+
+  private async noteDriverStuck(work: NeoWork): Promise<void> {
+    const now = Date.now();
+    const reminder = decideStuckReminder(work.updatedAt, now);
+    if (!reminder || !this.db.getSession(work.originSessionId)) return;
+    await this.deliver(
+      work.originSessionId,
+      neoStallMessageId(work.id, reminder.due),
+      driverStuckNote(work, this.workDoneGoal(work.id), work.updatedAt, now, reminder.abandoned),
       work.originSessionId
     );
   }

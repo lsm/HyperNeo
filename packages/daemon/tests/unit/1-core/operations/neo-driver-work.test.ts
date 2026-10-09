@@ -18,6 +18,8 @@ import {
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
+  NEO_WORK_STUCK_STEPS_MS,
+  decideStuckReminder,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -769,6 +771,55 @@ describe('Neo work with a drivers target', () => {
       clock.mockRestore();
       db.close();
     }
+  });
+
+  test('keeps reminding about a card stuck in progress and finally calls it abandoned', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'running', lastActivityAt: 5 },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        if (content.includes('without a result')) notes.push([messageId, content]);
+      },
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      const since = service.repo.getWork('work-1')!.updatedAt;
+      now = since + 2 * 60 * 60_000 - 1;
+      await service.refreshDriverWork();
+      expect(notes).toEqual([]);
+      for (const hours of [2, 24, 48, 72]) {
+        now = since + hours * 60 * 60_000;
+        await service.refreshDriverWork();
+      }
+      expect(notes.map(([id]) => id)).toEqual(
+        [2, 24, 48, 72].map((hours) => `work-1:stall:${since + hours * 60 * 60_000}`)
+      );
+      expect(notes[0][1]).toContain('work.status');
+      expect(notes[3][1]).toContain('propose closing it');
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
+  test('stuck reminders step through the schedule and end on abandoned', () => {
+    expect(decideStuckReminder(0, NEO_WORK_STUCK_STEPS_MS[0] - 1)).toBeNull();
+    expect(decideStuckReminder(0, NEO_WORK_STUCK_STEPS_MS[0])).toEqual({
+      due: NEO_WORK_STUCK_STEPS_MS[0],
+      abandoned: false,
+    });
+    expect(decideStuckReminder(10, 10 + NEO_WORK_STUCK_STEPS_MS[3] + 5)).toEqual({
+      due: 10 + NEO_WORK_STUCK_STEPS_MS[3],
+      abandoned: true,
+    });
   });
 
   test('tells the proposing session once each time started work comes to need the user', async () => {
