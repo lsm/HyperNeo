@@ -355,6 +355,21 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
+  requeueWaiting(jobId: string, runAt: number, claimToken: string): Job | null {
+    const res = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+             SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
+                 payload = json_remove(payload, '$.__parkCount', '$.__parkedSince')
+           WHERE id = ? AND status = 'processing'
+             AND json_extract(payload, '$.__claimToken') = ?`
+        )
+        .run(runAt, jobId, claimToken)
+    );
+    return res.changes === 0 ? null : this.getJob(jobId);
+  }
+
   requeueAllProcessing(queue: string, runAt: number): string[] {
     return withBusyRetry(() =>
       this.db.transaction(() => {

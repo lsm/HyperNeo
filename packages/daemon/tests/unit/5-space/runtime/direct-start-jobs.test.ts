@@ -347,6 +347,7 @@ test('dependency readiness defers same claimed job beyond retry budget then star
       expect(await processor.tick()).toBe(1);
       await waitForIdle(processor);
       expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 0 });
+      expect(jobs.getJob(job.id)?.payload).not.toHaveProperty('__parkCount');
       expect(count()).toBe(1);
     }
     tasks.updateTask(dependency.id, { status: 'done' });
@@ -768,10 +769,16 @@ test.each(['in_progress', 'approved', 'rate_limited', 'usage_limited'] as const)
     acceptedJob();
     const [job] = jobs.dequeue(DIRECT_TASK_START, 1);
     const attempt = attempts.getActive(taskId)!;
-    expect(await createDirectStartJobHandler(db, start, jobs, control)(job)).toMatchObject({
+    db.prepare(
+      "UPDATE job_queue SET payload = json_set(payload, '$.__parkCount', 60, '$.__parkedSince', 0) WHERE id = ?"
+    ).run(job.id);
+    const exhausted = { ...job, payload: { ...job.payload, __parkCount: 60, __parkedSince: 0 } };
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(exhausted)).toMatchObject({
       started: false,
-      parked: 'direct_start_not_ready',
+      parked: 'awaiting_capacity',
     });
+    expect(jobs.getJob(job.id)?.payload).not.toHaveProperty('__parkCount');
+    expect(jobs.getJob(job.id)?.payload).not.toHaveProperty('__parkedSince');
     expect(attempts.get(attempt.id)?.phase).toBe('reserved');
     expect(tasks.getTask(taskId)?.status).toBe('open');
     tasks.updateTask(occupying.id, { status: 'done' });
