@@ -22,6 +22,7 @@ const DefaultModel = z.object({
   availableModels: z.array(ModelEntry),
 });
 const NeoOnly = z.object({ ok: z.literal(false), reason: z.literal('neo_only') });
+const NEO_ONLY = { ok: false as const, reason: 'neo_only' as const };
 const SetInput = z.object({
   model: z.string().min(1),
   provider: z.string().min(1).optional(),
@@ -42,7 +43,7 @@ export function readDefaultModel(deps: DefaultModelDeps): z.infer<typeof Default
   };
 }
 
-export function admitDefaultModelWriter(caller: OperationCaller): boolean {
+export function admitDefaultModelCaller(caller: OperationCaller): boolean {
   return caller.source !== 'mcp' || caller.role === 'neo';
 }
 
@@ -54,6 +55,13 @@ export function setDefaultModel(input: z.infer<typeof SetInput>, deps: DefaultMo
       ok: false as const,
       reason: 'model_unavailable' as const,
       availableModels: readDefaultModel(deps).availableModels,
+    };
+  const offers = usable.filter((entry) => entry.id === found.id);
+  if (!input.provider && new Set(offers.map((entry) => entry.provider)).size > 1)
+    return {
+      ok: false as const,
+      reason: 'provider_required' as const,
+      availableModels: offers.map(({ id, name, provider }) => ({ id, name, provider })),
     };
   const before = deps.read();
   deps.write(found.id, found.provider);
@@ -71,22 +79,23 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
     defineOperation({
       name: 'settings.model.get',
       description:
-        'Read the default model and provider new sessions start on, and the models available to choose from. Credentials and other settings are not included.',
+        'Read the default model and provider new sessions start on, and the models available to choose from. Credentials and other settings are not included. Only Neo and the local app may call it.',
       inputSchema: z.object({}).default({}),
-      resultSchema: DefaultModel,
+      resultSchema: z.union([NeoOnly, DefaultModel]),
       policy: { safetyClass: 'read', roles: ['neo'] },
-      execute: async () => readDefaultModel(deps),
+      execute: async (_input, caller) =>
+        admitDefaultModelCaller(caller) ? readDefaultModel(deps) : NEO_ONLY,
     }),
     defineOperation({
       name: 'settings.model.set',
       description:
-        'Change the default model new sessions start on, and its provider. Only models listed by settings.model.get are accepted; anything else rejects with model_unavailable and the available models, so the human can add the missing provider in Settings. Existing sessions keep their model. Only Neo and the local app may call it; other sessions reject with neo_only. Changes nothing else.',
+        'Change the default model new sessions start on, and its provider. Only models listed by settings.model.get are accepted; anything else rejects with model_unavailable and the available models, so the human can add the missing provider in Settings. When more than one provider offers the model, pass provider; without it the call rejects with provider_required and the offers. Existing sessions keep their model. Only Neo and the local app may call it; other sessions reject with neo_only. Changes nothing else.',
       inputSchema: SetInput,
       resultSchema: z.union([
         NeoOnly,
         z.object({
           ok: z.literal(false),
-          reason: z.literal('model_unavailable'),
+          reason: z.enum(['model_unavailable', 'provider_required']),
           availableModels: z.array(ModelEntry),
         }),
         z.object({
@@ -98,9 +107,7 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
       ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) =>
-        admitDefaultModelWriter(caller)
-          ? setDefaultModel(input, deps)
-          : { ok: false as const, reason: 'neo_only' as const },
+        admitDefaultModelCaller(caller) ? setDefaultModel(input, deps) : NEO_ONLY,
     }),
   ];
 }

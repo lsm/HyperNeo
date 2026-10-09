@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { GlobalSettings, ModelInfo } from '@hyperneo/shared';
 import {
-  admitDefaultModelWriter,
+  admitDefaultModelCaller,
   createDefaultModelOperations,
   type DefaultModelDeps,
   readDefaultModel,
@@ -69,6 +69,25 @@ describe('setDefaultModel', () => {
   });
 });
 
+describe('setDefaultModel provider choice', () => {
+  test('asks for the provider when more than one offers the model, and takes it when given', () => {
+    const { value, writes } = deps([model('glm-5.3', 'glm'), model('glm-5.3', 'custom-glm')]);
+    expect(setDefaultModel({ model: 'glm-5.3' }, value)).toEqual({
+      ok: false,
+      reason: 'provider_required',
+      availableModels: [
+        { id: 'glm-5.3', name: 'GLM-5.3', provider: 'glm' },
+        { id: 'glm-5.3', name: 'GLM-5.3', provider: 'custom-glm' },
+      ],
+    });
+    expect(writes).toEqual([]);
+    expect(setDefaultModel({ model: 'glm-5.3', provider: 'custom-glm' }, value)).toMatchObject({
+      ok: true,
+      provider: 'custom-glm',
+    });
+  });
+});
+
 describe('createDefaultModelOperations', () => {
   test('exposes a read and a narrow write to Neo only', () => {
     const operations = createDefaultModelOperations(deps([]).value);
@@ -79,20 +98,28 @@ describe('createDefaultModelOperations', () => {
   });
 });
 
-describe('admitDefaultModelWriter', () => {
-  test('lets Neo and the local app change the default, and refuses other sessions', () => {
-    expect(admitDefaultModelWriter({ source: 'mcp', sessionId: 'neo:root', role: 'neo' })).toBe(
+describe('admitDefaultModelCaller', () => {
+  test('lets Neo and the local app read and change the default, and refuses other sessions', () => {
+    expect(admitDefaultModelCaller({ source: 'mcp', sessionId: 'neo:root', role: 'neo' })).toBe(
       true
     );
-    expect(admitDefaultModelWriter({ source: 'rpc' } as never)).toBe(true);
-    expect(admitDefaultModelWriter({ source: 'mcp', sessionId: 'chat-1' })).toBe(false);
+    expect(admitDefaultModelCaller({ source: 'rpc' } as never)).toBe(true);
+    expect(admitDefaultModelCaller({ source: 'mcp', sessionId: 'chat-1' })).toBe(false);
     expect(
-      admitDefaultModelWriter({ source: 'mcp', sessionId: 'w', role: 'workflow_worker' })
+      admitDefaultModelCaller({ source: 'mcp', sessionId: 'w', role: 'workflow_worker' })
     ).toBe(false);
   });
 });
 
 describe('createDefaultModelOperations caller gate', () => {
+  test('settings.model.get refuses a session that is not Neo', async () => {
+    const get = createDefaultModelOperations(deps([model('glm-5.3', 'glm')]).value)[0];
+    expect(await get.execute({}, { source: 'mcp', sessionId: 'chat-1' })).toEqual({
+      ok: false,
+      reason: 'neo_only',
+    });
+  });
+
   test('settings.model.set refuses a session that is not Neo without writing', async () => {
     const { value, writes } = deps([model('glm-5.3', 'glm')]);
     const set = createDefaultModelOperations(value)[1];
