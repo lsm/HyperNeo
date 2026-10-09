@@ -18,6 +18,8 @@ import {
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
+  NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNANCHORED_SETTLE_MS,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -1343,6 +1345,25 @@ describe('readDriverSettlement', () => {
     const later = 100 + 10 * 60_000;
     expect(readDriverSettlement(work, stale, later, 100)).toMatchObject({ status: 'reported' });
     expect(readDriverSettlement(work, stale, later, 100, true)).toBeNull();
+  });
+
+  test('settles an unanchored send on the latest reply once the session has been quiet for hours', () => {
+    const work = { updatedAt: 100 };
+    const reply = (lastReplyAt: number, status = 'done') => ({
+      kind: 'completed' as const,
+      value: {
+        ok: true,
+        value: { status, lastActivityAt: 1_000, lastReplyAt, lastReply: 'Shipped it.' },
+      },
+    });
+    const quiet = 1_000 + NEO_WORK_UNANCHORED_SETTLE_MS;
+    expect(readDriverSettlement(work, reply(900), quiet - 1, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(50), quiet, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(900, 'running'), quiet, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(900), quiet, null, true)).toEqual({
+      status: 'reported',
+      report: `${NEO_WORK_UNANCHORED_NOTE}\n\nShipped it.`,
+    });
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
