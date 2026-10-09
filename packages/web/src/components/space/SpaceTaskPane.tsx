@@ -30,6 +30,7 @@ import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskRunComposer } from './TaskRunComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import {
   canRunAgain,
@@ -695,16 +696,18 @@ export function SpaceTaskPane({
     }
   };
 
-  const handleRunTaskDirectly = async (rerun = false) => {
+  const handleRunTaskDirectly = async (rerun = false, note?: string | null) => {
     try {
       setStatusTransitioning(true);
       setThreadSendError(null);
-      const result = await spaceStore.runTaskDirectly(task.id);
+      const result = await spaceStore.runTaskDirectly(task.id, note);
       if (!result.accepted) {
         setThreadSendError(formatDirectStartRejection(result.reason, rerun));
       }
+      return result.accepted;
     } catch (err) {
       setThreadSendError(formatTaskThreadError(err));
+      return false;
     } finally {
       setStatusTransitioning(false);
     }
@@ -883,6 +886,9 @@ export function SpaceTaskPane({
     !task.taskAgentSessionId &&
     !task.hasActiveDirectAttempt &&
     !task.archivedAt;
+  const runLabel = spaceStore.workflows.value.some((workflow) => !workflow.disabled)
+    ? 'Run without a workflow'
+    : 'Run';
   if (filteredTransitionActions.length > 0) {
     if (taskActionItems.length > 0) {
       taskActionItems.push({ type: 'divider' as const });
@@ -1057,9 +1063,7 @@ export function SpaceTaskPane({
                     task={task}
                     workspaceLabel={workspaceLabel}
                     description={resolvedTask?.description ?? task.description ?? ''}
-                    canRunDirectly={canRunDirectly}
                     busy={statusTransitioning}
-                    onRun={() => void handleRunTaskDirectly()}
                     onPublish={() => handleStatusTransition('open')}
                     onEdit={() => setShowEditTaskModal(true)}
                   />
@@ -1094,7 +1098,17 @@ export function SpaceTaskPane({
             </div>
           )}
 
-          {showInlineComposer && (
+          {showInlineComposer && canRunDirectly && (
+            <TaskRunComposer
+              taskId={task.id}
+              label={runLabel}
+              busy={statusTransitioning}
+              errorMessage={threadSendError}
+              onComposerRef={setTaskComposerElement}
+              onRun={(note) => handleRunTaskDirectly(false, note)}
+            />
+          )}
+          {showInlineComposer && !canRunDirectly && (
             <VoiceSurfaceContext.Provider
               value={{
                 surfaceId: 'primary',

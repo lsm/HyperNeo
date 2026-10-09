@@ -1,4 +1,4 @@
-import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
+import { readDirectFinalizationRequest } from './finalize-direct-attempt.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { enqueueDirectStartRequest, readDirectStartRequest } from './direct-start-request.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
@@ -44,6 +44,7 @@ export interface DirectTaskStartInput {
   requestKey: string;
   retryFrom?: { attemptId: string; generation: number };
   reviewRejection?: { expectedPendingCompletionGeneration: number; reason?: string | null };
+  note?: string;
 }
 export type DirectTaskStartResult =
   | { started: true; attempt: DirectTaskAttempt }
@@ -126,28 +127,17 @@ export function claimDirectStart(
         )
           return unavailable;
         if (!active) {
-          const row = db
-            .prepare(
-              'SELECT finalization_json AS payload, finalization_state AS state FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?'
-            )
-            .get(previous.id, previous.sessionId) as {
-            payload: string | null;
-            state: string | null;
-          } | null;
-          const finalization = row?.payload
-            ? (JSON.parse(row.payload) as {
-                status: TaskLifecycleStatus;
-                lifecycleGeneration: number;
-                generation: number;
-              })
-            : null;
+          const finalization = readDirectFinalizationRequest(db, {
+            attemptId: previous.id,
+            sessionId: previous.sessionId,
+          });
           const manualReview =
             !!input.reviewRejection &&
             !!finalization &&
             isValidTaskTransition(finalization.status, 'review') &&
             task.status === 'review';
           if (
-            row?.state !== 'completed' ||
+            finalization?.state !== 'completed' ||
             !finalization ||
             finalization.generation !== previous.generation ||
             (!manualReview && finalization.status !== task.status) ||
@@ -284,6 +274,7 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession, input: Dire
           task,
           space,
           reviewFeedback: input.reviewRejection?.reason,
+          startNote: input.note,
           workspacePath: directTaskWorkspace(
             space,
             task,

@@ -2630,6 +2630,20 @@ describe('SpaceStore — runTaskDirectly', () => {
     expect(result).toEqual({ accepted: true, jobId: 'job-1' });
   });
 
+  it('sends the note only when one is given', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValue({ accepted: true, jobId: null });
+
+    await spaceStore.runTaskDirectly('task-1', 'Start with the API.');
+    await spaceStore.runTaskDirectly('task-1', null);
+
+    const inputs = mockHub.request.mock.calls
+      .filter(([method]) => method === 'operation.invoke')
+      .map(([, params]) => (params as { input: Record<string, unknown> }).input);
+    expect(inputs[0]).toMatchObject({ taskId: 'task-1', note: 'Start with the API.' });
+    expect(inputs[1]).not.toHaveProperty('note');
+  });
+
   it('generates a different requestKey for each call', async () => {
     await spaceStore.selectSpace('space-1');
     mockHub.request.mockResolvedValue({ accepted: true, jobId: null });

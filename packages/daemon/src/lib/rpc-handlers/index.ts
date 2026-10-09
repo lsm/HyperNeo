@@ -151,7 +151,6 @@ import {
   SpaceAgentInactivityConfigRepository,
 } from '../../storage/repositories/space-agent-inactivity-repository.ts';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
-import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers.ts';
 import { setupLiveQueryHandlers } from './live-query-handlers.ts';
@@ -1611,24 +1610,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRuntimeService
   );
 
-  const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
-    return new SpaceTaskManager(
-      deps.db.getDatabase(),
-      spaceId,
-      deps.reactiveDb,
-      evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
-      (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
-      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
-    );
-  };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
   setupSpaceWorkflowRunHandlers(
     deps.messageHub,
     spaceWorkflowManager,
     spaceWorkflowRunRepo,
-    spaceWorkflowRunTaskManagerFactory,
+    spaceTaskManagerFactory,
     deps.internalEventBus,
     artifactRepo,
     hookStateRepo,

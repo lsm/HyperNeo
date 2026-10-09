@@ -32,14 +32,13 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 
 const coding = { id: 'wf-1', name: 'Coding', nodes: [] } as unknown as SpaceWorkflow;
 
-function renderPanel(task: SpaceTask, canRunDirectly = true) {
-  const handlers = { onRun: vi.fn(), onPublish: vi.fn(), onEdit: vi.fn() };
+function renderPanel(task: SpaceTask) {
+  const handlers = { onPublish: vi.fn(), onEdit: vi.fn() };
   const view = render(
     <TaskReadyPanel
       task={task}
       workspaceLabel="Docs"
       description="Add a README section for readConfig."
-      canRunDirectly={canRunDirectly}
       busy={false}
       {...handlers}
     />
@@ -55,22 +54,19 @@ describe('TaskReadyPanel', () => {
     setPreferredWorkflow.mockClear();
   });
 
-  it('makes Run the main action when the Space has no workflows', () => {
-    const { getByTestId, handlers } = renderPanel(makeTask());
+  it('says the task is ready to run when the Space has no workflows', () => {
+    const { getByTestId } = renderPanel(makeTask());
     expect(getByTestId('task-ready-title').textContent).toBe('Ready to run');
     expect(getByTestId('task-ready-description').textContent).toBe(
       'Add a README section for readConfig.'
     );
-    fireEvent.click(getByTestId('task-run-button'));
-    expect(handlers.onRun).toHaveBeenCalled();
   });
 
-  it('explains the automatic start and offers Run without a workflow when workflows exist', () => {
+  it('explains the automatic start when workflows exist', () => {
     mockWorkflows.value = [coding];
     const { getByTestId, getByText } = renderPanel(makeTask({ preferredWorkflowId: 'wf-1' }));
     expect(getByTestId('task-ready-title').textContent).toBe('Starting soon');
     expect(getByText('Starts with Coding when a task slot is free.')).toBeTruthy();
-    expect(getByTestId('task-run-button').textContent).toBe('Run without a workflow');
   });
 
   it('lists the tasks it waits on and says it starts once they are done', () => {
@@ -86,13 +82,9 @@ describe('TaskReadyPanel', () => {
     ).toBeTruthy();
   });
 
-  it('offers Publish for a draft and no Run', () => {
-    const { getByTestId, queryByTestId, handlers } = renderPanel(
-      makeTask({ status: 'draft' }),
-      false
-    );
+  it('offers Publish for a draft', () => {
+    const { getByTestId, handlers } = renderPanel(makeTask({ status: 'draft' }));
     expect(getByTestId('task-ready-title').textContent).toBe('Draft');
-    expect(queryByTestId('task-run-button')).toBeNull();
     fireEvent.click(getByTestId('task-publish-button'));
     expect(handlers.onPublish).toHaveBeenCalled();
   });

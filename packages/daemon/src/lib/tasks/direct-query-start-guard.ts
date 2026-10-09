@@ -3,25 +3,22 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
-import { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { canonicalJson } from '../agent/prompt-comparison.ts';
 import { mailboxEntryExpired, type MailboxEntry } from '../mailbox/entry.ts';
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
-import {
-  loadDirectTaskWorkerEvidence,
-  requireDirectTaskWorkerIdentity,
-  type DirectTaskWorkerEvidence,
-  type DirectTaskWorkerIdentity,
+import type {
+  DirectTaskWorkerEvidence,
+  DirectTaskWorkerIdentity,
 } from './direct-task-worker-identity.ts';
 import {
-  loadDirectTaskQueryState,
-  requireRunningDirectTaskQuery,
+  createRunningDirectQueryReader,
+  requireRunningDirectQuery,
+  databaseDirectTaskQueryLookups,
   type DirectTaskQueryState,
+  type RunningDirectQuery,
 } from './direct-task-query-admission.ts';
 import { matchesDirectPreparedSession } from './prepare-direct-session.ts';
-import { directTaskWorkspace, readDirectTaskWorktreePath } from './direct-task-workspace.ts';
+import { directTaskWorkspace } from './direct-task-workspace.ts';
 
 type BoundStart = Pick<
   DirectTaskWorkerIdentity,
@@ -110,38 +107,21 @@ export function createDirectQueryStartGuard(
   const sessionId = getSession().id;
   const attempts = new DirectTaskExecutionRepository(db);
   if (!attempts.hasSessionProvenance(sessionId)) return undefined;
-  const sessions = new SessionRepository(db);
-  const tasks = new SpaceTaskRepository(db);
-  const spaces = new SpaceRepository(db);
+  const readRunning = createRunningDirectQueryReader(databaseDirectTaskQueryLookups(db));
   const read = (
     superpipe({
       db,
       messages: new SDKMessageRepository(db),
-      getPersistedSession: (id: string) => sessions.getSession(id),
-      getTask: (id: string) => tasks.getTask(id),
-      getActiveAttempt: (id: string) => attempts.getActive(id),
-      getSpace: (id: string) => spaces.getSpace(id),
-      isStopRequested: (id: string, sid: string) => attempts.isStopRequested(id, sid),
-      getTaskWorktreePath: readDirectTaskWorktreePath(db),
     })('guard-direct-query-start') as PipelineAPI
   )
     .input(['sessionId', 'session', 'expected'])
-    .pipe(
-      loadDirectTaskWorkerEvidence,
-      ['sessionId', 'getPersistedSession', 'getTask', 'getActiveAttempt'],
-      'evidence'
-    )
-    .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:start')
-    .pipe(
-      loadDirectTaskQueryState,
-      ['start', 'getSpace', 'isStopRequested', 'getTaskWorktreePath'],
-      'queryState'
-    )
-    .pipe(
-      requireRunningDirectTaskQuery,
-      ['start', 'start', 'evidence', 'queryState'],
-      'result:start'
-    )
+    .pipe(readRunning, ['sessionId'], 'running')
+    .pipe(requireRunningDirectQuery, 'running', 'result:start')
+    .pipe((running: RunningDirectQuery) => running, 'start', [
+      'identity:start',
+      'evidence',
+      'queryState',
+    ])
     .pipe(readKickoffProof, ['db', 'messages', 'start'], 'proof')
     .pipe(Date.now, undefined, 'now')
     .pipe(

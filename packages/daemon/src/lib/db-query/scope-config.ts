@@ -467,6 +467,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_work_continues',
   'neo_asks',
   'neo_ask_work',
+  'neo_work_prs',
   'direct_task_execution_selection',
   'direct_task_execution_attempts',
   'direct_task_session_provenance',

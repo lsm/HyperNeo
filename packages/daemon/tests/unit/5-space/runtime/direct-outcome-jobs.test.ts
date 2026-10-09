@@ -91,6 +91,7 @@ beforeEach(() => {
       coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
       getCachedSession: () => cached,
       isSessionLoading: () => false,
+      getSessionForControl: async () => null,
       unregisterSession: async (_id, expected) => {
         if (cached === expected) cached = null;
       },

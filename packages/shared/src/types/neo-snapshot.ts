@@ -51,6 +51,19 @@ export interface NeoAsk {
   settledAt: number | null;
 }
 
+export interface NeoWorkPr {
+  url: string;
+  state: 'OPEN' | 'MERGED' | 'CLOSED';
+  checks: 'pending' | 'failing' | 'passing' | 'none';
+  review: 'approved' | 'changes_requested' | 'none';
+}
+
+export interface NeoWorkPrReceipt {
+  workId: string;
+  prs: NeoWorkPr[];
+  waiting: boolean;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -70,6 +83,7 @@ export interface NeoSnapshot {
   workDrivers?: NeoWorkDriverReceipt[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
+  workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];
 }

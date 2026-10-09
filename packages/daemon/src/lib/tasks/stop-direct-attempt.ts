@@ -42,8 +42,21 @@ export interface DirectAttemptStopDependencies {
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
   sessionManager: Pick<
     SessionManager,
-    'getCachedSession' | 'isSessionLoading' | 'unregisterSession' | 'coalesceDirectStopVerification'
+    | 'getCachedSession'
+    | 'getSessionForControl'
+    | 'isSessionLoading'
+    | 'unregisterSession'
+    | 'coalesceDirectStopVerification'
   >;
+}
+
+export function requiresLiveStopProof(
+  attempt: Pick<DirectTaskAttempt, 'phase' | 'generation'>,
+  recorded: { token: string | null; generation: number | null } | null
+): boolean {
+  return (
+    attempt.phase === 'running' && (recorded?.generation !== attempt.generation || !recorded.token)
+  );
 }
 
 export function requireDirectStopTarget(
@@ -145,13 +158,11 @@ async function verifyDirectAttemptStopOwned(
     attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
     return { reason: { stopped: false, reason: 'unverified' } };
   }
-  const session = sessionManager.getCachedSession(attempt.sessionId);
-  if (
-    !session &&
-    attempt.phase === 'running' &&
-    (recorded?.generation !== attempt.generation || !recorded.token)
-  )
-    return { reason: { stopped: false, reason: 'unverified' } };
+  const needsLiveProof = requiresLiveStopProof(attempt, recorded);
+  const session =
+    sessionManager.getCachedSession(attempt.sessionId) ??
+    (needsLiveProof ? await sessionManager.getSessionForControl(attempt.sessionId) : null);
+  if (!session && needsLiveProof) return { reason: { stopped: false, reason: 'unverified' } };
   if (session || attempt.phase === 'reserved') {
     token = randomUUID();
     if (!attempts.beginStopVerification(attempt.id, attempt.sessionId, attempt.generation, token))

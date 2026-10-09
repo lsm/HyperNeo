@@ -19,7 +19,14 @@ import {
   type DirectTaskStartResult,
 } from './start-direct-task.ts';
 import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
-import { DIRECT_TASK_START, readDirectStartRequest } from './direct-start-request.ts';
+import {
+  DIRECT_TASK_START,
+  readDirectStartRequest,
+  reviveDirectStartJob,
+} from './direct-start-request.ts';
+import { Logger } from '../logger.ts';
+
+const log = new Logger('DirectStartJobs');
 import { DIRECT_ACTIVATION_WAITS } from './activate-direct-attempt.ts';
 
 export type DirectStartAcknowledgement =
@@ -131,6 +138,75 @@ export function createDirectStartJobHandler(
   };
 }
 
+type DeadStartReservation = { attemptId: string; sessionId: string; taskId: string };
+export type DeadStartOutcome = 'not_reserved' | 'retired' | 'revived';
+
+export function requireDeadStartReservation(
+  db: Database,
+  job: Job
+): { value: DeadStartReservation } | { reason: DeadStartOutcome } {
+  const attemptId = job.payload.attemptId;
+  if (job.queue !== DIRECT_TASK_START || typeof attemptId !== 'string')
+    return { reason: 'not_reserved' };
+  const attempt = new DirectTaskExecutionRepository(db).get(attemptId);
+  if (attempt?.phase !== 'reserved' || readDirectStartRequest(db, attemptId)?.jobId !== job.id)
+    return { reason: 'not_reserved' };
+  return { value: { attemptId, sessionId: attempt.sessionId, taskId: attempt.taskId } };
+}
+
+async function stopDeadReservation(
+  stop: ReturnType<typeof createDirectAttemptStopper>,
+  reservation: DeadStartReservation
+): Promise<boolean> {
+  const stopped = await stop({
+    attemptId: reservation.attemptId,
+    sessionId: reservation.sessionId,
+    outcome: 'start_superseded',
+  });
+  return stopped.stopped;
+}
+
+export function settleDeadStart(
+  db: Database,
+  jobs: Pick<JobQueueRepository, 'enqueue'>,
+  reservation: DeadStartReservation,
+  stopped: boolean,
+  onTaskAttemptChanged?: (taskId: string) => void
+): DeadStartOutcome {
+  if (stopped) {
+    onTaskAttemptChanged?.(reservation.taskId);
+    return 'retired';
+  }
+  reviveDirectStartJob(db, jobs, reservation.attemptId);
+  return 'revived';
+}
+
+export function createDirectStartDeadHandler(
+  db: Database,
+  jobs: Pick<JobQueueRepository, 'enqueue'>,
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  onTaskAttemptChanged?: (taskId: string) => void
+) {
+  const stop = createDirectAttemptStopper({
+    attempts: new DirectTaskExecutionRepository(db),
+    tasks: new SpaceTaskRepository(db),
+    sessionManager,
+  });
+  return (
+    superpipe({ db, jobs, stop, onTaskAttemptChanged })('retire-dead-direct-start') as PipelineAPI
+  )
+    .input('job')
+    .pipe(requireDeadStartReservation, ['db', 'job'], 'result:outcome')
+    .pipe((reservation: DeadStartReservation) => reservation, 'outcome', 'reservation')
+    .pipe(stopDeadReservation, ['stop', 'reservation'], 'stopped')
+    .pipe(
+      settleDeadStart,
+      ['db', 'jobs', 'reservation', 'stopped', 'onTaskAttemptChanged'],
+      'outcome'
+    )
+    .endAsync('outcome') as (job: Job) => Promise<DeadStartOutcome>;
+}
+
 export function registerDirectStartJobs(
   deps: Parameters<typeof createDirectTaskStarter>[0] & {
     sessionManager: DirectAttemptStopDependencies['sessionManager'];
@@ -138,6 +214,12 @@ export function registerDirectStartJobs(
     jobProcessor: Pick<JobQueueProcessor, 'register'>;
   }
 ): void {
+  const retire = createDirectStartDeadHandler(
+    deps.db,
+    deps.jobQueue,
+    deps.sessionManager,
+    deps.onTaskClaimed
+  );
   deps.jobProcessor.register(
     DIRECT_TASK_START,
     createDirectStartJobHandler(
@@ -146,6 +228,13 @@ export function registerDirectStartJobs(
       deps.jobQueue,
       deps.sessionManager,
       deps.onTaskClaimed
-    )
+    ),
+    {
+      onDead: (job) => {
+        retire(job).catch((error: unknown) =>
+          log.warn('Failed to retire a dead direct start reservation:', error)
+        );
+      },
+    }
   );
 }
