@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import {
+  annotateUnreachable,
+  createWorkVerbOperations,
+} from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
 import {
   createOperationRegistry,
@@ -314,5 +317,18 @@ describe('work verb operations', () => {
       detail:
         'laptop sent an unusable reply. The message may still have been delivered; check work.status before sending it again.',
     });
+  });
+});
+
+describe('annotateUnreachable', () => {
+  test('adds the hint only to an unreachable rejection', () => {
+    expect(
+      annotateUnreachable(
+        { ok: false, reason: 'unreachable', detail: 'timed out.' },
+        'Check first.'
+      )
+    ).toEqual({ ok: false, reason: 'unreachable', detail: 'timed out. Check first.' });
+    const notFound = { ok: false as const, reason: 'not_found' as const, detail: 'gone' };
+    expect(annotateUnreachable(notFound, 'Check first.')).toBe(notFound);
   });
 });

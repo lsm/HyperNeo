@@ -20,7 +20,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { ensureStartFolder } from './start-folder.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 import {
   boundExchange,
@@ -32,6 +32,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
+import { readTailLines } from './transcript-tail.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -318,23 +319,6 @@ export function claudeTranscriptPath(
   const cwd = record.cwd ?? record.originCwd;
   if (!cwd || !record.cliSessionId) return null;
   return join(projectsDir, cwd.replace(/[/.]/g, '-'), `${record.cliSessionId}.jsonl`);
-}
-
-async function readTailLines(
-  path: string,
-  bytes: number
-): Promise<{ lines: string[]; truncated: boolean }> {
-  const handle = await open(path, 'r');
-  try {
-    const { size } = await handle.stat();
-    const start = Math.max(0, size - bytes);
-    const buffer = Buffer.alloc(size - start);
-    await handle.read(buffer, 0, buffer.length, start);
-    const lines = buffer.toString('utf8').split('\n');
-    return { lines: start > 0 ? lines.slice(1) : lines, truncated: start > 0 };
-  } finally {
-    await handle.close();
-  }
 }
 
 function assistantText(line: string): string | null {
@@ -698,17 +682,7 @@ export function selectClaudeStartFolder(
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
 ): Gate<string> {
-  const { place } = request;
-  if (place.spaceId) {
-    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
-  }
-  if (place.machine !== deps.machine) {
-    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
-  }
-  if (!place.folder) {
-    return { reason: reject('invalid_place', 'A Claude Code session needs a folder to work in.') };
-  }
-  return ensureStartFolder(place.folder, request.createFolder, deps);
+  return selectLocalStartFolder(request, deps, 'A Claude Code session needs a folder to work in.');
 }
 
 async function runToExit(

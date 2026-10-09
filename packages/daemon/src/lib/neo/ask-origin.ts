@@ -1,6 +1,7 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { isMainNeoBinding, isNeoCoordinatorBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
   readonly sessionId: string;
@@ -75,9 +76,7 @@ export function requireNeoAskReference(input: Input): Gate {
 }
 
 export function requireNeoAskCoordinator(input: NeoAskOrigin, binding: NeoBinding | null): Gate {
-  return binding?.sessionId === input.sessionId &&
-    ((binding.kind === 'neo' && binding.concernId === null) ||
-      (binding.kind === 'concern' && binding.concernId !== null))
+  return binding?.sessionId === input.sessionId && isNeoCoordinatorBinding(binding)
     ? { value: input }
     : { reason: unknown };
 }
@@ -131,9 +130,7 @@ function validWorkOrigin(work: NeoWork, evidence: NeoAskEvidence): boolean {
   const binding = evidence.workOrigin;
   return (
     binding?.sessionId === work.originSessionId &&
-    ((binding.kind === 'neo' &&
-      binding.concernId === null &&
-      binding.sessionId === evidence.root?.sessionId) ||
+    ((isMainNeoBinding(binding) && binding.sessionId === evidence.root?.sessionId) ||
       (binding.kind === 'concern' &&
         binding.concernId !== null &&
         binding.concernId === work.concernId))
@@ -142,7 +139,7 @@ function validWorkOrigin(work: NeoWork, evidence: NeoAskEvidence): boolean {
 
 export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence): Hop {
   const { root, holder, consultation, work, envelope } = evidence;
-  if (root?.kind !== 'neo' || root.concernId !== null) return unknown;
+  if (!isMainNeoBinding(root)) return unknown;
   const nudged = nudgedMessageId(input.messageId);
   if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
   if (!envelope) {

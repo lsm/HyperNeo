@@ -11,6 +11,7 @@ import {
   isNeoCardAsk,
   requireNeoAskReceipt,
   requireNeoAskSettlement,
+  requireNeoAskSummary,
   requireNeoAskWritten,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
@@ -118,9 +119,20 @@ describe('neo.ask operations', () => {
       value: { ok: false, reason: 'ask_not_found' },
     });
 
-    const settle = { id: askId, outcome: 'achieved', evidence: 'PR #12 merged, CI green.' };
+    const settle = {
+      id: askId,
+      outcome: 'achieved',
+      summary: 'Merged in #12.',
+      evidence: 'PR #12 merged, CI green.',
+    };
+    expect(await invoke('neo.ask.settle', { ...settle, summary: undefined })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('summary_required') },
+    });
     expect(await invoke('neo.ask.settle', settle)).toMatchObject({
-      value: { ok: true, ask: { status: 'achieved', outcome: settle.evidence } },
+      value: {
+        ok: true,
+        ask: { status: 'achieved', outcome: 'Merged in #12.', evidence: settle.evidence },
+      },
     });
     expect(await invoke('neo.ask.settle', settle)).toMatchObject({ value: { ok: true } });
     expect(
@@ -132,7 +144,12 @@ describe('neo.ask operations', () => {
   });
   test('new work under a blocked ask reopens it', async () => {
     const askId = await openAsk();
-    await invoke('neo.ask.settle', { id: askId, outcome: 'blocked', evidence: 'Which API?' });
+    await invoke('neo.ask.settle', {
+      id: askId,
+      outcome: 'blocked',
+      summary: 'Needs you: which API?',
+      evidence: 'Two APIs fit.',
+    });
 
     await propose('card-1', askId);
 
@@ -149,7 +166,7 @@ describe('neo.ask operations', () => {
     expect(
       await invoke(
         'neo.ask.settle',
-        { id: askId, outcome: 'abandoned', evidence: 'x' },
+        { id: askId, outcome: 'abandoned', summary: 'Dropped.', evidence: 'x' },
         {
           ...neo,
           sessionId: 'other',
@@ -162,7 +179,16 @@ describe('neo.ask operations', () => {
         { id: askId, outcome: 'abandoned', evidence: 'Closed by the user.' },
         { source: 'rpc', principal: 'local' }
       )
-    ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'abandoned',
+          outcome: 'Closed by the user.',
+          evidence: 'Closed by the user.',
+        },
+      },
+    });
     expect(service.repo.getWork(running)?.status).toBe('cancelled');
     expect(service.repo.getWork(idle)?.status).toBe('cancelled');
   });
@@ -353,6 +379,35 @@ describe('requireNeoAskSettlement', () => {
     expect(isNeoAskReplay(done, settle)).toBe(true);
   });
 });
+describe('requireNeoAskSummary', () => {
+  const settle = { id: 'a1', outcome: 'achieved' as const, evidence: 'PR #12 merged, CI green.' };
+  test.each<[string, typeof settle & { summary?: string }, OperationCaller, boolean]>([
+    ['Neo with a summary', { ...settle, summary: 'Merged in #12.' }, neo, true],
+    ['Neo without one', settle, neo, false],
+    ["the user's close button without one", settle, { source: 'rpc', principal: 'local' }, true],
+  ])('%s', (_case, input, caller, admitted) => {
+    expect('value' in requireNeoAskSummary(input, caller)).toBe(admitted);
+  });
+});
+
+describe('isNeoAskReplay', () => {
+  const settle = {
+    id: 'a1',
+    outcome: 'achieved' as const,
+    summary: 'Merged in #12.',
+    evidence: 'PR #12 merged.',
+  };
+  const done = { ...ask, status: 'achieved' as const, outcome: 'Merged in #12.' };
+  test.each<[string, NeoAsk, boolean]>([
+    ['the same summary and evidence', { ...done, evidence: 'PR #12 merged.' }, true],
+    ['other evidence', { ...done, evidence: 'PR #13 merged.' }, false],
+    ['another summary', { ...done, outcome: 'Done.', evidence: 'PR #12 merged.' }, false],
+    ['another status', { ...done, status: 'abandoned', evidence: 'PR #12 merged.' }, false],
+  ])('%s', (_case, current, replay) => {
+    expect(isNeoAskReplay(current, settle)).toBe(replay);
+  });
+});
+
 describe('requireNeoAskWritten', () => {
   test('reports a lost write as superseded', () => {
     expect(requireNeoAskWritten({ ask: null })).toEqual({
@@ -415,7 +470,8 @@ describe('neoPrompt', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('record it with neo.ask.open before proposing its work');
     expect(prompt).toContain('Propose every card for that request with its askId');
-    expect(prompt).toContain('neo.ask.settle {id,outcome,evidence}');
+    expect(prompt).toContain('neo.ask.settle {id,outcome,summary,evidence}');
+    expect(prompt).toContain('the proof goes in evidence, never in summary');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');

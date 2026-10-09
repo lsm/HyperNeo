@@ -1,4 +1,3 @@
-import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
@@ -21,7 +20,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { ensureStartFolder } from './start-folder.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 import {
   boundExchange,
@@ -33,6 +32,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
+import { readTailLines } from './transcript-tail.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -300,25 +300,8 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   });
 }
 
-async function readRolloutWindow(
-  path: string,
-  bytes = ROLLOUT_TAIL_BYTES
-): Promise<{ lines: string[]; truncated: boolean }> {
-  const handle = await open(path, 'r');
-  try {
-    const { size } = await handle.stat();
-    const start = Math.max(0, size - bytes);
-    const buffer = Buffer.alloc(size - start);
-    await handle.read(buffer, 0, buffer.length, start);
-    const lines = buffer.toString('utf8').split('\n');
-    return { lines: start > 0 ? lines.slice(1) : lines, truncated: start > 0 };
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function readRolloutTail(path: string, bytes = ROLLOUT_TAIL_BYTES): Promise<string[]> {
-  return (await readRolloutWindow(path, bytes)).lines;
+  return (await readTailLines(path, bytes)).lines;
 }
 
 function parseLine(
@@ -473,7 +456,7 @@ export async function readCodexTurn(
   since?: number
 ): Promise<CodexTurnState> {
   try {
-    const { lines, truncated } = await readRolloutWindow(detail.thread.rolloutPath);
+    const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
     return {
       ...codexTurnState(lines),
       inputs: codexRecentInputs(lines, since),
@@ -569,17 +552,7 @@ export function selectCodexStartFolder(
   request: StartRequest,
   deps: CodexDesktopAdapterDeps
 ): Gate<string> {
-  const { place } = request;
-  if (place.spaceId) {
-    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
-  }
-  if (place.machine !== deps.machine) {
-    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
-  }
-  if (!place.folder) {
-    return { reason: reject('invalid_place', 'A Codex thread needs a folder to work in.') };
-  }
-  return ensureStartFolder(place.folder, request.createFolder, deps);
+  return selectLocalStartFolder(request, deps, 'A Codex thread needs a folder to work in.');
 }
 
 export function startedThreadId(started: unknown): string | null {
@@ -621,11 +594,10 @@ export async function prepareCodexWorkFolder(
   };
 }
 
-export async function startCodexThread(
-  folder: string,
-  request: StartRequest,
-  deps: CodexDesktopAdapterDeps
-): Promise<Result<WorkSummary>> {
+export async function withCodexAppServer<Value>(
+  deps: Pick<CodexDesktopAdapterDeps, 'appServer'>,
+  use: (server: CodexAppServer) => Promise<Result<Value>>
+): Promise<Result<Value>> {
   let server: CodexAppServer;
   try {
     server = await deps.appServer();
@@ -635,40 +607,53 @@ export async function startCodexThread(
       `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  let threadId: string | null = null;
-  let workFolder: CodexWorkFolder | null = null;
   try {
-    const prepared = await prepareCodexWorkFolder(folder, deps);
-    if (!prepared.ok) return prepared;
-    workFolder = prepared.value;
-    threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
-    if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
-    await server.call('thread/name/set', { threadId, name: request.title });
-    await server.call('turn/start', {
-      threadId,
-      input: [{ type: 'text', text: request.message }],
-    });
-    return {
-      ok: true,
-      value: {
-        ref: { adapter: 'codex-desktop', id: threadId },
-        title: request.title,
-        place: { machine: deps.machine, folder, name: request.place.name },
-        status: 'running',
-        lastActivityAt: deps.now(),
-        link: `codex://threads/${threadId}`,
-      },
-    };
-  } catch (error) {
-    const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
-    return reject(
-      'not_delivered',
-      `${error instanceof Error ? error.message : String(error)}${made}`
-    );
+    return await use(server);
   } finally {
     server.close();
-    if (!threadId) await workFolder?.release();
   }
+}
+
+export async function startCodexThread(
+  folder: string,
+  request: StartRequest,
+  deps: CodexDesktopAdapterDeps
+): Promise<Result<WorkSummary>> {
+  return withCodexAppServer(deps, async (server) => {
+    let threadId: string | null = null;
+    let workFolder: CodexWorkFolder | null = null;
+    try {
+      const prepared = await prepareCodexWorkFolder(folder, deps);
+      if (!prepared.ok) return prepared;
+      workFolder = prepared.value;
+      threadId = startedThreadId(await server.call('thread/start', { cwd: workFolder.cwd }));
+      if (!threadId) return reject('not_delivered', 'thread/start returned no thread id.');
+      await server.call('thread/name/set', { threadId, name: request.title });
+      await server.call('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: request.message }],
+      });
+      return {
+        ok: true,
+        value: {
+          ref: { adapter: 'codex-desktop', id: threadId },
+          title: request.title,
+          place: { machine: deps.machine, folder, name: request.place.name },
+          status: 'running',
+          lastActivityAt: deps.now(),
+          link: `codex://threads/${threadId}`,
+        },
+      };
+    } catch (error) {
+      const made = threadId ? ` Thread ${threadId} was created without its first turn.` : '';
+      return reject(
+        'not_delivered',
+        `${error instanceof Error ? error.message : String(error)}${made}`
+      );
+    } finally {
+      if (!threadId) await workFolder?.release();
+    }
+  });
 }
 
 const runCodexStart = (superpipe({})('codex-start-work') as PipelineAPI)
@@ -687,32 +672,23 @@ export async function interruptCodexTurn(
   const threadId = detail.thread.id;
   const turnId = await readActiveCodexTurn(detail.thread.rolloutPath);
   if (!turnId) return { ok: true, value: { stopped: false } };
-  let server: CodexAppServer;
-  try {
-    server = await deps.appServer();
-  } catch (error) {
-    return reject(
-      'unreachable',
-      `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  try {
-    await server.call('turn/interrupt', { threadId, turnId });
-    return { ok: true, value: { stopped: true } };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('thread not found')) {
-      return reject(
-        'unsupported',
-        `Codex Desktop runs thread ${threadId} itself; stop it in the app.`
-      );
+  return withCodexAppServer<{ stopped: boolean }>(deps, async (server) => {
+    try {
+      await server.call('turn/interrupt', { threadId, turnId });
+      return { ok: true, value: { stopped: true } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('thread not found')) {
+        return reject(
+          'unsupported',
+          `Codex Desktop runs thread ${threadId} itself; stop it in the app.`
+        );
+      }
+      return (await readActiveCodexTurn(detail.thread.rolloutPath)) === turnId
+        ? reject('not_delivered', message)
+        : { ok: true, value: { stopped: false } };
     }
-    return (await readActiveCodexTurn(detail.thread.rolloutPath)) === turnId
-      ? reject('not_delivered', message)
-      : { ok: true, value: { stopped: false } };
-  } finally {
-    server.close();
-  }
+  });
 }
 
 const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)

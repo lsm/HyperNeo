@@ -3,7 +3,11 @@ import { chmodSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readCodexThread, withCodexState } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import {
+  readCodexThread,
+  withCodexState,
+  withCodexAppServer,
+} from '../../../../src/lib/drivers/codex-desktop-adapter';
 
 describe('withCodexState', () => {
   let dir: string;
@@ -35,5 +39,27 @@ describe('withCodexState', () => {
     expect(withCodexState(statePath, (state) => state.prepare('SELECT 1 AS one').get())).toEqual({
       one: 1,
     });
+  });
+});
+
+describe('withCodexAppServer', () => {
+  test('rejects unreachable when the app-server is down and always closes an open one', async () => {
+    const down = await withCodexAppServer(
+      { appServer: () => Promise.reject(new Error('no socket')) },
+      async () => ({ ok: true as const, value: 1 })
+    );
+    expect(down).toEqual({
+      ok: false,
+      reason: 'unreachable',
+      detail: 'The Codex app-server is not running: no socket',
+    });
+    let closed = 0;
+    const server = { call: async () => ({}), close: () => void closed++ };
+    await expect(
+      withCodexAppServer({ appServer: async () => server as never }, async () => {
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    expect(closed).toBe(1);
   });
 });

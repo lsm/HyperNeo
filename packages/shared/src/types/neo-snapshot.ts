@@ -46,6 +46,7 @@ export interface NeoAsk {
   doneSource: string;
   status: NeoAskStatus;
   outcome: string | null;
+  evidence?: string | null;
   workIds: string[];
   createdAt: number;
   updatedAt: number;

@@ -6,6 +6,7 @@ import type { NeoRepository } from '../../storage/repositories/neo-repository.ts
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoPublicationSchema } from './publication.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 const Input = z
   .object({
@@ -30,9 +31,7 @@ export function requirePublicationReader(page: Page, caller: OperationCaller): G
 }
 
 export function requirePublicationConversation(page: Page, root: NeoBinding | null): Gate {
-  return root?.kind === 'neo' &&
-    root.concernId === null &&
-    root.sessionId === `neo:${page.conversationId}`
+  return isMainNeoBinding(root) && root.sessionId === `neo:${page.conversationId}`
     ? { value: page }
     : { reason: { ok: false, reason: 'conversation_not_found' } };
 }
