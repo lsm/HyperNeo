@@ -305,6 +305,14 @@ function startResult(
     : (alreadyStarted(db, input) ?? { started: false, reason: result.reason });
 }
 
+export function announceActivation(
+  result: DirectAttemptActivationResult,
+  onTaskActivated?: (taskId: string) => void
+): DirectAttemptActivationResult {
+  if (result.activated) onTaskActivated?.(result.task.id);
+  return result;
+}
+
 export function createDirectTaskStarter(dependencies: {
   db: Database;
   reactiveDb?: ReactiveDatabase;
@@ -313,6 +321,7 @@ export function createDirectTaskStarter(dependencies: {
   defaultModel: string;
   onTaskReopened?: (taskId: string) => void;
   onTaskClaimed?: (taskId: string) => void;
+  onTaskActivated?: (taskId: string) => void;
 }) {
   const { db, reactiveDb, sessionDb, sessionManager, defaultModel } = dependencies;
   const attempts = new DirectTaskExecutionRepository(db);
@@ -328,6 +337,7 @@ export function createDirectTaskStarter(dependencies: {
       onTaskReopened: dependencies.onTaskReopened,
       startJobs: undefined,
       onTaskClaimed: dependencies.onTaskClaimed,
+      onTaskActivated: dependencies.onTaskActivated,
       attempts,
       tasks,
       getSpace: (id: string) => spaces.getSpace(id),
@@ -373,6 +383,7 @@ export function createDirectTaskStarter(dependencies: {
     .pipe(kickoffInput, ['db', 'start', 'input'], 'kickoff')
     .pipe((kickoff: { message: unknown }) => kickoff.message, 'kickoff', 'message')
     .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'kickoff', 'message'], 'activation')
+    .pipe(announceActivation, ['activation', 'onTaskActivated'], 'activation')
     .pipe(startResult, ['activation', 'db', 'input'], 'start')
     .endAsync('start') as (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>;
 }

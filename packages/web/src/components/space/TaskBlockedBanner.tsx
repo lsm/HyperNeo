@@ -45,12 +45,19 @@ export function TaskBlockedBanner({
           variant: 'primary',
           testId: 'task-blocked-handoff-btn',
         }
-      : {
-          label: 'Reopen',
-          onClick: () => onStatusTransition?.('in_progress'),
-          variant: 'secondary',
-          testId: 'task-blocked-reopen-btn',
-        },
+      : task.workflowRunId
+        ? {
+            label: 'Resume',
+            onClick: () => onStatusTransition?.('in_progress'),
+            variant: 'secondary',
+            testId: 'task-blocked-resume-btn',
+          }
+        : {
+            label: 'Reopen',
+            onClick: () => onStatusTransition?.('open'),
+            variant: 'secondary',
+            testId: 'task-blocked-reopen-btn',
+          },
     {
       label: 'Cancel',
       onClick: () => onStatusTransition?.('cancelled'),

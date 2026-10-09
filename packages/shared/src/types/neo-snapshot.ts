@@ -70,6 +70,7 @@ export interface NeoSnapshot {
   workDrivers?: NeoWorkDriverReceipt[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
+  standingRules?: string[];
   asks?: NeoAsk[];
 }
 

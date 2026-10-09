@@ -221,10 +221,8 @@ test('fallback MCP catalog hides Space-owned task reads while preserving standal
   const deniedList = await mcp({ name: 'task.list', input: { spaceId } });
   expect(deniedList.isError).not.toBe(true);
   expect(JSON.parse(deniedList.content[0].text)).toEqual({
-    tasks: [],
-    total: 0,
-    nextCursor: null,
-    scope: { spaceId },
+    accepted: false,
+    reason: 'task_list_denied',
   });
 });
 
@@ -774,17 +772,15 @@ test('task.get stays unscoped for rpc callers', async () => {
 });
 
 test.each([undefined, 'other-space'])(
-  'task.list yields an empty page for ordinary or cross-Space MCP owner %s',
+  'task.list refuses ordinary or cross-Space MCP owner %s with task_list_denied',
   async (owner) => {
     const caller = member('lister', owner);
     const mcp = createOperationMcpHandler(provider(), () => caller);
     const denied = await mcp(list(spaceId));
     expect(denied.isError).not.toBe(true);
     expect(JSON.parse(denied.content[0].text)).toEqual({
-      tasks: [],
-      total: 0,
-      nextCursor: null,
-      scope: { spaceId },
+      accepted: false,
+      reason: 'task_list_denied',
     });
   }
 );

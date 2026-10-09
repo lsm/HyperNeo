@@ -104,7 +104,7 @@ export function TaskSessionChatComposer({
           type="button"
           class={cn(
             'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-surface/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-line/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/70 active:scale-95',
-            isNotStarted && 'ring-amber-400/40'
+            isNotStarted && 'ring-warning/40'
           )}
           style={{ backgroundColor: selectedTargetColor }}
           onClick={() => setTargetMenuOpen((open) => !open)}
@@ -118,7 +118,7 @@ export function TaskSessionChatComposer({
         </button>
         {targetMenuOpen && (
           <div
-            class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-line bg-surface-overlay shadow-xl shadow-black/30"
+            class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-line bg-surface-overlay shadow-xl"
             data-testid="task-composer-target-menu"
           >
             <div class="border-b border-line px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted">

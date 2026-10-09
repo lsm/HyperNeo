@@ -3,7 +3,7 @@ import { decideReportableTerminal } from '../../../../src/lib/goals/reportable-t
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { availableTaskSlots } from '../../../../src/lib/tasks/capacity.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../../../src/lib/tasks/capacity.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
@@ -1542,7 +1542,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(recovered.startedAt).not.toBeNull();
       const space = await spaceManager.getSpace(SPACE_ID);
       expect(
-        availableTaskSlots(space, []) - availableTaskSlots(space, taskRepo.listBySpace(SPACE_ID))
+        availableTaskSlots(space, 0) -
+          availableTaskSlots(space, taskRepo.countByStatuses(SPACE_ID, TASK_SLOT_STATUSES))
       ).toBe(1);
       expect(freshRt.executorCount).toBe(1);
     });

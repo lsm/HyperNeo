@@ -118,16 +118,27 @@ describe('TaskBlockedBanner', () => {
     expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
   });
 
-  it('Reopen and Cancel buttons call onStatusTransition', () => {
+  it('Reopen moves a task without a workflow back to open, and Cancel cancels it', () => {
     const onTransition = vi.fn();
     const task = makeTask({ blockReason: 'execution_failed' });
     const { getByTestId } = render(
       <TaskBlockedBanner task={task} spaceId="space-1" onStatusTransition={onTransition} />
     );
     fireEvent.click(getByTestId('task-blocked-reopen-btn'));
-    expect(onTransition).toHaveBeenCalledWith('in_progress');
+    expect(onTransition).toHaveBeenCalledWith('open');
     fireEvent.click(getByTestId('task-blocked-cancel-btn'));
     expect(onTransition).toHaveBeenCalledWith('cancelled');
+  });
+
+  it('Resume restarts a blocked workflow task', () => {
+    const onTransition = vi.fn();
+    const task = makeTask({ blockReason: 'execution_failed', workflowRunId: 'run-1' });
+    const { getByTestId, queryByTestId } = render(
+      <TaskBlockedBanner task={task} spaceId="space-1" onStatusTransition={onTransition} />
+    );
+    expect(queryByTestId('task-blocked-reopen-btn')).toBeNull();
+    fireEvent.click(getByTestId('task-blocked-resume-btn'));
+    expect(onTransition).toHaveBeenCalledWith('in_progress');
   });
 
   it('shows result text when present', () => {

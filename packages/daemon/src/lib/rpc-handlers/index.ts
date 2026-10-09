@@ -44,7 +44,7 @@ import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-sc
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import type { MessageHub, SessionMetadata } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata, SpaceTask } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -66,7 +66,7 @@ import { setupMessageHandlers } from './message-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
 import { registerMcpHandlers } from './mcp-handlers.ts';
-import { registerSettingsHandlers } from './settings-handlers.ts';
+import { registerSettingsHandlers, sanitizeGlobalSettings } from './settings-handlers.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
@@ -608,6 +608,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobProcessor: deps.jobProcessor,
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTaskClaimed: emitClaimedTaskUpdate,
+    onTaskActivated: emitClaimedTaskUpdate,
   });
 
   registerDirectOutcomeJobs({
@@ -618,14 +619,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobProcessor: deps.jobProcessor,
     onAttemptRetired: emitClaimedTaskUpdate,
     onTaskUpdated: (task) => {
-      void deps.internalEventBus
-        .publish('space.task.updated', {
-          sessionId: 'global',
-          spaceId: task.spaceId,
-          taskId: task.id,
-          task,
-        })
-        .catch((error) => log.warn('Failed to emit direct outcome task update:', error));
+      const publish = (updated: SpaceTask) =>
+        void deps.internalEventBus
+          .publish('space.task.updated', {
+            sessionId: 'global',
+            spaceId: updated.spaceId,
+            taskId: updated.id,
+            task: updated,
+          })
+          .catch((error) => log.warn('Failed to emit direct outcome task update:', error));
+      publish(task);
+      void spaceTaskManagerFactory(task.spaceId)
+        .settleDependents(task.id, task.status)
+        .then((settled) => settled.forEach(publish))
+        .catch((error) => log.warn('Failed to settle direct task dependents:', error));
     },
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTerminalTransition: (taskId, fromStatus) =>
@@ -1406,7 +1413,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.sessionManager,
     deps.messageHub,
-    deps.internalEventBus
+    deps.internalEventBus,
+    (settings) =>
+      deps.internalEventBus.publishAsync('settings.updated', {
+        namespaceId: 'global',
+        settings: sanitizeGlobalSettings(settings, deps.credentialManager),
+      })
   );
   const familyOperations = [
     ...collectFamilyOperations(familyContext),

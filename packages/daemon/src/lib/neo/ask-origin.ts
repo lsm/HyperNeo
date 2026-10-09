@@ -40,8 +40,16 @@ export function neoStallMessageId(workId: string, since: number): string {
   return `${workId}:stall:${since}`;
 }
 
+export function neoWorkReturnMessageId(workId: string, retries: number): string {
+  return retries ? `${workId}:retry:${retries}` : workId;
+}
+
+export function neoWorkReviewId(workId: string, retries: number): string {
+  return `neo-work:${workId}:review${retries ? `:retry:${retries}` : ''}`;
+}
+
 function checkedWorkId(messageId: string): string {
-  return /^(.+):(?:done-check|stall):\d+$/.exec(messageId)?.[1] ?? messageId;
+  return /^(.+):(?:done-check|stall|retry):\d+$/.exec(messageId)?.[1] ?? messageId;
 }
 
 function settledOrStalled(work: NeoWork, messageId: string): boolean {
@@ -90,9 +98,7 @@ export function classifyNeoAskInput(input: NeoAskOrigin, prompts: readonly SDKMe
 }
 
 function reviewWorkId(id: string): string | null {
-  return id.startsWith('neo-work:') && id.endsWith(':review')
-    ? id.slice('neo-work:'.length, -':review'.length) || null
-    : null;
+  return /^neo-work:(.+):review(?::retry:\d+)?$/.exec(id)?.[1] ?? null;
 }
 
 export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads): NeoAskEvidence {

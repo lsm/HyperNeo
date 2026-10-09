@@ -94,6 +94,18 @@ export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
 export interface NeoSettings {
   routeModel?: { provider: string; model: string };
   routeTimeoutMs?: number;
+  standingRules?: string[];
+}
+
+export const NEO_STANDING_RULES_MAX = 20;
+export const NEO_STANDING_RULE_MAX_CHARS = 500;
+
+export const DEFAULT_NEO_STANDING_RULES: readonly string[] = [
+  "When the work changes code, include 'a pull request is open against the base branch; do not merge it' in doneWhen unless the human said otherwise.",
+];
+
+export function neoStandingRules(settings?: NeoSettings): string[] {
+  return [...(settings?.standingRules ?? DEFAULT_NEO_STANDING_RULES)];
 }
 
 export interface ExaSettings {

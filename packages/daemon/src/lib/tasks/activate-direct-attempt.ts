@@ -1,5 +1,5 @@
 import { readDirectTaskWorktreePath } from './direct-task-workspace.ts';
-import { availableTaskSlots } from './capacity.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots } from './capacity.ts';
 import { readDirectStartRequest } from './direct-start-request.ts';
 import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -109,7 +109,12 @@ export function activateDirectAttemptAtomically(
       const attempt = attempts.get(input.attemptId);
       const task = attempt ? tasks.getTask(attempt.taskId) : null;
       const space = task ? new SpaceRepository(db).getSpace(task.spaceId) : null;
-      if (availableTaskSlots(space, space ? tasks.listBySpace(space.id, false) : []) <= 0)
+      if (
+        availableTaskSlots(
+          space,
+          space ? tasks.countByStatuses(space.id, TASK_SLOT_STATUSES) : 0
+        ) <= 0
+      )
         return rejected;
       const admitted = readDirectStartRequest(db, input.attemptId);
       if (

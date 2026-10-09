@@ -12,6 +12,11 @@ import type {
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
 import {
+  NEO_STANDING_RULE_MAX_CHARS,
+  NEO_STANDING_RULES_MAX,
+  neoStandingRules,
+} from '@hyperneo/shared/types/settings';
+import {
   requireNeoWorkTargetSession,
   requireNeoWorkTargetBinding,
   type presentNeoWorkTarget,
@@ -131,6 +136,7 @@ const Snapshot = z.union([
       )
       .optional(),
     work: z.array(Work),
+    standingRules: z.array(z.string()).optional(),
     consultations: z.array(Consultation),
     consultationWaiters: z.array(ConsultationWaiter).optional(),
     workResources: z
@@ -211,6 +217,15 @@ const Propose = z.object({
   askId: z.string().min(1).max(160).optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
+const SaveRules = z.object({
+  rules: z
+    .array(z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS))
+    .max(NEO_STANDING_RULES_MAX),
+});
+const RulesResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), standingRules: z.array(z.string()) }),
+]);
 const Close = z.object({ id: z.string().min(1), outcome: z.enum(['done', 'cancelled']) });
 const Continue = z.object({
   id: z.string().min(1),
@@ -368,6 +383,8 @@ export function admitNeoCaller(
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
   if (name === 'neo.concern.consult' && binding.kind !== 'neo')
     return { reason: { ok: false, reason: 'Only root Neo can consult a context holder.' } };
+  if (name === 'neo.rule.save' && binding.kind !== 'neo')
+    return { reason: { ok: false, reason: 'Only root Neo can save standing rules.' } };
   if (
     name === 'neo.concern.save' &&
     binding.kind === 'neo' &&
@@ -438,6 +455,7 @@ export function createNeoOperations(service: NeoService) {
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
+      standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listConcernBindings(scope ?? undefined) : [],
       concerns: concerns.map((item) => ({
@@ -475,6 +493,16 @@ export function createNeoOperations(service: NeoService) {
       ),
     };
   }
+  const saveRules = path(
+    'neo.rule.save',
+    (_input: z.infer<typeof SaveRules>) => undefined,
+    ({ rules }) => {
+      const neo = service.db.getGlobalSettings().neo;
+      const updated = service.db.updateGlobalSettings({ neo: { ...neo, standingRules: rules } });
+      service.publishSettings?.(updated);
+      return { ok: true as const, standingRules: rules };
+    }
+  );
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) => input.concernId,
@@ -848,6 +876,17 @@ export function createNeoOperations(service: NeoService) {
       return service.continueWork(id, message);
     }
   );
+  const retry = path(
+    'neo.work.retry',
+    (_input: z.infer<typeof WorkId>) => undefined,
+    async ({ id }, caller) => {
+      const work = service.repo.getWork(id);
+      if (!work) return { ok: false as const, reason: 'work_not_found' };
+      const admission = requireNeoWorkContinuation(work, caller);
+      if ('reason' in admission) return admission.reason;
+      return service.retryWork(id);
+    }
+  );
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
@@ -914,6 +953,15 @@ export function createNeoOperations(service: NeoService) {
       execute: open,
     }),
     defineOperation({
+      name: 'neo.rule.save',
+      description:
+        'Replace the saved standing rules that neo.snapshot returns as standingRules. Save only when the human states a lasting rule for how work should go, such as what counts as done; read the current list from neo.snapshot first and keep the rules they did not change. Up to 20 rules of up to 500 characters.',
+      inputSchema: SaveRules,
+      resultSchema: RulesResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: saveRules,
+    }),
+    defineOperation({
       name: 'neo.snapshot',
       description:
         'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context.',
@@ -968,6 +1016,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: continueWork,
+    }),
+    defineOperation({
+      name: 'neo.work.retry',
+      description:
+        'Try a failed hand-off again on the same work card: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The card goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. Only the Neo session that proposed the work or the user can retry it.',
+      inputSchema: WorkId,
+      resultSchema: WorkResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: retry,
     }),
     defineOperation({
       name: 'neo.work.close',

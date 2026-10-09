@@ -120,10 +120,10 @@ test('an rpc caller naming a Space still reads that Space', async () => {
   expect(outcome).toMatchObject({ value: { total: 1, scope: { spaceId: otherSpaceId } } });
 });
 
-test('a Space caller naming a foreign Space is still refused with an empty page', async () => {
+test('a Space caller naming a foreign Space is refused with task_list_denied', async () => {
   const outcome = await invoke({ spaceId: otherSpaceId }, member('foreign', spaceId));
-  expect(titles(outcome)).toEqual([]);
-  expect(outcome).toMatchObject({
-    value: { total: 0, nextCursor: null, scope: { spaceId: otherSpaceId } },
+  expect(outcome).toEqual({
+    kind: 'completed',
+    value: { accepted: false, reason: 'task_list_denied' },
   });
 });

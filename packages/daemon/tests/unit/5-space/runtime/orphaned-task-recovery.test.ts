@@ -7,7 +7,7 @@ import {
   ORPHANED_IN_PROGRESS_GRACE_MS,
   selectOrphanedInProgressTasks,
 } from '../../../../src/lib/tasks/orphaned-task-recovery.ts';
-import { availableTaskSlots } from '../../../../src/lib/tasks/capacity.ts';
+import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../../../src/lib/tasks/capacity.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
@@ -123,14 +123,18 @@ describe('orphaned in_progress task recovery', () => {
   test('a tick reopens the orphan and releases the concurrency slot it held', async () => {
     const stuck = orphanedTask(ORPHANED_IN_PROGRESS_GRACE_MS + 60_000);
     const space = new SpaceRepository(db).getSpace(SPACE_ID)!;
-    expect(availableTaskSlots(space, taskRepo.listBySpace(SPACE_ID))).toBe(0);
+    expect(availableTaskSlots(space, taskRepo.countByStatuses(SPACE_ID, TASK_SLOT_STATUSES))).toBe(
+      0
+    );
 
     await buildRuntime().executeTick();
 
     const reopened = taskRepo.getTask(stuck.id)!;
     expect(reopened.status).toBe('open');
     expect(reopened.startedAt).toBeNull();
-    expect(availableTaskSlots(space, taskRepo.listBySpace(SPACE_ID))).toBe(1);
+    expect(availableTaskSlots(space, taskRepo.countByStatuses(SPACE_ID, TASK_SLOT_STATUSES))).toBe(
+      1
+    );
   });
 
   test('the reopened task then starts a real workflow run on the same tick', async () => {

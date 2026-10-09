@@ -17,7 +17,7 @@ import {
   type SpaceCreateTaskInput,
   SpaceCreateTaskInputSchema,
 } from './create-task-target.ts';
-import { resolveMetadataSessionSpace } from './metadata.ts';
+import { requireActiveMetadataCallerSession, resolveMetadataSessionSpace } from './metadata.ts';
 import {
   validateWorkflowSelection,
   type SetPreferredWorkflowDependencies,
@@ -66,8 +66,16 @@ function createStandaloneWhenUnowned(
   const task = createStandaloneTask(deps.db, input, caller.sessionId, deps.notifyStandalone);
   return { reason: { ...task, standalone: true } };
 }
-async function requireSpace(spaceId: string, deps: Deps): Promise<void> {
-  if (!(await deps.getSpace(spaceId))) throw new Error(`Space not found: ${spaceId}`);
+function requireActiveCaller(spaceId: string, caller: Caller, session: Sess): TargetGate {
+  const active = requireActiveMetadataCallerSession({ kind: 'space', spaceId }, caller, session);
+  return 'reason' in active
+    ? { reason: { accepted: false, reason: active.reason } }
+    : { value: spaceId };
+}
+async function requireSpace(spaceId: string, deps: Deps): Promise<TargetGate> {
+  return (await deps.getSpace(spaceId))
+    ? { value: spaceId }
+    : { reason: { accepted: false, reason: `Space not found: ${spaceId}` } };
 }
 function requireSpaceWorkflow(spaceId: string, input: In, deps: Deps): TargetGate {
   if (!input.preferredWorkflowId || !deps.getWorkflow) return { value: spaceId };
@@ -76,11 +84,10 @@ function requireSpaceWorkflow(spaceId: string, input: In, deps: Deps): TargetGat
   });
   return rejection ? { reason: { accepted: false, reason: rejection } } : { value: spaceId };
 }
-async function requireUsableWorkspace(spaceId: string, input: In, deps: Deps): Promise<void> {
-  if (input.workspacePath === undefined) {
-    const error = await deps.validateDefaultTaskWorkspace(spaceId);
-    if (error) throw new Error(error);
-  }
+async function requireUsableWorkspace(spaceId: string, input: In, deps: Deps): Promise<TargetGate> {
+  if (input.workspacePath !== undefined) return { value: spaceId };
+  const error = await deps.validateDefaultTaskWorkspace(spaceId);
+  return error ? { reason: { accepted: false, reason: error } } : { value: spaceId };
 }
 async function createSpaceTask(
   spaceId: string,
@@ -112,15 +119,16 @@ export function createSpaceCreateTaskOperation(deps: Deps) {
     .pipe(resolveCallerSession, ['caller', 'deps'], 'session')
     .pipe(resolveCreateTarget, ['input', 'caller', 'session', 'deps'], 'result:task')
     .pipe(createStandaloneWhenUnowned, ['task', 'input', 'caller', 'deps'], 'result:task')
-    .pipe(requireSpace, ['task', 'deps'])
+    .pipe(requireActiveCaller, ['task', 'caller', 'session'], 'result:task')
+    .pipe(requireSpace, ['task', 'deps'], 'result:task')
     .pipe(requireSpaceWorkflow, ['task', 'input', 'deps'], 'result:task')
-    .pipe(requireUsableWorkspace, ['task', 'input', 'deps'])
+    .pipe(requireUsableWorkspace, ['task', 'input', 'deps'], 'result:task')
     .pipe(createSpaceTask, ['task', 'input', 'caller', 'session', 'deps'], 'task')
     .pipe(publishCreated, ['task', 'deps'], 'task')
     .endAsync('task') as CreateFn;
   return createCreateTaskOperation(createTask, {
     inputSchema: SpaceCreateTaskInputSchema,
     description:
-      'Create a task. Pass spaceId to create it in that Space; a session already scoped to a Space creates there by default and cannot target another Space, which returns { accepted: false, reason }. With no spaceId and no Space of its own the caller gets an independent task, reported as standalone: true on the result. dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; preferredWorkflowId must name an enabled workflow of that Space, else workflow_not_found or workflow_disabled; when workspacePath is omitted the Space needs a usable default workspace. Returns core task data, or a rejection.',
+      'Create a task. Pass spaceId to create it in that Space; a session already scoped to a Space creates there by default and cannot target another Space, which returns { accepted: false, reason }. With no spaceId and no Space of its own the caller gets an independent task, reported as standalone: true on the result. dependsOn, draft, preferredWorkflowId and workspacePath apply only to Space tasks; preferredWorkflowId must name an enabled workflow of that Space, else workflow_not_found or workflow_disabled; when workspacePath is omitted the Space needs a usable default workspace. An agent caller needs an active session. A missing Space, an unusable default workspace or an inactive caller session returns { accepted: false, reason }. Returns core task data, or a rejection.',
   });
 }
