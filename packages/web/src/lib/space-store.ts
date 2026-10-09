@@ -56,6 +56,7 @@ import {
   setPreferredWorkflow,
   transitionTask,
   type TaskTransitionResult,
+  requireAccepted,
 } from './operations';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
@@ -2093,8 +2094,7 @@ class SpaceStore {
       'task.create',
       { ...params, spaceId }
     );
-    if ('accepted' in result && result.accepted === false) throw new Error(result.reason);
-    return result as TaskCore;
+    return requireAccepted<TaskCore>(result, (rejection) => rejection.reason);
   }
 
   async listWorkspaces(): Promise<SpaceWorkspace[]> {
@@ -2332,8 +2332,7 @@ class SpaceStore {
       taskId,
       reason: reason ?? null,
     });
-    if ('accepted' in result) throw new Error(result.detail);
-    return result;
+    return requireAccepted<SpaceTask>(result);
   }
 
   async sendTaskMessage(
@@ -2634,8 +2633,9 @@ class SpaceStore {
       settingSources: params.settingSources,
       ...(tools !== undefined ? { tools } : {}),
     });
-    if ('accepted' in response) throw new Error(agentUpdateRefusalMessage(response.reason));
-    const { agent } = response;
+    const { agent } = requireAccepted<{ agent: SpaceAgent }>(response, (rejection) =>
+      agentUpdateRefusalMessage(rejection.reason)
+    );
     const mapped = this.fromSpaceAgentV2(agent, templateKey);
     this.upsertAgent(mapped, spaceId);
     return mapped;

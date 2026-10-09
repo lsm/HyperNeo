@@ -1,3 +1,4 @@
+import { isProviderNotRegisteredMessage } from '../providers/session-provider-env-pipeline.ts';
 import { ErrorCategory } from '../error-manager.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
@@ -118,10 +119,7 @@ export function decideProviderTerminalCategory(
   )
     return ErrorCategory.RATE_LIMIT;
   if (signal.isStartupTimeout || /\btimeout\b/.test(raw)) return ErrorCategory.TIMEOUT;
-  if (
-    /\bmodel_not_found\b/.test(raw) ||
-    raw.includes('is not registered; cannot prepare environment')
-  )
+  if (/\bmodel_not_found\b/.test(raw) || isProviderNotRegisteredMessage(raw))
     return ErrorCategory.MODEL;
   if (
     raw.includes('cannot be run as root') ||

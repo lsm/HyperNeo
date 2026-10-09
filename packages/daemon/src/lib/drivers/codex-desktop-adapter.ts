@@ -377,7 +377,7 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
   return withReplyAt({ marker: null, reply }, replyAt);
 }
 
-export function codexRecentInputs(lines: readonly string[]): WorkInput[] {
+export function codexRecentInputs(lines: readonly string[], since?: number): WorkInput[] {
   return recentWorkInputs(
     lines.flatMap((line) => {
       const entry = parseLine(line);
@@ -386,7 +386,8 @@ export function codexRecentInputs(lines: readonly string[]): WorkInput[] {
       if (!text || INJECTED_INPUT.test(text)) return [];
       const input = workInput(workEntryTime(entry.timestamp), text);
       return input ? [input] : [];
-    })
+    }),
+    since
   );
 }
 
@@ -478,7 +479,7 @@ export async function readCodexTurn(
     const { lines, truncated } = await readRolloutWindow(detail.thread.rolloutPath);
     return {
       ...codexTurnState(lines),
-      inputs: codexRecentInputs(lines),
+      inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
     };
   } catch {

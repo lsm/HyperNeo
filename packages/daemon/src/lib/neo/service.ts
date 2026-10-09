@@ -731,13 +731,14 @@ export class NeoService {
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
     const startedAt = this.driverTargets.readStartedAt(work.id);
+    const sent = this.driverTargets.readSent(work.id);
+    const since = startedAt ?? sent?.inputBefore ?? null;
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       'work.status',
-      { ref, ...(startedAt !== null ? { since: startedAt } : {}) },
+      { ref, ...(since !== null ? { since } : {}) },
       driverWorkCaller(work)
     );
-    const sent = this.driverTargets.readSent(work.id);
     const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
     if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
     const live = readDriverLive(outcome);
@@ -750,14 +751,16 @@ export class NeoService {
       this.driverTargets.recordLive(work.id, cardStatus, live.link, live.remoteLink)
     )
       this.notifyChanged();
-    const settled = readDriverSettlement(
-      work,
-      outcome,
-      Date.now(),
-      startedAt,
-      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
-      sent?.opening ?? (messageOpening(work.instruction) || null)
-    );
+    const settled =
+      landed === null &&
+      readDriverSettlement(
+        work,
+        outcome,
+        Date.now(),
+        startedAt,
+        !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
+        sent?.opening ?? (messageOpening(work.instruction) || null)
+      );
     if (!settled) {
       await this.noteDriverStall(work, outcome);
       await this.noteDriverStuck(work);

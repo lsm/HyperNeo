@@ -1,6 +1,5 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import { isRetryableTaskStatus, retryTargetStatus } from '../../tasks/transitions.ts';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;
@@ -206,35 +205,4 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     auditParamsShape: 'fields_only',
     emitTaskUpdated: 'always',
   };
-}
-
-export interface RetryTaskRoutingInput extends TaskTargetGateInput {
-  currentStatus: string;
-  hasWorkflowRun: boolean;
-}
-
-export type RetryTaskRouting =
-  | { action: 'reject'; reason: TaskTargetRejectReason | 'status_not_retryable'; message: string }
-  | { action: 'recover_workflow_task'; targetStatus: 'open' | 'in_progress' }
-  | { action: 'retry_task' };
-
-export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
-  const target = routeTaskTarget(input);
-  if (target.action === 'reject') {
-    return target;
-  }
-  if (input.hasWorkflowRun) {
-    if (!isRetryableTaskStatus(input.currentStatus)) {
-      return {
-        action: 'reject',
-        reason: 'status_not_retryable',
-        message: `Cannot retry task in '${input.currentStatus}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
-      };
-    }
-    return {
-      action: 'recover_workflow_task',
-      targetStatus: retryTargetStatus(input.currentStatus),
-    };
-  }
-  return { action: 'retry_task' };
 }

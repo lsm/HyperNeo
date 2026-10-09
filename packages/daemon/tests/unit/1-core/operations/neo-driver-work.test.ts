@@ -20,6 +20,8 @@ import {
   readDriverSendBaseline,
   NEO_WORK_STUCK_STEPS_MS,
   decideStuckReminder,
+  NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -479,6 +481,31 @@ describe('Neo work with a drivers target', () => {
         status: 'reported',
         report: 'Agent: Font is 16px.',
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('looks for its sent message among the inputs after the baseline', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'running',
+        lastActivityAt: 5_000,
+        recentInputs: [{ at: 2_000, text: 'Fix the bug please' }],
+      },
+    }));
+    try {
+      await service.start('work-1');
+      service.driverTargets.recordStartedAt('work-1', null);
+      service.driverTargets.recordSent('work-1', { inputBefore: 1_000, opening: 'Fix the bug' });
+      await service.refreshDriverWork();
+      expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
+        ref,
+        since: 1_000,
+      });
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(2_000);
     } finally {
       db.close();
     }
@@ -1018,6 +1045,42 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('never takes the unanchored fallback in the refresh that finds the message', async () => {
+    const landed = [{ at: 3, text: `${work.instruction} Neo routed this` }];
+    let reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: 1, recentInputs: [] },
+    };
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: false } },
+      undefined,
+      () => reply,
+      sendTarget
+    );
+    const clock = spyOn(Date, 'now');
+    try {
+      await service.start('work-1');
+      const sentAt = service.repo.getWork('work-1')!.updatedAt;
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: sentAt + 10,
+          recentInputs: landed,
+          lastReply: 'Done.',
+          lastReplyAt: sentAt + 10,
+        },
+      };
+      clock.mockImplementation(() => sentAt + 10 + NEO_WORK_UNANCHORED_SETTLE_MS);
+      await service.refreshDriverWork();
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(3);
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('settles a queued send on the reply after its message lands, a refresh after it lands', async () => {
     const input = (inputAt: number, text: string) => ({ at: inputAt, text });
     const older = [input(1, 'hello')];
@@ -1416,6 +1479,25 @@ describe('readDriverSettlement', () => {
     const later = 100 + 10 * 60_000;
     expect(readDriverSettlement(work, stale, later, 100)).toMatchObject({ status: 'reported' });
     expect(readDriverSettlement(work, stale, later, 100, true)).toBeNull();
+  });
+
+  test('settles an unanchored send on the latest reply once the session has been quiet for hours', () => {
+    const work = { updatedAt: 100 };
+    const reply = (lastReplyAt: number, status = 'done') => ({
+      kind: 'completed' as const,
+      value: {
+        ok: true,
+        value: { status, lastActivityAt: 1_000, lastReplyAt, lastReply: 'Shipped it.' },
+      },
+    });
+    const quiet = 1_000 + NEO_WORK_UNANCHORED_SETTLE_MS;
+    expect(readDriverSettlement(work, reply(900), quiet - 1, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(50), quiet, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(900, 'running'), quiet, null, true)).toBeNull();
+    expect(readDriverSettlement(work, reply(900), quiet, null, true)).toEqual({
+      status: 'reported',
+      report: `${NEO_WORK_UNANCHORED_NOTE}\n\nShipped it.`,
+    });
   });
 
   test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {

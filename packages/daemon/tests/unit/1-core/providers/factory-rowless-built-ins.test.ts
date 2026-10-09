@@ -75,6 +75,16 @@ describe('disableBuiltInProvidersWithoutEnabledRecord', () => {
     expect(getProviderRegistry().has('anthropic')).toBe(true);
   });
 
+  it('can register every built-in provider added later, including deepseek and opencode', async () => {
+    disableBuiltInProvidersWithoutEnabledRecord([]);
+    initializeProviders();
+    for (const providerId of ['deepseek', 'opencode', 'ollama-cloud', 'acp']) {
+      expect(getProviderRegistry().has(providerId)).toBe(false);
+      await ensureBuiltInProviderRegistered(providerId);
+      expect(getProviderRegistry().has(providerId)).toBe(true);
+    }
+  });
+
   it('registers no built-in provider when there are no rows', async () => {
     installStubCopilotModule();
     disableBuiltInProvidersWithoutEnabledRecord([]);

@@ -19,6 +19,23 @@ const TRANSITION_REJECTION_MESSAGES: Record<string, string> = {
     'This task belongs to a workflow run that is still going. Cancel the run first — archiving now would leave it stranded.',
 };
 
+export type OperationRejection = { accepted: false; reason: string; detail?: string };
+
+export function requireAccepted<T>(
+  result: T | OperationRejection,
+  message: (rejection: OperationRejection) => string = (rejection) =>
+    rejection.detail ?? rejection.reason
+): T {
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    'accepted' in result &&
+    result.accepted === false
+  )
+    throw new Error(message(result));
+  return result as T;
+}
+
 export async function transitionTask(
   hub: MessageHub,
   input: { taskId: string; status: string; result?: string; expectedStatus?: string }
@@ -32,10 +49,10 @@ export async function transitionTask(
     if (friendly) throw new Error(friendly);
     throw new Error(`Cannot move task ${input.taskId} to ${input.status}: ${result}`);
   }
-  if ('accepted' in result && !result.accepted) {
-    throw new Error(`Cannot move task ${input.taskId} to ${input.status}: ${result.reason}`);
-  }
-  return result;
+  return requireAccepted<TaskTransitionResult>(
+    result,
+    (rejection) => `Cannot move task ${input.taskId} to ${input.status}: ${rejection.reason}`
+  );
 }
 
 export type TaskTransitionResult = SpaceTask | { accepted: true; jobId: string | null };
@@ -56,10 +73,10 @@ export async function editTaskMetadata(
     input
   );
   if (result === null) throw new Error(`Task ${input.taskId} is unavailable`);
-  if ('accepted' in result && result.accepted === false) {
-    throw new Error(`Cannot edit task ${input.taskId}: ${result.reason}`);
-  }
-  return result as SpaceTask;
+  return requireAccepted<SpaceTask>(
+    result,
+    (rejection) => `Cannot edit task ${input.taskId}: ${rejection.reason}`
+  );
 }
 
 const PREFERRED_WORKFLOW_REJECTIONS: Record<string, string> = {

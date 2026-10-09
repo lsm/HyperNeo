@@ -1,6 +1,7 @@
 import type { WorkExchangeEntry, WorkInput } from './types.ts';
 
 const RECENT_INPUTS = 8;
+const INPUTS_AFTER = 50;
 const INPUT_TEXT_LIMIT = 160;
 const EXCHANGE_TEXT_LIMIT = 4_000;
 const EXCHANGE_ENTRIES = 40;
@@ -15,8 +16,10 @@ export function workInput(at: number | undefined, text: string): WorkInput | nul
   return at !== undefined && plain ? { at, text: plain.slice(0, INPUT_TEXT_LIMIT) } : null;
 }
 
-export function recentWorkInputs(inputs: readonly WorkInput[]): WorkInput[] {
-  return inputs.slice(-RECENT_INPUTS);
+export function recentWorkInputs(inputs: readonly WorkInput[], since?: number): WorkInput[] {
+  return since === undefined
+    ? inputs.slice(-RECENT_INPUTS)
+    : inputs.filter((input) => input.at > since).slice(0, INPUTS_AFTER);
 }
 
 export interface WorkExchange {
