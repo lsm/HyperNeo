@@ -105,6 +105,11 @@ export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): str
     'Neo routed this to you: do it here, not by handing it to another session or chat.',
     ...(goal.goal ? [`What the human asked: ${goal.goal}`] : []),
     ...(goal.doneWhen ? [`Done when:\n${goal.doneWhen}`] : []),
+    ...(/merg/i.test(goal.doneWhen ?? '')
+      ? [
+          'To merge, run `gh pr merge <number> --squash` as a command of its own, not chained with other commands.',
+        ]
+      : []),
     'If you stop before this is done, say what remains and why.',
   ].join('\n');
 }
