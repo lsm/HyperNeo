@@ -76,6 +76,7 @@ export function directSessionIsDown(session: AgentSession): boolean {
 }
 
 async function settleProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
+  session.refreshProcessExitedPromise();
   const exited = session.processExitedPromise;
   if (!exited) return;
   await Promise.race([
