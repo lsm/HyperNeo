@@ -94,10 +94,18 @@ describe('neoWorkOpenLabel', () => {
 });
 
 describe('neoWorkMeta', () => {
-  it('shows the PR number when there is one, else when the work started', () => {
+  it('shows the PR number when there is one, else when the work started, and only the time for work that never started', () => {
     const now = 3 * 60 * 60_000;
     expect(neoWorkMeta(work('queued'), undefined, now)).toBe('Started 3h ago');
     expect(neoWorkMeta(work('proposed'), undefined, now)).toBeNull();
+    expect(neoWorkMeta(work('cancelled'), undefined, now)).toBe('3h ago');
+    expect(
+      neoWorkMeta(
+        work('failed', { report: 'Could not start the execution: login expired' }),
+        undefined,
+        now
+      )
+    ).toBe('3h ago');
     expect(
       neoWorkMeta(
         work('reported'),

@@ -55,5 +55,10 @@ export function neoWorkMeta(
   const pr = neoWorkPrNumber(prs);
   if (pr) return `PR ${pr}`;
   if (work.status === 'proposed') return null;
-  return `Started ${getRelativeTime(work.createdAt, now)}`;
+  const when = getRelativeTime(work.createdAt, now);
+  const neverStarted =
+    !work.sessionId &&
+    (work.status === 'cancelled' ||
+      (work.status === 'failed' && !!work.report?.startsWith(startFailure)));
+  return neverStarted ? when : `Started ${when}`;
 }
