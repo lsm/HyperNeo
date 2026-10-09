@@ -11,6 +11,7 @@ import {
   admitTaskOwner,
   listScopedTasks,
   readScopedTask,
+  readScopedTaskByNumber,
   type TaskReadAdmission,
 } from '../../../../src/lib/tasks/scoped-task-reads';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -121,4 +122,12 @@ test('listScopedTasks never reaches the reader when the gate refuses', () => {
   expect(list).not.toHaveBeenCalled();
   listScopedTasks(member('allowed-list', spaceId), admission, list, { spaceId });
   expect(list).toHaveBeenCalledTimes(1);
+});
+
+test('readScopedTaskByNumber returns null for a missing number and the task for a present one', () => {
+  const rpc = { source: 'rpc' as const };
+  const byNumber = (id: string, number: number) => tasks.getTaskByNumber(id, number);
+  expect(readScopedTaskByNumber(rpc, admission, byNumber, spaceId, 999)).toBeNull();
+  const number = tasks.getTask(taskId)!.taskNumber;
+  expect(readScopedTaskByNumber(rpc, admission, byNumber, spaceId, number)?.id).toBe(taskId);
 });

@@ -63,8 +63,9 @@ function loadTaskByNumber(
   readByNumber: TaskNumberReader,
   spaceId: string,
   taskNumber: number
-): TaskCore | null {
-  return readByNumber(spaceId, taskNumber);
+): { value: TaskCore } | { reason: null } {
+  const task = readByNumber(spaceId, taskNumber);
+  return task ? { value: task } : { reason: null };
 }
 
 function loadPage(listTasks: TaskPageReader, input: ListTasksInput): TaskListPage {
@@ -86,7 +87,7 @@ export const readScopedTask = (superpipe({})('read-scoped-task') as PipelineAPI)
 export const readScopedTaskByNumber = (superpipe({})('read-scoped-task-by-number') as PipelineAPI)
   .input(['caller', 'admission', 'readByNumber', 'spaceId', 'taskNumber'])
   .pipe(admitSpaceScope, ['spaceId', 'caller', 'admission'], 'result:task')
-  .pipe(loadTaskByNumber, ['readByNumber', 'spaceId', 'taskNumber'], 'task')
+  .pipe(loadTaskByNumber, ['readByNumber', 'spaceId', 'taskNumber'], 'result:task')
   .end('task') as (
   caller: OperationCaller,
   admission: TaskReadAdmission,
