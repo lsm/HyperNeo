@@ -58,6 +58,7 @@ export function NeoLive() {
   const relevant = view?.work ?? [];
   const drivers = new Map((view?.workDrivers ?? []).map((driver) => [driver.workId, driver]));
   const goals = new Map((view?.workGoals ?? []).map((goal) => [goal.workId, goal]));
+  const prs = new Map((view?.workPrs ?? []).map((item) => [item.workId, item]));
   const continues = new Map((view?.workContinues ?? []).map((item) => [item.workId, item]));
   const topics = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
@@ -140,7 +141,8 @@ export function NeoLive() {
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
       : undefined,
-    drivers
+    drivers,
+    prs
   );
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
@@ -569,6 +571,7 @@ export function NeoLive() {
                       key={JSON.stringify(scene.ref)}
                       work={scene.receipt}
                       driver={drivers.get(scene.ref.id)}
+                      prs={prs.get(scene.ref.id)}
                       goal={goals.get(scene.ref.id)}
                       continued={continues.get(scene.ref.id)}
                       busy={neo.busyWork === scene.ref.id}
