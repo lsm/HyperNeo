@@ -98,76 +98,82 @@ async function fetchModelsFromEndpoint(params: {
   }
 }
 
-export function validateCustomEndpoint(
+function baseUrlProblem(baseUrl: string): string | null {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? null
+      : 'baseUrl must use http:// or https://';
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+function endpointModelProblem(
+  id: string,
+  model: CustomEndpointConfig['models'][number]
+): string | null {
+  const pct = model.capabilities?.autoCompactPercent;
+  if (
+    pct !== undefined &&
+    (typeof pct !== 'number' ||
+      !Number.isFinite(pct) ||
+      !Number.isInteger(pct) ||
+      pct < AUTO_COMPACT_PERCENT_MIN ||
+      pct > AUTO_COMPACT_PERCENT_MAX)
+  )
+    return `Custom endpoint '${id}': model '${model.id}' autoCompactPercent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`;
+  const off = model.capabilities?.thinkingOffEffort;
+  if (off !== undefined && off !== 'none' && off !== 'minimal' && off !== 'low')
+    return `Custom endpoint '${id}': model '${model.id}' thinkingOffEffort must be none, minimal or low`;
+  return null;
+}
+
+export function customEndpointProblem(
   config: CustomEndpointConfig,
   options?: { allowReservedIds?: ReadonlySet<string> }
-): void {
-  if (!config?.id || typeof config.id !== 'string')
-    throw new Error('Custom endpoint id is required');
+): string | null {
+  if (!config?.id || typeof config.id !== 'string') return 'Custom endpoint id is required';
   if (
     (config.id === VOICE_CREDENTIAL_PROVIDER_ID || config.id === EXA_CREDENTIAL_PROVIDER_ID) &&
     !options?.allowReservedIds?.has(config.id)
   )
-    throw new Error(`Custom endpoint id '${config.id}' is reserved`);
+    return `Custom endpoint id '${config.id}' is reserved`;
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
-    throw new Error(
-      `Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`
-    );
-  if (config.type !== undefined && !VALID_CUSTOM_ENDPOINT_TYPES.has(config.type)) {
-    throw new Error(
-      `Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
-        ...VALID_CUSTOM_ENDPOINT_TYPES,
-      ].join(', ')})`
-    );
-  }
+    return `Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`;
+  if (config.type !== undefined && !VALID_CUSTOM_ENDPOINT_TYPES.has(config.type))
+    return `Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
+      ...VALID_CUSTOM_ENDPOINT_TYPES,
+    ].join(', ')})`;
   if (!config.name || typeof config.name !== 'string')
-    throw new Error(`Custom endpoint '${config.id}': name is required`);
+    return `Custom endpoint '${config.id}': name is required`;
   if (!config.baseUrl || typeof config.baseUrl !== 'string')
-    throw new Error(`Custom endpoint '${config.id}': baseUrl is required`);
-  try {
-    const url = new URL(config.baseUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new Error('baseUrl must use http:// or https://');
-    }
-  } catch (err) {
-    throw new Error(
-      `Custom endpoint '${config.id}': invalid baseUrl — ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+    return `Custom endpoint '${config.id}': baseUrl is required`;
+  const urlProblem = baseUrlProblem(config.baseUrl);
+  if (urlProblem) return `Custom endpoint '${config.id}': invalid baseUrl — ${urlProblem}`;
   if (!Array.isArray(config.models) || config.models.length === 0)
-    throw new Error(`Custom endpoint '${config.id}': at least one model is required`);
+    return `Custom endpoint '${config.id}': at least one model is required`;
   const seen = new Set<string>();
   for (const model of config.models) {
     if (!model?.id || typeof model.id !== 'string')
-      throw new Error(`Custom endpoint '${config.id}': every model must have an id`);
+      return `Custom endpoint '${config.id}': every model must have an id`;
     if (seen.has(model.id))
-      throw new Error(`Custom endpoint '${config.id}': duplicate model id '${model.id}'`);
-    const pct = model.capabilities?.autoCompactPercent;
-    if (
-      pct !== undefined &&
-      (typeof pct !== 'number' ||
-        !Number.isFinite(pct) ||
-        !Number.isInteger(pct) ||
-        pct < AUTO_COMPACT_PERCENT_MIN ||
-        pct > AUTO_COMPACT_PERCENT_MAX)
-    ) {
-      throw new Error(
-        `Custom endpoint '${config.id}': model '${model.id}' autoCompactPercent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`
-      );
-    }
-    const off = model.capabilities?.thinkingOffEffort;
-    if (off !== undefined && off !== 'none' && off !== 'minimal' && off !== 'low') {
-      throw new Error(
-        `Custom endpoint '${config.id}': model '${model.id}' thinkingOffEffort must be none, minimal or low`
-      );
-    }
+      return `Custom endpoint '${config.id}': duplicate model id '${model.id}'`;
+    const modelProblem = endpointModelProblem(config.id, model);
+    if (modelProblem) return modelProblem;
     seen.add(model.id);
   }
-  if (config.defaultModelId && !seen.has(config.defaultModelId)) {
-    throw new Error(
-      `Custom endpoint '${config.id}': defaultModelId '${config.defaultModelId}' not in models[]`
-    );
-  }
+  if (config.defaultModelId && !seen.has(config.defaultModelId))
+    return `Custom endpoint '${config.id}': defaultModelId '${config.defaultModelId}' not in models[]`;
+  return null;
+}
+
+export function validateCustomEndpoint(
+  config: CustomEndpointConfig,
+  options?: { allowReservedIds?: ReadonlySet<string> }
+): void {
+  const problem = customEndpointProblem(config, options);
+  if (problem) throw new Error(problem);
 }
 
 export function validateCustomEndpoints(
