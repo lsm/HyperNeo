@@ -45,7 +45,6 @@ import {
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceTasksFilterTabSignal,
-  currentSpaceTaskViewTabSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
   settingsSectionSignal,
@@ -66,7 +65,6 @@ function resetSignals() {
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceSettingsTabSignal.value = 'general';
   currentSpaceTasksFilterTabSignal.value = 'active';
-  currentSpaceTaskViewTabSignal.value = 'thread';
   navSectionSignal.value = 'spaces';
   settingsSectionSignal.value = 'general';
 }
@@ -126,9 +124,7 @@ describe('router', () => {
     expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(
       `/space/${SPACE_ID}/session/${SESSION_ID}`
     );
-    expect(createSpaceTaskPath(SPACE_ID, TASK_ID, 'thread')).toBe(
-      `/space/${SPACE_ID}/task/${TASK_ID}/thread`
-    );
+    expect(createSpaceTaskPath(SPACE_ID, TASK_ID)).toBe(`/space/${SPACE_ID}/task/${TASK_ID}`);
   });
 
   it('does not treat legacy room URLs as space routes', () => {
@@ -170,22 +166,18 @@ describe('router', () => {
 
     expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
     expect(currentSpaceTaskIdSignal.value).toBe(TASK_ID);
-    expect(currentSpaceTaskViewTabSignal.value).toBe('thread');
     expect(navSectionSignal.value).toBe('spaces');
     expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/canvas`)).toEqual({
       spaceId: SPACE_ID,
       taskId: TASK_ID,
-      view: 'thread',
     });
     expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/timeline`)).toEqual({
       spaceId: SPACE_ID,
       taskId: TASK_ID,
-      view: 'thread',
     });
     expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/log`)).toEqual({
       spaceId: SPACE_ID,
       taskId: TASK_ID,
-      view: 'thread',
     });
   });
 
@@ -437,9 +429,8 @@ describe('router', () => {
     );
     finishNavigation();
 
-    navigateToSpaceTask(SPACE_ID, TASK_ID, 'thread');
+    navigateToSpaceTask(SPACE_ID, TASK_ID);
     expect(currentSpaceTaskIdSignal.value).toBe(TASK_ID);
-    expect(currentSpaceTaskViewTabSignal.value).toBe('thread');
     finishNavigation();
 
     navigateToSpaceSession(SPACE_ID, SESSION_ID);
