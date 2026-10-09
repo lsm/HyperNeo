@@ -194,22 +194,43 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export function readDriverLive(
-  outcome: OperationOutcome
-): { status: WorkStatus; link?: string; remoteLink?: string } | null {
+export function readDriverLive(outcome: OperationOutcome): {
+  status: WorkStatus;
+  lastActivityAt: number;
+  lastReplyAt?: number;
+  link?: string;
+  remoteLink?: string;
+} | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
   if (!reply.success || !reply.data.ok) return null;
-  const { status, link, remoteLink } = reply.data.value as {
+  const { status, lastActivityAt, lastReplyAt, link, remoteLink } = reply.data.value as {
     status: WorkStatus;
+    lastActivityAt: number;
+    lastReplyAt?: number;
     link?: unknown;
     remoteLink?: unknown;
   };
   return {
     status,
+    lastActivityAt,
+    ...(lastReplyAt !== undefined ? { lastReplyAt } : {}),
     ...(typeof link === 'string' ? { link } : {}),
     ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
   };
+}
+
+export function decideCardLiveStatus(
+  session: { status: WorkStatus; lastActivityAt: number; lastReplyAt?: number },
+  anchoredAt: number | null,
+  prior: WorkStatus | null
+): WorkStatus {
+  if (session.status === 'failed' || session.status === 'stopped') return session.status;
+  if (anchoredAt === null) return 'queued';
+  const replied = session.lastReplyAt !== undefined && session.lastReplyAt > anchoredAt;
+  if (!replied) return session.status === 'done' ? 'running' : session.status;
+  if (session.status === 'running') return prior === 'done' ? 'done' : 'running';
+  return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
 
 export function readDriverSendBaseline(
@@ -353,12 +374,15 @@ export function driverStuckNote(
   goal: NeoWorkGoal | null,
   queuedSince: number,
   now: number,
-  abandoned: boolean
+  abandoned: boolean,
+  budget: string | null
 ): string {
   const hours = Math.floor((now - queuedSince) / HOUR_MS);
   const next = abandoned
     ? 'It looks abandoned. Tell the human it has been in progress this long with no result and propose closing it; closing is theirs to do, never close it yourself.'
-    : 'Check it with work.status. If it is stuck, stop it with work.stop and send the next step with neo.work.continue {id, message}, or ask the human if only they can decide.';
+    : budget
+      ? `${budget} If it is stuck, stop it with work.stop and tell the human.`
+      : 'Check it with work.status. If it is stuck, stop it with work.stop and send the next step with neo.work.continue {id, message}, or ask the human if only they can decide.';
   return `Work you handed off has been in progress for ${hours} hours without a result. ${next}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal?.goal ?? null, doneWhen: goal?.doneWhen ?? null })}`;
 }
 

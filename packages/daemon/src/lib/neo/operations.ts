@@ -62,7 +62,9 @@ import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
+  isNeoCardAsk,
   NeoAskSchema,
+  planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
@@ -888,13 +890,31 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => ({
-        owner: input.askId ? service.askRecords.link(input.askId, receipt.work.id) : null,
+      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
+        const planned = planNeoCardAsk(input, origin);
+        const filed = service.askRecords.forWork(receipt.work.id);
+        const opened =
+          planned && !filed
+            ? service.askRecords.open({ ...planned, id: crypto.randomUUID() })
+            : null;
+        return {
+          askId:
+            input.askId ??
+            filed?.id ??
+            (planned && isNeoCardAsk(opened, planned) ? opened?.id : undefined),
+        };
+      },
+      ['input', 'origin', 'admission'],
+      'ask'
+    )
+    .pipe(
+      (ask: { askId?: string }, receipt: { work: NeoWork }) => ({
+        owner: ask.askId ? service.askRecords.link(ask.askId, receipt.work.id) : null,
       }),
-      ['input', 'admission'],
+      ['ask', 'admission'],
       'askLink'
     )
-    .pipe(requireNeoWorkAskLink, ['input', 'askLink', 'admission'], 'result:admission')
+    .pipe(requireNeoWorkAskLink, ['ask', 'askLink', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
         service.workGoals.record(receipt.work.id, input.goal ?? null, input.doneWhen ?? null);

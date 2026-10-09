@@ -20,6 +20,7 @@ import {
   readDriverSendBaseline,
   NEO_WORK_STUCK_STEPS_MS,
   decideStuckReminder,
+  decideCardLiveStatus,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -801,7 +802,9 @@ describe('Neo work with a drivers target', () => {
       expect(notes.map(([id]) => id)).toEqual(
         [2, 24, 48, 72].map((hours) => `work-1:stall:${since + hours * 60 * 60_000}`)
       );
-      expect(notes[0][1]).toContain('work.status');
+      expect(notes[0][1]).toContain('neo.work.continue');
+      expect(notes[1][1]).not.toContain('neo.work.continue {id');
+      expect(notes[1][1]).toContain('tell the human');
       expect(notes[3][1]).toContain('propose closing it');
       expect(service.repo.getWork('work-1')?.status).toBe('queued');
     } finally {
@@ -857,6 +860,25 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test("card status follows the session only after Neo's message landed and stays done after a reply", () => {
+    const running = { status: 'running' as const, lastActivityAt: 30 };
+    expect(decideCardLiveStatus(running, null, null)).toBe('queued');
+    expect(decideCardLiveStatus({ status: 'stopped', lastActivityAt: 30 }, null, null)).toBe(
+      'stopped'
+    );
+    expect(decideCardLiveStatus(running, 10, null)).toBe('running');
+    expect(decideCardLiveStatus({ status: 'done', lastActivityAt: 30 }, 10, null)).toBe('running');
+    expect(
+      decideCardLiveStatus({ status: 'done', lastActivityAt: 30, lastReplyAt: 20 }, 10, null)
+    ).toBe('done');
+    expect(decideCardLiveStatus({ ...running, lastReplyAt: 20 }, 10, 'done')).toBe('done');
+    expect(decideCardLiveStatus({ ...running, lastReplyAt: 20 }, 10, 'running')).toBe('running');
+    expect(decideCardLiveStatus({ ...running, lastReplyAt: 5 }, 10, 'done')).toBe('running');
+    expect(
+      decideCardLiveStatus({ status: 'needs_you', lastActivityAt: 30, lastReplyAt: 20 }, 10, null)
+    ).toBe('needs_you');
+  });
+
   test('records the live status and link of sent work without settling it', async () => {
     const reply = {
       ok: true,
@@ -883,7 +905,7 @@ describe('Neo work with a drivers target', () => {
           workId: 'work-1',
           adapter: 'hyperneo',
           daemon: null,
-          status: 'running',
+          status: 'queued',
           link: 'codex://threads/s1',
         },
       ]);
@@ -925,7 +947,7 @@ describe('Neo work with a drivers target', () => {
         workId: 'work-1',
         adapter: 'hyperneo',
         daemon: null,
-        status: 'running',
+        status: 'queued',
         link: 'claude://claude.ai/epitaxy/local_a1',
       });
     } finally {
