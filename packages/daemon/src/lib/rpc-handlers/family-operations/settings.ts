@@ -1,7 +1,11 @@
 import type { GlobalSettings, ModelInfo } from '@hyperneo/shared';
 import { z } from 'zod';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
-import { defineOperation, type OperationDefinition } from '../../operations/registry.ts';
+import {
+  defineOperation,
+  type OperationCaller,
+  type OperationDefinition,
+} from '../../operations/registry.ts';
 import { sanitizeGlobalSettings } from '../settings-handlers.ts';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -17,6 +21,7 @@ const DefaultModel = z.object({
   provider: z.string().nullable(),
   availableModels: z.array(ModelEntry),
 });
+const NeoOnly = z.object({ ok: z.literal(false), reason: z.literal('neo_only') });
 const SetInput = z.object({
   model: z.string().min(1),
   provider: z.string().min(1).optional(),
@@ -35,6 +40,10 @@ export function readDefaultModel(deps: DefaultModelDeps): z.infer<typeof Default
     provider: settings.modelProvider ?? null,
     availableModels: usableModels(deps).map(({ id, name, provider }) => ({ id, name, provider })),
   };
+}
+
+export function admitDefaultModelWriter(caller: OperationCaller): boolean {
+  return caller.source !== 'mcp' || caller.role === 'neo';
 }
 
 export function setDefaultModel(input: z.infer<typeof SetInput>, deps: DefaultModelDeps) {
@@ -63,7 +72,7 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
       name: 'settings.model.get',
       description:
         'Read the default model and provider new sessions start on, and the models available to choose from. Credentials and other settings are not included.',
-      inputSchema: z.object({}),
+      inputSchema: z.object({}).default({}),
       resultSchema: DefaultModel,
       policy: { safetyClass: 'read', roles: ['neo'] },
       execute: async () => readDefaultModel(deps),
@@ -71,9 +80,10 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
     defineOperation({
       name: 'settings.model.set',
       description:
-        'Change the default model new sessions start on, and its provider. Only models listed by settings.model.get are accepted; anything else rejects with model_unavailable and the available models, so the human can add the missing provider in Settings. Existing sessions keep their model. Changes nothing else.',
+        'Change the default model new sessions start on, and its provider. Only models listed by settings.model.get are accepted; anything else rejects with model_unavailable and the available models, so the human can add the missing provider in Settings. Existing sessions keep their model. Only Neo and the local app may call it; other sessions reject with neo_only. Changes nothing else.',
       inputSchema: SetInput,
       resultSchema: z.union([
+        NeoOnly,
         z.object({
           ok: z.literal(false),
           reason: z.literal('model_unavailable'),
@@ -87,7 +97,10 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
         }),
       ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input) => setDefaultModel(input, deps),
+      execute: async (input, caller) =>
+        admitDefaultModelWriter(caller)
+          ? setDefaultModel(input, deps)
+          : { ok: false as const, reason: 'neo_only' as const },
     }),
   ];
 }
