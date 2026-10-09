@@ -73,7 +73,7 @@ export function requireMissedRoutes(
 
 export function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
   return new Map(
-    new NeoRepository(db).listConcerns().map((concern) => [concern.id, concern.title.trim()])
+    new NeoRepository(db).listConcernTitles().map((concern) => [concern.id, concern.title.trim()])
   );
 }
 
