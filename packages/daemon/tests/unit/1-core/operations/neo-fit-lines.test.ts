@@ -8,6 +8,6 @@ describe('fitLines', () => {
     ['counts what is already used', ['ab', 'cd'], 6, 3, ['ab']],
     ['keeps nothing when the first line overflows', ['abcdef'], 6, 0, []],
   ] as const)('%s', (_label, lines, budget, used, expected) => {
-    expect(fitLines(lines, budget, used)).toEqual(expected);
+    expect(fitLines(lines, budget, used)).toEqual([...expected]);
   });
 });
