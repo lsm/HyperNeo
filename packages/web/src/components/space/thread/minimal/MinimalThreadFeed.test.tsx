@@ -26,6 +26,7 @@ function makeRow(opts: {
   turnIndex?: number;
   nodeExecutionId?: string | null;
   messageType?: string;
+  deliveryState?: 'queued' | 'processing' | 'retrying' | 'delivered' | 'failed';
 }) {
   return parseThreadRow({
     id: opts.id,
@@ -41,6 +42,7 @@ function makeRow(opts: {
     createdAt: opts.createdAt,
     origin: opts.origin,
     turnIndex: opts.turnIndex,
+    deliveryState: opts.deliveryState,
   });
 }
 
@@ -2685,6 +2687,25 @@ describe('MinimalThreadFeed', () => {
       const bubbles = screen.getAllByTestId('minimal-thread-human-bubble');
       expect(bubbles).toHaveLength(1);
       expect(bubbles[0].textContent).toContain('Again');
+    });
+
+    it('shows the delivery state instead of claiming sent when the kickoff is undelivered', () => {
+      const rows = [
+        makeRow({
+          id: 'k1',
+          label: 'Coder Agent',
+          createdAt: 1,
+          message: humanUserMessage('k1', kickoffText),
+          messageType: 'user',
+          deliveryState: 'failed',
+        }),
+      ];
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      const toggle = screen.getByTestId('minimal-thread-task-kickoff');
+      expect(toggle.textContent).not.toContain('Task sent');
+      expect(toggle.textContent).toContain('Task for Coder Agent');
+      expect(screen.getByTestId('minimal-thread-delivery-state').textContent).toBe('failed');
     });
 
     it('leaves a first human message without the kickoff heading as a bubble', () => {

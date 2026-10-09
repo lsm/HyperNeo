@@ -218,6 +218,7 @@ interface TaskKickoffFeedTurn {
   agent: string;
   body: string;
   createdAt: number;
+  deliveryState: MessageDeliveryStatus | null;
 }
 
 type FeedTurn =
@@ -1111,6 +1112,7 @@ function buildTaskKickoffTurn(row: ParsedThreadRow): TaskKickoffFeedTurn | null 
     agent: row.label,
     body,
     createdAt: row.createdAt,
+    deliveryState: row.deliveryState ?? null,
   };
 }
 
@@ -2033,6 +2035,7 @@ function AgentTurnRow({
 function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
   const [expanded, setExpanded] = useState(false);
   const color = getAgentTextColor(turn.agent);
+  const undelivered = turn.deliveryState !== null && turn.deliveryState !== 'delivered';
   return (
     <div
       data-testid="minimal-thread-turn"
@@ -2057,8 +2060,15 @@ function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
         </svg>
         <span class="truncate">
-          Task sent to <span style={{ color }}>{turn.agent}</span>
+          {undelivered ? 'Task for' : 'Task sent to'} <span style={{ color }}>{turn.agent}</span>
         </span>
+        {undelivered ? (
+          <DeliveryStateBadge
+            state={turn.deliveryState}
+            class="shrink-0"
+            test-id="minimal-thread-delivery-state"
+          />
+        ) : null}
         <span class="shrink-0 text-[11px] text-fg-faint">{formatClock(turn.createdAt)}</span>
       </button>
       {expanded ? (
