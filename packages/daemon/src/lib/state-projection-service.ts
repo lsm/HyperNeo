@@ -22,9 +22,8 @@ import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
 import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers.ts';
+import { BUILD_METADATA } from './build-metadata.ts';
 
-const VERSION = '0.1.1';
-const CLAUDE_SDK_VERSION = '0.1.37';
 const startTime = Date.now();
 
 export class StateProjectionService {
@@ -287,8 +286,8 @@ export class StateProjectionService {
     const authStatus = await this.authManager.getAuthStatus();
 
     return {
-      version: VERSION,
-      claudeSDKVersion: CLAUDE_SDK_VERSION,
+      version: BUILD_METADATA.version,
+      claudeSDKVersion: BUILD_METADATA.claudeSdkVersion,
 
       defaultModel: this.config.defaultModel,
       maxSessions: this.config.maxSessions,
@@ -299,7 +298,7 @@ export class StateProjectionService {
 
       health: {
         status: 'ok' as const,
-        version: VERSION,
+        version: BUILD_METADATA.version,
         uptime: Date.now() - startTime,
         sessions: {
           active: this.sessionManager.getActiveSessions(),

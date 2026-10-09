@@ -1,6 +1,8 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
+import { BUILD_METADATA } from '../../../../src/lib/build-metadata';
+import daemonPackageJson from '../../../../package.json' with { type: 'json' };
 import type { Database } from '../../../../src/storage';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session, GlobalSettings, AgentProcessingState } from '@hyperneo/shared';
@@ -123,6 +125,18 @@ describe('StateProjectionService', () => {
       expect(result).toHaveProperty('auth');
       expect(result).toHaveProperty('health');
       expect(result).toHaveProperty('apiConnection');
+    });
+
+    it('should report versions from the build metadata source', async () => {
+      const result = await service.getSystemState();
+
+      expect(result.version).toBe(BUILD_METADATA.version);
+      expect(result.version).toBe(daemonPackageJson.version);
+      expect(result.health.version).toBe(BUILD_METADATA.version);
+      expect(result.claudeSDKVersion).toBe(BUILD_METADATA.claudeSdkVersion);
+      expect(result.claudeSDKVersion).toBe(
+        daemonPackageJson.dependencies['@anthropic-ai/claude-agent-sdk']
+      );
     });
 
     it('should include authentication status', async () => {
