@@ -77,7 +77,12 @@ import {
   readContinueBudget,
 } from './driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import { neoSavedRulesKey, planNeoSavedRulesNote, withNeoSavedRules } from './saved-rules.ts';
+import {
+  type NeoSavedRulesNote,
+  planNeoSavedRulesAppend,
+  planNeoSavedRulesNote,
+  withNeoSavedRules,
+} from './saved-rules.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -145,7 +150,7 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly savedRules = new Map<string, string[]>();
+  private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -336,21 +341,32 @@ export class NeoService {
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
-    const note = planNeoSavedRulesNote(
+    const keep = planNeoSavedRulesNote(
       { sessionId: caller.sessionId, messageId: caller.neoTurn?.messageId },
       saved,
       this.savedRules
     );
-    if (!note) return;
-    for (const key of [...note.evict, note.key]) this.savedRules.delete(key);
-    this.savedRules.set(note.key, note.rules);
+    if (keep) this.keepSavedRules(keep);
+  }
+
+  private keepSavedRules({
+    key,
+    note,
+    evict,
+  }: {
+    key: string;
+    note: NeoSavedRulesNote;
+    evict: string[];
+  }) {
+    for (const old of [...evict, key]) this.savedRules.delete(old);
+    this.savedRules.set(key, note);
   }
 
   private appendPublication(input: NeoPublicationInput) {
-    const { sessionId, messageId } = input.producerInput;
-    return this.publications.append(
-      withNeoSavedRules(input, this.savedRules.get(neoSavedRulesKey(sessionId, messageId)) ?? [])
-    );
+    const plan = planNeoSavedRulesAppend(input, this.savedRules);
+    const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
+    if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
+    return receipt;
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {

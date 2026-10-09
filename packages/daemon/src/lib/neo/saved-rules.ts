@@ -7,18 +7,53 @@ export function neoSavedRulesKey(sessionId: string, messageId: string): string {
 
 const NEO_SAVED_RULE_TURNS = 50;
 
+export interface NeoSavedRulesNote {
+  pending: string[];
+  published: Readonly<Record<string, string[]>>;
+}
+type NeoSavedRulesNotes = ReadonlyMap<string, NeoSavedRulesNote>;
+type NeoSavedRulesKeep = { key: string; note: NeoSavedRulesNote; evict: string[] };
+
+function evictNeoSavedRules(notes: NeoSavedRulesNotes, key: string): string[] {
+  const others = [...notes.keys()].filter((existing) => existing !== key);
+  return others.slice(0, Math.max(0, others.length + 1 - NEO_SAVED_RULE_TURNS));
+}
+
 export function planNeoSavedRulesNote(
   turn: { sessionId?: string; messageId?: string },
   saved: readonly string[],
-  noted: ReadonlyMap<string, readonly string[]>
-): { key: string; rules: string[]; evict: string[] } | null {
+  notes: NeoSavedRulesNotes
+): NeoSavedRulesKeep | null {
   if (!turn.sessionId || !turn.messageId || !saved.length) return null;
   const key = neoSavedRulesKey(turn.sessionId, turn.messageId);
-  const others = [...noted.keys()].filter((existing) => existing !== key);
+  const current = notes.get(key);
   return {
     key,
-    rules: [...new Set([...(noted.get(key) ?? []), ...saved])],
-    evict: others.slice(0, Math.max(0, others.length + 1 - NEO_SAVED_RULE_TURNS)),
+    note: {
+      pending: [...new Set([...(current?.pending ?? []), ...saved])],
+      published: current?.published ?? {},
+    },
+    evict: evictNeoSavedRules(notes, key),
+  };
+}
+
+export function planNeoSavedRulesAppend(
+  input: NeoPublicationInput,
+  notes: NeoSavedRulesNotes
+): { rules: string[]; keep: NeoSavedRulesKeep | null } {
+  if (input.interim) return { rules: [], keep: null };
+  const key = neoSavedRulesKey(input.producerInput.sessionId, input.producerInput.messageId);
+  const current = notes.get(key);
+  const replay = current?.published[input.publicationId];
+  if (replay !== undefined) return { rules: replay, keep: null };
+  const rules = current?.pending ?? [];
+  return {
+    rules,
+    keep: {
+      key,
+      note: { pending: [], published: { ...current?.published, [input.publicationId]: rules } },
+      evict: evictNeoSavedRules(notes, key),
+    },
   };
 }
 

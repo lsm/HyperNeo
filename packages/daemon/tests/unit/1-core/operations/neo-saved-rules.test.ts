@@ -5,8 +5,10 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
+  type NeoSavedRulesNote,
   neoSavedRulesKey,
   planNeoSavedRules,
+  planNeoSavedRulesAppend,
   planNeoSavedRulesNote,
   withNeoSavedRules,
 } from '../../../../src/lib/neo/saved-rules.ts';
@@ -58,35 +60,64 @@ describe('neoSavedRulesKey', () => {
 
 describe('planNeoSavedRulesNote', () => {
   const turn = { sessionId: root, messageId: 'ask-1' };
-  const full = new Map(Array.from({ length: 50 }, (_, i) => [`${root}:old-${i}`, ['Old.']]));
+  const key = `${root}:ask-1`;
+  const full = new Map(
+    Array.from({ length: 50 }, (_, i) => [`${root}:old-${i}`, { pending: [], published: {} }])
+  );
   test.each<
     [
       string,
       Parameters<typeof planNeoSavedRulesNote>[0],
       string[],
-      Map<string, string[]>,
+      Map<string, NeoSavedRulesNote>,
       ReturnType<typeof planNeoSavedRulesNote>,
     ]
   >([
     ['a call outside a Neo turn', { sessionId: root }, [rule], new Map(), null],
     ['a turn that saved nothing', turn, [], new Map(), null],
-    ['a first save', turn, [rule], new Map(), { key: `${root}:ask-1`, rules: [rule], evict: [] }],
     [
-      'a second save in the same turn',
+      'a first save',
+      turn,
+      [rule],
+      new Map(),
+      { key, note: { pending: [rule], published: {} }, evict: [] },
+    ],
+    [
+      'a second save after a reply went out',
       turn,
       [rule, 'Keep B.'],
-      new Map([[`${root}:ask-1`, [rule]]]),
-      { key: `${root}:ask-1`, rules: [rule, 'Keep B.'], evict: [] },
+      new Map([[key, { pending: [rule], published: { p1: ['Keep A.'] } }]]),
+      { key, note: { pending: [rule, 'Keep B.'], published: { p1: ['Keep A.'] } }, evict: [] },
     ],
     [
       'a new turn past the cap',
       turn,
       [rule],
       full,
-      { key: `${root}:ask-1`, rules: [rule], evict: [`${root}:old-0`] },
+      { key, note: { pending: [rule], published: {} }, evict: [`${root}:old-0`] },
     ],
-  ])('%s', (_label, at, saved, noted, plan) => {
-    expect(planNeoSavedRulesNote(at, saved, noted)).toEqual(plan);
+  ])('%s', (_label, at, saved, notes, plan) => {
+    expect(planNeoSavedRulesNote(at, saved, notes)).toEqual(plan);
+  });
+});
+
+describe('planNeoSavedRulesAppend', () => {
+  const key = `${root}:ask-1`;
+  const pending = new Map([[key, { pending: [rule], published: {} }]]);
+  const sent = new Map([
+    [key, { pending: ['Keep B.'], published: { [reply.publicationId]: [rule] } }],
+  ]);
+  test.each<[string, NeoPublicationInput, Map<string, NeoSavedRulesNote>, string[], boolean]>([
+    ['an interim update', { ...reply, interim: true }, pending, [], false],
+    ['the first final reply', reply, pending, [rule], true],
+    ['a retry of that reply after another save', reply, sent, [rule], false],
+    ['a later reply in the same turn', { ...reply, publicationId: 'p2' }, sent, ['Keep B.'], true],
+    ['a turn with no saves', reply, new Map(), [], true],
+  ])('%s', (_label, input, notes, rules, keeps) => {
+    const plan = planNeoSavedRulesAppend(input, notes);
+    expect(plan.rules).toEqual(rules);
+    expect(plan.keep !== null).toBe(keeps);
+    if (plan.keep) expect(plan.keep.note.published[input.publicationId]).toEqual(rules);
   });
 });
 
@@ -170,6 +201,22 @@ describe('Neo reply after a rule save', () => {
     expect(await invoke('neo.publication.publish', draft)).toMatchObject({
       value: { accepted: true, created: false },
     });
+  });
+
+  test('a later save never changes a sent reply, and the next reply names only the new rule', async () => {
+    await invoke('neo.rule.save', { rules: [rule] });
+    const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
+    await invoke('neo.publication.publish', draft);
+    await invoke('neo.rule.save', { rules: [rule, 'Keep B.'] });
+
+    expect(await invoke('neo.publication.publish', draft)).toMatchObject({
+      value: { accepted: true, created: false },
+    });
+    const next = { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' };
+    await invoke('neo.publication.publish', next);
+    expect(service.publications.get(conversationId, next.publicationId)?.shortText).toBe(
+      `${reply.shortText}\n\nSaved: Keep B.`
+    );
   });
 
   test('a reply published after the publish nudge still names the rule', async () => {
