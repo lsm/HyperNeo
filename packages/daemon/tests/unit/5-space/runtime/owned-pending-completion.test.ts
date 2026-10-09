@@ -162,7 +162,10 @@ test.each(['missing', 'ordinary', 'member', 'noncanonical-chat', 'canonical-chat
       session = persist('space_chat', `space:chat:${spaceId}`);
     }
     const outcome = await invoke(session?.id ?? 'missing');
-    expect(outcome.kind).toBe('failed');
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      value: { accepted: false, reason: 'pending_completion_denied' },
+    });
     expect(dependencies.getTaskManager).not.toHaveBeenCalled();
     expect(order).toEqual([]);
     expect(tasks.getTask(task.id)?.status).toBe('review');
@@ -184,7 +187,10 @@ test('denies a long-term agent session whose backing agent is no longer active',
     },
   };
   const outcome = await invoke(session.id);
-  expect(outcome.kind).toBe('failed');
+  expect(outcome).toMatchObject({
+    kind: 'completed',
+    value: { accepted: false, reason: 'pending_completion_denied' },
+  });
   expect(dependencies.getTaskManager).not.toHaveBeenCalled();
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
@@ -211,8 +217,12 @@ test('denies a long-term agent below the required autonomy level via the operati
   dependencies.getSpaceAutonomyLevel = async () => 4;
   const outcome = await invoke(session.id);
   expect(outcome).toMatchObject({
-    kind: 'failed',
-    message: expect.stringContaining('space autonomy level 4 < required level 5'),
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'pending_completion_denied',
+      detail: expect.stringContaining('space autonomy level 4 < required level 5'),
+    },
   });
   expect(dependencies.getTaskManager).not.toHaveBeenCalled();
   expect(tasks.getTask(task.id)?.status).toBe('review');
@@ -229,7 +239,10 @@ test('denies a canonical space-chat caller below the required autonomy level', a
   const session = persist('space_chat', `space:chat:${spaceId}`, spaceId);
   dependencies.getSpaceAutonomyLevel = async () => 4;
   const outcome = await invoke(session.id);
-  expect(outcome.kind).toBe('failed');
+  expect(outcome).toMatchObject({
+    kind: 'completed',
+    value: { accepted: false, reason: 'pending_completion_denied' },
+  });
   expect(tasks.getTask(task.id)?.status).toBe('review');
 });
 
@@ -242,7 +255,10 @@ test('denies workflow worker even with default-agent provenance', async () => {
     },
     taskRepo: tasks,
   };
-  expect((await invoke(session.id)).kind).toBe('failed');
+  expect(await invoke(session.id)).toMatchObject({
+    kind: 'completed',
+    value: { accepted: false, reason: 'pending_completion_denied' },
+  });
   expect(dependencies.getTaskManager).not.toHaveBeenCalled();
 });
 
@@ -255,9 +271,12 @@ test('denies an actor from another Space before task mutation', async () => {
   );
   const outcome = await invoke(session.id);
   expect(outcome).toMatchObject({
-    kind: 'failed',
-    code: 'execution_failed',
-    message: expect.stringContaining('require a Space agent session in the owning space'),
+    kind: 'completed',
+    value: {
+      accepted: false,
+      reason: 'pending_completion_denied',
+      detail: expect.stringContaining('require a Space agent session in the owning space'),
+    },
   });
   expect(order).toEqual([]);
   expect(tasks.getTask(task.id)?.status).toBe('review');
@@ -267,20 +286,20 @@ test('target gates reject absent, standalone and non-review tasks', async () => 
   const input = { taskId: task.id, approved: true };
   const actor = { source: 'rpc' as const };
   expect(await loadCompletionTarget(input, actor, async () => null)).toEqual({
-    reason: expect.any(Error),
+    reason: expect.objectContaining({ accepted: false, reason: 'task_not_found' }),
   });
   expect(requireCompletionTarget({ ...task, spaceId: '' }, input, actor)).toEqual({
-    reason: expect.any(Error),
+    reason: expect.objectContaining({ accepted: false, reason: 'pending_completion_unavailable' }),
   });
   expect(requireCompletionTarget({ ...task, pendingCheckpointType: null }, input, actor)).toEqual({
     value: { ...task, pendingCheckpointType: null },
   });
   expect(requireCompletionTarget({ ...task, status: 'open' }, input, actor)).toEqual({
-    reason: expect.any(Error),
+    reason: expect.objectContaining({ accepted: false, reason: 'task_not_in_review' }),
   });
   expect(requireCompletionTarget(task, input, actor)).toEqual({ value: task });
   expect(resolveCompletionActor({ source: 'mcp' }, () => null, {})).toEqual({
-    reason: expect.any(Error),
+    reason: expect.objectContaining({ accepted: false, reason: 'pending_completion_denied' }),
   });
 });
 
@@ -361,11 +380,16 @@ test('opposing owned decisions admit one generation and produce one successful n
     invoke(session.id, { taskId: task.id }),
     invoke(session.id, { taskId: task.id }, 'mcp', 'task.reject'),
   ]);
-  expect(results.filter((result) => result.kind === 'completed')).toHaveLength(1);
-  expect(results.find((result) => result.kind === 'failed')).toMatchObject({
-    code: 'execution_failed',
-    message: expect.stringContaining('superseded'),
-  });
+  const superseded = {
+    kind: 'completed',
+    value: { accepted: false, reason: 'pending_completion_superseded' },
+  };
+  expect(results).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ value: expect.objectContaining({ id: task.id }) }),
+      expect.objectContaining({ ...superseded, value: expect.objectContaining(superseded.value) }),
+    ])
+  );
   expect(dependencies.emitTaskUpdated).toHaveBeenCalledTimes(1);
   expect(dependencies.audit).toHaveBeenCalledTimes(1);
   expect(dependencies.warn).not.toHaveBeenCalled();
@@ -395,9 +419,12 @@ test.each([true, false])(
       approved ? 'task.approve' : 'task.reject'
     );
     expect(outcome).toMatchObject({
-      kind: 'failed',
-      code: 'execution_failed',
-      message: expect.stringContaining('superseded'),
+      kind: 'completed',
+      value: {
+        accepted: false,
+        reason: 'pending_completion_superseded',
+        detail: expect.stringContaining('superseded'),
+      },
     });
     expect(tasks.getTask(task.id)).toMatchObject({
       status: 'review',

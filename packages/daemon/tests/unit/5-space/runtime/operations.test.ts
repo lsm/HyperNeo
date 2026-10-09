@@ -306,10 +306,15 @@ test('pending completion discovery is configured only and remains lazy', async (
   expect(description).toMatchObject({
     found: true,
     resultSchema: {
-      properties: {
-        postApprovalBlockedReason: expect.anything(),
-        approvalSource: expect.anything(),
-      },
+      anyOf: [
+        {
+          properties: {
+            postApprovalBlockedReason: expect.anything(),
+            approvalSource: expect.anything(),
+          },
+        },
+        { properties: { accepted: expect.anything(), reason: expect.anything() } },
+      ],
     },
   });
   const mcp = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'unbound' }));
@@ -373,10 +378,10 @@ test('discovered pending completion rejects an ordinary Space member before effe
   const deps = completionDependencies();
   const mcp = createOperationMcpHandler(provider({}, deps), () => caller);
   const result = await mcp({ name: completionName, input: { taskId } });
-  expect(result.isError).toBe(true);
   expect(JSON.parse(result.content[0].text)).toMatchObject({
-    code: 'execution_failed',
-    message: expect.stringContaining('Space agent session in the owning space'),
+    accepted: false,
+    reason: 'pending_completion_denied',
+    detail: expect.stringContaining('Space agent session in the owning space'),
   });
   expect(tasks.getTask(taskId)).toEqual(previous);
   expect(deps.dispatchApproval).not.toHaveBeenCalled();

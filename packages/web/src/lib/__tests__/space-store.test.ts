@@ -3378,6 +3378,19 @@ describe('SpaceStore — pending completion approval', () => {
     });
     expect(task.status).toBe('in_progress');
   });
+
+  it('throws the rejection detail when the decision is refused', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'task_not_in_review',
+      detail: "Task t1 is not in 'review' status (current: open).",
+    } as never);
+
+    await expect(spaceStore.approvePendingCompletion('t1', true)).rejects.toThrow(
+      "Task t1 is not in 'review' status"
+    );
+  });
 });
 
 describe('SpaceStore — task detail cache', () => {
