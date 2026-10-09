@@ -29,6 +29,7 @@ export const NeoAskSchema = z.object({
   doneSource: z.string(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
+  evidence: z.string().nullable().optional(),
   workIds: z.array(z.string()),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -46,6 +47,7 @@ const Open = z.object({
 const Settle = z.object({
   id: z.string().min(1),
   outcome: z.enum(['achieved', 'abandoned', 'blocked']),
+  summary: z.string().trim().min(1).max(200).optional(),
   evidence: z.string().trim().min(1).max(4000),
 });
 
@@ -145,8 +147,25 @@ export function requireNeoAskReceipt(
     : { reason: fail('This request key already belongs to another ask.') };
 }
 
+export const neoAskSummary = (input: z.infer<typeof Settle>) => input.summary ?? input.evidence;
+
 export const isNeoAskReplay = (ask: NeoAsk, input: z.infer<typeof Settle>) =>
-  ask.status === input.outcome && ask.outcome === input.evidence;
+  ask.status === input.outcome &&
+  ask.outcome === neoAskSummary(input) &&
+  (ask.evidence ?? ask.outcome) === input.evidence;
+
+export function requireNeoAskSummary(
+  input: z.infer<typeof Settle>,
+  caller: OperationCaller
+): Gate<OperationCaller> {
+  return caller.source === 'mcp' && !input.summary
+    ? {
+        reason: fail(
+          'summary_required: pass summary, one short sentence the card shows ("Merged in #6099."), and keep the proof in evidence.'
+        ),
+      }
+    : { value: caller };
+}
 
 export function requireNeoAskSettlement(
   input: z.infer<typeof Settle>,
@@ -245,12 +264,13 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['caller', 'current'],
       'result:admission'
     )
+    .pipe(requireNeoAskSummary, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskSettlement, ['input', 'current', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Settle>, ask: NeoAsk) => ({
         ask: isNeoAskReplay(ask, input)
           ? ask
-          : service.askRecords.settle(ask, input.outcome, input.evidence),
+          : service.askRecords.settle(ask, input.outcome, neoAskSummary(input), input.evidence),
       }),
       ['input', 'admission'],
       'written'
@@ -290,7 +310,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        "Settle an ask when its outcome is decided: achieved when every doneWhen item is met, with evidence; blocked when only the human can unblock it, saying what they need to decide; abandoned when it is no longer wanted. Achieved and abandoned are final and stop the ask's live work: queued cards close (done for achieved, cancelled for abandoned) and proposed cards are cancelled. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user's close button calls this too.",
+        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask card shows: the outcome, or for blocked what the human must decide ("Merged in #6099.", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the card does not show. Achieved and abandoned are final and stop the ask\'s live work: queued cards close (done for achieved, cancelled for abandoned) and proposed cards are cancelled. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

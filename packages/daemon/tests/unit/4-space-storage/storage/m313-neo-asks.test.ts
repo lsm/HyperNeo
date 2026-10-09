@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
+import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -41,6 +42,7 @@ describe('NeoAskRepository', () => {
   test('opens one ask per request key and lists its cards in creation order', () => {
     const db = withWork();
     runMigration313(db);
+    runMigration316(db);
     const asks = new NeoAskRepository(db);
 
     expect(asks.open(input)).toMatchObject({ id: 'a1', status: 'open', workIds: [] });
@@ -60,13 +62,18 @@ describe('NeoAskRepository', () => {
   test('settles only from the expected status, and new work reopens a blocked ask', () => {
     const db = withWork();
     runMigration313(db);
+    runMigration316(db);
     const asks = new NeoAskRepository(db);
     const opened = asks.open(input)!;
 
-    const blocked = asks.settle(opened, 'blocked', 'Needs a product decision.')!;
-    expect(blocked).toMatchObject({ status: 'blocked', outcome: 'Needs a product decision.' });
+    const blocked = asks.settle(opened, 'blocked', 'Needs you: pick a plan.', 'Two plans fit.')!;
+    expect(blocked).toMatchObject({
+      status: 'blocked',
+      outcome: 'Needs you: pick a plan.',
+      evidence: 'Two plans fit.',
+    });
     expect(blocked.settledAt).not.toBeNull();
-    expect(asks.settle(opened, 'achieved', 'stale')).toBe(null);
+    expect(asks.settle(opened, 'achieved', 'stale', 'stale')).toBe(null);
 
     asks.link('a1', 'w1');
     expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null, workIds: ['w1'] });

@@ -70,6 +70,7 @@ import { runMigration311 } from './m311-neo-work-driver-retries.ts';
 import { runMigration312 } from './m312-drop-artifact-cache.ts';
 import { runMigration313 } from './m313-neo-asks.ts';
 import { runMigration314 } from './m314-neo-work-prs.ts';
+import { runMigration316 } from './m316-neo-ask-evidence.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -704,6 +705,7 @@ export function runMigrations(
   run(migrationMarkerKey(312), () => runMigration312(db));
   run(migrationMarkerKey(313), () => runMigration313(db));
   run(migrationMarkerKey(314), () => runMigration314(db));
+  run(migrationMarkerKey(316), () => runMigration316(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
