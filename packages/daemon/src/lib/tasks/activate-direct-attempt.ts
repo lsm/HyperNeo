@@ -29,7 +29,15 @@ export interface DirectAttemptActivationInput {
 }
 export type DirectAttemptActivationResult =
   | { activated: true; attempt: DirectTaskAttempt; task: SpaceTask }
-  | { activated: false; reason: 'unavailable' };
+  | { activated: false; reason: 'unavailable' | DirectActivationWait };
+export type DirectActivationWait = 'awaiting_capacity' | 'awaiting_dependencies';
+export const DIRECT_ACTIVATION_WAITS: ReadonlySet<string> = new Set<DirectActivationWait>([
+  'awaiting_capacity',
+  'awaiting_dependencies',
+]);
+class ActivationRejected {
+  constructor(readonly result: DirectAttemptActivationResult) {}
+}
 export interface DirectAttemptActivationEvidence {
   attempt: DirectTaskAttempt | null;
   active: DirectTaskAttempt | null;
@@ -86,11 +94,12 @@ export function requireDirectActivation(
       (dependency, index) =>
         !dependency ||
         dependency.id !== task?.dependsOn?.[index] ||
-        dependency.spaceId !== task.spaceId ||
-        dependency.status !== 'done'
+        dependency.spaceId !== task.spaceId
     )
   )
     return { reason: { activated: false, reason: 'unavailable' } };
+  if (dependencies.some((dependency) => dependency?.status !== 'done'))
+    return { reason: { activated: false, reason: 'awaiting_dependencies' } };
   return { value: { attempt, task: prepared.value.task } };
 }
 
@@ -100,7 +109,7 @@ export function activateDirectAttemptAtomically(
   input: DirectAttemptActivationInput,
   kickoffMessage?: MailboxMessage
 ): DirectAttemptActivationResult {
-  const rejected = { activated: false as const, reason: 'unavailable' as const };
+  const rejected = new ActivationRejected({ activated: false, reason: 'unavailable' });
   reactiveDb?.beginTransaction();
   try {
     const result = db.transaction((): DirectAttemptActivationResult => {
@@ -115,13 +124,15 @@ export function activateDirectAttemptAtomically(
           space ? tasks.countByStatuses(space.id, TASK_SLOT_STATUSES) : 0
         ) <= 0
       )
-        return rejected;
+        return task && space && attempt?.phase === 'reserved'
+          ? { activated: false, reason: 'awaiting_capacity' }
+          : rejected.result;
       const admitted = readDirectStartRequest(db, input.attemptId);
       if (
         admitted &&
         (!task || tasks.getLifecycleGeneration(task.id) !== admitted.lifecycleGeneration)
       )
-        return rejected;
+        return rejected.result;
       if (
         kickoffMessage &&
         !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
@@ -144,7 +155,7 @@ export function activateDirectAttemptAtomically(
         Date.now()
       );
       if ('reason' in admission) {
-        if (kickoffMessage) throw rejected;
+        if (kickoffMessage) throw new ActivationRejected(admission.reason);
         return admission.reason;
       }
       assertValidTaskTransition(admission.value.task.status, 'in_progress');
@@ -175,7 +186,7 @@ export function activateDirectAttemptAtomically(
     return result;
   } catch (error) {
     reactiveDb?.abortTransaction();
-    if (error === rejected) return rejected;
+    if (error instanceof ActivationRejected) return error.result;
     throw error;
   }
 }

@@ -20,6 +20,7 @@ import {
 } from './start-direct-task.ts';
 import { DIRECT_TASK_PARK_BUDGET, decideParkAdmission, parkAdmissionInput } from './park-budget.ts';
 import { DIRECT_TASK_START, readDirectStartRequest } from './direct-start-request.ts';
+import { DIRECT_ACTIVATION_WAITS } from './activate-direct-attempt.ts';
 
 export type DirectStartAcknowledgement =
   | { accepted: true; jobId: string | null }
@@ -56,7 +57,7 @@ export function createDirectStartRequester(deps: {
 export function createDirectStartJobHandler(
   db: Database,
   start: (input: DirectTaskStartInput) => Promise<DirectTaskStartResult>,
-  jobs: Pick<JobQueueRepository, 'requeueParked'>,
+  jobs: Pick<JobQueueRepository, 'requeueParked' | 'requeueWaiting'>,
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   onTaskAttemptChanged?: (taskId: string) => void
 ) {
@@ -113,6 +114,10 @@ export function createDirectStartJobHandler(
       return { started: false, reason: 'superseded' };
     if (!job.claimToken) throw new Error(`Direct start remains unavailable: ${result.reason}`);
     const now = Date.now();
+    if (!terminal && !retiring && DIRECT_ACTIVATION_WAITS.has(result.reason))
+      return jobs.requeueWaiting(job.id, now + 30_000, job.claimToken)
+        ? { ...result, parked: result.reason }
+        : { started: false, reason: 'superseded_claim' };
     const admission = decideParkAdmission(parkAdmissionInput(job, DIRECT_TASK_PARK_BUDGET, now));
     if ('reason' in admission) {
       throw new Error(`Direct start remains unavailable: ${admission.reason}`);

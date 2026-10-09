@@ -10,6 +10,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import {
+  bringDirectSessionDown,
   createDirectAttemptStopper,
   directSessionIsDown,
   requireDirectStopTarget,
@@ -43,6 +44,8 @@ function agent(owner = taskId): AgentSession {
     getProcessingState: () => ({ status: 'idle' }),
     isInterruptInProgress: () => false,
     getTrackedAgentRootPidsSplit: () => ({ live, exited: [] }),
+    processExitedPromise: null,
+    refreshProcessExitedPromise: () => {},
     handleInterrupt: interrupt,
     cleanup,
   } as unknown as AgentSession;
@@ -551,4 +554,41 @@ test('old verification cannot clear, restore or finalize a newer proof', () => {
   expect(attempts.finishRequestedStop('attempt', 'session', 1, 'old')).toBeNull();
   expect(attempts.getActive(taskId)?.id).toBe('attempt');
   expect(attempts.finishRequestedStop('attempt', 'session', 1, 'new')?.phase).toBe('stopped');
+});
+
+test('a session still alive after the interrupt gets a second interrupt, then its processes terminated', async () => {
+  let pids = [4242];
+  let exit!: () => void;
+  const exited = new Promise<void>((resolve) => {
+    exit = resolve;
+  });
+  const terminate = mock(() => {
+    setTimeout(() => {
+      pids = [];
+      exit();
+    }, 20);
+  });
+  const stubborn = {
+    processExitedPromise: null as Promise<void> | null,
+    refreshProcessExitedPromise: () => {
+      stubborn.processExitedPromise = pids.length > 0 ? exited : null;
+    },
+    getProcessingState: () => ({ status: 'idle' }),
+    isInterruptInProgress: () => false,
+    getTrackedAgentRootPidsSplit: () => ({ live: pids, exited: [] }),
+    handleInterrupt: interrupt,
+    terminateTrackedAgentProcesses: terminate,
+  };
+
+  expect(await bringDirectSessionDown(stubborn as unknown as AgentSession)).toBe(true);
+  expect(interrupt).toHaveBeenCalledTimes(1);
+  expect(terminate).toHaveBeenCalledTimes(1);
+
+  pids = [4242];
+  const leaking = {
+    ...stubborn,
+    refreshProcessExitedPromise: () => {},
+    terminateTrackedAgentProcesses: () => {},
+  } as unknown as AgentSession;
+  expect(await bringDirectSessionDown(leaking)).toBe(false);
 });

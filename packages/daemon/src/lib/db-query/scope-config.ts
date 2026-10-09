@@ -449,7 +449,6 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 ];
 
 const EXCLUDED_TABLE_NAMES: string[] = [
-  'workflow_run_artifact_cache',
   'session_incarnations',
   'neo_agent_work_targets',
   'neo_concerns',

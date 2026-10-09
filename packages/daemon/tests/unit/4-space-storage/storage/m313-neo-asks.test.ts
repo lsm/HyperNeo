@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository';
-import { runMigration312 } from '../../../../src/storage/schema/m312-neo-asks';
+import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -22,17 +22,17 @@ const input = {
   doneSource: 'human',
 };
 
-describe('runMigration312', () => {
+describe('runMigration313', () => {
   test('creates the ask tables once, and skips databases without Neo work', () => {
     const db = withWork();
-    runMigration312(db);
-    runMigration312(db);
+    runMigration313(db);
+    runMigration313(db);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE name IN ('neo_asks', 'neo_ask_work')").all()
     ).toHaveLength(2);
 
     const bare = new Database(':memory:');
-    runMigration312(bare);
+    runMigration313(bare);
     expect(bare.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_asks'").get()).toBe(null);
   });
 });
@@ -40,7 +40,7 @@ describe('runMigration312', () => {
 describe('NeoAskRepository', () => {
   test('opens one ask per request key and lists its cards in creation order', () => {
     const db = withWork();
-    runMigration312(db);
+    runMigration313(db);
     const asks = new NeoAskRepository(db);
 
     expect(asks.open(input)).toMatchObject({ id: 'a1', status: 'open', workIds: [] });

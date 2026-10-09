@@ -151,15 +151,33 @@ for (const change of ['jobId', 'generation', 'session', 'queue'] as const) {
   });
 }
 
-test('dead and pruned jobs retain receipt identity without resetting retries', () => {
+test('a retry replaces a dead or pruned job with a fresh one and keeps a live receipt', () => {
   const job = acceptedJob();
+  expect(request()).toEqual({ accepted: true, jobId: job.id });
   db.prepare("UPDATE job_queue SET status = 'dead', retry_count = max_retries WHERE id = ?").run(
     job.id
   );
-  expect(request()).toEqual({ accepted: true, jobId: job.id });
-  db.prepare('DELETE FROM job_queue WHERE id = ?').run(job.id);
-  expect(request()).toEqual({ accepted: true, jobId: job.id });
-  expect(jobs.listJobs({ queue: DIRECT_TASK_OUTCOME })).toHaveLength(0);
+  const revived = request();
+  expect(revived).toMatchObject({ accepted: true, jobId: expect.any(String) });
+  if (!revived.accepted || !revived.jobId) throw new Error('expected a receipt');
+  expect(revived.jobId).not.toBe(job.id);
+  expect(jobs.getJob(revived.jobId)).toMatchObject({ status: 'pending', retryCount: 0 });
+  db.prepare('DELETE FROM job_queue WHERE id = ?').run(revived.jobId);
+  const replaced = request();
+  if (!replaced.accepted || !replaced.jobId) throw new Error('expected a receipt');
+  expect(replaced.jobId).not.toBe(revived.jobId);
+  expect(jobs.getJob(replaced.jobId)?.status).toBe('pending');
+});
+
+test('startup recovery re-enqueues a request whose job went dead', () => {
+  const job = acceptedJob();
+  db.prepare("UPDATE job_queue SET status = 'dead' WHERE id = ?").run(job.id);
+  registerDirectOutcomeJobs({ ...deps, jobQueue: jobs, jobProcessor: { register: () => {} } });
+  const pending = jobs
+    .listJobs({ queue: DIRECT_TASK_OUTCOME })
+    .filter((queued) => queued.status === 'pending');
+  expect(pending).toHaveLength(1);
+  expect(pending[0].id).not.toBe(job.id);
 });
 
 test('registration recovers unlinked requests and safely repeats startup recovery', async () => {
