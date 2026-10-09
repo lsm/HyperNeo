@@ -81,7 +81,9 @@ describe('current human work guidance', () => {
     expect(prompt).toContain(
       'To continue a Space task or agent, a Codex Desktop thread, a Claude Code Desktop session or a hyperneo ref with a daemon'
     );
-    expect(prompt).toContain("work {verb:'start',adapter,place} using an adapter that place lists");
+    expect(prompt).toContain(
+      "work {verb:'start',adapter,place} using an adapter that can start work"
+    );
     expect(prompt).toContain('Do not call work.start, work.send or work.stop yourself');
     expect(prompt).toContain(
       "the instruction is delivered verbatim as the worker's own message, so write it as the task itself"
