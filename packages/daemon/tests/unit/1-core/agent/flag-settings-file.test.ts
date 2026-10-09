@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { createFlagSettingsFileWriter } from '../../../../src/lib/agent/flag-settings-file.ts';
+import {
+  buildFlagSettings,
+  createFlagSettingsFileWriter,
+} from '../../../../src/lib/agent/flag-settings-file.ts';
 
 const SECRET = 'sk-ant-oat01-flag-settings-secret';
 
@@ -88,5 +91,32 @@ describe('SDK flag settings file', () => {
     expect(existsSync(abandoned)).toBe(false);
     expect(existsSync(live)).toBe(true);
     expect(existsSync(unrelated)).toBe(true);
+  });
+});
+
+describe('buildFlagSettings', () => {
+  const env = { A: '1' };
+  it.each([
+    ['no settings', {}, null],
+    ['a settings path', { settings: '/tmp/settings.json' }, null],
+    ['settings without env', { settings: { model: 'x' } }, null],
+    ['settings with env', { settings: { env } }, { env }],
+    [
+      'an enabled sandbox that must fail closed',
+      { settings: { env }, sandbox: { enabled: true } },
+      { env, sandbox: { enabled: true, failIfUnavailable: true } },
+    ],
+    [
+      'an explicit failIfUnavailable',
+      { settings: { env }, sandbox: { enabled: true, failIfUnavailable: false } },
+      { env, sandbox: { enabled: true, failIfUnavailable: false } },
+    ],
+    [
+      'a disabled sandbox',
+      { settings: { env }, sandbox: { enabled: false } },
+      { env, sandbox: { enabled: false } },
+    ],
+  ] as const)('%s', (_label, options, expected) => {
+    expect(buildFlagSettings(options as Parameters<typeof buildFlagSettings>[0])).toEqual(expected);
   });
 });
