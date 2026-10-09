@@ -844,6 +844,22 @@ describe('decide', () => {
     expect(parkStopped).not.toHaveBeenCalled();
   });
 
+  test('reopening a task that awaits a manual handoff is a typed rejection, not a throw', async () => {
+    const owned = createOwned('blocked', createWorkflowRun().id);
+    const task = tasks.updateTask(owned.task.id, { blockReason: 'agent_handoff_required' })!;
+    const recoverTransition = mock(async () => task);
+    const result = await decide(
+      { spaceId, task },
+      { taskId: task.id, status: 'in_progress' },
+      rpc,
+      deps({ recoverTransition })
+    );
+    expect(result).toEqual({
+      reason: expect.objectContaining({ accepted: false, reason: 'handoff_required' }),
+    });
+    expect(recoverTransition).not.toHaveBeenCalled();
+  });
+
   test('a string rejection from recover_transition becomes the operation rejection', async () => {
     const owned = createOwned('blocked', createWorkflowRun().id);
     const recoverTransition = mock(async () => 'invalid_recovery_status');
