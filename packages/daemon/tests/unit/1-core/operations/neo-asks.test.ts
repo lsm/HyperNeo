@@ -4,7 +4,11 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
   requireNeoAskConcern,
+  isNeoAskReplay,
+  planNeoAskWorkStops,
   requireNeoAskReceipt,
+  requireNeoAskSettlement,
+  requireNeoAskWritten,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
@@ -57,12 +61,12 @@ describe('neo.ask operations', () => {
     db.close();
   });
 
-  function invoke(name: string, input: unknown) {
+  function invoke(name: string, input: unknown, caller: OperationCaller = neo) {
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
       input,
-      neo
+      caller
     ) as Promise<{
       kind: string;
       value?: { ok: boolean; ask?: NeoAsk; asks?: NeoAsk[]; work?: { id: string } };
@@ -101,6 +105,61 @@ describe('neo.ask operations', () => {
     expect(snapshot.value?.asks).toEqual([
       expect.objectContaining({ id: askId, doneWhen: opening.doneWhen, workIds: [workId] }),
     ]);
+  });
+
+  test('refuses work under a missing or achieved ask, and settling is final', async () => {
+    const askId = await openAsk();
+    expect(await propose('card-1', 'nope')).toMatchObject({
+      value: { ok: false, reason: 'ask_not_found' },
+    });
+
+    const settle = { id: askId, outcome: 'achieved', evidence: 'PR #12 merged, CI green.' };
+    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
+      value: { ok: true, ask: { status: 'achieved', outcome: settle.evidence } },
+    });
+    expect(await invoke('neo.ask.settle', settle)).toMatchObject({ value: { ok: true } });
+    expect(
+      await invoke('neo.ask.settle', { ...settle, outcome: 'blocked', evidence: 'x' })
+    ).toMatchObject({ value: { ok: false, reason: 'ask_settled: this ask is already achieved.' } });
+    expect(await propose('card-2', askId)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('ask_settled') },
+    });
+  });
+  test('new work under a blocked ask reopens it', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.settle', { id: askId, outcome: 'blocked', evidence: 'Which API?' });
+
+    await propose('card-1', askId);
+
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+  });
+
+  test("settling for good stops its live work; only the user can settle another session's ask", async () => {
+    const askId = await openAsk();
+    const running = (await propose('card-1', askId)).value!.work!.id;
+    const idle = (await propose('card-2', askId)).value!.work!.id;
+    const work = service.repo.getWork(running)!;
+    service.repo.transitionWork(work.id, work, { status: 'queued' });
+
+    expect(
+      await invoke(
+        'neo.ask.settle',
+        { id: askId, outcome: 'abandoned', evidence: 'x' },
+        {
+          ...neo,
+          sessionId: 'other',
+        }
+      )
+    ).toMatchObject({ value: { ok: false } });
+    expect(
+      await invoke(
+        'neo.ask.settle',
+        { id: askId, outcome: 'abandoned', evidence: 'Closed by the user.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
+    expect(service.repo.getWork(running)?.status).toBe('cancelled');
+    expect(service.repo.getWork(idle)?.status).toBe('cancelled');
   });
 
   test('refuses a retried request key under another ask', async () => {
@@ -225,5 +284,76 @@ describe('projectNeoSnapshotAsks', () => {
       { ...ask, id: 'b1', status: 'blocked' as const },
     ];
     expect(projectNeoSnapshotAsks(asks, 1).map((item) => item.id)).toEqual(['o1', 'b1', 's1']);
+  });
+});
+
+describe('requireNeoAskSettlement', () => {
+  const settle = { id: 'a1', outcome: 'achieved' as const, evidence: 'PR merged.' };
+  const done = { ...ask, status: 'achieved' as const, outcome: 'PR merged.' };
+
+  test.each([
+    ['a missing ask', null, neo, 'ask_not_found'],
+    [
+      'another Neo session',
+      ask,
+      { ...neo, sessionId: 'other' },
+      'Only the Neo session that opened this ask or the user can settle it.',
+    ],
+    [
+      'a different outcome on a final ask',
+      { ...done, outcome: 'Other.' },
+      neo,
+      'ask_settled: this ask is already achieved.',
+    ],
+  ])('refuses %s', (_case, current, caller, reason) => {
+    expect(requireNeoAskSettlement(settle, { ask: current }, caller)).toEqual({
+      reason: { ok: false, reason },
+    });
+  });
+
+  test('admits an open ask and an identical replay', () => {
+    expect(requireNeoAskSettlement(settle, { ask }, neo)).toEqual({ value: ask });
+    expect(requireNeoAskSettlement(settle, { ask: done }, neo)).toEqual({ value: done });
+    expect(isNeoAskReplay(done, settle)).toBe(true);
+  });
+});
+describe('requireNeoAskWritten', () => {
+  test('reports a lost write as superseded', () => {
+    expect(requireNeoAskWritten({ ask: null })).toEqual({
+      reason: { ok: false, reason: 'This ask changed; read it again.' },
+    });
+    expect(requireNeoAskWritten({ ask })).toEqual({ value: { ok: true, ask } });
+  });
+});
+
+describe('planNeoAskWorkStops', () => {
+  const works = [
+    { id: 'q', status: 'queued' as const },
+    { id: 'p', status: 'proposed' as const },
+    { id: 'r', status: 'reported' as const },
+  ];
+
+  test.each<[string, 'achieved' | 'abandoned' | 'blocked', ReturnType<typeof planNeoAskWorkStops>]>(
+    [
+      [
+        'achieved closes queued work as done',
+        'achieved',
+        [
+          { id: 'q', close: 'done' },
+          { id: 'p', close: 'cancelled' },
+        ],
+      ],
+      [
+        'abandoned cancels live work',
+        'abandoned',
+        [
+          { id: 'q', close: 'cancelled' },
+          { id: 'p', close: 'cancelled' },
+        ],
+      ],
+      ['blocked leaves work alone', 'blocked', []],
+    ]
+  )('%s', (_case, outcome, stops) => {
+    expect(planNeoAskWorkStops(works, outcome)).toEqual(stops);
   });
 });

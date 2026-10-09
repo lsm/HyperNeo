@@ -422,6 +422,7 @@ describe('Neo MVP', () => {
       'neo.conversation.asks.read',
       'neo.draft.recover',
       'neo.ask.open',
+      'neo.ask.settle',
       'neo.concern.cancel',
       'neo.concern.consult',
       'neo.concern.respond',
