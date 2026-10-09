@@ -36,18 +36,14 @@ export function TaskReadyPanel({
   task,
   workspaceLabel,
   description,
-  canRunDirectly,
   busy,
-  onRun,
   onPublish,
   onEdit,
 }: {
   task: SpaceTask;
   workspaceLabel?: string | null;
   description: string;
-  canRunDirectly: boolean;
   busy: boolean;
-  onRun: () => void;
   onPublish: () => void;
   onEdit: () => void;
 }) {
@@ -74,7 +70,6 @@ export function TaskReadyPanel({
     ? (workflows.find((workflow) => workflow.id === task.preferredWorkflowId)?.name ?? null)
     : null;
   const state = readiness(task, workflows.length, waitingOn, workflowName);
-  const runIsPrimary = canRunDirectly && workflows.length === 0;
 
   const changeWorkflow = async (workflowId: string | null) => {
     const requestedTaskId = task.id;
@@ -169,21 +164,6 @@ export function TaskReadyPanel({
             data-testid="task-publish-button"
           >
             Publish
-          </button>
-        )}
-        {canRunDirectly && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onRun}
-            class={
-              runIsPrimary
-                ? 'h-8 rounded-lg bg-accent px-3.5 text-sm font-semibold text-accent-fg disabled:opacity-50'
-                : 'h-8 rounded-lg border border-line-strong px-3 text-sm text-fg-soft hover:text-fg disabled:opacity-50'
-            }
-            data-testid="task-run-button"
-          >
-            {runIsPrimary ? 'Run' : 'Run without a workflow'}
           </button>
         )}
         <button
