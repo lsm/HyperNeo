@@ -1007,7 +1007,16 @@ describe('SpaceTaskPane — activity members actions', () => {
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Reopen'));
-    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress'));
+    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'open'));
+  });
+
+  it('offers no status-only start for a task without a workflow', () => {
+    mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByRole } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    const menu = getByRole('menu');
+    expect(menu.textContent).not.toContain('Resume');
+    expect(menu.textContent).not.toContain('Run again');
   });
 
   it('cancels blocked workflow tasks with a task status transition', async () => {
@@ -1041,14 +1050,14 @@ describe('SpaceTaskPane — activity members actions', () => {
 
   it.each([
     ['open', 'Reopen workflow as Open'],
-    ['in_progress', 'Reopen workflow'],
+    ['in_progress', 'Resume workflow'],
   ] as const)('distinguishes completed workflow recovery to %s', async (target, label) => {
     mockTasks.value = [makeTask({ status: 'done', workflowRunId: 'run-1' })];
     mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'done' })];
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     expect(getByText('Reopen workflow as Open')).toBeTruthy();
-    expect(getByText('Reopen workflow')).toBeTruthy();
+    expect(getByText('Resume workflow')).toBeTruthy();
     fireEvent.click(getByText(label));
     await waitFor(() => expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', target));
     expect(mockSetTaskStatus).not.toHaveBeenCalled();
@@ -1173,14 +1182,30 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockSetTaskStatus).not.toHaveBeenCalled();
   });
 
-  it('resumes a stopped standalone task with a plain status transition', async () => {
+  it('tells the user how to proceed when the last run cannot be picked up', async () => {
+    mockRunTaskDirectly.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'direct_start_unavailable',
+    });
+    mockTasks.value = [makeTask({ status: 'cancelled', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByText, findByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Run again'));
+    expect(
+      await findByText('This task can’t pick up its last run. Reopen it, then run it.')
+    ).toBeTruthy();
+  });
+
+  it('runs a stopped task without a workflow again through task.start', async () => {
     mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
-    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    const { getByTestId, getByText, getByRole } = render(<SpaceTaskPane taskId="task-1" />);
 
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
-    fireEvent.click(getByText('Resume'));
+    expect(getByRole('menu').textContent).not.toContain('Resume');
+    fireEvent.click(getByText('Run again'));
 
-    await waitFor(() => expect(mockSetTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress'));
+    await waitFor(() => expect(mockRunTaskDirectly).toHaveBeenCalledWith('task-1'));
+    expect(mockSetTaskStatus).not.toHaveBeenCalled();
     expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
   });
 
@@ -1208,7 +1233,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     const menu = getByRole('menu');
     expect(menu.textContent).not.toContain('Approve');
     expect(menu.textContent).toContain('Cancel');
-    expect(menu.textContent).toContain('Reopen');
+    expect(menu.textContent).not.toContain('Reopen');
     expect(menu.textContent).toContain('Archive');
   });
 
