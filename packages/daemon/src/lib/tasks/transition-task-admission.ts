@@ -85,13 +85,17 @@ export async function loadTask(
 export function routeActiveDirectAttempt<T extends OwnedTask>(
   owned: T,
   input: In,
+  caller: OperationCaller,
   deps: Deps
 ): Gate<T, 'unsupported_status' | 'direct_attempt_not_running' | DirectOutcomeAcknowledgement> {
   const attempt = new DirectTaskExecutionRepository(deps.db).getActive(owned.task.id);
   if (!attempt) return { value: owned };
-  const directStatus = input.status as 'done' | 'blocked' | 'cancelled' | 'stopped';
-  if (!(['done', 'blocked', 'cancelled', 'stopped'] as const).includes(directStatus))
-    return { reason: 'unsupported_status' };
+  const directStatus = input.status as DirectFinalizationInput['status'];
+  const directStatuses: DirectFinalizationInput['status'][] =
+    caller.source === 'rpc'
+      ? ['done', 'blocked', 'cancelled', 'stopped', 'archived']
+      : ['done', 'blocked', 'cancelled', 'stopped'];
+  if (!directStatuses.includes(directStatus)) return { reason: 'unsupported_status' };
   if (
     attempt.phase !== 'running' ||
     owned.task.taskAgentSessionId !== attempt.sessionId ||

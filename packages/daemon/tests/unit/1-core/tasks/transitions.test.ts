@@ -29,7 +29,8 @@ describe('task transition policy', () => {
     ['stopped', 'open', true],
     ['archived', 'open', false],
     ['done', 'open', true],
-    ['draft', 'done', false],
+    ['draft', 'done', true],
+    ['archived', 'done', false],
   ] as [TaskLifecycleStatus, TaskLifecycleStatus, boolean][])(
     'preserves %s to %s = %s',
     (from, to, allowed) => {
@@ -41,12 +42,23 @@ describe('task transition policy', () => {
 
   test('preserves the diagnostic including allowed transitions in their original order', () => {
     expect(() => assertValidTaskTransition('done', 'blocked')).toThrow(
-      "Invalid status transition from 'done' to 'blocked'. Allowed: open, in_progress, archived"
+      "Invalid status transition from 'done' to 'blocked'. Allowed: open, in_progress, cancelled, archived"
     );
     expect(() => assertValidTaskTransition('archived', 'open')).toThrow(
       "Invalid status transition from 'archived' to 'open'. Allowed: none"
     );
   });
+});
+
+test('every status except archived can move to done, cancelled, and archived', () => {
+  const statuses = Object.keys(VALID_TASK_TRANSITIONS) as TaskLifecycleStatus[];
+  for (const from of statuses.filter((status) => status !== 'archived')) {
+    for (const to of ['done', 'cancelled', 'archived'] as const) {
+      if (from !== to)
+        expect([from, to, isValidTaskTransition(from, to)]).toEqual([from, to, true]);
+    }
+  }
+  expect(VALID_TASK_TRANSITIONS.archived).toEqual([]);
 });
 
 test('review can queue a guarded task retry without enabling generic review-to-open writes', () => {

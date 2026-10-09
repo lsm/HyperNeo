@@ -3515,7 +3515,7 @@ export class SpaceRuntime {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'blocked');
         }
       }
-      if (nextStatus === 'cancelled') {
+      if (nextStatus === 'cancelled' || nextStatus === 'archived') {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
@@ -3546,7 +3546,7 @@ export class SpaceRuntime {
       if (task.status === 'approved') {
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
-      } else if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
+      } else if (task.status !== 'done' && isValidSpaceTaskTransition(task.status, 'cancelled')) {
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'cancelled' && task.workflowRunId) {
         await this.stopActiveWorkflowTaskAgents(task, 'workflow run cancelled');
@@ -3823,6 +3823,7 @@ export class SpaceRuntime {
     if (
       run.status === 'cancelled' &&
       canonicalTask.status !== 'cancelled' &&
+      canonicalTask.status !== 'done' &&
       isValidSpaceTaskTransition(canonicalTask.status, 'cancelled')
     ) {
       await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {

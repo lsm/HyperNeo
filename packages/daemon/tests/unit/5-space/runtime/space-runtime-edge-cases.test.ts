@@ -903,6 +903,40 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       expect(cancelledExecution.agentSessionId).toBeNull();
     });
 
+    test('cancelling a workflow run leaves its done tasks done', async () => {
+      const rt = makeRuntime({ taskAgentManager: new MockTaskAgentManager() as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-cancel-done', name: 'Only Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+      await rt.cancelWorkflowRun(SPACE_ID, run.id);
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('done');
+    });
+
+    test('archiving a running workflow task cancels its run', async () => {
+      const tam = new MockTaskAgentManager();
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'step-archive-run', name: 'Only Step', agentId: AGENT },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        taskAgentSessionId: 'task-session-archive-run',
+      });
+
+      const archived = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, tasks[0].id, {
+        status: 'archived',
+      });
+
+      expect(archived?.status).toBe('archived');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+      expect(tam.cancelledSessions).toContain('task-session-archive-run');
+    });
+
     test('cancelling a run interrupts a live node session whose execution row has a null agentSessionId', async () => {
       const tam = new MockTaskAgentManager();
       const rt = makeRuntime({ taskAgentManager: tam as never });
