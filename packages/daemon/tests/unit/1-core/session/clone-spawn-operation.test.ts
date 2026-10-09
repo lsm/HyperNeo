@@ -199,6 +199,12 @@ describe('session.clone.spawn', () => {
     });
   });
 
+  test('the input schema accepts the Ultra thinking level and rejects unknown ones', () => {
+    const schema = createSpawnSessionCloneOperation(makeHarness().deps).inputSchema;
+    expect(schema.safeParse({ thinkingLevel: 'think64k' }).success).toBe(true);
+    expect(schema.safeParse({ thinkingLevel: 'think128k' }).success).toBe(false);
+  });
+
   test('a non-git workspace is shared directly; a worktree parent clones from its main repo', async () => {
     const h = makeHarness({ isGit: false });
     await run(h, {});

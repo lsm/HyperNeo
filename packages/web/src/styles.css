@@ -1354,3 +1354,11 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 .thinking-tone-32k {
   color: light-dark(#b45309, #fde68a);
 }
+
+.thinking-tone-48k {
+  color: light-dark(#c2410c, #fdba74);
+}
+
+.thinking-tone-64k {
+  color: light-dark(#b91c1c, #fca5a5);
+}

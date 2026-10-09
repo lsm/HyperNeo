@@ -108,14 +108,10 @@ describe('SessionStatusBar', () => {
     });
     await openPicker(container);
 
-    const thinking = getByRole('group', { name: 'Thinking' });
-    const option = [...thinking.querySelectorAll('button')].find(
-      (button) => button.textContent !== 'Off'
-    )!;
-    fireEvent.click(option);
+    fireEvent.change(getByRole('slider', { name: 'Thinking' }), { target: { value: '4' } });
 
     expect(onThinkingLevelChange).toHaveBeenCalledTimes(1);
-    expect(onThinkingLevelChange.mock.calls[0][0]).not.toBe('off');
+    expect(onThinkingLevelChange.mock.calls[0][0]).toBe('think32k');
   });
 
   it.each([

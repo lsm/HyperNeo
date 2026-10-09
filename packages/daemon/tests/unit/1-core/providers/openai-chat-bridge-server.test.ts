@@ -864,8 +864,10 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(map(undefined)).toBeUndefined();
       expect(map({ type: 'adaptive' })).toBe('medium');
       expect(map({ type: 'enabled', budget_tokens: 1000 })).toBe('low');
-      expect(map({ type: 'enabled', budget_tokens: 8000 })).toBe('medium');
+      expect(map({ type: 'enabled', budget_tokens: 8000 })).toBe('low');
+      expect(map({ type: 'enabled', budget_tokens: 16000 })).toBe('medium');
       expect(map({ type: 'enabled', budget_tokens: 32000 })).toBe('high');
+      expect(map({ type: 'enabled', budget_tokens: 63999 })).toBe('high');
       expect(map({ type: 'enabled', budget_tokens: 0 })).toBeUndefined();
     });
 

@@ -1,4 +1,4 @@
-import type { Session, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import { THINKING_LEVELS, type Session, type SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { z } from 'zod';
 import type {
   OperationCaller,
@@ -10,13 +10,7 @@ import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-se
 
 export const AgentStatusSchema = z.enum(['active', 'paused', 'disabled', 'archived']);
 
-export const AgentThinkingLevelSchema = z.enum([
-  'off',
-  'think8k',
-  'think16k',
-  'think24k',
-  'think32k',
-]);
+export const AgentThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const AgentSettingSourcesSchema = z.array(z.enum(['user', 'project', 'local']));
 

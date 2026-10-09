@@ -1,4 +1,4 @@
-import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import { THINKING_LEVELS, type ModelInfo, type ThinkingLevel } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   filterModelsBySearch,
@@ -165,7 +165,9 @@ export function NeoModelMenu({
             {working ? 'Available after this reply' : 'For this conversation'}
           </span>
         </div>
-        {options.length ? (
+        {options.length > 4 ? (
+          <ThinkingSlider level={level} options={options} busy={busy} onThinking={onThinking} />
+        ) : options.length ? (
           <div role="group" aria-label="Thinking" class="flex gap-1 rounded-xl bg-surface p-1">
             {options.map((option) => (
               <button
@@ -186,6 +188,70 @@ export function NeoModelMenu({
           <p class="text-xs text-fg-faint">Not available for this model</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function nearestOptionIndex(level: ThinkingLevel, options: { value: ThinkingLevel }[]): number {
+  const rank = THINKING_LEVELS.indexOf(level);
+  let best = 0;
+  options.forEach((option, index) => {
+    const distance = Math.abs(THINKING_LEVELS.indexOf(option.value) - rank);
+    if (distance < Math.abs(THINKING_LEVELS.indexOf(options[best].value) - rank)) best = index;
+  });
+  return best;
+}
+
+function ThinkingSlider({
+  level,
+  options,
+  busy,
+  onThinking,
+}: {
+  level: ThinkingLevel;
+  options: { value: ThinkingLevel; label: string }[];
+  busy: boolean;
+  onThinking: (level: ThinkingLevel) => void;
+}) {
+  const [preview, setPreview] = useState<number | null>(null);
+  const selected = nearestOptionIndex(level, options);
+  const shown = preview ?? selected;
+  const pick = (index: number) => {
+    setPreview(null);
+    if (options[index] && options[index].value !== level) onThinking(options[index].value);
+  };
+  return (
+    <div class="flex items-center gap-3 rounded-xl bg-surface px-3 py-2">
+      <div class="relative min-w-0 flex-1">
+        <input
+          type="range"
+          min={0}
+          max={options.length - 1}
+          step={1}
+          value={shown}
+          disabled={busy}
+          aria-label="Thinking"
+          aria-valuetext={options[shown].label}
+          onInput={(event) => setPreview(Number((event.target as HTMLInputElement).value))}
+          onChange={(event) => pick(Number((event.target as HTMLInputElement).value))}
+          class="w-full accent-accent disabled:opacity-50"
+        />
+        <div aria-hidden="true" class="mt-0.5 flex justify-between px-[7px]">
+          {options.map((option, index) => (
+            <span
+              key={option.value}
+              title={option.label}
+              class={`h-1 w-1 rounded-full ${index <= shown ? 'bg-accent' : 'bg-line-strong'}`}
+            />
+          ))}
+        </div>
+      </div>
+      <span
+        class="w-[4.5rem] shrink-0 text-right text-xs font-medium text-accent"
+        data-testid="thinking-slider-label"
+      >
+        {options[shown].label}
+      </span>
     </div>
   );
 }

@@ -1,9 +1,9 @@
-import type { SpaceAgentStatus } from '@hyperneo/shared';
+import { THINKING_LEVELS, type SpaceAgentStatus } from '@hyperneo/shared';
 
-const THINKING_LEVELS = new Set(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
+const VALID_THINKING_LEVELS = new Set<string>(THINKING_LEVELS);
 
 export function isValidThinkingLevel(value: unknown): boolean {
-  return typeof value === 'string' && THINKING_LEVELS.has(value);
+  return typeof value === 'string' && VALID_THINKING_LEVELS.has(value);
 }
 
 const SETTING_SOURCES = new Set(['user', 'project', 'local']);
