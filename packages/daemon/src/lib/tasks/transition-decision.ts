@@ -88,6 +88,7 @@ export function classifyRequest(input: Input): TaskUpdateRouting {
     workflowRunId: workflowRunId ?? undefined,
     allowReviewToDone: input.callerSource === 'rpc',
     allowApprovedToDone: input.callerSource === 'rpc',
+    allowArchiveActiveRun: input.callerSource === 'rpc',
   });
 }
 export function rejectUnsupportedRequest(routing: TaskUpdateRouting): Gate {

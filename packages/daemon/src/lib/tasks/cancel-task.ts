@@ -44,7 +44,9 @@ export async function admitManagedCancellation(
   if (!task?.spaceId) return { value: undefined };
   const route = resolveCancellationRoute(db, task);
   if (route.kind === 'direct') return { value: undefined };
-  if (task.archivedAt || task.status === 'cancelled' || task.status === 'done')
+  const finished = (status: SpaceTask['status']) =>
+    status === 'cancelled' || (status === 'done' && caller.source !== 'rpc');
+  if (task.archivedAt || finished(task.status))
     return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
   if (caller.source === 'mcp') {
     const session = caller.sessionId
@@ -77,8 +79,8 @@ export async function admitManagedCancellation(
   const getTaskManager = policy.getTaskManager;
   if (!getTaskManager) return { reason: { accepted: false, reason: 'cancellation_unavailable' } };
   const guardWrite = (current: SpaceTask): string | undefined => {
-    if (current.archivedAt || current.status === 'cancelled' || current.status === 'done')
-      return 'already_terminal';
+    if (current.archivedAt || finished(current.status)) return 'already_terminal';
+    if (current.status !== task.status) return 'status_changed';
     if (route.kind === 'reserved')
       return supersedeReservedAttempt(db, route.attempt) ? undefined : 'reserved_attempt_race';
     return new DirectTaskExecutionRepository(db).getActive(current.id)

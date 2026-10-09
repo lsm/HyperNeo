@@ -1,7 +1,7 @@
 import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 
 export const VALID_TASK_TRANSITIONS: Record<TaskLifecycleStatus, TaskLifecycleStatus[]> = {
-  draft: ['open', 'archived'],
+  draft: ['open', 'done', 'cancelled', 'archived'],
   open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
   in_progress: [
     'open',
@@ -13,10 +13,11 @@ export const VALID_TASK_TRANSITIONS: Record<TaskLifecycleStatus, TaskLifecycleSt
     'stopped',
     'rate_limited',
     'usage_limited',
+    'archived',
   ],
   review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
   approved: ['done', 'in_progress', 'archived', 'cancelled'],
-  done: ['open', 'in_progress', 'archived'],
+  done: ['open', 'in_progress', 'cancelled', 'archived'],
   blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
   rate_limited: [
@@ -24,6 +25,7 @@ export const VALID_TASK_TRANSITIONS: Record<TaskLifecycleStatus, TaskLifecycleSt
     'usage_limited',
     'open',
     'blocked',
+    'done',
     'cancelled',
     'archived',
     'stopped',
@@ -33,12 +35,13 @@ export const VALID_TASK_TRANSITIONS: Record<TaskLifecycleStatus, TaskLifecycleSt
     'rate_limited',
     'open',
     'blocked',
+    'done',
     'cancelled',
     'archived',
     'stopped',
   ],
   archived: [],
-  stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
+  stopped: ['in_progress', 'open', 'review', 'done', 'cancelled', 'archived'],
 };
 
 export function isValidTaskTransition(from: TaskLifecycleStatus, to: TaskLifecycleStatus): boolean {

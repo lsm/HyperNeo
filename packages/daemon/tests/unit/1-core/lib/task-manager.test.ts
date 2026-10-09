@@ -578,12 +578,10 @@ describe('SpaceTaskManager', () => {
       expect(typeof archived.archivedAt).toBe('number');
     });
 
-    it('throws when archiving a task in in_progress status', async () => {
+    it('archives a task in in_progress status', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');
-      await expect(manager.archiveTask(task.id)).rejects.toThrow(
-        "Invalid status transition from 'in_progress' to 'archived'"
-      );
+      expect((await manager.archiveTask(task.id)).status).toBe('archived');
     });
   });
 
@@ -800,8 +798,13 @@ describe('SpaceTaskManager', () => {
   });
 
   describe('VALID_SPACE_TASK_TRANSITIONS', () => {
-    it('done allows reactivation and archival', () => {
-      expect(VALID_SPACE_TASK_TRANSITIONS.done).toEqual(['open', 'in_progress', 'archived']);
+    it('done allows reactivation, cancellation, and archival', () => {
+      expect(VALID_SPACE_TASK_TRANSITIONS.done).toEqual([
+        'open',
+        'in_progress',
+        'cancelled',
+        'archived',
+      ]);
     });
 
     it('cancelled allows restart, reactivation, done, and archival', () => {
@@ -840,7 +843,7 @@ describe('SpaceTaskManager', () => {
       ]);
     });
 
-    it('in_progress allows open, review, approved, done, blocked, cancelled, stopped, and the runtime-owned limited statuses', () => {
+    it('in_progress allows open, review, approved, done, blocked, cancelled, stopped, the runtime-owned limited statuses, and archived', () => {
       expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
         'open',
         'review',
@@ -851,6 +854,7 @@ describe('SpaceTaskManager', () => {
         'stopped',
         'rate_limited',
         'usage_limited',
+        'archived',
       ]);
     });
   });
@@ -908,12 +912,10 @@ describe('SpaceTaskManager', () => {
       expect(archived.status).toBe('archived');
     });
 
-    it('rejects transition from in_progress -> archived', async () => {
+    it('allows transition from in_progress -> archived', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');
-      await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
-        'Invalid status transition'
-      );
+      expect((await manager.setTaskStatus(task.id, 'archived')).status).toBe('archived');
     });
 
     it('rejects archived -> every status (exhaustive)', async () => {

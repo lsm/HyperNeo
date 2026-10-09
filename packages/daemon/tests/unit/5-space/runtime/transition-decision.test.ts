@@ -164,16 +164,28 @@ const cases: Case[] = [
     { action: 'reject', result: 'unsupported_status' },
   ],
   [
-    'archiving with an active workflow run keeps its own reject reason',
+    'an agent archiving with an active workflow run keeps its own reject reason',
     {
       ...base,
       currentStatus: 'open',
       requestedStatus: 'archived',
       workflowRunId: 'run-1',
       runActive: true,
-      callerSource: 'rpc',
+      callerSource: 'mcp',
     },
     { action: 'reject', result: 'archive_active_run' },
+  ],
+  [
+    'a person archiving with an active workflow run stops the run first',
+    {
+      ...base,
+      currentStatus: 'in_progress',
+      requestedStatus: 'archived',
+      workflowRunId: 'run-1',
+      runActive: true,
+      callerSource: 'rpc',
+    },
+    { action: 'runtime', executor: 'stop_for_status', approvalSource: undefined },
   ],
   [
     'archiving with an inactive workflow run writes',
@@ -422,7 +434,7 @@ describe('requireBlockReasonOnlyWithBlocked', () => {
 describe('requireTableTransition', () => {
   test.each([
     ['a valid transition passes through', 'open', 'in_progress', 'value'],
-    ['an invalid transition is rejected', 'done', 'cancelled', 'reason'],
+    ['an invalid transition is rejected', 'archived', 'done', 'reason'],
   ] as const)('%s', (_name, currentStatus, requestedStatus, expected) => {
     const gate = requireTableTransition(setStatus, {
       ...base,

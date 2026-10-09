@@ -35,16 +35,16 @@ describe('VALID_SPACE_TASK_TRANSITIONS — draft rules', () => {
     expect(VALID_SPACE_TASK_TRANSITIONS.draft).not.toContain('in_progress');
   });
 
-  test('draft cannot transition to done', () => {
-    expect(VALID_SPACE_TASK_TRANSITIONS.draft).not.toContain('done');
+  test('draft can transition to done', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.draft).toContain('done');
   });
 
   test('draft cannot transition to blocked', () => {
     expect(VALID_SPACE_TASK_TRANSITIONS.draft).not.toContain('blocked');
   });
 
-  test('draft cannot transition to cancelled', () => {
-    expect(VALID_SPACE_TASK_TRANSITIONS.draft).not.toContain('cancelled');
+  test('draft can transition to cancelled', () => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.draft).toContain('cancelled');
   });
 
   test('draft cannot transition to review', () => {
@@ -59,8 +59,8 @@ describe('VALID_SPACE_TASK_TRANSITIONS — draft rules', () => {
     expect(isValidSpaceTaskTransition('draft', 'in_progress')).toBe(false);
   });
 
-  test('isValidSpaceTaskTransition rejects draft → done', () => {
-    expect(isValidSpaceTaskTransition('draft', 'done')).toBe(false);
+  test('isValidSpaceTaskTransition accepts draft → done', () => {
+    expect(isValidSpaceTaskTransition('draft', 'done')).toBe(true);
   });
 });
 
@@ -132,16 +132,14 @@ describe('SpaceTaskManager — draft task lifecycle', () => {
     );
   });
 
-  test('draft → done transition is rejected', async () => {
+  test('draft → done transition is allowed', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'Draft',
       description: '',
       status: 'draft',
     });
-    await expect(taskManager.setTaskStatus(task.id, 'done')).rejects.toThrow(
-      /Invalid status transition from 'draft' to 'done'/
-    );
+    expect((await taskManager.setTaskStatus(task.id, 'done')).status).toBe('done');
   });
 
   test('draft → blocked transition is rejected', async () => {
@@ -168,16 +166,14 @@ describe('SpaceTaskManager — draft task lifecycle', () => {
     );
   });
 
-  test('draft → cancelled transition is rejected', async () => {
+  test('draft → cancelled transition is allowed', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'Draft',
       description: '',
       status: 'draft',
     });
-    await expect(taskManager.setTaskStatus(task.id, 'cancelled')).rejects.toThrow(
-      /Invalid status transition from 'draft' to 'cancelled'/
-    );
+    expect((await taskManager.setTaskStatus(task.id, 'cancelled')).status).toBe('cancelled');
   });
 
   test('draft → archived transition is valid', async () => {

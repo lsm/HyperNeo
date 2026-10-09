@@ -401,15 +401,34 @@ test.each(['approved', 'rate_limited'] as const)(
   }
 );
 
-test('archiving a task with an active workflow run names the active run', async () => {
+test('an agent archiving a task with an active workflow run is told the run is active', async () => {
   const task = tasks.createTask({ spaceId, title: 'T', description: '' });
   tasks.updateTask(task.id, { workflowRunId: createWorkflowRun().id });
   isWorkflowRunActive.mockImplementation(() => true);
-  expect(await invoke({ taskId: task.id, status: 'archived' }, rpc)).toEqual({
+  expect(await invoke({ taskId: task.id, status: 'archived' }, worker('member', spaceId))).toEqual({
     kind: 'completed',
     value: 'archive_active_run',
   });
   expect(tasks.getTask(task.id)?.archivedAt).toBeNull();
+});
+
+test('a person archiving a running workflow task stops the run first', async () => {
+  const run = createWorkflowRun();
+  const task = tasks.createTask({ spaceId, title: 'T', description: '' });
+  tasks.updateTask(task.id, { workflowRunId: run.id, status: 'in_progress' });
+  const stopForStatus = mock(async () => tasks.getTask(task.id));
+
+  await invoke({ taskId: task.id, status: 'archived' }, rpc, {
+    isWorkflowRunActive: () => true,
+    stopForStatus,
+  });
+
+  expect(stopForStatus).toHaveBeenCalledWith(
+    spaceId,
+    task.id,
+    expect.objectContaining({ status: 'archived' }),
+    { expectedStatus: 'in_progress', expectedWorkflowRunId: run.id }
+  );
 });
 
 test('an mcp session in the owning Space archives a task off the board', async () => {

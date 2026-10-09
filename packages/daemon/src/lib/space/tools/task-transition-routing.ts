@@ -16,6 +16,7 @@ export interface TaskUpdateRoutingInput {
   workflowRunId?: string;
   allowReviewToDone?: boolean;
   allowApprovedToDone?: boolean;
+  allowArchiveActiveRun?: boolean;
 }
 
 export type TaskUpdateRejectReason =
@@ -89,6 +90,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     workflowRunId,
     allowReviewToDone,
     allowApprovedToDone,
+    allowArchiveActiveRun,
   } = input;
   if (!hasChanges) {
     return {
@@ -152,7 +154,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     if (requestedStatus === 'done' && currentStatus === 'approved' && !allowApprovedToDone) {
       return { action: 'complete_task', auditParamsShape: 'transition', emitTaskUpdated: 'never' };
     }
-    if (requestedStatus === 'archived' && hasWorkflowRun && runActive) {
+    if (requestedStatus === 'archived' && hasWorkflowRun && runActive && !allowArchiveActiveRun) {
       return {
         action: 'reject',
         reason: 'archive_active_run',
@@ -178,7 +180,10 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     const toStopped = requestedStatus === 'open' || requestedStatus === 'cancelled';
     const toBlockedFromPaused = requestedStatus === 'blocked' && rateOrUsageLimited;
     const toTerminalWithActiveRun =
-      runActive && (requestedStatus === 'done' || requestedStatus === 'blocked');
+      runActive &&
+      (requestedStatus === 'done' ||
+        requestedStatus === 'blocked' ||
+        requestedStatus === 'archived');
     if (
       hasWorkflowRun &&
       (toTerminalWithActiveRun || (fromActivePaused && (toStopped || toBlockedFromPaused)))

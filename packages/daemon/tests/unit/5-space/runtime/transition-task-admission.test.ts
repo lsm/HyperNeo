@@ -160,6 +160,7 @@ describe('routeActiveDirectAttempt', () => {
       routeActiveDirectAttempt(
         { spaceId, task },
         { taskId: task.id, status: 'done' },
+        rpc,
         deps({ requestDirectOutcome: () => ack })
       )
     ).toEqual({ reason: 'direct_attempt_not_running' });
@@ -171,6 +172,7 @@ describe('routeActiveDirectAttempt', () => {
       routeActiveDirectAttempt(
         { spaceId, task },
         { taskId: task.id, status: 'done' },
+        rpc,
         deps({ requestDirectOutcome: () => ack })
       )
     ).toEqual({ reason: 'direct_attempt_not_running' });
@@ -182,9 +184,38 @@ describe('routeActiveDirectAttempt', () => {
       routeActiveDirectAttempt(
         { spaceId, task },
         { taskId: task.id, status: 'done' },
+        rpc,
         deps({ requestDirectOutcome: () => ack })
       )
     ).toEqual({ reason: ack });
+  });
+
+  test('a person archiving a running attempt hands it to the outcome queue', () => {
+    const task = stage('running');
+    const requestDirectOutcome = mock(() => ack);
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'archived' },
+        rpc,
+        deps({ requestDirectOutcome })
+      )
+    ).toEqual({ reason: ack });
+    expect(requestDirectOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'archived' })
+    );
+  });
+
+  test('an agent cannot archive a running attempt', () => {
+    const task = stage('running');
+    expect(
+      routeActiveDirectAttempt(
+        { spaceId, task },
+        { taskId: task.id, status: 'archived' },
+        { source: 'mcp', sessionId: 'worker' },
+        deps({ requestDirectOutcome: () => ack })
+      )
+    ).toEqual({ reason: 'unsupported_status' });
   });
 
   test('a status the direct route does not carry is still unsupported_status', () => {
@@ -193,6 +224,7 @@ describe('routeActiveDirectAttempt', () => {
       routeActiveDirectAttempt(
         { spaceId, task },
         { taskId: task.id, status: 'open' },
+        rpc,
         deps({ requestDirectOutcome: () => ack })
       )
     ).toEqual({ reason: 'unsupported_status' });
@@ -201,7 +233,7 @@ describe('routeActiveDirectAttempt', () => {
   test('a task without an active attempt passes through unchanged', () => {
     const task = tasks.createTask({ spaceId, title: 'T', description: '' });
     expect(
-      routeActiveDirectAttempt({ spaceId, task }, { taskId: task.id, status: 'done' }, deps())
+      routeActiveDirectAttempt({ spaceId, task }, { taskId: task.id, status: 'done' }, rpc, deps())
     ).toEqual({ value: { spaceId, task } });
   });
 });

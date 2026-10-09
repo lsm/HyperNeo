@@ -611,13 +611,32 @@ test('a plain task with a reserved direct attempt and no session yet is fenced t
   expect(emitTaskUpdated).toHaveBeenCalledTimes(1);
 });
 
-test('a plain done task returns cancellation_unavailable', async () => {
+test('a person can cancel a plain done task', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({
     spaceId,
     title: 'Plain',
     description: '',
     status: 'done',
+  }).id;
+  const plainOp = canceller({
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    emitTaskUpdated: async () => {},
+  });
+  expect(await plainOp.execute({ taskId: plainTaskId }, { source: 'rpc' })).toEqual({
+    accepted: true,
+    jobId: null,
+  });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
+});
+
+test('a plain cancelled task returns cancellation_unavailable', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({
+    spaceId,
+    title: 'Plain',
+    description: '',
+    status: 'cancelled',
   }).id;
   const plainOp = canceller({
     getTaskManager: (id) => new SpaceTaskManager(db, id),
@@ -740,7 +759,23 @@ test('the attempt worker itself still cancels through the transition door', asyn
   expect(outcomeCount()).toBe(1);
 });
 
-test('task.transition reports cancellation_unavailable for an already terminal plain task', async () => {
+test('task.transition reports cancellation_unavailable for an already cancelled plain task', async () => {
+  const spaceId = tasks.getTask(taskId)!.spaceId!;
+  const plainTaskId = tasks.createTask({
+    spaceId,
+    title: 'Plain',
+    description: '',
+    status: 'cancelled',
+  }).id;
+  const { operation: transition } = transitionOperation();
+
+  expect(
+    await transition.execute({ taskId: plainTaskId, status: 'cancelled' }, { source: 'rpc' })
+  ).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
+});
+
+test('task.transition lets a person cancel a done plain task', async () => {
   const spaceId = tasks.getTask(taskId)!.spaceId!;
   const plainTaskId = tasks.createTask({
     spaceId,
@@ -752,8 +787,8 @@ test('task.transition reports cancellation_unavailable for an already terminal p
 
   expect(
     await transition.execute({ taskId: plainTaskId, status: 'cancelled' }, { source: 'rpc' })
-  ).toEqual({ accepted: false, reason: 'cancellation_unavailable' });
-  expect(tasks.getTask(plainTaskId)?.status).toBe('done');
+  ).toEqual({ accepted: true, jobId: null });
+  expect(tasks.getTask(plainTaskId)?.status).toBe('cancelled');
 });
 
 test('a direct start claimed between the route read and the write is refused', async () => {

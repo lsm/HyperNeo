@@ -567,7 +567,7 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
 
   test('full matrix snapshot — every (from → to) edge matches the documented table', () => {
     const EXPECTED = {
-      draft: ['open', 'archived'],
+      draft: ['open', 'done', 'cancelled', 'archived'],
       open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
       in_progress: [
         'open',
@@ -579,10 +579,11 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
         'stopped',
         'rate_limited',
         'usage_limited',
+        'archived',
       ],
       review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
       approved: ['done', 'in_progress', 'archived', 'cancelled'],
-      done: ['open', 'in_progress', 'archived'],
+      done: ['open', 'in_progress', 'cancelled', 'archived'],
       blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
       cancelled: ['open', 'in_progress', 'done', 'archived'],
       rate_limited: [
@@ -590,6 +591,7 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
         'usage_limited',
         'open',
         'blocked',
+        'done',
         'cancelled',
         'archived',
         'stopped',
@@ -599,12 +601,13 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
         'rate_limited',
         'open',
         'blocked',
+        'done',
         'cancelled',
         'archived',
         'stopped',
       ],
       archived: [],
-      stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
+      stopped: ['in_progress', 'open', 'review', 'done', 'cancelled', 'archived'],
     };
     expect(VALID_SPACE_TASK_TRANSITIONS).toEqual(EXPECTED);
   });
@@ -827,7 +830,7 @@ describe('stopped status — dormant park capability (task #1080)', () => {
     }
   );
 
-  test.each(['in_progress', 'open', 'review', 'cancelled', 'archived'] as const)(
+  test.each(['in_progress', 'open', 'review', 'done', 'cancelled', 'archived'] as const)(
     'stopped → %s is a valid transition',
     (to) => {
       expect(VALID_SPACE_TASK_TRANSITIONS.stopped).toContain(to);
@@ -835,7 +838,7 @@ describe('stopped status — dormant park capability (task #1080)', () => {
     }
   );
 
-  test.each(['done', 'blocked', 'approved', 'stopped'] as const)(
+  test.each(['blocked', 'approved', 'stopped'] as const)(
     'stopped → %s is rejected by the transition validator',
     (to) => {
       expect(VALID_SPACE_TASK_TRANSITIONS.stopped).not.toContain(to);
