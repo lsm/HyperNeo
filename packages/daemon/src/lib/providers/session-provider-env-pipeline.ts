@@ -2,6 +2,12 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Provider as SdkProvider, ProviderSessionConfig } from '@hyperneo/shared/provider';
 import type { ProviderEnvVars } from '../provider-service.ts';
 
+const PROVIDER_NOT_REGISTERED = 'is not registered; cannot prepare environment';
+
+export function isProviderNotRegisteredMessage(message: string): boolean {
+  return message.includes(PROVIDER_NOT_REGISTERED);
+}
+
 export interface SessionProviderEnvRequest {
   providerId: string;
   modelId: string;
@@ -43,7 +49,7 @@ export function makeSessionProviderEnvStages(deps: {
       const provider = deps.getProvider(request.providerId);
       if (!provider) {
         throw new Error(
-          `Provider '${request.providerId}' is not registered; cannot prepare environment for ` +
+          `Provider '${request.providerId}' ${PROVIDER_NOT_REGISTERED} for ` +
             `session '${request.sessionId}' (model '${request.modelId}')`
         );
       }
