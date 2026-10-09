@@ -209,6 +209,41 @@ export function normalizeThinkingLevel(level: string | undefined | null): Thinki
   return 'off';
 }
 
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
+  off: undefined,
+  think8k: 'low',
+  think16k: 'medium',
+  think24k: 'high',
+  think32k: 'xhigh',
+  think48k: 'max',
+  think64k: 'max',
+};
+
+export function effortForThinkingLevel(
+  level: ThinkingLevel,
+  supported: readonly ThinkingEffort[]
+): ThinkingEffort | undefined {
+  const levels = THINKING_LEVELS.slice(1, THINKING_LEVELS.indexOf(level) + 1).reverse();
+  return levels
+    .map((candidate) => THINKING_LEVEL_EFFORT[candidate])
+    .find((effort): effort is ThinkingEffort => !!effort && supported.includes(effort));
+}
+
+export function getThinkingLevelsForModel(
+  provider: string | undefined,
+  mode: 'off' | 'on' | 'granular' | undefined,
+  effortLevels: readonly ThinkingEffort[] | undefined
+): ThinkingLevel[] {
+  const levels = getThinkingOptionsForProvider(provider, mode).map((option) => option.value);
+  if (!effortLevels?.length || levels.length <= 2) return levels;
+  return levels.filter((level) => {
+    const effort = THINKING_LEVEL_EFFORT[level];
+    return !effort || (level !== 'think64k' && effortLevels.includes(effort));
+  });
+}
+
 export function getThinkingOptionsForProvider(
   provider: string | undefined,
   mode?: 'off' | 'on' | 'granular'

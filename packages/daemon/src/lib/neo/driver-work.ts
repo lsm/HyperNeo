@@ -194,22 +194,43 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export function readDriverLive(
-  outcome: OperationOutcome
-): { status: WorkStatus; link?: string; remoteLink?: string } | null {
+export function readDriverLive(outcome: OperationOutcome): {
+  status: WorkStatus;
+  lastActivityAt: number;
+  lastReplyAt?: number;
+  link?: string;
+  remoteLink?: string;
+} | null {
   if (outcome.kind !== 'completed') return null;
   const reply = DriverStatusSchema.safeParse(outcome.value);
   if (!reply.success || !reply.data.ok) return null;
-  const { status, link, remoteLink } = reply.data.value as {
+  const { status, lastActivityAt, lastReplyAt, link, remoteLink } = reply.data.value as {
     status: WorkStatus;
+    lastActivityAt: number;
+    lastReplyAt?: number;
     link?: unknown;
     remoteLink?: unknown;
   };
   return {
     status,
+    lastActivityAt,
+    ...(lastReplyAt !== undefined ? { lastReplyAt } : {}),
     ...(typeof link === 'string' ? { link } : {}),
     ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
   };
+}
+
+export function decideCardLiveStatus(
+  session: { status: WorkStatus; lastActivityAt: number; lastReplyAt?: number },
+  anchoredAt: number | null,
+  prior: WorkStatus | null
+): WorkStatus {
+  if (session.status === 'failed' || session.status === 'stopped') return session.status;
+  if (anchoredAt === null) return 'queued';
+  const replied = session.lastReplyAt !== undefined && session.lastReplyAt > anchoredAt;
+  if (!replied) return session.status === 'done' ? 'running' : session.status;
+  if (session.status === 'running') return prior === 'done' ? 'done' : 'running';
+  return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
 
 export function readDriverSendBaseline(

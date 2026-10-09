@@ -58,6 +58,7 @@ import {
   readDriverSent,
   messageOpening,
   readDriverLanded,
+  decideCardLiveStatus,
   readDriverNeedsYou,
   readDriverSettlement,
   driverNeedsYouNote,
@@ -734,20 +735,29 @@ export class NeoService {
       { ref, ...(startedAt !== null ? { since: startedAt } : {}) },
       driverWorkCaller(work)
     );
-    const live = readDriverLive(outcome);
-    if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
-      this.notifyChanged();
     const sent = this.driverTargets.readSent(work.id);
     const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
     if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
-    const settled = readDriverSettlement(
-      work,
-      outcome,
-      Date.now(),
-      startedAt,
-      !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
-      sent?.opening ?? (messageOpening(work.instruction) || null)
-    );
+    const live = readDriverLive(outcome);
+    const cardStatus = live
+      ? decideCardLiveStatus(live, startedAt ?? landed, this.driverTargets.readLiveStatus(work.id))
+      : null;
+    if (
+      live &&
+      cardStatus &&
+      this.driverTargets.recordLive(work.id, cardStatus, live.link, live.remoteLink)
+    )
+      this.notifyChanged();
+    const settled =
+      landed === null &&
+      readDriverSettlement(
+        work,
+        outcome,
+        Date.now(),
+        startedAt,
+        !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
+        sent?.opening ?? (messageOpening(work.instruction) || null)
+      );
     if (!settled) {
       await this.noteDriverStall(work, outcome);
       return this.noteDriverNeedsYou(work, ref, outcome);

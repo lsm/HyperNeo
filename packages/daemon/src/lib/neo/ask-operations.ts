@@ -3,6 +3,7 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { NeoAskInput } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoService } from './service.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
@@ -82,6 +83,39 @@ export function requireNeoWorkAskLink<T>(
     : {
         reason: fail('This request key already belongs to work under another ask; use a new one.'),
       };
+}
+
+export function planNeoCardAsk(
+  input: {
+    askId?: string;
+    requestKey: string;
+    concernId: string | null;
+    title: string;
+    goal?: string;
+    doneWhen?: string;
+  },
+  origin: NeoWorkOrigin
+): Omit<NeoAskInput, 'id'> | null {
+  if (input.askId || !input.doneWhen) return null;
+  return {
+    requestKey: `card:${origin.originSessionId}:${input.requestKey}`,
+    concernId: input.concernId,
+    originSessionId: origin.originSessionId,
+    originMessageId: origin.originMessageId,
+    title: input.title,
+    ask: input.goal ?? input.title,
+    doneWhen: input.doneWhen,
+    doneSource: 'card',
+  };
+}
+
+export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'>): boolean {
+  return (
+    !!ask &&
+    (Object.keys(planned) as (keyof typeof planned)[]).every(
+      (field) => ask[field] === planned[field]
+    )
+  );
 }
 
 export function projectNeoSnapshotAsks(asks: readonly NeoAsk[], settledLimit: number): NeoAsk[] {

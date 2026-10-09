@@ -418,7 +418,13 @@ export class AnthropicProvider implements Provider {
   }
 
   convertSdkModels(
-    sdkModels: Array<{ value: string; displayName: string; description: string }>
+    sdkModels: Array<{
+      value: string;
+      displayName: string;
+      description: string;
+      supportsEffort?: boolean;
+      supportedEffortLevels?: ModelInfo['effortLevels'];
+    }>
   ): ModelInfo[] {
     sdkModels = sdkModels.filter((m) => isAnthropicSdkModelId(m.value));
 
@@ -493,8 +499,16 @@ export class AnthropicProvider implements Provider {
           description: sdkModel.description || '',
           releaseDate: '',
           available: true,
+          ...(sdkModel.supportsEffort && sdkModel.supportedEffortLevels?.length
+            ? { effortLevels: sdkModel.supportedEffortLevels }
+            : {}),
         };
       });
+  }
+
+  getModelEffortLevels(modelId: string): ModelInfo['effortLevels'] {
+    return this.modelCache?.find((model) => model.id === modelId || model.alias === modelId)
+      ?.effortLevels;
   }
 
   ownsModel(modelId: string): boolean {
