@@ -1,4 +1,5 @@
 import { AGENT_OPERATION_NAMES } from './operation-names/agent.ts';
+import { CLIENT_OPERATION_NAMES } from './operation-names/client.ts';
 import { CORE_OPERATION_NAMES } from './operation-names/core.ts';
 import { DAEMON_OPERATION_NAMES } from './operation-names/daemon.ts';
 import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
@@ -17,6 +18,7 @@ import { WORKFLOW_OPERATION_NAMES } from './operation-names/workflow.ts';
 
 export const OPERATION_NAME_FAMILIES = {
   agent: AGENT_OPERATION_NAMES,
+  client: CLIENT_OPERATION_NAMES,
   core: CORE_OPERATION_NAMES,
   daemon: DAEMON_OPERATION_NAMES,
   event: EXTERNAL_EVENT_OPERATION_NAMES,
@@ -36,6 +38,7 @@ export const OPERATION_NAME_FAMILIES = {
 
 export const OPERATION_NAMES = [
   ...AGENT_OPERATION_NAMES,
+  ...CLIENT_OPERATION_NAMES,
   ...CORE_OPERATION_NAMES,
   ...DAEMON_OPERATION_NAMES,
   ...EXTERNAL_EVENT_OPERATION_NAMES,
