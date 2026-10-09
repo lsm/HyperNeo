@@ -66,7 +66,7 @@ import { setupMessageHandlers } from './message-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
 import { registerMcpHandlers } from './mcp-handlers.ts';
-import { registerSettingsHandlers } from './settings-handlers.ts';
+import { registerSettingsHandlers, sanitizeGlobalSettings } from './settings-handlers.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
@@ -1406,7 +1406,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.sessionManager,
     deps.messageHub,
-    deps.internalEventBus
+    deps.internalEventBus,
+    (settings) =>
+      deps.internalEventBus.publishAsync('settings.updated', {
+        namespaceId: 'global',
+        settings: sanitizeGlobalSettings(settings, deps.credentialManager),
+      })
   );
   const familyOperations = [
     ...collectFamilyOperations(familyContext),

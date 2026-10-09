@@ -485,7 +485,8 @@ export function createNeoOperations(service: NeoService) {
     (_input: z.infer<typeof SaveRules>) => undefined,
     ({ rules }) => {
       const neo = service.db.getGlobalSettings().neo;
-      service.db.updateGlobalSettings({ neo: { ...neo, standingRules: rules } });
+      const updated = service.db.updateGlobalSettings({ neo: { ...neo, standingRules: rules } });
+      service.publishSettings?.(updated);
       return { ok: true as const, standingRules: rules };
     }
   );

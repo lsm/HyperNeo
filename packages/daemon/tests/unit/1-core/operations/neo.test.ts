@@ -74,6 +74,7 @@ describe('Neo MVP', () => {
   let delivered: Set<string>;
   let interrupt: ReturnType<typeof mock>;
   let settings: { neo?: { standingRules?: string[] } };
+  let published: unknown[];
 
   beforeEach(async () => {
     const real = await createTestDb();
@@ -88,6 +89,7 @@ describe('Neo MVP', () => {
     delivered = new Set();
     interrupt = mock(async () => {});
     settings = {};
+    published = [];
     const queue = {
       listActiveByPayload: (_queue: string, match: Record<string, unknown>) =>
         jobs.filter(
@@ -140,7 +142,8 @@ describe('Neo MVP', () => {
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,
-      events
+      events,
+      (updated) => published.push(updated)
     );
   });
   afterEach(() => {
@@ -245,6 +248,7 @@ describe('Neo MVP', () => {
       await invoke('neo.rule.save', { rules }, { source: 'mcp', role: 'neo', sessionId: root })
     ).toMatchObject({ value: { ok: true, standingRules: rules } });
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: rules } });
+    expect(published).toEqual([expect.objectContaining({ neo: { standingRules: rules } })]);
     service.repo.saveConcern({ id: 'book-club', title: 'Book club', summary: '', context: '' }, 0);
     const holder = await service.open('book-club');
     expect(

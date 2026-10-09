@@ -1,4 +1,4 @@
-import type { MessageHub } from '@hyperneo/shared';
+import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -117,7 +117,8 @@ export class NeoService {
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
-    events: InternalEventBus<DaemonInternalEventMap>
+    events: InternalEventBus<DaemonInternalEventMap>,
+    readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
