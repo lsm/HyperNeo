@@ -149,6 +149,7 @@ import {
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
+  decideWorktreeFailure,
   explicitTaskWorkspace,
   findAvailableSessionId,
   type NodeAgentSpawnConfig,
@@ -901,17 +902,19 @@ export class TaskAgentManager {
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;
           } catch (err) {
+            const decision = decideWorktreeFailure({
+              notGitRepository: err instanceof WorkspaceNotGitRepositoryError,
+              ownFolder: ownsSpace ? explicitTaskWorkspace(task) : undefined,
+            });
+            if (decision.kind === 'own_folder') return decision.path;
             const detail = err instanceof Error ? err.message : String(err);
-            const ownFolder = ownsSpace ? explicitTaskWorkspace(task) : undefined;
-            if (err instanceof WorkspaceNotGitRepositoryError && ownFolder) return ownFolder;
             log.warn(
               `TaskAgentManager: failed to create worktree for workflow task ${task.id}; failing the spawn instead of falling back to the space workspace: ${detail}`
             );
             const message = `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`;
-            if (err instanceof WorkspaceNotGitRepositoryError) {
-              throw new PermanentSpawnError(message);
-            }
-            throw new Error(message);
+            throw decision.kind === 'permanent'
+              ? new PermanentSpawnError(message)
+              : new Error(message);
           }
         }
         return workspace.workspacePath;
