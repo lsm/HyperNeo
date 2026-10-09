@@ -25,7 +25,15 @@ import { useInputDraft } from '../hooks/useInputDraft.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { useNeoAttachments } from './neo-attachments.ts';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { NEO_QUICK_CHOICE_LABEL, type NeoSceneRef, projectNeoScenes } from './neo-scenes.ts';
+import { NeoAskCard } from './NeoAskCard.tsx';
+import { groupNeoAsks } from './neo-asks.ts';
+import {
+  NEO_QUICK_CHOICE_LABEL,
+  type NeoScene,
+  type NeoSceneGroup,
+  type NeoSceneRef,
+  projectNeoScenes,
+} from './neo-scenes.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 
@@ -144,12 +152,19 @@ export function NeoLive() {
     drivers,
     prs
   );
+  const askGroups = groupNeoAsks(view?.asks, scenes);
   const sceneGroups = [
-    { key: 'attention', label: 'Needs your attention', scenes: scenes?.attention ?? [] },
-    { key: 'running', label: 'In progress', scenes: scenes?.running ?? [] },
-    { key: 'outcomes', label: 'Recent outcomes', scenes: scenes?.outcomes ?? [] },
-  ] as const;
-  const workCount = sceneGroups.reduce((total, group) => total + group.scenes.length, 0);
+    { key: 'attention', label: 'Needs your attention' },
+    { key: 'running', label: 'In progress' },
+    { key: 'outcomes', label: 'Recent outcomes' },
+  ].map((group) => {
+    const key = group.key as NeoSceneGroup;
+    return { ...group, key, asks: askGroups.asks[key], scenes: askGroups.loose[key] };
+  });
+  const workCount = sceneGroups.reduce(
+    (total, group) => total + group.asks.length + group.scenes.length,
+    0
+  );
   const columns = !!publicConversation && (workCount > 0 || !!chat);
   const sheet = !!publicConversation && narrow;
   useNeoSheetSwipe({
@@ -159,11 +174,32 @@ export function NeoLive() {
     surface: shell,
     sheet: sceneSheet,
   });
-  const attentionCount = sceneGroups.find((group) => group.key === 'attention')?.scenes.length ?? 0;
+  const attention = sceneGroups.find((group) => group.key === 'attention');
+  const attentionCount = (attention?.asks.length ?? 0) + (attention?.scenes.length ?? 0);
   const ready =
     !!neo.sessionId &&
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
+  function renderScene(scene: NeoScene, groupKey: NeoSceneGroup) {
+    return scene.receipt.kind === 'work' ? (
+      <NeoWorkCard
+        key={JSON.stringify(scene.ref)}
+        work={scene.receipt}
+        driver={drivers.get(scene.ref.id)}
+        prs={prs.get(scene.ref.id)}
+        goal={goals.get(scene.ref.id)}
+        continued={continues.get(scene.ref.id)}
+        busy={neo.busyWork === scene.ref.id}
+        disabled={!connected || !!neo.busyWork}
+        onAction={(id, action) => void neo.act(id, action)}
+        onOpen={() => openScene(scene.ref)}
+        presentation={publicConversation && groupKey !== 'attention' ? 'summary' : 'detail'}
+        questionSlot={publicConversation ? attachQuestion : undefined}
+        waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
+        summary={neoWorkSummary(summaries, scene.receipt)}
+      />
+    ) : null;
+  }
   function writeDraft(text: string) {
     setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
@@ -555,7 +591,7 @@ export function NeoLive() {
             </div>
           )}
           {sceneGroups.map((group) =>
-            group.scenes.length === 0 ? null : (
+            group.asks.length + group.scenes.length === 0 ? null : (
               <section
                 key={group.key}
                 aria-label={group.label}
@@ -563,30 +599,14 @@ export function NeoLive() {
                 data-scene-group={group.key}
               >
                 <h2 class="text-xs font-medium text-fg-muted">
-                  {group.label} · {group.scenes.length}
+                  {group.label} · {group.asks.length + group.scenes.length}
                 </h2>
-                {group.scenes.map((scene) =>
-                  scene.receipt.kind === 'work' ? (
-                    <NeoWorkCard
-                      key={JSON.stringify(scene.ref)}
-                      work={scene.receipt}
-                      driver={drivers.get(scene.ref.id)}
-                      prs={prs.get(scene.ref.id)}
-                      goal={goals.get(scene.ref.id)}
-                      continued={continues.get(scene.ref.id)}
-                      busy={neo.busyWork === scene.ref.id}
-                      disabled={!connected || !!neo.busyWork}
-                      onAction={(id, action) => void neo.act(id, action)}
-                      onOpen={() => openScene(scene.ref)}
-                      presentation={
-                        publicConversation && group.key !== 'attention' ? 'summary' : 'detail'
-                      }
-                      questionSlot={publicConversation ? attachQuestion : undefined}
-                      waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
-                      summary={neoWorkSummary(summaries, scene.receipt)}
-                    />
-                  ) : null
-                )}
+                {group.asks.map((ask) => (
+                  <NeoAskCard key={ask.ask.id} view={ask}>
+                    {ask.scenes.map((scene) => renderScene(scene, ask.group))}
+                  </NeoAskCard>
+                ))}
+                {group.scenes.map((scene) => renderScene(scene, group.key))}
               </section>
             )
           )}
