@@ -532,7 +532,7 @@ describe('Neo work with a drivers target', () => {
       },
     });
     const refreshLater = async () => {
-      service.workPrs.record('work-1', service.workPrs.get('work-1')!.prs, 0);
+      service.workPrs.recordFailedRead('work-1', 0);
       await service.refreshDriverWork();
     };
     try {
@@ -579,6 +579,50 @@ describe('Neo work with a drivers target', () => {
       );
       await refreshLater();
       expect(reads).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('skips cards checked before PR tracking and tells Neo once when PRs stay unreadable', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/42';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+    let reads = 0;
+    let readable = true;
+    service.readPrs = async () => {
+      reads++;
+      return readable ? [running] : null;
+    };
+    const notes: string[] = [];
+    Object.assign(service, {
+      hasDelivery: () => true,
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(reads).toBe(0);
+      Reflect.deleteProperty(service, 'hasDelivery');
+
+      await service.reconcile('work-1');
+      expect([reads, notes.length]).toEqual([1, 0]);
+
+      readable = false;
+      service.workPrs.record('work-1', [running], 0);
+      await service.refreshDriverWork();
+      service.workPrs.recordFailedRead('work-1', 0);
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toContain('may be out of date');
     } finally {
       db.close();
     }

@@ -9,6 +9,7 @@ export function runMigration314(db: Database): void {
     open INTEGER NOT NULL,
     revision INTEGER NOT NULL,
     delivered TEXT,
-    read_at INTEGER NOT NULL
+    read_at INTEGER NOT NULL,
+    read_ok_at INTEGER NOT NULL
   )`);
 }

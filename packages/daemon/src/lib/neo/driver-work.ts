@@ -271,11 +271,14 @@ export function driverDoneCheckNote(
   goal: NeoWorkGoal,
   continued: number,
   budget: string | null,
-  prs?: readonly NeoWorkPr[]
+  prs?: readonly NeoWorkPr[],
+  stale = false
 ): string {
-  const live = prs
-    ? ' prs is the live state of its pull requests, read by the daemon: trust it over the report. If a pull request only waits on CI or a review, do nothing; the daemon tells you again when it changes.'
-    : '';
+  const live = !prs
+    ? ''
+    : stale
+      ? ' prs is the last state the daemon read for its pull requests, but it has not been able to read them for 30 minutes, so they may be out of date: check with the working session before relying on them.'
+      : ' prs is the live state of its pull requests, read by the daemon: trust it over the report. If a pull request only waits on CI or a review, do nothing; the daemon tells you again when it changes.';
   const next = budget
     ? `${budget} Do not continue it. ${NEO_WORK_SUMMARY_NOTE}`
     : `If items remain and nothing in the report blocks them, call neo.work.continue {id, message} with the next concrete step and do not tell the human yet; ${NEO_WORK_CONTINUE_LIMIT - continued} continues are left. Otherwise, when every item is met or the report names a blocker or a decision only the human can make: ${NEO_WORK_SUMMARY_NOTE}`;

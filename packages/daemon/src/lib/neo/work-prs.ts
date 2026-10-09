@@ -7,6 +7,7 @@ import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
+export const NEO_WORK_PR_STALE_MS = 30 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
@@ -67,12 +68,32 @@ export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
 export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
   JSON.stringify(prs.map(({ url, state, checks, review }) => [url, state, checks, review]));
 
-export function planNeoWorkPrRefresh(row: {
+type StoredPrs = {
   prs: readonly NeoWorkPr[];
   delivered: string | null;
-}): 'wait' | 'unchanged' | 'deliver' {
+  readAt: number;
+  readOkAt: number;
+};
+
+export function shouldReadNeoWorkPrs(
+  stored: StoredPrs | null,
+  urls: readonly string[],
+  now: number
+): boolean {
+  if (!urls.length) return false;
+  if (!stored || urls.some((url) => !stored.prs.some((pr) => pr.url === url))) return true;
+  return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
+}
+
+export function planNeoWorkPrRefresh(
+  row: StoredPrs,
+  read: boolean,
+  now: number
+): 'wait' | 'unchanged' | 'deliver' {
+  const seen = neoWorkPrSignature(row.prs) === row.delivered;
+  if (!read) return !seen && now - row.readOkAt >= NEO_WORK_PR_STALE_MS ? 'deliver' : 'wait';
   if (isNeoWorkPrWaiting(row.prs)) return 'wait';
-  return neoWorkPrSignature(row.prs) === row.delivered ? 'unchanged' : 'deliver';
+  return seen ? 'unchanged' : 'deliver';
 }
 
 export async function readGithubPrs(

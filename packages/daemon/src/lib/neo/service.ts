@@ -81,6 +81,7 @@ import {
   neoWorkPrSignature,
   planNeoWorkPrRefresh,
   readGithubPrs,
+  shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
 } from './work-prs.ts';
 
@@ -703,9 +704,10 @@ export class NeoService {
     if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS || !this.db.getSession(work.originSessionId))
       return;
     const prs = await this.readPrs(row.prs.map((pr) => pr.url));
-    const next = this.recordWorkPrs(workId, prs ?? row.prs, row);
-    if (prs && next && planNeoWorkPrRefresh(next) === 'deliver')
-      await this.deliverDoneCheck(work, goal, next);
+    if (!prs) this.workPrs.recordFailedRead(workId, Date.now());
+    const next = prs ? this.recordWorkPrs(workId, prs, row) : row;
+    if (next && planNeoWorkPrRefresh(next, !!prs, Date.now()) === 'deliver')
+      await this.deliverDoneCheck(work, goal, next, !prs);
   }
 
   private recordWorkPrs(
@@ -917,8 +919,14 @@ export class NeoService {
       return false;
     if (!this.db.getSession(work.originSessionId)) return false;
     const stored = this.workPrs.get(work.id);
+    const continued = this.workContinues.get(work.id)?.count ?? 0;
+    if (
+      !stored &&
+      this.hasDelivery(work.originSessionId, neoDoneCheckMessageId(work.id, continued))
+    )
+      return true;
     const urls = extractNeoWorkPrUrls(work.report);
-    const prs = urls.length ? await this.readPrs(urls) : null;
+    const prs = shouldReadNeoWorkPrs(stored, urls, Date.now()) ? await this.readPrs(urls) : null;
     const row = prs ? this.recordWorkPrs(work.id, prs, stored) : stored;
     if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row);
     return true;
@@ -927,13 +935,21 @@ export class NeoService {
   private async deliverDoneCheck(
     work: NeoWork,
     goal: NeoWorkGoal,
-    row: NeoWorkPrRow | null
+    row: NeoWorkPrRow | null,
+    stale = false
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
     await this.deliver(
       work.originSessionId,
       neoDoneCheckMessageId(work.id, continued, row?.revision),
-      driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), row?.prs),
+      driverDoneCheckNote(
+        work,
+        goal,
+        continued,
+        this.continueBudget(work, Date.now()),
+        row?.prs,
+        stale
+      ),
       work.originSessionId
     );
     if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs));

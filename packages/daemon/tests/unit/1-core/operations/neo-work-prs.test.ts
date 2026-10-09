@@ -5,6 +5,7 @@ import {
   neoWorkPrSignature,
   planNeoWorkPrRefresh,
   readGithubPrs,
+  shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
 } from '../../../../src/lib/neo/work-prs.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -81,20 +82,78 @@ describe('summarizeNeoWorkPr', () => {
 });
 
 describe('planNeoWorkPrRefresh', () => {
-  test.each<[string, NeoWorkPr[], string | null, ReturnType<typeof planNeoWorkPrRefresh>]>([
-    ['an open PR with running checks', [{ ...pr, checks: 'pending' as const }], null, 'wait'],
+  const at = (prs: NeoWorkPr[], delivered: string | null, readOkAt = 0) => ({
+    prs,
+    delivered,
+    readAt: 0,
+    readOkAt,
+  });
+  const halfHour = 30 * 60_000;
+
+  test.each<
+    [string, ReturnType<typeof at>, boolean, number, ReturnType<typeof planNeoWorkPrRefresh>]
+  >([
+    ['an open PR with running checks', at([{ ...pr, checks: 'pending' }], null), true, 0, 'wait'],
     [
       'a merged PR with leftover pending checks',
-      [{ ...pr, state: 'MERGED' as const, checks: 'pending' as const }],
-      null,
+      at([{ ...pr, state: 'MERGED', checks: 'pending' }], null),
+      true,
+      0,
       'deliver',
     ],
-    ['a state Neo has not seen', [pr], null, 'deliver'],
-    ['the state Neo already saw', [pr], neoWorkPrSignature([pr]), 'unchanged'],
-    ['a new review', [{ ...pr, review: 'approved' as const }], neoWorkPrSignature([pr]), 'deliver'],
-  ])('%s', (_case, prs, delivered, plan) => {
-    expect(planNeoWorkPrRefresh({ prs, delivered })).toBe(plan);
-    expect(isNeoWorkPrWaiting(prs)).toBe(plan === 'wait');
+    ['a state Neo has not seen', at([pr], null), true, 0, 'deliver'],
+    ['the state Neo already saw', at([pr], neoWorkPrSignature([pr])), true, 0, 'unchanged'],
+    [
+      'a new review',
+      at([{ ...pr, review: 'approved' }], neoWorkPrSignature([pr])),
+      true,
+      0,
+      'deliver',
+    ],
+    [
+      'a failed read soon after a good one',
+      at([{ ...pr, checks: 'pending' }], null),
+      false,
+      halfHour - 1,
+      'wait',
+    ],
+    [
+      'reads failing for half an hour',
+      at([{ ...pr, checks: 'pending' }], null),
+      false,
+      halfHour,
+      'deliver',
+    ],
+    [
+      'reads still failing after Neo was told',
+      at([pr], neoWorkPrSignature([pr])),
+      false,
+      halfHour,
+      'wait',
+    ],
+  ])('%s', (_case, row, read, now, plan) => {
+    expect(planNeoWorkPrRefresh(row, read, now)).toBe(plan);
+  });
+
+  test('isNeoWorkPrWaiting means an open PR still runs checks', () => {
+    expect(isNeoWorkPrWaiting([{ ...pr, checks: 'pending' }])).toBe(true);
+    expect(isNeoWorkPrWaiting([{ ...pr, state: 'MERGED', checks: 'pending' }])).toBe(false);
+  });
+});
+
+describe('shouldReadNeoWorkPrs', () => {
+  const stored = { prs: [pr], delivered: null, readAt: 0, readOkAt: 0 };
+  const late = 2 * 60_000;
+
+  test.each<[string, typeof stored | null, string[], number, boolean]>([
+    ['a report with no links', null, [], late, false],
+    ['a first report', null, [pr.url], 0, true],
+    ['a new pull request', stored, [pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], 0, true],
+    ['an open PR read moments ago', stored, [pr.url], late - 1, false],
+    ['an open PR read a while ago', stored, [pr.url], late, true],
+    ['a merged PR', { ...stored, prs: [{ ...pr, state: 'MERGED' }] }, [pr.url], late, false],
+  ])('%s', (_case, row, urls, now, read) => {
+    expect(shouldReadNeoWorkPrs(row, urls, now)).toBe(read);
   });
 });
 

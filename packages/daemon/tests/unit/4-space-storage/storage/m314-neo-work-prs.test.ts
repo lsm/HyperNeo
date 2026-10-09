@@ -40,7 +40,12 @@ describe('NeoWorkPrRepository', () => {
     runMigration314(db);
     const prs = new NeoWorkPrRepository(db);
 
-    expect(prs.record('w1', [pr], 10)).toMatchObject({ revision: 1, readAt: 10, delivered: null });
+    expect(prs.record('w1', [pr], 10)).toMatchObject({
+      revision: 1,
+      readAt: 10,
+      readOkAt: 10,
+      delivered: null,
+    });
     expect(prs.record('w1', [pr], 20)).toMatchObject({ revision: 1, readAt: 20 });
     prs.markDelivered('w1', 'seen');
     expect(prs.record('w1', [{ ...pr, checks: 'passing' }], 30)).toMatchObject({
@@ -49,6 +54,9 @@ describe('NeoWorkPrRepository', () => {
       prs: [{ ...pr, checks: 'passing' }],
     });
     expect(prs.listOpen()).toEqual(['w1']);
+
+    prs.recordFailedRead('w1', 35);
+    expect(prs.get('w1')).toMatchObject({ readAt: 35, readOkAt: 30, revision: 2 });
 
     prs.record('w1', [{ ...pr, state: 'MERGED' }], 40);
     expect(prs.listOpen()).toEqual([]);
