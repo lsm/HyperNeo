@@ -7,7 +7,10 @@ import type {
 } from '../../storage/repositories/direct-task-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
+import {
+  requireDirectTaskWorkerIdentity,
+  type DirectTaskWorkerEvidence,
+} from './direct-task-worker-identity.ts';
 import {
   decideStopVerification,
   inspectSessionLiveness,
@@ -136,79 +139,200 @@ export type DirectStopVerificationResult =
   | { value: VerifiedDirectStop }
   | { reason: DirectAttemptStopResult };
 
+type StopProof = { token: string | null; generation: number | null } | null;
+type StopVerificationGate =
+  | { value: DirectTaskAttempt }
+  | { value: VerifiedDirectStop }
+  | { reason: DirectAttemptStopResult };
+const unavailable = { reason: { stopped: false as const, reason: 'unavailable' as const } };
+const unverified = { reason: { stopped: false as const, reason: 'unverified' as const } };
+
+interface StopVerificationState {
+  current: DirectTaskAttempt | null;
+  stopRequested: boolean;
+  recorded: StopProof;
+  loading: boolean;
+}
+
+function readStopVerificationState(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  attempt: DirectTaskAttempt
+): StopVerificationState {
+  const current = attempts.get(attempt.id);
+  return {
+    current,
+    stopRequested: !!current && attempts.isStopRequested(current.id, current.sessionId),
+    recorded: attempts.getStopVerification(attempt.id, attempt.sessionId),
+    loading: sessionManager.isSessionLoading(attempt.sessionId),
+  };
+}
+
+export function classifyStopTarget(
+  state: StopVerificationState,
+  attempt: Pick<DirectTaskAttempt, 'sessionId' | 'generation'>
+): 'unavailable' | 'loading' | 'verifiable' {
+  const { current } = state;
+  if (
+    !current ||
+    current.sessionId !== attempt.sessionId ||
+    current.generation !== attempt.generation ||
+    current.phase === 'stopped' ||
+    !state.stopRequested
+  )
+    return 'unavailable';
+  return state.loading ? 'loading' : 'verifiable';
+}
+
+function clearProofWhileLoading(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  target: ReturnType<typeof classifyStopTarget>,
+  state: StopVerificationState,
+  attempt: DirectTaskAttempt
+): void {
+  if (target === 'loading' && state.recorded?.token)
+    attempts.clearStopVerification(attempt.id, attempt.sessionId, state.recorded.token);
+}
+
+export function requireVerifiableStopTarget(
+  target: ReturnType<typeof classifyStopTarget>,
+  state: StopVerificationState
+): StopVerificationGate {
+  if (target === 'unavailable' || !state.current) return unavailable;
+  return target === 'loading' ? unverified : { value: state.current };
+}
+
+async function loadStopSession(
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  current: DirectTaskAttempt,
+  state: StopVerificationState
+): Promise<{ session: AgentSession | null; needsLiveProof: boolean }> {
+  const needsLiveProof = requiresLiveStopProof(current, state.recorded);
+  const session =
+    sessionManager.getCachedSession(current.sessionId) ??
+    (needsLiveProof ? await sessionManager.getSessionForControl(current.sessionId) : null);
+  return { session: session ?? null, needsLiveProof };
+}
+
+export function requireStopSessionOrProof(
+  session: AgentSession | null,
+  needsLiveProof: boolean,
+  current: DirectTaskAttempt
+): StopVerificationGate {
+  return !session && needsLiveProof ? unverified : { value: current };
+}
+
+function beginStopProof(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  current: DirectTaskAttempt,
+  session: AgentSession | null,
+  state: StopVerificationState
+): { value: string } | { reason: DirectAttemptStopResult } {
+  if (!session && current.phase !== 'reserved')
+    return { value: state.recorded?.token ?? randomUUID() };
+  const token = randomUUID();
+  return attempts.beginStopVerification(current.id, current.sessionId, current.generation, token)
+    ? { value: token }
+    : unavailable;
+}
+
+function readStopIdentityEvidence(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  tasks: DirectAttemptStopDependencies['tasks'],
+  current: DirectTaskAttempt,
+  session: AgentSession | null
+): DirectTaskWorkerEvidence | null {
+  return session
+    ? {
+        session: session.getSessionData(),
+        task: tasks.getTask(current.taskId),
+        attempt: attempts.getActive(current.taskId),
+      }
+    : null;
+}
+
+export function requireStopWorkerIdentity(
+  evidence: DirectTaskWorkerEvidence | null,
+  current: DirectTaskAttempt
+): StopVerificationGate {
+  if (!evidence) return { value: current };
+  const identity = requireDirectTaskWorkerIdentity(current.sessionId, evidence);
+  return 'reason' in identity || identity.value.attemptId !== current.id
+    ? unverified
+    : { value: current };
+}
+
+async function proveDirectSessionDown(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  current: DirectTaskAttempt,
+  session: AgentSession | null,
+  token: string
+): Promise<StopVerificationGate> {
+  const verified = { value: { attempt: current, session, token } };
+  if (!session)
+    return current.phase === 'reserved' &&
+      !attempts.recordStopVerification(current.id, current.sessionId, current.generation, token)
+      ? unavailable
+      : verified;
+  try {
+    try {
+      await session.handleInterrupt({ skipDeferredReplay: true });
+    } finally {
+      await session.cleanup();
+    }
+    if (!(await bringDirectSessionDown(session))) return unverified;
+    if (!attempts.recordStopVerification(current.id, current.sessionId, current.generation, token))
+      return unavailable;
+    await sessionManager.unregisterSession(current.sessionId, session);
+    if (
+      !directSessionIsDown(session) ||
+      sessionManager.isSessionLoading(current.sessionId) ||
+      sessionManager.getCachedSession(current.sessionId)
+    ) {
+      attempts.clearStopVerification(current.id, current.sessionId, token);
+      return unverified;
+    }
+  } catch {
+    attempts.clearStopVerification(current.id, current.sessionId, token);
+    return unverified;
+  }
+  return verified;
+}
+
+const runStopVerification = (superpipe({})('verify-direct-attempt-stop') as PipelineAPI)
+  .input(['attempts', 'tasks', 'sessionManager', 'attempt'])
+  .pipe(readStopVerificationState, ['attempts', 'sessionManager', 'attempt'], 'state')
+  .pipe(classifyStopTarget, ['state', 'attempt'], 'target')
+  .pipe(clearProofWhileLoading, ['attempts', 'target', 'state', 'attempt'])
+  .pipe(requireVerifiableStopTarget, ['target', 'state'], 'result:verification')
+  .pipe((current: DirectTaskAttempt) => current, 'verification', 'current')
+  .pipe(loadStopSession, ['sessionManager', 'current', 'state'], ['session', 'needsLiveProof'])
+  .pipe(requireStopSessionOrProof, ['session', 'needsLiveProof', 'current'], 'result:verification')
+  .pipe(beginStopProof, ['attempts', 'current', 'session', 'state'], 'result:verification')
+  .pipe((token: string) => token, 'verification', 'token')
+  .pipe(readStopIdentityEvidence, ['attempts', 'tasks', 'current', 'session'], 'evidence')
+  .pipe(requireStopWorkerIdentity, ['evidence', 'current'], 'result:verification')
+  .pipe(
+    proveDirectSessionDown,
+    ['attempts', 'sessionManager', 'current', 'session', 'token'],
+    'result:verification'
+  )
+  .endAsync('verification') as (
+  attempts: DirectAttemptStopDependencies['attempts'],
+  tasks: DirectAttemptStopDependencies['tasks'],
+  sessionManager: DirectAttemptStopDependencies['sessionManager'],
+  attempt: DirectTaskAttempt
+) => Promise<VerifiedDirectStop | DirectAttemptStopResult>;
+
 async function verifyDirectAttemptStopOwned(
   attempts: DirectAttemptStopDependencies['attempts'],
   tasks: DirectAttemptStopDependencies['tasks'],
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   attempt: DirectTaskAttempt
 ): Promise<DirectStopVerificationResult> {
-  const current = attempts.get(attempt.id);
-  if (
-    !current ||
-    current.sessionId !== attempt.sessionId ||
-    current.generation !== attempt.generation ||
-    current.phase === 'stopped' ||
-    !attempts.isStopRequested(current.id, current.sessionId)
-  )
-    return { reason: { stopped: false, reason: 'unavailable' } };
-  attempt = current;
-  const recorded = attempts.getStopVerification(attempt.id, attempt.sessionId);
-  let token = recorded?.token ?? randomUUID();
-  if (sessionManager.isSessionLoading(attempt.sessionId)) {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
-    return { reason: { stopped: false, reason: 'unverified' } };
-  }
-  const needsLiveProof = requiresLiveStopProof(attempt, recorded);
-  const session =
-    sessionManager.getCachedSession(attempt.sessionId) ??
-    (needsLiveProof ? await sessionManager.getSessionForControl(attempt.sessionId) : null);
-  if (!session && needsLiveProof) return { reason: { stopped: false, reason: 'unverified' } };
-  if (session || attempt.phase === 'reserved') {
-    token = randomUUID();
-    if (!attempts.beginStopVerification(attempt.id, attempt.sessionId, attempt.generation, token))
-      return { reason: { stopped: false, reason: 'unavailable' } };
-  }
-  if (session) {
-    const identity = requireDirectTaskWorkerIdentity(attempt.sessionId, {
-      session: session.getSessionData(),
-      task: tasks.getTask(attempt.taskId),
-      attempt: attempts.getActive(attempt.taskId),
-    });
-    if ('reason' in identity || identity.value.attemptId !== attempt.id)
-      return { reason: { stopped: false, reason: 'unverified' } };
-    try {
-      try {
-        await session.handleInterrupt({ skipDeferredReplay: true });
-      } finally {
-        await session.cleanup();
-      }
-      if (!(await bringDirectSessionDown(session)))
-        return { reason: { stopped: false, reason: 'unverified' } };
-      if (
-        !attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation, token)
-      )
-        return { reason: { stopped: false, reason: 'unavailable' } };
-      await sessionManager.unregisterSession(attempt.sessionId, session);
-      if (
-        !directSessionIsDown(session) ||
-        sessionManager.isSessionLoading(attempt.sessionId) ||
-        sessionManager.getCachedSession(attempt.sessionId)
-      ) {
-        attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
-        return { reason: { stopped: false, reason: 'unverified' } };
-      }
-    } catch {
-      attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
-      return { reason: { stopped: false, reason: 'unverified' } };
-    }
-  }
-  if (
-    !session &&
-    attempt.phase === 'reserved' &&
-    !attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation, token)
-  )
-    return { reason: { stopped: false, reason: 'unavailable' } };
-  return { value: { attempt, session, token } };
+  const outcome = await runStopVerification(attempts, tasks, sessionManager, attempt);
+  return 'stopped' in outcome ? { reason: outcome } : { value: outcome };
 }
 
 export function verifyDirectAttemptStop(
