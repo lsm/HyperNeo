@@ -27,6 +27,7 @@ export function buildCustomAgentTaskMessage(
     coreMemories,
     relevantMemories,
     reviewFeedback,
+    startNote,
   } = config;
 
   const sections: string[] = [];
@@ -38,6 +39,9 @@ export function buildCustomAgentTaskMessage(
   if (task.priority) sections.push(`**Priority:** ${task.priority}`);
   if (reviewFeedback != null) {
     sections.push('', '## Requested Revisions', '', reviewFeedback);
+  }
+  if (startNote) {
+    sections.push('', '## Note From the User', '', startNote);
   }
 
   sections.push('');
