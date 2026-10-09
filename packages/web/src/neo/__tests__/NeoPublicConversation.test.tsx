@@ -40,7 +40,8 @@ const publication = (fields: Partial<NeoPublication> = {}): NeoPublication => ({
   publicationId: '20000000-0000-4000-8000-000000000001',
   askOrigin: original,
   producerInput: { sessionId: holder, messageId: 'neo-consult:fictional:request' },
-  shortText: 'The comparison is ready. Nothing has been executed.',
+  shortText:
+    '## Evidence\n\n| Source | Finding |\n| --- | --- |\n| A | Different |\n\n> Reported evidence, not verified completion.\n\n```text\nFictional detail\n```',
   fullText:
     '## Evidence\n\n| Source | Finding |\n| --- | --- |\n| A | Different |\n\n> Reported evidence, not verified completion.\n\n```text\nFictional detail\n```',
   links: [
@@ -108,16 +109,21 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelectorAll('article')).toHaveLength(2);
   });
 
-  it('shows the full reply inline and copies it without adding scene labels', async () => {
-    const value = publication();
+  it('shows the short reply, the full one on demand, and copies the full one without scene labels', async () => {
+    const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
     );
     expect(container.querySelector('details')).toBeNull();
+    expect(await screen.findByText(value.shortText)).toBeTruthy();
+    expect(container.querySelector('table')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
     expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
     expect(screen.queryByText(value.shortText)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    expect(await screen.findByText(value.shortText)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();
