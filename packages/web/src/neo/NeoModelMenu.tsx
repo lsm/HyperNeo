@@ -17,6 +17,7 @@ export function NeoModelMenu({
   busy,
   loading,
   working,
+  scope = { idle: 'For this conversation', working: 'Available after this reply' },
   onModel,
   onThinking,
   onClose,
@@ -31,6 +32,7 @@ export function NeoModelMenu({
   busy: boolean;
   loading: boolean;
   working: boolean;
+  scope?: { idle: string; working: string };
   onModel: (model: ModelInfo) => void;
   onThinking: (level: ThinkingLevel) => void;
   onClose: () => void;
@@ -161,9 +163,7 @@ export function NeoModelMenu({
       <div class="shrink-0 border-t border-line bg-surface/40 p-3">
         <div class="mb-2 flex items-center justify-between">
           <span class="text-xs font-medium text-fg-muted">Thinking</span>
-          <span class="text-[10px] text-fg-faint">
-            {working ? 'Neo switches after this reply' : 'For Neo and all its topics'}
-          </span>
+          <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
         </div>
         {options.length > 4 ? (
           <ThinkingSlider level={level} options={options} busy={busy} onThinking={onThinking} />

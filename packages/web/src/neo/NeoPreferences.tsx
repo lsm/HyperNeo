@@ -112,7 +112,11 @@ export function NeoPreferences({
   }
 
   async function changeThinking(next: ThinkingLevel) {
-    if (busy || !info || !currentId) return;
+    if (busy) return;
+    if (!info || !currentId) {
+      onError('Neo’s model hasn’t loaded yet. Try again in a moment.');
+      return;
+    }
     await save({ model: currentId, provider: info.provider, thinkingLevel: next });
   }
 
@@ -157,6 +161,7 @@ export function NeoPreferences({
           busy={busy}
           loading={model.loading}
           working={store.isWorking.value}
+          scope={{ idle: 'For Neo and all its topics', working: 'Neo switches after this reply' }}
           onModel={(next) => void changeModel(next)}
           onThinking={(next) => void changeThinking(next)}
           onReload={() => void model.reload()}
