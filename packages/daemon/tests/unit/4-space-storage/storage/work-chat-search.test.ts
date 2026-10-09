@@ -4,6 +4,8 @@ import {
   fuseWorkChats,
   searchWorkChats,
   vectorWorkChats,
+  groupVectorTurns,
+  rankVectorTurns,
 } from '../../../../src/storage/work-chat-search';
 import { saveTurnVector } from '../../../../src/storage/turn-vectors';
 import { runMigration297 } from '../../../../src/storage/schema/m297-message-search-vectors';
@@ -222,5 +224,60 @@ describe('fuseWorkChats with meaning matches', () => {
     expect(fused.map((c) => c.sessionId)).toEqual(['both', 'keyword-only', 'meaning-only']);
     expect(fused[2].score).toBeLessThan(fused[1].score);
     expect(fused[1].score).toBeGreaterThan(100);
+  });
+});
+
+describe('rankVectorTurns', () => {
+  const blob = (...values: number[]) => new Uint8Array(Float32Array.from(values).buffer);
+  test('keeps turns above the similarity floor, best first', () => {
+    const vector = Float32Array.from([1, 0]);
+    expect(
+      rankVectorTurns(vector, [
+        { id: 1, embedding: blob(0, 1) },
+        { id: 2, embedding: blob(1, 1) },
+        { id: 3, embedding: blob(1, 0) },
+        { id: 4, embedding: blob(1, 0, 0) },
+      ]).map(({ id }) => id)
+    ).toEqual([3, 2]);
+  });
+});
+
+describe('groupVectorTurns', () => {
+  const row = (id: number, chat: string, at: number, body = `turn ${id}`) => ({
+    id,
+    kind: 'message' as const,
+    chat,
+    sessionId: chat,
+    taskId: null,
+    messageId: `m${id}`,
+    role: 'user',
+    at,
+    body,
+  });
+  test('groups ranked turns by chat in rank order and caps snippets per chat', () => {
+    const chats = groupVectorTurns(
+      [{ id: 3 }, { id: 1 }, { id: 2 }, { id: 4 }, { id: 9 }],
+      [row(1, 'a', 10), row(2, 'a', 30), row(3, 'b', 20), row(4, 'a', 5)],
+      5
+    );
+    expect(
+      chats.map((chat) => [chat.sessionId, chat.hits, chat.lastHitAt, chat.snippets.length])
+    ).toEqual([
+      ['b', 1, 20, 1],
+      ['a', 3, 30, 2],
+    ]);
+  });
+
+  test('truncates long bodies and limits the chat count', () => {
+    const [chat] = groupVectorTurns(
+      [{ id: 1 }, { id: 2 }],
+      [row(1, 'a', 1, 'x'.repeat(300)), row(2, 'b', 2)],
+      1
+    );
+    expect(
+      groupVectorTurns([{ id: 1 }, { id: 2 }], [row(1, 'a', 1), row(2, 'b', 2)], 1)
+    ).toHaveLength(1);
+    expect(chat.snippets[0].text.endsWith('…')).toBe(true);
+    expect(chat.snippets[0].text.length).toBe(241);
   });
 });
