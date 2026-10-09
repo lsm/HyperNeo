@@ -175,8 +175,6 @@ async function runRuntimeExecutor(
     return deps.parkStopped(spaceId, task.id, expected);
   }
   if (executor === 'recover_transition') {
-    if (task.blockReason === 'agent_handoff_required')
-      return { accepted: false, reason: 'handoff_required' };
     if (!deps.recoverTransition) throw new Error(`Space runtime executor unavailable: ${executor}`);
     const recovered = await deps.recoverTransition(
       spaceId,
@@ -218,6 +216,15 @@ export function requireReviewBeforeAgentCompletion(
   if (caller.source !== 'mcp' || input.status !== 'done') return { value: owned };
   if (owned.task.status === 'review' || owned.task.status === 'approved') return { value: owned };
   return { reason: 'completion_requires_review' };
+}
+
+export function requireHandoffBeforeReopen(owned: OwnedTask, input: In): Gate<OwnedTask, Result> {
+  const { task } = owned;
+  const reopening =
+    input.status === 'in_progress' || (input.status === 'open' && task.status !== 'stopped');
+  return reopening && task.workflowRunId && task.blockReason === 'agent_handoff_required'
+    ? { reason: { accepted: false, reason: 'handoff_required' } }
+    : { value: owned };
 }
 
 export async function decide(
@@ -342,6 +349,7 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(loadTask, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(requireExpectedStatus, ['outcome', 'input'], 'result:outcome')
     .pipe(requireReviewBeforeAgentCompletion, ['outcome', 'input', 'caller'], 'result:outcome')
+    .pipe(requireHandoffBeforeReopen, ['outcome', 'input'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(routeActiveDirectAttempt, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(requireFreeTaskSlot, ['outcome', 'input', 'deps'], 'result:outcome')

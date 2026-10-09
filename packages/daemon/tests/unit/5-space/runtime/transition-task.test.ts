@@ -10,6 +10,7 @@ import { SpaceTaskManager, StaleTaskGuardError } from '../../../../src/lib/tasks
 import {
   createSpaceTransitionTaskOperation,
   decide,
+  requireHandoffBeforeReopen,
   type SpaceTransitionTaskDependencies,
   writeStatus,
 } from '../../../../src/lib/tasks/transition-task';
@@ -844,22 +845,6 @@ describe('decide', () => {
     expect(parkStopped).not.toHaveBeenCalled();
   });
 
-  test('reopening a task that awaits a manual handoff is a typed rejection, not a throw', async () => {
-    const owned = createOwned('blocked', createWorkflowRun().id);
-    const task = tasks.updateTask(owned.task.id, { blockReason: 'agent_handoff_required' })!;
-    const recoverTransition = mock(async () => task);
-    const result = await decide(
-      { spaceId, task },
-      { taskId: task.id, status: 'in_progress' },
-      rpc,
-      deps({ recoverTransition })
-    );
-    expect(result).toEqual({
-      reason: expect.objectContaining({ accepted: false, reason: 'handoff_required' }),
-    });
-    expect(recoverTransition).not.toHaveBeenCalled();
-  });
-
   test('a string rejection from recover_transition becomes the operation rejection', async () => {
     const owned = createOwned('blocked', createWorkflowRun().id);
     const recoverTransition = mock(async () => 'invalid_recovery_status');
@@ -1156,5 +1141,34 @@ describe('the review edge', () => {
     expect(
       await invoke({ taskId: task.id, status: 'in_progress', reviewReason: 'Ready' }, rpc)
     ).toEqual({ kind: 'completed', value: 'review_reason_requires_review' });
+  });
+});
+
+describe('requireHandoffBeforeReopen', () => {
+  test('reopening a task that awaits a manual handoff is a typed rejection, not a throw', () => {
+    const owned = createOwned('blocked', createWorkflowRun().id);
+    const task = tasks.updateTask(owned.task.id, { blockReason: 'agent_handoff_required' })!;
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task }, { taskId: task.id, status: 'open' })
+    ).toEqual({
+      reason: { accepted: false, reason: 'handoff_required' },
+    });
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task }, { taskId: task.id, status: 'cancelled' })
+    ).toEqual({ value: { spaceId, task } });
+    const parked = { ...task, status: 'stopped' as const };
+    expect(
+      requireHandoffBeforeReopen(
+        { spaceId, task: parked },
+        { taskId: task.id, status: 'in_progress' }
+      )
+    ).toEqual({ reason: { accepted: false, reason: 'handoff_required' } });
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task: parked }, { taskId: task.id, status: 'open' })
+    ).toEqual({ value: { spaceId, task: parked } });
+    const unblocked = { ...task, blockReason: 'human_input_requested' as const };
+    expect(
+      requireHandoffBeforeReopen({ spaceId, task: unblocked }, { taskId: task.id, status: 'open' })
+    ).toEqual({ value: { spaceId, task: unblocked } });
   });
 });
