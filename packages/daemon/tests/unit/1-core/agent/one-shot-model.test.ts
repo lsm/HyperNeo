@@ -49,6 +49,11 @@ describe('buildOneShotQueryOptions', () => {
     expect(thinking('moonshot-v1')).toEqual({ type: 'disabled' });
   });
 
+  test('sets a working directory only when one is given', () => {
+    expect(buildOneShotQueryOptions(request(), runtime).cwd).toBeUndefined();
+    expect(buildOneShotQueryOptions(request({ cwd: '/lean' }), runtime).cwd).toBe('/lean');
+  });
+
   test('passes an abort controller through', () => {
     const abortController = new AbortController();
     expect(buildOneShotQueryOptions(request({ abortController }), runtime).abortController).toBe(
