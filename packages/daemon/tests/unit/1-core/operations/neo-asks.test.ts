@@ -469,7 +469,7 @@ describe('neoPrompt', () => {
   test('tells root Neo to open, file under and settle asks', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('record it with neo.ask.open before proposing its work');
-    expect(prompt).toContain('Propose every card for that request with its askId');
+    expect(prompt).toContain('Propose every work item for that request with its askId');
     expect(prompt).toContain('neo.ask.settle {id,outcome,summary,evidence}');
     expect(prompt).toContain('the proof goes in evidence, never in summary');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');

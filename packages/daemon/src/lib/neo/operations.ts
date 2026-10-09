@@ -1161,7 +1161,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.retry',
       description:
-        'Try a failed hand-off again on the same work card: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The card goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. Only the Neo session that proposed the work or the user can retry it.',
+        'Try a failed hand-off again on the same work item: only work that failed before its driver started it (for example the claude CLI was logged out) can be retried. The work item goes back to queued and the same approved instruction is sent to the same target. Use this instead of proposing new work for the same ask. Started work uses neo.work.continue instead. Only the Neo session that proposed the work or the user can retry it.',
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -1170,7 +1170,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.close',
       description:
-        'Close a work card as done or cancelled from any state, for the user only. Closing queued work stops the Codex or Claude work behind it. Done is recorded as a report saying the user closed it; cancelled work stays cancelled. Neo cannot close cards: when a card looks stale, propose closing it to the user instead.',
+        'Close a work item as done or cancelled from any state, for the user only. Closing queued work stops the Codex or Claude work behind it. Done is recorded as a report saying the user closed it; cancelled work stays cancelled. Neo cannot close work items: when a work item looks stale, propose closing it to the user instead.',
       inputSchema: Close,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },
