@@ -437,7 +437,6 @@ describe('setupLiveQueryHandlers', () => {
     'spaceTaskMessages.byTask',
     'spaceTaskMessages.byTask.compact',
     'spaceTaskActiveTurn.byTask',
-    'taskMilestones.byTask',
   ])('subscribe %s: rejects an existing task without Space ownership', async (queryName) => {
     db.exec('CREATE TEMP TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT)');
     db.prepare('INSERT INTO temp.space_tasks (id, space_id) VALUES (?, NULL)').run('standalone');

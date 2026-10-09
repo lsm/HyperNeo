@@ -22,7 +22,6 @@ export * from './types/space-agent.ts';
 export * from './artifact-shapes.ts';
 export * from './types/actor-message-projection.ts';
 export * from './types/message-delivery.ts';
-export * from './types/task-milestone.ts';
 export * from './types/evolution.ts';
 export * from './evolution-preflight.ts';
 export * from './types/space-utils.ts';

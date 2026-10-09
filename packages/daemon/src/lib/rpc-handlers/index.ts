@@ -101,18 +101,13 @@ import type { SpaceAgentLookup } from '../workflows/workflow-manager.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
-import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler.ts';
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler.ts';
 import { GoalAutomationService } from '../goals/automation-service.ts';
-import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler.ts';
 import {
   GOAL_AUTOMATION_EXECUTE,
   SPACE_CONVERSATION_FRICTION_ANALYZE,
-  SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
-  SPACE_WORKFLOW_RUN_SYNC_COMMITS,
-  SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
 } from '../job-queue-constants.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
@@ -465,7 +460,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
   const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
   const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
   const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
   const spaceRepo = new SpaceRepository(deps.db.getDatabase());
@@ -1620,16 +1614,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());
   setupSpaceWorkflowRunHandlers(
     deps.messageHub,
-    deps.spaceManager,
     spaceWorkflowManager,
     spaceWorkflowRunRepo,
     spaceWorkflowRunTaskManagerFactory,
     deps.internalEventBus,
-    spaceTaskRepo,
-    spaceWorktreeManager,
     artifactRepo,
-    artifactCacheRepo,
-    deps.jobQueue,
     hookStateRepo,
     (runId, sessionId) =>
       nodeExecutionRepo
@@ -1637,21 +1626,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         .some((execution) => execution.workflowRunId === runId),
     (sessionId) => taskAgentManager.isRetryableActionRestorePending(sessionId)
   );
-
-  const artifactSyncHandlers = createSyncArtifactHandlers({
-    cacheRepo: artifactCacheRepo,
-    workflowRunRepo: spaceWorkflowRunRepo,
-    spaceTaskRepo,
-    spaceManager: deps.spaceManager,
-    spaceWorktreeManager,
-    internalEventBus: deps.internalEventBus,
-  });
-  deps.jobProcessor.register(
-    SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
-    artifactSyncHandlers.gateArtifacts
-  );
-  deps.jobProcessor.register(SPACE_WORKFLOW_RUN_SYNC_COMMITS, artifactSyncHandlers.commits);
-  deps.jobProcessor.register(SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF, artifactSyncHandlers.fileDiff);
 
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 

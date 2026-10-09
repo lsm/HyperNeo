@@ -71,7 +71,6 @@ describe('scope-config', () => {
         'channel_cycles',
         'channel_cycle_events',
         'workflow_run_artifacts',
-        'workflow_run_artifact_cache',
         'mcp_audit_log',
         'task_schedules',
         'space_agent_memory',
@@ -88,7 +87,7 @@ describe('scope-config', () => {
         'session_groups',
         'session_group_members',
       ]);
-      expect(names).toHaveLength(35);
+      expect(names).toHaveLength(34);
     });
 
     it('all table configs have a description', () => {

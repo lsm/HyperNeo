@@ -12,7 +12,3 @@ export const GOAL_AUTOMATION_EXECUTE = 'goalAutomation.execute';
 export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';
 
 export const LONG_HORIZON_AGENT_REMINDER_FIRE = 'longHorizonAgentReminder.fire';
-
-export const SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS = 'spaceWorkflowRun.syncGateArtifacts';
-export const SPACE_WORKFLOW_RUN_SYNC_COMMITS = 'spaceWorkflowRun.syncCommits';
-export const SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF = 'spaceWorkflowRun.syncFileDiff';
