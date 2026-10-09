@@ -1,9 +1,14 @@
-import type { SpaceTaskStatus } from '@hyperneo/shared';
+import type { Session, SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
+import {
+  DirectTaskExecutionRepository,
+  type DirectTaskAttempt,
+} from '../../storage/repositories/direct-task-execution-repository.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
+import type { NodeExecution } from '@hyperneo/shared';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
@@ -38,49 +43,91 @@ function resolveWorkflowSubmissionRejection(error: unknown): string | undefined 
   return WORKFLOW_SUBMISSION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
 }
 
-function reviewBackedByFrozenDirectRequest(db: Database, taskId: string, sessionId: string) {
-  const attempt = new DirectTaskExecutionRepository(db).getByTaskAndSession(taskId, sessionId);
-  if (!attempt) return false;
-  return (
-    readDirectFinalizationRequest(db, { attemptId: attempt.id, sessionId })?.status === 'review'
-  );
+type Ack = DirectOutcomeAcknowledgement;
+const reject = (reason: string): { reason: Ack } => ({ reason: { accepted: false, reason } });
+
+interface SubmissionEvidence {
+  task: SpaceTask | null;
+  hasActiveAttempt: boolean;
+  frozenReview: boolean;
+  callerSession: Session | null;
+  callerExecution: NodeExecution | null;
 }
 
-export async function admitManagedSubmission(
+function readSubmissionEvidence(
   db: Database,
   input: Input,
-  caller: OperationCaller,
-  tasks: ReviewSubmissionDependencies
-): Promise<{ value: true } | { reason: DirectOutcomeAcknowledgement }> {
+  caller: OperationCaller
+): SubmissionEvidence {
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
-  const hasActiveDirectAttempt =
-    task?.taskAgentSessionId &&
-    (!!new DirectTaskExecutionRepository(db).getActive(task.id) ||
-      (task.status === 'review' &&
-        reviewBackedByFrozenDirectRequest(db, task.id, task.taskAgentSessionId)));
-  if (!task?.spaceId || hasActiveDirectAttempt) return { value: true };
-  if (task.archivedAt)
-    return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
-  if (caller.source === 'mcp') {
-    const session = caller.sessionId
-      ? new SessionRepository(db).getSession(caller.sessionId)
+  const attempts = new DirectTaskExecutionRepository(db);
+  const frozenAttempt =
+    task?.status === 'review' && task.taskAgentSessionId
+      ? attempts.getByTaskAndSession(task.id, task.taskAgentSessionId)
       : null;
-    if (
-      session?.status !== 'active' ||
-      resolveMetadataSessionSpace(session, tasks) !== task.spaceId
-    )
-      return { reason: { accepted: false, reason: 'review_submission_denied' } };
-  }
-  if (!task.workflowRunId && new DirectTaskExecutionRepository(db).getActive(task.id))
-    return { reason: { accepted: false, reason: 'review_submission_unavailable' } };
-  const callerExecution =
-    caller.source === 'mcp' && caller.sessionId
-      ? new NodeExecutionRepository(db).getByAgentSessionId(caller.sessionId)
-      : null;
-  const submittedByNodeId =
-    callerExecution && callerExecution.workflowRunId === task.workflowRunId
-      ? callerExecution.workflowNodeId
-      : null;
+  const mcpSessionId = caller.source === 'mcp' ? caller.sessionId : undefined;
+  return {
+    task,
+    hasActiveAttempt: !!task && !!attempts.getActive(task.id),
+    frozenReview:
+      !!frozenAttempt &&
+      readDirectFinalizationRequest(db, {
+        attemptId: frozenAttempt.id,
+        sessionId: frozenAttempt.sessionId,
+      })?.status === 'review',
+    callerSession: mcpSessionId ? new SessionRepository(db).getSession(mcpSessionId) : null,
+    callerExecution: mcpSessionId
+      ? new NodeExecutionRepository(db).getByAgentSessionId(mcpSessionId)
+      : null,
+  };
+}
+
+export function requireManagedSubmission(
+  evidence: SubmissionEvidence
+): { value: SpaceTask } | { reason: Ack | null } {
+  const { task } = evidence;
+  const directOwned =
+    !!task?.taskAgentSessionId && (evidence.hasActiveAttempt || evidence.frozenReview);
+  if (!task?.spaceId || directOwned) return { reason: null };
+  return task.archivedAt ? reject('review_submission_unavailable') : { value: task };
+}
+
+export function requireSubmitterInSpace(
+  task: SpaceTask,
+  evidence: SubmissionEvidence,
+  caller: OperationCaller,
+  policy: SpaceMcpSessionPolicyContext
+): { value: SpaceTask } | { reason: Ack } {
+  if (caller.source !== 'mcp') return { value: task };
+  const session = evidence.callerSession;
+  return session?.status !== 'active' ||
+    resolveMetadataSessionSpace(session, policy) !== task.spaceId
+    ? reject('review_submission_denied')
+    : { value: task };
+}
+
+export function requireNoUnownedAttempt(
+  task: SpaceTask,
+  evidence: SubmissionEvidence
+): { value: SpaceTask } | { reason: Ack } {
+  return !task.workflowRunId && evidence.hasActiveAttempt
+    ? reject('review_submission_unavailable')
+    : { value: task };
+}
+
+export function submittingNodeId(task: SpaceTask, evidence: SubmissionEvidence): string | null {
+  const execution = evidence.callerExecution;
+  return execution && execution.workflowRunId === task.workflowRunId
+    ? execution.workflowNodeId
+    : null;
+}
+
+async function writeManagedSubmission(
+  task: SpaceTask,
+  submittedByNodeId: string | null,
+  input: Input,
+  tasks: ReviewSubmissionDependencies
+): Promise<Ack> {
   try {
     const updated = await tasks.getTaskManager(task.spaceId).submitTaskForReview(task.id, {
       submittedByNodeId,
@@ -90,33 +137,89 @@ export async function admitManagedSubmission(
     await tasks.emitTaskUpdated(task.spaceId, updated).catch((error: unknown) => {
       log.warn('Failed to emit space.task.updated:', error);
     });
-    return { reason: { accepted: true, jobId: null } };
+    return { accepted: true, jobId: null };
   } catch (error) {
     const reason = resolveWorkflowSubmissionRejection(error);
     if (!reason) throw error;
-    return { reason: { accepted: false, reason } };
+    return { accepted: false, reason };
   }
 }
 
-export function admitSubmission(
+const runManagedSubmission = (superpipe({})('submit-managed-space-task') as PipelineAPI)
+  .input(['db', 'input', 'caller', 'tasks'])
+  .pipe(readSubmissionEvidence, ['db', 'input', 'caller'], 'evidence')
+  .pipe(requireManagedSubmission, 'evidence', 'result:ack')
+  .pipe(requireSubmitterInSpace, ['ack', 'evidence', 'caller', 'tasks'], 'result:ack')
+  .pipe(requireNoUnownedAttempt, ['ack', 'evidence'], 'result:ack')
+  .pipe((task: SpaceTask) => task, 'ack', 'task')
+  .pipe(submittingNodeId, ['task', 'evidence'], 'submittedByNodeId')
+  .pipe(writeManagedSubmission, ['task', 'submittedByNodeId', 'input', 'tasks'], 'ack')
+  .endAsync('ack') as (
   db: Database,
   input: Input,
-  caller: OperationCaller
-): { value: DirectFinalizationInput } | { reason: DirectOutcomeAcknowledgement } {
-  const unavailable = {
-    reason: { accepted: false as const, reason: 'direct_review_submission_unavailable' },
-  };
-  const denied = {
-    reason: { accepted: false as const, reason: 'direct_review_submission_denied' },
-  };
-  const task = new SpaceTaskRepository(db).getTask(input.taskId);
+  caller: OperationCaller,
+  tasks: ReviewSubmissionDependencies
+) => Promise<Ack | null>;
+
+export async function admitManagedSubmission(
+  db: Database,
+  input: Input,
+  caller: OperationCaller,
+  tasks: ReviewSubmissionDependencies
+): Promise<{ value: true } | { reason: Ack }> {
+  const ack = await runManagedSubmission(db, input, caller, tasks);
+  return ack ? { reason: ack } : { value: true };
+}
+
+type DirectReviewTask = SpaceTask & { taskAgentSessionId: string };
+
+export function requireDirectReviewTask(
+  task: SpaceTask | null,
+  input: Input
+): { value: DirectReviewTask } | { reason: Ack } {
   if (!task || task.workflowRunId || !task.taskAgentSessionId || task.archivedAt)
-    return unavailable;
-  if (input.expectedStatus !== undefined && task.status !== input.expectedStatus)
-    return { reason: { accepted: false, reason: 'invalid_transition' } };
+    return reject('direct_review_submission_unavailable');
+  return input.expectedStatus !== undefined && task.status !== input.expectedStatus
+    ? reject('invalid_transition')
+    : { value: task as DirectReviewTask };
+}
+
+interface DirectReviewEvidence {
+  attempt: DirectTaskAttempt | null;
+  active: DirectTaskAttempt | null;
+  session: Session | null;
+  frozen: ReturnType<typeof readDirectFinalizationRequest>;
+}
+
+function readDirectReviewEvidence(
+  db: Database,
+  task: DirectReviewTask,
+  input: Input,
+  caller: OperationCaller
+): DirectReviewEvidence {
   const attempts = new DirectTaskExecutionRepository(db);
   const attempt = attempts.getByTaskAndSession(task.id, task.taskAgentSessionId);
-  if (!attempt) return unavailable;
+  const mcp = caller.source === 'mcp' && caller.sessionId === attempt?.sessionId;
+  return {
+    attempt,
+    active: mcp ? attempts.getActive(task.id) : null,
+    session:
+      mcp && caller.sessionId ? new SessionRepository(db).getSession(caller.sessionId) : null,
+    frozen:
+      mcp && attempt
+        ? readDirectFinalizationRequest(db, { attemptId: attempt.id, sessionId: attempt.sessionId })
+        : null,
+  };
+}
+
+export function requireDirectReviewSubmitter(
+  task: DirectReviewTask,
+  evidence: DirectReviewEvidence,
+  input: Input,
+  caller: OperationCaller
+): { value: DirectFinalizationInput } | { reason: Ack } {
+  const { attempt, session } = evidence;
+  if (!attempt) return reject('direct_review_submission_unavailable');
   const target: DirectFinalizationInput = {
     attemptId: attempt.id,
     sessionId: attempt.sessionId,
@@ -124,29 +227,54 @@ export function admitSubmission(
     status: 'review',
     reviewReason: input.reason ?? null,
   };
-  if (caller.source === 'mcp') {
-    if (caller.sessionId !== attempt.sessionId) return denied;
-    const session = new SessionRepository(db).getSession(caller.sessionId);
-    if (
-      !session ||
-      session.type !== 'worker' ||
-      session.context?.taskId !== task.id ||
-      session.context?.spaceId !== task.spaceId
-    )
-      return denied;
-    const frozen = readDirectFinalizationRequest(db, target);
-    const sameRequest = frozen?.status === 'review' && frozen.reviewReason === target.reviewReason;
-    if (
-      !sameRequest &&
-      ('reason' in
-        requireDirectTaskWorkerIdentity(caller.sessionId, {
-          session,
-          task,
-          attempt: attempts.getActive(task.id),
-        }) ||
-        attempt.phase !== 'running')
-    )
-      return denied;
-  }
+  if (caller.source !== 'mcp') return { value: target };
+  const denied = reject('direct_review_submission_denied');
+  if (caller.sessionId !== attempt.sessionId || !caller.sessionId) return denied;
+  if (
+    !session ||
+    session.type !== 'worker' ||
+    session.context?.taskId !== task.id ||
+    session.context?.spaceId !== task.spaceId
+  )
+    return denied;
+  const sameRequest =
+    evidence.frozen?.status === 'review' && evidence.frozen.reviewReason === target.reviewReason;
+  if (
+    !sameRequest &&
+    ('reason' in
+      requireDirectTaskWorkerIdentity(caller.sessionId, {
+        session,
+        task,
+        attempt: evidence.active,
+      }) ||
+      attempt.phase !== 'running')
+  )
+    return denied;
   return { value: target };
+}
+
+const runDirectSubmission = (superpipe({})('submit-direct-space-task') as PipelineAPI)
+  .input(['db', 'input', 'caller'])
+  .pipe(
+    (db: Database, input: Input) => new SpaceTaskRepository(db).getTask(input.taskId),
+    ['db', 'input'],
+    'loaded'
+  )
+  .pipe(requireDirectReviewTask, ['loaded', 'input'], 'result:target')
+  .pipe((task: DirectReviewTask) => task, 'target', 'task')
+  .pipe(readDirectReviewEvidence, ['db', 'task', 'input', 'caller'], 'evidence')
+  .pipe(requireDirectReviewSubmitter, ['task', 'evidence', 'input', 'caller'], 'result:target')
+  .end('target') as (
+  db: Database,
+  input: Input,
+  caller: OperationCaller
+) => DirectFinalizationInput | Ack;
+
+export function admitSubmission(
+  db: Database,
+  input: Input,
+  caller: OperationCaller
+): { value: DirectFinalizationInput } | { reason: Ack } {
+  const target = runDirectSubmission(db, input, caller);
+  return 'accepted' in target ? { reason: target } : { value: target };
 }
