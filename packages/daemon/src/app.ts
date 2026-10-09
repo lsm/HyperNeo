@@ -2,7 +2,6 @@ import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
 import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
-import daemonPackageJson from '../package.json' with { type: 'json' };
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { Database } from './storage/database.ts';
@@ -19,6 +18,7 @@ import { AuthManager } from './lib/auth-manager.ts';
 import { DaemonConfigService } from './lib/daemon-config-service.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
+import { BUILD_METADATA } from './lib/build-metadata.ts';
 import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
@@ -928,7 +928,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           return Response.json(
             {
               name: 'HyperNeo Daemon',
-              version: daemonPackageJson.version,
+              version: BUILD_METADATA.version,
               status: 'running',
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
               endpoints: {
