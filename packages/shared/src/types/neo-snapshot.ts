@@ -49,6 +49,7 @@ export interface NeoSnapshot {
   workDrivers?: NeoWorkDriverReceipt[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
+  standingRules?: string[];
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };
