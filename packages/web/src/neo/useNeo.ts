@@ -8,6 +8,7 @@ import { readNeoConversationAsks } from './conversation-ask-client.ts';
 import { useNeoConversationAsks } from './useNeoConversationAsks.ts';
 import type { DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import type { NeoWorkAction } from './NeoWorkCard.tsx';
 import { readNeoPublications } from './publication-client.ts';
 import { useNeoPublications } from './useNeoPublications.ts';
 import { projectNeoPublicConversation } from './public-conversation.ts';
@@ -108,17 +109,20 @@ export function useNeo() {
     [store]
   );
 
-  async function act(id: string, action: 'start' | 'cancel') {
+  async function act(id: string, action: NeoWorkAction) {
     if (busyWork) return;
     setBusyWork(id);
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(
-        hub,
-        ({ start: 'neo.work.start', cancel: 'neo.work.cancel' } as const)[action],
-        { id }
-      );
+      const call = {
+        start: ['neo.work.start', { id }],
+        cancel: ['neo.work.cancel', { id }],
+        done: ['neo.work.close', { id, outcome: 'done' }],
+        close: ['neo.work.close', { id, outcome: 'cancelled' }],
+      } as const;
+      const [name, input] = call[action];
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, name, input);
       if (!result.ok) throw new Error(result.reason);
       await refresh();
     } catch (cause) {

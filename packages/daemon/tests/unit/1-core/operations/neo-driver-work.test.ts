@@ -24,6 +24,7 @@ import {
   createNeoOperations,
   requireNeoExecutionChoice,
 } from '../../../../src/lib/neo/operations.ts';
+import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -937,6 +938,62 @@ describe('Neo work with a drivers target', () => {
         report: 'Could not start the execution: invalid_place: /focus/dolmen does not exist.',
       });
       expect(service.driverTargets.readRef('work-1')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('Neo cannot close a work card; only the user can', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } });
+    try {
+      await service.start('work-1');
+      db.createSession(createTestSession('neo:root'));
+      service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', concernId: null });
+      const outcome = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.close',
+        { id: 'work-1', outcome: 'done' },
+        { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
+      );
+      expect(outcome).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'This action needs the user.' },
+      });
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a person closes started work as done or cancelled and the driver work stops', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } });
+    const delivered: string[] = [];
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (_target: string, messageId: string) => {
+        delivered.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      expect(await service.close('work-1', 'done')).toMatchObject({
+        ok: true,
+        work: { status: 'reported', report: NEO_WORK_CLOSED_DONE },
+      });
+      expect(calls.map((call) => call.name)).toEqual(['work.start', 'work.stop']);
+      await service.reconcile('work-1');
+      expect(delivered).toEqual([]);
+      expect(await service.close('work-1', 'cancelled')).toMatchObject({
+        ok: true,
+        work: { status: 'cancelled' },
+      });
+      expect(calls.map((call) => call.name)).toEqual(['work.start', 'work.stop']);
+      expect(await service.close('work-1', 'done')).toEqual({
+        ok: false,
+        reason: 'work_closed: cancelled work stays cancelled',
+      });
     } finally {
       db.close();
     }

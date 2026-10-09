@@ -8,6 +8,8 @@ import {
 import { useMemo } from 'preact/hooks';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { Dropdown } from '../components/ui/Dropdown.tsx';
+import { IconButton } from '../components/ui/IconButton.tsx';
 import { providerLogoColor } from '../lib/provider-brand.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
@@ -54,6 +56,8 @@ function neoWorkTone(
 const interactive =
   'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
 
+export type NeoWorkAction = 'start' | 'cancel' | 'done' | 'close';
+
 export function sceneOpenSelector(id: string): string {
   return `[data-scene-open="${id.replace(/["\\]/g, '\\$&')}"]`;
 }
@@ -85,7 +89,7 @@ export function NeoWorkCard({
   continued?: NeoWorkContinue;
   busy: boolean;
   disabled: boolean;
-  onAction: (id: string, action: 'start' | 'cancel') => void;
+  onAction: (id: string, action: NeoWorkAction) => void;
   onOpen?: (id: string) => void;
   presentation?: 'detail' | 'summary';
   questionSlot?: (id: string, node: HTMLElement | null, previous: HTMLElement | null) => void;
@@ -156,6 +160,8 @@ export function NeoWorkCard({
   const answering = active && waiting && !!work.sessionId && !!onOpen;
   const hasActions = work.status === 'proposed' || answering;
   const openable = !!onOpen && !!work.sessionId && !hasActions;
+  const openChat = !openable && !answering && !!onOpen && !!work.sessionId;
+  const closable = presentation === 'detail' && !answering && (active || work.status === 'failed');
   return (
     <article
       aria-label={work.title}
@@ -201,7 +207,7 @@ export function NeoWorkCard({
             <NeoIcon name="external" />
           </span>
         )}
-        {!openable && !answering && onOpen && work.sessionId && (
+        {openChat && (
           <button
             type="button"
             onClick={() => onOpen(work.id)}
@@ -210,6 +216,34 @@ export function NeoWorkCard({
             Open chat
             <NeoIcon name="external" class="!h-3.5 !w-3.5" />
           </button>
+        )}
+        {closable && (
+          <Dropdown
+            position="right"
+            class={openable || openChat ? '' : 'ml-auto'}
+            items={[
+              {
+                label: 'Mark done',
+                onClick: () => onAction(work.id, 'done'),
+                disabled: disabled || busy,
+              },
+              {
+                label: 'Cancel work',
+                onClick: () => onAction(work.id, 'close'),
+                danger: true,
+                disabled: disabled || busy,
+              },
+            ]}
+            trigger={
+              <IconButton title="Card actions" size="sm" class="text-fg-faint">
+                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.75" />
+                  <circle cx="12" cy="12" r="1.75" />
+                  <circle cx="19" cy="12" r="1.75" />
+                </svg>
+              </IconButton>
+            }
+          />
         )}
       </div>
       <h3 class="break-words text-base font-medium">{work.title}</h3>
