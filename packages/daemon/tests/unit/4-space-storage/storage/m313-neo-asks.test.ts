@@ -57,6 +57,21 @@ describe('NeoAskRepository', () => {
     expect(asks.list('other')).toEqual([]);
   });
 
+  test('settles only from the expected status, and new work reopens a blocked ask', () => {
+    const db = withWork();
+    runMigration313(db);
+    const asks = new NeoAskRepository(db);
+    const opened = asks.open(input)!;
+
+    const blocked = asks.settle(opened, 'blocked', 'Needs a product decision.')!;
+    expect(blocked).toMatchObject({ status: 'blocked', outcome: 'Needs a product decision.' });
+    expect(blocked.settledAt).not.toBeNull();
+    expect(asks.settle(opened, 'achieved', 'stale')).toBe(null);
+
+    asks.link('a1', 'w1');
+    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null, workIds: ['w1'] });
+  });
+
   test('reads nothing before the migration has run', () => {
     const asks = new NeoAskRepository(withWork());
     expect(asks.open(input)).toBe(null);
