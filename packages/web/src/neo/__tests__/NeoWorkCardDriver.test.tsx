@@ -147,6 +147,35 @@ describe('NeoWorkCard with drivers work', () => {
     expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
 
+  it('labels a reported card by its pull request, keeps it in progress while the PR is open and warns when the PR fails or closes', () => {
+    const rows = [
+      ['pending', 'OPEN', 'Waiting on CI · #6039', 'accent'],
+      ['passing', 'MERGED', 'Merged · #6039', 'success'],
+      ['failing', 'OPEN', 'Checks failing · #6039', 'warning'],
+      ['passing', 'CLOSED', 'PR closed · #6039', 'warning'],
+    ] as const;
+    for (const [checks, state, label, tone] of rows) {
+      const { container, unmount } = render(
+        <NeoWorkCard
+          work={{ ...work, status: 'reported' }}
+          prs={{
+            workId: 'w1',
+            waiting: checks === 'pending',
+            prs: [
+              { url: 'https://github.com/lsm/HyperNeo/pull/6039', state, checks, review: 'none' },
+            ],
+          }}
+          busy={false}
+          disabled={false}
+          onAction={vi.fn()}
+        />
+      );
+      expect(screen.getByText(label)).toBeTruthy();
+      expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(tone);
+      unmount();
+    }
+  });
+
   it('marks the Open link with the app it opens', () => {
     const logos = [
       { adapter: 'codex-desktop', link: 'codex://threads/t1' },

@@ -1,5 +1,9 @@
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
-import type { NeoSnapshot, NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoSnapshot,
+  NeoWorkDriverReceipt,
+  NeoWorkPrReceipt,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { readDaemonInventory } from '../lib/daemon-inventory.ts';
@@ -9,6 +13,7 @@ import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoConcernBoard, projectNeoConcernBoard } from './neo-concern-board.ts';
 import { type NeoRequestOrigin, projectNeoRequestSnapshot } from './request-board.ts';
 import { neoWorkDriverLabel } from './work-driver.ts';
+import { neoWorkPrLabel } from './work-prs.ts';
 
 const statusLabels = {
   proposed: 'Your call',
@@ -24,10 +29,12 @@ export function NeoConcernBoardView({
   board,
   requestScoped = false,
   drivers = [],
+  prs = [],
 }: {
   board: NeoConcernBoard;
   requestScoped?: boolean;
   drivers?: readonly NeoWorkDriverReceipt[];
+  prs?: readonly NeoWorkPrReceipt[];
 }) {
   const statusOf = (item: NeoConcernBoard['receipts'][number]) => {
     if (item.kind === 'consultation' && item.status === 'queued') return 'Waiting for context';
@@ -35,7 +42,11 @@ export function NeoConcernBoardView({
       item.kind === 'work' && item.status === 'queued'
         ? drivers.find((candidate) => candidate.workId === item.id)
         : undefined;
-    return driver ? neoWorkDriverLabel(driver) : statusLabels[item.status];
+    const pr =
+      item.kind === 'work' && item.status === 'reported'
+        ? neoWorkPrLabel(prs.find((candidate) => candidate.workId === item.id))
+        : null;
+    return driver ? neoWorkDriverLabel(driver) : (pr ?? statusLabels[item.status]);
   };
   const name = (ref: DaemonInventoryLink) =>
     board.participants.find((item) => refKey(item.ref) === refKey(ref))?.metadata?.name || ref.id;
@@ -225,6 +236,7 @@ export function NeoConcernBoardPanel({
             board={board}
             requestScoped={!!requestOrigin}
             drivers={snapshot?.workDrivers}
+            prs={snapshot?.workPrs}
           />
           {!connected && (
             <p role="status" class="mt-3 text-xs text-warning">

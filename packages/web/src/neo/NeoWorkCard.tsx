@@ -4,6 +4,7 @@ import {
   type NeoWorkContinue,
   type NeoWorkDriverReceipt,
   type NeoWorkGoal,
+  type NeoWorkPrReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
@@ -14,6 +15,7 @@ import { providerLogoColor } from '../lib/provider-brand.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoWorkDriverLabel, neoWorkDriverLink } from './work-driver.ts';
+import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
 
 const labels: Record<NeoWork['status'], string> = {
   proposed: 'Your call',
@@ -37,10 +39,14 @@ const tones = {
 function neoWorkTone(
   work: NeoWork,
   driver: NeoWorkDriverReceipt | undefined,
-  waiting: boolean
+  waiting: boolean,
+  prs?: NeoWorkPrReceipt
 ): keyof typeof tones {
   const status = work.status === 'queued' ? driver?.status : null;
-  if (work.status === 'reported') return 'success';
+  if (work.status === 'reported') {
+    if (neoWorkPrInProgress(prs)) return 'accent';
+    return neoWorkPrSetback(prs) ? 'warning' : 'success';
+  }
   if (
     (work.status === 'queued' && waiting) ||
     work.status === 'failed' ||
@@ -72,6 +78,7 @@ function insideUserSelection(scope: Element): boolean {
 export function NeoWorkCard({
   work,
   driver,
+  prs,
   goal,
   continued,
   busy,
@@ -85,6 +92,7 @@ export function NeoWorkCard({
 }: {
   work: NeoWork;
   driver?: NeoWorkDriverReceipt;
+  prs?: NeoWorkPrReceipt;
   goal?: NeoWorkGoal;
   continued?: NeoWorkContinue;
   busy: boolean;
@@ -104,8 +112,10 @@ export function NeoWorkCard({
     };
   }, [work.id, questionSlot]);
   const label =
-    work.status === 'queued' && driver ? neoWorkDriverLabel(driver) : labels[work.status];
-  const tone = neoWorkTone(work, driver, waiting);
+    work.status === 'queued' && driver
+      ? neoWorkDriverLabel(driver)
+      : (work.status === 'reported' && neoWorkPrLabel(prs)) || labels[work.status];
+  const tone = neoWorkTone(work, driver, waiting, prs);
   const icon = tone === 'success' ? 'check' : 'work';
   const driverLink = work.sessionId ? null : neoWorkDriverLink(driver);
   const appLogo = driver ? appLogos[driver.adapter] : undefined;
