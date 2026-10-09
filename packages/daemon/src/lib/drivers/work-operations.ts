@@ -138,6 +138,12 @@ export async function forwardWork<Result>(
   }
 }
 
+export function annotateUnreachable(rejected: Rejected, hint: string): Rejected {
+  return rejected.reason === 'unreachable'
+    ? { ...rejected, detail: `${rejected.detail} ${hint}` }
+    : rejected;
+}
+
 export function routeStart(input: StartInput, deps: WorkVerbDeps): Gate<Route<'start'>> {
   return pickRoute(
     'start',
@@ -164,12 +170,10 @@ export async function startWork(
     REMOTE_START_TIMEOUT_MS
   );
   if (result.ok) return { ok: true, value: stampWork(result.value, route.daemon) };
-  return result.reason === 'unreachable'
-    ? {
-        ...result,
-        detail: `${result.detail} The work may still have started there; check work.find before starting it again.`,
-      }
-    : result;
+  return annotateUnreachable(
+    result,
+    'The work may still have started there; check work.find before starting it again.'
+  );
 }
 
 export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'send'>> {
@@ -196,11 +200,11 @@ export async function sendWork(
     deps.remote,
     REMOTE_SEND_TIMEOUT_MS
   );
-  if (result.ok || result.reason !== 'unreachable') return result;
-  return {
-    ...result,
-    detail: `${result.detail} The message may still have been delivered; check work.status before sending it again.`,
-  };
+  if (result.ok) return result;
+  return annotateUnreachable(
+    result,
+    'The message may still have been delivered; check work.status before sending it again.'
+  );
 }
 
 export function routeStatus(input: RefInput, deps: WorkVerbDeps): Gate<Route<'status'>> {
