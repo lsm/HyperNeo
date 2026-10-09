@@ -24,6 +24,7 @@ import {
   NeoWorkPrRepository,
   type NeoWorkPrRow,
 } from '../../storage/repositories/neo-work-pr-repository.ts';
+import { NeoDeviceRepository } from '../../storage/repositories/neo-device-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -125,6 +126,7 @@ export class NeoService {
   readonly workContinues: NeoWorkContinueRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
+  readonly devices: NeoDeviceRepository;
   readPrs: NeoWorkPrReader = readGithubPrs;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -162,6 +164,7 @@ export class NeoService {
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.devices = new NeoDeviceRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );

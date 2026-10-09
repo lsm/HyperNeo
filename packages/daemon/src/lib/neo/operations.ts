@@ -72,6 +72,7 @@ import {
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from './ask-operations.ts';
+import { createNeoDeviceOperations } from './devices.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 const Concern = z.object({
@@ -1015,6 +1016,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
+    ...createNeoDeviceOperations(service.devices),
     ...createNeoAskOperations(service, (caller, name, concernId) =>
       admitNeoCaller(service, caller, name, concernId)
     ),
