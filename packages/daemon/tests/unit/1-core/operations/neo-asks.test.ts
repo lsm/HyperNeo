@@ -82,9 +82,10 @@ describe('neo.ask operations', () => {
     expect(await invoke('neo.ask.open', opening)).toMatchObject({
       value: { ok: true, ask: { id: askId, originMessageId: 'ask-1', status: 'open' } },
     });
-    expect(await invoke('neo.ask.open', { ...opening, ask: 'Something else' })).toMatchObject({
-      value: { ok: false, reason: 'This request key already belongs to another ask.' },
-    });
+    for (const change of [{ ask: 'Something else' }, { doneWhen: '- PR open' }])
+      expect(await invoke('neo.ask.open', { ...opening, ...change })).toMatchObject({
+        value: { ok: false, reason: 'This request key already belongs to another ask.' },
+      });
 
     const proposed = await propose('card-1', askId);
     const workId = proposed.value!.work!.id;

@@ -86,7 +86,10 @@ export function createNeoAskOperations(service: NeoService, path: NeoPath) {
         requestKey: `${origin.value.originSessionId}:${input.requestKey}`,
       });
       if (!ask) return fail('Asks are not available on this daemon yet.');
-      return ask.title === input.title && ask.ask === input.ask
+      const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
+        (field) => ask[field] === input[field]
+      );
+      return same
         ? { ok: true as const, ask }
         : fail('This request key already belongs to another ask.');
     }
