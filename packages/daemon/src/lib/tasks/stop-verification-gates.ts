@@ -56,6 +56,16 @@ export function inspectSessionLiveness(snapshot: SessionLivenessSnapshot): Sessi
   return { down: true };
 }
 
+export interface DirectSessionGoneEvidence {
+  loading: boolean;
+  cached: boolean;
+  sessionDown: boolean;
+}
+
+export function directSessionGone(evidence: DirectSessionGoneEvidence | null): boolean {
+  return !!evidence && !evidence.loading && !evidence.cached && evidence.sessionDown;
+}
+
 export function decideStopVerification(
   snapshot: StopVerificationSnapshot
 ): StopVerificationDecision {

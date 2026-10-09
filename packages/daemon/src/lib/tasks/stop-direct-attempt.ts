@@ -13,7 +13,9 @@ import {
 } from './direct-task-worker-identity.ts';
 import {
   decideStopVerification,
+  directSessionGone,
   inspectSessionLiveness,
+  type DirectSessionGoneEvidence,
   isStopDownProcessingStatus,
 } from './stop-verification-gates.ts';
 
@@ -90,6 +92,42 @@ export function directSessionIsDown(session: AgentSession): boolean {
     livePids: session.getTrackedAgentRootPidsSplit().live,
   }).down;
 }
+
+function readDirectSessionGoneEvidence(
+  sessionManager: Pick<SessionManager, 'isSessionLoading' | 'getCachedSession'>,
+  { attempt, session }: VerifiedDirectStop
+): DirectSessionGoneEvidence | null {
+  try {
+    return {
+      loading: sessionManager.isSessionLoading(attempt.sessionId),
+      cached: !!sessionManager.getCachedSession(attempt.sessionId),
+      sessionDown: !session || directSessionIsDown(session),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearUnprovenStop(
+  attempts: Pick<DirectTaskExecutionRepository, 'clearStopVerification'>,
+  { attempt, token }: VerifiedDirectStop,
+  gone: boolean
+): void {
+  if (!gone) attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
+}
+
+export const confirmDirectSessionGone = (
+  superpipe({})('confirm-direct-session-gone') as PipelineAPI
+)
+  .input(['attempts', 'sessionManager', 'verified'])
+  .pipe(readDirectSessionGoneEvidence, ['sessionManager', 'verified'], 'evidence')
+  .pipe(directSessionGone, 'evidence', 'gone')
+  .pipe(clearUnprovenStop, ['attempts', 'verified', 'gone'])
+  .end('gone') as (
+  attempts: Pick<DirectTaskExecutionRepository, 'clearStopVerification'>,
+  sessionManager: Pick<SessionManager, 'isSessionLoading' | 'getCachedSession'>,
+  verified: VerifiedDirectStop
+) => boolean;
 
 async function settleProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
   if (session.getTrackedAgentRootPidsSplit().live.length === 0) return;
@@ -285,14 +323,7 @@ async function proveDirectSessionDown(
     if (!attempts.recordStopVerification(current.id, current.sessionId, current.generation, token))
       return unavailable;
     await sessionManager.unregisterSession(current.sessionId, session);
-    if (
-      !directSessionIsDown(session) ||
-      sessionManager.isSessionLoading(current.sessionId) ||
-      sessionManager.getCachedSession(current.sessionId)
-    ) {
-      attempts.clearStopVerification(current.id, current.sessionId, token);
-      return unverified;
-    }
+    if (!confirmDirectSessionGone(attempts, sessionManager, verified.value)) return unverified;
   } catch {
     attempts.clearStopVerification(current.id, current.sessionId, token);
     return unverified;
@@ -350,21 +381,11 @@ export function verifyDirectAttemptStop(
 function finishVerifiedDirectStop(
   attempts: DirectAttemptStopDependencies['attempts'],
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
-  { attempt, session, token }: VerifiedDirectStop
+  verified: VerifiedDirectStop
 ): DirectAttemptStopResult {
-  try {
-    if (
-      sessionManager.isSessionLoading(attempt.sessionId) ||
-      sessionManager.getCachedSession(attempt.sessionId) ||
-      (session && !directSessionIsDown(session))
-    ) {
-      attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
-      return { stopped: false, reason: 'unverified' };
-    }
-  } catch {
-    attempts.clearStopVerification(attempt.id, attempt.sessionId, token);
+  const { attempt, token } = verified;
+  if (!confirmDirectSessionGone(attempts, sessionManager, verified))
     return { stopped: false, reason: 'unverified' };
-  }
   const stopped = attempts.finishRequestedStop(
     attempt.id,
     attempt.sessionId,

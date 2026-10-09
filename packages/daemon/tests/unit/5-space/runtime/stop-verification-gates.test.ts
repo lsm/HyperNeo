@@ -3,6 +3,7 @@ import type { AgentProcessingState } from '@hyperneo/shared';
 import {
   assembleVerifiedStopResult,
   decideStopVerification,
+  directSessionGone,
   inspectSessionLiveness,
   isStopDownProcessingStatus,
   type StopVerificationDecision,
@@ -363,5 +364,18 @@ describe('assembleVerifiedStopResult', () => {
     const notes = ['a', 'b'];
     assembleVerifiedStopResult({ sessionId: 'sess-1', notes, decision: { action: 'down' } });
     expect(notes).toStrictEqual(['a', 'b']);
+  });
+});
+
+describe('directSessionGone', () => {
+  const gone = { loading: false, cached: false, sessionDown: true };
+  test.each([
+    ['unreadable evidence', null, false],
+    ['a session still loading', { ...gone, loading: true }, false],
+    ['a session still cached', { ...gone, cached: true }, false],
+    ['a session not down', { ...gone, sessionDown: false }, false],
+    ['an unloaded, uncached, down session', gone, true],
+  ])('%s', (_label, evidence, expected) => {
+    expect(directSessionGone(evidence)).toBe(expected);
   });
 });
