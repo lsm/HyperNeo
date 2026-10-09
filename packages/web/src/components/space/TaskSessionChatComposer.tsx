@@ -35,43 +35,6 @@ interface TaskSessionChatComposerProps {
   registerDropTarget?: RegisterFileDropTarget;
 }
 
-export function TaskCanvasToggleButton({
-  active,
-  onClick,
-  class: className,
-}: {
-  active: boolean;
-  onClick: () => void;
-  class?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      class={cn(
-        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-info/60 active:scale-95',
-        active
-          ? 'border-sky-400/40 bg-sky-500/15 text-info-soft ring-1 ring-info/30'
-          : 'border-line-strong bg-surface-overlay/90 text-fg-muted hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-info-soft',
-        className
-      )}
-      data-testid="canvas-toggle"
-      aria-label={active ? 'Hide canvas' : 'Show canvas'}
-      aria-pressed={active}
-      title={active ? 'Hide canvas' : 'Show canvas'}
-    >
-      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width={2}
-          d="M5.5 5.5h13v13h-13z"
-        />
-      </svg>
-    </button>
-  );
-}
-
 export function TaskSessionChatComposer({
   mentionCandidates,
   targets,

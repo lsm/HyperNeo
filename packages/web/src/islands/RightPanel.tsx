@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
 import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
-import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { SessionInspector } from './SessionInspector.tsx';
 import { sessionStore } from '../lib/session-store.ts';
@@ -10,7 +9,6 @@ import {
   currentSpaceGoalIdSignal,
   currentSpaceIdSignal,
   currentSpaceScopeIdSignal,
-  currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
   navSectionSignal,
   type RightPanelTarget,
@@ -76,12 +74,8 @@ function useToggleTarget(): RightPanelTarget | null {
   const viewMode = currentSpaceViewModeSignal.value;
   const goalId = currentSpaceGoalIdSignal.value;
   const scopeId = currentSpaceScopeIdSignal.value;
-  const taskId = currentSpaceTaskIdSignal.value;
 
   if (activeSessionId) return null;
-  if (inSpace && spaceId && taskId) {
-    return { type: 'task', spaceId, taskId, tab: 'details' };
-  }
   if (inSpace && spaceId && viewMode === 'goals' && goalId) {
     return { type: 'goal', spaceId, goalId };
   }
@@ -102,13 +96,6 @@ function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanel
       toggleTarget.type === 'goal' &&
       target.spaceId === toggleTarget.spaceId &&
       target.goalId === toggleTarget.goalId
-    );
-  }
-  if (target.type === 'task') {
-    return (
-      toggleTarget.type === 'task' &&
-      target.spaceId === toggleTarget.spaceId &&
-      target.taskId === toggleTarget.taskId
     );
   }
   return (
@@ -310,14 +297,6 @@ export function RightPanel() {
           )}
           {renderedTarget?.type === 'scope' && (
             <ScopeDetailPanel spaceId={renderedTarget.spaceId} scopeId={renderedTarget.scopeId} />
-          )}
-          {renderedTarget?.type === 'task' && (
-            <TaskAuxiliaryPanel
-              spaceId={renderedTarget.spaceId}
-              navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
-              taskId={renderedTarget.taskId}
-              focusSection={renderedTarget.tab ?? undefined}
-            />
           )}
         </div>
       </div>

@@ -4,7 +4,6 @@ import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
-import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import {
   closeOverlayHistory,
   navigateBack,
@@ -246,7 +245,6 @@ export default function SpaceIsland({
   }
 
   if (taskViewId) {
-    const showInMiddle = spaceStore.hasTaskMessageActivity(taskViewId) === false;
     return (
       <>
         <div
@@ -255,21 +253,12 @@ export default function SpaceIsland({
           {...baseLayerProps}
         >
           <Suspense fallback={lazyFallback}>
-            {showInMiddle ? (
-              <TaskAuxiliaryPanel
-                spaceId={spaceId}
-                navigationSpaceId={navigationSpaceId}
-                taskId={taskViewId}
-                onClose={handleTaskPaneClose}
-              />
-            ) : (
-              <SpaceTaskPane
-                taskId={taskViewId}
-                spaceId={spaceId}
-                navigationSpaceId={navigationSpaceId}
-                onClose={handleTaskPaneClose}
-              />
-            )}
+            <SpaceTaskPane
+              taskId={taskViewId}
+              spaceId={spaceId}
+              navigationSpaceId={navigationSpaceId}
+              onClose={handleTaskPaneClose}
+            />
           </Suspense>
         </div>
         {overlay}

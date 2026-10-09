@@ -78,7 +78,7 @@ export const TASK_STATUS_CONFIG: Record<SpaceTaskStatus, TaskStatusConfig> = {
   draft: { tone: 'neutral', label: 'Draft' },
   open: { tone: 'neutral', label: 'Open' },
   in_progress: { tone: 'info', label: 'In Progress' },
-  review: { tone: 'special', label: 'Awaiting Review' },
+  review: { tone: 'special', label: 'Review' },
   approved: { tone: 'success', label: 'Approved' },
   done: { tone: 'success', label: 'Done' },
   blocked: { tone: 'danger', label: 'Blocked' },

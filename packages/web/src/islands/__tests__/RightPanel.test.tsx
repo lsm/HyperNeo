@@ -18,23 +18,6 @@ vi.mock('../SessionInspector', () => ({
   ),
 }));
 
-vi.mock('../../components/space/TaskAuxiliaryPanel', () => ({
-  TaskAuxiliaryPanel: (props: {
-    spaceId: string;
-    navigationSpaceId?: string;
-    taskId: string;
-    tab?: string;
-  }) => (
-    <div
-      data-testid="task-auxiliary-panel"
-      data-space-id={props.spaceId}
-      data-navigation-space-id={props.navigationSpaceId ?? ''}
-      data-task-id={props.taskId}
-      data-tab={props.tab ?? ''}
-    />
-  ),
-}));
-
 vi.mock('../../components/space/GoalDetailPanel', () => ({
   GoalDetailPanel: (props: { spaceId: string; navigationSpaceId?: string; goalId: string }) => (
     <div
@@ -128,35 +111,12 @@ describe('RightPanelToggle', () => {
     });
   });
 
-  it('toggles the task auxiliary panel on a task view', () => {
+  it('shows no toggle on a task view', () => {
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceTaskIdSignal.value = 'task-1';
     render(<RightPanelToggle />);
 
-    fireEvent.click(screen.getByRole('button'));
-    expect(rightPanelTargetSignal.value).toEqual({
-      type: 'task',
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      tab: 'details',
-    });
-  });
-
-  it('passes the route space id to task panel navigation while keeping canonical targets', () => {
-    currentSpaceIdSignal.value = 'space-slug';
-    currentSpaceCanonicalIdSignal.value = 'space-1';
-    rightPanelTargetSignal.value = {
-      type: 'task',
-      spaceId: 'space-1',
-      taskId: 'task-1',
-      tab: 'details',
-    };
-
-    render(<RightPanel />);
-
-    const panel = screen.getByTestId('task-auxiliary-panel');
-    expect(panel.getAttribute('data-space-id')).toBe('space-1');
-    expect(panel.getAttribute('data-navigation-space-id')).toBe('space-slug');
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('passes the route space id to goal panel navigation while keeping canonical targets', () => {

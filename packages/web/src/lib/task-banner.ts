@@ -16,7 +16,6 @@ export interface HookBannerSummary {
 export type ActiveTaskBanner =
   | { kind: 'blocked' }
   | { kind: 'post_approval_blocked'; reason: string }
-  | { kind: 'task_completion_pending' }
   | { kind: 'hook_pending'; runId: string }
   | null;
 
@@ -33,10 +32,6 @@ export function resolveActiveTaskBanner(
     if (reason) {
       return { kind: 'post_approval_blocked', reason };
     }
-  }
-
-  if (task.status === 'review') {
-    return { kind: 'task_completion_pending' };
   }
 
   if (

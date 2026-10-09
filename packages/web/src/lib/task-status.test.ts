@@ -27,7 +27,7 @@ describe('task-status', () => {
 
   it('maps review to special', () => {
     expect(TASK_STATUS_CONFIG.review.tone).toBe('special');
-    expect(TASK_STATUS_CONFIG.review.label).toBe('Awaiting Review');
+    expect(TASK_STATUS_CONFIG.review.label).toBe('Review');
   });
 
   it('maps in_progress to info', () => {

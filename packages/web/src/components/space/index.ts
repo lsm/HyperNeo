@@ -1,6 +1,4 @@
 export { downloadBundle, pickImportFile } from './export-import-utils';
-export type { FileDiffViewProps } from './FileDiffView';
-export { FileDiffView, parseDiff } from './FileDiffView';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
 export type { LineNumberedTextareaProps } from './LineNumberedTextarea';
 export { LineNumberedTextarea } from './LineNumberedTextarea';
@@ -24,8 +22,6 @@ export { SpaceMemoryEditor } from './SpaceMemoryEditor';
 export { SpaceOverview } from './SpaceOverview';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
-export type { TaskArtifactsPanelProps } from './TaskArtifactsPanel';
-export { TaskArtifactsPanel } from './TaskArtifactsPanel';
 export { WorkflowList } from './WorkflowList';
 export type { ConditionDraft, NodeDraft } from './WorkflowNodeCard';
 export { WorkflowNodeCard } from './WorkflowNodeCard';

@@ -188,16 +188,6 @@ vi.mock('../../components/space/SpaceTaskPane', () => ({
   ),
 }));
 
-vi.mock('../../components/space/TaskAuxiliaryPanel', () => ({
-  TaskAuxiliaryPanel: (props: { taskId: string; spaceId?: string }) => (
-    <div
-      data-testid="task-auxiliary-panel"
-      data-task-id={props.taskId}
-      data-space-id={props.spaceId ?? ''}
-    />
-  ),
-}));
-
 vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
   SpaceCreateTaskDialog: (props: {
     isOpen: boolean;
@@ -720,37 +710,22 @@ describe('SpaceIsland — content priority chain', () => {
     expect(mockUnsubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
   });
 
-  it('renders the task information panel when the task has no message activity', async () => {
-    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
-    const { findByTestId, queryByTestId } = render(
-      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
-    );
-    const panel = await findByTestId('task-auxiliary-panel');
-    expect(panel.getAttribute('data-task-id')).toBe('task-xyz');
-    expect(queryByTestId('space-task-pane-inner')).toBeNull();
-  });
-
-  it('renders the task thread pane when the task has message activity, regardless of status', async () => {
-    for (const status of ['open', 'in_progress', 'blocked', 'cancelled', 'done'] as const) {
+  it('renders the task pane whether or not the task has message activity', async () => {
+    for (const [status, count] of [
+      ['open', 0],
+      ['done', 0],
+      ['in_progress', 3],
+      ['blocked', 3],
+      ['cancelled', 3],
+    ] as const) {
       cleanup();
       mockTasks = signal([makeTask({ id: 'task-xyz', status })]);
-      mockTaskMessageActivity.value = new Map([['task-xyz', 3]]);
-      const { findByTestId, queryByTestId } = render(
+      mockTaskMessageActivity.value = new Map([['task-xyz', count]]);
+      const { findByTestId } = render(
         <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
       );
       await findByTestId('space-task-pane-inner');
-      expect(queryByTestId('task-auxiliary-panel')).toBeNull();
     }
-  });
-
-  it('renders the task information panel for a done task with no message activity', async () => {
-    mockTasks = signal([makeTask({ id: 'task-xyz', status: 'done' })]);
-    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
-    const { findByTestId, queryByTestId } = render(
-      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
-    );
-    await findByTestId('task-auxiliary-panel');
-    expect(queryByTestId('space-task-pane-inner')).toBeNull();
   });
 
   it('re-subscribes when the task view switches to another task', async () => {
@@ -786,17 +761,6 @@ describe('SpaceIsland — content priority chain', () => {
     await waitFor(() => {
       expect(mockSubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
     });
-  });
-
-  it('switches from the information panel to the thread pane when activity arrives', async () => {
-    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
-    const { findByTestId, queryByTestId } = render(
-      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
-    );
-    await findByTestId('task-auxiliary-panel');
-    mockTaskMessageActivity.value = new Map([['task-xyz', 1]]);
-    await findByTestId('space-task-pane-inner');
-    expect(queryByTestId('task-auxiliary-panel')).toBeNull();
   });
 });
 

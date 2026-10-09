@@ -3,7 +3,7 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NewChatModelPicker } from '../NewChatModelPicker';
+import { ModelPicker } from '../ModelPicker';
 
 const mockGetHubIfConnected = vi.fn(() => null);
 
@@ -40,7 +40,7 @@ function makeHub(providers: Array<Record<string, unknown>>) {
   };
 }
 
-describe('NewChatModelPicker', () => {
+describe('ModelPicker', () => {
   const onSelectModel = vi.fn();
   const onSelectThinking = vi.fn();
 
@@ -53,7 +53,7 @@ describe('NewChatModelPicker', () => {
 
   function renderPicker(overrides: Record<string, unknown> = {}) {
     return render(
-      <NewChatModelPicker
+      <ModelPicker
         activeModelInfo={activeModelInfo}
         activeModelLabel="Model Alpha"
         availableModels={anthropicModels}
@@ -135,7 +135,7 @@ describe('NewChatModelPicker', () => {
       const { container } = renderPicker();
       await openDropdown(container);
 
-      const dropdown = container.querySelector('#new-chat-preferences')!;
+      const dropdown = container.querySelector('#model-preferences')!;
       expect(dropdown.textContent).toContain('Model Alpha');
       expect(dropdown.textContent).toContain('Model Beta');
     });
@@ -148,7 +148,7 @@ describe('NewChatModelPicker', () => {
       const { container } = renderPicker();
       await openDropdown(container);
 
-      const dropdown = container.querySelector('#new-chat-preferences')!;
+      const dropdown = container.querySelector('#model-preferences')!;
       expect(dropdown.textContent).toContain('Model Alpha');
       expect(dropdown.textContent).not.toContain('Model Beta');
     });

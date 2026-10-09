@@ -1,33 +1,12 @@
 import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
-import { getThinkingOptionsForProvider, THINKING_LEVEL_LABELS } from '@hyperneo/shared';
-import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useSignalEffect } from '@preact/signals';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import {
-  getProviderLabel,
-  groupModelsByProvider,
-  useClickOutside,
-  useFilteredModelsForPicker,
-  useMessageHub,
-  useModal,
-} from '../hooks';
-import { connectionManager } from '../lib/connection-manager.ts';
-import {
-  providerHeaderStyle,
-  providerLogoColor,
-  providerPillStyle,
-  shortenModelName,
-} from '../lib/provider-brand.ts';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useMessageHub } from '../hooks';
 import { type ConnectionState, connectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
-import { ProviderLogo } from './ProviderLogo.tsx';
+import { ModelPicker } from './ModelPicker.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { Spinner } from './ui/Spinner.tsx';
-import { StatusDot } from './ui/StatusDot.tsx';
-import { Tooltip } from './ui/Tooltip.tsx';
-
-import { ThinkingBorderRing, ThinkingLevelIcon } from './ThinkingLevelIcon.tsx';
 
 interface SessionStatusBarProps {
   sessionId: string;
@@ -76,134 +55,25 @@ export default function SessionStatusBar({
 
   const { callIfConnected } = useMessageHub();
 
-  const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
-    new Map()
-  );
-  const [modelSearchQuery, setModelSearchQuery] = useState('');
-
-  const loadAuthStatuses = useCallback(() => {
-    let cancelled = false;
-    callIfConnected('auth.providers', {})
-      .then((res) => {
-        if (cancelled) return;
-        const result = res as { providers?: ProviderAuthStatus[] } | null;
-        const statusMap = new Map<string, ProviderAuthStatus>();
-        for (const p of result?.providers ?? []) {
-          statusMap.set(p.id, p);
-        }
-        setProviderAuthStatuses(statusMap);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [callIfConnected]);
-
-  useEffect(() => {
-    return loadAuthStatuses();
-  }, [loadAuthStatuses]);
-
-  useEffect(() => {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
-    const unsub = hub.onEvent('providers.changed', () => {
-      loadAuthStatuses();
-    });
-    return () => {
-      unsub();
-    };
-  }, [loadAuthStatuses, connectionState.value]);
-
-  const modelDropdown = useModal();
-  const thinkingDropdown = useModal();
-  const modelDropdownRef = useRef<HTMLDivElement>(null);
-  const thinkingDropdownRef = useRef<HTMLDivElement>(null);
-  useClickOutside(modelDropdownRef, modelDropdown.close, modelDropdown.isOpen);
-  useClickOutside(thinkingDropdownRef, thinkingDropdown.close, thinkingDropdown.isOpen);
-
-  const toggleModelDropdown = useCallback(() => {
-    if (modelDropdown.isOpen) {
-      modelDropdown.close();
-    } else {
-      thinkingDropdown.close();
-      setModelSearchQuery('');
-      modelDropdown.open();
-    }
-  }, [modelDropdown, thinkingDropdown]);
-
-  const toggleThinkingDropdown = useCallback(() => {
-    if (thinkingDropdown.isOpen) {
-      thinkingDropdown.close();
-    } else {
-      modelDropdown.close();
-      thinkingDropdown.open();
-    }
-  }, [modelDropdown, thinkingDropdown]);
-
-  useEffect(() => {
-    if (isRecovering) {
-      modelDropdown.close();
-      thinkingDropdown.close();
-    }
-  }, [isRecovering, modelDropdown, thinkingDropdown]);
-
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
-
   useEffect(() => {
     setThinkingLevel(thinkingLevelProp || 'off');
   }, [thinkingLevelProp]);
 
-  const thinkingOptions = getThinkingOptionsForProvider(
-    currentModelInfo?.provider,
-    currentModelInfo?.thinkingModes
-  );
-
-  const handleModelSwitch = useCallback(
-    async (model: ModelInfo) => {
-      await onModelSwitch(model);
-      setModelSearchQuery('');
-      modelDropdown.close();
-    },
-    [onModelSwitch, modelDropdown]
-  );
-
-  useEffect(() => {
-    if (!modelDropdown.isOpen) {
-      setModelSearchQuery('');
-    }
-  }, [modelDropdown.isOpen]);
-
   const handleThinkingLevelChange = useCallback(
     async (level: ThinkingLevel) => {
       setThinkingLevel(level);
-      thinkingDropdown.close();
-
       if (onThinkingLevelChange) {
         await onThinkingLevelChange(level);
         return;
       }
-
       await callIfConnected('session.thinking.set', {
         sessionId: _sessionId,
         level,
       });
     },
-    [_sessionId, callIfConnected, thinkingDropdown, onThinkingLevelChange]
+    [_sessionId, callIfConnected, onThinkingLevelChange]
   );
-
-  const activeProvider = currentModelInfo?.provider;
-  const pillStyle = providerPillStyle(activeProvider);
-  const tierLabel = currentModelInfo ? shortenModelName(currentModelInfo.name, activeProvider) : '';
-  const filteredModels = useFilteredModelsForPicker(
-    availableModels,
-    providerAuthStatuses,
-    currentModelInfo?.provider,
-    currentModelInfo?.id,
-    modelSearchQuery
-  );
-  const groupedFilteredModels = groupModelsByProvider(filteredModels);
-  const glassControlButtonBaseClass =
-    'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-surface-raised/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
   return (
     <ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -216,202 +86,19 @@ export default function SessionStatusBar({
       />
 
       <div class="flex min-w-0 items-center gap-3 sm:gap-4">
-        <div class="flex min-w-0 items-center gap-1.5">
-          <div class="relative" ref={modelDropdownRef}>
-            <Tooltip
-              content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
-              position="top"
-              delay={300}
-            >
-              <button
-                data-testid="model-pill"
-                data-provider={activeProvider ?? ''}
-                class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                style={pillStyle}
-                onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching || coordinatorSwitching || isRecovering}
-                title={
-                  currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
-                }
-              >
-                {modelSwitching ? (
-                  <Spinner size="sm" />
-                ) : currentModelInfo ? (
-                  <>
-                    <span
-                      class="flex shrink-0"
-                      style={{ color: providerLogoColor(activeProvider) }}
-                    >
-                      <ProviderLogo provider={activeProvider ?? 'anthropic'} class="h-4 w-4" />
-                    </span>
-                    <span class="min-w-0 max-w-[88px] sm:max-w-[150px] truncate font-medium">
-                      {tierLabel || currentModelInfo.name}
-                    </span>
-                    <svg
-                      class="h-3 w-3 shrink-0 text-fg-faint"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </>
-                ) : (
-                  <span class="px-1 text-fg-muted">Select model</span>
-                )}
-              </button>
-            </Tooltip>
-
-            {modelDropdown.isOpen && (
-              <div
-                data-testid="model-dropdown"
-                class="absolute bottom-full mb-2 left-0 bg-surface-raised border border-line-strong rounded-lg shadow-xl w-72 py-1 z-50 animate-slideIn max-h-[60vh] flex flex-col"
-              >
-                <div class="px-3 py-1.5 text-xs font-semibold text-fg-muted">Select Model</div>
-                <div class="px-2 pb-2">
-                  <input
-                    type="search"
-                    value={modelSearchQuery}
-                    onInput={(e) => setModelSearchQuery(e.currentTarget.value)}
-                    placeholder="Search models..."
-                    aria-label="Search models"
-                    class="w-full bg-surface border border-line-strong rounded px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent"
-                  />
-                </div>
-                <div class="flex-1 min-h-0 overflow-y-auto">
-                  {Array.from(groupedFilteredModels.entries()).map(
-                    ([provider, models], groupIndex) => {
-                      const authStatus = providerAuthStatuses.get(provider);
-                      const isAuthenticated = authStatus?.isAuthenticated;
-                      const needsRefresh = authStatus?.needsRefresh ?? false;
-                      const isTransient = authStatus?.errorKind === 'transient';
-                      const availabilityTone =
-                        isAuthenticated === undefined || isTransient
-                          ? 'neutral'
-                          : !isAuthenticated
-                            ? 'danger'
-                            : needsRefresh
-                              ? 'warning'
-                              : 'success';
-                      return (
-                        <div key={provider} data-testid="provider-section">
-                          {groupIndex > 0 && <div class="mx-2 my-1 border-t border-line" />}
-                          <div
-                            class="flex items-center gap-1.5 px-3 py-1.5"
-                            style={providerHeaderStyle(provider)}
-                          >
-                            <span class="flex h-3.5 w-3.5 shrink-0">
-                              <ProviderLogo provider={provider} class="h-3.5 w-3.5" />
-                            </span>
-                            <span
-                              data-testid="provider-group-header"
-                              class="text-[11px] font-bold uppercase tracking-wider"
-                            >
-                              {getProviderLabel(provider)}
-                            </span>
-                            <StatusDot tone={availabilityTone} />
-                            {needsRefresh && (
-                              <span class="text-warning text-[10px]" title="Token expiring soon">
-                                ⚠
-                              </span>
-                            )}
-                          </div>
-                          {models.map((model) => {
-                            const isCurrent =
-                              model.id === currentModelInfo?.id &&
-                              model.provider === currentModelInfo?.provider;
-                            const unavailable = model.available === false;
-                            return (
-                              <button
-                                key={`${model.provider}:${model.id}`}
-                                class={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${
-                                  unavailable
-                                    ? 'cursor-not-allowed opacity-50'
-                                    : 'hover:bg-fill-strong'
-                                } ${isCurrent ? 'text-accent' : 'text-fg-soft'}`}
-                                onClick={() => handleModelSwitch(model)}
-                                disabled={modelSwitching || unavailable}
-                              >
-                                <span class="flex-1 truncate">
-                                  {shortenModelName(model.name, model.provider)}
-                                </span>
-                                {unavailable && (
-                                  <span
-                                    class="text-fg-faint text-[10px]"
-                                    title="Not runnable on this account"
-                                  >
-                                    unavailable
-                                  </span>
-                                )}
-                                {isCurrent && <span class="text-accent text-[10px]">✓</span>}
-                                {needsRefresh && (
-                                  <span class="text-warning text-[10px]" title="Token expiring">
-                                    ⚠
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      );
-                    }
-                  )}
-                  {filteredModels.length === 0 && (
-                    <div class="px-3 py-4 text-xs text-fg-faint text-center">
-                      No matching models
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {thinkingOptions.length > 0 && (
-          <div class="relative" ref={thinkingDropdownRef}>
-            <Tooltip
-              content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
-              position="top"
-              delay={300}
-            >
-              <button
-                class={`${glassControlButtonBaseClass} relative ${
-                  thinkingLevel === 'off' ? 'border-line-strong/80' : 'border-transparent'
-                }`}
-                onClick={toggleThinkingDropdown}
-                disabled={isRecovering}
-                title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
-              >
-                <ThinkingBorderRing level={thinkingLevel} />
-                <ThinkingLevelIcon level={thinkingLevel} />
-              </button>
-            </Tooltip>
-
-            {thinkingDropdown.isOpen && (
-              <div class="absolute bottom-full mb-2 left-0 bg-surface-raised border border-line-strong rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn">
-                <div class="px-3 py-1.5 text-xs font-semibold text-fg-muted">Thinking Level</div>
-                {thinkingOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    class={`w-full text-left px-3 py-2 hover:bg-fill-strong text-xs flex items-center gap-2 ${
-                      option.value === thinkingLevel ? 'text-warning' : 'text-fg-soft'
-                    }`}
-                    onClick={() => handleThinkingLevelChange(option.value)}
-                    disabled={isRecovering}
-                  >
-                    <ThinkingLevelIcon level={option.value} />
-                    {option.label}
-                    {option.value === thinkingLevel && ' (current)'}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <ModelPicker
+          menuId="session-preferences"
+          align="right"
+          activeModelInfo={currentModelInfo}
+          activeModelLabel={_currentModel || 'Select model'}
+          availableModels={availableModels}
+          loading={modelLoading}
+          disabled={modelSwitching || coordinatorSwitching || isRecovering}
+          busy={modelSwitching}
+          thinkingLevel={thinkingLevel}
+          onSelectModel={(model) => void onModelSwitch(model)}
+          onSelectThinking={(level) => void handleThinkingLevelChange(level)}
+        />
 
         <div class="h-6 w-px bg-fg-faint" />
 

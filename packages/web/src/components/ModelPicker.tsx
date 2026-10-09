@@ -13,7 +13,7 @@ import { ProviderLogo } from './ProviderLogo.tsx';
 import { ThinkingLevelIcon } from './ThinkingLevelIcon.tsx';
 import { Spinner } from './ui/Spinner.tsx';
 
-interface NewChatModelPickerProps {
+interface ModelPickerProps {
   activeModelInfo: ModelInfo | null;
   activeModelLabel: string;
   availableModels: ModelInfo[];
@@ -21,10 +21,23 @@ interface NewChatModelPickerProps {
   thinkingLevel: ThinkingLevel;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
-  onReload: () => void;
+  onReload?: () => void;
+  menuId?: string;
+  disabled?: boolean;
+  busy?: boolean;
+  align?: 'left' | 'right';
 }
 
-export function NewChatModelPicker({
+function solidPillStyle(provider: string | undefined) {
+  const pill = providerPillStyle(provider);
+  return {
+    borderColor: pill.borderColor,
+    backgroundColor: 'var(--color-surface-raised)',
+    backgroundImage: `linear-gradient(${pill.backgroundColor}, ${pill.backgroundColor})`,
+  };
+}
+
+export function ModelPicker({
   activeModelInfo,
   activeModelLabel,
   availableModels,
@@ -33,7 +46,11 @@ export function NewChatModelPicker({
   onSelectModel,
   onSelectThinking,
   onReload,
-}: NewChatModelPickerProps) {
+  menuId = 'model-preferences',
+  disabled = false,
+  busy = false,
+  align = 'left',
+}: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -94,15 +111,15 @@ export function NewChatModelPicker({
         ref={trigger}
         type="button"
         onClick={() => setOpen(!open)}
-        disabled={waiting}
+        disabled={waiting || disabled}
         title={`${label} · Thinking: ${thinking}`}
         aria-label="Choose model and thinking"
         aria-expanded={open}
-        aria-controls="new-chat-preferences"
-        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-        style={activeModelInfo ? providerPillStyle(activeProvider) : undefined}
+        aria-controls={menuId}
+        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+        style={activeModelInfo ? solidPillStyle(activeProvider) : undefined}
       >
-        {waiting ? (
+        {waiting || busy ? (
           <Spinner size="sm" />
         ) : activeModelInfo ? (
           <span class="flex shrink-0" style={{ color: providerLogoColor(activeProvider) }}>
@@ -123,12 +140,13 @@ export function NewChatModelPicker({
       </button>
       {open && (
         <NeoModelMenu
-          id="new-chat-preferences"
+          id={menuId}
           models={models}
           current={activeModelInfo ?? undefined}
           level={level}
           options={options}
-          busy={false}
+          busy={busy}
+          align={align}
           loading={loading}
           working={false}
           onModel={onSelectModel}

@@ -1,49 +1,35 @@
 import {
-  getWorkflowRunExecutionStatusLabel,
   isWorkflowRecoveryTransition,
   type MessageDeliveryMode,
   type MessageImage,
   type SpaceTaskActivityMember,
   type SpaceTaskActivityState,
-  type SpaceTaskPriority,
   type SpaceTaskStatus,
 } from '@hyperneo/shared';
-import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
 import { getTaskStatusConfig } from '../../lib/task-status';
-import {
-  navigateToSpaceTask,
-  pushOverlayHistory,
-  pushOverlayHistoryForPendingAgent,
-} from '../../lib/router';
-import { resolveNodeClick, type NodeChoice } from '../../lib/node-click-resolver';
-import {
-  currentSpaceIdSignal,
-  currentSpaceTaskViewTabSignal,
-  rightPanelTargetSignal,
-} from '../../lib/signals';
+import { pushOverlayHistory, pushOverlayHistoryForPendingAgent } from '../../lib/router';
+import { currentSpaceIdSignal } from '../../lib/signals';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
-import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
+import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
-import { SectionCard } from '../ui/SectionCard';
-import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
-import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
-import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
-import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
+import { TaskApproveButton } from './TaskApproveButton';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { TaskHeaderMeta } from './TaskHeaderMeta';
+import { TaskReadyPanel } from './TaskReadyPanel';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
-import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { filterDirectAttemptTargets, getTransitionActions } from './TaskStatusActions';
 import { useRunHookStates } from './use-run-hook-states.ts';
@@ -55,28 +41,6 @@ interface SpaceTaskPaneProps {
   onClose?: () => void;
 }
 
-const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
-  draft: 'Draft',
-  open: 'Open',
-  in_progress: 'In Progress',
-  review: 'Awaiting Review',
-  approved: 'Approved',
-  done: 'Done',
-  blocked: 'Blocked',
-  cancelled: 'Cancelled',
-  archived: 'Archived',
-  rate_limited: 'Rate Limited',
-  usage_limited: 'Usage Limited',
-  stopped: 'Stopped',
-};
-
-const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
-  low: 'Low',
-  normal: 'Normal',
-  high: 'High',
-  urgent: 'Urgent',
-};
-
 const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   active: 'Active',
   queued: 'Queued',
@@ -86,13 +50,6 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   completed: 'Done',
   failed: 'Failed',
   interrupted: 'Interrupted',
-};
-
-const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
-  low: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
-  normal: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
-  high: 'border-orange-500/30 bg-warning/10 text-warning-soft',
-  urgent: 'border-danger/30 bg-danger/10 text-danger-soft',
 };
 
 function getTaskActionLabel(
@@ -124,25 +81,6 @@ function normalizeTargetName(name: string | null | undefined): string {
     .replace(/[\s_-]+/g, '');
 }
 
-function TaskMetaBadge({
-  children,
-  class: className,
-}: {
-  children: ComponentChildren;
-  class?: string;
-}) {
-  return (
-    <span
-      class={cn(
-        'inline-flex h-6 max-w-[8.5rem] items-center rounded-md border px-2 text-[11px] font-medium leading-none whitespace-nowrap',
-        className
-      )}
-    >
-      <span class="truncate">{children}</span>
-    </span>
-  );
-}
-
 function formatTaskThreadError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes('Task Agent session not started')) {
@@ -164,20 +102,6 @@ function formatDirectStartRejection(reason: string): string {
 function formatEditTaskError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || 'Failed to update task';
-}
-
-function formatTaskTimestamp(timestamp: number | null | undefined): string {
-  if (!timestamp) return '—';
-  return new Date(timestamp).toLocaleString();
-}
-
-function TaskInfoRow({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div class="flex items-start justify-between gap-3 text-sm">
-      <span class="text-fg-muted">{label}</span>
-      <span class="min-w-0 text-right text-fg-soft">{children}</span>
-    </div>
-  );
 }
 
 export function SpaceTaskPane({
@@ -214,7 +138,6 @@ export function SpaceTaskPane({
   const draftWasActiveRef = useRef(false);
   const currentTaskIdRef = useRef<string | null>(taskId);
   currentTaskIdRef.current = taskId;
-  const nodeClickGenRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -226,16 +149,9 @@ export function SpaceTaskPane({
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
   const [editTaskBusy, setEditTaskBusy] = useState(false);
   const [editTaskError, setEditTaskError] = useState<string | null>(null);
-  const [nodeChoice, setNodeChoice] = useState<{
-    taskId: string;
-    nodeName: string;
-    nodeId: string;
-    choices: NodeChoice[];
-  } | null>(null);
   const [fullWorkflow, setFullWorkflow] = useState<import('@hyperneo/shared').SpaceWorkflow | null>(
     null
   );
-  const activeView = currentSpaceTaskViewTabSignal.value;
 
   useEffect(() => {
     setThreadSendError(null);
@@ -250,7 +166,6 @@ export function SpaceTaskPane({
     setShowEditTaskModal(false);
     setEditTaskBusy(false);
     setEditTaskError(null);
-    setNodeChoice(null);
   }, [taskId]);
 
   useEffect(() => {
@@ -274,20 +189,6 @@ export function SpaceTaskPane({
   } = useRunHookStates(_runId, _workflowIdForHook);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
-  const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
-
-  useEffect(() => {
-    if (!taskId || !targetSpaceIdForTask) return;
-    const currentTarget = rightPanelTargetSignal.value;
-    if (currentTarget?.type === 'task' && currentTarget.taskId === taskId) return;
-    if (currentTarget === null) return;
-    rightPanelTargetSignal.value = {
-      type: 'task',
-      spaceId: targetSpaceIdForTask,
-      taskId,
-      tab: 'details',
-    };
-  }, [targetSpaceIdForTask, taskId]);
 
   if (!taskId) {
     return (
@@ -307,26 +208,6 @@ export function SpaceTaskPane({
 
   const navigationSpaceId = navigationSpaceIdForTask ?? task.spaceId;
   const runtimeSpaceId = spaceId ?? task.spaceId;
-  const auxiliaryPanelTab =
-    activeView === 'timeline' || activeView === 'log' || activeView === 'artifacts'
-      ? activeView
-      : null;
-
-  useEffect(() => {
-    if (!auxiliaryPanelTab) return;
-    if ((auxiliaryPanelTab === 'log' || auxiliaryPanelTab === 'artifacts') && !task.workflowRunId) {
-      navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
-      return;
-    }
-    if (!targetSpaceIdForTask) return;
-    rightPanelTargetSignal.value = {
-      type: 'task',
-      spaceId: targetSpaceIdForTask,
-      taskId: task.id,
-      tab: auxiliaryPanelTab,
-    };
-    navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
-  }, [auxiliaryPanelTab, navigationSpaceId, targetSpaceIdForTask, task.id, task.workflowRunId]);
 
   const workflowRun = task.workflowRunId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
@@ -350,9 +231,6 @@ export function SpaceTaskPane({
   }, [canvasWorkflowId, workflowVersion]);
 
   const workflow = fullWorkflow;
-  const preferredWorkflowName = task.preferredWorkflowId
-    ? (spaceStore.workflows.value.find((w) => w.id === task.preferredWorkflowId)?.name ?? null)
-    : null;
   const spaceAgents = spaceStore.agents.value;
   const nodeExecutions = spaceStore.nodeExecutions.value;
   const composerTargets: TaskComposerTarget[] = useMemo(() => {
@@ -591,8 +469,7 @@ export function SpaceTaskPane({
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
   }, canSendThreadMessage);
-  const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
-  const activitySummary = STATUS_LABELS[task.status];
+  const activitySummary = getTaskStatusConfig(task.status).label;
   const resolvedBanner = resolveActiveTaskBanner(
     task,
     hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[]
@@ -645,7 +522,7 @@ export function SpaceTaskPane({
   }, [composerTargets, voiceReturnTargetSession]);
 
   useEffect(() => {
-    if (activeView !== 'thread' || !showInlineComposer) return;
+    if (!showInlineComposer) return;
     const root = threadPanelRef.current;
     if (!root) return;
     const scroller =
@@ -700,20 +577,7 @@ export function SpaceTaskPane({
       observer.disconnect();
       scroller.removeEventListener('scroll', handleScroll);
     };
-  }, [
-    activeView,
-    hasComposerDraft,
-    sendingThread,
-    showInlineComposer,
-    targetLocked,
-    threadScroller,
-  ]);
-
-  useEffect(() => {
-    if (activeView === 'canvas' && !canShowCanvasTab) {
-      navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
-    }
-  }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
+  }, [hasComposerDraft, sendingThread, showInlineComposer, targetLocked, threadScroller]);
 
   useEffect(() => {
     spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
@@ -724,216 +588,6 @@ export function SpaceTaskPane({
       spaceStore.ensureNodeExecutions(null).catch(() => {});
     };
   }, []);
-
-  const handleCanvasToggle = useCallback(() => {
-    if (!canShowCanvasTab) return;
-    if (activeView === 'canvas') {
-      navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
-      return;
-    }
-    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
-    navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
-  }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
-
-  const handleNodeClick = async (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
-    const clickGen = ++nodeClickGenRef.current;
-    let wf = workflow;
-    if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
-      wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
-      if (
-        !mountedRef.current ||
-        currentTaskIdRef.current !== task.id ||
-        nodeClickGenRef.current !== clickGen
-      )
-        return;
-    }
-    const currentTask = taskId
-      ? (spaceStore.tasks.value.find((t) => t.id === taskId) ?? null)
-      : null;
-    if (!currentTask) return;
-    const currentActivityMembers: SpaceTaskActivityMember[] = taskId
-      ? (spaceStore.taskActivity.value.get(taskId) ?? [])
-      : [];
-    const currentNodeExecutions = spaceStore.nodeExecutions.value;
-    const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
-    const slotLabel = (agentName: string): string => {
-      const slot = clickedNode?.agents.find((a) => a.name === agentName) ?? null;
-      const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
-      return spaceAgent?.displayName ?? formatAgentSlotLabel(agentName);
-    };
-    const currentWorkerMember = currentActivityMembers.find(
-      (m) =>
-        m.kind === 'node_agent' &&
-        m.nodeExecution?.isCurrentPostApproval === true &&
-        (!currentTask.postApprovalSessionId || m.sessionId === currentTask.postApprovalSessionId)
-    );
-    let postApprovalTargetAgent: string | null =
-      currentWorkerMember?.nodeExecution?.agentName ?? null;
-    if (!postApprovalTargetAgent && wf) {
-      for (const node of wf.nodes) {
-        const target = node.postApproval?.targetAgent;
-        if (target && target !== 'task-agent') {
-          postApprovalTargetAgent = target;
-          break;
-        }
-      }
-      if (!postApprovalTargetAgent) {
-        const target = wf.postApproval?.targetAgent;
-        if (target && target !== 'task-agent') {
-          postApprovalTargetAgent = target;
-        }
-      }
-    }
-    const postApprovalNodeId =
-      currentWorkerMember?.nodeExecution?.nodeId ??
-      (postApprovalTargetAgent
-        ? (wf?.nodes.find((n) => n.agents.some((a) => a.name === postApprovalTargetAgent))?.id ??
-          null)
-        : null);
-
-    const outcome = resolveNodeClick({
-      taskId: currentTask.id,
-      nodeId,
-      nodeName,
-      agentSlotNames,
-      workflowRunId: currentTask.workflowRunId,
-      nodeExecutions: currentNodeExecutions,
-      activityMembers: currentActivityMembers,
-      postApprovalSessionId: currentTask.postApprovalSessionId,
-      postApprovalTargetAgent,
-      postApprovalNodeId,
-      resolveLabel: slotLabel,
-      normalizeSlotName: normalizeTargetName,
-    });
-
-    switch (outcome.type) {
-      case 'open_session': {
-        const currentOverlayReadonly =
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped';
-        const taskContext = {
-          taskId: currentTask.id,
-          agentName: outcome.session.agentName,
-          workflowNodeId: nodeId,
-          sessionId: outcome.session.sessionId,
-          ...(currentOverlayReadonly ? { readonly: true } : {}),
-          ...(outcome.session.nodeExecutionId
-            ? { nodeExecutionId: outcome.session.nodeExecutionId }
-            : {}),
-        };
-        pushOverlayHistory(
-          outcome.session.sessionId,
-          outcome.session.label,
-          undefined,
-          taskContext
-        );
-        return;
-      }
-      case 'activate_slot':
-        if (
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped'
-        ) {
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-          return;
-        }
-        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-          return;
-        }
-        pushOverlayHistoryForPendingAgent(currentTask.id, outcome.agentName, outcome.nodeId);
-        return;
-      case 'choose':
-        if (
-          currentTask.status === 'done' ||
-          currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived' ||
-          currentTask.status === 'stopped'
-        ) {
-          setNodeChoice({
-            taskId: currentTask.id,
-            nodeName,
-            nodeId,
-            choices: outcome.choices.filter((c) => c.kind === 'live'),
-          });
-          return;
-        }
-        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
-          const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
-          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: safeChoices });
-          return;
-        }
-        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: outcome.choices });
-        return;
-      case 'empty':
-        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
-        return;
-    }
-  };
-
-  const handleNodeChoiceSelect = (choice: NodeChoice) => {
-    const clickedNodeId = nodeChoice?.nodeId;
-    setNodeChoice(null);
-    if (choice.kind === 'live') {
-      const taskContext: {
-        taskId: string;
-        agentName: string;
-        workflowNodeId?: string;
-        nodeExecutionId?: string;
-        sessionId?: string;
-        readonly?: boolean;
-      } = {
-        taskId: task.id,
-        agentName: choice.agentName,
-        ...(isTerminalTask || task.status === 'stopped' ? { readonly: true } : {}),
-        ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
-        ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
-      };
-      let liveSessionId: string;
-      if (choice.nodeExecutionId) {
-        const liveExec = nodeExecutions.find((e) => e.id === choice.nodeExecutionId);
-        if (
-          !liveExec?.agentSessionId ||
-          liveExec.status === 'cancelled' ||
-          liveExec.status === 'pending'
-        )
-          return;
-        liveSessionId = liveExec.agentSessionId;
-      } else {
-        if (task.postApprovalSessionId) {
-          const currentWorkerForSlot = activityMembers.find(
-            (m) =>
-              m.kind === 'node_agent' &&
-              m.nodeExecution?.isCurrentPostApproval === true &&
-              m.sessionId === task.postApprovalSessionId &&
-              m.role === choice.agentName &&
-              (!clickedNodeId || m.nodeExecution?.nodeId === clickedNodeId)
-          );
-          if (!currentWorkerForSlot) return;
-          liveSessionId = task.postApprovalSessionId;
-        } else if (isTerminalTask || task.status === 'stopped') {
-          liveSessionId = choice.sessionId;
-          pushOverlayHistory(liveSessionId, choice.label, undefined, {
-            taskId: task.id,
-            agentName: choice.agentName,
-            sessionId: liveSessionId,
-            readonly: true,
-          });
-          return;
-        } else {
-          return;
-        }
-      }
-      taskContext.sessionId = liveSessionId;
-      pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
-    } else {
-      pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);
-    }
-  };
 
   const sendThreadMessage = async (
     nextMessage: string,
@@ -951,6 +605,16 @@ export function SpaceTaskPane({
     try {
       setSendingThread(true);
       setThreadSendError(null);
+
+      if (task.status === 'review') {
+        await spaceStore.approvePendingCompletion(task.id, false, nextMessage);
+        if (!task.workflowRunId) {
+          setTargetLocked(false);
+          setHasComposerDraft(false);
+          draftWasActiveRef.current = false;
+          return true;
+        }
+      }
 
       const result = await spaceStore.sendTaskMessage(
         task.id,
@@ -1211,19 +875,9 @@ export function SpaceTaskPane({
     !task.taskAgentSessionId &&
     !task.hasActiveDirectAttempt &&
     !task.archivedAt;
-  if (canRunDirectly || filteredTransitionActions.length > 0) {
+  if (filteredTransitionActions.length > 0) {
     if (taskActionItems.length > 0) {
       taskActionItems.push({ type: 'divider' as const });
-    }
-    if (canRunDirectly) {
-      taskActionItems.push({
-        label: 'Run',
-        title: 'Start an agent on this task without a workflow',
-        disabled: statusTransitioning,
-        onClick: () => {
-          handleRunTaskDirectly();
-        },
-      });
     }
     taskActionItems.push(
       ...filteredTransitionActions.map(({ target, label }) => ({
@@ -1241,89 +895,76 @@ export function SpaceTaskPane({
     <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class={`flex h-[88px] flex-shrink-0 items-center bg-surface-overlay border-b px-4 border-line`}
+        class="relative flex h-[52px] flex-shrink-0 items-center gap-2 border-b border-line bg-surface-overlay px-4"
       >
-        <div class="flex w-full items-center gap-3 pr-12" data-tauri-drag-region>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-              aria-label="Back"
-              data-testid="task-back-button"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
-            </button>
-          )}
-          <div class="min-w-0 flex-1" data-tauri-drag-region>
-            <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
-              <h2
-                class="min-w-0 truncate text-base font-semibold leading-6 text-fg"
-                title={task.title}
-                data-tauri-drag-region
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            class="-ml-1 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+            aria-label="Back"
+            data-testid="task-back-button"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M15 19l-7-7 7-7"
+              />
+            </svg>
+          </button>
+        )}
+        <span
+          class="flex-shrink-0 font-mono text-xs text-fg-faint tabular-nums"
+          data-testid="task-number"
+        >
+          #{task.taskNumber}
+        </span>
+        <h2
+          class="min-w-0 flex-1 truncate text-[15px] font-semibold leading-5 text-fg"
+          title={task.title}
+          data-tauri-drag-region
+        >
+          {task.title}
+        </h2>
+        <TaskHeaderMeta
+          task={task}
+          statusLabel={showHeaderStatusBadge ? activitySummary : null}
+          workspaceLabel={workspaceLabel}
+          routeSpaceId={navigationSpaceId}
+        />
+        {taskActionItems.length > 0 && (
+          <Dropdown
+            items={taskActionItems}
+            position="right"
+            trigger={
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
+                data-testid="task-actions-menu-trigger"
+                aria-label="Task Actions"
+                title="Task Actions"
               >
-                {task.title}
-              </h2>
-              {taskActionItems.length > 0 && (
-                <Dropdown
-                  items={taskActionItems}
-                  position="right"
-                  trigger={
-                    <button
-                      type="button"
-                      class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
-                      data-testid="task-actions-menu-trigger"
-                      aria-label="Task Actions"
-                      title="Task Actions"
-                    >
-                      <svg
-                        class="h-4 w-4"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        aria-hidden="true"
-                      >
-                        <circle cx="10" cy="4" r="1.75" />
-                        <circle cx="10" cy="10" r="1.75" />
-                        <circle cx="10" cy="16" r="1.75" />
-                      </svg>
-                    </button>
-                  }
-                />
-              )}
-            </div>
-            <div class="mt-2 flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
-              <span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-line-strong bg-surface-raised/60 px-2 font-mono text-[11px] font-medium leading-none text-fg-soft tabular-nums">
-                #{task.taskNumber}
-              </span>
-              {showHeaderStatusBadge && (
-                <span data-testid="task-status-label">
-                  <StatusBadge
-                    tone={getTaskStatusConfig(task.status).tone}
-                    label={activitySummary}
-                  />
-                </span>
-              )}
-              <TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
-                {PRIORITY_LABELS[task.priority]} Priority
-              </TaskMetaBadge>
-              {workspaceLabel && (
-                <span
-                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-line-strong bg-fill-strong px-2 text-[11px] font-medium leading-none text-fg-muted whitespace-nowrap"
-                  data-testid="task-workspace-badge"
-                >
-                  <span class="truncate">{workspaceLabel}</span>
-                </span>
-              )}
-            </div>
+                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <circle cx="10" cy="4" r="1.75" />
+                  <circle cx="10" cy="10" r="1.75" />
+                  <circle cx="10" cy="16" r="1.75" />
+                </svg>
+              </button>
+            }
+          />
+        )}
+        {task.status === 'review' && (
+          <div
+            class={cn(
+              'absolute top-[calc(100%+1px)] z-30 mt-4 rounded-lg bg-surface-raised shadow-lg shadow-black/30',
+              'right-4'
+            )}
+          >
+            <TaskApproveButton task={task} />
           </div>
-        </div>
+        )}
       </div>
 
       {(() => {
@@ -1339,8 +980,6 @@ export function SpaceTaskPane({
             />
           ) : banner.kind === 'post_approval_blocked' ? (
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
-          ) : banner.kind === 'task_completion_pending' ? (
-            <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
           ) : (
             <PendingHookBanner
               runId={banner.runId}
@@ -1359,155 +998,121 @@ export function SpaceTaskPane({
       })()}
 
       <div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
-        {activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
-          <div class="relative h-full" data-testid="canvas-view">
-            <ReadOnlyWorkflowCanvas
-              workflowId={canvasWorkflowId}
-              runId={task.workflowRunId}
-              spaceId={spaceId}
-              onNodeClick={handleNodeClick}
-              class="h-full"
-            />
-            {canShowCanvasTab && (
-              <div class="pointer-events-none absolute top-4 right-4 z-20">
-                <TaskCanvasToggleButton
-                  active={true}
-                  onClick={handleCanvasToggle}
-                  class="pointer-events-auto shadow-lg shadow-black/30"
-                />
-              </div>
-            )}
-          </div>
-        ) : (
-          <div
-            class="h-full flex flex-col relative"
-            style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
-            {...dragHandlers}
-          >
-            {isDragging && <ImageDropOverlay />}
-            {canShowCanvasTab && (
-              <div class="pointer-events-none absolute top-4 right-4 z-20">
-                <TaskCanvasToggleButton
-                  active={false}
-                  onClick={handleCanvasToggle}
-                  class="pointer-events-auto shadow-lg shadow-black/30"
-                />
-              </div>
-            )}
-            <div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
-              {hasUnifiedWorkflowThread ? (
-                <SpaceTaskUnifiedThread
-                  taskId={task.id}
-                  bottomInsetPx={taskComposerPaddingPx}
-                  activeAgentLabels={activeAgentLabels}
-                  overlayTaskId={task.id}
-                  overlayTaskReadonly={!taskAgentsLive}
-                  cooldownBannerMembers={cooldownBannerMembers}
-                  authErrorBannerMembers={authErrorBannerMembers}
-                  onShowScrollButtonChange={setShowScrollButton}
-                  onScrollToBottomChange={(scrollToBottom) => {
-                    scrollToBottomRef.current = scrollToBottom;
-                  }}
-                  onScrollerChange={setThreadScroller}
-                />
-              ) : (
-                <div class="h-full overflow-y-auto" data-testid="task-info-view">
-                  <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
-                    <SectionCard title="Description">
-                      {resolvedTask?.description ? (
-                        <p class="whitespace-pre-wrap text-sm text-fg-soft">
-                          {resolvedTask.description}
-                        </p>
-                      ) : (
-                        <p class="text-sm text-fg-faint">No description yet.</p>
-                      )}
-                    </SectionCard>
-                    <SectionCard title="Details">
-                      <TaskInfoRow label="Status">{STATUS_LABELS[task.status]}</TaskInfoRow>
-                      <TaskInfoRow label="Priority">
-                        {PRIORITY_LABELS[task.priority]} Priority
-                      </TaskInfoRow>
-                      <TaskInfoRow label="Created">
-                        {formatTaskTimestamp(task.createdAt)}
-                      </TaskInfoRow>
-                      <TaskInfoRow label="Workflow">
-                        {workflow?.name ?? preferredWorkflowName ?? 'Auto-select'}
-                      </TaskInfoRow>
-                      {workflowRun && (
-                        <TaskInfoRow label="Run status">
-                          {getWorkflowRunExecutionStatusLabel(workflowRun.status)}
-                        </TaskInfoRow>
-                      )}
-                    </SectionCard>
-                    <p class="text-center text-xs text-fg-faint" data-testid="task-info-view-hint">
-                      This task has no agent activity yet.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {showScrollButton && (
-              <ScrollToBottomButton
-                onClick={handleScrollToBottom}
-                bottomClass="bottom-[var(--task-composer-offset)]"
-              />
-            )}
-
-            {task.status === 'stopped' && (
-              <div
-                class="flex-shrink-0 border-t border-line bg-scrim-soft px-4 py-2 text-center text-xs text-fg-muted"
-                data-testid="task-stopped-footer"
-                role="status"
-              >
-                Task stopped — resume it to continue working with its agents.
-              </div>
-            )}
-            {!showInlineComposer && threadSendError && (
-              <div
-                class="flex-shrink-0 border-t border-red-400/30 bg-danger/10 px-4 py-2 text-center text-xs text-danger-soft"
-                data-testid="task-pane-transition-error"
-                role="alert"
-              >
-                {threadSendError}
-              </div>
-            )}
-
-            {showInlineComposer && (
-              <VoiceSurfaceContext.Provider
-                value={{
-                  surfaceId: 'primary',
-                  spaceId: spaceId ?? null,
-                  taskId: task.id,
+        <div
+          class="h-full flex flex-col relative"
+          style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
+          {...dragHandlers}
+        >
+          {isDragging && <ImageDropOverlay />}
+          <div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
+            {hasUnifiedWorkflowThread ? (
+              <SpaceTaskUnifiedThread
+                taskId={task.id}
+                bottomInsetPx={taskComposerPaddingPx}
+                activeAgentLabels={activeAgentLabels}
+                overlayTaskId={task.id}
+                overlayTaskReadonly={!taskAgentsLive}
+                cooldownBannerMembers={cooldownBannerMembers}
+                authErrorBannerMembers={authErrorBannerMembers}
+                onShowScrollButtonChange={setShowScrollButton}
+                onScrollToBottomChange={(scrollToBottom) => {
+                  scrollToBottomRef.current = scrollToBottom;
                 }}
-              >
-                <TaskSessionChatComposer
-                  mentionCandidates={mentionCandidates}
-                  targets={composerTargets}
-                  selectedTargetId={selectedTarget?.id ?? null}
-                  canSend={canSendThreadMessage}
-                  isSending={sendingThread}
-                  errorMessage={threadSendError}
-                  activityMembers={activityMembers}
-                  defaultAgentModels={defaultAgentModels}
-                  taskId={task.id}
-                  onTargetSelect={(targetId) => {
-                    setSelectedTargetId(targetId);
-                    setTargetLocked(true);
-                  }}
-                  onDraftActiveChange={(hasDraft) => {
-                    setHasComposerDraft(hasDraft);
-                    if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
-                    draftWasActiveRef.current = hasDraft;
-                  }}
-                  onComposerRef={setTaskComposerElement}
-                  onSend={sendThreadMessage}
-                  registerDropTarget={registerDropTarget}
-                />
-              </VoiceSurfaceContext.Provider>
+                onScrollerChange={setThreadScroller}
+                footer={
+                  resolvedTask?.result ? (
+                    <section
+                      class="rounded-xl border border-success/40 bg-success/10 px-4 py-3"
+                      data-testid="task-result-card"
+                    >
+                      <div class="text-[11px] font-semibold uppercase tracking-wide text-success">
+                        Result
+                      </div>
+                      <p class="mt-1 whitespace-pre-wrap break-words text-sm text-fg">
+                        {resolvedTask.result}
+                      </p>
+                    </section>
+                  ) : null
+                }
+              />
+            ) : (
+              <div class="h-full overflow-y-auto" data-testid="task-info-view">
+                <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
+                  <TaskReadyPanel
+                    task={task}
+                    workspaceLabel={workspaceLabel}
+                    description={resolvedTask?.description ?? task.description ?? ''}
+                    canRunDirectly={canRunDirectly}
+                    busy={statusTransitioning}
+                    onRun={handleRunTaskDirectly}
+                    onPublish={() => handleStatusTransition('open')}
+                    onEdit={() => setShowEditTaskModal(true)}
+                  />
+                </div>
+              </div>
             )}
           </div>
-        )}
+
+          {showScrollButton && (
+            <ScrollToBottomButton
+              onClick={handleScrollToBottom}
+              bottomClass="bottom-[var(--task-composer-offset)]"
+            />
+          )}
+
+          {task.status === 'stopped' && (
+            <div
+              class="flex-shrink-0 border-t border-line bg-scrim-soft px-4 py-2 text-center text-xs text-fg-muted"
+              data-testid="task-stopped-footer"
+              role="status"
+            >
+              Task stopped — resume it to continue working with its agents.
+            </div>
+          )}
+          {!showInlineComposer && threadSendError && (
+            <div
+              class="flex-shrink-0 border-t border-red-400/30 bg-danger/10 px-4 py-2 text-center text-xs text-danger-soft"
+              data-testid="task-pane-transition-error"
+              role="alert"
+            >
+              {threadSendError}
+            </div>
+          )}
+
+          {showInlineComposer && (
+            <VoiceSurfaceContext.Provider
+              value={{
+                surfaceId: 'primary',
+                spaceId: spaceId ?? null,
+                taskId: task.id,
+              }}
+            >
+              <TaskSessionChatComposer
+                mentionCandidates={mentionCandidates}
+                targets={composerTargets}
+                selectedTargetId={selectedTarget?.id ?? null}
+                canSend={canSendThreadMessage}
+                isSending={sendingThread}
+                errorMessage={threadSendError}
+                activityMembers={activityMembers}
+                defaultAgentModels={defaultAgentModels}
+                taskId={task.id}
+                onTargetSelect={(targetId) => {
+                  setSelectedTargetId(targetId);
+                  setTargetLocked(true);
+                }}
+                onDraftActiveChange={(hasDraft) => {
+                  setHasComposerDraft(hasDraft);
+                  if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+                  draftWasActiveRef.current = hasDraft;
+                }}
+                onComposerRef={setTaskComposerElement}
+                onSend={sendThreadMessage}
+                registerDropTarget={registerDropTarget}
+              />
+            </VoiceSurfaceContext.Provider>
+          )}
+        </div>
       </div>
       <SubmitForReviewModal
         isOpen={showSubmitForReviewModal}
@@ -1529,13 +1134,6 @@ export function SpaceTaskPane({
         }}
         onConfirm={handleEditTaskConfirm}
         error={editTaskError}
-      />
-      <NodeAgentChoiceOverlay
-        isOpen={nodeChoice !== null && nodeChoice.taskId === taskId}
-        nodeName={nodeChoice?.nodeName ?? ''}
-        choices={nodeChoice?.choices ?? []}
-        onSelect={handleNodeChoiceSelect}
-        onClose={() => setNodeChoice(null)}
       />
     </div>
   );
