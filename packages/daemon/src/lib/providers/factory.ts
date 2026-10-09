@@ -35,20 +35,23 @@ export function markBuiltInProviderEnabled(providerId: string): void {
   disabledBuiltInProviderIds.delete(providerId);
 }
 
-const BUILT_IN_PROVIDER_IDS = [
-  'anthropic',
-  'glm',
-  'kimi',
-  'minimax',
-  'deepseek',
-  'openrouter',
-  'opencode',
-  'ollama',
-  'ollama-cloud',
-  'anthropic-codex',
-  'acp',
-  'anthropic-copilot',
-];
+const COPILOT_PROVIDER_ID = 'anthropic-copilot';
+
+const BUILT_IN_PROVIDER_FACTORIES: Record<string, () => Provider> = {
+  anthropic: () => new AnthropicProvider(),
+  glm: () => new GlmProvider(),
+  kimi: () => new KimiProvider(),
+  minimax: () => new MinimaxProvider(),
+  deepseek: () => new DeepSeekProvider(),
+  openrouter: () => new OpenRouterProvider(),
+  opencode: () => new OpencodeProvider(),
+  ollama: () => new OllamaProvider({ kind: 'local' }),
+  'ollama-cloud': () => new OllamaProvider({ kind: 'cloud' }),
+  'anthropic-codex': () => new AnthropicToCodexBridgeProvider(),
+  acp: () => new AcpProvider(),
+};
+
+const BUILT_IN_PROVIDER_IDS = [...Object.keys(BUILT_IN_PROVIDER_FACTORIES), COPILOT_PROVIDER_ID];
 
 export function disableBuiltInProvidersWithoutEnabledRecord(records: ProviderRecord[]): void {
   const enabledIds = new Set(
@@ -74,50 +77,11 @@ export function initializeProviders(): ProviderRegistry {
     return registry;
   }
 
-  if (!disabledBuiltInProviderIds.has('anthropic')) {
-    registerIfMissing(registry, new AnthropicProvider());
+  for (const [providerId, create] of Object.entries(BUILT_IN_PROVIDER_FACTORIES)) {
+    if (!disabledBuiltInProviderIds.has(providerId)) registerIfMissing(registry, create());
   }
 
-  if (!disabledBuiltInProviderIds.has('glm')) {
-    registerIfMissing(registry, new GlmProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('kimi')) {
-    registerIfMissing(registry, new KimiProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('minimax')) {
-    registerIfMissing(registry, new MinimaxProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('deepseek')) {
-    registerIfMissing(registry, new DeepSeekProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('openrouter')) {
-    registerIfMissing(registry, new OpenRouterProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('opencode')) {
-    registerIfMissing(registry, new OpencodeProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('ollama')) {
-    registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
-  }
-  if (!disabledBuiltInProviderIds.has('ollama-cloud')) {
-    registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
-  }
-
-  if (!disabledBuiltInProviderIds.has('anthropic-codex')) {
-    registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('acp')) {
-    registerIfMissing(registry, new AcpProvider());
-  }
-
-  if (!disabledBuiltInProviderIds.has('anthropic-copilot')) {
+  if (!disabledBuiltInProviderIds.has(COPILOT_PROVIDER_ID)) {
     registerCopilotProvider(registry, false);
   }
 
@@ -131,47 +95,14 @@ export async function registerBuiltInProvider(
   providerId: string
 ): Promise<void> {
   if (registry.has(providerId)) return;
-  switch (providerId) {
-    case 'anthropic':
-      registry.register(new AnthropicProvider());
-      break;
-    case 'glm':
-      registry.register(new GlmProvider());
-      break;
-    case 'kimi':
-      registry.register(new KimiProvider());
-      break;
-    case 'minimax':
-      registry.register(new MinimaxProvider());
-      break;
-    case 'deepseek':
-      registry.register(new DeepSeekProvider());
-      break;
-    case 'opencode':
-      registry.register(new OpencodeProvider());
-      break;
-    case 'openrouter':
-      registry.register(new OpenRouterProvider());
-      break;
-    case 'ollama':
-      registry.register(new OllamaProvider({ kind: 'local' }));
-      break;
-    case 'ollama-cloud':
-      registry.register(new OllamaProvider({ kind: 'cloud' }));
-      break;
-    case 'anthropic-codex':
-      registry.register(new AnthropicToCodexBridgeProvider());
-      break;
-    case 'anthropic-copilot':
-      markBuiltInProviderEnabled(providerId);
-      await waitForOptionalProviderRegistration(registry, true);
-      break;
-    case 'acp':
-      registry.register(new AcpProvider());
-      break;
-    default:
-      logger.warn(`Unknown built-in provider ID: ${providerId}`);
+  if (providerId === COPILOT_PROVIDER_ID) {
+    markBuiltInProviderEnabled(providerId);
+    await waitForOptionalProviderRegistration(registry, true);
+    return;
   }
+  const create = BUILT_IN_PROVIDER_FACTORIES[providerId];
+  if (create) registry.register(create());
+  else logger.warn(`Unknown built-in provider ID: ${providerId}`);
 }
 
 export async function syncCustomEndpointProviders(
@@ -270,42 +201,13 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
   const registry = getProviderRegistry();
   if (registry.has(providerId)) return;
   markBuiltInProviderEnabled(providerId);
-
-  switch (providerId) {
-    case 'anthropic':
-      registerIfMissing(registry, new AnthropicProvider());
-      break;
-    case 'glm':
-      registerIfMissing(registry, new GlmProvider());
-      break;
-    case 'kimi':
-      registerIfMissing(registry, new KimiProvider());
-      break;
-    case 'minimax':
-      registerIfMissing(registry, new MinimaxProvider());
-      break;
-    case 'openrouter':
-      registerIfMissing(registry, new OpenRouterProvider());
-      break;
-    case 'ollama':
-      registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
-      break;
-    case 'ollama-cloud':
-      registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
-      break;
-    case 'anthropic-codex':
-      registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
-      break;
-    case 'anthropic-copilot':
-      registerCopilotProvider(registry, true);
-      await waitForOptionalProviderRegistration(registry);
-      break;
-    case 'acp':
-      registerIfMissing(registry, new AcpProvider());
-      break;
-    default:
-      break;
+  if (providerId === COPILOT_PROVIDER_ID) {
+    registerCopilotProvider(registry, true);
+    await waitForOptionalProviderRegistration(registry);
+    return;
   }
+  const create = BUILT_IN_PROVIDER_FACTORIES[providerId];
+  if (create) registerIfMissing(registry, create());
 }
 
 async function registerLoadedCopilotProvider(
