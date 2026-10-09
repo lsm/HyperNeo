@@ -4,7 +4,10 @@ import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useModelSwitcher, filterModelsForPicker } from '../hooks/useModelSwitcher.ts';
 import { useClickOutside } from '../hooks/useClickOutside.ts';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { invokeOperation } from '../lib/operations.ts';
 import { connectionState } from '../lib/state.ts';
 import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -13,14 +16,20 @@ import { NeoModelMenu } from './NeoModelMenu.tsx';
 import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
 
+export type NeoPreference = NeoSnapshot['preferences'];
+
 export function NeoPreferences({
   sessionId,
   store,
   onError,
+  preference,
+  onSaved,
 }: {
   sessionId: string;
   store: SessionStore;
   onError: (message: string) => void;
+  preference?: NeoPreference;
+  onSaved?: () => void;
 }) {
   const model = useModelSwitcher(sessionId);
   const [open, setOpen] = useState(false);
@@ -29,12 +38,20 @@ export function NeoPreferences({
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
-  const level = normalizeThinkingLevel(store.sessionInfo.value?.config?.thinkingLevel);
-  const options = getThinkingOptionsForProvider(
-    model.currentModelInfo?.provider,
-    model.currentModelInfo?.thinkingModes
+  const chosen = preference
+    ? model.availableModels.find(
+        (item) =>
+          (item.id === preference.model || item.alias === preference.model) &&
+          item.provider === preference.provider
+      )
+    : undefined;
+  const info = chosen ?? model.currentModelInfo;
+  const currentId = preference?.model ?? model.currentModel;
+  const level = normalizeThinkingLevel(
+    preference?.thinkingLevel ?? store.sessionInfo.value?.config?.thinkingLevel
   );
-  const busy = saving || model.switching || model.loading || !connected || store.isWorking.value;
+  const options = getThinkingOptionsForProvider(info?.provider, info?.thinkingModes);
+  const busy = saving || model.loading || !connected;
   useClickOutside(ref, () => setOpen(false), open);
   useEffect(() => {
     if (!open || !connected) return;
@@ -50,56 +67,53 @@ export function NeoPreferences({
       active = false;
     };
   }, [open, connected, model.availableModels]);
-  const available = filterModelsForPicker(
-    model.availableModels,
-    auth,
-    model.currentModelInfo?.provider,
-    model.currentModel
-  );
+  const available = filterModelsForPicker(model.availableModels, auth, info?.provider, currentId);
   const models = [
     ...new Map(available.map((item) => [JSON.stringify([item.provider, item.id]), item])).values(),
   ];
   const current = models.find(
     (item) =>
-      (item.id === model.currentModel || item.alias === model.currentModel) &&
-      item.provider === model.currentModelInfo?.provider
+      (item.id === currentId || item.alias === currentId) && item.provider === info?.provider
   );
-  const name = shortenModelName(model.currentModelInfo?.name || model.currentModel || 'Model');
+  const name = shortenModelName(info?.name || currentId || 'Model');
   const thinking = options.length
     ? (options.find((option) => option.value === level)?.label ?? 'Off')
     : 'Off';
+
+  async function save(next: NeoModelPreference) {
+    setSaving(true);
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Reconnect before changing the model.');
+      const result = await invokeOperation<
+        { ok: true; preferences: NeoModelPreference } | { ok: false; reason: string }
+      >(hub, 'neo.preferences.set', next);
+      if (!result.ok) throw new Error(result.reason);
+      onSaved?.();
+      await store.refresh();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Could not change Neo’s model.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function changeModel(next: ModelInfo) {
     if (busy) return;
     if (
       next.provider.startsWith('anthropic') &&
-      !model.currentModelInfo?.provider.startsWith('anthropic') &&
+      !info?.provider.startsWith('anthropic') &&
       !confirm(
         'Switching to this provider removes old thinking blocks for compatibility. Your messages and results stay. Continue?'
       )
     )
       return;
-    try {
-      await model.switchModel(next);
-      await store.refresh();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : 'Could not refresh the selected model.');
-    }
+    await save({ model: next.id, provider: next.provider, thinkingLevel: level });
   }
 
   async function changeThinking(next: ThinkingLevel) {
-    if (busy) return;
-    setSaving(true);
-    try {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) throw new Error('Reconnect before changing thinking.');
-      await hub.request('session.thinking.set', { sessionId, level: next });
-      await store.refresh();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : 'Could not change thinking.');
-    } finally {
-      setSaving(false);
-    }
+    if (busy || !info || !currentId) return;
+    await save({ model: currentId, provider: info.provider, thinkingLevel: next });
   }
 
   return (
@@ -114,16 +128,10 @@ export function NeoPreferences({
         title={`${name} · Thinking: ${thinking}`}
         class="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-fill-soft px-2.5 py-2 text-xs text-fg-muted transition-colors hover:border-accent/30 hover:text-fg sm:gap-2 sm:px-3"
       >
-        <span
-          class="flex shrink-0"
-          style={{ color: providerLogoColor(model.currentModelInfo?.provider) }}
-        >
-          <ProviderLogo
-            provider={model.currentModelInfo?.provider ?? 'anthropic'}
-            class="h-3.5 w-3.5"
-          />
+        <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
+          <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
         </span>
-        <span class="max-w-32 truncate">{model.switching ? 'Switching…' : name}</span>
+        <span class="max-w-32 truncate">{saving ? 'Switching…' : name}</span>
         <span aria-hidden="true" class="text-fg-faint">
           ·
         </span>

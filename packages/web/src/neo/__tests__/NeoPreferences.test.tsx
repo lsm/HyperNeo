@@ -51,20 +51,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo preferences', () => {
-  it('opens one control for both model and thinking and uses existing session updates', async () => {
+  it('opens one control for model and thinking and saves both as Neo’s preference', async () => {
     const store = makeStore();
-    render(<NeoPreferences sessionId="neo:root" store={store} onError={vi.fn()} />);
+    const saved = vi.fn();
+    api.request.mockImplementation(async (method: string) =>
+      method === 'operation.invoke' ? { ok: true, preferences: {} } : { providers: [] }
+    );
+    render(<NeoPreferences sessionId="neo:root" store={store} onError={vi.fn()} onSaved={saved} />);
     expect(screen.queryByLabelText('Thinking')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
     expect(screen.getAllByRole('button', { name: 'Sonnet · Anthropic' })).toHaveLength(1);
     fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
     await waitFor(() =>
-      expect(api.request).toHaveBeenCalledWith('session.thinking.set', {
-        sessionId: 'neo:root',
-        level: 'think16k',
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'sonnet', provider: 'anthropic', thinkingLevel: 'think16k' },
       })
     );
     await waitFor(() => expect(store.refresh).toHaveBeenCalled());
+    expect(saved).toHaveBeenCalled();
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
@@ -72,21 +77,34 @@ describe('Neo preferences', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
     await waitFor(() =>
-      expect(api.switchModel).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'haiku', provider: 'anthropic' })
-      )
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.preferences.set',
+        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'off' },
+      })
     );
+    expect(api.switchModel).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Close model settings' }));
     expect(screen.queryByLabelText('Thinking')).toBeNull();
   });
-  it('does not let preference changes interrupt active work', () => {
+  it('lets Neo’s preference change while it works, applying from its next reply', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
     expect(
       (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
-    ).toBe(true);
-    expect((screen.getByRole('slider', { name: 'Thinking' }) as HTMLInputElement).disabled).toBe(
-      true
+    ).toBe(false);
+    expect(screen.getByText('Neo switches after this reply')).toBeTruthy();
+  });
+  it('shows Neo’s saved preference rather than the session’s current model', () => {
+    render(
+      <NeoPreferences
+        sessionId="neo:root"
+        store={makeStore()}
+        onError={vi.fn()}
+        preference={{ model: 'haiku', provider: 'anthropic', thinkingLevel: 'off', saved: true }}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Model and thinking' }).textContent).toContain(
+      'Haiku'
     );
   });
   it('shows unsupported thinking honestly and keeps failed updates out of the label', async () => {

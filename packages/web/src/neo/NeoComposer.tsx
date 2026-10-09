@@ -5,7 +5,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import { NeoPreferences } from './NeoPreferences.tsx';
+import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { NEO_FILE_ACCEPT, attachmentMessage, useNeoAttachments } from './neo-attachments.ts';
 import { NeoAttachments } from './NeoAttachments.tsx';
@@ -33,7 +33,11 @@ export function NeoComposer({
   onError,
   onTranscript,
   onSend,
+  preference,
+  onPreferenceSaved,
 }: {
+  preference?: NeoPreference;
+  onPreferenceSaved?: () => void;
   store: SessionStore;
   sessionId: string;
   draft: string;
@@ -207,7 +211,13 @@ export function NeoComposer({
           >
             <NeoIcon name="plus" />
           </button>
-          <NeoPreferences sessionId={sessionId} store={store} onError={onError} />
+          <NeoPreferences
+            sessionId={sessionId}
+            store={store}
+            onError={onError}
+            preference={preference}
+            onSaved={onPreferenceSaved}
+          />
         </div>
         <span
           role="status"

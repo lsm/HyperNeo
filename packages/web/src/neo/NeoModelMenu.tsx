@@ -162,7 +162,7 @@ export function NeoModelMenu({
         <div class="mb-2 flex items-center justify-between">
           <span class="text-xs font-medium text-fg-muted">Thinking</span>
           <span class="text-[10px] text-fg-faint">
-            {working ? 'Available after this reply' : 'For this conversation'}
+            {working ? 'Neo switches after this reply' : 'For Neo and all its topics'}
           </span>
         </div>
         {options.length > 4 ? (

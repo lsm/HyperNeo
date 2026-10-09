@@ -660,6 +660,8 @@ export function NeoLive() {
               key={neo.sessionId}
               store={neo.store}
               sessionId={neo.sessionId}
+              preference={neo.snapshot?.preferences}
+              onPreferenceSaved={() => void neo.refresh()}
               draft={draft ?? ''}
               onDraft={(text) => {
                 if (
