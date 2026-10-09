@@ -18,6 +18,7 @@ import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { isActionRequired } from '../../lib/task-filters';
+import { getTaskStatusConfig } from '../../lib/task-status';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
@@ -249,16 +250,6 @@ const STATUS_COLORS: Record<string, string> = {
   archived: 'bg-fg-faint/60 ring-fg-muted/15',
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  in_progress: 'In progress',
-  open: 'Open',
-  blocked: 'Blocked',
-  review: 'Review',
-  done: 'Done',
-  cancelled: 'Cancelled',
-  archived: 'Archived',
-};
-
 function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => void }) {
   return (
     <button
@@ -273,7 +264,7 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
         )}
         aria-hidden="true"
       />
-      <span class="sr-only">{STATUS_LABELS[task.status] ?? task.status}: </span>
+      <span class="sr-only">{getTaskStatusConfig(task.status).label}: </span>
       <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">{task.title}</span>
       <span class="flex-none font-mono text-[11px] font-medium text-fg-faint">
         #{task.taskNumber}

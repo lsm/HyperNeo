@@ -45,7 +45,7 @@ const ACTION_GROUPS: StatusGroupDef[] = [
     matchFn: (t) =>
       t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'human_input_requested',
   },
-  { status: 'review', title: 'Awaiting Review', variant: 'purple' },
+  { status: 'review', title: 'Review', variant: 'purple' },
   {
     status: 'blocked',
     title: 'Blocked',

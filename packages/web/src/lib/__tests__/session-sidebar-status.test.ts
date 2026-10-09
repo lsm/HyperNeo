@@ -74,7 +74,7 @@ describe('getTaskSidebarStatus', () => {
 
   it('keeps completed and review task state authoritative', () => {
     expect(getTaskSidebarStatus({ status: 'done' }, [thinking]).label).toBe('Done');
-    expect(getTaskSidebarStatus({ status: 'review' }, [interrupted]).label).toBe('Awaiting Review');
+    expect(getTaskSidebarStatus({ status: 'review' }, [interrupted]).label).toBe('Review');
   });
 
   it('uses task lifecycle if no session is running', () => {

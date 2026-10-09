@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
+import { getTaskStatusConfig } from '../../lib/task-status';
 import {
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -45,21 +46,6 @@ interface SpaceTaskPaneProps {
   navigationSpaceId?: string;
   onClose?: () => void;
 }
-
-const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
-  draft: 'Draft',
-  open: 'Open',
-  in_progress: 'In Progress',
-  review: 'Awaiting Review',
-  approved: 'Approved',
-  done: 'Done',
-  blocked: 'Blocked',
-  cancelled: 'Cancelled',
-  archived: 'Archived',
-  rate_limited: 'Rate Limited',
-  usage_limited: 'Usage Limited',
-  stopped: 'Stopped',
-};
 
 const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
   active: 'Active',
@@ -499,7 +485,7 @@ export function SpaceTaskPane({
     void dropFilesRef.current?.(files);
   }, canSendThreadMessage);
   const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
-  const activitySummary = STATUS_LABELS[task.status];
+  const activitySummary = getTaskStatusConfig(task.status).label;
   const resolvedBanner = resolveActiveTaskBanner(
     task,
     hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[]
