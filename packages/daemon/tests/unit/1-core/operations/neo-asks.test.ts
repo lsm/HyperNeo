@@ -475,6 +475,14 @@ describe('isNeoCardAsk', () => {
   });
 });
 
+describe('neoPrompt reply length', () => {
+  test('keeps shortText to the outcome and the next action', () => {
+    expect(neoPrompt(null)).toContain(
+      'shortText is one or two short sentences: the outcome for what they asked'
+    );
+  });
+});
+
 describe('neoPrompt place resolution', () => {
   test('tells Neo to find the place with work.find and never guess a folder', () => {
     for (const prompt of [neoPrompt(null), neoPrompt('book-club')]) {
