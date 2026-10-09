@@ -1370,6 +1370,28 @@ describe('SpaceTaskManager', () => {
       expect(after?.pendingCheckpointType).toBeFalsy();
     });
 
+    it('reopens a blocked task through the same preparation as the direct writer', async () => {
+      const reopenedIds: string[] = [];
+      const reopening = new SpaceTaskManager(db as any, spaceId, undefined, undefined, (id) =>
+        reopenedIds.push(id)
+      );
+      const task = await reopening.createTask({ title: 'T', description: '' });
+      await reopening.startTask(task.id);
+      await reopening.failTask(task.id, 'stuck', 'human_input_requested');
+
+      const reviewing = await reopening.submitTaskForReview(task.id, {
+        submittedByNodeId: null,
+        reason: 'unblocked',
+      });
+
+      expect(reviewing).toMatchObject({
+        status: 'review',
+        blockReason: null,
+        pendingCheckpointType: 'task_completion',
+      });
+      expect(reopenedIds).toEqual([task.id]);
+    });
+
     it('rejects illegal source statuses before any pending-* fields get written', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
