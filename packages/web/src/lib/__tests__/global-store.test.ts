@@ -1069,12 +1069,23 @@ describe('GlobalStore - destroy (actual)', () => {
 
   it('should clear cleanup functions on destroy', async () => {
     mockHub.request.mockResolvedValue({ acknowledged: true });
+    const unsubscribers: Array<ReturnType<typeof vi.fn>> = [];
+    const track = () => {
+      const unsub = vi.fn();
+      unsubscribers.push(unsub);
+      return unsub;
+    };
+    mockHub.onEvent.mockImplementation(track);
+    mockHub.onConnection.mockImplementation(track);
     await store.initialize();
 
     const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
-    expect(privateStore.cleanupFunctions.length).toBe(7);
+    expect(unsubscribers.length).toBeGreaterThan(0);
+    for (const unsub of unsubscribers) expect(unsub).not.toHaveBeenCalled();
 
     store.destroy();
+
+    for (const unsub of unsubscribers) expect(unsub).toHaveBeenCalledTimes(1);
 
     expect(privateStore.cleanupFunctions.length).toBe(0);
   });

@@ -141,7 +141,6 @@ export class GlobalStore {
     this.cleanupFunctions.push(unsubReconnect);
 
     let prevShowArchived = this.settings.value?.showArchived ?? false;
-    this.cleanupFunctions.push(() => {});
     const checkSetting = (): void => {
       const current = this.settings.value?.showArchived ?? false;
       if (current !== prevShowArchived) {
