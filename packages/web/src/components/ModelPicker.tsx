@@ -28,6 +28,15 @@ interface ModelPickerProps {
   align?: 'left' | 'right';
 }
 
+function solidPillStyle(provider: string | undefined) {
+  const pill = providerPillStyle(provider);
+  return {
+    borderColor: pill.borderColor,
+    backgroundColor: 'var(--color-surface-raised)',
+    backgroundImage: `linear-gradient(${pill.backgroundColor}, ${pill.backgroundColor})`,
+  };
+}
+
 export function ModelPicker({
   activeModelInfo,
   activeModelLabel,
@@ -107,8 +116,8 @@ export function ModelPicker({
         aria-label="Choose model and thinking"
         aria-expanded={open}
         aria-controls={menuId}
-        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-        style={activeModelInfo ? providerPillStyle(activeProvider) : undefined}
+        class="flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+        style={activeModelInfo ? solidPillStyle(activeProvider) : undefined}
       >
         {waiting || busy ? (
           <Spinner size="sm" />
