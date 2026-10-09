@@ -1,33 +1,25 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
-import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
-import ToastContainer from '../islands/ToastContainer.tsx';
-import { Button } from '../components/ui/Button.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import { useNeo } from './useNeo.ts';
-import { NeoIcon } from './NeoIcon.tsx';
-import { neoAwaitingReply } from './processing-activity.ts';
-import { restoreNeoImages } from './neo-attachments.ts';
-import { NeoConversation } from './NeoConversation.tsx';
-import { NeoComposer } from './NeoComposer.tsx';
+import { Button } from '../components/ui/Button.tsx';
+import { useInputDraft } from '../hooks/useInputDraft.ts';
+import ToastContainer from '../islands/ToastContainer.tsx';
+import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
+import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { NeoActivity } from './NeoActivity.tsx';
+import { NeoAskCard } from './NeoAskCard.tsx';
+import { NeoComposer } from './NeoComposer.tsx';
+import { NeoConversation } from './NeoConversation.tsx';
+import { NeoIcon } from './NeoIcon.tsx';
+import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
 import { NeoWorkQuestionResource } from './NeoWorkQuestionResource.tsx';
-import { NeoSessionPane } from './NeoSessionPane.tsx';
-import { publicationConversationId } from './useNeoPublications.ts';
-import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
-import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
-import { useNeoSheetSwipe } from './useNeoSheetSwipe.ts';
-import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
-import { useInputDraft } from '../hooks/useInputDraft.ts';
-import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
-import { useNeoAttachments } from './neo-attachments.ts';
-import { projectNeoConcernBoard } from './neo-concern-board.ts';
-import { neoWorkPresentation } from './work-actions.ts';
-import { NeoAskCard } from './NeoAskCard.tsx';
 import { groupNeoAsks } from './neo-asks.ts';
+import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
+import { projectNeoConcernBoard } from './neo-concern-board.ts';
+import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import {
   NEO_QUICK_CHOICE_LABEL,
   type NeoScene,
@@ -35,6 +27,14 @@ import {
   type NeoSceneRef,
   projectNeoScenes,
 } from './neo-scenes.ts';
+import { neoAwaitingReply } from './processing-activity.ts';
+import { neoWorkSummaries, neoWorkSummary } from './public-conversation.ts';
+import { useNeo } from './useNeo.ts';
+import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
+import { publicationConversationId } from './useNeoPublications.ts';
+import { useNeoSheetSwipe } from './useNeoSheetSwipe.ts';
+import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
+import { neoWorkPresentation } from './work-actions.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 
@@ -447,6 +447,7 @@ export function NeoLive() {
           )
             nearBottom.current = false;
         }}
+        onClick={blurComposerOnTap}
         onScroll={(event) => recordScroll(event.currentTarget)}
         class="neo-scroll min-h-0 w-full flex-1 overflow-y-auto"
       >

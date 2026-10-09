@@ -11,40 +11,33 @@ import type {
 import {
   DEFAULT_LOBBY_FEATURES,
   DEFAULT_WORKER_FEATURES,
-  normalizeThinkingLevel,
   generateUUID,
+  normalizeThinkingLevel,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKSystemMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
-import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
-import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
+import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
+import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
-import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import {
   ChatDisplayModeContext,
   MessageHydrationContext,
   resolveChatDisplayMode,
 } from '../components/sdk/chat-display-mode.ts';
-import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
-import {
-  type ChatTurn,
-  backgroundTasksLabel,
-  buildChatTurns,
-  countTopLevelTasks,
-  liveTurnActivity,
-} from '../lib/chat-turns.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
+import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
+import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import {
-  UnavailableSessionView,
   type UnavailableAction,
+  UnavailableSessionView,
 } from '../components/UnavailableSessionView.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
@@ -53,18 +46,26 @@ import { Modal } from '../components/ui/Modal.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { WorkspaceSelector } from '../components/WorkspaceSelector.tsx';
 import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
+import { type FileDropHandler, useImageDropZone } from '../hooks';
 import { getProviderLabel } from '../hooks/index.ts';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useChatComposerController } from '../hooks/useChatComposerController.ts';
-import { useImageDropZone, type FileDropHandler } from '../hooks';
-import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.ts';
-import { useRunningToolUseIds } from '../hooks/useRunningToolUseIds.ts';
+import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { useModal } from '../hooks/useModal.ts';
+import { useRunningToolUseIds } from '../hooks/useRunningToolUseIds.ts';
 import { useScrollToMessage } from '../hooks/useScrollToMessage.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { updateSession } from '../lib/api-helpers.ts';
+import { blurComposerOnTap } from '../lib/blur-composer-on-tap.ts';
+import {
+  backgroundTasksLabel,
+  buildChatTurns,
+  type ChatTurn,
+  countTopLevelTasks,
+  liveTurnActivity,
+} from '../lib/chat-turns.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import {
@@ -72,9 +73,9 @@ import {
   navigateToSettings,
   replaceOverlayHistory,
 } from '../lib/router.ts';
-import { sessionStore, type SessionStore } from '../lib/session-store.ts';
 import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
-import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
+import { type SessionStore, sessionStore } from '../lib/session-store.ts';
+import { type SearchMessageLoadTarget, searchHighlightMessageIdSignal } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState, globalSettings } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -1364,6 +1365,7 @@ export default function ChatContainer({
         <div
           ref={messagesContainerRef}
           data-messages-container
+          onClick={blurComposerOnTap}
           class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
           style={{
             WebkitOverflowScrolling: 'touch',
