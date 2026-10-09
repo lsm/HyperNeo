@@ -52,6 +52,13 @@ export class NeoWorkDriverTargetRepository {
     return row ? (JSON.parse(row.ref) as WorkRef) : null;
   }
 
+  readLiveStatus(workId: string): WorkStatus | null {
+    const row = this.db
+      .prepare('SELECT live_status AS status FROM neo_work_driver_targets WHERE work_id = ?')
+      .get(workId) as { status: WorkStatus | null } | null | undefined;
+    return row?.status ?? null;
+  }
+
   readStartedAt(workId: string): number | null {
     if (!this.hasTable()) return null;
     const row = this.db
