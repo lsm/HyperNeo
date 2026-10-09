@@ -419,6 +419,8 @@ describe('neoPrompt', () => {
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');
+    expect(prompt).toContain('or from precedent: what done meant for the same kind of work');
+    expect(prompt).toContain('corrects you with something lasting');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
 });
