@@ -605,11 +605,12 @@ export function NeoLive() {
                   <NeoAskCard
                     key={ask.ask.id}
                     view={ask}
+                    drivers={drivers}
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
-                  >
-                    {ask.scenes.map((scene) => renderScene(scene, ask.group))}
-                  </NeoAskCard>
+                    onOpen={(id) => openScene({ kind: 'work', id })}
+                    renderCard={(scene) => renderScene(scene, ask.group)}
+                  />
                 ))}
                 {group.scenes.map((scene) => renderScene(scene, group.key))}
               </section>

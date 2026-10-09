@@ -24,3 +24,25 @@ export function neoWorkDriverLink(driver: NeoWorkDriverReceipt | undefined): str
   if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
   return !driver.daemon && /^\/(?!\/)/.test(link) ? link : null;
 }
+
+const shortApps: Record<string, string> = {
+  hyperneo: 'HyperNeo',
+  space: 'Space',
+  'codex-desktop': 'Codex',
+  'claude-desktop': 'Claude Code',
+  'copilot-cli': 'GitHub Copilot',
+  opencode: 'OpenCode',
+};
+
+const logos: Record<string, string> = {
+  'claude-desktop': 'anthropic',
+  'codex-desktop': 'anthropic-codex',
+};
+
+export function neoWorkDriverApp(driver: NeoWorkDriverReceipt): string {
+  return shortApps[driver.adapter] ?? driver.adapter;
+}
+
+export function neoWorkDriverLogo(driver: NeoWorkDriverReceipt | undefined): string | undefined {
+  return driver ? logos[driver.adapter] : undefined;
+}

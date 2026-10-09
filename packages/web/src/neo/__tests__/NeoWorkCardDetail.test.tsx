@@ -70,11 +70,16 @@ const show = (item: NeoWork, onOpen?: (id: string) => void, onAction = vi.fn()) 
   return { ...result, action: onAction, card: screen.getByRole('article', { name: item.title }) };
 };
 
+const names = (card: HTMLElement) =>
+  within(card)
+    .queryAllByRole('button')
+    .map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
 afterEach(cleanup);
 
 describe('NeoWorkCard detail opening', () => {
   it.each(['queued', 'reported', 'cancelled'] as const)(
-    'makes a %s card one keyboard-reachable opener with at most its card menu',
+    'makes a %s card one keyboard-reachable opener with Open chat and at most its card menu',
     (status) => {
       const open = vi.fn();
       const { card } = show(work('r', status), open);
@@ -82,16 +87,16 @@ describe('NeoWorkCard detail opening', () => {
       expect(card.getAttribute('tabindex')).toBe('0');
       expect(within(card).getByRole('heading').textContent).toBe('Title r');
       expect(card.querySelector('details, a')).toBeNull();
-      expect(
-        within(card)
-          .queryAllByRole('button')
-          .map((button) => button.getAttribute('aria-label'))
-      ).toEqual(status === 'queued' ? ['Card actions'] : []);
+      expect(names(card)).toEqual(
+        status === 'queued' ? ['Card actions', 'Open chat'] : ['Open chat']
+      );
       expect(within(card).queryByText('Report r')).toBeNull();
       fireEvent.keyDown(card, { key: 'Enter' });
       expect(open).toHaveBeenCalledExactlyOnceWith('r');
       fireEvent.click(within(card).getByRole('heading'));
       expect(open).toHaveBeenCalledTimes(2);
+      fireEvent.click(within(card).getByRole('button', { name: 'Open chat' }));
+      expect(open).toHaveBeenCalledTimes(3);
     }
   );
 
@@ -135,17 +140,29 @@ describe('NeoWorkCard detail opening', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it('makes a failed card an opener with only its card menu', () => {
+  it('makes a failed card an opener with its card menu and Open chat', () => {
     const open = vi.fn();
     const { card } = show(work('f', 'failed', { sessionId: 'f-session' }), open);
-    expect(
-      within(card)
-        .queryAllByRole('button')
-        .map((button) => button.getAttribute('aria-label'))
-    ).toEqual(['Card actions']);
+    expect(names(card)).toEqual(['Card actions', 'Open chat']);
     expect(within(card).getByText('Failed')).toBeTruthy();
     fireEvent.keyDown(card, { key: 'Enter' });
     expect(open).toHaveBeenCalledExactlyOnceWith('f');
+  });
+
+  it('retries a hand-off that never started from its footer', () => {
+    const action = vi.fn();
+    const failed = work('f', 'failed', {
+      sessionId: null,
+      report: 'Could not start the execution: logged out',
+    });
+    const { card } = show(failed, vi.fn(), action);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry' }));
+    expect(action).toHaveBeenCalledExactlyOnceWith('f', 'retry');
+    cleanup();
+    render(<NeoWorkCard work={failed} busy={true} disabled={false} onAction={action} />);
+    expect((screen.getByRole('button', { name: 'Retrying…' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
   });
 
   it('offers no Open chat before the work has a chat', () => {

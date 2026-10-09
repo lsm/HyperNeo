@@ -118,6 +118,7 @@ export function useNeo() {
       const hub = await connectionManager.getHub();
       const call = {
         start: ['neo.work.start', { id }],
+        retry: ['neo.work.retry', { id }],
         cancel: ['neo.work.cancel', { id }],
         done: ['neo.work.close', { id, outcome: 'done' }],
         close: ['neo.work.close', { id, outcome: 'cancelled' }],
