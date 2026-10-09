@@ -20,7 +20,7 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { ensureStartFolder } from './start-folder.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 import {
   boundExchange,
@@ -685,17 +685,7 @@ export function selectClaudeStartFolder(
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps
 ): Gate<string> {
-  const { place } = request;
-  if (place.spaceId) {
-    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
-  }
-  if (place.machine !== deps.machine) {
-    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
-  }
-  if (!place.folder) {
-    return { reason: reject('invalid_place', 'A Claude Code session needs a folder to work in.') };
-  }
-  return ensureStartFolder(place.folder, request.createFolder, deps);
+  return selectLocalStartFolder(request, deps, 'A Claude Code session needs a folder to work in.');
 }
 
 async function runToExit(

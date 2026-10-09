@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, normalize, relative, sep } from 'node:path';
-import type { Rejected } from './types.ts';
+import type { Rejected, StartRequest } from './types.ts';
 import { reject } from './work-operations.ts';
 
 export interface StartFolderDeps {
@@ -51,4 +51,20 @@ export function ensureStartFolder(
     return { reason: reject('invalid_place', `Could not create ${folder}: ${why}`) };
   }
   return { value: folder };
+}
+
+export function selectLocalStartFolder(
+  request: Pick<StartRequest, 'place' | 'createFolder'>,
+  deps: StartFolderDeps & { machine: string },
+  noFolder: string
+): { value: string } | { reason: Rejected } {
+  const { place } = request;
+  if (place.spaceId) {
+    return { reason: reject('invalid_place', 'Spaces take work through the space adapter.') };
+  }
+  if (place.machine !== deps.machine) {
+    return { reason: reject('invalid_place', `${place.name} is on ${place.machine}, not here.`) };
+  }
+  if (!place.folder) return { reason: reject('invalid_place', noFolder) };
+  return ensureStartFolder(place.folder, request.createFolder, deps);
 }
