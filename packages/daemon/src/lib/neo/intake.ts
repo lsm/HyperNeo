@@ -12,6 +12,7 @@ import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoRouteChoice, NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 const Input = z
   .object({
@@ -85,8 +86,7 @@ export function requireNeoIntakeConversation(
   session: Target | null
 ): Gate<string> {
   const id = root?.sessionId.startsWith('neo:') ? root.sessionId.slice(4) : null;
-  return root?.kind === 'neo' &&
-    root.concernId === null &&
+  return isMainNeoBinding(root) &&
     id &&
     z.uuid().safeParse(id).success &&
     session?.id === root.sessionId &&

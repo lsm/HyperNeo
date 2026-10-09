@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { SecurityAgent } from '../../../../src/lib/github/security-agent';
+import { SecurityAgent, securityAgentEnv } from '../../../../src/lib/github/security-agent';
 
 describe('SecurityAgent', () => {
   let aiCheckSpy: ReturnType<typeof spyOn> | undefined;
@@ -356,5 +356,21 @@ Let me know if this works.
 
       expect(agent).toBeDefined();
     });
+  });
+});
+
+describe('securityAgentEnv', () => {
+  test('puts the key in the query env for its type without touching the base', () => {
+    const base = { PATH: '/bin', ANTHROPIC_API_KEY: 'daemon-key' };
+    expect(securityAgentEnv(base, 'oauth', 'gh-token')).toEqual({
+      PATH: '/bin',
+      ANTHROPIC_API_KEY: 'daemon-key',
+      CLAUDE_CODE_OAUTH_TOKEN: 'gh-token',
+    });
+    expect(securityAgentEnv(base, undefined, 'gh-key')).toEqual({
+      PATH: '/bin',
+      ANTHROPIC_API_KEY: 'gh-key',
+    });
+    expect(base).toEqual({ PATH: '/bin', ANTHROPIC_API_KEY: 'daemon-key' });
   });
 });

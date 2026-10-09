@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { SessionInspectionRecord } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { SpaceSessionMessage } from '../session/space-session-reads.ts';
+import { isNeoCoordinatorBinding } from '../neo/binding-roles.ts';
 
 const InputSchema = z
   .object({
@@ -75,8 +76,7 @@ export function requireInspectionCaller(
       caller.role === 'neo' &&
       binding &&
       binding.sessionId === caller.sessionId &&
-      ((binding.kind === 'neo' && binding.concernId === null) ||
-        (binding.kind === 'concern' && binding.concernId !== null)))
+      isNeoCoordinatorBinding(binding))
     ? { value: input }
     : { reason: { accepted: false, reason: 'inspection_forbidden' } };
 }

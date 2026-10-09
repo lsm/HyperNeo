@@ -221,6 +221,20 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
+type DriverStatusReply = z.infer<typeof DriverStatusSchema>;
+type DriverStatus = Extract<DriverStatusReply, { ok: true }>['value'];
+
+function parseDriverStatusReply(outcome: OperationOutcome): DriverStatusReply | null {
+  if (outcome.kind !== 'completed') return null;
+  const reply = DriverStatusSchema.safeParse(outcome.value);
+  return reply.success ? reply.data : null;
+}
+
+function parseDriverStatus(outcome: OperationOutcome): DriverStatus | null {
+  const reply = parseDriverStatusReply(outcome);
+  return reply?.ok ? reply.value : null;
+}
+
 export function readDriverLive(outcome: OperationOutcome): {
   status: WorkStatus;
   lastActivityAt: number;
@@ -228,10 +242,9 @@ export function readDriverLive(outcome: OperationOutcome): {
   link?: string;
   remoteLink?: string;
 } | null {
-  if (outcome.kind !== 'completed') return null;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return null;
-  const { status, lastActivityAt, lastReplyAt, link, remoteLink } = reply.data.value as {
+  const value = parseDriverStatus(outcome);
+  if (!value) return null;
+  const { status, lastActivityAt, lastReplyAt, link, remoteLink } = value as {
     status: WorkStatus;
     lastActivityAt: number;
     lastReplyAt?: number;
@@ -266,10 +279,9 @@ export function readDriverSendBaseline(
   remote: boolean
 ): number | null {
   const fallback = remote ? null : sentAt;
-  if (outcome.kind !== 'completed') return fallback;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return fallback;
-  const { status, lastActivityAt } = reply.data.value;
+  const value = parseDriverStatus(outcome);
+  if (!value) return fallback;
+  const { status, lastActivityAt } = value;
   return status === 'running' || status === 'needs_you' ? null : lastActivityAt;
 }
 
@@ -283,10 +295,7 @@ export function messageOpening(message: string): string {
 }
 
 function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
-  if (outcome.kind !== 'completed') return null;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return null;
-  return reply.data.value.recentInputs ?? null;
+  return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 
 export function readDriverSent(outcome: OperationOutcome, message: string): DriverSent | null {
@@ -310,10 +319,9 @@ export function readDriverLanded(
 export function readDriverNeedsYou(
   outcome: OperationOutcome
 ): { needsYou: boolean; since: number; lastReply?: string } | null {
-  if (outcome.kind !== 'completed') return null;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return null;
-  const { status, lastActivityAt, lastReply } = reply.data.value;
+  const value = parseDriverStatus(outcome);
+  if (!value) return null;
+  const { status, lastActivityAt, lastReply } = value;
   return { needsYou: status === 'needs_you', since: lastActivityAt, lastReply };
 }
 
@@ -361,10 +369,9 @@ export const NEO_WORK_STALL_MS = 20 * 60_000;
 export function readDriverActivity(
   outcome: OperationOutcome
 ): { status: string; lastActivityAt: number; lastReply?: string } | null {
-  if (outcome.kind !== 'completed') return null;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success || !reply.data.ok) return null;
-  const { status, lastActivityAt, lastReply } = reply.data.value;
+  const value = parseDriverStatus(outcome);
+  if (!value) return null;
+  const { status, lastActivityAt, lastReply } = value;
   return { status, lastActivityAt, lastReply };
 }
 
@@ -478,21 +485,19 @@ export function readDriverSettlement(
   requireFresh = false,
   opening: string | null = null
 ): { status: 'reported' | 'failed'; report: string } | null {
-  if (outcome.kind !== 'completed') return null;
-  const reply = DriverStatusSchema.safeParse(outcome.value);
-  if (!reply.success) return null;
-  if (!reply.data.ok) {
-    return reply.data.reason === 'not_found'
-      ? { status: 'failed', report: `The work is gone: ${reply.data.detail}` }
+  const reply = parseDriverStatusReply(outcome);
+  if (!reply) return null;
+  if (!reply.ok) {
+    return reply.reason === 'not_found'
+      ? { status: 'failed', report: `The work is gone: ${reply.detail}` }
       : null;
   }
-  const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.data.value;
-  if (requireFresh && startedAt === null)
-    return readUnanchoredSettlement(work, reply.data.value, now);
+  const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.value;
+  if (requireFresh && startedAt === null) return readUnanchoredSettlement(work, reply.value, now);
   const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
   if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
   const said =
-    driverExchangeReport(exchange, exchangeCut ?? false, opening) ?? reply.data.value.lastReply;
+    driverExchangeReport(exchange, exchangeCut ?? false, opening) ?? reply.value.lastReply;
   if (status === 'done') {
     const staleReply =
       requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;
