@@ -14,6 +14,7 @@ import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-se
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import { resolveMetadataSessionSpace, type SpaceTaskMetadataDependencies } from './metadata.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
+import { taskRejectionKind, type TaskRejectionKind } from './transitions.ts';
 import { Logger } from '../logger.ts';
 import {
   readDirectFinalizationRequest,
@@ -28,19 +29,16 @@ export type ReviewSubmissionDependencies = Pick<SpaceTaskMetadataDependencies, '
     getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'submitTaskForReview'>;
   };
 
-const WORKFLOW_SUBMISSION_REJECTIONS: [substring: string, reason: string][] = [
-  ['Task not found:', 'review_submission_unavailable'],
-  ["Cannot re-submit task in 'review'", 'review_submission_invalid_transition'],
-  ['Invalid status transition from', 'review_submission_invalid_transition'],
-  [
-    'cannot be submitted for review while its direct start is queued',
-    'review_submission_invalid_transition',
-  ],
-];
+const SUBMISSION_REJECTIONS: Partial<Record<TaskRejectionKind, string>> = {
+  task_not_found: 'review_submission_unavailable',
+  checkpoint_not_refreshable: 'review_submission_invalid_transition',
+  invalid_transition: 'review_submission_invalid_transition',
+  direct_start_queued: 'review_submission_invalid_transition',
+};
 
 function resolveWorkflowSubmissionRejection(error: unknown): string | undefined {
-  const message = error instanceof Error ? error.message : '';
-  return WORKFLOW_SUBMISSION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
+  const kind = taskRejectionKind(error);
+  return kind && SUBMISSION_REJECTIONS[kind];
 }
 
 type Ack = DirectOutcomeAcknowledgement;

@@ -7,6 +7,7 @@ import { DirectTaskExecutionRepository } from '../../storage/repositories/direct
 import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { StaleTaskGuardError, type SpaceTaskManager } from './task-manager.ts';
+import { taskRejectionKind } from './transitions.ts';
 import { resolveMetadataSessionSpace } from './metadata.ts';
 import {
   resolveCancellationRoute,
@@ -30,15 +31,6 @@ export type CancelPolicyContext = SpaceMcpSessionPolicyContext &
     emitTaskUpdated?: (spaceId: string, task: SpaceTask) => Promise<void>;
     expediteDirectStart?: (attemptId: string) => void;
   };
-
-const WORKFLOW_CANCELLATION_REJECTIONS: [substring: string, reason: string][] = [
-  ['Invalid status transition from', 'cancellation_invalid_transition'],
-];
-
-function resolveWorkflowCancellationRejection(error: unknown): string | undefined {
-  const message = error instanceof Error ? error.message : '';
-  return WORKFLOW_CANCELLATION_REJECTIONS.find(([substring]) => message.includes(substring))?.[1];
-}
 
 type Ack = DirectOutcomeAcknowledgement;
 const reject = (reason: string): { reason: Ack } => ({ reason: { accepted: false, reason } });
@@ -105,7 +97,7 @@ export function requireCancellerInSpace(
 function mapCancellationFailure(error: unknown): Ack {
   if (error instanceof StaleTaskGuardError)
     return { accepted: false, reason: 'cancellation_unavailable' };
-  if (!resolveWorkflowCancellationRejection(error)) throw error;
+  if (taskRejectionKind(error) !== 'invalid_transition') throw error;
   return { accepted: false, reason: 'cancellation_invalid_transition' };
 }
 
