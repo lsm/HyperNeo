@@ -481,6 +481,31 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('looks for its sent message among the inputs after the baseline', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'running',
+        lastActivityAt: 5_000,
+        recentInputs: [{ at: 2_000, text: 'Fix the bug please' }],
+      },
+    }));
+    try {
+      await service.start('work-1');
+      service.driverTargets.recordStartedAt('work-1', null);
+      service.driverTargets.recordSent('work-1', { inputBefore: 1_000, opening: 'Fix the bug' });
+      await service.refreshDriverWork();
+      expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
+        ref,
+        since: 1_000,
+      });
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(2_000);
+    } finally {
+      db.close();
+    }
+  });
+
   test('asks the proposing session to check idle work against its done-when list', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({

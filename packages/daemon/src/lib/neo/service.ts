@@ -728,16 +728,17 @@ export class NeoService {
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
     const startedAt = this.driverTargets.readStartedAt(work.id);
+    const sent = this.driverTargets.readSent(work.id);
+    const since = startedAt ?? sent?.inputBefore ?? null;
     const outcome = await invokeOperation(
       this.sessions.getOperationRegistry(),
       'work.status',
-      { ref, ...(startedAt !== null ? { since: startedAt } : {}) },
+      { ref, ...(since !== null ? { since } : {}) },
       driverWorkCaller(work)
     );
     const live = readDriverLive(outcome);
     if (live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink))
       this.notifyChanged();
-    const sent = this.driverTargets.readSent(work.id);
     const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
     if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
     const settled = readDriverSettlement(

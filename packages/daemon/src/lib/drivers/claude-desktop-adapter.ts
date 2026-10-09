@@ -439,7 +439,7 @@ export function claudeTranscriptState(
   return {
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
-    inputs: recentWorkInputs(inputs),
+    inputs: recentWorkInputs(inputs, since),
     lastAt,
     ...(since !== undefined
       ? {
