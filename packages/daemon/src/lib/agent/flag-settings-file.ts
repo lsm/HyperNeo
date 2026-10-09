@@ -34,7 +34,7 @@ export function buildFlagSettings(
 ): Record<string, unknown> | null {
   const { settings, sandbox } = options;
   if (!settings || typeof settings !== 'object' || !settings.env) return null;
-  if (!sandbox) return settings;
+  if (!sandbox) return { ...settings };
   return {
     ...settings,
     sandbox:
