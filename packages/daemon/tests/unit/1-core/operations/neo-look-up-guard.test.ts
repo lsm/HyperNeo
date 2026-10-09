@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import {
   bashDenial,
+  decideLookUp,
   isSecretPath,
   neoLookUpDenial,
   neoLookUpGuard,
   neoSecretReadRules,
+  requireLookUpTool,
 } from '../../../../src/lib/neo/look-up-guard.ts';
 
 const scope = {
@@ -271,5 +273,53 @@ describe('neoSecretReadRules', () => {
         'Read(~/.hyperneo/**)',
       ])
     );
+  });
+});
+
+describe('requireLookUpTool', () => {
+  test.each([
+    ['WebSearch', { reason: { denial: null } }],
+    ['mcp__hyperneo-operations__invoke', { reason: { denial: null } }],
+    ['Read', { value: { denial: null } }],
+    ['Bash', { value: { denial: null } }],
+    ['Write', { reason: { denial: 'Write is not a look-up tool' } }],
+  ])('%s', (tool, expected) => {
+    expect(requireLookUpTool(tool)).toEqual(expected);
+  });
+});
+
+describe('decideLookUp', () => {
+  const project = '/home/fictional/focus/app';
+  const here = { ...scope, cwd: project };
+  const facts = (links: Record<string, string> = {}, present: string[] = []) => ({
+    realPath: (path: string) => links[path] ?? path,
+    exists: (path: string) => present.includes(path),
+  });
+
+  test('follows the real path the facts report', () => {
+    const link = `${project}/notes.md`;
+    expect(decideLookUp('Read', { file_path: link }, here, facts())).toBeNull();
+    expect(
+      decideLookUp(
+        'Read',
+        { file_path: link },
+        here,
+        facts({ [link]: '/home/fictional/.ssh/notes.md' })
+      )
+    ).toBe('that file may hold secrets');
+  });
+
+  test('checks bash arguments that exist through the facts', () => {
+    const command = 'git blame notes.md';
+    const link = `${project}/notes.md`;
+    expect(decideLookUp('Bash', { command }, here, facts())).toBeNull();
+    expect(
+      decideLookUp(
+        'Bash',
+        { command },
+        here,
+        facts({ [link]: '/home/fictional/.aws/notes.md' }, [link])
+      )
+    ).toContain('may hold secrets');
   });
 });
