@@ -498,6 +498,14 @@ export class NeoService {
       },
       { subscriberName: 'neo-work-return' }
     );
+    const offStatus = events.subscribe(
+      'messages.statusChanged',
+      ({ sessionId, status }) => {
+        if (status === 'failed' && sessionId && this.repo.getBindingBySession(sessionId))
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-ask-delivery' }
+    );
     const offDeleted = events.subscribe(
       'session.deleted',
       ({ sessionId }) => this.forgetSession(sessionId),
@@ -505,6 +513,7 @@ export class NeoService {
     );
     this.unsubscribe = () => {
       offUpdated();
+      offStatus();
       offDeleted();
     };
   }

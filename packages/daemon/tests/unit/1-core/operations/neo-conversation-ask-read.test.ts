@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
+import {
+  createNeoConversationAskReadOperation,
+  presentNeoAskDelivery,
+} from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -141,6 +144,29 @@ describe('durable public ask reads', () => {
     }
   );
 
+  test('an ask whose delivery failed reads back as not delivered', async () => {
+    ledger.append(ask(1));
+    ledger.append(ask(2));
+    const statuses = new Map([[ask(2).requestId, 'failed']]);
+    const registry = createOperationRegistry([
+      createNeoConversationAskReadOperation(
+        repo,
+        ledger,
+        (_session, messageId) => statuses.get(messageId) ?? 'consumed'
+      ),
+    ]);
+    const read = (await invokeOperation(
+      registry,
+      'neo.conversation.asks.read',
+      { conversationId },
+      human
+    )) as { kind: 'completed'; value: { items: Array<{ requestId: string; delivery?: unknown }> } };
+    expect(read.value.items.map((item) => [item.requestId, item.delivery])).toEqual([
+      [ask(1).requestId, undefined],
+      [ask(2).requestId, { state: 'failed' }],
+    ]);
+  });
+
   test('ascending pagination excludes interleaved foreign rows and retains empty-tail cursor', async () => {
     const first = ledger.append(ask(1));
     expect(ledger.append(ask(2, foreignId)).accepted).toBe(true);
@@ -227,5 +253,14 @@ describe('durable public ask reads', () => {
       db.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('presentNeoAskDelivery', () => {
+  test('marks only failed sends', () => {
+    const items = [1, 2, 3].map((index) => ({ ...ask(index), sequence: index, createdAt: 'x' }));
+    expect(
+      presentNeoAskDelivery(items, ['consumed', 'failed', null]).map((item) => item.delivery)
+    ).toEqual([undefined, { state: 'failed' }, undefined]);
   });
 });
