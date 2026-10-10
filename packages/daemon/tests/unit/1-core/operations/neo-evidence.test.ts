@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  combineNeoEvidenceReads,
   type NeoEvidence,
   type NeoEvidenceTold,
   neoEvidenceSignature,
@@ -137,5 +138,35 @@ describe('planNeoDoneCheck', () => {
     ['one still waiting for review', [open], told([open]), quiet, 'unchanged'],
   ])('%s', (_label, evidence, before, card, plan) => {
     expect(planNeoDoneCheck(evidence, before, { ok: true, okAt: now }, now, card)).toBe(plan);
+  });
+});
+
+describe('combineNeoEvidenceReads', () => {
+  const read = (key: string, ok: boolean, okAt: number) => ({
+    evidence: [{ ...open, key }],
+    read: { ok, okAt },
+  });
+  test.each<
+    [
+      string,
+      Parameters<typeof combineNeoEvidenceReads>[0],
+      ReturnType<typeof combineNeoEvidenceReads>,
+    ]
+  >([
+    ['no pack with evidence', [null, undefined], null],
+    ['one pack', [read('a', true, 5)], read('a', true, 5)],
+    [
+      'two packs, one of them failing to read',
+      [read('a', true, 5), null, read('b', false, 3)],
+      {
+        evidence: [
+          { ...open, key: 'a' },
+          { ...open, key: 'b' },
+        ],
+        read: { ok: false, okAt: 3 },
+      },
+    ],
+  ])('%s', (_label, reads, combined) => {
+    expect(combineNeoEvidenceReads(reads)).toEqual(combined);
   });
 });

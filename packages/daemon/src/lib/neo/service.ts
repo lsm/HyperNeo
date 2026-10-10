@@ -105,7 +105,15 @@ import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
-import { neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
+import {
+  combineNeoEvidenceReads,
+  type NeoEvidenceRead,
+  neoEvidenceSignature,
+  planNeoDoneCheck,
+} from './evidence.ts';
+import { createCodingPack } from './packs/coding/pack.ts';
+import { NEO_DEFAULT_PACKS, neoPacks } from './packs/index.ts';
+import type { NeoPack } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
   neoWorkPrEvidence,
@@ -159,7 +167,7 @@ type NeoWorkPrCard = {
   row: NeoWorkPrRow | null;
   session: boolean;
 };
-type NeoWorkPrRefreshed = { next: NeoWorkPrRow | null; read: boolean };
+type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null };
 type NeoNeedsYouCard = {
   state: ReturnType<typeof readDriverNeedsYou>;
   noted: number | null;
@@ -187,6 +195,8 @@ export class NeoService {
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly workChecks: NeoWorkCheckRepository;
+  filePacks: readonly NeoPack[] = [];
+  private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -344,6 +354,13 @@ export class NeoService {
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
+    this.builtinPacks = [
+      createCodingPack({
+        readPrs: (urls) => this.readPrs(urls),
+        workPrs: this.workPrs,
+        record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
+      }),
+    ];
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -1006,11 +1023,11 @@ export class NeoService {
       'result:row'
     )
     .pipe(
-      async (work: NeoWork, row: NeoWorkPrRow) => {
-        const prs = await this.readPrs(row.prs.map((pr) => pr.url));
-        if (!prs) this.workPrs.recordFailedRead(work.id, Date.now());
-        return { next: prs ? this.recordWorkPrs(work.id, prs, row) : row, read: !!prs };
-      },
+      async (work: NeoWork) => ({
+        read: combineNeoEvidenceReads(
+          await Promise.all(this.packs().map((pack) => pack.readEvidence?.(work)))
+        ),
+      }),
       ['work', 'row'],
       'refreshed'
     )
@@ -1023,14 +1040,11 @@ export class NeoService {
         told: NeoWorkTold,
         now: number
       ) =>
-        refreshed.next
-          ? planNeoDoneCheck(
-              neoWorkPrEvidence(refreshed.next.prs),
-              told.row,
-              { ok: refreshed.read, okAt: refreshed.next.readOkAt },
-              now,
-              { quietSince: work.updatedAt, remindable: !card.ask || card.ask.status === 'open' }
-            )
+        refreshed.read
+          ? planNeoDoneCheck(refreshed.read.evidence, told.row, refreshed.read.read, now, {
+              quietSince: work.updatedAt,
+              remindable: !card.ask || card.ask.status === 'open',
+            })
           : 'wait',
       ['work', 'card', 'refreshed', 'told', 'now'],
       'plan'
@@ -1053,19 +1067,27 @@ export class NeoService {
         await this.deliverDoneCheck(
           work,
           card.goal,
-          refreshed.next,
+          this.workPrs.get(work.id),
           delivery === 'remind'
             ? {
                 ask: card.ask,
                 ready: true,
                 followedAt: told.row?.toldAt ?? work.updatedAt,
               }
-            : { stale: !refreshed.read, ask: card.ask }
+            : { stale: !refreshed.read?.read.ok, ask: card.ask }
         );
       },
       ['work', 'card', 'refreshed', 'told', 'delivery']
     )
     .endAsync('delivery') as (workId: string, now: number) => Promise<unknown>;
+
+  packs(): NeoPack[] {
+    return neoPacks({
+      builtins: this.builtinPacks,
+      filePacks: this.filePacks,
+      enabled: NEO_DEFAULT_PACKS,
+    });
+  }
 
   private recordWorkPrs(
     workId: string,
