@@ -92,9 +92,21 @@ export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
 type StoredPrs = {
   prs: readonly NeoWorkPr[];
   delivered: string | null;
+  deliveredAt?: number | null;
+  reminded?: string | null;
   readAt: number;
   readOkAt: number;
 };
+
+const NEO_WORK_PR_READY_MS = 30 * 60_000;
+
+const isNeoWorkPrReady = (prs: readonly NeoWorkPr[]) =>
+  prs.some(
+    (pr) =>
+      pr.state === 'OPEN' &&
+      pr.review === 'approved' &&
+      (pr.checks === 'passing' || pr.checks === 'none')
+  );
 
 export function shouldReadNeoWorkPrs(
   stored: StoredPrs | null,
@@ -109,12 +121,42 @@ export function shouldReadNeoWorkPrs(
 export function planNeoWorkPrRefresh(
   row: StoredPrs,
   read: boolean,
-  now: number
-): 'wait' | 'unchanged' | 'deliver' {
+  now: number,
+  card: { quietSince: number; remindable: boolean } = { quietSince: 0, remindable: true }
+): 'wait' | 'unchanged' | 'deliver' | 'remind' {
   const seen = neoWorkPrSignature(row.prs) === row.delivered;
   if (!read) return !seen && now - row.readOkAt >= NEO_WORK_PR_STALE_MS ? 'deliver' : 'wait';
   if (isNeoWorkPrWaiting(row.prs)) return 'wait';
-  return seen ? 'unchanged' : 'deliver';
+  if (!seen) return 'deliver';
+  const stalled =
+    isNeoWorkPrReady(row.prs) &&
+    card.remindable &&
+    row.reminded !== row.delivered &&
+    now - (row.deliveredAt ?? 0) >= NEO_WORK_PR_READY_MS &&
+    now - card.quietSince >= NEO_WORK_PR_READY_MS;
+  return stalled ? 'remind' : 'unchanged';
+}
+
+export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
+  work: { status: string; report: string | null },
+  card: { goal: boolean; row: Row | null; session: boolean },
+  now: number,
+  closedDone: string
+): { value: Row } | { reason: null } {
+  return work.status === 'reported' &&
+    work.report !== closedDone &&
+    card.goal &&
+    card.session &&
+    card.row &&
+    now - card.row.readAt >= NEO_WORK_PR_READ_MS
+    ? { value: card.row }
+    : { reason: null };
+}
+
+export function requireNeoWorkPrDelivery(
+  plan: ReturnType<typeof planNeoWorkPrRefresh>
+): { value: 'deliver' | 'remind' } | { reason: null } {
+  return plan === 'deliver' || plan === 'remind' ? { value: plan } : { reason: null };
 }
 
 type BranchRule = {

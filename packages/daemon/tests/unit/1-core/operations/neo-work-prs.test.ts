@@ -7,6 +7,8 @@ import {
   planNeoWorkPrBlockers,
   planNeoWorkPrRefresh,
   readGithubPrs,
+  requireNeoWorkPrDelivery,
+  requireNeoWorkPrRefresh,
   shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
   wantsNeoWorkPrBlockers,
@@ -143,6 +145,53 @@ describe('planNeoWorkPrRefresh', () => {
     ],
   ])('%s', (_case, row, read, now, plan) => {
     expect(planNeoWorkPrRefresh(row, read, now)).toBe(plan);
+  });
+
+  const ready: NeoWorkPr = { ...pr, state: 'OPEN', checks: 'passing', review: 'approved' };
+  const seen = neoWorkPrSignature([ready]);
+  const now = 10 * halfHour;
+  const told: Parameters<typeof planNeoWorkPrRefresh>[0] = {
+    ...at([ready], seen),
+    deliveredAt: now - halfHour,
+    reminded: null,
+  };
+  const quiet = { quietSince: now - halfHour, remindable: true };
+  test.each<
+    [
+      string,
+      typeof told,
+      Parameters<typeof planNeoWorkPrRefresh>[3],
+      ReturnType<typeof planNeoWorkPrRefresh>,
+    ]
+  >([
+    ['an approved green PR left open for half an hour', told, quiet, 'remind'],
+    [
+      'one Neo was told about a minute ago',
+      { ...told, deliveredAt: now - 60_000 },
+      quiet,
+      'unchanged',
+    ],
+    ['one whose session moved since', told, { ...quiet, quietSince: now - 60_000 }, 'unchanged'],
+    ['one already reminded in this state', { ...told, reminded: seen }, quiet, 'unchanged'],
+    [
+      'one under an ask that is settled or waits on the human',
+      told,
+      { ...quiet, remindable: false },
+      'unchanged',
+    ],
+    ['one told before delivery times were kept', { ...told, deliveredAt: null }, quiet, 'remind'],
+    [
+      'one still waiting for review',
+      {
+        ...told,
+        prs: [{ ...ready, review: 'none' }],
+        delivered: neoWorkPrSignature([{ ...ready, review: 'none' }]),
+      },
+      quiet,
+      'unchanged',
+    ],
+  ])('%s', (_case, row, card, plan) => {
+    expect(planNeoWorkPrRefresh(row, true, now, card)).toBe(plan);
   });
 });
 
@@ -352,5 +401,38 @@ describe('readGithubPrs blockers', () => {
     expect(asked.find((args) => args[2]?.startsWith('repos/'))?.[2]).toBe(
       'repos/lsm/blockers-release/rules/branches/release%2F1.x'
     );
+  });
+});
+
+describe('requireNeoWorkPrRefresh', () => {
+  const row = { readAt: 0 };
+  type Card = { goal: boolean; row: { readAt: number } | null; session: boolean };
+  const card: Card = { goal: true, row, session: true };
+  const reported = { status: 'reported', report: 'Merged.' };
+  test.each<[string, typeof reported, Partial<Card>, number, boolean]>([
+    ['a reported card read over two minutes ago', reported, {}, 3 * 60_000, true],
+    ['one read a minute ago', reported, {}, 60_000, false],
+    ['one still running', { ...reported, status: 'queued' }, {}, 3 * 60_000, false],
+    ['one the user closed as done', { ...reported, report: 'closed' }, {}, 3 * 60_000, false],
+    ['one with no done list', reported, { goal: false }, 3 * 60_000, false],
+    ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
+    ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
+  ])('%s', (_label, work, overrides, now, refreshes) => {
+    expect(requireNeoWorkPrRefresh(work, { ...card, ...overrides }, now, 'closed')).toEqual(
+      refreshes ? { value: row } : { reason: null }
+    );
+  });
+});
+
+describe('requireNeoWorkPrDelivery', () => {
+  test.each<['deliver' | 'remind' | 'wait' | 'unchanged', boolean]>([
+    ['deliver', true],
+    ['remind', true],
+    ['wait', false],
+    ['unchanged', false],
+  ])('%s', (plan, delivers) => {
+    const gate = requireNeoWorkPrDelivery(plan);
+    expect('value' in gate).toBe(delivers);
+    if ('value' in gate) expect(gate.value as string).toBe(plan);
   });
 });

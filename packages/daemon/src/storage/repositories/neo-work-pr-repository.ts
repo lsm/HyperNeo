@@ -6,13 +6,15 @@ export interface NeoWorkPrRow {
   prs: NeoWorkPr[];
   revision: number;
   delivered: string | null;
+  deliveredAt: number | null;
+  reminded: string | null;
   readAt: number;
   readOkAt: number;
 }
 type StoredRow = Omit<NeoWorkPrRow, 'prs'> & { prsJson: string };
 
 const columns =
-  'work_id AS workId, prs_json AS prsJson, revision, delivered, read_at AS readAt, read_ok_at AS readOkAt';
+  'work_id AS workId, prs_json AS prsJson, revision, delivered, delivered_at AS deliveredAt, reminded, read_at AS readAt, read_ok_at AS readOkAt';
 
 export class NeoWorkPrRepository {
   constructor(private readonly db: Database) {}
@@ -66,11 +68,14 @@ export class NeoWorkPrRepository {
     this.db.prepare('UPDATE neo_work_prs SET read_at = ? WHERE work_id = ?').run(at, workId);
   }
 
-  markDelivered(workId: string, signature: string): void {
+  markDelivered(workId: string, signature: string, at: number, reminded = false): void {
     if (!this.hasTable()) return;
     this.db
-      .prepare('UPDATE neo_work_prs SET delivered = ? WHERE work_id = ?')
-      .run(signature, workId);
+      .prepare(
+        `UPDATE neo_work_prs SET delivered = ?, delivered_at = ?,
+           reminded = CASE WHEN ? THEN ? ELSE reminded END WHERE work_id = ?`
+      )
+      .run(signature, at, reminded ? 1 : 0, signature, workId);
   }
 
   listOpen(): string[] {
