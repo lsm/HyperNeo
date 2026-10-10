@@ -201,6 +201,7 @@ const Snapshot = z.union([
               state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
               checks: z.enum(['pending', 'failing', 'passing', 'none']),
               review: z.enum(['approved', 'changes_requested', 'none']),
+              blockers: z.array(z.string()).optional(),
             })
           ),
           waiting: z.boolean(),
