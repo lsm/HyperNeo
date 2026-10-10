@@ -116,4 +116,23 @@ describe('decideNewSessionModel', () => {
       fallbackFrom: 'missing',
     });
   });
+
+  test('skips an unavailable default for the fallback chain but keeps an explicit request', () => {
+    const offline = [{ ...models[0], available: false }, models[1]];
+    const request = plan(undefined, undefined, {
+      model: 'sonnet',
+      fallbackModels: [{ provider: 'glm', model: 'glm-5' }],
+    });
+    expect(decideNewSessionModel(request, catalog({ models: offline }))).toEqual({
+      kind: 'model',
+      id: 'glm-5',
+      provider: 'glm',
+      fallbackFrom: 'sonnet',
+    });
+    expect(decideNewSessionModel(plan('sonnet'), catalog({ models: offline }))).toEqual({
+      kind: 'model',
+      id: 'claude-sonnet-5',
+      provider: 'anthropic',
+    });
+  });
 });

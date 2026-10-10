@@ -42,6 +42,14 @@ export function resolveMetadataSessionSpace(
   return resolveSessionSpaceId(session, context);
 }
 
+export function isActiveSessionInSpace(
+  session: Session | null | undefined,
+  spaceId: string,
+  context: SpaceMcpSessionPolicyContext
+): boolean {
+  return session?.status === 'active' && resolveMetadataSessionSpace(session, context) === spaceId;
+}
+
 export function resolveSpaceTaskOwner(db: Database, taskId: string): TaskMetadataOwner | null {
   const row = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
     space_id: string | null;

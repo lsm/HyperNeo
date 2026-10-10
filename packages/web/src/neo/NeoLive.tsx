@@ -627,6 +627,7 @@ export function NeoLive() {
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
                     onDone={(itemId) => void neo.tickAskItem(ask.ask.id, itemId)}
+                    onApprove={() => void neo.approveAsk(ask.ask.id)}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     renderCard={(scene) => renderScene(scene, ask.group)}
                   />

@@ -353,7 +353,11 @@ export class SpaceTaskManager {
         if (settled.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(settled);
         }
-      } catch {}
+      } catch (err) {
+        log.warn(
+          `Settling dependents of task "${taskId}" threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
 
     if (newStatus === 'archived' && updated.workflowRunId) {

@@ -8,7 +8,7 @@ import { SessionRepository } from '../../storage/repositories/session-repository
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { resolveMetadataSessionSpace } from './metadata.ts';
+import { isActiveSessionInSpace } from './metadata.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import {
   claimDirectStart,
@@ -45,11 +45,7 @@ function admitStart(
     const session = caller.sessionId
       ? new SessionRepository(db).getSession(caller.sessionId)
       : null;
-    if (
-      session?.status !== 'active' ||
-      resolveMetadataSessionSpace(session, policy) !== task.spaceId
-    )
-      return denied;
+    if (!isActiveSessionInSpace(session, task.spaceId, policy)) return denied;
   }
   const existing = readDirectStartRequest(db, directTaskStartIdentity(input).attemptId);
   if (existing) return existing.input.reviewRejection ? unavailable : { value: existing.input };

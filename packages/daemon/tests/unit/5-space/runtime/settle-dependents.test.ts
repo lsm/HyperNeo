@@ -101,4 +101,26 @@ describe('settleTaskDependents', () => {
     ]);
     expect(settled.map(({ id }) => id)).toEqual(['open', 'wf']);
   });
+
+  test('one dependent that fails to settle does not stop the rest', async () => {
+    const ended = task('ended', { status: 'done', dependsOn: [] });
+    const broken = task('broken', { status: 'blocked', blockReason: 'dependency_failed' });
+    const ready = task('ready', { status: 'blocked', blockReason: 'dependency_failed' });
+    const tried: string[] = [];
+    const deps: DependentSettlementDeps = {
+      getTaskManager: () => ({
+        listTasks: async () => [ended, broken, ready],
+        getTask: async () => null,
+        setTaskStatus: async (id, status) => {
+          tried.push(id);
+          if (id === 'broken') throw new Error('invalid transition');
+          return { ...task(id), status };
+        },
+      }),
+      getActiveAttempt: () => null,
+    };
+    const settled = await settleTaskDependents(ended, deps);
+    expect(tried).toEqual(['broken', 'ready']);
+    expect(settled.map(({ id }) => id)).toEqual(['ready']);
+  });
 });
