@@ -37,7 +37,7 @@ export function NeoVoice({
   draftText: string;
   onTranscript: (text: string) => void;
   onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
-  onSendHandle: (send: (() => void) | null) => void;
+  onSendHandle: (finish: ((intent: 'draft' | 'send') => void) | null) => void;
   onError: (message: string) => void;
   onPhase: (phase: VoicePhase) => void;
 }) {
@@ -61,7 +61,7 @@ export function NeoVoice({
         ? 'working'
         : 'idle';
   const records = pendingVoiceAudioRecords.value.filter((entry) => entry.sessionId === sessionId);
-  const submitForSend = useRef<() => void>(() => {});
+  const finishFromComposer = useRef<(intent: 'draft' | 'send') => void>(() => {});
   useEffect(() => {
     void refreshPendingVoiceAudio();
   }, []);
@@ -146,11 +146,11 @@ export function NeoVoice({
     if (recorder.durationLimitHit) void transcribe('draft');
   }, [recorder.durationLimitHit]);
 
-  submitForSend.current = () => {
-    void transcribe('send');
+  finishFromComposer.current = (intent) => {
+    void transcribe(intent);
   };
   useEffect(() => {
-    onSendHandle(() => submitForSend.current());
+    onSendHandle((intent) => finishFromComposer.current(intent));
     return () => onSendHandle(null);
   }, [onSendHandle]);
 
