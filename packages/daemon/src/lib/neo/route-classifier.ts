@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { neoExcerpt } from '../../storage/repositories/neo-routing-log-repository.ts';
-import { runOneShotModel } from '../agent/one-shot-model.ts';
+import { oneShotModelIds, runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
@@ -203,8 +203,7 @@ async function askNeoRouteModel(
     const raw = await runOneShotModel({
       prompt,
       provider,
-      model: provider === 'glm' ? 'haiku' : config.modelId,
-      thinkingModelId: config.modelId,
+      ...oneShotModelIds(provider, config.modelId, env),
       env: { ...env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
       abortController,
       cwd: leanCwd,
