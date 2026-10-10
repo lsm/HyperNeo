@@ -111,7 +111,8 @@ import { createNeoWorkTargetResolver } from './work-target.ts';
 import { type NeoEvidenceRead, neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import {
-  NEO_DEFAULT_PACKS,
+  neoEnabledPacks,
+  neoPackBriefs,
   neoPackChecks,
   neoPackFragment,
   neoPacks,
@@ -119,7 +120,7 @@ import {
   readNeoPackEvidence,
   requireNeoPackTickable,
 } from './packs/index.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
   neoAskPrEvidence,
@@ -707,7 +708,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          systemPrompt: neoPrompt(concernId),
+          systemPrompt: neoPrompt(concernId, this.packBriefs()),
           sdkToolsPreset: neoCoordinatorNativeTools(concernId),
           permissionMode: 'dontAsk',
           allowedTools: neoCoordinatorAllowedTools(concernId),
@@ -1107,7 +1108,7 @@ export class NeoService {
     return neoPacks({
       builtins: this.builtinPacks,
       filePacks: this.filePacks,
-      enabled: NEO_DEFAULT_PACKS,
+      enabled: neoEnabledPacks(this.db.getGlobalSettings?.().neo),
     });
   }
 
@@ -1126,6 +1127,10 @@ export class NeoService {
 
   packBriefing(ask: NeoAsk): string | undefined {
     return ask.pack ? (this.pack(ask.pack)?.instructions(ask) ?? undefined) : undefined;
+  }
+
+  packBriefs(): NeoPackBrief[] {
+    return neoPackBriefs(neoEnabledPacks(this.db.getGlobalSettings?.().neo), this.installedPacks());
   }
 
   askPackFragment(ask: NeoAsk | null | undefined): NeoPackFragment | null {

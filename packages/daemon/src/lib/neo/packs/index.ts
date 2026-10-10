@@ -7,6 +7,21 @@ import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './typ
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 
+export function neoEnabledPacks(settings?: { packs?: string[] }): string[] {
+  return [...(settings?.packs ?? NEO_DEFAULT_PACKS)];
+}
+
+let fileBriefs: readonly NeoPackBrief[] = [];
+
+export function adoptNeoFilePacks(packs: readonly NeoPack[]): readonly NeoPack[] {
+  fileBriefs = packs.map(({ id, describe }) => ({ id, describe }));
+  return packs;
+}
+
+export function neoSettingsPackBriefs(settings?: { packs?: string[] }): NeoPackBrief[] {
+  return neoPackBriefs(neoEnabledPacks(settings), [...NEO_BUILTIN_PACK_BRIEFS, ...fileBriefs]);
+}
+
 export const NEO_BUILTIN_PACK_BRIEFS: readonly NeoPackBrief[] = [CODING_PACK_BRIEF];
 
 export function neoPackBriefs(
