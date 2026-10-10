@@ -42,7 +42,7 @@ const NEO_ASK_SUMMARY_LIMIT = 160;
 
 const askScenes: Record<NeoAskStatus, { group: NeoSceneGroup; label: string }> = {
   open: { group: 'running', label: 'Working on it' },
-  waiting: { group: 'running', label: 'Waiting on checks or review' },
+  waiting: { group: 'attention', label: 'Waiting on you' },
   blocked: { group: 'attention', label: 'Blocked · needs you' },
   achieved: { group: 'outcomes', label: 'Done' },
   abandoned: { group: 'outcomes', label: 'Dropped' },

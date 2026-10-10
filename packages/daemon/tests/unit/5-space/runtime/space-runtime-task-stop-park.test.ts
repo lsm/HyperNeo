@@ -579,6 +579,37 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
     });
 
+    test('cancelling a task blocks its open dependents and stops running ones', async () => {
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Prerequisite Run');
+      const task = seedTask(run.id);
+      const dependentRun = createRun(SPACE_ID, workflow.id, 'Dependent Run');
+      const dependent = (title: string, status: 'open' | 'in_progress', workflowRunId?: string) =>
+        taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title,
+          description: '',
+          status,
+          dependsOn: [task.id],
+          ...(workflowRunId ? { workflowRunId } : {}),
+        });
+      const waiting = dependent('Waiting', 'open');
+      const runningWorkflow = dependent('Running workflow', 'in_progress', dependentRun.id);
+      const runningManual = dependent('Running manual', 'in_progress');
+      const rt = buildRuntime(makeParkTam(nodeExecutionRepo));
+
+      await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'cancelled' });
+
+      for (const { id } of [waiting, runningWorkflow, runningManual]) {
+        expect(taskRepo.getTask(id)).toMatchObject({
+          status: 'blocked',
+          blockReason: 'dependency_failed',
+          result: `Dependency task ${task.id} was cancelled`,
+        });
+      }
+      expect(workflowRunRepo.getRun(dependentRun.id)?.status).toBe('blocked');
+    });
+
     test('blocking a task settles its run instead of leaving it in_progress', async () => {
       const { workflow, stepA } = buildWorkflow(SPACE_ID);
       const run = createRun(SPACE_ID, workflow.id, 'Block Run');

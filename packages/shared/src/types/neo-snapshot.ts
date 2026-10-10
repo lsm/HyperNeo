@@ -34,6 +34,17 @@ export interface NeoWorkContinue {
 
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
 
+export interface NeoAskItem {
+  id: string;
+  text: string;
+  state: 'pending' | 'met' | 'needs_you';
+  evidence: string | null;
+  check: 'pr_merged' | null;
+  metBy: 'neo' | 'daemon' | 'human' | null;
+  removed: boolean;
+  addedAt: number | null;
+}
+
 export interface NeoAsk {
   id: string;
   requestKey: string;
@@ -47,6 +58,7 @@ export interface NeoAsk {
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;
+  doneItems?: NeoAskItem[];
   workIds: string[];
   createdAt: number;
   updatedAt: number;

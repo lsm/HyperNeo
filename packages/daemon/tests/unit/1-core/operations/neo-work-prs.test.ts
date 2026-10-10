@@ -39,6 +39,13 @@ describe('extractNeoWorkPrUrls', () => {
     expect(extractNeoWorkPrUrls('No link here.')).toEqual([]);
     expect(extractNeoWorkPrUrls(null)).toEqual([]);
   });
+
+  test('keeps the pull requests a card already tracks ahead of new links', () => {
+    const tracked = [{ url: 'https://github.com/lsm/HyperNeo/pull/1' }];
+    expect(
+      extractNeoWorkPrUrls('Opened https://github.com/lsm/HyperNeo/pull/2 too.', tracked)
+    ).toEqual(['https://github.com/lsm/HyperNeo/pull/1', 'https://github.com/lsm/HyperNeo/pull/2']);
+  });
 });
 
 describe('summarizeNeoWorkPr', () => {

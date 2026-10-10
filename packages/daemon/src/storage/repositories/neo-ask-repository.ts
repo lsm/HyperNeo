@@ -1,4 +1,4 @@
-import type { NeoAsk, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
@@ -6,11 +6,23 @@ const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   title, ask, done_when AS doneWhen, done_source AS doneSource, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
 
-type NeoAskRow = Omit<NeoAsk, 'workIds'>;
+type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
 export type NeoAskInput = Omit<
   NeoAsk,
-  'workIds' | 'status' | 'outcome' | 'evidence' | 'createdAt' | 'updatedAt' | 'settledAt'
+  | 'workIds'
+  | 'doneItems'
+  | 'status'
+  | 'outcome'
+  | 'evidence'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'settledAt'
 >;
+export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
+type NeoAskItemRow = Omit<NeoAskItem, 'removed'> & { askId: string; removed: number };
+
+const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
+  met_by AS metBy, removed, added_at AS addedAt`;
 
 export class NeoAskRepository {
   constructor(
@@ -24,9 +36,35 @@ export class NeoAskRepository {
       .get();
   }
 
-  open(input: NeoAskInput): NeoAsk | null {
+  private hasItems(): boolean {
+    return !!this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_ask_items' AND type = 'table'")
+      .get();
+  }
+
+  open(input: NeoAskInput, items: readonly NeoAskItemInput[] = []): NeoAsk | null {
     if (!this.hasTable()) return null;
     const now = Date.now();
+    const created = this.db.transaction(() => {
+      const opened = this.insertAsk(input, now);
+      if (opened && this.hasItems()) {
+        const insert = this.db.prepare(`INSERT INTO neo_ask_items
+          (ask_id, id, position, text, state, check_kind, updated_at)
+          VALUES (?, ?, ?, ?, 'pending', ?, ?)`);
+        items.forEach((item, index) =>
+          insert.run(input.id, `i${index + 1}`, index, item.text, item.check, now)
+        );
+      }
+      return opened;
+    })();
+    if (created) this.notify();
+    const row = this.db
+      .prepare(`SELECT ${askColumns} FROM neo_asks WHERE request_key = ?`)
+      .get(input.requestKey) as NeoAskRow;
+    return this.withWork([row])[0];
+  }
+
+  private insertAsk(input: NeoAskInput, now: number): boolean {
     const result = this.db
       .prepare(`INSERT INTO neo_asks
         (id, request_key, concern_id, origin_session_id, origin_message_id, title, ask,
@@ -46,11 +84,7 @@ export class NeoAskRepository {
         now,
         now
       );
-    if (result.changes > 0) this.notify();
-    const row = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks WHERE request_key = ?`)
-      .get(input.requestKey) as NeoAskRow;
-    return this.withWork([row])[0];
+    return result.changes > 0;
   }
 
   get(id: string): NeoAsk | null {
@@ -136,9 +170,18 @@ export class NeoAskRepository {
         WHERE l.ask_id IN (SELECT value FROM json_each(?))
         ORDER BY w.created_at, w.id`)
       .all(JSON.stringify(rows.map((row) => row.id))) as { askId: string; workId: string }[];
+    const items = this.hasItems()
+      ? (this.db
+          .prepare(`SELECT ${itemColumns} FROM neo_ask_items
+            WHERE ask_id IN (SELECT value FROM json_each(?)) ORDER BY position`)
+          .all(JSON.stringify(rows.map((row) => row.id))) as NeoAskItemRow[])
+      : [];
     return rows.map((row) => ({
       ...row,
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
+      doneItems: items
+        .filter((item) => item.askId === row.id)
+        .map(({ askId: _askId, removed, ...item }) => ({ ...item, removed: removed === 1 })),
     }));
   }
 }

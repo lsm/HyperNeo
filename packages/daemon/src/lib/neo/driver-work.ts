@@ -348,6 +348,8 @@ export function readDriverNeedsYou(
 
 export { NEO_WORK_SUMMARY_NOTE };
 
+export const NEO_DRIVER_NO_REPLY = 'It finished without a written reply.';
+
 export interface NeoAskCard {
   id: string;
   title: string;
@@ -533,7 +535,7 @@ export function readUnanchoredSettlement(
   if (now - value.lastActivityAt < NEO_WORK_UNANCHORED_SETTLE_MS) return null;
   return {
     status: 'reported',
-    report: `${NEO_WORK_UNANCHORED_NOTE}\n\n${value.lastReply || 'It finished without a written reply.'}`,
+    report: `${NEO_WORK_UNANCHORED_NOTE}\n\n${value.lastReply || NEO_DRIVER_NO_REPLY}`,
   };
 }
 
@@ -562,7 +564,7 @@ export function readDriverSettlement(
     const staleReply =
       requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;
     if (staleReply) return null;
-    return { status: 'reported', report: said || 'It finished without a written reply.' };
+    return { status: 'reported', report: said || NEO_DRIVER_NO_REPLY };
   }
   if (status === 'failed' || status === 'stopped') {
     return { status: 'failed', report: `It ${status}.${said ? ` ${said}` : ''}` };

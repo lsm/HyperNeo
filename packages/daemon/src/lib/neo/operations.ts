@@ -74,6 +74,7 @@ import {
   createNeoAskOperations,
   isNeoCardAsk,
   NeoAskSchema,
+  planNeoAskItems,
   planNeoCardAsk,
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
@@ -946,7 +947,10 @@ export function createNeoOperations(service: NeoService) {
         const filed = service.askRecords.forWork(receipt.work.id);
         const opened =
           planned && !filed
-            ? service.askRecords.open({ ...planned, id: crypto.randomUUID() })
+            ? service.askRecords.open(
+                { ...planned, id: crypto.randomUUID() },
+                planNeoAskItems(planned).items
+              )
             : null;
         return {
           askId:
