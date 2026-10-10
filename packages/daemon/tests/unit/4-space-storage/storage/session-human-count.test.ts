@@ -36,7 +36,6 @@ describe('Database.countHumanSessions', () => {
   it('matches the archived-inclusive session list across session kinds', () => {
     db.createSession(session('plain'));
     db.createSession(session('archived', { status: 'archived' }));
-    db.createSession(session('general', { type: 'general' }));
     db.createSession(session('lobby', { type: 'lobby' }));
     db.createSession(
       session('space-chat', { type: 'space_chat', context: { spaceId: 'space-1' } })
@@ -44,7 +43,7 @@ describe('Database.countHumanSessions', () => {
     db.createSession(session('space-worker', { context: { spaceId: 'space-1' } }));
     db.createSession(session('room-worker', { context: { roomId: 'room-1' } }));
 
-    expect(db.countHumanSessions()).toBe(3);
+    expect(db.countHumanSessions()).toBe(2);
     expect(db.countHumanSessions()).toBe(db.listSessions({ includeArchived: true }).length);
   });
 
