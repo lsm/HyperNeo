@@ -355,7 +355,11 @@ describe('NeoAskCard', () => {
       {
         ...ask('a', 'open', ['a1', 'a2']),
         doneItems: [
-          item('i1', 'met', { metBy: 'daemon', check: 'pr_merged', evidence: 'PR #6099 merged' }),
+          item('i1', 'met', {
+            metBy: 'daemon',
+            check: 'coding.pr_merged',
+            evidence: 'PR #6099 merged',
+          }),
           item('i2', 'pending'),
           item('i3', 'pending', { removed: true }),
         ],

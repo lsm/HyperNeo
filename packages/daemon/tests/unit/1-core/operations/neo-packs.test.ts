@@ -203,7 +203,7 @@ const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
   text: 'Fix merged to dev',
   state: 'pending',
   evidence: null,
-  check: 'pr_merged',
+  check: 'coding.pr_merged',
   metBy: null,
   removed: false,
   addedAt: null,
@@ -225,17 +225,17 @@ describe('neoPackChecks', () => {
     const first = () => ({ value: 'first' });
     const second = () => ({ value: 'second' });
     const checks = neoPackChecks([
-      { ...pack('coding'), checks: { pr_merged: first } },
-      { ...pack('other'), checks: { pr_merged: second, filed: second } },
+      { ...pack('coding'), checks: { 'coding.pr_merged': first } },
+      { ...pack('other'), checks: { 'coding.pr_merged': second, 'other.filed': second } },
     ]);
-    expect(checks).toEqual({ pr_merged: first, filed: second });
+    expect(checks).toEqual({ 'coding.pr_merged': first, 'other.filed': second });
   });
 });
 
 describe('planNeoPackTicks', () => {
   const ask = (items: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
     ({ id: 'a1', status, doneItems: items }) as NeoAsk;
-  const checks = { pr_merged: codingPrMergedCheck };
+  const checks = { 'coding.pr_merged': codingPrMergedCheck };
   test.each<[string, NeoAsk | null, NeoEvidence[], ReturnType<typeof planNeoPackTicks>]>([
     [
       'a merged item on a live ask',

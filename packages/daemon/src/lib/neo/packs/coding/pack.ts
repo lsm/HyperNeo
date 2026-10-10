@@ -12,6 +12,8 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
   describe: 'Software work in git repositories: pull requests, CI, review and merging.',
 };
 
+export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
+
 export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) =>
   evidence.length && evidence.every((item) => item.state === 'done')
     ? { value: `Merged: ${evidence.map((item) => item.key).join(', ')}` }
@@ -30,7 +32,7 @@ export function createCodingPack(deps: {
   return {
     ...CODING_PACK_BRIEF,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
-    checks: { pr_merged: codingPrMergedCheck },
+    checks: { [CODING_CHECK_PR_MERGED]: codingPrMergedCheck },
     readEvidence: async (work: NeoWork) => {
       const stored = deps.workPrs.get(work.id);
       const urls = extractNeoWorkPrUrls(work.report, stored?.prs);

@@ -81,6 +81,7 @@ import { runMigration322 } from './m322-neo-ask-reminders.ts';
 import { runMigration323 } from './m323-neo-work-check-evidence.ts';
 import { runMigration324 } from './m324-neo-ask-pack.ts';
 import { runMigration325 } from './m325-neo-ask-checks.ts';
+import { runMigration326 } from './m326-neo-ask-item-check-kinds.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -726,6 +727,7 @@ export function runMigrations(
   run(migrationMarkerKey(323), () => runMigration323(db));
   run(migrationMarkerKey(324), () => runMigration324(db));
   run(migrationMarkerKey(325), () => runMigration325(db));
+  run(migrationMarkerKey(326), () => runMigration326(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
