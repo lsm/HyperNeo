@@ -36,6 +36,7 @@ export const NeoAskSchema = z.object({
   doneSource: z.string(),
   pack: z.string().nullable().optional(),
   approvedAt: z.number().nullable().optional(),
+  approvedContinues: z.number().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
@@ -652,7 +653,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. An approval never covers deploying to production, deleting data or other destructive steps.",
+        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Their continues come from the ask's shared budget; approving again refills it. An approval never covers deploying to production, deleting data or other destructive steps.",
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

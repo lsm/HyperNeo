@@ -46,7 +46,7 @@ export class NeoAskRepository {
   }
 
   private askColumns(): string {
-    return `${askColumns}${this.hasPack() ? ', pack' : ''}${this.hasColumn('approved_at') ? ', approved_at AS approvedAt' : ''}, status, outcome, evidence,
+    return `${askColumns}${this.hasPack() ? ', pack' : ''}${this.hasColumn('approved_at') ? ', approved_at AS approvedAt' : ''}${this.hasColumn('approved_continues') ? ', approved_continues AS approvedContinues' : ''}, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
   }
 
@@ -227,13 +227,21 @@ export class NeoAskRepository {
 
   approve(id: string, at: number): NeoAsk | null {
     if (!this.hasTable() || !this.hasColumn('approved_at')) return null;
+    const refill = this.hasColumn('approved_continues') ? ', approved_continues = 0' : '';
     const row = this.db
-      .prepare(`UPDATE neo_asks SET approved_at = COALESCE(approved_at, ?), updated_at = ?
+      .prepare(`UPDATE neo_asks SET approved_at = ?${refill}, updated_at = ?
         WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${this.askColumns()}`)
       .get(at, at, id) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
+  }
+
+  spendApprovedContinue(id: string): void {
+    if (!this.hasTable() || !this.hasColumn('approved_continues')) return;
+    this.db
+      .prepare('UPDATE neo_asks SET approved_continues = approved_continues + 1 WHERE id = ?')
+      .run(id);
   }
 
   settle(

@@ -28,12 +28,14 @@ import {
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
+  NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkContinue,
   type NeoWorkGoal,
   type NeoAsk,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoAskLive } from './done-check.ts';
 import {
   PlaceSchema,
   WorkExchangeEntrySchema,
@@ -149,6 +151,23 @@ export function readContinueBudget(
     return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
     return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
+  return null;
+}
+
+export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+export function readNeoWorkContinueBudget(
+  continued: Pick<NeoWorkContinue, 'count'> | null,
+  startedAt: number | null,
+  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
+  now: number
+): string | null {
+  if (ask?.approvedAt == null || !isNeoAskLive(ask))
+    return readContinueBudget(continued, startedAt, now);
+  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT)
+    return `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
+  if (now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS)
+    return 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.';
   return null;
 }
 

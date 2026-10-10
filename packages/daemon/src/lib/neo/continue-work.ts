@@ -1,9 +1,10 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CONTINUE_LIMIT } from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CONTINUE_LIMIT, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import { type DriverSent, readContinueBudget, readDriverOutcome } from './driver-work.ts';
+import { isNeoAskLive } from './done-check.ts';
+import { type DriverSent, readDriverOutcome, readNeoWorkContinueBudget } from './driver-work.ts';
 
 export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
@@ -14,6 +15,7 @@ export interface NeoContinueEvidence {
   ref: WorkRef | null;
   continuedCount: number | null;
   inFlight: boolean;
+  ask: NeoAsk | null;
 }
 
 export interface NeoContinueTarget {
@@ -25,6 +27,7 @@ export interface NeoContinueDeps {
   readWork(id: string): NeoWork | null;
   readRef(id: string): WorkRef | null;
   readContinuedCount(id: string): number | null;
+  readAsk(id: string): NeoAsk | null;
   isContinuing(id: string): boolean;
   withGoal(id: string, message: string): string;
   readSendBaseline(
@@ -34,6 +37,7 @@ export interface NeoContinueDeps {
   send(target: NeoContinueTarget, message: string): Promise<OperationOutcome>;
   recordSent(id: string, startedAt: number | null, sent: DriverSent | null): void;
   recordContinue(id: string, message: string, now: number): number | null;
+  spendAskContinue(ask: NeoAsk): void;
   reopen(id: string, current: NeoWork, report: string): NeoWork | null;
   reopenAsk(id: string): void;
 }
@@ -48,9 +52,10 @@ export function requireNeoWorkContinuable(
   if (!work || !ref) return reject('Only started driver work can be continued.');
   if (work.status !== 'queued' && work.status !== 'reported')
     return reject(`This work already ${work.status}; it cannot be continued.`);
-  const budget = readContinueBudget(
+  const budget = readNeoWorkContinueBudget(
     evidence.continuedCount === null ? null : { count: evidence.continuedCount },
     work.createdAt,
+    evidence.ask,
     now
   );
   if (budget) return reject(budget);
@@ -88,6 +93,7 @@ export const admitNeoWorkContinue = (superpipe({})('neo.work.continue.admit') as
       ref: deps.readRef(id),
       continuedCount: deps.readContinuedCount(id),
       inFlight: deps.isContinuing(id),
+      ask: deps.readAsk(id),
     }),
     ['deps', 'id'],
     'evidence'
@@ -136,6 +142,13 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
     }),
     ['deps', 'target', 'message', 'now'],
     'record'
+  )
+  .pipe(
+    (deps: NeoContinueDeps, target: NeoContinueTarget) => {
+      const ask = deps.readAsk(target.work.id);
+      if (ask?.approvedAt != null && isNeoAskLive(ask)) deps.spendAskContinue(ask);
+    },
+    ['deps', 'target']
   )
   .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget) => ({

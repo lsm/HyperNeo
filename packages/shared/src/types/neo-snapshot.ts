@@ -25,6 +25,7 @@ export interface NeoWorkGoal {
 }
 
 export const NEO_WORK_CONTINUE_LIMIT = 5;
+export const NEO_ASK_CONTINUE_LIMIT = 20;
 export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
 
 export interface NeoWorkContinue {
@@ -59,6 +60,7 @@ export interface NeoAsk {
   doneSource: string;
   pack?: string | null;
   approvedAt?: number | null;
+  approvedContinues?: number;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;

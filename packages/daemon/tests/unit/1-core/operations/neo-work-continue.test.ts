@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { readContinueBudget } from '../../../../src/lib/neo/driver-work.ts';
+import {
+  readContinueBudget,
+  readNeoWorkContinueBudget,
+} from '../../../../src/lib/neo/driver-work.ts';
 import {
   neoContinuedReport,
   requireNeoContinueDelivered,
@@ -36,6 +39,29 @@ describe('readContinueBudget', () => {
   });
 });
 
+describe('readNeoWorkContinueBudget', () => {
+  const approved = { status: 'open' as const, approvedAt: 0, approvedContinues: 0 };
+  test('work under an approved ask shares the ask budget instead of its own', () => {
+    expect(readNeoWorkContinueBudget({ count: 7 }, 0, approved, 13 * HOUR)).toBeNull();
+    expect(
+      readNeoWorkContinueBudget(null, 0, { ...approved, approvedContinues: 20 }, HOUR)
+    ).toContain('approve it again');
+    expect(readNeoWorkContinueBudget(null, 0, approved, 48 * HOUR)).toContain('approve it again');
+  });
+
+  test('work under an ask not approved, or settled, keeps its own budget', () => {
+    expect(
+      readNeoWorkContinueBudget({ count: 5 }, 0, { ...approved, approvedAt: null }, HOUR)
+    ).toContain('already continued 5 times');
+    expect(
+      readNeoWorkContinueBudget({ count: 5 }, 0, { ...approved, status: 'achieved' }, HOUR)
+    ).toContain('already continued 5 times');
+    expect(readNeoWorkContinueBudget({ count: 5 }, 0, null, HOUR)).toContain(
+      'already continued 5 times'
+    );
+  });
+});
+
 const continued: NeoWork = Object.freeze({
   id: 'work-1',
   requestKey: 'root:k',
@@ -54,7 +80,7 @@ const continued: NeoWork = Object.freeze({
 const rejected = (reason: string) => ({ reason: { ok: false as const, reason } });
 
 describe('requireNeoWorkContinuable', () => {
-  const evidence = { work: continued, ref, continuedCount: null, inFlight: false };
+  const evidence = { work: continued, ref, continuedCount: null, inFlight: false, ask: null };
 
   test('admits started work that is queued or reported', () => {
     expect(requireNeoWorkContinuable(evidence, HOUR)).toEqual({ value: { work: continued, ref } });
@@ -228,6 +254,39 @@ describe('neo.work.continue', () => {
     expect(service.workContinues.get(work.id)).toMatchObject({
       count: 1,
       lastMessage: 'Now build the chat screen.',
+    });
+  });
+
+  test('work under an approved ask spends the ask budget, and approving again refills it', async () => {
+    const work = reportedWork();
+    const opened = service.askRecords.open({
+      id: 'ask-ios',
+      requestKey: 'root:ask-ios',
+      concernId: null,
+      originSessionId: 'root',
+      originMessageId: null,
+      title: 'Neo iOS app',
+      ask: 'Build the Neo iOS app',
+      doneWhen: '- all screens work',
+      doneSource: 'human',
+    })!;
+    service.askRecords.link(opened.id, work.id);
+    service.askRecords.approve(opened.id, Date.now());
+    for (let index = 0; index < 6; index++)
+      expect(await invoke({ id: work.id, message: `Step ${index}.` })).toMatchObject({
+        value: { ok: true },
+      });
+    expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(6);
+    db.getDatabase()
+      .prepare('UPDATE neo_asks SET approved_continues = 20 WHERE id = ?')
+      .run(opened.id);
+    expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('approve it again') },
+    });
+    service.askRecords.approve(opened.id, Date.now());
+    expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(0);
+    expect(await invoke({ id: work.id, message: 'One more.' })).toMatchObject({
+      value: { ok: true },
     });
   });
 
