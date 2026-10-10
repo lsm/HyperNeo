@@ -231,7 +231,8 @@ the ask opens, much like a Goose recipe.
   with coding asks. This can change routing and done-check behaviour, so the
   prompt split ships only after a before/after run on the eval set.
 - A second domain needs no core change: a knowledge-only pack is markdown plus
-  an enable switch.
+  an enable switch. The first second pack, life admin, is built in instead,
+  because it reads evidence and has a check; it still needs no core change.
 - `pr_merged` becomes `coding.pr_merged`, which needs a migration of the m318
   constraint and existing rows.
 - Delivery bookkeeping moves out of `neo_work_prs`. The old columns are copied,
@@ -249,7 +250,7 @@ One PR per rung (ADR 0004 ladder):
 | c1 | Core `neo_work_checks` table, migration and repository; bookkeeping copied and dual-written, coding still the only producer | Neo backend |
 | c2 | `NeoEvidence`, `NeoPack`, the coding pack implementing it, core pipelines wired through it | Neo backend |
 | d | Prompt split: core plus coding fragment, `neo.ask.open {pack}`, `neo.pack.read`; gated on the eval | Neo backend |
-| e | Second pack: legal review, knowledge only, shipped disabled; the enable setting; the file-pack loader | first free |
+| e | Second pack: life admin (`docs/design/neo-life-admin-pack.md`), shipped disabled; the enable setting; the file-pack loader | first free |
 | f | `pr_merged` to `coding.pr_merged`, with its migration | Neo backend |
 | g | Delete the copied `neo_work_prs` columns | Neo backend |
 
