@@ -40,7 +40,11 @@ describe('SpaceTaskManager', () => {
         throw new Error(`Workspace path is not registered to space: ${rawPath}`);
       },
       (ended) =>
-        settleTaskDependents(ended, { getTaskManager: () => manager, getActiveAttempt: () => null })
+        settleTaskDependents(ended, {
+          getTaskManager: () => manager,
+          getActiveAttempt: () => null,
+          requestDirectOutcome: () => ({ accepted: true, jobId: null }),
+        })
     );
   });
 

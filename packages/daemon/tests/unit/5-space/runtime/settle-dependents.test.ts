@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
+import { Logger } from '../../../../src/lib/logger';
 import type { SpaceTask } from '@hyperneo/shared';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import {
@@ -118,9 +120,35 @@ describe('settleTaskDependents', () => {
         },
       }),
       getActiveAttempt: () => null,
+      requestDirectOutcome: () => ({ accepted: true, jobId: null }),
     };
     const settled = await settleTaskDependents(ended, deps);
     expect(tried).toEqual(['broken', 'ready']);
     expect(settled.map(({ id }) => id)).toEqual(['ready']);
+  });
+
+  test('a rejected stop of a running direct dependent is reported, not silently dropped', async () => {
+    const ended = task('ended', { status: 'cancelled', dependsOn: [] });
+    const direct = task('direct', { status: 'in_progress', taskAgentSessionId: 'w' });
+    const requested: string[] = [];
+    const deps: DependentSettlementDeps = {
+      getTaskManager: () => ({
+        listTasks: async () => [ended, direct],
+        getTask: async () => null,
+        setTaskStatus: async () => {
+          throw new Error('not reached');
+        },
+      }),
+      getActiveAttempt: () => attempt(),
+      requestDirectOutcome: (input) => {
+        requested.push(input.attemptId);
+        return { accepted: false, reason: 'direct_attempt_not_running' };
+      },
+    };
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    expect(await settleTaskDependents(ended, deps)).toEqual([]);
+    expect(requested).toEqual(['a1']);
+    expect(String(warn.mock.calls.at(-1)?.[0])).toContain('direct_attempt_not_running');
+    warn.mockRestore();
   });
 });
