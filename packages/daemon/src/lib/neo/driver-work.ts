@@ -157,6 +157,15 @@ export function readContinueBudget(
 
 export const NEO_ASK_CONTINUES_SPENT = `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
 
+export function neoContinuesLeft(
+  continued: number,
+  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null
+): number {
+  return ask?.approvedAt != null && isNeoAskLive(ask)
+    ? Math.max(0, NEO_ASK_CONTINUE_LIMIT - (ask.approvedContinues ?? 0))
+    : Math.max(0, NEO_WORK_CONTINUE_LIMIT - continued);
+}
+
 export function readNeoWorkContinueBudget(
   continued: Pick<NeoWorkContinue, 'count'> | null,
   startedAt: number | null,
@@ -467,7 +476,7 @@ export function driverDoneCheckNote(
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
-        continues_left: String(NEO_WORK_CONTINUE_LIMIT - continued),
+        continues_left: String(neoContinuesLeft(continued, ask ?? null)),
         summary,
       });
   const owner = !ask

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
+  neoContinuesLeft,
   readContinueBudget,
   readNeoWorkContinueBudget,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -37,6 +38,16 @@ describe('readContinueBudget', () => {
     expect(readContinueBudget({ count: 4 }, 0, 11 * HOUR)).toBeNull();
     expect(readContinueBudget({ count: 5 }, 0, HOUR)).toContain('continue_budget_spent');
     expect(readContinueBudget({ count: 1 }, 0, 12 * HOUR)).toContain('continue_budget_spent');
+  });
+});
+
+describe('neoContinuesLeft', () => {
+  test("counts what is left of the approved ask's shared pool, else the card's own", () => {
+    const ask = { status: 'open' as const, approvedAt: 5, approvedContinues: 6 };
+    expect(neoContinuesLeft(7, ask)).toBe(14);
+    expect(neoContinuesLeft(2, { ...ask, approvedAt: null })).toBe(3);
+    expect(neoContinuesLeft(2, { ...ask, status: 'achieved' })).toBe(3);
+    expect(neoContinuesLeft(9, null)).toBe(0);
   });
 });
 
