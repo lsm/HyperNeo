@@ -100,7 +100,7 @@ describe('neoAskPrNews', () => {
 });
 
 describe('readGithubPrStates', () => {
-  test('reads each pull request once it settled, skips what is not one, and retries gh failures', async () => {
+  test('reads a pull request once it merged, skips what is not one, and retries the rest', async () => {
     const asked: string[] = [];
     const spawn = (args: string[]) => {
       asked.push(args[3]);
@@ -108,7 +108,9 @@ describe('readGithubPrStates', () => {
         ? { url: args[3], state: 'MERGED', mergedAt: '2026-10-10T14:31:00Z', closedAt: null }
         : args[3].endsWith('/9002')
           ? { url: args[3], state: 'OPEN', mergedAt: null, closedAt: null }
-          : null;
+          : args[3].endsWith('/9005')
+            ? { url: args[3], state: 'CLOSED', mergedAt: null, closedAt: '2026-10-10T15:00:00Z' }
+            : null;
       return {
         stdout: new Response(raw ? JSON.stringify(raw) : '').body,
         stderr: new Response(
@@ -123,16 +125,18 @@ describe('readGithubPrStates', () => {
         kill: () => {},
       };
     };
-    const urls = [url(9001), url(9002), url(9003), url(9004)];
+    const urls = [url(9001), url(9002), url(9003), url(9004), url(9005)];
     expect(await readGithubPrStates(urls, spawn as never)).toEqual([
       { url: url(9001), state: 'MERGED', at: Date.parse('2026-10-10T14:31:00Z') },
       { url: url(9002), state: 'OPEN', at: null },
+      { url: url(9005), state: 'CLOSED', at: Date.parse('2026-10-10T15:00:00Z') },
     ]);
     await readGithubPrStates(urls, spawn as never);
     expect(asked.filter((item) => item === url(9001))).toHaveLength(1);
     expect(asked.filter((item) => item === url(9002))).toHaveLength(2);
     expect(asked.filter((item) => item === url(9003))).toHaveLength(1);
     expect(asked.filter((item) => item === url(9004))).toHaveLength(2);
+    expect(asked.filter((item) => item === url(9005))).toHaveLength(2);
   });
 });
 

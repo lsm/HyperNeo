@@ -70,7 +70,7 @@ async function readGithubPrState(url: string, spawnImpl: SpawnFn): Promise<NeoPr
   const { state, mergedAt, closedAt } = parsed.data;
   const at = state === 'MERGED' ? mergedAt : state === 'CLOSED' ? closedAt : null;
   const pr = { url, state, at: at ? Date.parse(at) : null };
-  if (state !== 'OPEN') settled.set(url, pr);
+  if (state === 'MERGED') settled.set(url, pr);
   return pr;
 }
 
