@@ -59,7 +59,15 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
-function ItemRow({ item }: { item: NeoAskItem }) {
+function ItemRow({
+  item,
+  onDone,
+  disabled,
+}: {
+  item: NeoAskItem;
+  onDone?: (itemId: string) => void;
+  disabled?: boolean;
+}) {
   const glyph = itemGlyphs[item.state];
   const tags = [
     item.removed && 'removed',
@@ -85,15 +93,36 @@ function ItemRow({ item }: { item: NeoAskItem }) {
           </span>
         )}
       </span>
+      {onDone && item.state === 'needs_you' && !item.removed && (
+        <button
+          type="button"
+          class={neoSecondaryClass}
+          disabled={disabled}
+          aria-label={`Mark done: ${item.text}`}
+          onClick={() => onDone(item.id)}
+        >
+          Done
+        </button>
+      )}
     </li>
   );
 }
 
-function Checklist({ items, label }: { items: readonly NeoAskItem[]; label: string }) {
+function Checklist({
+  items,
+  label,
+  onDone,
+  disabled,
+}: {
+  items: readonly NeoAskItem[];
+  label: string;
+  onDone?: (itemId: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <ul aria-label={label} class="space-y-1.5">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} />
+        <ItemRow key={item.id} item={item} onDone={onDone} disabled={disabled} />
       ))}
     </ul>
   );
@@ -104,6 +133,7 @@ export function NeoAskCard({
   drivers,
   disabled = false,
   onSettle,
+  onDone,
   onOpen,
   renderCard,
 }: {
@@ -111,6 +141,7 @@ export function NeoAskCard({
   drivers?: NeoSceneDrivers;
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
+  onDone?: (itemId: string) => void;
   onOpen?: (workId: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
@@ -194,7 +225,7 @@ export function NeoAskCard({
       )}
       {needsYouItems.length > 0 && (
         <div data-ask-needs-you class="mt-3 rounded-lg bg-warning/10 px-3 py-2">
-          <Checklist items={needsYouItems} label="Needs you" />
+          <Checklist items={needsYouItems} label="Needs you" onDone={onDone} disabled={disabled} />
         </div>
       )}
       {steps > 0 && (
