@@ -126,6 +126,19 @@ describe('durable public conversation presentation', () => {
     expect(screen.getByText('Not delivered: Neo never got this message.')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Edit and send again'));
     expect(onEditUndelivered).toHaveBeenCalledWith(failed);
+    expect(screen.queryByLabelText('Edit and send again')).toBeNull();
+  });
+
+  it('keeps the edit action when the composer refuses the photos', () => {
+    const failed = ask({ delivery: { state: 'failed' } });
+    render(
+      <NeoPublicConversation
+        conversation={conversation([failed], [])}
+        onEditUndelivered={() => false}
+      />
+    );
+    fireEvent.click(screen.getByLabelText('Edit and send again'));
+    expect(screen.getByLabelText('Edit and send again')).toBeTruthy();
   });
 
   it('shows no edit action on a delivered ask', () => {

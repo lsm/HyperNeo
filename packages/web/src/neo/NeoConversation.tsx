@@ -67,7 +67,7 @@ export function NeoConversation({
   onEditUndelivered,
 }: {
   store: SessionStore;
-  onEditUndelivered?: (ask: NeoConversationAsk) => void;
+  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;

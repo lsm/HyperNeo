@@ -47,13 +47,14 @@ function PublicEntry({
   topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  onEditUndelivered?: (ask: NeoConversationAsk) => void;
+  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
   const undelivered = ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
   const [showReason, setShowReason] = useState(false);
+  const [restored, setRestored] = useState(false);
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
@@ -171,12 +172,14 @@ function PublicEntry({
         <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
-        {undelivered && onEditUndelivered && (
+        {undelivered && onEditUndelivered && !restored && (
           <button
             type="button"
             aria-label="Edit and send again"
             title="Edit and send again"
-            onClick={() => onEditUndelivered(ask!)}
+            onClick={() => {
+              if (onEditUndelivered(ask!) !== false) setRestored(true);
+            }}
             class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
             <NeoIcon name="edit" class="!h-4 !w-4" />
@@ -305,7 +308,7 @@ export function NeoPublicConversation({
   topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
-  onEditUndelivered?: (ask: NeoConversationAsk) => void;
+  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
