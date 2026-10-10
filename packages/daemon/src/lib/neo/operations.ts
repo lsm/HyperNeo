@@ -365,10 +365,21 @@ export function requireNeoExecutionChoice(
       };
 }
 
-export function adoptOwnedNeoTarget<
-  Input extends { targetSessionId?: string | null; targetAgent?: unknown; work?: NeoDriverTarget },
->(input: Input, owned: { ref: WorkRef | null }): Input {
-  return owned.ref && input.targetSessionId && !input.work && !input.targetAgent
+type OwnedLookupInput = {
+  targetSessionId?: string | null;
+  targetAgent?: unknown;
+  work?: NeoDriverTarget;
+};
+
+export function ownedLookupSessionId(input: OwnedLookupInput): string | null {
+  return input.targetSessionId && !input.work && !input.targetAgent ? input.targetSessionId : null;
+}
+
+export function adoptOwnedNeoTarget<Input extends OwnedLookupInput>(
+  input: Input,
+  owned: { ref: WorkRef | null }
+): Input {
+  return owned.ref && ownedLookupSessionId(input)
     ? { ...input, targetSessionId: undefined, work: { verb: 'send', ref: owned.ref } }
     : input;
 }
@@ -768,12 +779,12 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(requireNeoExecutionChoice, ['input', 'admission'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>) => ({
-        ref:
-          input.targetSessionId && !input.work && !input.targetAgent
-            ? spaceWorkRefForSession(service.db.getDatabase(), input.targetSessionId)
-            : null,
-      }),
+      (input: z.infer<typeof Propose>) => {
+        const sessionId = ownedLookupSessionId(input);
+        return {
+          ref: sessionId ? spaceWorkRefForSession(service.db.getDatabase(), sessionId) : null,
+        };
+      },
       'input',
       'owned'
     )
