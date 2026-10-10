@@ -7,6 +7,7 @@ import {
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
   NEO_WORK_DONE_CHECK_PRS_LIVE,
+  NEO_WORK_DONE_CHECK_PRS_READY,
   NEO_WORK_DONE_CHECK_PRS_STALE,
   NEO_WORK_GOAL,
   NEO_WORK_GOAL_ASKED,
@@ -387,11 +388,13 @@ export function driverDoneCheckNote(
   {
     prs,
     stale = false,
+    ready = false,
     ask,
     cards = [],
   }: {
     prs?: readonly NeoWorkPr[];
     stale?: boolean;
+    ready?: boolean;
     ask?: NeoAsk | null;
     cards?: readonly NeoAskCard[];
   } = {}
@@ -400,7 +403,9 @@ export function driverDoneCheckNote(
     ? ''
     : stale
       ? ` ${NEO_WORK_DONE_CHECK_PRS_STALE}`
-      : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
+      : ready
+        ? ` ${NEO_WORK_DONE_CHECK_PRS_READY}`
+        : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
   const owned = !!ask && ask.originSessionId === work.originSessionId;
   const summary = owned
     ? fillPrompt(NEO_WORK_DONE_CHECK_ASK_NEXT, { summary: NEO_WORK_SUMMARY_NOTE })

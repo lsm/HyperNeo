@@ -945,8 +945,19 @@ export class NeoService {
     const prs = await this.readPrs(row.prs.map((pr) => pr.url));
     if (!prs) this.workPrs.recordFailedRead(workId, Date.now());
     const next = prs ? this.recordWorkPrs(workId, prs, row) : row;
-    if (next && planNeoWorkPrRefresh(next, !!prs, Date.now()) === 'deliver')
-      await this.deliverDoneCheck(work, goal, next, { stale: !prs, ask });
+    const plan = next
+      ? planNeoWorkPrRefresh(next, !!prs, Date.now(), {
+          quietSince: work.updatedAt,
+          remindable: !ask || ask.status === 'open',
+        })
+      : 'wait';
+    if (plan === 'deliver') await this.deliverDoneCheck(work, goal, next, { stale: !prs, ask });
+    if (plan === 'remind')
+      await this.deliverDoneCheck(work, goal, next, {
+        ask,
+        ready: true,
+        followedAt: next?.deliveredAt ?? work.updatedAt,
+      });
   }
 
   private recordWorkPrs(
@@ -1200,9 +1211,10 @@ export class NeoService {
     row: NeoWorkPrRow | null,
     {
       stale = false,
+      ready = false,
       ask,
       followedAt,
-    }: { stale?: boolean; ask?: NeoAsk | null; followedAt?: number } = {}
+    }: { stale?: boolean; ready?: boolean; ask?: NeoAsk | null; followedAt?: number } = {}
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
     await this.deliver(
@@ -1211,6 +1223,7 @@ export class NeoService {
       driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), {
         prs: row?.prs,
         stale,
+        ready,
         ask,
         cards: ask
           ? projectNeoAskCards(
@@ -1222,7 +1235,7 @@ export class NeoService {
       }),
       work.originSessionId
     );
-    if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs));
+    if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs), Date.now(), ready);
   }
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {

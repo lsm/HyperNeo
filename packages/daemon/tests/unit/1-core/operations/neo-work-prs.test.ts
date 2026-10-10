@@ -141,6 +141,53 @@ describe('planNeoWorkPrRefresh', () => {
   ])('%s', (_case, row, read, now, plan) => {
     expect(planNeoWorkPrRefresh(row, read, now)).toBe(plan);
   });
+
+  const ready: NeoWorkPr = { ...pr, state: 'OPEN', checks: 'passing', review: 'approved' };
+  const seen = neoWorkPrSignature([ready]);
+  const now = 10 * halfHour;
+  const told: Parameters<typeof planNeoWorkPrRefresh>[0] = {
+    ...at([ready], seen),
+    deliveredAt: now - halfHour,
+    reminded: null,
+  };
+  const quiet = { quietSince: now - halfHour, remindable: true };
+  test.each<
+    [
+      string,
+      typeof told,
+      Parameters<typeof planNeoWorkPrRefresh>[3],
+      ReturnType<typeof planNeoWorkPrRefresh>,
+    ]
+  >([
+    ['an approved green PR left open for half an hour', told, quiet, 'remind'],
+    [
+      'one Neo was told about a minute ago',
+      { ...told, deliveredAt: now - 60_000 },
+      quiet,
+      'unchanged',
+    ],
+    ['one whose session moved since', told, { ...quiet, quietSince: now - 60_000 }, 'unchanged'],
+    ['one already reminded in this state', { ...told, reminded: seen }, quiet, 'unchanged'],
+    [
+      'one under an ask that is settled or waits on the human',
+      told,
+      { ...quiet, remindable: false },
+      'unchanged',
+    ],
+    ['one told before delivery times were kept', { ...told, deliveredAt: null }, quiet, 'remind'],
+    [
+      'one still waiting for review',
+      {
+        ...told,
+        prs: [{ ...ready, review: 'none' }],
+        delivered: neoWorkPrSignature([{ ...ready, review: 'none' }]),
+      },
+      quiet,
+      'unchanged',
+    ],
+  ])('%s', (_case, row, card, plan) => {
+    expect(planNeoWorkPrRefresh(row, true, now, card)).toBe(plan);
+  });
 });
 
 describe('isNeoWorkPrWaiting', () => {

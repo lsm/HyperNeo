@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { NeoWorkPrRepository } from '../../../../src/storage/repositories/neo-work-pr-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
+import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const pr: NeoWorkPr = {
@@ -38,6 +39,7 @@ describe('NeoWorkPrRepository', () => {
   test('bumps the revision only when the state changes, and stops listing merged work', () => {
     const db = withWork();
     runMigration314(db);
+    runMigration317(db);
     const prs = new NeoWorkPrRepository(db);
 
     expect(prs.record('w1', [pr], 10)).toMatchObject({
@@ -47,7 +49,10 @@ describe('NeoWorkPrRepository', () => {
       delivered: null,
     });
     expect(prs.record('w1', [pr], 20)).toMatchObject({ revision: 1, readAt: 20 });
-    prs.markDelivered('w1', 'seen');
+    prs.markDelivered('w1', 'seen', 25);
+    expect(prs.get('w1')).toMatchObject({ delivered: 'seen', deliveredAt: 25, reminded: null });
+    prs.markDelivered('w1', 'seen', 26, true);
+    expect(prs.get('w1')).toMatchObject({ deliveredAt: 26, reminded: 'seen' });
     expect(prs.record('w1', [{ ...pr, checks: 'passing' }], 30)).toMatchObject({
       revision: 2,
       delivered: 'seen',
