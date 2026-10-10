@@ -87,6 +87,7 @@ import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
   type: 'text',
 };
+import mdneoWorkDoneCheckAskNext from './neo/work/done-check-ask-next.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskOwned from './neo/work/done-check-ask-owned.md' with { type: 'text' };
 import mdneoWorkDoneCheckBudget from './neo/work/done-check-budget.md' with { type: 'text' };
 import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with { type: 'text' };
@@ -322,6 +323,7 @@ const registry: Record<string, string> = {
   'neo/system/root-snapshot-scope.md': mdneoSystemRootSnapshotScope,
   'neo/work/delegated.md': mdneoWorkDelegated,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
+  'neo/work/done-check-ask-next.md': mdneoWorkDoneCheckAskNext,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
   'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
@@ -474,6 +476,7 @@ export const {
   NEO_ROOT_SNAPSHOT_SCOPE,
   NEO_WORK_DELEGATED,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
+  NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,

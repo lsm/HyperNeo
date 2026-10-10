@@ -2,6 +2,7 @@ import {
   fillPrompt,
   NEO_WORK_DONE_CHECK,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
+  NEO_WORK_DONE_CHECK_ASK_NEXT,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,
   NEO_WORK_DONE_CHECK_CONTINUE,
@@ -347,6 +348,35 @@ export function readDriverNeedsYou(
 
 export { NEO_WORK_SUMMARY_NOTE };
 
+export interface NeoAskCard {
+  id: string;
+  title: string;
+  status: NeoWork['status'];
+  prs?: NeoWorkPr[];
+}
+
+const NEO_ASK_CARDS_MAX = 10;
+
+export function projectNeoAskCards(
+  workId: string,
+  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[],
+  prRows: readonly { workId: string; prs: NeoWorkPr[] }[]
+): NeoAskCard[] {
+  const prs = new Map(prRows.map((row) => [row.workId, row.prs]));
+  return works
+    .filter((work) => work.id !== workId)
+    .slice(-NEO_ASK_CARDS_MAX)
+    .map((work) => {
+      const linked = prs.get(work.id);
+      return {
+        id: work.id,
+        title: work.title,
+        status: work.status,
+        ...(linked ? { prs: linked } : {}),
+      };
+    });
+}
+
 export function driverDoneCheckNote(
   work: Pick<NeoWork, 'id' | 'title' | 'report' | 'originSessionId'>,
   goal: NeoWorkGoal,
@@ -356,25 +386,35 @@ export function driverDoneCheckNote(
     prs,
     stale = false,
     ask,
-  }: { prs?: readonly NeoWorkPr[]; stale?: boolean; ask?: NeoAsk | null } = {}
+    cards = [],
+  }: {
+    prs?: readonly NeoWorkPr[];
+    stale?: boolean;
+    ask?: NeoAsk | null;
+    cards?: readonly NeoAskCard[];
+  } = {}
 ): string {
   const live = !prs
     ? ''
     : stale
       ? ` ${NEO_WORK_DONE_CHECK_PRS_STALE}`
       : ` ${NEO_WORK_DONE_CHECK_PRS_LIVE}`;
+  const owned = !!ask && ask.originSessionId === work.originSessionId;
+  const summary = owned
+    ? fillPrompt(NEO_WORK_DONE_CHECK_ASK_NEXT, { summary: NEO_WORK_SUMMARY_NOTE })
+    : NEO_WORK_SUMMARY_NOTE;
   const next = budget
-    ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary: NEO_WORK_SUMMARY_NOTE })
+    ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
         continues_left: String(NEO_WORK_CONTINUE_LIMIT - continued),
-        summary: NEO_WORK_SUMMARY_NOTE,
+        summary,
       });
   const owner = !ask
     ? ''
-    : ask.originSessionId === work.originSessionId
+    : owned
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status } } : {}) })}`;
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(

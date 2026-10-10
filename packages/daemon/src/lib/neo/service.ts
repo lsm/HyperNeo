@@ -75,6 +75,7 @@ import {
   driverStuckNote,
   decideStuckReminder,
   driverDoneCheckNote,
+  projectNeoAskCards,
   neoWorkDoneGoal,
   NEO_WORK_SUMMARY_NOTE,
   driverStallNote,
@@ -1101,6 +1102,13 @@ export class NeoService {
         prs: row?.prs,
         stale,
         ask,
+        cards: ask
+          ? projectNeoAskCards(
+              work.id,
+              ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+              this.workPrs.list(ask.workIds)
+            )
+          : [],
       }),
       work.originSessionId
     );
