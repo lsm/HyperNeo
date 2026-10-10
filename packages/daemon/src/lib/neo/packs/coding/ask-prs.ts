@@ -11,6 +11,7 @@ export type NeoPrStateReader = (urls: readonly string[]) => Promise<NeoPrState[]
 const PR_URL = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g;
 const PR_REF = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const NEO_ASK_PR_MAX = 10;
+const NOT_A_PR = /could not resolve to a (pullrequest|repository)/i;
 const GhPrStateSchema = z.object({
   url: z.string(),
   state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
@@ -63,7 +64,7 @@ async function readGithubPrState(url: string, spawnImpl: SpawnFn): Promise<NeoPr
   );
   const parsed = outcome.ok ? GhPrStateSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) {
-    if (outcome.ok || !outcome.retryable) settled.set(url, null);
+    if (!outcome.ok && NOT_A_PR.test(outcome.error)) settled.set(url, null);
     return null;
   }
   const { state, mergedAt, closedAt } = parsed.data;

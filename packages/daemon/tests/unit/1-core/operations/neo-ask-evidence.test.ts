@@ -100,7 +100,7 @@ describe('neoAskPrNews', () => {
 });
 
 describe('readGithubPrStates', () => {
-  test('reads each pull request once it settled, and skips what is not a pull request', async () => {
+  test('reads each pull request once it settled, skips what is not one, and retries gh failures', async () => {
     const asked: string[] = [];
     const spawn = (args: string[]) => {
       asked.push(args[3]);
@@ -111,13 +111,19 @@ describe('readGithubPrStates', () => {
           : null;
       return {
         stdout: new Response(raw ? JSON.stringify(raw) : '').body,
-        stderr: new Response(raw ? '' : 'Could not resolve to a PullRequest').body,
+        stderr: new Response(
+          raw
+            ? ''
+            : args[3].endsWith('/9003')
+              ? 'GraphQL: Could not resolve to a PullRequest with the number of 9003.'
+              : 'gh: To get started with GitHub CLI, please run: gh auth login'
+        ).body,
         exited: Promise.resolve(raw ? 0 : 1),
         exitCode: raw ? 0 : 1,
         kill: () => {},
       };
     };
-    const urls = [url(9001), url(9002), url(9003)];
+    const urls = [url(9001), url(9002), url(9003), url(9004)];
     expect(await readGithubPrStates(urls, spawn as never)).toEqual([
       { url: url(9001), state: 'MERGED', at: Date.parse('2026-10-10T14:31:00Z') },
       { url: url(9002), state: 'OPEN', at: null },
@@ -125,6 +131,8 @@ describe('readGithubPrStates', () => {
     await readGithubPrStates(urls, spawn as never);
     expect(asked.filter((item) => item === url(9001))).toHaveLength(1);
     expect(asked.filter((item) => item === url(9002))).toHaveLength(2);
+    expect(asked.filter((item) => item === url(9003))).toHaveLength(1);
+    expect(asked.filter((item) => item === url(9004))).toHaveLength(2);
   });
 });
 
