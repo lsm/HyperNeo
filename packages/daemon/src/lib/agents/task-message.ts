@@ -1,3 +1,9 @@
+import {
+  fillPrompt,
+  TASK_MESSAGE_GATED_HANDOFF,
+  TASK_MESSAGE_GOAL_OUTCOME,
+  TASK_MESSAGE_VERIFICATION_LABEL,
+} from '@hyperneo/prompts';
 import type { WorkflowChannel, WorkflowNode, SpaceWorkflow } from '@hyperneo/shared';
 import type { AgentMemoryCoreEntry } from '../../storage/repositories/agent-memory-repository.ts';
 import { Logger } from '../logger.ts';
@@ -68,9 +74,7 @@ export function buildCustomAgentTaskMessage(
       sections.push('**Next Steps:**');
       for (const step of goal.nextSteps) sections.push(`- ${step}`);
     }
-    sections.push(
-      'When this task finishes, record a concise outcome summary in its result. The goal owner reviews reported outcomes and applies goal updates — do not mutate the goal rolling state yourself.'
-    );
+    sections.push(TASK_MESSAGE_GOAL_OUTCOME);
   }
 
   if (relevantScopeLessons && relevantScopeLessons.length > 0) {
@@ -157,8 +161,7 @@ function truncateMemoryPromptContent(content: string): string {
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
 }
 
-const IMPLEMENTER_FACING_VERIFICATION_LABEL =
-  ' (for the implementer; the reviewer validates by reading, CI validates by running)';
+const IMPLEMENTER_FACING_VERIFICATION_LABEL = ` ${TASK_MESSAGE_VERIFICATION_LABEL}`;
 
 export function labelVerificationImplementerFacing(description: string): string {
   return description.replace(
@@ -268,7 +271,10 @@ function buildHookValidatedHandoffLines(
   for (const channel of outboundHookValidatedChannels) {
     if (Array.isArray(channel.to)) continue;
     lines.push(
-      `  - ${describeChannelTarget(channel, channel.to)}: call \`send_message(target=${JSON.stringify(channel.to)}, message="<short summary>", data: { "pr_url": "<pr_url>" })\`; \`save_artifact\` alone does not deliver this gated handoff.`
+      fillPrompt(TASK_MESSAGE_GATED_HANDOFF, {
+        target: describeChannelTarget(channel, channel.to),
+        target_json: JSON.stringify(channel.to),
+      })
     );
   }
   return lines;

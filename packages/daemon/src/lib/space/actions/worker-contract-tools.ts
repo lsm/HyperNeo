@@ -1,3 +1,9 @@
+import {
+  fillPrompt,
+  SPACE_CONTRACT_TOOL_CATALOG,
+  SPACE_CONTRACT_TOOL_DOOR,
+  SPACE_CONTRACT_TOOL_SUGGESTED,
+} from '@hyperneo/prompts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { GENERAL_HOT_ACTIONS, ROLE_HOT_ACTIONS } from './description-generator.ts';
 
@@ -41,8 +47,10 @@ export function buildWorkerDispatcherContractTools(
     .filter((name) => availableActionNames?.has(name) ?? false)
     .map((name) => `invoke(name="${name}")`);
   return [
-    `  - invoke({ name, input? }) on the operations server — one door for every operation available to the ${label} role`,
-    ...(suggested.length > 0 ? [`    Suggested: ${suggested.join(', ')}`] : []),
-    '  - invoke(name="operations.list") — the authoritative catalog for this role; invoke(name="operations.describe") for one operation\'s schema',
+    fillPrompt(SPACE_CONTRACT_TOOL_DOOR, { label }),
+    ...(suggested.length > 0
+      ? [fillPrompt(SPACE_CONTRACT_TOOL_SUGGESTED, { suggested: suggested.join(', ') })]
+      : []),
+    SPACE_CONTRACT_TOOL_CATALOG,
   ];
 }

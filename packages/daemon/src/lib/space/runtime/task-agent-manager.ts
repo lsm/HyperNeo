@@ -1,3 +1,12 @@
+import {
+  fillPrompt,
+  SPACE_CONTRACT_BLOCKER,
+  SPACE_CONTRACT_COMPLETE_HUMAN,
+  SPACE_CONTRACT_COMPLETE_UNLOCKED,
+  SPACE_CONTRACT_END_NODE_OVERRIDE,
+  SPACE_CONTRACT_NODE_HEADER,
+  SPACE_CONTRACT_WORKER_HEADER,
+} from '@hyperneo/prompts';
 import type {
   McpServerConfig,
   MessageContent,
@@ -3246,11 +3255,9 @@ export class TaskAgentManager {
     );
 
     const fallback = [
-      '## Runtime Execution Contract',
-      `Role: "${execution.agentName}"`,
-      'Tools available:',
+      fillPrompt(SPACE_CONTRACT_WORKER_HEADER, { agent_name: execution.agentName }),
       ...dispatcherTools,
-      'If you hit a hard blocker: record it via invoke(name="workflow.run.artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
+      SPACE_CONTRACT_BLOCKER,
     ].join('\n');
 
     if (!workflow) {
@@ -3263,29 +3270,20 @@ export class TaskAgentManager {
     }
 
     const lines: string[] = [
-      '## Runtime Execution Contract',
-      `Node: "${node.name}" (${node.id})`,
-      `Agent: "${execution.agentName}"`,
-      'Tools available:',
+      fillPrompt(SPACE_CONTRACT_NODE_HEADER, {
+        node_name: node.name,
+        node_id: node.id,
+        agent_name: execution.agentName,
+      }),
       ...dispatcherTools,
     ];
 
-    lines.push(
-      'If you hit a hard blocker: record it via invoke(name="workflow.run.artifact.save", input={ shape: "note", kind: "blocked", summary: "<what blocks you>" }) and stop. Do NOT wait for a reply — there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.'
-    );
+    lines.push(SPACE_CONTRACT_BLOCKER);
     if (isEndNode) {
+      lines.push(SPACE_CONTRACT_END_NODE_OVERRIDE);
       lines.push(
-        'For this workflow worker, this runtime contract overrides earlier terminal-action guidance: submit completion with a task.transition to review at every autonomy level. Workflow workers cannot use task.approve; submission creates the checkpoint required for a later authorized approval.'
+        approveUnlocked ? SPACE_CONTRACT_COMPLETE_UNLOCKED : SPACE_CONTRACT_COMPLETE_HUMAN
       );
-      if (approveUnlocked) {
-        lines.push(
-          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "..." }) as your FINAL action to submit the completion checkpoint. The runtime applies the completion and autonomy policy; submission acceptance is not final approval.'
-        );
-      } else {
-        lines.push(
-          'When your work is complete: (1) call invoke(name="workflow.run.artifact.save", input={ shape: "decision", key: "outcome", summary: "...", data: { recommendation: "completed" } }) to record the outcome, then (2) call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "..." }) as your FINAL action. Only a human can finalize at this autonomy level.'
-        );
-      }
     }
     return lines.join('\n');
   }
