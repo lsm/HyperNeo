@@ -127,6 +127,19 @@ describe('durable public conversation presentation', () => {
     fireEvent.click(screen.getByLabelText('Edit and send again'));
     expect(onEditUndelivered).toHaveBeenCalledWith(failed);
     expect(screen.queryByLabelText('Edit and send again')).toBeNull();
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      'neo:restored-undelivered',
+      JSON.stringify([failed.requestId])
+    );
+    vi.mocked(localStorage.getItem).mockReturnValueOnce(JSON.stringify([failed.requestId]));
+    cleanup();
+    render(
+      <NeoPublicConversation
+        conversation={conversation([failed], [])}
+        onEditUndelivered={onEditUndelivered}
+      />
+    );
+    expect(screen.queryByLabelText('Edit and send again')).toBeNull();
   });
 
   it('keeps the edit action when the composer refuses the photos', () => {

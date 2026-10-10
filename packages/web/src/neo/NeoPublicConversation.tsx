@@ -35,6 +35,23 @@ export function publicAskText(content: NeoConversationAsk['content']): string {
 }
 
 const NOT_DELIVERED = 'Not delivered: Neo never got this message.';
+const RESTORED_KEY = 'neo:restored-undelivered';
+
+function restoredUndelivered(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(RESTORED_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function markRestored(requestId: string) {
+  try {
+    const ids = [...restoredUndelivered().filter((id) => id !== requestId), requestId];
+    localStorage.setItem(RESTORED_KEY, JSON.stringify(ids.slice(-200)));
+  } catch {}
+}
 
 function PublicEntry({
   entry,
@@ -54,7 +71,9 @@ function PublicEntry({
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
   const [showReason, setShowReason] = useState(false);
-  const [restored, setRestored] = useState(false);
+  const [restored, setRestored] = useState(
+    () => !!ask && restoredUndelivered().includes(ask.requestId)
+  );
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
@@ -178,7 +197,9 @@ function PublicEntry({
             aria-label="Edit and send again"
             title="Edit and send again"
             onClick={() => {
-              if (onEditUndelivered(ask!) !== false) setRestored(true);
+              if (onEditUndelivered(ask!) === false) return;
+              markRestored(ask!.requestId);
+              setRestored(true);
             }}
             class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
           >
