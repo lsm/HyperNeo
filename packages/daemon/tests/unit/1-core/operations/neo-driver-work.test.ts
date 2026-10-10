@@ -748,6 +748,18 @@ describe('Neo work with a drivers target', () => {
     );
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'Fix the tap target', '- merged');
+    const ask = service.askRecords.open({
+      id: 'ask-tap',
+      requestKey: 'neo:root:tap',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'ask-1',
+      title: 'Fix the tap target',
+      ask: 'Fix the tap target',
+      doneWhen: '- merged',
+      doneSource: 'human',
+    })!;
+    service.askRecords.link(ask.id, 'work-1');
     service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
     const notes: string[] = [];
     Object.assign(service, {
