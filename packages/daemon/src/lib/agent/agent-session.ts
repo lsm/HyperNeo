@@ -525,7 +525,9 @@ export class AgentSession
     );
     this.settingsManager = new SettingsManager(
       this.db,
-      this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined
+      neoCoordinatorBinding(this.db, this.session.id)
+        ? undefined
+        : (this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined)
     );
 
     this.messageQueue = new MessageQueue();

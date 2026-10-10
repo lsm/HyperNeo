@@ -6,10 +6,12 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorAllowedTools,
   neoCoordinatorNativeTools,
+  neoCoordinatorRuntimePath,
 } from '../../../../src/lib/neo/session-policy.ts';
 import { neoConsultationRequestContent } from '../../../../src/lib/neo/consultation-request-content.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -270,4 +272,30 @@ describe('published consultation runtime activation', () => {
       }
     }
   );
+
+  test('a Neo session filed under the Neo project still runs and resumes in its own folder', async () => {
+    db.updateSession(root, { sdkSessionId: crypto.randomUUID(), workspacePath: neoFolderPath() });
+    const session = db.getSession(root)!;
+    const agent = new AgentSession(
+      session,
+      db,
+      hub,
+      events,
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { autoReplayPendingMessages: false }
+    );
+    agents.push(agent);
+    const options = agent.optionsBuilder.addSessionStateOptions(await agent.optionsBuilder.build());
+    expect(options.cwd).toBe(neoCoordinatorRuntimePath(root));
+    expect(options.resume).toBe(session.sdkSessionId);
+    expect(options.settingSources).toEqual([]);
+    expect(
+      (agent as unknown as { settingsManager: { workspacePath?: string } }).settingsManager
+        .workspacePath
+    ).toBeUndefined();
+  });
 });

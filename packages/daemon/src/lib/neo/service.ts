@@ -26,6 +26,7 @@ import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import {
   NeoWorkCheckRepository,
@@ -47,6 +48,7 @@ import {
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
   neoStallMessageId,
+  nudgedMessageId,
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
@@ -94,6 +96,7 @@ import {
   planNeoSavedRulesNote,
   withNeoSavedRules,
 } from './saved-rules.ts';
+import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -121,6 +124,7 @@ import {
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
 } from './done-check.ts';
+import { planNeoWaitingReminders } from './waiting-reminders.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -526,7 +530,21 @@ export class NeoService {
     });
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
+    if (receipt.accepted && receipt.created && !input.interim)
+      this.askRecords.markReminded(
+        this.waitingReminders(input.producerInput).map((ask) => ask.id),
+        Date.now()
+      );
     return receipt;
+  }
+
+  waitingReminders(turn: { sessionId: string; messageId: string }) {
+    const route = new NeoRoutingLogRepository(this.db.getDatabase()).find(
+      nudgedMessageId(turn.messageId) ?? turn.messageId
+    );
+    return route
+      ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
+      : [];
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
@@ -636,7 +654,8 @@ export class NeoService {
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
-        workspacePath: null,
+        workspacePath: neoFolderPath(),
+        detectGit: false,
         config: {
           systemPrompt: neoPrompt(concernId),
           sdkToolsPreset: neoCoordinatorNativeTools(concernId),
