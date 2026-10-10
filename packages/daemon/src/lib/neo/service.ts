@@ -26,6 +26,7 @@ import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import {
   NeoWorkCheckRepository,
@@ -50,6 +51,7 @@ import {
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
   neoStallMessageId,
+  nudgedMessageId,
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
@@ -124,6 +126,7 @@ import {
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
 } from './done-check.ts';
+import { planNeoWaitingReminders } from './waiting-reminders.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -529,7 +532,21 @@ export class NeoService {
     });
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
+    if (receipt.accepted && receipt.created && !input.interim)
+      this.askRecords.markReminded(
+        this.waitingReminders(input.producerInput).map((ask) => ask.id),
+        Date.now()
+      );
     return receipt;
+  }
+
+  waitingReminders(turn: { sessionId: string; messageId: string }) {
+    const route = new NeoRoutingLogRepository(this.db.getDatabase()).find(
+      nudgedMessageId(turn.messageId) ?? turn.messageId
+    );
+    return route
+      ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
+      : [];
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {

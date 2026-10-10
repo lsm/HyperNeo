@@ -722,7 +722,7 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('the proof goes in evidence, never in summary');
     expect(prompt).toContain('Never offer work only in text');
     expect(prompt).toContain('settle waiting with summary naming them, never achieved');
-    expect(prompt).toContain('then ask about the waiting one in one short line');
+    expect(prompt).toContain('neo.snapshot returns waitingOnHuman');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');
