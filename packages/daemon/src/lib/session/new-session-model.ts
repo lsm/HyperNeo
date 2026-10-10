@@ -4,6 +4,7 @@ import { resolveFallbackChain } from '../agent/fallback-recovery.ts';
 import { canonicalModelId, findInModels } from '../model-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
+import { usableModels } from '../usable-models.ts';
 
 export type NewSessionModelSettings = Pick<
   GlobalSettings,
@@ -101,7 +102,8 @@ function decideFromCatalog(
     if (requested) return { kind: 'model', ...requested };
     if (explicitProvider) return { kind: 'model', id: explicitModel, provider: explicitProvider };
   }
-  const byDefault = pickCatalogModel(models, defaultModel, defaultProvider);
+  const usable = usableModels(models);
+  const byDefault = pickCatalogModel(usable, defaultModel, defaultProvider);
   if (byDefault) return { kind: 'model', ...byDefault };
   const chainProvider = defaultProvider ?? inferProviderForModel(defaultModel);
   const chain = resolveFallbackChain(
@@ -111,7 +113,7 @@ function decideFromCatalog(
     settings.fallbackModels
   );
   for (const entry of chain) {
-    const fallback = pickCatalogModel(models, entry.model, entry.provider);
+    const fallback = pickCatalogModel(usable, entry.model, entry.provider);
     if (fallback) return { kind: 'model', ...fallback, fallbackFrom: request.requestedModel };
   }
   return {
