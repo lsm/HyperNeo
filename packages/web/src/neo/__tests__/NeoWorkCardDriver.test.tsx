@@ -50,6 +50,15 @@ describe('neoWorkDriverLabel', () => {
     );
   });
 
+  it('says when Neo could not confirm the session got its message', () => {
+    expect(
+      neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', unconfirmed: true })
+    ).toBe('Running in Codex Desktop · not confirmed it got this');
+    expect(
+      neoWorkDriverLabel({ ...driver, daemon: null, status: 'stopped', unconfirmed: true })
+    ).toBe('Stopped in Codex Desktop');
+  });
+
   it('says when Neo could not check the session lately', () => {
     const since = new Date(2026, 9, 10, 15, 42).getTime();
     const time = new Date(since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
