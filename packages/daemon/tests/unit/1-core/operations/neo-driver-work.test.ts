@@ -955,7 +955,7 @@ describe('Neo work with a drivers target', () => {
   });
 
   test("tracks the pull request a card's session opened on its branch without naming it", async () => {
-    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const ref = { adapter: 'hyperneo', id: 'card-session' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6301';
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
       ok: true,
@@ -979,12 +979,8 @@ describe('Neo work with a drivers target', () => {
       urls.map((item) => ({ url: item, state: 'OPEN', checks: 'pending', review: 'none' }));
     Object.assign(service, { deliver: async () => {} });
     try {
-      await service.start('work-1');
-      const work = service.repo.getWork('work-1')!;
       db.createSession({ ...createTestSession('card-session'), worktree });
-      db.getDatabase()
-        .prepare('UPDATE neo_work SET session_id = ? WHERE id = ?')
-        .run('card-session', work.id);
+      await service.start('work-1');
       await service.refreshDriverWork();
       expect(branches).toContain('neo/font');
       expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);

@@ -1565,8 +1565,7 @@ export class NeoService {
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<string[]> {
     const ref = this.driverTargets.readRef(work.id);
-    const sessionId = ref?.adapter === 'hyperneo' ? ref.id : work.sessionId;
-    const branch = neoWorkBranch(sessionId ? this.db.getSession(sessionId) : null);
+    const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
     const opened = branch ? await this.readBranchPrs(branch) : [];
     return extractNeoWorkPrUrls(work.report, [
       ...(stored?.prs ?? []),
