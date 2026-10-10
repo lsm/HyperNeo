@@ -168,7 +168,12 @@ import {
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
-import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
+import {
+  planNeoWorkFollow,
+  planNeoWorkFollowLive,
+  requireNeoWorkFollow,
+  requireNeoWorkFollowUp,
+} from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -267,6 +272,7 @@ export class NeoService {
         readAt: this.followReads.get(work.id) ?? null,
         since: this.driverTargets.readFollowAnchor(work.id) ?? work.updatedAt,
         superseded: this.driverTargets.readSupersededAt(work.id) !== null,
+        live: this.driverTargets.readLiveStatus(work.id),
       }),
       'work',
       'card'
@@ -287,6 +293,16 @@ export class NeoService {
       ['work', 'follow', 'now', 'card'],
       'read'
     )
+    .pipe(planNeoWorkFollowLive, 'read', 'live')
+    .pipe(
+      (work: NeoWork, live: ReturnType<typeof planNeoWorkFollowLive>, now: number) => {
+        const recorded =
+          !!live && this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink);
+        if (this.recordCardCheck(work.id, !!live, now) || recorded) this.notifyChanged();
+      },
+      ['work', 'live', 'now']
+    )
+    .pipe(requireNeoWorkFollowUp, ['work', 'card'], 'result:follow')
     .pipe(planNeoWorkFollow, ['work', 'read', 'card'], 'result:follow')
     .pipe(
       (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
