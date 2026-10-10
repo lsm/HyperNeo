@@ -180,7 +180,8 @@ function folderOf(record: ClaudeDesktopRecord): string | undefined {
 }
 
 export function claudeRemoteLink(record: ClaudeDesktopRecord): string | undefined {
-  const bridge = record.remoteControlUserEnabled ? record.bridgeSessionIds?.at(-1) : undefined;
+  const bridge =
+    record.remoteControlUserEnabled === false ? undefined : record.bridgeSessionIds?.at(-1);
   return bridge && /^session_[A-Za-z0-9]+$/.test(bridge)
     ? `https://claude.ai/code/${bridge}`
     : undefined;
