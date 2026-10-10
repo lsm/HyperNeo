@@ -6,6 +6,7 @@ import {
   projectNeoSnapshotAsks,
   requireNeoAskConcern,
   isNeoAskReplay,
+  planNeoAskItems,
   planNeoAskWorkStops,
   planNeoCardAsk,
   isNeoCardAsk,
@@ -115,6 +116,56 @@ describe('neo.ask operations', () => {
     expect(snapshot.value?.asks).toEqual([
       expect.objectContaining({ id: askId, doneWhen: opening.doneWhen, workIds: [workId] }),
     ]);
+  });
+
+  test('stores the done list as checklist items and shows them in the snapshot', async () => {
+    const opened = await invoke('neo.ask.open', {
+      ...opening,
+      requestKey: 'checklist',
+      doneWhen: undefined,
+      doneItems: [{ text: 'Fix merged to dev', check: 'pr_merged' }, { text: 'Docs updated' }],
+    });
+    const item = (id: string, text: string, check: 'pr_merged' | null) => ({
+      id,
+      text,
+      state: 'pending',
+      evidence: null,
+      check,
+      metBy: null,
+      removed: false,
+      addedAt: null,
+    });
+    expect(opened).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          doneWhen: '- Fix merged to dev\n- Docs updated',
+          doneItems: [
+            item('i1', 'Fix merged to dev', 'pr_merged'),
+            item('i2', 'Docs updated', null),
+          ],
+        },
+      },
+    });
+    expect(
+      await invoke('neo.ask.open', {
+        ...opening,
+        requestKey: 'checklist',
+        doneWhen: undefined,
+        doneItems: [{ text: 'Fix merged to dev', check: 'pr_merged' }, { text: 'Docs updated' }],
+      })
+    ).toMatchObject({ value: { ok: true, ask: { id: opened.value!.ask!.id } } });
+    const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
+    expect(asks.find((ask) => ask.id === opened.value!.ask!.id)?.doneItems).toHaveLength(2);
+
+    const legacy = await invoke('neo.ask.open', opening);
+    expect(legacy.value!.ask!.doneItems?.map((done) => done.text)).toEqual([
+      'merged to dev',
+      'CI green',
+    ]);
+    expect(
+      await invoke('neo.ask.open', { ...opening, requestKey: 'none', doneWhen: undefined })
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
 
   test('refuses work under a missing or achieved ask, and settling is final', async () => {
@@ -418,6 +469,39 @@ describe('requireNeoAskWritten', () => {
       reason: { ok: false, reason: 'This ask changed; read it again.' },
     });
     expect(requireNeoAskWritten({ ask })).toEqual({ value: { ok: true, ask } });
+  });
+});
+
+describe('planNeoAskItems', () => {
+  const free = 'Merged to dev after CI and bot approval.';
+  test.each<[string, Parameters<typeof planNeoAskItems>[0], ReturnType<typeof planNeoAskItems>]>([
+    [
+      'a checklist',
+      {
+        doneItems: [
+          { text: 'Merged', check: 'pr_merged' },
+          { text: 'Docs', check: null },
+        ],
+      },
+      {
+        doneWhen: '- Merged\n- Docs',
+        items: [
+          { text: 'Merged', check: 'pr_merged' },
+          { text: 'Docs', check: null },
+        ],
+      },
+    ],
+    [
+      'a bulleted done list under a heading',
+      { doneWhen: 'Done when:\n- merged\n* docs\n2) released' },
+      {
+        doneWhen: 'Done when:\n- merged\n* docs\n2) released',
+        items: ['merged', 'docs', 'released'].map((text) => ({ text, check: null })),
+      },
+    ],
+    ['free text', { doneWhen: free }, { doneWhen: free, items: [{ text: free, check: null }] }],
+  ])('%s', (_label, input, plan) => {
+    expect(planNeoAskItems(input)).toEqual(plan);
   });
 });
 

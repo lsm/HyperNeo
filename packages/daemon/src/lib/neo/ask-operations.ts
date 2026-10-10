@@ -3,7 +3,10 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoAskInput } from '../../storage/repositories/neo-ask-repository.ts';
+import type {
+  NeoAskInput,
+  NeoAskItemInput,
+} from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoService } from './service.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
@@ -30,20 +33,47 @@ export const NeoAskSchema = z.object({
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
+  doneItems: z
+    .array(
+      z.object({
+        id: z.string(),
+        text: z.string(),
+        state: z.enum(['pending', 'met', 'needs_you']),
+        evidence: z.string().nullable(),
+        check: z.enum(['pr_merged']).nullable(),
+        metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
+        removed: z.boolean(),
+        addedAt: z.number().nullable(),
+      })
+    )
+    .optional(),
   workIds: z.array(z.string()),
   createdAt: z.number(),
   updatedAt: z.number(),
   settledAt: z.number().nullable(),
 });
 const AskResult = z.union([Failure, z.object({ ok: z.literal(true), ask: NeoAskSchema })]);
-const Open = z.object({
-  requestKey: z.string().min(1).max(160),
-  concernId: z.string().min(1).nullable().default(null),
-  title: z.string().trim().min(1).max(160),
-  ask: z.string().trim().min(1).max(4000),
-  doneWhen: z.string().trim().min(1).max(2000),
-  doneSource: z.string().trim().min(1).max(160),
-});
+const Open = z
+  .object({
+    requestKey: z.string().min(1).max(160),
+    concernId: z.string().min(1).nullable().default(null),
+    title: z.string().trim().min(1).max(160),
+    ask: z.string().trim().min(1).max(4000),
+    doneWhen: z.string().trim().min(1).max(2000).optional(),
+    doneItems: z
+      .array(
+        z.object({
+          text: z.string().trim().min(1).max(300),
+          check: z.enum(['pr_merged']).nullable().default(null),
+        })
+      )
+      .min(1)
+      .max(12)
+      .optional(),
+    doneSource: z.string().trim().min(1).max(160),
+  })
+  .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.');
+type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 const Settle = z.object({
   id: z.string().min(1),
   outcome: z.enum(['achieved', 'abandoned', 'blocked']),
@@ -133,8 +163,27 @@ export function requireNeoAskConcern<T>(
   return input.concernId && !found.concern ? { reason: fail('Concern not found.') } : { value };
 }
 
+export function planNeoAskItems(input: {
+  doneWhen?: string;
+  doneItems?: readonly NeoAskItemInput[];
+}): { doneWhen: string; items: NeoAskItemInput[] } {
+  if (input.doneItems?.length)
+    return {
+      doneWhen: input.doneWhen ?? input.doneItems.map((item) => `- ${item.text}`).join('\n'),
+      items: [...input.doneItems],
+    };
+  const doneWhen = input.doneWhen ?? '';
+  const bullets = doneWhen
+    .split('\n')
+    .flatMap((line) => /^\s*(?:[-*•]|\d+[.)])\s+(.+)$/.exec(line)?.[1]?.trim() || []);
+  return {
+    doneWhen,
+    items: (bullets.length ? bullets : [doneWhen.trim()]).map((text) => ({ text, check: null })),
+  };
+}
+
 export function requireNeoAskReceipt(
-  input: z.infer<typeof Open>,
+  input: Opening,
   opened: { ask: NeoAsk | null }
 ): Gate<AskReceipt> {
   const { ask } = opened;
@@ -234,19 +283,31 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['input', 'caller'],
       'result:admission'
     )
+    .pipe(planNeoAskItems, 'input', 'checklist')
     .pipe(
-      (input: z.infer<typeof Open>, origin: NeoWorkOrigin) => ({
-        ask: service.askRecords.open({
-          ...input,
-          ...origin,
-          id: crypto.randomUUID(),
-          requestKey: `${origin.originSessionId}:${input.requestKey}`,
-        }),
+      (input: z.infer<typeof Open>, checklist: ReturnType<typeof planNeoAskItems>): Opening => {
+        const { doneItems: _items, ...rest } = input;
+        return { ...rest, doneWhen: checklist.doneWhen };
+      },
+      ['input', 'checklist'],
+      'opening'
+    )
+    .pipe(
+      (opening: Opening, origin: NeoWorkOrigin, checklist: ReturnType<typeof planNeoAskItems>) => ({
+        ask: service.askRecords.open(
+          {
+            ...opening,
+            ...origin,
+            id: crypto.randomUUID(),
+            requestKey: `${origin.originSessionId}:${opening.requestKey}`,
+          },
+          checklist.items
+        ),
       }),
-      ['input', 'admission'],
+      ['opening', 'admission', 'checklist'],
       'opened'
     )
-    .pipe(requireNeoAskReceipt, ['input', 'opened'], 'result:admission')
+    .pipe(requireNeoAskReceipt, ['opening', 'opened'], 'result:admission')
     .end('admission') as (
     input: z.infer<typeof Open>,
     caller: OperationCaller
@@ -301,7 +362,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneWhen is the outcome that finishes it (for code, usually merged and not just a pull request opened); doneSource is "human" when the human said it, or the id of the standing rule it came from. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item (for code, usually merged and not just a pull request opened); a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
