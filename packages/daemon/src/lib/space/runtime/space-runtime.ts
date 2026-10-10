@@ -1,4 +1,16 @@
 import {
+  fillPrompt,
+  SPACE_RUNTIME_HANDOFF_NO_TRANSCRIPT,
+  SPACE_RUNTIME_HANDOFF_NOTE,
+  SPACE_RUNTIME_HANDOFF_TRANSCRIPT,
+  SPACE_RUNTIME_IDLE_NUDGE,
+  SPACE_RUNTIME_RESTART_HANDOFF_LOST,
+  SPACE_RUNTIME_RESTART_NODE_ENDED,
+  SPACE_RUNTIME_RESTART_NOTICE,
+  SPACE_RUNTIME_STALL_NAG,
+  SPACE_RUNTIME_TERMINAL_ERROR,
+} from '@hyperneo/prompts';
+import {
   assertTaskTransitionSnapshot,
   StaleTaskGuardError,
   type TaskTransitionExpectation,
@@ -4373,17 +4385,16 @@ export class SpaceRuntime {
           .slice(-8_000);
         handoffNotes.set(execution.id, {
           sessionId,
-          note: [
-            '[Human-authorized worker session handoff]',
-            `Previous session: ${sessionId}`,
-            `Task: ${task.title}`,
-            `Node: ${execution.workflowNodeId}; agent: ${execution.agentName}`,
-            `Recovery failure: ${(execution.result ?? 'unknown').slice(0, 1_000)}`,
-            'The prior session could not be resumed. Its transcript is preserved. Verify repository, task, workflow, and artifact state before repeating interrupted work.',
-            transcript
-              ? `Recent predecessor messages:\n${transcript}`
-              : 'No readable predecessor messages were found.',
-          ].join('\n\n'),
+          note: fillPrompt(SPACE_RUNTIME_HANDOFF_NOTE, {
+            session_id: sessionId,
+            task_title: task.title,
+            node_id: execution.workflowNodeId,
+            agent_name: execution.agentName,
+            failure: (execution.result ?? 'unknown').slice(0, 1_000),
+            transcript: transcript
+              ? fillPrompt(SPACE_RUNTIME_HANDOFF_TRANSCRIPT, { transcript })
+              : SPACE_RUNTIME_HANDOFF_NO_TRANSCRIPT,
+          }),
         });
       }
     }
@@ -5778,7 +5789,9 @@ export class SpaceRuntime {
             .find((execution) => execution.agentName === agentEntry.name);
           if (existing) {
             if (existing.status === 'idle' || existing.status === 'cancelled') {
-              const message = `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`;
+              const message = fillPrompt(SPACE_RUNTIME_RESTART_NODE_ENDED, {
+                node_name: targetNode.name,
+              });
               this.config.nodeExecutionRepo.update(existing.id, {
                 status: 'pending',
                 result: null,
@@ -5790,7 +5803,9 @@ export class SpaceRuntime {
             }
             continue;
           }
-          const message = `[Daemon restart recovery] The previous agent (${sourceExecution.agentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
+          const message = fillPrompt(SPACE_RUNTIME_RESTART_HANDOFF_LOST, {
+            agent_name: sourceExecution.agentName,
+          });
           this.createNodeExecutionOrIgnore({
             workflowRunId: run.id,
             workflowNodeId: targetNode.id,
@@ -6042,28 +6057,24 @@ export class SpaceRuntime {
     lastMessageAt: number,
     reason: string
   ): string {
-    return [
-      '[Runtime recovery notice]',
-      '',
-      `No observable progress has been recorded for workflow run ${runId}, node ${execution.workflowNodeId}, agent ${execution.agentName} since ${new Date(lastMessageAt).toISOString()}.`,
-      `The last SDK message is non-terminal: ${reason}.`,
-      '',
-      'Please continue your assigned work from the current state. If work is complete, report completion through the workflow tools. If you are blocked, report the blocker clearly through the available tools. Do not wait silently.',
-    ].join('\n');
+    return fillPrompt(SPACE_RUNTIME_STALL_NAG, {
+      run_id: runId,
+      node_id: execution.workflowNodeId,
+      agent_name: execution.agentName,
+      since: new Date(lastMessageAt).toISOString(),
+      reason,
+    });
   }
 
   private buildNonTerminalIdleNudgeMessage(): string {
-    return 'Runtime noticed no recent progress. Continue current work, or report a blocker.';
+    return SPACE_RUNTIME_IDLE_NUDGE;
   }
 
   private buildRuntimeRestartNotice(execution: NodeExecution): string {
-    return [
-      '[Runtime session recovery]',
-      '',
-      `The process for your current session on node ${execution.workflowNodeId}, agent ${execution.agentName}, stopped making observable progress and was restarted by the runtime.`,
-      'Continue your work in this same session. Check the current repository and workflow state before repeating any interrupted action.',
-      'If you are blocked, report the blocker clearly through the available workflow tools.',
-    ].join('\n');
+    return fillPrompt(SPACE_RUNTIME_RESTART_NOTICE, {
+      node_id: execution.workflowNodeId,
+      agent_name: execution.agentName,
+    });
   }
 
   private async blockWorkerForManualHandoff(
@@ -7946,16 +7957,12 @@ export class SpaceRuntime {
     const errorDetails = (errorResult.errors ?? []).join('; ');
     const fallbackText = typeof errorResult.result === 'string' ? errorResult.result : '';
     const errorSummary = (errorDetails !== '' ? errorDetails : fallbackText).slice(0, 280);
-    return [
-      '[Runtime recovery — terminal error]',
-      '',
-      `Your previous turn ended with a terminal error result (${errorResult.subtype})` +
-        `${errorSummary ? `: ${errorSummary}` : ''}.`,
-      `The error appears transient. Resume your assigned task for node ${execution.workflowNodeId}` +
-        ` (agent ${execution.agentName}) from the current repository and workflow state.`,
-      'Inspect task/workflow status, recent messages, and any partial work before continuing.',
-      'If the same error recurs, report the blocker clearly through the available workflow tools.',
-    ].join('\n');
+    return fillPrompt(SPACE_RUNTIME_TERMINAL_ERROR, {
+      subtype: errorResult.subtype,
+      summary: errorSummary ? `: ${errorSummary}` : '',
+      node_id: execution.workflowNodeId,
+      agent_name: execution.agentName,
+    });
   }
 
   private async handleWaitingRebindExecutions(

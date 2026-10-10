@@ -138,6 +138,45 @@ import mdevolutionConversationFriction from './evolution/conversation-friction.m
 };
 import mdsessionMinimalWorktree from './session/minimal-worktree.md' with { type: 'text' };
 import mdsessionWorktreeIsolation from './session/worktree-isolation.md' with { type: 'text' };
+import mdspaceContractBlocker from './space/contract/blocker.md' with { type: 'text' };
+import mdspaceContractCompleteHuman from './space/contract/complete-human.md' with { type: 'text' };
+import mdspaceContractCompleteUnlocked from './space/contract/complete-unlocked.md' with {
+  type: 'text',
+};
+import mdspaceContractEndNodeOverride from './space/contract/end-node-override.md' with {
+  type: 'text',
+};
+import mdspaceContractNodeHeader from './space/contract/node-header.md' with { type: 'text' };
+import mdspaceContractToolCatalog from './space/contract/tool-catalog.md' with { type: 'text' };
+import mdspaceContractToolDoor from './space/contract/tool-door.md' with { type: 'text' };
+import mdspaceContractToolSuggested from './space/contract/tool-suggested.md' with { type: 'text' };
+import mdspaceContractWorkerHeader from './space/contract/worker-header.md' with { type: 'text' };
+import mdspaceRuntimeHandoffNoTranscript from './space/runtime/handoff-no-transcript.md' with {
+  type: 'text',
+};
+import mdspaceRuntimeHandoffNote from './space/runtime/handoff-note.md' with { type: 'text' };
+import mdspaceRuntimeHandoffTranscript from './space/runtime/handoff-transcript.md' with {
+  type: 'text',
+};
+import mdspaceRuntimeIdleNudge from './space/runtime/idle-nudge.md' with { type: 'text' };
+import mdspaceRuntimeRestartHandoffLost from './space/runtime/restart-handoff-lost.md' with {
+  type: 'text',
+};
+import mdspaceRuntimeRestartNodeEnded from './space/runtime/restart-node-ended.md' with {
+  type: 'text',
+};
+import mdspaceRuntimeRestartNotice from './space/runtime/restart-notice.md' with { type: 'text' };
+import mdspaceRuntimeStallNag from './space/runtime/stall-nag.md' with { type: 'text' };
+import mdspaceRuntimeTerminalError from './space/runtime/terminal-error.md' with { type: 'text' };
+import mdspaceTaskMessageGatedHandoff from './space/task-message/gated-handoff.md' with {
+  type: 'text',
+};
+import mdspaceTaskMessageGoalOutcome from './space/task-message/goal-outcome.md' with {
+  type: 'text',
+};
+import mdspaceTaskMessageVerificationLabel from './space/task-message/verification-label.md' with {
+  type: 'text',
+};
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
 import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
@@ -322,6 +361,27 @@ const registry: Record<string, string> = {
   'evolution/conversation-friction.md': mdevolutionConversationFriction,
   'session/minimal-worktree.md': mdsessionMinimalWorktree,
   'session/worktree-isolation.md': mdsessionWorktreeIsolation,
+  'space/contract/blocker.md': mdspaceContractBlocker,
+  'space/contract/complete-human.md': mdspaceContractCompleteHuman,
+  'space/contract/complete-unlocked.md': mdspaceContractCompleteUnlocked,
+  'space/contract/end-node-override.md': mdspaceContractEndNodeOverride,
+  'space/contract/node-header.md': mdspaceContractNodeHeader,
+  'space/contract/tool-catalog.md': mdspaceContractToolCatalog,
+  'space/contract/tool-door.md': mdspaceContractToolDoor,
+  'space/contract/tool-suggested.md': mdspaceContractToolSuggested,
+  'space/contract/worker-header.md': mdspaceContractWorkerHeader,
+  'space/runtime/handoff-no-transcript.md': mdspaceRuntimeHandoffNoTranscript,
+  'space/runtime/handoff-note.md': mdspaceRuntimeHandoffNote,
+  'space/runtime/handoff-transcript.md': mdspaceRuntimeHandoffTranscript,
+  'space/runtime/idle-nudge.md': mdspaceRuntimeIdleNudge,
+  'space/runtime/restart-handoff-lost.md': mdspaceRuntimeRestartHandoffLost,
+  'space/runtime/restart-node-ended.md': mdspaceRuntimeRestartNodeEnded,
+  'space/runtime/restart-notice.md': mdspaceRuntimeRestartNotice,
+  'space/runtime/stall-nag.md': mdspaceRuntimeStallNag,
+  'space/runtime/terminal-error.md': mdspaceRuntimeTerminalError,
+  'space/task-message/gated-handoff.md': mdspaceTaskMessageGatedHandoff,
+  'space/task-message/goal-outcome.md': mdspaceTaskMessageGoalOutcome,
+  'space/task-message/verification-label.md': mdspaceTaskMessageVerificationLabel,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
@@ -453,6 +513,27 @@ export const {
   EVOLUTION_CONVERSATION_FRICTION_PROMPT,
   MINIMAL_WORKTREE_PROMPT,
   WORKTREE_ISOLATION_PROMPT,
+  SPACE_CONTRACT_BLOCKER,
+  SPACE_CONTRACT_COMPLETE_HUMAN,
+  SPACE_CONTRACT_COMPLETE_UNLOCKED,
+  SPACE_CONTRACT_END_NODE_OVERRIDE,
+  SPACE_CONTRACT_NODE_HEADER,
+  SPACE_CONTRACT_TOOL_CATALOG,
+  SPACE_CONTRACT_TOOL_DOOR,
+  SPACE_CONTRACT_TOOL_SUGGESTED,
+  SPACE_CONTRACT_WORKER_HEADER,
+  SPACE_RUNTIME_HANDOFF_NO_TRANSCRIPT,
+  SPACE_RUNTIME_HANDOFF_NOTE,
+  SPACE_RUNTIME_HANDOFF_TRANSCRIPT,
+  SPACE_RUNTIME_IDLE_NUDGE,
+  SPACE_RUNTIME_RESTART_HANDOFF_LOST,
+  SPACE_RUNTIME_RESTART_NODE_ENDED,
+  SPACE_RUNTIME_RESTART_NOTICE,
+  SPACE_RUNTIME_STALL_NAG,
+  SPACE_RUNTIME_TERMINAL_ERROR,
+  TASK_MESSAGE_GATED_HANDOFF,
+  TASK_MESSAGE_GOAL_OUTCOME,
+  TASK_MESSAGE_VERIFICATION_LABEL,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
