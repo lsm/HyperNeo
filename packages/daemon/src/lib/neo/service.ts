@@ -176,6 +176,12 @@ type NeoNeedsYouCard = {
   siblingsWaiting: boolean;
 };
 type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
+type NeoDoneCheckDelivery = {
+  stale?: boolean;
+  ready?: boolean;
+  ask?: NeoAsk | null;
+  followedAt?: number;
+};
 type NeoWorkTold = { row: NeoWorkCheckRow | null };
 type NeoDoneCheckCard = {
   ask: NeoAsk | null;
@@ -1376,54 +1382,111 @@ export class NeoService {
     }
   }
 
-  private async deliverDoneCheck(
+  private deliverDoneCheck(
     work: NeoWork,
     goal: NeoWorkGoal,
     row: NeoWorkPrRow | null,
-    {
-      stale = false,
-      ready = false,
-      ask,
-      followedAt,
-    }: { stale?: boolean; ready?: boolean; ask?: NeoAsk | null; followedAt?: number } = {}
-  ): Promise<void> {
-    const continued = this.workContinues.get(work.id)?.count ?? 0;
-    const ticks = planNeoPackTicks(
-      ask ?? null,
-      row ? neoWorkPrEvidence(row.prs) : [],
-      neoPackChecks(this.packs())
-    );
-    if (ask)
-      for (const tick of ticks)
-        this.askRecords.tickItem(
-          ask.id,
-          { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-          Date.now()
-        );
-    const current = ask && ticks.length ? (this.askRecords.get(ask.id) ?? ask) : ask;
-    await this.deliver(
-      work.originSessionId,
-      neoDoneCheckMessageId(work.id, continued, row?.revision, followedAt),
-      driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), {
-        prs: row?.prs,
-        stale,
-        ready,
-        ask: current,
-        cards: current
-          ? projectNeoAskCards(
-              work.id,
-              current.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-              this.workPrs.list(current.workIds)
-            )
-          : [],
-      }),
-      work.originSessionId
-    );
-    if (!row) return;
-    const at = Date.now();
-    this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs), at, ready);
-    this.workChecks.markTold(work.id, neoEvidenceSignature(neoWorkPrEvidence(row.prs)), at, ready);
+    options: NeoDoneCheckDelivery = {}
+  ): Promise<unknown> {
+    return this.runDoneCheckDelivery(work, goal, { row }, options);
   }
+
+  private readonly runDoneCheckDelivery = (superpipe({})('neo-done-check-delivery') as PipelineAPI)
+    .input(['work', 'goal', 'found', 'options'])
+    .pipe(
+      (found: NeoDoneCheckFound, options: NeoDoneCheckDelivery) => ({
+        ticks: planNeoPackTicks(
+          options.ask ?? null,
+          found.row ? neoWorkPrEvidence(found.row.prs) : [],
+          neoPackChecks(this.packs())
+        ),
+      }),
+      ['found', 'options'],
+      'plan'
+    )
+    .pipe(
+      (options: NeoDoneCheckDelivery, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => {
+        const ask = options.ask ?? null;
+        if (ask)
+          for (const tick of plan.ticks)
+            this.askRecords.tickItem(
+              ask.id,
+              { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
+              Date.now()
+            );
+        return { ask: ask && plan.ticks.length ? (this.askRecords.get(ask.id) ?? ask) : ask };
+      },
+      ['options', 'plan'],
+      'current'
+    )
+    .pipe(
+      (
+        work: NeoWork,
+        goal: NeoWorkGoal,
+        found: NeoDoneCheckFound,
+        options: NeoDoneCheckDelivery,
+        current: { ask: NeoAsk | null }
+      ) => {
+        const continued = this.workContinues.get(work.id)?.count ?? 0;
+        return {
+          id: neoDoneCheckMessageId(work.id, continued, found.row?.revision, options.followedAt),
+          content: driverDoneCheckNote(
+            work,
+            goal,
+            continued,
+            this.continueBudget(work, Date.now()),
+            {
+              prs: found.row?.prs,
+              stale: options.stale ?? false,
+              ready: options.ready ?? false,
+              ask: current.ask,
+              cards: current.ask
+                ? projectNeoAskCards(
+                    work.id,
+                    current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+                    this.workPrs.list(current.ask.workIds)
+                  )
+                : [],
+            }
+          ),
+        };
+      },
+      ['work', 'goal', 'found', 'options', 'current'],
+      'note'
+    )
+    .pipe(
+      async (work: NeoWork, note: { id: string; content: string }) => {
+        await this.deliver(work.originSessionId, note.id, note.content, work.originSessionId);
+        return { at: Date.now() };
+      },
+      ['work', 'note'],
+      'sent'
+    )
+    .pipe(
+      (
+        work: NeoWork,
+        found: NeoDoneCheckFound,
+        options: NeoDoneCheckDelivery,
+        sent: { at: number }
+      ) => {
+        if (!found.row) return;
+        const ready = options.ready ?? false;
+        this.workPrs.markDelivered(work.id, neoWorkPrSignature(found.row.prs), sent.at, ready);
+        this.workChecks.markTold(
+          work.id,
+          neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
+          sent.at,
+          ready
+        );
+      },
+      ['work', 'found', 'options', 'sent']
+    )
+    .endAsync('sent') as (
+    work: NeoWork,
+    goal: NeoWorkGoal,
+    found: NeoDoneCheckFound,
+    options: NeoDoneCheckDelivery
+  ) => Promise<unknown>;
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
