@@ -126,6 +126,7 @@ describe('Neo turns with an ask waiting on the human', () => {
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', concernId: null });
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     service.dispose();
     db.close();
   });
@@ -152,6 +153,8 @@ describe('Neo turns with an ask waiting on the human', () => {
     );
 
   test('lists the ask on the next human message only, until it changes again', async () => {
+    let clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
     const { id, requestKey, originMessageId, title, doneWhen, doneSource } = ask;
     const opened = service.askRecords.open({
       id,
