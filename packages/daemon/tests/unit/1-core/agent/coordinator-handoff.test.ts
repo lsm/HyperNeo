@@ -239,6 +239,32 @@ describe.each(['neo', 'concern'] as const)('AgentSession %s coordinator handoff'
     expect(agent.messageQueue.size()).toBe(0);
   });
 
+  it('keeps a successor admitted through a turn longer than the consumption timeout', async () => {
+    const previous = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '50';
+    try {
+      const { second, firstQuery } = await admitSuccessor();
+      let settled = false;
+      void second.then(
+        () => (settled = true),
+        () => (settled = true)
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(settled).toBe(false);
+      expect(agent.messageQueue.hasPendingOrInFlight('ask-B')).toBe(true);
+      finishFirst.resolve();
+      await firstQuery;
+      await expect(second).resolves.toEqual({ outcome: 'completed' });
+      expect(received).toEqual(['ask-A', 'ask-B']);
+      const nextQuery = agent.queryPromise;
+      finishSecond.resolve();
+      await nextQuery;
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+      else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previous;
+    }
+  });
+
   it.each(['manual', 'archived', 'interrupt', 'cleanup', 'waiting', 'recovery', 'stale'] as const)(
     'does not hand off while %s',
     async (condition) => {
