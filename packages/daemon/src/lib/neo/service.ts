@@ -184,7 +184,6 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly followReads = new Map<string, number>();
-  private readonly followAnchors = new Map<string, number>();
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
     .pipe(
@@ -193,7 +192,8 @@ export class NeoService {
         goal: !!this.workDoneGoal(work.id)?.doneWhen,
         ask: this.askRecords.forWork(work.id),
         readAt: this.followReads.get(work.id) ?? null,
-        since: this.followAnchors.get(work.id) ?? work.updatedAt,
+        since: this.driverTargets.readFollowAnchor(work.id) ?? work.updatedAt,
+        superseded: this.driverTargets.readSupersededAt(work.id) !== null,
       }),
       'work',
       'card'
@@ -219,7 +219,7 @@ export class NeoService {
       (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
         const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });
         const seen = readDriverActivity(read.outcome)?.lastActivityAt;
-        if (followed && seen !== undefined) this.followAnchors.set(work.id, seen);
+        if (followed && seen !== undefined) this.driverTargets.recordFollowAnchor(work.id, seen);
         return { work: followed };
       },
       ['work', 'follow', 'read'],
@@ -1082,7 +1082,7 @@ export class NeoService {
         status: settled.status,
         report: settled.report.slice(0, 12000),
       }),
-    anchorFollow: (workId, at) => this.followAnchors.set(workId, at),
+    anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),
   };
 

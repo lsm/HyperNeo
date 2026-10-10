@@ -12,7 +12,7 @@ const work = {
   updatedAt: now - 60 * 60_000,
 } as NeoWork;
 type Card = Parameters<typeof requireNeoWorkFollow>[1];
-const card: Card = { ref, goal: true, ask: { status: 'open' }, readAt: null };
+const card: Card = { ref, goal: true, ask: { status: 'open' }, readAt: null, superseded: false };
 
 describe('requireNeoWorkFollow', () => {
   test.each<[string, NeoWork, Partial<Card>, boolean]>([
@@ -29,6 +29,7 @@ describe('requireNeoWorkFollow', () => {
     ['a card read a minute ago', work, { readAt: now - 60_000 }, false],
     ['a card read three minutes ago', work, { readAt: now - 3 * 60_000 }, true],
     ['a card reported over a week ago', { ...work, updatedAt: now - 8 * 86_400_000 }, {}, false],
+    ['a card whose session has since taken a newer card', work, { superseded: true }, false],
   ])('%s', (_label, at, overrides, following) => {
     const gate = requireNeoWorkFollow(at, { ...card, ...overrides }, now);
     expect(gate).toEqual(following ? { value: ref } : { reason: null });
