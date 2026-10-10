@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
 import {
@@ -41,6 +42,9 @@ import {
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations } from '../neo/operations.ts';
+import { loadNeoFilePacks } from '../neo/packs/file-packs.ts';
+import { adoptNeoFilePacks } from '../neo/packs/index.ts';
+import { getDataDir } from '../data-dir.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
@@ -1429,6 +1433,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
+  );
+  neoService.filePacks = adoptNeoFilePacks(
+    loadNeoFilePacks({
+      root: join(getDataDir(), 'neo-packs'),
+      warn: (id, error) => log.warn(`Neo file pack ${id} was not loaded`, error),
+    })
   );
   const familyOperations = [
     ...collectFamilyOperations(familyContext),

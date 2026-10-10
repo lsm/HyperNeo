@@ -102,6 +102,7 @@ export interface NeoSettings {
   routeTimeoutMs?: number;
   standingRules?: string[];
   preferences?: NeoModelPreference;
+  packs?: string[];
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

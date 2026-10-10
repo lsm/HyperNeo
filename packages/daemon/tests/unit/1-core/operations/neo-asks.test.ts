@@ -217,6 +217,33 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test('the enable setting gates the packs an ask may name', async () => {
+    db.updateGlobalSettings({ neo: { packs: [] } });
+    expect(await invoke('neo.ask.open', { ...opening, pack: 'coding' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('pack_not_enabled: "coding"') },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: true, ask: { id: expect.any(String), pack: null } },
+    });
+    expect(service.packBriefs()).toEqual([]);
+  });
+
+  test('an enabled file pack joins the registry, the ask door and the prompt', async () => {
+    service.filePacks = [
+      { id: 'life-admin', describe: 'Life admin', instructions: () => 'File the inbox daily.' },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    const opened = await invoke('neo.ask.open', { ...opening, pack: 'life-admin' });
+    expect(opened).toMatchObject({ value: { ok: true, ask: { pack: 'life-admin' } } });
+    expect((opened.value as { packBriefing?: string }).packBriefing).toBe('File the inbox daily.');
+    expect(await invoke('neo.pack.read', { id: 'life-admin' })).toMatchObject({
+      value: { ok: true, instructions: 'File the inbox daily.' },
+    });
+    expect(neoPrompt(null, service.packBriefs())).toContain('life-admin — Life admin');
+    db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+    expect(service.packBriefs().map((brief) => brief.id)).toEqual(['coding']);
+  });
+
   test('refuses work under a missing or achieved ask, and settling is final', async () => {
     const askId = await openAsk();
     expect(await propose('card-1', 'nope')).toMatchObject({
