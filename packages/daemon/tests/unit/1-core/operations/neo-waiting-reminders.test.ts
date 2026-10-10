@@ -7,8 +7,12 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
+  neoReminderTurn,
   neoWaitingOnHuman,
+  planNeoReminderListings,
+  planNeoRemindersSpent,
   planNeoWaitingReminders,
+  type NeoReminderListing,
 } from '../../../../src/lib/neo/waiting-reminders.ts';
 import {
   InternalEventBus,
@@ -54,6 +58,77 @@ describe('planNeoWaitingReminders', () => {
     ['an ask that changed after its last reminder', { remindedAt: 50 }, 200, true],
   ])('%s', (_label, overrides, askedAt, due) => {
     expect(planNeoWaitingReminders([{ ...ask, ...overrides }], askedAt)).toHaveLength(due ? 1 : 0);
+  });
+});
+
+describe('neoReminderTurn', () => {
+  test('keys a nudged turn by the human message it continues', () => {
+    expect(neoReminderTurn({ sessionId: root, messageId: 'neo-nudge:ask-1' })).toBe(
+      neoReminderTurn({ sessionId: root, messageId: 'ask-1' })
+    );
+  });
+});
+
+describe('planNeoReminderListings', () => {
+  const listings = (entries: [string, NeoReminderListing][]) => new Map(entries);
+  test.each<[string, [string, NeoReminderListing][], [string, NeoReminderListing][]]>([
+    ['a first listing', [], [['a1', { updatedAt: 100, turns: ['t2'] }]]],
+    [
+      'a second turn',
+      [['a1', { updatedAt: 100, turns: ['t1'] }]],
+      [['a1', { updatedAt: 100, turns: ['t1', 't2'] }]],
+    ],
+    [
+      'the same turn again',
+      [['a1', { updatedAt: 100, turns: ['t2'] }]],
+      [['a1', { updatedAt: 100, turns: ['t2'] }]],
+    ],
+    [
+      'an ask that changed since',
+      [['a1', { updatedAt: 50, turns: ['t1'] }]],
+      [['a1', { updatedAt: 100, turns: ['t2'] }]],
+    ],
+  ])('%s', (_label, before, after) => {
+    expect(planNeoReminderListings(listings(before), [ask], 't2')).toEqual({
+      entries: after,
+      evict: [],
+    });
+  });
+
+  test('evicts the oldest other listings past 200 asks', () => {
+    const others = Array.from({ length: 200 }, (_, index): [string, NeoReminderListing] => [
+      `old-${index}`,
+      { updatedAt: 1, turns: ['t0'] },
+    ]);
+    expect(planNeoReminderListings(listings(others), [ask], 't2').evict).toEqual(['old-0']);
+  });
+});
+
+describe('planNeoRemindersSpent', () => {
+  test.each<[string, NeoReminderListing, (typeof ask)[], ReturnType<typeof planNeoRemindersSpent>]>(
+    [
+      [
+        'listed once and left as it was',
+        { updatedAt: 100, turns: ['t1'] },
+        [ask],
+        { spent: [], drop: [] },
+      ],
+      [
+        'listed twice and left as it was',
+        { updatedAt: 100, turns: ['t0', 't1'] },
+        [ask],
+        { spent: ['a1'], drop: ['a1'] },
+      ],
+      ['acted on this turn', { updatedAt: 100, turns: ['t1'] }, [], { spent: [], drop: ['a1'] }],
+      [
+        'listed to another turn only',
+        { updatedAt: 100, turns: ['t0', 't9'] },
+        [ask],
+        { spent: [], drop: [] },
+      ],
+    ]
+  )('%s', (_label, listing, due, plan) => {
+    expect(planNeoRemindersSpent(new Map([['a1', listing]]), due, 't1')).toEqual(plan);
   });
 });
 
@@ -152,7 +227,7 @@ describe('Neo turns with an ask waiting on the human', () => {
       human(messageId)
     );
 
-  test('lists the ask on the next human message only, until it changes again', async () => {
+  test('lists the ask on two human messages Neo leaves it alone on, then stops', async () => {
     let clock = Date.now();
     vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
     const { id, requestKey, originMessageId, title, doneWhen, doneSource } = ask;
@@ -190,17 +265,41 @@ describe('Neo turns with an ask waiting on the human', () => {
     expect(await reply('ask-1', '20000000-0000-4000-8000-000000000001', true)).toMatchObject({
       value: { accepted: true },
     });
-    expect(await waitingOn(human('ask-1'))).toBeDefined();
     expect(await reply('ask-1', '20000000-0000-4000-8000-000000000002')).toMatchObject({
       value: { accepted: true, created: true },
     });
     writes('ask-2', waiting.updatedAt + 2);
-    expect(await waitingOn(human('ask-2'))).toBeUndefined();
+    expect(await waitingOn(human('ask-2'))).toMatchObject({ asks: [{ id: 'a1' }] });
+    await reply('ask-2', '20000000-0000-4000-8000-000000000003');
+    writes('ask-3', waiting.updatedAt + 3);
+    expect(await waitingOn(human('ask-3'))).toBeUndefined();
 
     const asked = service.askRecords.settle(waiting, 'waiting', 'Approve the bar position?', '')!;
-    writes('ask-3', asked.updatedAt + 1);
-    expect(await waitingOn(human('ask-3'))).toMatchObject({
+    writes('ask-4', asked.updatedAt + 1);
+    expect(await waitingOn(human('ask-4'))).toMatchObject({
       asks: [{ id: 'a1', question: 'Approve the bar position?' }],
     });
+  });
+
+  test('keeps the reminder for a reply that never listed it', async () => {
+    let clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
+    const { id, requestKey, originMessageId, title, doneWhen, doneSource } = ask;
+    const opened = service.askRecords.open({
+      id,
+      requestKey,
+      concernId: null,
+      originSessionId: root,
+      originMessageId,
+      title,
+      ask: ask.ask,
+      doneWhen,
+      doneSource,
+    })!;
+    const waiting = service.askRecords.settle(opened, 'waiting', 'Pick the bar position.', '')!;
+    writes('ask-1', waiting.updatedAt + 1);
+    await reply('ask-1', '20000000-0000-4000-8000-000000000001');
+    writes('ask-2', waiting.updatedAt + 2);
+    expect(await waitingOn(human('ask-2'))).toMatchObject({ asks: [{ id: 'a1' }] });
   });
 });

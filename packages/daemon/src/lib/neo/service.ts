@@ -137,7 +137,13 @@ import {
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
 } from './done-check.ts';
-import { planNeoWaitingReminders } from './waiting-reminders.ts';
+import {
+  neoReminderTurn,
+  planNeoReminderListings,
+  planNeoRemindersSpent,
+  planNeoWaitingReminders,
+  type NeoReminderListing,
+} from './waiting-reminders.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
@@ -185,6 +191,8 @@ type NeoDoneCheckCard = {
   stored: NeoWorkPrRow | null;
 };
 type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
+type NeoReminderTurnInput = { sessionId: string; messageId: string };
+type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -334,6 +342,7 @@ export class NeoService {
     .endAsync('check') as (work: NeoWork, followed: boolean) => Promise<boolean>;
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
+  private readonly reminderListings = new Map<string, NeoReminderListing>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -570,10 +579,7 @@ export class NeoService {
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
-      this.askRecords.markReminded(
-        this.waitingReminders(input.producerInput).map((ask) => ask.id),
-        Date.now()
-      );
+      this.spendWaitingReminders(input.producerInput);
     return receipt;
   }
 
@@ -585,6 +591,53 @@ export class NeoService {
       ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
       : [];
   }
+
+  readonly listWaitingReminders = (superpipe({})('neo-waiting-reminders-list') as PipelineAPI)
+    .input(['turn'])
+    .pipe(
+      (turn: NeoReminderTurnInput) => ({
+        key: neoReminderTurn(turn),
+        asks: this.waitingReminders(turn),
+      }),
+      'turn',
+      'due'
+    )
+    .pipe(
+      (due: NeoRemindersDue) => planNeoReminderListings(this.reminderListings, due.asks, due.key),
+      'due',
+      'plan'
+    )
+    .pipe((plan: ReturnType<typeof planNeoReminderListings>) => {
+      for (const id of plan.evict) this.reminderListings.delete(id);
+      for (const [id, listing] of plan.entries) {
+        this.reminderListings.delete(id);
+        this.reminderListings.set(id, listing);
+      }
+    }, 'plan')
+    .end('due') as (turn: NeoReminderTurnInput) => NeoRemindersDue;
+
+  private readonly spendWaitingReminders = (
+    superpipe({})('neo-waiting-reminders-spend') as PipelineAPI
+  )
+    .input(['turn'])
+    .pipe(
+      (turn: NeoReminderTurnInput) => ({
+        key: neoReminderTurn(turn),
+        asks: this.waitingReminders(turn),
+      }),
+      'turn',
+      'due'
+    )
+    .pipe(
+      (due: NeoRemindersDue) => planNeoRemindersSpent(this.reminderListings, due.asks, due.key),
+      'due',
+      'plan'
+    )
+    .pipe((plan: ReturnType<typeof planNeoRemindersSpent>) => {
+      this.askRecords.markReminded(plan.spent, Date.now());
+      for (const id of plan.drop) this.reminderListings.delete(id);
+    }, 'plan')
+    .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
     const root = this.repo.getBindingForConcern(null)?.sessionId;
