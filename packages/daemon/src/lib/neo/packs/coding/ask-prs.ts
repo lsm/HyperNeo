@@ -93,6 +93,19 @@ export function extractNeoAskRefs(
   return [...refs.values()].slice(0, NEO_ASK_REF_MAX);
 }
 
+export function neoAskCardRefs(
+  named: readonly NeoRef[],
+  running: readonly string[],
+  tracked: readonly string[]
+): NeoRef[] {
+  const refs = new Map(named.map((ref) => [refKey(ref), ref]));
+  for (const url of running.filter((item) => !tracked.includes(item))) {
+    const ref = neoRefFromUrl(url);
+    if (ref && !refs.has(refKey(ref))) refs.set(refKey(ref), ref);
+  }
+  return [...refs.values()];
+}
+
 export function neoAskRefNews(states: readonly NeoRefState[], since: number): NeoEvidence[] {
   return states.flatMap((ref) => {
     if (ref.state === 'OPEN' || ref.at === null || ref.at <= since) return [];

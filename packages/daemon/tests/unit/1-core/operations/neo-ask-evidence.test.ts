@@ -13,6 +13,7 @@ import {
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   extractNeoAskRefs,
+  neoAskCardRefs,
   neoAskRefNews,
   readGithubRefStates,
   type NeoRef,
@@ -95,6 +96,15 @@ describe('extractNeoAskRefs', () => {
         []
       )
     ).toEqual([ref(5546)]);
+  });
+});
+
+describe('neoAskCardRefs', () => {
+  test("adds running cards' branch pull requests the cards don't track yet, each once", () => {
+    expect(neoAskCardRefs([ref(6159)], [url(6159), url(6283), url(6288)], [url(6288)])).toEqual([
+      ref(6159),
+      ref(6283),
+    ]);
   });
 });
 
@@ -213,6 +223,7 @@ describe('readAskEvidence', () => {
     const pack = createCodingPack({
       readPrs: async () => [],
       prUrls: async () => [],
+      runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
       readRefStates: async (refs) => {
         read.push([...refs]);
         return [merged(6159, 200), merged(6205, 50)];
@@ -225,7 +236,7 @@ describe('readAskEvidence', () => {
       record: () => null,
     });
     expect(await pack.readAskEvidence!({ ...ask, workIds: ['w1'] })).toEqual([news(6159)]);
-    expect(read).toEqual([[ref(6159), ref(6205)]]);
+    expect(read).toEqual([[ref(6159), ref(6205), ref(6283)]]);
   });
 });
 
@@ -312,6 +323,57 @@ describe('refreshDriverWork', () => {
     vi.restoreAllMocks();
     service.dispose();
     db.close();
+  });
+
+  test("tells the ask session when a running card's branch pull request merges", async () => {
+    const opened = service.askRecords.open({
+      id: 'a2',
+      requestKey: 'k2',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'm0',
+      title: 'Split the packs',
+      ask: 'Split the coding pack out',
+      doneWhen: '- d merged\n- e merged',
+      doneSource: 'human',
+    })!;
+    service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'w-split',
+        requestKey: 'root:split',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'm0',
+        title: 'Split the packs',
+        instruction: 'Do rungs d to g.',
+      },
+      { verb: 'send', ref: { adapter: 'hyperneo', id: 'card-session' } }
+    );
+    service.repo.transitionWork('w-split', service.repo.getWork('w-split')!, { status: 'queued' });
+    service.askRecords.link(opened.id, 'w-split');
+    service.driverTargets.recordRef('w-split', { adapter: 'hyperneo', id: 'card-session' });
+    db.createSession({
+      ...createTestSession('card-session'),
+      worktree: {
+        isWorktree: true,
+        worktreePath: '/repo/.worktrees/split',
+        mainRepoPath: '/repo',
+        branch: 'session/split',
+      },
+    });
+    service.readBranchPrs = async () => [url(6291), url(6283)];
+    service.readRefStates = async (refs) =>
+      refs.some((item) => item.number === 6283) ? [merged(6283, opened.createdAt + 1)] : [];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    await service.refreshDriverWork();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(url(6283));
   });
 
   test('tells the ask session once when a pull request its ask names merges', async () => {

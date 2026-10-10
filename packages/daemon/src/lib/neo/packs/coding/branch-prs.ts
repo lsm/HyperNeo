@@ -8,6 +8,7 @@ export type NeoWorkBranch = { branch: string; cwd: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
 
 export const NEO_BRANCH_PR_MAX = 2;
+const NEO_BRANCH_PR_READ = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const read = new Map<string, { at: number; urls: string[] }>();
 
@@ -42,7 +43,7 @@ export async function readGithubBranchPrs(
       '--json',
       'url',
       '--limit',
-      String(NEO_BRANCH_PR_MAX),
+      String(NEO_BRANCH_PR_READ),
     ],
     branch.cwd,
     spawnImpl,
