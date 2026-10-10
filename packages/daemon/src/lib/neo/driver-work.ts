@@ -297,6 +297,16 @@ export function decideCardLiveStatus(
   return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
 
+export const NEO_CARD_CONFIRM_MS = 24 * 60 * 60_000;
+
+export function isNeoCardUnconfirmed(
+  work: Pick<NeoWork, 'createdAt'>,
+  sent: Pick<DriverSent, 'inputBefore'> | null,
+  now: number
+): boolean {
+  return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
+}
+
 export function readDriverSendBaseline(
   outcome: OperationOutcome,
   sentAt: number,

@@ -178,6 +178,7 @@ const Snapshot = z.union([
           link: z.string().nullable(),
           remoteLink: z.string().optional(),
           uncheckedSince: z.number().optional(),
+          unconfirmed: z.literal(true).optional(),
         })
       )
       .max(100)
