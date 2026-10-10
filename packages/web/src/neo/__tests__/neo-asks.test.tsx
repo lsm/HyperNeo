@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskCard } from '../NeoAskCard.tsx';
@@ -8,6 +8,7 @@ import {
   groupNeoAsks,
   NEO_ASK_NEEDS_YOU_LABEL,
   neoAskOpenTarget,
+  neoAskItems,
   neoAskSummary,
   neoSupersededAttempts,
 } from '../neo-asks.ts';
@@ -144,6 +145,31 @@ describe('describeNeoAsk', () => {
       1,
       ['x3'],
     ]);
+  });
+});
+
+const item = (
+  id: string,
+  state: NeoAskItem['state'],
+  extra: Partial<NeoAskItem> = {}
+): NeoAskItem => ({
+  id,
+  text: `Item ${id}`,
+  state,
+  evidence: null,
+  check: null,
+  metBy: state === 'met' ? 'neo' : null,
+  removed: false,
+  addedAt: null,
+  ...extra,
+});
+
+describe('neoAskItems', () => {
+  it('reads the checklist, and nothing for an ask opened before checklists', () => {
+    expect(neoAskItems({ ...ask('a', 'open', []), doneItems: [item('i1', 'met')] })).toHaveLength(
+      1
+    );
+    expect(neoAskItems(ask('a', 'open', []))).toEqual([]);
   });
 });
 
@@ -322,6 +348,63 @@ describe('NeoAskCard', () => {
       <NeoAskCard view={describeNeoAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
     );
     expect(unstarted.queryByRole('button', { name: 'Open Ask b' })).toBeNull();
+  });
+
+  it('counts checklist items, not cards, and leaves removed items out of the count', () => {
+    const view = describeNeoAsk(
+      {
+        ...ask('a', 'open', ['a1', 'a2']),
+        doneItems: [
+          item('i1', 'met', { metBy: 'daemon', check: 'pr_merged', evidence: 'PR #6099 merged' }),
+          item('i2', 'pending'),
+          item('i3', 'pending', { removed: true }),
+        ],
+      },
+      scenes.running.slice(0, 1)
+    );
+    expect([view.done, view.total]).toEqual([1, 2]);
+    const card = render(<NeoAskCard view={view} />);
+    expect(card.getByText('1 of 2 done')).toBeTruthy();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    const rows = [...card.container.querySelectorAll('[data-ask-item]')].map((row) => [
+      row.getAttribute('data-ask-item'),
+      row.textContent,
+    ]);
+    expect(rows).toEqual([
+      ['i1', '✓Item i1verifiedPR #6099 merged'],
+      ['i2', '○Item i2'],
+      ['i3', '○Item i3removed'],
+    ]);
+    expect(card.container.querySelector('[data-ask-item="i3"] .line-through')).toBeTruthy();
+  });
+
+  it('puts what needs you on the card face and marks items added later', () => {
+    const view = describeNeoAsk(
+      {
+        ...ask('w', 'waiting', []),
+        doneItems: [
+          item('i1', 'met'),
+          item('i2', 'needs_you', { text: 'You pick the bar placement' }),
+          item('i3', 'pending', { addedAt: 5 }),
+        ],
+      },
+      []
+    );
+    const card = render(<NeoAskCard view={view} />);
+    const face = card.getByRole('list', { name: 'Needs you' });
+    expect(face.textContent).toBe('!You pick the bar placementneeds you');
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(
+      card.getByRole('list', { name: 'Done when' }).querySelector('[data-ask-item="i3"]')
+        ?.textContent
+    ).toBe('○Item i3added');
+  });
+
+  it('shows the done-when text for an ask opened before checklists', () => {
+    const card = render(<NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} />);
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
+    expect(card.queryByRole('list', { name: 'Done when' })).toBeNull();
   });
 
   it('drops the count once settled and keeps a long outcome behind Details', () => {
