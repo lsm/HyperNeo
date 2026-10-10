@@ -38,7 +38,8 @@ import {
   scheduleCodexFeed,
   WORK_FEED_CODEX,
 } from '../drivers/codex-feed.ts';
-import { ensureNeoProject } from '../neo/folder.ts';
+import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -458,7 +459,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus
   );
 
-  setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager(), deps.sessionManager);
+  setupGitHandlers(
+    deps.messageHub,
+    deps.sessionManager.getWorktreeManager(),
+    deps.sessionManager,
+    (sessionId) => !!neoCoordinatorBinding(deps.db, sessionId)
+  );
 
   const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
@@ -1633,6 +1639,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
+  if (process.env.NODE_ENV !== 'test') {
+    const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
+    fileNeoSessions(deps.db, neoService.repo, neoFolder);
+  }
   void neoService.recover();
   deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
     recoverNeoConsultations(deps.jobQueue, neoService)
@@ -1660,7 +1670,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     scheduleTurnEmbedding(deps.jobQueue);
     scheduleCodexFeed(deps.jobQueue);
     scheduleClaudeFeed(deps.jobQueue);
-    ensureNeoProject(deps.db.workspaceHistory);
   }
 
   return {

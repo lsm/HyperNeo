@@ -105,7 +105,9 @@ describe('Neo isolated holder turns', () => {
     const nextSent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
     const first = turn();
     const input = runner.createMessageGeneratorWrapper(1, undefined, first);
+    expect(runner.acceptsPrompt(1)).toBe(true);
     expect((await input.next()).value?.uuid).toBe('neo-consult:a:request');
+    expect(runner.acceptsPrompt(1)).toBe(false);
     expect(first.identity()?.consultationId).toBe('a');
     expect((await input.next()).done).toBe(true);
     await firstSent;
@@ -115,9 +117,11 @@ describe('Neo isolated holder turns', () => {
     queue.start();
     const successor = turn();
     const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
+    expect(runner.acceptsPrompt(2)).toBe(true);
     expect((await next.next()).value?.uuid).toBe('human-input');
     expect((await next.next()).done).toBe(true);
     await nextSent;
+    expect(runner.acceptsPrompt(2)).toBe(false);
     expect(successor.identity()?.human).toBe(true);
     expect(first.identity()?.isLive()).toBe(false);
     expect(queue.size()).toBe(0);

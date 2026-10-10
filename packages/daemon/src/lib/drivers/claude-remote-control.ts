@@ -72,8 +72,8 @@ async function createRcToggle(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcTo
       cliSessionId,
       '-n',
       RC_TOGGLE_TITLE,
-      '--permission-mode',
-      'bypassPermissions',
+      '--model',
+      'haiku',
       '--',
       CLAUDE_RC_TOGGLE_BRIEF,
     ],
@@ -90,7 +90,6 @@ async function createRcToggle(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcTo
       title: RC_TOGGLE_TITLE,
       isArchived: false,
       lastActivityAt: deps.now(),
-      permissionMode: 'bypassPermissions',
     },
   };
 }

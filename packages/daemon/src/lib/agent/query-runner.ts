@@ -388,6 +388,12 @@ export interface QueryRunnerContext {
 }
 
 export class QueryRunner {
+  private promptSpentGeneration: number | null = null;
+
+  acceptsPrompt(queryGeneration: number): boolean {
+    return this.promptSpentGeneration !== queryGeneration;
+  }
+
   private _lastConsumedUserMessage: {
     uuid: string;
     content: string | MessageContent[];
@@ -2045,6 +2051,7 @@ export class QueryRunner {
       if (holderTurn) {
         startGuard?.();
         if (!holderTurn.bind(message.uuid ?? '')) {
+          this.promptSpentGeneration = queryGeneration;
           onSent();
           return;
         }
@@ -2102,6 +2109,7 @@ export class QueryRunner {
 
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
+      if (holderTurn) this.promptSpentGeneration = queryGeneration;
       yield message;
       onSent();
       if (holderTurn) return;

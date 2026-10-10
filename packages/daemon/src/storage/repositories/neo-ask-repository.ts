@@ -212,6 +212,28 @@ export class NeoAskRepository {
     return this.withWork([row])[0];
   }
 
+  waitingFor(sessionId: string): (NeoAsk & { remindedAt: number | null })[] {
+    if (!this.hasTable() || !this.hasReminders()) return [];
+    const rows = this.db
+      .prepare(`SELECT ${askColumns}, reminded_at AS remindedAt FROM neo_asks
+        WHERE origin_session_id = ? AND status IN ('waiting', 'blocked') ORDER BY updated_at, id`)
+      .all(sessionId) as (NeoAskRow & { remindedAt: number | null })[];
+    return this.withWork(rows) as (NeoAsk & { remindedAt: number | null })[];
+  }
+
+  markReminded(ids: readonly string[], at: number): void {
+    if (!ids.length || !this.hasReminders()) return;
+    this.db
+      .prepare('UPDATE neo_asks SET reminded_at = ? WHERE id IN (SELECT value FROM json_each(?))')
+      .run(at, JSON.stringify(ids));
+  }
+
+  private hasReminders(): boolean {
+    return (this.db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).some(
+      (column) => column.name === 'reminded_at'
+    );
+  }
+
   private withWork(rows: NeoAskRow[]): NeoAsk[] {
     if (rows.length === 0) return [];
     const links = this.db

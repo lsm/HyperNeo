@@ -7,6 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { Database } from '../../storage/database.ts';
+import { sessionSdkPath } from '../neo/session-policy.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import {
@@ -237,9 +238,7 @@ export class RewindHandler {
 
     const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
-    const sdkWorkspacePath = session.worktree
-      ? session.worktree.worktreePath
-      : session.workspacePath;
+    const sdkWorkspacePath = sessionSdkPath(db, session);
     if (!sdkWorkspacePath) {
       throw new Error('Cannot rewind unbound session without a workspace path');
     }
@@ -530,9 +529,7 @@ export class RewindHandler {
       if (mode === 'conversation' || mode === 'both') {
         messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
-        const rewindSdkPath = session.worktree
-          ? session.worktree.worktreePath
-          : session.workspacePath;
+        const rewindSdkPath = sessionSdkPath(db, session);
         if (!rewindSdkPath) {
           throw new Error('Cannot rewind unbound session without a workspace path');
         }

@@ -63,6 +63,7 @@ import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.
 import mdneoPublishNudge from './neo/publish-nudge.md' with { type: 'text' };
 import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
+import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -336,6 +337,7 @@ const registry: Record<string, string> = {
   'neo/publish-nudge.md': mdneoPublishNudge,
   'neo/recent-conversation.md': mdneoRecentConversation,
   'neo/route-classifier.md': mdneoRouteClassifier,
+  'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -507,6 +509,7 @@ export const {
   NEO_PUBLISH_NUDGE,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
+  NEO_WAITING_REMINDER,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,

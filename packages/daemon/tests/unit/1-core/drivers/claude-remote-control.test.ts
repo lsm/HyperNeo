@@ -133,15 +133,16 @@ describe('runClaudeRemoteControlRequest', () => {
     expect(outcome.ok).toBe(true);
     const created = spawned[0];
     expect(created.cwd).toBe('/Users/test');
-    expect(created.args.slice(0, 8)).toEqual([
+    expect(created.args.slice(0, 9)).toEqual([
       'claude',
       '-p',
       '--session-id',
       'new-rc',
       '-n',
       'rc-toggle',
-      '--permission-mode',
-      'bypassPermissions',
+      '--model',
+      'haiku',
+      '--',
     ]);
     expect(created.args.at(-1)).toContain('You are rc-toggle.');
     expect(spawned[1].args.slice(-3)).toEqual(['--desktop', '--resume', 'new-rc']);

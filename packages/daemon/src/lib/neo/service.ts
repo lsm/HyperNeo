@@ -11,7 +11,6 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   NEO_WORK_CLOSED_DONE,
-  NEO_WORK_CONTINUE_LIMIT,
   type NeoAsk,
   type NeoWorkGoal,
   type NeoWorkPr,
@@ -27,6 +26,7 @@ import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import {
   NeoWorkCheckRepository,
@@ -51,6 +51,7 @@ import {
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
   neoStallMessageId,
+  nudgedMessageId,
 } from './ask-origin.ts';
 import { neoConsultationReplyContent } from './consultation-reply-content.ts';
 import { neoConsultationRequestContent } from './consultation-request-content.ts';
@@ -84,6 +85,12 @@ import {
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
+import {
+  admitNeoWorkContinue,
+  type NeoContinueDeps,
+  type NeoContinueResult,
+  sendNeoWorkContinue,
+} from './continue-work.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
@@ -92,6 +99,7 @@ import {
   planNeoSavedRulesNote,
   withNeoSavedRules,
 } from './saved-rules.ts';
+import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -116,7 +124,10 @@ import {
   requireNeoDoneCheck,
   requireNeoDoneCheckDue,
   requireNeoDoneCheckUntold,
+  neoWorkReturnToldIds,
+  requireNeoWorkReturnUntold,
 } from './done-check.ts';
+import { planNeoWaitingReminders } from './waiting-reminders.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -184,7 +195,6 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly followReads = new Map<string, number>();
-  private readonly followAnchors = new Map<string, number>();
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
     .pipe(
@@ -193,7 +203,8 @@ export class NeoService {
         goal: !!this.workDoneGoal(work.id)?.doneWhen,
         ask: this.askRecords.forWork(work.id),
         readAt: this.followReads.get(work.id) ?? null,
-        since: this.followAnchors.get(work.id) ?? work.updatedAt,
+        since: this.driverTargets.readFollowAnchor(work.id) ?? work.updatedAt,
+        superseded: this.driverTargets.readSupersededAt(work.id) !== null,
       }),
       'work',
       'card'
@@ -219,7 +230,7 @@ export class NeoService {
       (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
         const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });
         const seen = readDriverActivity(read.outcome)?.lastActivityAt;
-        if (followed && seen !== undefined) this.followAnchors.set(work.id, seen);
+        if (followed && seen !== undefined) this.driverTargets.recordFollowAnchor(work.id, seen);
         return { work: followed };
       },
       ['work', 'follow', 'read'],
@@ -522,7 +533,21 @@ export class NeoService {
     });
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
+    if (receipt.accepted && receipt.created && !input.interim)
+      this.askRecords.markReminded(
+        this.waitingReminders(input.producerInput).map((ask) => ask.id),
+        Date.now()
+      );
     return receipt;
+  }
+
+  waitingReminders(turn: { sessionId: string; messageId: string }) {
+    const route = new NeoRoutingLogRepository(this.db.getDatabase()).find(
+      nudgedMessageId(turn.messageId) ?? turn.messageId
+    );
+    return route
+      ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
+      : [];
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
@@ -632,7 +657,8 @@ export class NeoService {
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
-        workspacePath: null,
+        workspacePath: neoFolderPath(),
+        detectGit: false,
         config: {
           systemPrompt: neoPrompt(concernId),
           sdkToolsPreset: neoCoordinatorNativeTools(concernId),
@@ -714,52 +740,41 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
-  async continueWork(
-    id: string,
-    message: string,
-    now = Date.now()
-  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
-    const work = this.repo.getWork(id);
-    const ref = this.driverTargets.readRef(id);
-    if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
-    if (work.status !== 'queued' && work.status !== 'reported')
-      return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
-    const budget = this.continueBudget(work, now);
-    if (budget) return { ok: false, reason: budget };
-    if (this.continuing.has(id))
-      return { ok: false, reason: 'This work is already being continued; wait for that first.' };
+  async continueWork(id: string, message: string, now = Date.now()): Promise<NeoContinueResult> {
+    const admitted = admitNeoWorkContinue(this.continueDeps, id, now);
+    if ('ok' in admitted) return admitted;
     this.continuing.add(id);
     try {
-      const sending = withWorkGoal(message, this.workDoneGoal(id));
-      const probe = await this.readSendBaseline(ref, work, sending);
-      const outcome = await invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.send',
-        { ref, message: sending },
-        driverWorkCaller(work)
-      );
-      const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
-      if ('failure' in sent) return { ok: false, reason: sent.failure };
-      this.driverTargets.recordStartedAt(id, 'queued' in sent ? null : probe.baseline);
-      this.driverTargets.recordSent(id, probe.sent);
-      const continued = this.workContinues.record(id, message, now);
-      const count = continued?.count ?? 1;
-      const current = this.repo.getWork(id) ?? work;
-      if (current.status !== 'queued' && current.status !== 'reported')
-        return {
-          ok: false,
-          reason: `The message was sent, but this work was ${current.status} meanwhile; it stays ${current.status}.`,
-        };
-      const reopened = this.repo.transitionWork(id, current, {
-        status: 'queued',
-        report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
-      });
-      this.askRecords.reopenForWork(id);
-      return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
+      return await sendNeoWorkContinue(this.continueDeps, admitted, message, now);
     } finally {
       this.continuing.delete(id);
     }
   }
+
+  private readonly continueDeps: NeoContinueDeps = {
+    readWork: (id) => this.repo.getWork(id),
+    readRef: (id) => this.driverTargets.readRef(id),
+    readContinuedCount: (id) => this.workContinues.get(id)?.count ?? null,
+    isContinuing: (id) => this.continuing.has(id),
+    withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
+    readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
+    send: ({ ref, work }, message) =>
+      invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.send',
+        { ref, message },
+        driverWorkCaller(work)
+      ),
+    recordSent: (id, startedAt, sent) => {
+      this.driverTargets.recordStartedAt(id, startedAt);
+      this.driverTargets.recordSent(id, sent);
+    },
+    recordContinue: (id, message, now) =>
+      this.workContinues.record(id, message, now)?.count ?? null,
+    reopen: (id, current, report) =>
+      this.repo.transitionWork(id, current, { status: 'queued', report }),
+    reopenAsk: (id) => this.askRecords.reopenForWork(id),
+  };
 
   private async readSendBaseline(
     ref: WorkRef,
@@ -1082,7 +1097,7 @@ export class NeoService {
         status: settled.status,
         report: settled.report.slice(0, 12000),
       }),
-    anchorFollow: (workId, at) => this.followAnchors.set(workId, at),
+    anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),
   };
 
@@ -1228,7 +1243,7 @@ export class NeoService {
     let work = this.repo.getWork(id);
     if (!work?.sessionId) {
       if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
-        await this.returnReport(work);
+        await this.recoverWorkReturn(work);
       return;
     }
     if (work.status === 'cancelled' || work.status === 'proposed') return;
@@ -1239,8 +1254,28 @@ export class NeoService {
       return;
     }
     if (work && (work.status === 'reported' || work.status === 'failed'))
-      await this.returnReport(work);
+      await this.recoverWorkReturn(work);
   }
+
+  private readonly recoverWorkReturn = (superpipe({})('neo-work-recover-return') as PipelineAPI)
+    .input(['work'])
+    .pipe(
+      (work: NeoWork) => ({
+        told: this.toldDoneCheck(
+          work,
+          neoWorkReturnToldIds(work, {
+            retries: this.driverTargets.readRetries(work.id),
+            continued: this.workContinues.get(work.id)?.count ?? 0,
+            prRevision: this.workPrs.get(work.id)?.revision,
+          })
+        ),
+      }),
+      'work',
+      'told'
+    )
+    .pipe(requireNeoWorkReturnUntold, 'told', 'result:recover')
+    .pipe((work: NeoWork) => this.returnReport(work), 'work')
+    .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
@@ -1268,7 +1303,7 @@ export class NeoService {
       if (this.db.getSession(target))
         await this.deliver(
           target,
-          neoWorkReturnMessageId(work.id, retries),
+          neoWorkReturnMessageId(work.id, retries, this.workContinues.get(work.id)?.count ?? 0),
           content,
           work.sessionId ?? work.originSessionId
         );
