@@ -15,6 +15,8 @@ import {
   StaleTaskGuardError,
   type TaskTransitionExpectation,
 } from '../../tasks/task-manager.ts';
+import { settleTaskDependents } from '../../tasks/settle-dependents.ts';
+import { createDirectOutcomeRequester } from '../../tasks/direct-outcome-jobs.ts';
 import { prepareSpaceTaskStatusUpdate } from '../../tasks/status-preparation.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { TASK_SLOT_STATUSES, availableTaskSlots } from '../../tasks/capacity.ts';
@@ -3143,9 +3145,7 @@ export class SpaceRuntime {
 
       if (routeResult.mode === 'no-route' && final?.status === 'done') {
         try {
-          const taskManager = this.getOrCreateTaskManager(spaceId);
-          const unblocked = await taskManager.unblockDependentTasks(taskId);
-          for (const dep of unblocked) {
+          for (const dep of await this.settleEndedTask(final)) {
             await this.safeOnTaskUpdated(spaceId, dep);
           }
         } catch {}
@@ -3547,7 +3547,6 @@ export class SpaceRuntime {
       } else if (previous.status === 'stopped') {
         await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
-      if (nextStatus === 'cancelled') await this.blockRunningDependents(spaceId, taskId);
       return updated;
     }
 
@@ -3556,16 +3555,15 @@ export class SpaceRuntime {
     return updated;
   }
 
-  private async blockRunningDependents(spaceId: string, taskId: string): Promise<void> {
-    for (const dependent of this.config.taskRepo.listBySpace(spaceId, false)) {
-      if (!dependent.dependsOn?.includes(taskId) || !dependent.workflowRunId) continue;
-      if (dependent.status !== 'in_progress' && !isRateOrUsageLimited(dependent.status)) continue;
-      await this.stopWorkflowBackedTaskForStatus(spaceId, dependent.id, {
-        status: 'blocked',
-        blockReason: 'dependency_failed',
-        result: `Dependency task ${taskId} was cancelled`,
-      }).catch((error) => log.warn(`Failed to block dependent ${dependent.id}:`, error));
-    }
+  private settleEndedTask(ended: SpaceTask): Promise<SpaceTask[]> {
+    return settleTaskDependents(ended, {
+      getTaskManager: (spaceId) => this.getOrCreateTaskManager(spaceId),
+      getActiveAttempt: (taskId) =>
+        new DirectTaskExecutionRepository(this.config.db).getActive(taskId),
+      stopForStatus: (spaceId, taskId, params, expected) =>
+        this.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
+      requestDirectOutcome: createDirectOutcomeRequester(this.config.db, this.getJobQueueRepo()),
+    });
   }
 
   async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
@@ -3679,12 +3677,9 @@ export class SpaceRuntime {
           await this.safeOnTaskUpdated(spaceId, blocked);
         }
       } else if (params.status === 'cancelled') {
-        const taskManager = this.getOrCreateTaskManager(spaceId);
-        const cascaded = await taskManager.settleDependents(taskId, 'cancelled');
-        for (const blocked of cascaded) {
-          await this.safeOnTaskUpdated(spaceId, blocked);
+        for (const settled of await this.settleEndedTask(updated)) {
+          await this.safeOnTaskUpdated(spaceId, settled);
         }
-        await this.blockRunningDependents(spaceId, taskId);
       }
       if (emitUpdated) {
         await this.safeOnTaskUpdated(spaceId, updated, {
@@ -8794,7 +8789,8 @@ export class SpaceRuntime {
             fromStatus,
             deferPostCommitEffects: true,
           }),
-        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
+        (ended) => this.settleEndedTask(ended)
       );
       this.taskManagers.set(spaceId, manager);
     }

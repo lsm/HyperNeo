@@ -60,7 +60,7 @@ export interface DependentSettlementDeps {
     taskId: string,
     params: { status: 'blocked'; blockReason: 'dependency_failed'; result: string },
     expected: { expectedStatus: SpaceTaskStatus }
-  ) => Promise<SpaceTask>;
+  ) => Promise<SpaceTask | null>;
   requestDirectOutcome?: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 }
 
