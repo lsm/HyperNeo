@@ -11,6 +11,7 @@ import {
   neoCardClass,
   neoFooterClass,
   neoPlainClass,
+  neoPrimaryClass,
   neoSecondaryClass,
 } from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -134,6 +135,7 @@ export function NeoAskCard({
   disabled = false,
   onSettle,
   onDone,
+  onApprove,
   onOpen,
   renderCard,
 }: {
@@ -142,6 +144,7 @@ export function NeoAskCard({
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
   onDone?: (itemId: string) => void;
+  onApprove?: () => void;
   onOpen?: (workId: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
@@ -160,6 +163,12 @@ export function NeoAskCard({
   const needsYouItems = view.settled
     ? []
     : view.items.filter((item) => item.state === 'needs_you' && !item.removed);
+  const canApprove =
+    !view.settled &&
+    !ask.approvedAt &&
+    view.scenes.some(
+      (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
+    );
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -192,6 +201,14 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
+        {!view.settled && !!ask.approvedAt && (
+          <span
+            class="shrink-0 text-xs text-fg-muted"
+            title="You approved this ask: Neo starts its steps without asking again."
+          >
+            Approved
+          </span>
+        )}
         {!view.settled && view.total > 0 && (
           <span class="shrink-0 text-xs text-fg-muted">
             {view.done} of {view.total} done
@@ -262,6 +279,17 @@ export function NeoAskCard({
       )}
       <div class={neoFooterClass}>
         {openControl}
+        {canApprove && onApprove && (
+          <button
+            type="button"
+            class={neoPrimaryClass}
+            disabled={disabled}
+            title="Let Neo start this ask's steps without asking for each one. Deploys and destructive steps still ask you."
+            onClick={onApprove}
+          >
+            Approve all steps
+          </button>
+        )}
         <span class="flex-1" />
         <button
           type="button"
