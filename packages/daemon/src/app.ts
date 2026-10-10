@@ -19,6 +19,7 @@ import { DaemonConfigService } from './lib/daemon-config-service.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
 import { BUILD_METADATA } from './lib/build-metadata.ts';
+import { writeRuntimeDescriptor } from './lib/runtime-descriptor.ts';
 import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
@@ -983,6 +984,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupTimer.start('post-bind jobs + background services');
+    const removeRuntimeDescriptorFile =
+      process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
@@ -1302,6 +1305,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       isCleanedUp = true;
       startupLogCaptureCleanup = null;
 
+      removeRuntimeDescriptorFile();
       abortAgentMemoryEmbeddingModelPrefetch();
 
       if (reaperTimer !== null) {
