@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
+import { isNeoAskLive } from './done-check.ts';
 import { readDriverFollowUp } from './driver-work.ts';
 
 type Gate<T> = { value: T } | { reason: null };
@@ -20,13 +21,12 @@ export function requireNeoWorkFollow(
   },
   now: number
 ): Gate<WorkRef> {
-  const live = !!card.ask && card.ask.status !== 'achieved' && card.ask.status !== 'abandoned';
   const due = card.readAt === null || now - card.readAt >= NEO_WORK_FOLLOW_READ_MS;
   return work.status === 'reported' &&
     work.report !== NEO_WORK_CLOSED_DONE &&
     card.ref &&
     card.goal &&
-    live &&
+    isNeoAskLive(card.ask) &&
     due &&
     now - work.updatedAt < NEO_WORK_FOLLOW_MAX_AGE_MS
     ? { value: card.ref }

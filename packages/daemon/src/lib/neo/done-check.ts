@@ -5,8 +5,10 @@ import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 type Gate<T> = { value: T } | { reason: boolean };
 
-export const isNeoAskLive = (ask: Pick<NeoAsk, 'status'> | null) =>
-  !!ask && ask.status !== 'achieved' && ask.status !== 'abandoned';
+export const isNeoAskSettled = (ask: Pick<NeoAsk, 'status'>) =>
+  ask.status === 'achieved' || ask.status === 'abandoned';
+
+export const isNeoAskLive = (ask: Pick<NeoAsk, 'status'> | null) => !!ask && !isNeoAskSettled(ask);
 
 export function requireNeoDoneCheck(
   work: Pick<NeoWork, 'status'>,
@@ -17,7 +19,7 @@ export function requireNeoDoneCheck(
     ask: Pick<NeoAsk, 'status'> | null;
   }
 ): Gate<NeoWorkGoal> {
-  if (card.ask && !isNeoAskLive(card.ask)) return { reason: true };
+  if (work.status === 'reported' && card.ask && isNeoAskSettled(card.ask)) return { reason: true };
   return work.status === 'reported' &&
     card.goal?.doneWhen &&
     card.driver &&

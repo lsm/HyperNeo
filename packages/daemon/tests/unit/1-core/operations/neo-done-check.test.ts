@@ -44,6 +44,12 @@ describe('requireNeoDoneCheck', () => {
       });
     }
   );
+
+  test('still lets failed work under a settled ask send its plain return note', () => {
+    expect(
+      requireNeoDoneCheck({ status: 'failed' }, { ...card, ask: { status: 'achieved' } })
+    ).toEqual({ reason: false });
+  });
 });
 
 describe('neoDoneCheckToldIds', () => {

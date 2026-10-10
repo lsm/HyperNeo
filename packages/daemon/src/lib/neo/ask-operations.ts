@@ -8,6 +8,7 @@ import type {
   NeoAskItemInput,
 } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoService } from './service.ts';
+import { isNeoAskSettled } from './done-check.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -89,7 +90,7 @@ const Tick = z.object({
 });
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
-const isFinal = (ask: NeoAsk) => ask.status === 'achieved' || ask.status === 'abandoned';
+const isFinal = isNeoAskSettled;
 const ACTIVE_ASK_LIMIT = 50;
 
 export function requireNeoWorkAsk(
