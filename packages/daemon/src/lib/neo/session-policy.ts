@@ -8,6 +8,8 @@ import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { readNeoCatchUp, readNeoHolderView } from './catch-up.ts';
 import { neoFolderPath } from './folder.ts';
 import { NEO_LOOKUP_COMMANDS, neoLookUpGuard, neoSecretReadRules } from './look-up-guard.ts';
+import { neoSettingsPackBriefs } from './packs/index.ts';
+import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -74,13 +76,14 @@ export function restrictNeoQuery(
   options: Options,
   concernId: string | null = null,
   sessionId?: string,
-  catchUp = ''
+  catchUp = '',
+  packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): void {
   if (sessionId) {
     options.cwd = neoCoordinatorRuntimePath(sessionId);
     mkdirSync(options.cwd, { recursive: true });
   }
-  const prompt = neoPrompt(concernId);
+  const prompt = neoPrompt(concernId, packs);
   options.systemPrompt = {
     type: 'custom',
     prompt: catchUp ? `${prompt}\n\n${catchUp}` : prompt,

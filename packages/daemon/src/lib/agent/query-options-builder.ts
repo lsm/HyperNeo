@@ -75,6 +75,7 @@ import {
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { neoCoordinatorBinding, neoQueryContext, restrictNeoQuery } from '../neo/session-policy.ts';
+import { neoSettingsPackBriefs } from '../neo/packs/index.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -570,7 +571,8 @@ export class QueryOptionsBuilder {
         queryOptions,
         neoBinding.concernId,
         this.ctx.session.id,
-        neoQueryContext(neoBinding, this.ctx.db)
+        neoQueryContext(neoBinding, this.ctx.db),
+        neoSettingsPackBriefs(this.ctx.settingsManager.getGlobalSettings().neo)
       );
 
     const cleanedOptions = Object.fromEntries(
