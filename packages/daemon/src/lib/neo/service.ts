@@ -100,9 +100,10 @@ import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import {
   extractNeoWorkPrUrls,
-  NEO_WORK_PR_READ_MS,
   neoWorkPrSignature,
   planNeoWorkPrRefresh,
+  requireNeoWorkPrDelivery,
+  requireNeoWorkPrRefresh,
   readGithubPrs,
   shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
@@ -139,6 +140,13 @@ const dispatchNeoConsultationWaiter = (
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 
+type NeoWorkPrCard = {
+  ask: NeoAsk | null;
+  goal: NeoWorkGoal | null;
+  row: NeoWorkPrRow | null;
+  session: boolean;
+};
+type NeoWorkPrRefreshed = { next: NeoWorkPrRow | null; read: boolean };
 type NeoDoneCheckCard = {
   ask: NeoAsk | null;
   continued: number;
@@ -927,38 +935,85 @@ export class NeoService {
       );
     }
     for (const workId of this.workPrs.listOpen()) {
-      await this.refreshWorkPrs(workId).catch((error) =>
+      await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
       );
     }
   }
 
-  private async refreshWorkPrs(workId: string): Promise<void> {
-    const work = this.repo.getWork(workId);
-    const ask = this.askRecords.forWork(workId);
-    const goal = neoWorkDoneGoal(workId, this.workGoals.get(workId), ask);
-    const row = this.workPrs.get(workId);
-    if (work?.status !== 'reported' || work.report === NEO_WORK_CLOSED_DONE || !goal || !row)
-      return;
-    if (Date.now() - row.readAt < NEO_WORK_PR_READ_MS || !this.db.getSession(work.originSessionId))
-      return;
-    const prs = await this.readPrs(row.prs.map((pr) => pr.url));
-    if (!prs) this.workPrs.recordFailedRead(workId, Date.now());
-    const next = prs ? this.recordWorkPrs(workId, prs, row) : row;
-    const plan = next
-      ? planNeoWorkPrRefresh(next, !!prs, Date.now(), {
-          quietSince: work.updatedAt,
-          remindable: !ask || ask.status === 'open',
-        })
-      : 'wait';
-    if (plan === 'deliver') await this.deliverDoneCheck(work, goal, next, { stale: !prs, ask });
-    if (plan === 'remind')
-      await this.deliverDoneCheck(work, goal, next, {
-        ask,
-        ready: true,
-        followedAt: next?.deliveredAt ?? work.updatedAt,
-      });
-  }
+  private readonly refreshWorkPrs = (superpipe({})('neo-work-pr-refresh') as PipelineAPI)
+    .input(['workId', 'now'])
+    .pipe((workId: string) => ({ work: this.repo.getWork(workId) }), 'workId', 'current')
+    .pipe(
+      (current: { work: NeoWork | null }) =>
+        current.work ? { value: current.work } : { reason: null },
+      'current',
+      'result:work'
+    )
+    .pipe(
+      (work: NeoWork) => {
+        const ask = this.askRecords.forWork(work.id);
+        return {
+          ask,
+          goal: neoWorkDoneGoal(work.id, this.workGoals.get(work.id), ask),
+          row: this.workPrs.get(work.id),
+          session: !!this.db.getSession(work.originSessionId),
+        };
+      },
+      'work',
+      'card'
+    )
+    .pipe(
+      (work: NeoWork, card: NeoWorkPrCard, now: number) =>
+        requireNeoWorkPrRefresh(work, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
+      ['work', 'card', 'now'],
+      'result:row'
+    )
+    .pipe(
+      async (work: NeoWork, row: NeoWorkPrRow) => {
+        const prs = await this.readPrs(row.prs.map((pr) => pr.url));
+        if (!prs) this.workPrs.recordFailedRead(work.id, Date.now());
+        return { next: prs ? this.recordWorkPrs(work.id, prs, row) : row, read: !!prs };
+      },
+      ['work', 'row'],
+      'refreshed'
+    )
+    .pipe(
+      (work: NeoWork, card: NeoWorkPrCard, refreshed: NeoWorkPrRefreshed, now: number) =>
+        refreshed.next
+          ? planNeoWorkPrRefresh(refreshed.next, refreshed.read, now, {
+              quietSince: work.updatedAt,
+              remindable: !card.ask || card.ask.status === 'open',
+            })
+          : 'wait',
+      ['work', 'card', 'refreshed', 'now'],
+      'plan'
+    )
+    .pipe(requireNeoWorkPrDelivery, 'plan', 'result:delivery')
+    .pipe(
+      async (
+        work: NeoWork,
+        card: NeoWorkPrCard,
+        refreshed: NeoWorkPrRefreshed,
+        delivery: 'deliver' | 'remind'
+      ) => {
+        if (!card.goal) return;
+        await this.deliverDoneCheck(
+          work,
+          card.goal,
+          refreshed.next,
+          delivery === 'remind'
+            ? {
+                ask: card.ask,
+                ready: true,
+                followedAt: refreshed.next?.deliveredAt ?? work.updatedAt,
+              }
+            : { stale: !refreshed.read, ask: card.ask }
+        );
+      },
+      ['work', 'card', 'refreshed', 'delivery']
+    )
+    .endAsync('delivery') as (workId: string, now: number) => Promise<unknown>;
 
   private recordWorkPrs(
     workId: string,

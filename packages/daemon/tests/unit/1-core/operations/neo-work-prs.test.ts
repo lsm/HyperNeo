@@ -5,6 +5,8 @@ import {
   neoWorkPrSignature,
   planNeoWorkPrRefresh,
   readGithubPrs,
+  requireNeoWorkPrDelivery,
+  requireNeoWorkPrRefresh,
   shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
 } from '../../../../src/lib/neo/work-prs.ts';
@@ -232,5 +234,36 @@ describe('readGithubPrs', () => {
       await readGithubPrs([pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], spawn as never)
     ).toBe(null);
     expect(asked[0].slice(0, 4)).toEqual(['gh', 'pr', 'view', pr.url]);
+  });
+});
+
+describe('requireNeoWorkPrRefresh', () => {
+  const row = { readAt: 0 };
+  type Card = { goal: boolean; row: { readAt: number } | null; session: boolean };
+  const card: Card = { goal: true, row, session: true };
+  const reported = { status: 'reported', report: 'Merged.' };
+  test.each<[string, typeof reported, Partial<Card>, number, boolean]>([
+    ['a reported card read over two minutes ago', reported, {}, 3 * 60_000, true],
+    ['one read a minute ago', reported, {}, 60_000, false],
+    ['one still running', { ...reported, status: 'queued' }, {}, 3 * 60_000, false],
+    ['one the user closed as done', { ...reported, report: 'closed' }, {}, 3 * 60_000, false],
+    ['one with no done list', reported, { goal: false }, 3 * 60_000, false],
+    ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
+    ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
+  ])('%s', (_label, work, overrides, now, refreshes) => {
+    expect(requireNeoWorkPrRefresh(work, { ...card, ...overrides }, now, 'closed')).toEqual(
+      refreshes ? { value: row } : { reason: null }
+    );
+  });
+});
+
+describe('requireNeoWorkPrDelivery', () => {
+  test.each<['deliver' | 'remind' | 'wait' | 'unchanged', boolean]>([
+    ['deliver', true],
+    ['remind', true],
+    ['wait', false],
+    ['unchanged', false],
+  ])('%s', (plan, delivers) => {
+    expect(requireNeoWorkPrDelivery(plan)).toEqual(delivers ? { value: plan } : { reason: null });
   });
 });

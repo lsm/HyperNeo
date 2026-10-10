@@ -122,6 +122,28 @@ export function planNeoWorkPrRefresh(
   return stalled ? 'remind' : 'unchanged';
 }
 
+export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
+  work: { status: string; report: string | null },
+  card: { goal: boolean; row: Row | null; session: boolean },
+  now: number,
+  closedDone: string
+): { value: Row } | { reason: null } {
+  return work.status === 'reported' &&
+    work.report !== closedDone &&
+    card.goal &&
+    card.session &&
+    card.row &&
+    now - card.row.readAt >= NEO_WORK_PR_READ_MS
+    ? { value: card.row }
+    : { reason: null };
+}
+
+export function requireNeoWorkPrDelivery(
+  plan: ReturnType<typeof planNeoWorkPrRefresh>
+): { value: 'deliver' | 'remind' } | { reason: null } {
+  return plan === 'deliver' || plan === 'remind' ? { value: plan } : { reason: null };
+}
+
 export async function readGithubPrs(
   urls: readonly string[],
   spawnImpl: SpawnFn = spawnProcess
