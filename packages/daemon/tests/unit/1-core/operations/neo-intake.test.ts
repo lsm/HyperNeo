@@ -3,8 +3,11 @@ import type { Session } from '@hyperneo/shared';
 import {
   admitNeoIntake,
   createNeoIntakeOperation,
+  loggedNeoRoute,
   requireNeoIntakeTarget,
+  wantsNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
+import type { NeoRouter } from '../../../../src/lib/neo/router.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -56,6 +59,38 @@ describe('Neo intake gates', () => {
   });
 });
 
+describe('wantsNeoRoute', () => {
+  const router: NeoRouter = async () => ({ choice: null });
+  test('routes only asks to the main Neo conversation when a router exists', () => {
+    expect(wantsNeoRoute(binding, router)).toEqual({ value: router });
+    expect(wantsNeoRoute(binding, null)).toEqual({ reason: { choice: null } });
+    expect(wantsNeoRoute({ ...binding, kind: 'concern', concernId: 'c1' }, router)).toEqual({
+      reason: { choice: null },
+    });
+  });
+});
+
+describe('loggedNeoRoute', () => {
+  const earlier = {
+    destination: 'holder',
+    concernId: 'c1',
+    targetSessionId: 's1',
+    signal: 'classifier',
+    confidence: 0.8,
+  } as unknown as Parameters<typeof loggedNeoRoute>[0];
+  test('a retried ask reuses its logged route instead of routing again', () => {
+    expect(loggedNeoRoute(null)).toEqual({ value: null });
+    expect(loggedNeoRoute(earlier)).toEqual({
+      reason: {
+        choice: { concernId: 'c1', sessionId: 's1', signal: 'classifier', confidence: 0.8 },
+      },
+    });
+    expect(
+      loggedNeoRoute({ ...earlier!, destination: 'main' } as Parameters<typeof loggedNeoRoute>[0])
+    ).toEqual({ reason: { choice: null } });
+  });
+});
+
 describe('durable Neo intake operation', () => {
   let mailbox: MailboxTestDb;
   let repo: NeoRepository;
@@ -86,6 +121,22 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
+  test('an ask the gates reject never pays for routing', async () => {
+    let routed = 0;
+    const router: NeoRouter = async () => {
+      routed += 1;
+      return { choice: null };
+    };
+    sessions.set(input.sessionId, { ...target, status: 'archived' as never });
+    const registry = createOperationRegistry([
+      createNeoIntakeOperation(db, repo, undefined, router),
+    ]);
+    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
+      value: { ok: false, reason: 'This Neo conversation is no longer available.' },
+    });
+    expect(routed).toBe(0);
+  });
+
   test('registers the operation in the real Neo operation family', () => {
     const registry = createOperationRegistry(createNeoOperations({ db, repo } as NeoService));
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');

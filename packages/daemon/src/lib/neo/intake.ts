@@ -187,8 +187,60 @@ export function notifyNeoIntakeAcceptance(
   return receipt;
 }
 
+export function wantsNeoRoute(
+  binding: NeoBinding,
+  router: NeoRouter | null
+): { value: NeoRouter } | { reason: NeoRouted } {
+  return binding.kind === 'neo' && router ? { value: router } : { reason: { choice: null } };
+}
+
+export function loggedNeoRoute(
+  earlier: ReturnType<NeoRoutingLogRepository['find']>
+): { value: null } | { reason: NeoRouted } {
+  if (!earlier) return { value: null };
+  return {
+    reason: {
+      choice:
+        earlier.destination === 'holder' && earlier.concernId && earlier.targetSessionId
+          ? {
+              concernId: earlier.concernId,
+              sessionId: earlier.targetSessionId,
+              signal: earlier.signal.startsWith('classifier')
+                ? (earlier.signal as NeoRouteSignal)
+                : 'embedding',
+              confidence: earlier.confidence ?? 0,
+            }
+          : null,
+    },
+  };
+}
+
+const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
+  .input(['input', 'binding', 'db', 'router'])
+  .pipe(wantsNeoRoute, ['binding', 'router'], 'result:route')
+  .pipe((router: NeoRouter) => router, 'route', 'chosenRouter')
+  .pipe(
+    (input: IntakeInput, db: Database) =>
+      new NeoRoutingLogRepository(db.getDatabase()).find(input.requestId),
+    ['input', 'db'],
+    'earlier'
+  )
+  .pipe(loggedNeoRoute, 'earlier', 'result:route')
+  .pipe(
+    (input: IntakeInput, router: NeoRouter): Promise<NeoRouted> =>
+      router(neoAskText(input.content)),
+    ['input', 'chosenRouter'],
+    'route'
+  )
+  .endAsync('route') as (
+  input: IntakeInput,
+  binding: NeoBinding,
+  db: Database,
+  router: NeoRouter | null
+) => Promise<NeoRouted>;
+
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'notify', 'route', 'fallback'])
+  .input(['input', 'caller', 'db', 'repo', 'notify', 'router'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(
     (input: IntakeInput, repo: NeoRepository) => repo.getBindingBySession(input.sessionId),
@@ -210,7 +262,18 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'rootSession'
   )
   .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:receipt')
-  .pipe(applyNeoRoute, ['binding', 'target', 'route', 'repo', 'db', 'fallback'], 'routed')
+  .pipe(routeNeoAsk, ['input', 'binding', 'db', 'router'], 'route')
+  .pipe(
+    (
+      binding: NeoBinding,
+      target: Target,
+      route: NeoRouted,
+      repo: NeoRepository,
+      db: Database
+    ): Routed => applyNeoRoute(binding, target, route.choice, repo, db, route.fallback),
+    ['binding', 'target', 'route', 'repo', 'db'],
+    'routed'
+  )
   .pipe(
     (input: IntakeInput, routed: Routed) => neoIntakeMessage(input, routed.target.id),
     ['input', 'routed'],
@@ -221,68 +284,14 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .pipe(persistNeoIntake, ['message', 'routedTarget', 'db', 'receipt'], 'receipt')
   .pipe(logNeoRoute, ['receipt', 'message', 'routed', 'conversationId', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
-  .end('receipt') as (
+  .endAsync('receipt') as (
   input: IntakeInput,
   caller: OperationCaller,
   db: Database,
   repo: NeoRepository,
   notify: NeoIntakeNotifier,
-  route: NeoRouteChoice | null,
-  fallback?: string
-) => IntakeResult;
-
-type AskRoute = NeoRouted;
-
-export function requireRoutableAsk(
-  input: IntakeInput,
-  caller: OperationCaller,
-  repo: NeoRepository
-): { value: IntakeInput } | { reason: AskRoute } {
-  return 'value' in admitNeoIntake(input, caller) &&
-    repo.getBindingBySession(input.sessionId)?.kind === 'neo'
-    ? { value: input }
-    : { reason: { choice: null } };
-}
-
-export function reuseLoggedRoute(
-  input: IntakeInput,
-  db: Database
-): { value: IntakeInput } | { reason: AskRoute } {
-  const earlier = new NeoRoutingLogRepository(db.getDatabase()).find(input.requestId);
-  if (!earlier) return { value: input };
-  return {
-    reason: {
-      choice:
-        earlier.destination === 'holder' && earlier.concernId && earlier.targetSessionId
-          ? {
-              concernId: earlier.concernId,
-              sessionId: earlier.targetSessionId,
-              signal: earlier.signal.startsWith('classifier')
-                ? (earlier.signal as NeoRouteSignal)
-                : 'embedding',
-              confidence: earlier.confidence ?? 0,
-            }
-          : null,
-    },
-  };
-}
-
-const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'router'])
-  .pipe(requireRoutableAsk, ['input', 'caller', 'repo'], 'result:route')
-  .pipe(reuseLoggedRoute, ['route', 'db'], 'result:route')
-  .pipe(
-    (input: IntakeInput, router: NeoRouter): Promise<AskRoute> => router(neoAskText(input.content)),
-    ['route', 'router'],
-    'route'
-  )
-  .endAsync('route') as (
-  input: IntakeInput,
-  caller: OperationCaller,
-  db: Database,
-  repo: NeoRepository,
-  router: NeoRouter
-) => Promise<AskRoute>;
+  router: NeoRouter | null
+) => Promise<IntakeResult>;
 
 export function createNeoIntakeOperation(
   db: Database,
@@ -297,11 +306,6 @@ export function createNeoIntakeOperation(
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },
-    execute: (input, caller) =>
-      router
-        ? routeNeoAsk(input, caller, db, repo, router).then((route) =>
-            runIntake(input, caller, db, repo, notify, route.choice, route.fallback)
-          )
-        : Promise.resolve(runIntake(input, caller, db, repo, notify, null)),
+    execute: (input, caller) => runIntake(input, caller, db, repo, notify, router ?? null),
   });
 }
