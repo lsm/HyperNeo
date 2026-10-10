@@ -63,14 +63,20 @@ const scenes = groupNeoScenes(
 describe('groupNeoAsks', () => {
   it('nests each ask’s cards under it and leaves the rest where they were', () => {
     const grouped = groupNeoAsks(
-      [ask('a', 'waiting', ['a1', 'a2']), ask('b', 'open', ['b1']), ask('c', 'achieved', ['c1'])],
+      [
+        ask('a', 'open', ['a1', 'a2']),
+        ask('b', 'open', ['b1']),
+        ask('c', 'achieved', ['c1']),
+        ask('w', 'waiting', []),
+      ],
       scenes
     );
     expect(
       grouped.asks.running.map((view) => [view.ask.id, view.label, view.done, view.total])
-    ).toEqual([['a', 'Waiting on checks or review', 1, 2]]);
+    ).toEqual([['a', 'Working on it', 1, 2]]);
     expect(grouped.asks.attention.map((view) => [view.ask.id, view.label])).toEqual([
       ['b', NEO_ASK_NEEDS_YOU_LABEL],
+      ['w', 'Waiting on you'],
     ]);
     expect(grouped.asks.outcomes.map((view) => [view.ask.id, view.label])).toEqual([['c', 'Done']]);
     expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['loose']);
@@ -240,7 +246,7 @@ describe('NeoAskCard', () => {
     expect(card.container.querySelector('[data-ask-step]')?.textContent).toBe(
       '●Card a2Handed to HyperNeo'
     );
-    expect(card.getByText('Waiting on checks or review')).toBeTruthy();
+    expect(card.getByText('Waiting on you')).toBeTruthy();
     expect(card.getByText('0 of 2 done')).toBeTruthy();
     expect(card.queryByText('Merged to dev with CI green')).toBeNull();
     expect(card.queryByText('Step card')).toBeNull();
