@@ -3148,7 +3148,11 @@ export class SpaceRuntime {
           for (const dep of await this.settleEndedTask(final)) {
             await this.safeOnTaskUpdated(spaceId, dep);
           }
-        } catch {}
+        } catch (err) {
+          log.warn(
+            `Settling dependents of task "${taskId}" threw: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
     }
     return routeResult;
