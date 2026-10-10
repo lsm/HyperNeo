@@ -177,6 +177,12 @@ describe('Neo turns with an ask waiting on the human', () => {
         neoTurn: { ...human('x').neoTurn!, messageId: 'w1:done-check:0', human: false },
       })
     ).toBeUndefined();
+    expect(
+      await waitingOn({
+        ...human('neo-nudge:ask-1'),
+        neoTurn: { ...human('x').neoTurn!, messageId: 'neo-nudge:ask-1', human: false },
+      })
+    ).toMatchObject({ asks: [{ id: 'a1' }] });
 
     expect(await reply('ask-1', '20000000-0000-4000-8000-000000000001', true)).toMatchObject({
       value: { accepted: true },

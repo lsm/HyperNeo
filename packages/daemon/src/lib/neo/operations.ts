@@ -532,7 +532,7 @@ export function createNeoOperations(service: NeoService) {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
       waitingOnHuman:
-        caller.neoTurn?.human && caller.sessionId
+        caller.neoTurn && caller.sessionId
           ? neoWaitingOnHuman(
               service.waitingReminders({
                 sessionId: caller.sessionId,
