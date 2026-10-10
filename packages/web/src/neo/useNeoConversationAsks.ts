@@ -168,13 +168,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyAskTail : applyAskPage)(before, response));
-          if (
-            changed &&
-            !tail &&
-            value.status === 'ready' &&
-            value.items.length > 0 &&
-            value.nextAfter === before.nextAfter
-          ) {
+          if (changed && !tail && value.status === 'ready' && value.items.length > 0) {
             const recent = await readNeoConversationAsks(
               { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: LIMIT },
               async () => hub,
@@ -206,7 +200,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
         earlier.current = () => void loadEarlier();
         unsubscribe = hub.onEvent('neo.changed', () => void update(true));
         reconnect = hub.onConnection((connection) => {
-          if (connection === 'connected') void update();
+          if (connection === 'connected') void update(true);
         });
         void update();
       })
