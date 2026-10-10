@@ -68,7 +68,7 @@ export function App() {
       try {
         const hub = await connectionManager.getHub();
 
-        await globalStore.initialize();
+        await globalStore.initialize().catch(() => {});
 
         await initializeApplicationState(hub, currentSessionIdSignal);
 
