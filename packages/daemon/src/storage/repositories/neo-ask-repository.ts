@@ -5,6 +5,8 @@ const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   title, ask, done_when AS doneWhen, done_source AS doneSource`;
 
+const REOPEN = "status = 'open', outcome = NULL, settled_at = NULL";
+const REOPENABLE = "status IN ('waiting', 'blocked')";
 type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
 export type NeoAskInput = Omit<
   NeoAsk,
@@ -183,8 +185,8 @@ export class NeoAskRepository {
 
   reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
     const row = this.db
-      .prepare(`UPDATE neo_asks SET status = 'open', outcome = NULL, settled_at = NULL,
-        updated_at = ? WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
+      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+        WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
       .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
@@ -194,9 +196,8 @@ export class NeoAskRepository {
   reopenForWork(workId: string): void {
     if (!this.hasTable()) return;
     const reopened = this.db
-      .prepare(`UPDATE neo_asks SET status = 'open', settled_at = NULL, updated_at = ?
-        WHERE status IN ('waiting', 'blocked')
-          AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
+      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+        WHERE ${REOPENABLE} AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
       .run(Date.now(), workId);
     if (reopened.changes > 0) this.notify();
   }
@@ -210,12 +211,9 @@ export class NeoAskRepository {
         )
         .run(workId, askId);
       if (added.changes === 0) return false;
-      this.db
-        .prepare(`UPDATE neo_asks SET updated_at = ?,
-          status = CASE WHEN status IN ('waiting', 'blocked') THEN 'open' ELSE status END,
-          settled_at = CASE WHEN status IN ('waiting', 'blocked') THEN NULL ELSE settled_at END
-          WHERE id = ?`)
-        .run(Date.now(), askId);
+      const now = Date.now();
+      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
+      this.db.prepare(`UPDATE neo_asks SET ${REOPEN} WHERE id = ? AND ${REOPENABLE}`).run(askId);
       return true;
     })();
     if (linked) this.notify();
