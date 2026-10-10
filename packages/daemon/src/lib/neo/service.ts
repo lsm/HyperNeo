@@ -210,7 +210,7 @@ export class NeoService {
       ['work', 'follow', 'now', 'card'],
       'read'
     )
-    .pipe(planNeoWorkFollow, ['work', 'read', 'now', 'card'], 'result:follow')
+    .pipe(planNeoWorkFollow, ['work', 'read', 'card'], 'result:follow')
     .pipe(
       (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
         const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });

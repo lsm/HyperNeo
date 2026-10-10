@@ -550,6 +550,17 @@ export function readUnanchoredSettlement(
   };
 }
 
+export function readDriverFollowUp(outcome: OperationOutcome, since: number): string | null {
+  const value = parseDriverStatus(outcome);
+  if (!value || value.status === 'running' || value.status === 'queued') return null;
+  if (value.lastActivityAt <= since) return null;
+  const said = driverExchangeReport(value.exchange, value.exchangeCut ?? false, null);
+  if (said) return said;
+  return value.lastReplyAt !== undefined && value.lastReplyAt > since && value.lastReply
+    ? `Agent: ${value.lastReply}`
+    : null;
+}
+
 export function readDriverSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,

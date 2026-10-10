@@ -2,7 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import { NEO_DRIVER_NO_REPLY, readDriverSettlement } from './driver-work.ts';
+import { readDriverFollowUp } from './driver-work.ts';
 
 type Gate<T> = { value: T } | { reason: null };
 
@@ -36,12 +36,10 @@ export function requireNeoWorkFollow(
 export function planNeoWorkFollow(
   work: Pick<NeoWork, 'updatedAt' | 'report'>,
   read: { outcome: OperationOutcome },
-  now: number,
   card: { since: number }
 ): Gate<string> {
-  const settled = readDriverSettlement(work, read.outcome, now, card.since, true);
-  if (settled?.status !== 'reported' || settled.report === NEO_DRIVER_NO_REPLY)
-    return { reason: null };
-  const report = `${settled.report}\n\nEarlier report:\n${work.report ?? ''}`;
+  const said = readDriverFollowUp(read.outcome, card.since);
+  if (!said) return { reason: null };
+  const report = `${said}\n\nEarlier report:\n${work.report ?? ''}`;
   return { value: report.slice(0, NEO_WORK_REPORT_MAX) };
 }
