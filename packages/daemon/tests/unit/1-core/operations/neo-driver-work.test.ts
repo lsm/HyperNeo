@@ -1060,6 +1060,54 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('leaves a merged-PR item alone while a sibling card under the ask has no PR yet', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Merged ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-icons',
+        requestKey: 'neo:root:icons',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Icons',
+        ask: 'Regenerate the icons and their docs',
+        doneWhen: '- merged to dev',
+        doneSource: 'human',
+      },
+      [{ text: 'Icons and docs merged to dev', check: 'pr_merged' }]
+    )!;
+    service.repo.proposeWork({
+      id: 'work-2',
+      requestKey: 'root:docs',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'ask-1',
+      title: 'Document the icons',
+      instruction: 'Write the docs.',
+    });
+    for (const id of ['work-1', 'work-2']) service.askRecords.link(opened.id, id);
+    service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.recover();
+      expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
+        state: 'pending',
+        metBy: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('reopens a waiting ask once its daemon-ticked item no longer needs the human', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';

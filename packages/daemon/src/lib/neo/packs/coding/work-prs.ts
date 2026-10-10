@@ -111,16 +111,32 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
 }
 
 export function neoAskPrEvidence(
-  works: readonly Pick<NeoWork, 'id' | 'status'>[],
+  works: readonly Pick<NeoWork, 'id' | 'status' | 'report'>[],
   rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[]
 ): NeoEvidence[] {
-  const live = new Set(works.filter((work) => work.status !== 'cancelled').map((work) => work.id));
+  const live = works.filter((work) => work.status !== 'cancelled');
+  const tracked = new Set(rows.map((row) => row.workId));
   const prs = new Map(
     rows
-      .filter((row) => live.has(row.workId))
+      .filter((row) => live.some((work) => work.id === row.workId))
       .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
   );
-  return neoWorkPrEvidence([...prs.values()]);
+  const untracked = live.filter(
+    (work) =>
+      !tracked.has(work.id) &&
+      (work.status === 'proposed' ||
+        work.status === 'queued' ||
+        extractNeoWorkPrUrls(work.report).length > 0)
+  );
+  return [
+    ...neoWorkPrEvidence([...prs.values()]),
+    ...untracked.map((work) => ({
+      key: `work:${work.id}`,
+      state: 'pending' as const,
+      summary: 'no pull request read yet',
+      blockers: [],
+    })),
+  ];
 }
 
 type StoredPrs = {

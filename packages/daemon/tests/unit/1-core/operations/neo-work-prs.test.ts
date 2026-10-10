@@ -136,8 +136,8 @@ describe('neoAskPrEvidence', () => {
     expect(
       neoAskPrEvidence(
         [
-          { id: 'w1', status: 'reported' },
-          { id: 'w2', status: 'queued' },
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'queued', report: null },
         ],
         [
           { workId: 'w1', prs: [merged] },
@@ -150,12 +150,30 @@ describe('neoAskPrEvidence', () => {
     ]);
   });
 
+  test('holds a live card whose pull request is not read yet as pending', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'queued', report: null },
+          { id: 'w3', status: 'reported', report: `Opened ${other.url}.` },
+          { id: 'w4', status: 'reported', report: 'Wrote the notes.' },
+        ],
+        [{ workId: 'w1', prs: [merged] }]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      ['work:w2', 'pending'],
+      ['work:w3', 'pending'],
+    ]);
+  });
+
   test('leaves out cards that were cancelled', () => {
     expect(
       neoAskPrEvidence(
         [
-          { id: 'w1', status: 'reported' },
-          { id: 'w2', status: 'cancelled' },
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'cancelled', report: null },
         ],
         [
           { workId: 'w1', prs: [merged] },
