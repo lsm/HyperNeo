@@ -22,6 +22,7 @@ import {
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
   driverDoneCheckNote,
+  driverNeedsYouNote,
   neoWorkDoneGoal,
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -919,6 +920,24 @@ describe('isNeoCardAsk', () => {
     expect(isNeoCardAsk(opened, planned)).toBe(true);
     expect(isNeoCardAsk({ ...opened, doneWhen: '- deployed' }, planned)).toBe(false);
     expect(isNeoCardAsk(null, planned)).toBe(false);
+  });
+});
+
+describe('neoPrompt decision items', () => {
+  test('tells Neo to give a decision its own item instead of an outcome item', () => {
+    expect(neoPrompt(null)).toContain('never tick an outcome item needs_you for a decision');
+  });
+});
+
+describe('driverNeedsYouNote', () => {
+  test('asks Neo to record the decision as its own item before telling the human', () => {
+    expect(
+      driverNeedsYouNote(
+        { id: 'w1', title: 'Fix startup' },
+        { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' },
+        'A or B?'
+      )
+    ).toContain('record it first as its own checklist item with neo.ask.edit');
   });
 });
 
