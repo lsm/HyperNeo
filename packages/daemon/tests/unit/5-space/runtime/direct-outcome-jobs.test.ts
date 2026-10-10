@@ -125,6 +125,22 @@ test('durable acknowledgement leaves caller running until the linked worker proc
   expect(terminal).toHaveBeenCalledTimes(1);
 });
 
+test('settles dependents inside the job and retries the settle when it fails', async () => {
+  const job = acceptedJob();
+  request();
+  const published: string[] = [];
+  deps.onTaskUpdated = (task) => published.push(`${task.id}:${task.status}`);
+  let fail = true;
+  deps.settleDependents = async (task) => {
+    if (fail) throw new Error('settle failed');
+    return [{ ...task, id: 'dependent', status: 'blocked' }];
+  };
+  await expect(createDirectOutcomeHandler(deps)(job)).rejects.toThrow('settle failed');
+  fail = false;
+  expect(await createDirectOutcomeHandler(deps)(job)).toHaveProperty('finalized', true);
+  expect(published).toEqual([`${taskId}:blocked`, `${taskId}:blocked`, 'dependent:blocked']);
+});
+
 test('enqueue failure rolls back the durable request and stop fence', () => {
   db.exec(
     "CREATE TRIGGER reject_outcome_job BEFORE INSERT ON job_queue WHEN NEW.queue = 'direct_task_outcome' BEGIN SELECT RAISE(ABORT, 'enqueue failed'); END;"

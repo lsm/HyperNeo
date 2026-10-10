@@ -23,6 +23,7 @@ import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
 interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
   jobQueue: Pick<JobQueueRepository, 'requeueParked'>;
   onTaskUpdated?: (task: SpaceTask) => void;
+  settleDependents?: (task: SpaceTask) => Promise<SpaceTask[]>;
 }
 
 export const DIRECT_TASK_OUTCOME = 'direct_task_outcome';
@@ -161,7 +162,11 @@ export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
       if (deps.jobQueue.requeueParked(job.id, now + 30_000, job.claimToken))
         return { ...result, parked: 'direct_stop_unverified' };
     }
-    if (result.finalized) deps.onTaskUpdated?.(result.task);
+    if (result.finalized) {
+      deps.onTaskUpdated?.(result.task);
+      for (const settled of (await deps.settleDependents?.(result.task)) ?? [])
+        deps.onTaskUpdated?.(settled);
+    }
     return result;
   };
 }
