@@ -15,7 +15,7 @@ import {
   NEO_SYSTEM_PROMPT,
 } from '@hyperneo/prompts';
 import type { NeoPackBrief } from './packs/types.ts';
-import { NEO_DEFAULT_PACKS, neoPackBriefs } from './packs/index.ts';
+import { neoSettingsPackBriefs } from './packs/index.ts';
 
 export function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
   if (!briefs.length) return '';
@@ -29,7 +29,7 @@ export function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
 
 export function neoPrompt(
   concernId: string | null,
-  packs: readonly NeoPackBrief[] = neoPackBriefs(NEO_DEFAULT_PACKS)
+  packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): string {
   return fillPrompt(NEO_SYSTEM_PROMPT, {
     capabilities: NEO_CAPABILITIES_BRIEFING,
