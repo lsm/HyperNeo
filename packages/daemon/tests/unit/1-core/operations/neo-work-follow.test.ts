@@ -53,6 +53,26 @@ describe('planNeoWorkFollow', () => {
       'Agent: Merged https://github.com/lsm/neo-ios/pull/25.\n\nEarlier report:\nAgent: Waiting for the build.',
     ],
     ['nothing happened since', read({ status: 'done', lastActivityAt: work.updatedAt - 1 }), null],
+    [
+      'a session the app no longer has open, with a new reply',
+      read({
+        status: 'stopped',
+        lastActivityAt: later,
+        lastReplyAt: later,
+        exchange: [{ at: later, role: 'agent', text: 'PR C merged.' }],
+      }),
+      'Agent: PR C merged.\n\nEarlier report:\nAgent: Waiting for the build.',
+    ],
+    [
+      'a session that asks the human something',
+      read({
+        status: 'needs_you',
+        lastActivityAt: later,
+        lastReplyAt: later,
+        lastReply: 'Can I merge?',
+      }),
+      'Agent: Can I merge?\n\nEarlier report:\nAgent: Waiting for the build.',
+    ],
     ['the session is still working', read({ status: 'running', lastActivityAt: later }), null],
     ['the session said nothing new', read({ status: 'done', lastActivityAt: later }), null],
     [
@@ -66,7 +86,7 @@ describe('planNeoWorkFollow', () => {
       null,
     ],
   ])('%s', (_label, status, report) => {
-    expect(planNeoWorkFollow(work, status, now, { since: work.updatedAt })).toEqual(
+    expect(planNeoWorkFollow(work, status, { since: work.updatedAt })).toEqual(
       report === null ? { reason: null } : { value: report }
     );
   });
@@ -79,10 +99,10 @@ describe('planNeoWorkFollow', () => {
       lastReplyAt: remoteSince + 60_000,
       lastReply: 'Merged.',
     });
-    expect(planNeoWorkFollow(work, behind, now, { since: remoteSince })).toMatchObject({
+    expect(planNeoWorkFollow(work, behind, { since: remoteSince })).toMatchObject({
       value: expect.stringContaining('Merged.'),
     });
-    expect(planNeoWorkFollow(work, behind, now, { since: work.updatedAt })).toEqual({
+    expect(planNeoWorkFollow(work, behind, { since: work.updatedAt })).toEqual({
       reason: null,
     });
   });
