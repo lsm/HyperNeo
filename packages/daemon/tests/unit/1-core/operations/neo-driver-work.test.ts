@@ -25,6 +25,7 @@ import {
   NEO_WORK_UNANCHORED_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
+  NEO_CARD_CONFIRM_MS,
   readDriverSettlement,
   readNeoStartFolder,
   requireNeoStartFolder,
@@ -810,6 +811,38 @@ describe('Neo work with a drivers target', () => {
       ]);
       expect(notes[0]).toContain('end the turn without telling the human');
     } finally {
+      db.close();
+    }
+  });
+
+  test('marks a card unconfirmed when it shows its session without its message seen landing', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: { status: 'running', lastActivityAt: Date.now(), recentInputs: [] },
+      }),
+      sendTarget
+    );
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0]).toMatchObject({ status: 'queued' });
+      expect(service.driverTargets.receipts(['work-1'])[0].unconfirmed).toBeUndefined();
+
+      now += NEO_CARD_CONFIRM_MS;
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0]).toMatchObject({
+        status: 'running',
+        unconfirmed: true,
+      });
+    } finally {
+      clock.mockRestore();
       db.close();
     }
   });

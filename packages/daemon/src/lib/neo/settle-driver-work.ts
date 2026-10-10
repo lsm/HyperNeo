@@ -5,6 +5,7 @@ import type { OperationOutcome } from '../operations/invoke.ts';
 import {
   decideCardLiveStatus,
   type DriverSent,
+  isNeoCardUnconfirmed,
   messageOpening,
   readDriverLanded,
   readDriverLive,
@@ -54,12 +55,15 @@ export function planNeoDriverSettlement(
   const { startedAt, sent, outcome } = evidence;
   const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
   const live = readDriverLive(outcome);
+  const anchored = startedAt ?? landed;
   return {
     landed,
     live,
-    cardStatus: live
-      ? decideCardLiveStatus(live, startedAt ?? landed, evidence.priorLiveStatus)
-      : null,
+    cardStatus: !live
+      ? null
+      : anchored === null && isNeoCardUnconfirmed(work, sent, evidence.now)
+        ? live.status
+        : decideCardLiveStatus(live, anchored, evidence.priorLiveStatus),
     settled:
       landed === null
         ? readDriverSettlement(

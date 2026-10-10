@@ -8,6 +8,7 @@ import {
   settleNeoDriverWork,
 } from '../../../../src/lib/neo/settle-driver-work.ts';
 import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
+import { NEO_CARD_CONFIRM_MS } from '../../../../src/lib/neo/driver-work.ts';
 
 const work: NeoWork = Object.freeze({
   id: 'work-1',
@@ -61,6 +62,21 @@ describe('planNeoDriverSettlement', () => {
       })
     );
     expect(plan).toMatchObject({ landed: 8, cardStatus: 'running', settled: null });
+  });
+
+  test("a send unconfirmed a day after it was sent shows the session's own state", () => {
+    const unconfirmed = (now: number) =>
+      planNeoDriverSettlement(
+        work,
+        evidence({
+          startedAt: null,
+          sent: { inputBefore: 4, opening: 'Raise the font.' },
+          outcome: status({ status: 'running', recentInputs: [] }),
+          now,
+        })
+      ).cardStatus;
+    expect(unconfirmed(4 + NEO_CARD_CONFIRM_MS - 1)).toBe('queued');
+    expect(unconfirmed(4 + NEO_CARD_CONFIRM_MS)).toBe('running');
   });
 
   test('running work stays unsettled', () => {
