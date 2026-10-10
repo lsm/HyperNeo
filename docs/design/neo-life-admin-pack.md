@@ -50,15 +50,16 @@ Anything that sends, pays, books, cancels or accepts terms needs the user's yes 
 
 ## The pack
 
-A built-in pack, `life-admin`, shipped disabled and enabled in settings.
+A built-in pack, `life-admin`, shipped disabled and enabled in settings. It is TypeScript, not knowledge only, because it reads evidence and has a check. That departs from the ADR's knowledge-only second pack, which the ADR edit in this PR records.
 
 - `describe`: "Life admin: inbox, scheduling, orders, bookings, subscriptions, watches. Acts in the user's own browser and accounts, proves results with confirmations."
 - `instructions` (the `SKILL.md` body): the done rule above, the approval rule, the handoff rule for logins and payment, and one short section per task row: what to do, what counts as proof, and the usual traps. For example, a cancellation flow that offers a discount instead of cancelling, or a booking that holds a slot without confirming it.
-- `workerMcpServers`: `chrome-devtools-mcp` (user's Chrome), plus the mail and calendar connectors the user has enabled.
+- `workerMcpServers`: a new app-MCP entry, `chrome-devtools-user`, that runs `chrome-devtools-mcp --autoConnect` against the user's Chrome, plus the mail and calendar connectors the user has enabled. The existing `chrome-devtools` entry stays as it is: it runs `--isolated` and is off by default, so it can't reach the user's logins. Rung e adds the new entry.
 - `readEvidence`: reads the card's report for a `Confirmation:` block: the sender, subject, date and message id of the confirmation, or the calendar event id. In v1 it does not read the inbox itself, since the daemon holds no mail tokens. The done check, run by a worker with the mail connector, confirms the message exists.
 - `checks`:
   - `life-admin.confirmed`: met when the evidence has a confirmation from the right sender after the card started.
-  - `life-admin.approved`: met when the user ticked the decision item.
+
+  Approval needs no check. The decision item is ticked by the user (`metBy: human`), and the worker waits for that tick before the final click.
 
 Recurring work (weekly inbox triage, a fare watch) uses core's reminders and follow-ups: one ask with a schedule, not a new mechanism.
 

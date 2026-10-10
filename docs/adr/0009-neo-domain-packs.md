@@ -224,7 +224,8 @@ the ask opens, much like a Goose recipe.
   with coding asks. This can change routing and done-check behaviour, so the
   prompt split ships only after a before/after run on the eval set.
 - A second domain needs no core change: a knowledge-only pack is markdown plus
-  an enable switch.
+  an enable switch. The first second pack, life admin, is built in instead,
+  because it reads evidence and has a check; it still needs no core change.
 - `pr_merged` becomes `coding.pr_merged`, which needs a migration of the m318
   constraint and existing rows.
 - Delivery bookkeeping moves out of `neo_work_prs`. The old columns are copied,
