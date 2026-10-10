@@ -1,4 +1,5 @@
 export const NEO_OPERATION_NAMES = [
+  'neo.ask.approve',
   'neo.ask.edit',
   'neo.ask.open',
   'neo.ask.settle',

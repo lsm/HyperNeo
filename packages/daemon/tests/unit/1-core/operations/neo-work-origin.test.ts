@@ -3,6 +3,7 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry.ts
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import {
   admitNeoWorkOrigin,
+  isNeoAskStartApproved,
   requireLiveNeoWorkOrigin,
 } from '../../../../src/lib/neo/work-origin.ts';
 
@@ -67,5 +68,35 @@ describe('Neo work input origins', () => {
     attempts.allocate();
     expect(requireLiveNeoWorkOrigin(result.value, bound)).toMatchObject({ reason: { ok: false } });
     expect(result.value.originMessageId).toBe('ask-A');
+  });
+});
+
+describe('isNeoAskStartApproved', () => {
+  const neo: OperationCaller = {
+    source: 'mcp',
+    sessionId: 'root',
+    neoTurn: { messageId: 'note-1', human: false, isLive: () => true },
+  };
+  const work = { id: 'w1', status: 'proposed' as const };
+  const ask = { originSessionId: 'root', approvedAt: 5, status: 'open' as const, workIds: ['w1'] };
+  test.each<[string, Partial<typeof ask>, Partial<typeof work>, OperationCaller, boolean]>([
+    ['a proposed item under an approved open ask', {}, {}, neo, true],
+    ['an ask not approved', { approvedAt: null as never }, {}, neo, false],
+    ['a settled ask', { status: 'achieved' as never }, {}, neo, false],
+    ['another Neo session', {}, {}, { ...neo, sessionId: 'holder' }, false],
+    ['an item not under the ask', { workIds: ['w2'] }, {}, neo, false],
+    ['an item already started', {}, { status: 'queued' as never }, neo, false],
+    [
+      'a turn that ended',
+      {},
+      {},
+      { ...neo, neoTurn: { ...neo.neoTurn!, isLive: () => false } },
+      false,
+    ],
+    ['the user', {}, {}, { source: 'rpc', principal: 'local' }, false],
+  ])('%s', (_label, askOverrides, workOverrides, as, approved) => {
+    expect(
+      isNeoAskStartApproved({ ...work, ...workOverrides }, { ...ask, ...askOverrides }, as)
+    ).toBe(approved);
   });
 });
