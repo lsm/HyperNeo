@@ -97,7 +97,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
-      gitRoot: async () => null,
+      gitCheckout: async () => null,
       newId: () => 'abcd1234-0000',
     });
   }
@@ -114,7 +114,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
-      gitRoot: async () => null,
+      gitCheckout: async () => null,
       newId: () => 'abcd1234-0000',
       searchChats: async (text) => {
         searched.push(text);
@@ -270,7 +270,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
-      gitRoot: async () => null,
+      gitCheckout: async () => null,
       newId: () => 'abcd1234-0000',
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
