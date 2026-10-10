@@ -61,15 +61,15 @@ const sendTarget: NeoDriverTarget = {
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
 
 describe('isNeoReceiptUnconfirmed', () => {
-  const card = {
+  const card: Parameters<typeof isNeoReceiptUnconfirmed>[0] = {
     ref: true,
     workStatus: 'queued',
     workCreatedAt: 100,
     startedAt: null,
     inputBefore: null,
-    status: 'running' as const,
+    status: 'running',
   };
-  test.each<[string, Partial<typeof card> | { status: 'failed' | 'queued' }, number, boolean]>([
+  test.each<[string, Partial<typeof card>, number, boolean]>([
     ['a card showing its session a day after it was sent', {}, 100 + NEO_CARD_CONFIRM_MS, true],
     ['the same card earlier', {}, 100 + NEO_CARD_CONFIRM_MS - 1, false],
     ['a session that failed before the card was confirmed', { status: 'failed' }, 200, false],
