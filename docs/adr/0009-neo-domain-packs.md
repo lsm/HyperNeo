@@ -242,7 +242,7 @@ One PR per rung (ADR 0004 ladder):
 | c1 | Core `neo_work_checks` table, migration and repository; bookkeeping copied and dual-written, coding still the only producer | Neo backend |
 | c2 | `NeoEvidence`, `NeoPack`, the coding pack implementing it, core pipelines wired through it | Neo backend |
 | d | Prompt split: core plus coding fragment, `neo.ask.open {pack}`, `neo.pack.read`; gated on the eval | Neo backend |
-| e | Second pack: legal review, knowledge only, shipped disabled; the enable setting; the file-pack loader | first free |
+| e | Second pack: life admin (`docs/design/neo-life-admin-pack.md`), shipped disabled; the enable setting; the file-pack loader | first free |
 | f | `pr_merged` to `coding.pr_merged`, with its migration | Neo backend |
 | g | Delete the copied `neo_work_prs` columns | Neo backend |
 
