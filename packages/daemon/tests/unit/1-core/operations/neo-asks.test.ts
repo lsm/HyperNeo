@@ -941,6 +941,14 @@ describe('driverNeedsYouNote', () => {
   });
 });
 
+describe('neoPrompt dropped items', () => {
+  test('tells Neo to remove an item the human dropped instead of ticking it met', () => {
+    expect(neoPrompt(null)).toContain(
+      'when the human drops part of an ask, remove that item (it stays listed as removed), and never tick a dropped item met'
+    );
+  });
+});
+
 describe('neoPrompt stale failures', () => {
   test('tells Neo to re-check an old failure before repeating it', () => {
     expect(neoPrompt(null)).toContain(
