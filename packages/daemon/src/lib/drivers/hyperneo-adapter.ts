@@ -35,7 +35,8 @@ const CLOSED_SESSIONS = 500;
 const REPLY_LIMIT = 4_000;
 const TAIL_INPUTS = 8;
 const INPUTS_AFTER = 50;
-const LANDED_INPUT = `message_type = 'user' AND COALESCE(send_status, 'consumed') = 'consumed'
+const LANDED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
+  AND COALESCE(send_status, 'consumed') = 'consumed'
   AND COALESCE(json_extract(sdk_message, '$.inputKind'), '') <> 'system'
   AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') = 'text'`;
 

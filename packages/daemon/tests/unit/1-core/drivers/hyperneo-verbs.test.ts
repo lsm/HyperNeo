@@ -134,6 +134,10 @@ describe('hyperneo adapter send and status', () => {
     input.run(user('Done check for w1', 'system'), '2026-10-04T10:03:00.000Z', 'consumed');
     input.run(user([{ type: 'text', text: 'Also add tests' }]), '2026-10-04T10:04:00.000Z', null);
     input.run(user('Still queued'), '2026-10-04T10:05:00.000Z', 'enqueued');
+    db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+        VALUES ('busy', 'user', ?, '2026-10-04T10:06:00.000Z', 'tool-1')`
+    ).run(user('Subagent: read the parser'));
     const at = (iso: string) => Date.parse(iso);
 
     expect(await adapter().status?.(ref('busy'))).toMatchObject({
