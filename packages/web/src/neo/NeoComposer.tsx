@@ -16,6 +16,7 @@ import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import { attachmentMessage, NEO_FILE_ACCEPT, useNeoAttachments } from './neo-attachments.ts';
 import type { createNeoIntakeClient } from './neo-intake.ts';
 import { useCoarsePointer } from './useCoarsePointer.ts';
+import { VoiceDraftPreview } from '../components/voice/VoiceDraftPreview.tsx';
 
 export function neoEnterSends(
   keyboard: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
@@ -67,13 +68,21 @@ export function NeoComposer({
         : null;
   const thought = useRef<HTMLTextAreaElement>(null);
   const wasVoiceBusy = useRef(false);
+  const idleHeight = useRef(0);
   useLayoutEffect(() => {
     const el = thought.current;
-    if (!el) return;
-    if (voiceBusy) el.scrollTop = el.scrollHeight;
-    else if (wasVoiceBusy.current && !coarsePointer) {
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
+    if (el) {
+      const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 26;
+      el.style.height = 'auto';
+      const full = el.scrollHeight;
+      const height = Math.min(Math.max(full, line * 2), line * 8);
+      el.style.height = `${height}px`;
+      el.style.overflowY = full > line * 8 ? 'auto' : 'hidden';
+      idleHeight.current = height;
+      if (wasVoiceBusy.current && !coarsePointer) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
     }
     wasVoiceBusy.current = voiceBusy;
   }, [voiceBusy, coarsePointer, draft]);
@@ -198,45 +207,53 @@ export function NeoComposer({
           void attachments.add(files, onError);
         }}
       />
-      <textarea
-        ref={thought}
-        id="neo-thought"
-        aria-label="Message Neo"
-        disabled={voiceBusy}
-        value={draft}
-        onInput={(event) => onDraft(event.currentTarget.value)}
-        onPaste={(event) => {
-          const files = Array.from(event.clipboardData?.files ?? []);
-          if (files.length) {
-            event.preventDefault();
-            void attachments.add(files, onError);
+      {voiceBusy ? (
+        <VoiceDraftPreview
+          text={draft}
+          start={draft.length}
+          end={draft.length}
+          transcribing={voicePhase === 'sending' || voicePhase === 'drafting'}
+          newLine
+          hint={listening ? 'Listening. Your words appear here.' : undefined}
+          heightPx={idleHeight.current || undefined}
+          class="text-base leading-relaxed text-fg-muted"
+        />
+      ) : (
+        <textarea
+          ref={thought}
+          id="neo-thought"
+          aria-label="Message Neo"
+          value={draft}
+          onInput={(event) => onDraft(event.currentTarget.value)}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData?.files ?? []);
+            if (files.length) {
+              event.preventDefault();
+              void attachments.add(files, onError);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+            if (
+              neoEnterSends(
+                { shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
+                coarsePointer
+              )
+            ) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+          rows={2}
+          maxLength={16000}
+          placeholder={
+            coarsePointer
+              ? 'Return adds a line · Tap the arrow to send'
+              : 'Enter to send · Shift + Enter for a new line'
           }
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
-          if (
-            neoEnterSends(
-              { shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
-              coarsePointer
-            )
-          ) {
-            event.preventDefault();
-            void send();
-          }
-        }}
-        rows={2}
-        maxLength={16000}
-        placeholder={
-          listening
-            ? 'Listening. Your words appear here.'
-            : voiceBusy
-              ? ''
-              : coarsePointer
-                ? 'Return adds a line · Tap the arrow to send'
-                : 'Enter to send · Shift + Enter for a new line'
-        }
-        class={`w-full resize-none bg-transparent text-base leading-relaxed placeholder:text-fg-faint focus:outline-none ${voiceBusy ? 'text-fg-muted' : 'text-fg'}`}
-      />
+          class="w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none"
+        />
+      )}
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
         <div class={`min-w-0 items-center gap-1 ${voiceBusy ? 'hidden' : 'flex'}`}>
           <button

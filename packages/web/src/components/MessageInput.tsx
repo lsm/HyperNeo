@@ -430,6 +430,8 @@ export default function MessageInput({
       if (!fullyInserted) return false;
       setContent(nextValue);
       const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
+      lastCursorRef.current = nextCursor;
+      lastSelectionEndRef.current = nextCursor;
       setTimeout(() => {
         const textarea = textareaInputRef.current;
         if (!textarea) return;
@@ -440,6 +442,15 @@ export default function MessageInput({
     },
     [setContent]
   );
+
+  const wasVoiceActiveRef = useRef(false);
+  useLayoutEffect(() => {
+    const textarea = textareaInputRef.current;
+    if (wasVoiceActiveRef.current && !voiceActive && textarea) {
+      textarea.setSelectionRange(lastCursorRef.current, lastSelectionEndRef.current);
+    }
+    wasVoiceActiveRef.current = voiceActive;
+  }, [voiceActive]);
 
   const startRecording = useCallback(async () => {
     if (isTranscribing || resendingVoiceRecordId !== null) return;
@@ -1332,6 +1343,7 @@ export default function MessageInput({
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
               transparent={true}
+              transcribing={isTranscribing}
               recordingCursor={
                 voiceActive
                   ? (voiceRecorder.recordingCursor ?? {
