@@ -92,6 +92,7 @@ import {
   planNeoSavedRulesNote,
   withNeoSavedRules,
 } from './saved-rules.ts';
+import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
@@ -632,7 +633,8 @@ export class NeoService {
         sessionId: binding.sessionId,
         parentSessionId: rootSession ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
-        workspacePath: null,
+        workspacePath: neoFolderPath(),
+        worktreeMode: 'direct',
         config: {
           systemPrompt: neoPrompt(concernId),
           sdkToolsPreset: neoCoordinatorNativeTools(concernId),

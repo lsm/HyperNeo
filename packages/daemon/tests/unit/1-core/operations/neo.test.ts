@@ -21,6 +21,7 @@ import {
   neoCoordinatorRuntimePath,
   restrictNeoQuery,
 } from '../../../../src/lib/neo/session-policy.ts';
+import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -207,7 +208,7 @@ describe('Neo MVP', () => {
       sdkToolsPreset: neoCoordinatorNativeTools(null),
       allowedTools: neoCoordinatorAllowedTools(null),
     });
-    expect(created[0].workspacePath).toBeNull();
+    expect(created[0]).toMatchObject({ workspacePath: neoFolderPath(), worktreeMode: 'direct' });
     expect(service.repo.listConcerns()).toEqual([]);
     expect(await service.open(null)).toBe(ids[0]);
     expect(neoCoordinatorBinding(db, ids[0])?.kind).toBe('neo');
