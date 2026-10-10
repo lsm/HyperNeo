@@ -8,6 +8,8 @@ import {
   groupNeoAsks,
   NEO_ASK_NEEDS_YOU_LABEL,
   neoAskOpenTarget,
+  neoAskSummary,
+  neoSupersededAttempts,
 } from '../neo-asks.ts';
 import type { NeoConcernBoard } from '../neo-concern-board.ts';
 import { classifyNeoScenes, groupNeoScenes } from '../neo-scenes.ts';
@@ -76,6 +78,20 @@ describe('groupNeoAsks', () => {
     expect(grouped.loose.outcomes).toEqual([]);
   });
 
+  it('hides failed attempts a later attempt replaced, and marks the cards of settled asks', () => {
+    const retried = groupNeoScenes(
+      classifyNeoScenes([
+        { ...work('f1', 'failed'), title: 'Fix it', createdAt: 1 } as Receipt,
+        { ...work('f2', 'reported'), title: 'Fix it', createdAt: 2 } as Receipt,
+        { ...work('lone', 'failed'), title: 'Only try', createdAt: 1 } as Receipt,
+        work('c1', 'reported'),
+      ])
+    );
+    const grouped = groupNeoAsks([ask('c', 'achieved', ['c1'])], retried);
+    expect(grouped.loose.outcomes.map((scene) => scene.ref.id)).toEqual(['f2', 'lone']);
+    expect([...grouped.settledWork]).toEqual(['c1']);
+  });
+
   it('keeps every card loose when there are no asks', () => {
     const grouped = groupNeoAsks(undefined, scenes);
     expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['a2', 'loose']);
@@ -110,7 +126,63 @@ describe('describeNeoAsk', () => {
       describeNeoAsk(ask('a', 'open', ['a1']), scenes.outcomes.slice(0, 1), failing).done
     ).toBe(0);
     const settled = describeNeoAsk(ask('b', 'abandoned', ['b1']), scenes.attention);
-    expect([settled.group, settled.label]).toEqual(['outcomes', 'Dropped']);
+    expect([settled.group, settled.label, settled.settled]).toEqual(['outcomes', 'Dropped', true]);
+    const attempts = classifyNeoScenes([
+      { ...work('x1', 'failed'), title: 'Same', createdAt: 1 } as Receipt,
+      { ...work('x2', 'cancelled'), title: 'Same', createdAt: 2 } as Receipt,
+      { ...work('x3', 'reported'), title: 'Same', createdAt: 3 } as Receipt,
+    ]);
+    const retried = describeNeoAsk(ask('x', 'open', ['x1', 'x2', 'x3']), attempts);
+    expect([retried.done, retried.total, retried.scenes.map((scene) => scene.ref.id)]).toEqual([
+      1,
+      1,
+      ['x3'],
+    ]);
+  });
+});
+
+describe('neoSupersededAttempts', () => {
+  it('names failed cards whose title a later card reuses', () => {
+    const scenes = classifyNeoScenes([
+      { ...work('a', 'failed'), title: 'Audit', createdAt: 1 } as Receipt,
+      { ...work('b', 'failed'), title: 'Audit ', createdAt: 2 } as Receipt,
+      { ...work('c', 'failed'), title: 'Audit', createdAt: 3 } as Receipt,
+      { ...work('d', 'reported'), title: 'Other', createdAt: 0 } as Receipt,
+    ]);
+    expect([...neoSupersededAttempts(scenes)]).toEqual(['a', 'b']);
+  });
+});
+
+describe('neoAskSummary', () => {
+  const long = `All doneWhen items met, live-verified on GitHub: ${'evidence '.repeat(30)}`;
+  const merged = new Map([
+    [
+      'a1',
+      {
+        workId: 'a1',
+        waiting: false,
+        prs: [
+          {
+            url: 'https://github.com/lsm/HyperNeo/pull/6071',
+            state: 'MERGED' as const,
+            checks: 'passing' as const,
+            review: 'approved' as const,
+          },
+        ],
+      },
+    ],
+  ]);
+
+  it('keeps a short outcome, names the merged PRs for a long one, and else cuts to one sentence', () => {
+    expect(neoAskSummary(ask('a', 'achieved', ['a1']), scenes.outcomes)).toBe('Merged in #12.');
+    const verbose = { ...ask('a', 'achieved', ['a1']), outcome: long };
+    expect(neoAskSummary(verbose, scenes.outcomes, merged)).toBe('Merged in #6071.');
+    expect(
+      neoAskSummary({ ...verbose, outcome: `Shipped the fix. ${long}` }, scenes.outcomes)
+    ).toBe('Shipped the fix.');
+    const cut = neoAskSummary(verbose, scenes.outcomes) ?? '';
+    expect([cut.length, cut.endsWith('…')]).toEqual([160, true]);
+    expect(neoAskSummary(ask('b', 'open', []), [])).toBeNull();
   });
 });
 
@@ -190,7 +262,9 @@ describe('NeoAskCard', () => {
         }}
       />
     );
-    expect(card.getByRole('button', { name: 'Steps' }).getAttribute('aria-expanded')).toBe('true');
+    expect(card.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
+      'false'
+    );
     const rows = [...card.container.querySelectorAll('[data-ask-step]')].map((row) => [
       row.getAttribute('data-ask-step'),
       row.textContent,
@@ -239,6 +313,20 @@ describe('NeoAskCard', () => {
       <NeoAskCard view={describeNeoAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
     );
     expect(unstarted.queryByRole('button', { name: 'Open Ask b' })).toBeNull();
+  });
+
+  it('drops the count once settled and keeps a long outcome behind Details', () => {
+    const outcome = `Merged after review. ${'evidence '.repeat(30)}`;
+    const view = describeNeoAsk(
+      { ...ask('c', 'achieved', ['c1']), outcome },
+      scenes.outcomes.slice(1)
+    );
+    const card = render(<NeoAskCard view={view} />);
+    expect(card.queryByText(/of \d+ done/)).toBeNull();
+    expect(card.getByText('Merged after review.')).toBeTruthy();
+    expect(card.queryByText(outcome)).toBeNull();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(card.getByText(outcome.trim())).toBeTruthy();
   });
 
   it('closes an open ask as done or dropped from its menu, and offers nothing once settled', () => {

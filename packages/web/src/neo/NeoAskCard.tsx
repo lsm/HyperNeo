@@ -65,7 +65,7 @@ export function NeoAskCard({
   onOpen?: (workId: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
-  const [open, setOpen] = useState(view.group === 'attention');
+  const [open, setOpen] = useState(view.group === 'attention' && view.scenes.length === 1);
   const { ask } = view;
   const tone =
     view.group === 'attention'
@@ -77,6 +77,7 @@ export function NeoAskCard({
           : 'running';
   const steps = view.scenes.length;
   const several = steps > 1;
+  const single = steps === 1 ? view.scenes[0] : undefined;
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -109,7 +110,7 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
-        {view.total > 0 && (
+        {!view.settled && view.total > 0 && (
           <span class="shrink-0 text-xs text-fg-muted">
             {view.done} of {view.total} done
           </span>
@@ -137,8 +138,19 @@ export function NeoAskCard({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
-      {ask.outcome && (
-        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{ask.outcome}</p>
+      {view.summary && (
+        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
+      )}
+      {several && (
+        <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
+          {view.scenes.map((scene) =>
+            scene.group === 'attention' ? (
+              renderCard?.(scene)
+            ) : (
+              <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
+            )
+          )}
+        </div>
       )}
       {open && (
         <div data-ask-details class="mt-3 space-y-3">
@@ -146,17 +158,13 @@ export function NeoAskCard({
             <p class="text-xs font-medium text-fg-faint">Done when</p>
             <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
           </div>
-          {steps > 0 && (
-            <div class="space-y-2 border-l-2 border-line pl-3">
-              {view.scenes.map((scene) =>
-                several && scene.group !== 'attention' ? (
-                  <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
-                ) : (
-                  renderCard?.(scene)
-                )
-              )}
+          {ask.outcome && ask.outcome.trim() !== view.summary && (
+            <div class="text-sm text-fg-muted">
+              <p class="text-xs font-medium text-fg-faint">Outcome</p>
+              <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
             </div>
           )}
+          {single && renderCard?.(single)}
         </div>
       )}
       <div class={neoFooterClass}>
@@ -168,7 +176,7 @@ export function NeoAskCard({
           onClick={() => setOpen(!open)}
           class={neoPlainClass}
         >
-          {several ? 'Steps' : 'Details'}
+          Details
           <NeoIcon
             name="chevron"
             class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
