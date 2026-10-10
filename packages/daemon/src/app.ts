@@ -45,7 +45,12 @@ import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-h
 import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
 import { createWebSocketHandlers } from './routes/setup-websocket.ts';
 import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
-import { ExternalEventService, ExternalEventStore } from './lib/external-events/index.ts';
+import {
+  ExternalEventService,
+  ExternalEventStore,
+  routeExternalEventPublisher,
+  SessionExternalEventStore,
+} from './lib/external-events/index.ts';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
   ExternalEventExtensionManager,
@@ -774,12 +779,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
     const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+    const sessionExternalEventService = new ExternalEventService(
+      new SessionExternalEventStore(db.getDatabase()),
+      internalEventBus
+    );
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
       github: ['space_github_watched_repos'],
     };
     const extensionContext = {
-      publisher: externalEventService,
+      publisher: routeExternalEventPublisher(externalEventService, sessionExternalEventService),
       config: extensionConfigStore,
       onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }) {
         logInfo('[Daemon] Extension config changed', change);

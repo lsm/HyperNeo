@@ -12,11 +12,13 @@ export {
   ExternalEventService,
   type PublishOutcome,
   type PublishResult,
+  routeExternalEventPublisher,
 } from './external-event-service.ts';
 export {
   ExternalEventStore,
   ExternalEventValidationError,
 } from './external-event-store.ts';
+export { SessionExternalEventStore } from './session-external-event-store.ts';
 export { isReceivingStatus, TopicTrie } from './topic-trie.ts';
 export {
   KNOWN_SOURCES,

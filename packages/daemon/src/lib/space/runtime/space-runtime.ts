@@ -72,6 +72,7 @@ import { essenceEntryFromExternalEvent } from '../../external-events/event-essen
 import { eventMatchesFilter, subscriptionEventFilter } from '../../external-events/event-filter.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import { SESSION_EVENT_SCOPE } from '../../external-events/session-external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
 import {
@@ -1611,7 +1612,7 @@ export class SpaceRuntime {
 
   private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<void> {
     const store = this.config.externalEventStore;
-    if (!store) return;
+    if (!store || payload.spaceId === SESSION_EVENT_SCOPE) return;
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
       if (isLongHorizonSubscriptionTarget(target))
         return (

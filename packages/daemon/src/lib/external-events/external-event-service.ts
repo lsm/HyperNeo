@@ -1,6 +1,7 @@
 import type { InternalEventBus } from '../internal-event-bus.ts';
 import { type ExternalEventStore, ExternalEventValidationError } from './external-event-store.ts';
 import { ingestExternalEvent } from './ingest-external-event-pipeline.ts';
+import { SESSION_EVENT_SCOPE } from './session-external-event-store.ts';
 import type { ExternalEvent } from './types.ts';
 
 export type PublishOutcome = 'published' | 'duplicate_terminal' | 'retryable_duplicate';
@@ -29,9 +30,18 @@ export interface ExternalEventPublisher {
   publish(event: ExternalEvent): Promise<PublishResult>;
 }
 
+export function routeExternalEventPublisher(
+  spaces: ExternalEventPublisher,
+  sessions: ExternalEventPublisher
+): ExternalEventPublisher {
+  return {
+    publish: (event) => (event.spaceId === SESSION_EVENT_SCOPE ? sessions : spaces).publish(event),
+  };
+}
+
 export class ExternalEventService implements ExternalEventPublisher {
   constructor(
-    private readonly store: ExternalEventStore,
+    private readonly store: Pick<ExternalEventStore, 'store' | 'getById'>,
     private readonly bus: InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
     }>
