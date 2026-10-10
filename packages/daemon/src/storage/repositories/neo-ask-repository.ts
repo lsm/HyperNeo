@@ -78,6 +78,16 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
+  reopenForWork(workId: string): void {
+    if (!this.hasTable()) return;
+    const reopened = this.db
+      .prepare(`UPDATE neo_asks SET status = 'open', settled_at = NULL, updated_at = ?
+        WHERE status IN ('waiting', 'blocked')
+          AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
+      .run(Date.now(), workId);
+    if (reopened.changes > 0) this.notify();
+  }
+
   link(askId: string, workId: string): string | null {
     if (!this.hasTable()) return null;
     const linked = this.db.transaction(() => {
@@ -90,7 +100,7 @@ export class NeoAskRepository {
       this.db
         .prepare(`UPDATE neo_asks SET updated_at = ?,
           status = CASE WHEN status IN ('waiting', 'blocked') THEN 'open' ELSE status END,
-          settled_at = CASE WHEN status = 'blocked' THEN NULL ELSE settled_at END
+          settled_at = CASE WHEN status IN ('waiting', 'blocked') THEN NULL ELSE settled_at END
           WHERE id = ?`)
         .run(Date.now(), askId);
       return true;
@@ -104,7 +114,7 @@ export class NeoAskRepository {
 
   settle(
     expected: Pick<NeoAsk, 'id' | 'status'>,
-    status: Exclude<NeoAskStatus, 'open' | 'waiting'>,
+    status: Exclude<NeoAskStatus, 'open'>,
     outcome: string,
     evidence: string
   ): NeoAsk | null {

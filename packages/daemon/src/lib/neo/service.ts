@@ -535,6 +535,7 @@ export class NeoService {
   private async startReservedWork(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
+    this.askRecords.reopenForWork(id);
     const driver = this.driverTargets.get(id);
     if (driver) return this.startDriverWork(work, driver);
     const target = this.resolveWorkTarget(id);
@@ -609,6 +610,7 @@ export class NeoService {
         status: 'queued',
         report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
       });
+      this.askRecords.reopenForWork(id);
       return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
     } finally {
       this.continuing.delete(id);
