@@ -4,11 +4,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import type { NeoEvidence, planNeoDoneCheck } from '../../evidence.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
-export const NEO_WORK_PR_STALE_MS = 30 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
@@ -89,6 +89,26 @@ export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
     ])
   );
 
+export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
+  return prs.map((pr) => ({
+    key: pr.url,
+    state:
+      pr.state === 'MERGED'
+        ? 'done'
+        : pr.state === 'CLOSED'
+          ? 'failed'
+          : pr.checks === 'pending'
+            ? 'waiting'
+            : pr.checks === 'failing' || pr.review === 'changes_requested'
+              ? 'failed'
+              : pr.review === 'approved'
+                ? 'ready'
+                : 'pending',
+    summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
+    blockers: pr.blockers ?? [],
+  }));
+}
+
 type StoredPrs = {
   prs: readonly NeoWorkPr[];
   delivered: string | null;
@@ -98,16 +118,6 @@ type StoredPrs = {
   readOkAt: number;
 };
 
-const NEO_WORK_PR_READY_MS = 30 * 60_000;
-
-const isNeoWorkPrReady = (prs: readonly NeoWorkPr[]) =>
-  prs.some(
-    (pr) =>
-      pr.state === 'OPEN' &&
-      pr.review === 'approved' &&
-      (pr.checks === 'passing' || pr.checks === 'none')
-  );
-
 export function shouldReadNeoWorkPrs(
   stored: StoredPrs | null,
   urls: readonly string[],
@@ -116,25 +126,6 @@ export function shouldReadNeoWorkPrs(
   if (!urls.length) return false;
   if (!stored || urls.some((url) => !stored.prs.some((pr) => pr.url === url))) return true;
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
-}
-
-export function planNeoWorkPrRefresh(
-  row: StoredPrs,
-  read: boolean,
-  now: number,
-  card: { quietSince: number; remindable: boolean } = { quietSince: 0, remindable: true }
-): 'wait' | 'unchanged' | 'deliver' | 'remind' {
-  const seen = neoWorkPrSignature(row.prs) === row.delivered;
-  if (!read) return !seen && now - row.readOkAt >= NEO_WORK_PR_STALE_MS ? 'deliver' : 'wait';
-  if (isNeoWorkPrWaiting(row.prs)) return 'wait';
-  if (!seen) return 'deliver';
-  const stalled =
-    isNeoWorkPrReady(row.prs) &&
-    card.remindable &&
-    row.reminded !== row.delivered &&
-    now - (row.deliveredAt ?? 0) >= NEO_WORK_PR_READY_MS &&
-    now - card.quietSince >= NEO_WORK_PR_READY_MS;
-  return stalled ? 'remind' : 'unchanged';
 }
 
 export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
@@ -154,7 +145,7 @@ export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
 }
 
 export function requireNeoWorkPrDelivery(
-  plan: ReturnType<typeof planNeoWorkPrRefresh>,
+  plan: ReturnType<typeof planNeoDoneCheck>,
   live: boolean
 ): { value: 'deliver' | 'remind' } | { reason: null } {
   return live && (plan === 'deliver' || plan === 'remind') ? { value: plan } : { reason: null };

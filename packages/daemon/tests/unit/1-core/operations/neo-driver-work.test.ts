@@ -33,6 +33,11 @@ import {
   requireNeoExecutionChoice,
 } from '../../../../src/lib/neo/operations.ts';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
+import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
+import {
+  neoWorkPrEvidence,
+  neoWorkPrSignature,
+} from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -862,7 +867,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:1']);
-      const signature = service.workPrs.get('work-1')?.delivered;
+      const signature = neoEvidenceSignature(neoWorkPrEvidence([ready]));
       expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: null });
       reply = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
 
@@ -878,7 +883,9 @@ describe('Neo work with a drivers target', () => {
       ]);
       expect(notes[1][1]).toContain('still open and nothing has moved');
       expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: signature });
-      expect(service.workPrs.get('work-1')).toMatchObject({ reminded: signature });
+      expect(service.workPrs.get('work-1')).toMatchObject({
+        reminded: neoWorkPrSignature([ready]),
+      });
 
       quietFor(31 * 60_000);
       await service.refreshDriverWork();

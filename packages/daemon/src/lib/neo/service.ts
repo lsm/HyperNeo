@@ -104,10 +104,11 @@ import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
+import { neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
 import {
   extractNeoWorkPrUrls,
+  neoWorkPrEvidence,
   neoWorkPrSignature,
-  planNeoWorkPrRefresh,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
   readGithubPrs,
@@ -1022,14 +1023,10 @@ export class NeoService {
         now: number
       ) =>
         refreshed.next
-          ? planNeoWorkPrRefresh(
-              {
-                ...refreshed.next,
-                delivered: told.row?.signature ?? null,
-                deliveredAt: told.row?.toldAt ?? null,
-                reminded: told.row?.reminded ?? null,
-              },
-              refreshed.read,
+          ? planNeoDoneCheck(
+              neoWorkPrEvidence(refreshed.next.prs),
+              told.row,
+              { ok: refreshed.read, okAt: refreshed.next.readOkAt },
               now,
               { quietSince: work.updatedAt, remindable: !card.ask || card.ask.status === 'open' }
             )
@@ -1038,7 +1035,7 @@ export class NeoService {
       'plan'
     )
     .pipe(
-      (plan: ReturnType<typeof planNeoWorkPrRefresh>, card: NeoWorkPrCard) =>
+      (plan: ReturnType<typeof planNeoDoneCheck>, card: NeoWorkPrCard) =>
         requireNeoWorkPrDelivery(plan, isNeoAskLive(card.ask)),
       ['plan', 'card'],
       'result:delivery'
@@ -1385,10 +1382,9 @@ export class NeoService {
       work.originSessionId
     );
     if (!row) return;
-    const signature = neoWorkPrSignature(row.prs);
     const at = Date.now();
-    this.workPrs.markDelivered(work.id, signature, at, ready);
-    this.workChecks.markTold(work.id, signature, at, ready);
+    this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs), at, ready);
+    this.workChecks.markTold(work.id, neoEvidenceSignature(neoWorkPrEvidence(row.prs)), at, ready);
   }
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
