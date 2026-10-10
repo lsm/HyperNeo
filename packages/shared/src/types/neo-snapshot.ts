@@ -14,6 +14,7 @@ export interface NeoWorkDriverReceipt {
   status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | null;
   link: string | null;
   remoteLink?: string;
+  uncheckedSince?: number;
 }
 
 export interface NeoWorkGoal {

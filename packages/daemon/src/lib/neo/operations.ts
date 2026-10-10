@@ -177,6 +177,7 @@ const Snapshot = z.union([
           status: WorkStatusSchema.nullable(),
           link: z.string().nullable(),
           remoteLink: z.string().optional(),
+          uncheckedSince: z.number().optional(),
         })
       )
       .max(100)
@@ -560,7 +561,12 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
-      workDrivers: service.driverTargets.receipts(visibleWork.map((item) => item.id)),
+      workDrivers: service.driverTargets
+        .receipts(visibleWork.map((item) => item.id))
+        .map((receipt) => {
+          const since = service.uncheckedSince(receipt.workId);
+          return since === null ? receipt : { ...receipt, uncheckedSince: since };
+        }),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),

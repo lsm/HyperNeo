@@ -113,6 +113,7 @@ import {
   neoEvidenceSignature,
   planNeoDoneCheck,
 } from './evidence.ts';
+import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import {
   neoEnabledPacks,
@@ -226,6 +227,7 @@ export class NeoService {
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
+  private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readRefStates: NeoRefStateReader = readGithubRefStates;
@@ -569,6 +571,17 @@ export class NeoService {
       offStatus();
       offDeleted();
     };
+  }
+
+  private recordCardCheck(workId: string, read: boolean, now: number): boolean {
+    const { next, changed } = planNeoCardCheck(this.cardChecks.get(workId), read, now);
+    this.cardChecks.set(workId, next);
+    return changed;
+  }
+
+  uncheckedSince(workId: string): number | null {
+    const check = this.cardChecks.get(workId);
+    return check?.unchecked ? check.checkedAt : null;
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
@@ -1280,6 +1293,7 @@ export class NeoService {
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
     recordLive: (workId, status, live) =>
       this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),
+    recordCheck: (workId, read, now) => this.recordCardCheck(workId, read, now),
     notifyChanged: () => this.notifyChanged(),
     noteUnsettled: async (work, ref, outcome) => {
       await this.noteDriverStall(work, outcome);
