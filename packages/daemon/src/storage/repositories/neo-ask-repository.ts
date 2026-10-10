@@ -35,14 +35,18 @@ export class NeoAskRepository {
       .get();
   }
 
-  private hasPack(): boolean {
+  private hasColumn(name: string): boolean {
     return (this.db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).some(
-      (column) => column.name === 'pack'
+      (column) => column.name === name
     );
   }
 
+  private hasPack(): boolean {
+    return this.hasColumn('pack');
+  }
+
   private askColumns(): string {
-    return `${askColumns}${this.hasPack() ? ', pack' : ''}, status, outcome, evidence,
+    return `${askColumns}${this.hasPack() ? ', pack' : ''}${this.hasColumn('approved_at') ? ', approved_at AS approvedAt' : ''}, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
   }
 
@@ -219,6 +223,17 @@ export class NeoAskRepository {
       .prepare('SELECT ask_id AS askId FROM neo_ask_work WHERE work_id = ?')
       .get(workId) as { askId: string } | undefined;
     return owner?.askId ?? null;
+  }
+
+  approve(id: string, at: number): NeoAsk | null {
+    if (!this.hasTable() || !this.hasColumn('approved_at')) return null;
+    const row = this.db
+      .prepare(`UPDATE neo_asks SET approved_at = COALESCE(approved_at, ?), updated_at = ?
+        WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${this.askColumns()}`)
+      .get(at, at, id) as NeoAskRow | null;
+    if (!row) return null;
+    this.notify();
+    return this.withWork([row])[0];
   }
 
   settle(
