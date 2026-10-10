@@ -5,7 +5,9 @@ import type { NeoPublicEntry } from './public-conversation.ts';
 export function neoAwaitingReply(entries: readonly NeoPublicEntry[]): boolean {
   const origin = (value: { sessionId: string; messageId: string }) =>
     `${value.sessionId}\n${value.messageId}`;
-  const latest = entries.findLast((entry) => entry.kind === 'ask');
+  const latest = entries.findLast(
+    (entry) => entry.kind === 'ask' && entry.ask.delivery?.state !== 'failed'
+  );
   if (latest?.kind !== 'ask') return false;
   const asked = origin(latest.ask.askOrigin);
   return !entries.some(
