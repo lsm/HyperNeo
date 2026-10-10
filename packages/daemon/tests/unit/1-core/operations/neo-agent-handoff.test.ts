@@ -6,7 +6,10 @@ import { createReactiveDatabase } from '../../../../src/storage/reactive-databas
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { requireNeoProposalReceipt } from '../../../../src/lib/neo/agent-work-target.ts';
+import {
+  requireNeoProposal,
+  requireNeoProposalReceipt,
+} from '../../../../src/lib/neo/agent-work-target.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import {
   InternalEventBus,
@@ -49,6 +52,29 @@ const work: NeoWork = Object.freeze({
 });
 const target = Object.freeze({ id: 'candidate', targetSessionId: agent.sessionId, agent });
 const ok = { value: { ok: true, work } };
+
+describe('requireNeoProposal', () => {
+  test('a cross-target reservation rejects before the receipt is compared', () => {
+    expect(
+      requireNeoProposal(target, origin, {
+        receipt: { work: { ...work, originMessageId: 'ask-B' }, agent },
+        crossTarget: true,
+      })
+    ).toMatchObject({
+      reason: { ok: false, reason: 'This request key belongs to another execution target.' },
+    });
+  });
+  test('a same-target reservation defers to the receipt gate', () => {
+    expect(
+      requireNeoProposal(target, origin, { receipt: { work, agent }, crossTarget: false })
+    ).toEqual({ value: { ok: true as const, work } });
+    expect(
+      requireNeoProposal(target, origin, { receipt: { work, agent: null }, crossTarget: false })
+    ).toMatchObject({
+      reason: { ok: false, reason: 'This request key belongs to another native target.' },
+    });
+  });
+});
 
 describe('Neo proposal receipt gate', () => {
   test('exact native and ordinary receipts preserve their original work record', () => {
