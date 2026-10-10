@@ -347,11 +347,9 @@ export class SpaceTaskManager {
       }
     }
 
-    if (newStatus === 'done' || newStatus === 'cancelled') {
+    if ((newStatus === 'done' || newStatus === 'cancelled') && this.settleEndedTask) {
       try {
-        const settled = this.settleEndedTask
-          ? await this.settleEndedTask(updated)
-          : await this.settleDependents(taskId, newStatus);
+        const settled = await this.settleEndedTask(updated);
         if (settled.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(settled);
         }
@@ -722,44 +720,6 @@ export class SpaceTaskManager {
       }
     }
     return acc;
-  }
-
-  async settleDependents(taskId: string, status: SpaceTaskStatus): Promise<SpaceTask[]> {
-    if (status === 'done') return this.unblockDependentTasks(taskId);
-    if (status === 'cancelled') return this.blockDependentsOfCancelled(taskId);
-    return [];
-  }
-
-  private async blockDependentsOfCancelled(taskId: string): Promise<SpaceTask[]> {
-    const blocked: SpaceTask[] = [];
-    for (const t of await this.listTasks(false)) {
-      if (t.status !== 'open' || !t.dependsOn?.includes(taskId)) continue;
-      blocked.push(
-        await this.setTaskStatus(t.id, 'blocked', {
-          blockReason: 'dependency_failed',
-          result: `Dependency task ${taskId} was cancelled`,
-        })
-      );
-    }
-    return blocked;
-  }
-
-  async unblockDependentTasks(taskId: string): Promise<SpaceTask[]> {
-    const unblocked: SpaceTask[] = [];
-    const allTasks = await this.listTasks(false);
-    for (const t of allTasks) {
-      if (t.status !== 'blocked') continue;
-      if (t.blockReason !== 'dependency_failed' && t.blockReason !== 'dependency_added') continue;
-      if (!t.dependsOn?.includes(taskId)) continue;
-      const depsMet = await this.areDependenciesMet(t);
-      if (depsMet) {
-        try {
-          const reopened = await this.setTaskStatus(t.id, 'open');
-          unblocked.push(reopened);
-        } catch {}
-      }
-    }
-    return unblocked;
   }
 
   private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {

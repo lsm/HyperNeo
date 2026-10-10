@@ -6,6 +6,7 @@ import {
   StaleTaskGuardError,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/tasks/task-manager';
+import { settleTaskDependents } from '../../../../src/lib/tasks/settle-dependents';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorktreeRepository } from '../../../../src/storage/repositories/space-worktree-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -37,7 +38,9 @@ describe('SpaceTaskManager', () => {
       async (rawPath: string) => {
         if (rawPath === '/workspace/test' || rawPath === '/secondary') return rawPath;
         throw new Error(`Workspace path is not registered to space: ${rawPath}`);
-      }
+      },
+      (ended) =>
+        settleTaskDependents(ended, { getTaskManager: () => manager, getActiveAttempt: () => null })
     );
   });
 
@@ -1148,7 +1151,7 @@ describe('SpaceTaskManager', () => {
   });
 
   describe('cancelling a task blocks its live dependents', () => {
-    it('blocks open dependents and leaves running ones to the runtime stop path', async () => {
+    it('blocks open dependents and running ones with no direct attempt', async () => {
       const a = await manager.createTask({ title: 'A', description: '' });
       const bOpen = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
       const cRunning = await manager.createTask({
@@ -1165,7 +1168,7 @@ describe('SpaceTaskManager', () => {
         blockReason: 'dependency_failed',
         result: `Dependency task ${a.id} was cancelled`,
       });
-      expect((await manager.getTask(cRunning.id))!.status).toBe('in_progress');
+      expect((await manager.getTask(cRunning.id))!.status).toBe('blocked');
     });
 
     it('leaves done dependents and the open tasks further down the chain alone', async () => {

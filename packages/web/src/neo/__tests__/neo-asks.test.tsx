@@ -400,6 +400,33 @@ describe('NeoAskCard', () => {
     ).toBe('○Item i3added');
   });
 
+  it('lets you mark an item that needs you as done from the card face', () => {
+    const done = vi.fn();
+    const view = describeNeoAsk(
+      {
+        ...ask('w', 'waiting', []),
+        doneItems: [
+          item('i1', 'met'),
+          item('i2', 'needs_you', { text: 'Check the keyboard hides' }),
+        ],
+      },
+      []
+    );
+    const card = render(<NeoAskCard view={view} onDone={done} />);
+    fireEvent.click(card.getByRole('button', { name: 'Mark done: Check the keyboard hides' }));
+    expect(done).toHaveBeenCalledExactlyOnceWith('i2');
+    expect(card.queryByRole('button', { name: 'Mark done: Item i1' })).toBeNull();
+    cleanup();
+    const busy = render(<NeoAskCard view={view} onDone={done} disabled />);
+    expect(
+      (
+        busy.getByRole('button', {
+          name: 'Mark done: Check the keyboard hides',
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+  });
+
   it('shows the done-when text for an ask opened before checklists', () => {
     const card = render(<NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
