@@ -22,7 +22,7 @@ vi.mock('../../lib/state.ts', () => ({
 }));
 
 const onDraft = vi.fn();
-function composer() {
+function composer(draft = 'Fictional draft about lunch') {
   const store = {
     sdkMessages: signal([]),
     agentState: signal({ status: 'idle' }),
@@ -36,7 +36,7 @@ function composer() {
     <NeoComposer
       store={store}
       sessionId="neo-1"
-      draft="Fictional draft about lunch"
+      draft={draft}
       onDraft={onDraft}
       onError={vi.fn()}
       onTranscript={vi.fn()}
@@ -63,18 +63,54 @@ afterEach(() => {
 });
 
 describe('Neo composer draft while voice is active', () => {
-  it.each<VoicePhase>(['recording', 'working'])(
-    'hides the draft and placeholder during %s and shows them again afterwards',
+  it.each<VoicePhase>(['recording', 'working', 'drafting', 'sending'])(
+    'keeps the draft visible, muted and read-only during %s, then editable and focused',
     (phase) => {
       voice.phase = phase;
       const { rerender } = render(composer());
-      expect(textarea().classList.contains('invisible')).toBe(true);
+      expect(textarea().classList.contains('invisible')).toBe(false);
+      expect(textarea().classList.contains('text-fg-muted')).toBe(true);
+      expect(textarea().disabled).toBe(true);
 
       voice.phase = 'idle';
       rerender(composer());
-      expect(textarea().classList.contains('invisible')).toBe(false);
-      expect(textarea().value).toBe('Fictional draft about lunch');
+      expect(textarea().classList.contains('text-fg')).toBe(true);
+      expect(textarea().disabled).toBe(false);
+      expect(document.activeElement).toBe(textarea());
+      expect(textarea().selectionStart).toBe('Fictional draft about lunch'.length);
       expect(onDraft).not.toHaveBeenCalled();
     }
   );
+
+  it('hands the attach and model controls over to the voice bar while voice is active', () => {
+    voice.phase = 'recording';
+    const { rerender } = render(composer());
+    const attach = screen.getByRole('button', { name: 'Attach photos or files' });
+    expect(attach.parentElement?.classList.contains('hidden')).toBe(true);
+
+    voice.phase = 'idle';
+    rerender(composer());
+    expect(attach.parentElement?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('tells an empty draft where the dictated words will appear', () => {
+    voice.phase = 'recording';
+    render(composer(''));
+    expect(screen.getByLabelText('Message Neo').getAttribute('placeholder')).toBe(
+      'Listening. Your words appear here.'
+    );
+  });
+
+  it('says where a transcript is going once recording stops', () => {
+    voice.phase = 'drafting';
+    const { rerender } = render(composer());
+    expect(screen.getByRole('status').textContent).toBe('Transcribing into your draft…');
+
+    voice.phase = 'sending';
+    rerender(composer());
+    expect(screen.getByRole('status').textContent).toBe('Sending with your draft…');
+
+    rerender(composer(''));
+    expect(screen.queryByText('Sending with your draft…')).toBeNull();
+  });
 });

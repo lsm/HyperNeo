@@ -51,6 +51,28 @@ export function NeoComposer({
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const voiceBusy = voicePhase !== 'idle';
   const recordingVoice = voicePhase === 'recording';
+  const listening = recordingVoice || voicePhase === 'working';
+  const voiceStatus = recordingVoice
+    ? coarsePointer
+      ? 'Recording · Tap the arrow to stop and send'
+      : 'Recording · Click the arrow to stop and send'
+    : voicePhase === 'drafting'
+      ? 'Transcribing into your draft…'
+      : voicePhase === 'sending' && draft.trim()
+        ? 'Sending with your draft…'
+        : null;
+  const thought = useRef<HTMLTextAreaElement>(null);
+  const wasVoiceBusy = useRef(false);
+  useLayoutEffect(() => {
+    const el = thought.current;
+    if (!el) return;
+    if (voiceBusy) el.scrollTop = el.scrollHeight;
+    else if (wasVoiceBusy.current && !coarsePointer) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+    wasVoiceBusy.current = voiceBusy;
+  }, [voiceBusy, coarsePointer, draft]);
   const sendFromVoice = useRef<(() => void) | null>(null);
   const registerSendFromVoice = useCallback((send: (() => void) | null) => {
     sendFromVoice.current = send;
@@ -167,6 +189,7 @@ export function NeoComposer({
         }}
       />
       <textarea
+        ref={thought}
         id="neo-thought"
         aria-label="Message Neo"
         disabled={voiceBusy}
@@ -194,14 +217,18 @@ export function NeoComposer({
         rows={2}
         maxLength={16000}
         placeholder={
-          coarsePointer
-            ? 'Return adds a line · Tap the arrow to send'
-            : 'Enter to send · Shift + Enter for a new line'
+          listening
+            ? 'Listening. Your words appear here.'
+            : voiceBusy
+              ? ''
+              : coarsePointer
+                ? 'Return adds a line · Tap the arrow to send'
+                : 'Enter to send · Shift + Enter for a new line'
         }
-        class={`w-full resize-none bg-transparent text-base leading-relaxed text-fg placeholder:text-fg-faint focus:outline-none${voiceBusy ? ' invisible' : ''}`}
+        class={`w-full resize-none bg-transparent text-base leading-relaxed placeholder:text-fg-faint focus:outline-none ${voiceBusy ? 'text-fg-muted' : 'text-fg'}`}
       />
       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <div class="flex min-w-0 items-center gap-1">
+        <div class={`min-w-0 items-center gap-1 ${voiceBusy ? 'hidden' : 'flex'}`}>
           <button
             type="button"
             aria-label="Attach photos or files"
@@ -222,20 +249,22 @@ export function NeoComposer({
         <span
           role="status"
           class={`min-w-0 items-center justify-center gap-2 text-xs text-fg-muted ${
-            recordingVoice || store.agentState.value.status === 'waiting_for_input'
-              ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
-              : 'hidden'
+            voiceBusy
+              ? voiceStatus
+                ? 'order-last flex w-full'
+                : 'hidden'
+              : store.agentState.value.status === 'waiting_for_input'
+                ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
+                : 'hidden'
           }`}
         >
-          {recordingVoice
-            ? coarsePointer
-              ? 'Recording · Tap the arrow to stop and send'
-              : 'Recording · Click the arrow to stop and send'
+          {voiceBusy
+            ? voiceStatus
             : store.agentState.value.status === 'waiting_for_input'
               ? 'A quick question for you above.'
               : null}
         </span>
-        <div class="ml-auto flex shrink-0 gap-2">
+        <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
           <NeoVoice
             sessionId={sessionId}
             connected={connected}

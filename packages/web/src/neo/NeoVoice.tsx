@@ -20,7 +20,7 @@ import { Button } from '../components/ui/Button.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { useNeoVoiceSettings } from './useNeoVoiceSettings.ts';
 
-export type VoicePhase = 'idle' | 'recording' | 'working';
+export type VoicePhase = 'idle' | 'recording' | 'working' | 'sending' | 'drafting';
 
 export function NeoVoice({
   sessionId,
@@ -43,6 +43,7 @@ export function NeoVoice({
 }) {
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
+  const [transcribeIntent, setTranscribeIntent] = useState<'draft' | 'send'>('draft');
   const running = useRef(false);
   const mounted = useRef(true);
   const recorder = useVoiceRecorder(sessionId, { autoAdopt: false });
@@ -50,7 +51,15 @@ export function NeoVoice({
   latest.current = recorder;
   const active =
     recorder.isRecording || recorder.isStarting || recorder.durationLimitHit || !!transcribing;
-  const phase: VoicePhase = recorder.isRecording ? 'recording' : active ? 'working' : 'idle';
+  const phase: VoicePhase = recorder.isRecording
+    ? 'recording'
+    : transcribing
+      ? transcribeIntent === 'send'
+        ? 'sending'
+        : 'drafting'
+      : active
+        ? 'working'
+        : 'idle';
   const records = pendingVoiceAudioRecords.value.filter((entry) => entry.sessionId === sessionId);
   const submitForSend = useRef<() => void>(() => {});
   useEffect(() => {
@@ -90,6 +99,7 @@ export function NeoVoice({
     running.current = true;
     const id = entry?.id ?? generateUUID();
     setTranscribing(id);
+    setTranscribeIntent(intent);
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
     try {
@@ -161,8 +171,8 @@ export function NeoVoice({
         </div>
       )}
       {active ? (
-        <div class="flex min-w-0 items-center gap-2">
-          <div class="absolute inset-x-4 top-4 rounded-xl bg-surface-raised">
+        <div class="flex min-w-0 flex-1 items-center gap-2">
+          <div class="min-w-0 flex-1">
             <VoiceWaveform
               getLevel={recorder.getLevel}
               isRecording={recorder.isRecording}

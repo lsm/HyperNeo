@@ -203,6 +203,46 @@ describe('Neo voice', () => {
     await waitFor(() => expect(onPhase).toHaveBeenCalledWith('idle'));
   });
 
+  it.each([
+    ['Stop', 'drafting'],
+    ['arrow', 'sending'],
+  ] as const)(
+    'reports where the transcript goes while transcribing after %s',
+    async (via, phase) => {
+      voice.recording = true;
+      let finish: (value: unknown) => void = () => {};
+      voice.submit.mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+      );
+      const onPhase = vi.fn();
+      let sendFromComposer: (() => void) | null = null;
+      const props = {
+        sessionId: 'neo:club',
+        connected: true,
+        draftText: 'typed first',
+        onTranscript: vi.fn(),
+        onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
+        onSendHandle: (send: (() => void) | null) => {
+          sendFromComposer = send;
+        },
+        onError: vi.fn(),
+        onPhase,
+      };
+      render(<NeoVoice {...props} />);
+      const stop = screen.getByRole('button', {
+        name: 'Stop recording and keep the text as a draft',
+      });
+      voice.recording = false;
+      if (via === 'Stop') fireEvent.click(stop);
+      else (sendFromComposer as unknown as () => void)();
+      await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith(phase));
+      finish({ kind: 'silent-recording' });
+      await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith('idle'));
+    }
+  );
+
   it('keeps the recording when the send is not confirmed, so it can be retried', async () => {
     voice.recording = true;
     voice.submit.mockResolvedValue({
