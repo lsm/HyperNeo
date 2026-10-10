@@ -1,3 +1,4 @@
+import { CLAUDE_DESKTOP_OPENING, CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyperneo/prompts';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -44,8 +45,7 @@ const RELAY_TIMEOUT_MS = 120_000;
 const RESUME_SETTLE_MS = 3_000;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
-const OPENING_MESSAGE =
-  'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.';
+const OPENING_MESSAGE = CLAUDE_DESKTOP_OPENING;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -508,11 +508,8 @@ export function requireOpenClaudeRecord(
     : { reason: reject('not_open', `${record.title} has no Claude Code session yet.`) };
 }
 
-const RELAY_REPLY_NOTE =
-  '(Relayed from HyperNeo by a one-shot sender that has already exited. Answer here in this session; HyperNeo reads your reply from this chat. Do not message the sender back.)';
-
 export function claudeRelayPrompt(name: string, message: string): string {
-  return `Use the SendMessage tool once to send the text between the message tags, exactly and without the tags, to the session named ${JSON.stringify(name)}. Do nothing else, then stop.\n<message>\n${message}\n\n${RELAY_REPLY_NOTE}\n</message>`;
+  return fillPrompt(CLAUDE_DESKTOP_RELAY, { name: JSON.stringify(name), message });
 }
 
 export function transcriptHasRelayedMessage(lines: readonly string[], message: string): boolean {

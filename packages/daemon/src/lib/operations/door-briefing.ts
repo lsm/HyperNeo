@@ -1,4 +1,8 @@
-import { SPACE_OPERATIONS_DOOR } from '@hyperneo/prompts';
+import {
+  fillPrompt,
+  SPACE_OPERATIONS_DOOR,
+  SPACE_OPERATIONS_DOOR_LISTING,
+} from '@hyperneo/prompts';
 import type {
   AttachedMcpServerConfig,
   AuthoredCapabilityContribution,
@@ -28,7 +32,13 @@ export function describeResolvedOperations(
   );
   const operationWord = names.length === 1 ? 'operation' : 'operations';
   const areaWord = families.length === 1 ? 'area' : 'areas';
-  return `operations.list shows this session ${names.length} ${operationWord} across ${families.length} ${areaWord}: ${families.join(', ')}.`;
+  return fillPrompt(SPACE_OPERATIONS_DOOR_LISTING, {
+    count: String(names.length),
+    operation_word: operationWord,
+    family_count: String(families.length),
+    area_word: areaWord,
+    families: families.join(', '),
+  });
 }
 
 export function operationsCapabilityContribution(
