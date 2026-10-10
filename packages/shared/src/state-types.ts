@@ -160,6 +160,16 @@ export interface GlobalStateSnapshot {
   meta: StateChannelMeta;
 }
 
+export type GlobalSystemSnapshot = Omit<GlobalStateSnapshot, 'sessions'>;
+
+export interface GlobalSnapshotRequest {
+  includeSessions?: boolean;
+}
+
+export const GLOBAL_SYSTEM_SNAPSHOT_REQUEST = {
+  includeSessions: false,
+} as const satisfies GlobalSnapshotRequest;
+
 export interface SessionsUpdate {
   added?: SessionInfo[];
   updated?: SessionInfo[];

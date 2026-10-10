@@ -476,7 +476,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
-| state.global.snapshot | packages/daemon/src/lib/state-projection-service.ts:247 | — | `GlobalStateSnapshot` (shared/src/state-types.ts:154): `sessions: SessionsState; system: SystemState; settings: SettingsState; meta: StateChannelMeta` | — | global-store.ts (constant-indirect: `STATE_CHANNELS.GLOBAL_SNAPSHOT`) |
+| state.global.snapshot | packages/daemon/src/lib/state-projection-service.ts:249 | `GlobalSnapshotRequest` (shared/src/state-types.ts): `{ includeSessions?: boolean }`; omitted or `{}` keeps the legacy shape | `includeSessions: false` → `GlobalSystemSnapshot`: `system: SystemState; settings: SettingsState; meta: StateChannelMeta` (no session inventory, no session listing). Otherwise legacy `GlobalStateSnapshot`: the same plus `sessions: SessionsState` | — | global-store.ts, neo/useNeoVoiceSettings.ts (constant-indirect: `STATE_CHANNELS.GLOBAL_SNAPSHOT` with `GLOBAL_SYSTEM_SNAPSHOT_REQUEST`); the web session list comes from the `sessions.list` live query |
 | state.sdkMessages | packages/daemon/src/lib/state-projection-service.ts:273 | inline `{ sessionId: string; since?: number }` | `SDKMessagesState` (state-types.ts:141): `sdkMessages: ChatMessage[]; hasMore: boolean; timestamp` (latest 100) | throws `Session not found` unless `room:`/`conv:` w/ db (repo fallback) | state.ts:74 (constant-indirect via `StateChannel.fetchSnapshot`) |
 | state.session | packages/daemon/src/lib/state-projection-service.ts:268 | inline `{ sessionId: string }` | `SessionState` (state-types.ts:125): `sessionInfo: SessionInfo \| null; agentState: AgentProcessingState; commandsData: CommandsData; error: SessionError \| null; timestamp; revision?; daemonEpoch?` | throws `Session not found` unless id starts `room:`/`conv:` (idle stub returned) | useSessionQuestionState.ts,useTargetSessionContext.ts,session-store.ts |
 
@@ -512,7 +512,7 @@ Nuances — methods consumed **indirectly** (not visible to a literal-string sca
 - `space.github.enable`/`space.github.disable` — dynamic ternary argument at `SpaceExternalEventsSettings.tsx:325`.
 - `spaceGoal.pause`/`spaceGoal.resume` — method name passed through `runGoalAction(method, …)` (`space-store.ts:2732,2736`).
 - `spaceWorkflowRun.getCommitFileDiff`/`spaceWorkflowRun.getFileDiff` — selected into `rpcName` by ternary at `FileDiffView.tsx:120`.
-- `state.global.snapshot` — constant-indirect (`global-store.ts:89,190` request `STATE_CHANNELS.GLOBAL_SNAPSHOT` on reconnect).
+- `state.global.snapshot` — constant-indirect (`global-store.ts:88,189` and `neo/useNeoVoiceSettings.ts` request `STATE_CHANNELS.GLOBAL_SNAPSHOT` with `{ includeSessions: false }` on init and reconnect).
 - `state.sdkMessages` — constant-indirect pull via `StateChannel.fetchSnapshot()` constructed with `STATE_CHANNELS.SESSION_SDK_MESSAGES` (`state.ts:74`, `state-channel.ts:223`).
 
 Other notes:

@@ -659,7 +659,7 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    expect(hub.request).toHaveBeenCalledWith('state.global.snapshot', {});
+    expect(hub.request).toHaveBeenCalledWith('state.global.snapshot', { includeSessions: false });
     expect(store.systemState.value).toEqual(system);
     expect(store.settings.value).toEqual(settings);
   });
@@ -849,7 +849,7 @@ describe('GlobalStore - refresh()', () => {
       params: [0],
       subscriptionId: 'sessions-list',
     });
-    expect(hub.request).toHaveBeenCalledWith('state.global.snapshot', {});
+    expect(hub.request).toHaveBeenCalledWith('state.global.snapshot', { includeSessions: false });
     expect(store.systemState.value).toEqual(system);
     expect(store.settings.value).toEqual(settings);
   });

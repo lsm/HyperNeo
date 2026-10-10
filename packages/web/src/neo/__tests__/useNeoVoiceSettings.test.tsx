@@ -31,6 +31,7 @@ describe('Neo voice settings', () => {
     const view = render(<VoiceAvailability />);
     await act(async () => {});
     await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
+    expect(hub.request).toHaveBeenCalledWith('state.global.snapshot', { includeSessions: false });
     view.unmount();
     expect(hub.unsubscribe).toHaveBeenCalled();
   });
