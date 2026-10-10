@@ -1,6 +1,6 @@
 import type { EvolutionScope } from '@hyperneo/shared';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { runOneShotModel } from '../agent/one-shot-model.ts';
+import { oneShotModelIds, runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService } from '../provider-service.ts';
 import { getAvailableModels } from '../model-service.ts';
@@ -71,12 +71,10 @@ export async function judgeEpisodeWithModel(
       string,
       string | undefined
     >;
-    const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
     const raw = await runOneShotModel({
       prompt,
       provider,
-      model: sdkModelId,
-      thinkingModelId: sdkModelId,
+      ...oneShotModelIds(provider, modelId, providerEnvVars),
       env: await providerService.getIsolatedEnvForModel(provider, modelId),
       separator: '\n',
     });

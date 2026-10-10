@@ -4,7 +4,7 @@ import {
   WORKFLOW_SELECTOR_INSTRUCTIONS,
 } from '@hyperneo/prompts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { runOneShotModel } from '../agent/one-shot-model.ts';
+import { oneShotModelIds, runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
 import { getProviderService } from '../provider-service.ts';
 
@@ -50,11 +50,14 @@ export async function selectWorkflowWithLlmDefault(
   const prompt = buildSelectionPrompt(task, workflows);
 
   try {
+    const providerEnvVars = (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
+      string,
+      string | undefined
+    >;
     const raw = await runOneShotModel({
       prompt,
       provider,
-      model: provider === 'glm' ? 'haiku' : modelId,
-      thinkingModelId: modelId,
+      ...oneShotModelIds(provider, modelId, providerEnvVars),
       env: await providerService.getIsolatedEnvForModel(provider, modelId),
     });
 

@@ -3,6 +3,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   buildOneShotQueryOptions,
   firstAssistantText,
+  oneShotModelIds,
   runOneShotModel,
   type OneShotModelRequest,
 } from '../../../../src/lib/agent/one-shot-model';
@@ -102,5 +103,15 @@ describe('runOneShotModel', () => {
       })
     );
     expect(text).toBeNull();
+  });
+});
+
+describe('oneShotModelIds', () => {
+  test.each([
+    ['glm routes through the haiku alias', 'glm', 'glm-5', { ANTHROPIC_MODEL: 'glm-5' }, 'haiku'],
+    ['a provider-mapped SDK model wins', 'codex', 'gpt-6', { ANTHROPIC_MODEL: 'sonnet' }, 'sonnet'],
+    ['the provider model is used as is', 'anthropic', 'claude-sonnet-5', {}, 'claude-sonnet-5'],
+  ] as const)('%s', (_label, provider, modelId, env, model) => {
+    expect(oneShotModelIds(provider, modelId, env)).toEqual({ model, thinkingModelId: modelId });
   });
 });
