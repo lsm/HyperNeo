@@ -36,6 +36,83 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
+import mdneoCatchUp from './neo/catch-up.md' with { type: 'text' };
+import mdneoConsultationReceiptClosed from './neo/consultation/receipt-closed.md' with {
+  type: 'text',
+};
+import mdneoConsultationReceiptPending from './neo/consultation/receipt-pending.md' with {
+  type: 'text',
+};
+import mdneoConsultationReceiptReturned from './neo/consultation/receipt-returned.md' with {
+  type: 'text',
+};
+import mdneoConsultationRequest from './neo/consultation/request.md' with { type: 'text' };
+import mdneoConsultationSettled from './neo/consultation/settled.md' with { type: 'text' };
+import mdneoConsultationSettledExpired from './neo/consultation/settled-expired.md' with {
+  type: 'text',
+};
+import mdneoConsultationSettledFailed from './neo/consultation/settled-failed.md' with {
+  type: 'text',
+};
+import mdneoConsultationSettledReported from './neo/consultation/settled-reported.md' with {
+  type: 'text',
+};
+import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.md' with {
+  type: 'text',
+};
+import mdneoPublishNudge from './neo/publish-nudge.md' with { type: 'text' };
+import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
+import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
+import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
+  type: 'text',
+};
+import mdneoSystemHolderOperations from './neo/system/holder-operations.md' with { type: 'text' };
+import mdneoSystemHolderRole from './neo/system/holder-role.md' with { type: 'text' };
+import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.md' with {
+  type: 'text',
+};
+import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
+import mdneoSystemRootClarify from './neo/system/root-clarify.md' with { type: 'text' };
+import mdneoSystemRootConsultationReturn from './neo/system/root-consultation-return.md' with {
+  type: 'text',
+};
+import mdneoSystemRootOperations from './neo/system/root-operations.md' with { type: 'text' };
+import mdneoSystemRootRole from './neo/system/root-role.md' with { type: 'text' };
+import mdneoSystemRootRuleSave from './neo/system/root-rule-save.md' with { type: 'text' };
+import mdneoSystemRootSnapshotScope from './neo/system/root-snapshot-scope.md' with {
+  type: 'text',
+};
+import mdneoWorkDelegated from './neo/work/delegated.md' with { type: 'text' };
+import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
+import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
+  type: 'text',
+};
+import mdneoWorkDoneCheckAskOwned from './neo/work/done-check-ask-owned.md' with { type: 'text' };
+import mdneoWorkDoneCheckBudget from './neo/work/done-check-budget.md' with { type: 'text' };
+import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with { type: 'text' };
+import mdneoWorkDoneCheckPrsLive from './neo/work/done-check-prs-live.md' with { type: 'text' };
+import mdneoWorkDoneCheckPrsStale from './neo/work/done-check-prs-stale.md' with { type: 'text' };
+import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
+import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
+import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
+import mdneoWorkGoalMerge from './neo/work/goal-merge.md' with { type: 'text' };
+import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
+import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
+import mdneoWorkReturnReview from './neo/work/return-review.md' with { type: 'text' };
+import mdneoWorkReturned from './neo/work/returned.md' with { type: 'text' };
+import mdneoWorkReturnedRetried from './neo/work/returned-retried.md' with { type: 'text' };
+import mdneoWorkReturnedRetry from './neo/work/returned-retry.md' with { type: 'text' };
+import mdneoWorkStall from './neo/work/stall.md' with { type: 'text' };
+import mdneoWorkStallBudget from './neo/work/stall-budget.md' with { type: 'text' };
+import mdneoWorkStallCheck from './neo/work/stall-check.md' with { type: 'text' };
+import mdneoWorkStuck from './neo/work/stuck.md' with { type: 'text' };
+import mdneoWorkStuckAbandoned from './neo/work/stuck-abandoned.md' with { type: 'text' };
+import mdneoWorkStuckBudget from './neo/work/stuck-budget.md' with { type: 'text' };
+import mdneoWorkStuckCheck from './neo/work/stuck-check.md' with { type: 'text' };
+import mdneoWorkSummary from './neo/work/summary.md' with { type: 'text' };
+
+export { fillPrompt } from './loader.ts';
+
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
 import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
@@ -155,6 +232,56 @@ const registry: Record<string, string> = {
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/capabilities.md': mdneoCapabilities,
   'neo/response-focus.md': mdneoResponseFocus,
+  'neo/catch-up.md': mdneoCatchUp,
+  'neo/consultation/receipt-closed.md': mdneoConsultationReceiptClosed,
+  'neo/consultation/receipt-pending.md': mdneoConsultationReceiptPending,
+  'neo/consultation/receipt-returned.md': mdneoConsultationReceiptReturned,
+  'neo/consultation/request.md': mdneoConsultationRequest,
+  'neo/consultation/settled-expired.md': mdneoConsultationSettledExpired,
+  'neo/consultation/settled-failed.md': mdneoConsultationSettledFailed,
+  'neo/consultation/settled-reported.md': mdneoConsultationSettledReported,
+  'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
+  'neo/consultation/settled.md': mdneoConsultationSettled,
+  'neo/publish-nudge.md': mdneoPublishNudge,
+  'neo/recent-conversation.md': mdneoRecentConversation,
+  'neo/route-classifier.md': mdneoRouteClassifier,
+  'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
+  'neo/system/holder-operations.md': mdneoSystemHolderOperations,
+  'neo/system/holder-role.md': mdneoSystemHolderRole,
+  'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
+  'neo/system/prompt.md': mdneoSystemPrompt,
+  'neo/system/root-clarify.md': mdneoSystemRootClarify,
+  'neo/system/root-consultation-return.md': mdneoSystemRootConsultationReturn,
+  'neo/system/root-operations.md': mdneoSystemRootOperations,
+  'neo/system/root-role.md': mdneoSystemRootRole,
+  'neo/system/root-rule-save.md': mdneoSystemRootRuleSave,
+  'neo/system/root-snapshot-scope.md': mdneoSystemRootSnapshotScope,
+  'neo/work/delegated.md': mdneoWorkDelegated,
+  'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
+  'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
+  'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
+  'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
+  'neo/work/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
+  'neo/work/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
+  'neo/work/done-check.md': mdneoWorkDoneCheck,
+  'neo/work/goal-asked.md': mdneoWorkGoalAsked,
+  'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
+  'neo/work/goal-merge.md': mdneoWorkGoalMerge,
+  'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
+  'neo/work/goal.md': mdneoWorkGoal,
+  'neo/work/needs-you.md': mdneoWorkNeedsYou,
+  'neo/work/return-review.md': mdneoWorkReturnReview,
+  'neo/work/returned-retried.md': mdneoWorkReturnedRetried,
+  'neo/work/returned-retry.md': mdneoWorkReturnedRetry,
+  'neo/work/returned.md': mdneoWorkReturned,
+  'neo/work/stall-budget.md': mdneoWorkStallBudget,
+  'neo/work/stall-check.md': mdneoWorkStallCheck,
+  'neo/work/stall.md': mdneoWorkStall,
+  'neo/work/stuck-abandoned.md': mdneoWorkStuckAbandoned,
+  'neo/work/stuck-budget.md': mdneoWorkStuckBudget,
+  'neo/work/stuck-check.md': mdneoWorkStuckCheck,
+  'neo/work/stuck.md': mdneoWorkStuck,
+  'neo/work/summary.md': mdneoWorkSummary,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
@@ -221,6 +348,56 @@ export const {
   GITHUB_SECURITY_SYSTEM_PROMPT,
   NEO_CAPABILITIES_BRIEFING,
   NEO_RESPONSE_FOCUS_BRIEFING,
+  NEO_CATCH_UP_HEADER,
+  NEO_CONSULTATION_RECEIPT_CLOSED,
+  NEO_CONSULTATION_RECEIPT_PENDING,
+  NEO_CONSULTATION_RECEIPT_RETURNED,
+  NEO_CONSULTATION_REQUEST,
+  NEO_CONSULTATION_SETTLED_EXPIRED,
+  NEO_CONSULTATION_SETTLED_FAILED,
+  NEO_CONSULTATION_SETTLED_REPORTED,
+  NEO_CONSULTATION_SETTLED_STOPPED,
+  NEO_CONSULTATION_SETTLED,
+  NEO_PUBLISH_NUDGE,
+  NEO_RECENT_CONVERSATION_HEADER,
+  NEO_ROUTE_PROMPT,
+  NEO_HOLDER_CONSULTATION_RETURN,
+  NEO_HOLDER_OPERATIONS,
+  NEO_HOLDER_ROLE,
+  NEO_HOLDER_SNAPSHOT_SCOPE,
+  NEO_SYSTEM_PROMPT,
+  NEO_ROOT_CLARIFY,
+  NEO_ROOT_CONSULTATION_RETURN,
+  NEO_ROOT_OPERATIONS,
+  NEO_ROOT_ROLE,
+  NEO_ROOT_RULE_SAVE,
+  NEO_ROOT_SNAPSHOT_SCOPE,
+  NEO_WORK_DELEGATED,
+  NEO_WORK_DONE_CHECK_ASK_FOREIGN,
+  NEO_WORK_DONE_CHECK_ASK_OWNED,
+  NEO_WORK_DONE_CHECK_BUDGET,
+  NEO_WORK_DONE_CHECK_CONTINUE,
+  NEO_WORK_DONE_CHECK_PRS_LIVE,
+  NEO_WORK_DONE_CHECK_PRS_STALE,
+  NEO_WORK_DONE_CHECK,
+  NEO_WORK_GOAL_ASKED,
+  NEO_WORK_GOAL_DONE_WHEN,
+  NEO_WORK_GOAL_MERGE,
+  NEO_WORK_GOAL_REMAINING,
+  NEO_WORK_GOAL,
+  NEO_WORK_NEEDS_YOU,
+  NEO_WORK_RETURN_REVIEW,
+  NEO_WORK_RETURNED_RETRIED,
+  NEO_WORK_RETURNED_RETRY,
+  NEO_WORK_RETURNED,
+  NEO_WORK_STALL_BUDGET,
+  NEO_WORK_STALL_CHECK,
+  NEO_WORK_STALL,
+  NEO_WORK_STUCK_ABANDONED,
+  NEO_WORK_STUCK_BUDGET,
+  NEO_WORK_STUCK_CHECK,
+  NEO_WORK_STUCK,
+  NEO_WORK_SUMMARY_NOTE,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,
