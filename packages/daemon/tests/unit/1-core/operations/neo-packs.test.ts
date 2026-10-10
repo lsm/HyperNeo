@@ -91,6 +91,7 @@ describe('coding pack instructions', () => {
   test('carry the moved coding guidance', () => {
     const coding = createCodingPack({
       prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      runningPrUrls: async () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
       record: () => null,
@@ -145,6 +146,7 @@ describe('readEvidence', () => {
     const recorded: NeoWorkPr[][] = [];
     const coding = createCodingPack({
       prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      runningPrUrls: async () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
       record: (_id, prs) => {

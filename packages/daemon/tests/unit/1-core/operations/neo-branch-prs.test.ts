@@ -68,7 +68,7 @@ describe('readGithubBranchPrs', () => {
       '--json',
       'url',
       '--limit',
-      '2',
+      '5',
     ]);
   });
 });

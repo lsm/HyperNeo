@@ -428,6 +428,7 @@ export class NeoService {
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
         prUrls: (work, stored) => this.cardPrUrls(work, stored),
+        runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         readRefStates: (refs) => this.readRefStates(refs),
         workPrs: this.workPrs,
         record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
@@ -1600,10 +1601,21 @@ export class NeoService {
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<string[]> {
-    const ref = this.driverTargets.readRef(work.id);
+    return neoCardPrUrls(
+      extractNeoWorkPrUrls(work.report, stored?.prs),
+      await this.branchPrUrls(work.id)
+    );
+  }
+
+  private async branchPrUrls(workId: string): Promise<string[]> {
+    const ref = this.driverTargets.readRef(workId);
     const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
-    const opened = branch ? await this.readBranchPrs(branch) : [];
-    return neoCardPrUrls(extractNeoWorkPrUrls(work.report, stored?.prs), opened);
+    return branch ? this.readBranchPrs(branch) : [];
+  }
+
+  private async runningPrUrls(workIds: readonly string[]): Promise<string[]> {
+    const running = workIds.filter((id) => this.repo.getWork(id)?.status === 'queued');
+    return (await Promise.all(running.map((id) => this.branchPrUrls(id)))).flat();
   }
 
   private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)
