@@ -280,13 +280,31 @@ describe('requireNeoAskEvidenceDue', () => {
 });
 
 describe('planNeoAskEvidenceNote', () => {
-  test('tells about new evidence once, and again only when it changes', () => {
+  const told = (plan: ReturnType<typeof planNeoAskEvidenceNote>) =>
+    'value' in plan ? { signature: plan.value.signature } : null;
+  test('tells each change once, and never again when an item drops out', () => {
     const first = planNeoAskEvidenceNote([news(2), news(1)], null);
     expect(first).toMatchObject({ value: { evidence: [news(1), news(2)] } });
-    const signature = 'value' in first ? first.value.signature : '';
-    expect(planNeoAskEvidenceNote([news(1), news(2)], { signature })).toEqual({ reason: 'told' });
-    expect(planNeoAskEvidenceNote([news(1)], { signature })).toMatchObject({ value: {} });
+    expect(planNeoAskEvidenceNote([news(1), news(2)], told(first))).toEqual({ reason: 'told' });
+    expect(planNeoAskEvidenceNote([news(1)], told(first))).toEqual({ reason: 'told' });
+    const next = planNeoAskEvidenceNote([news(1), news(3)], told(first));
+    expect(next).toMatchObject({ value: { evidence: [news(3)] } });
+    expect(planNeoAskEvidenceNote([news(2)], told(next))).toEqual({ reason: 'told' });
+    expect(
+      planNeoAskEvidenceNote(
+        [{ ...news(2), state: 'failed', summary: 'closed unmerged' }],
+        told(next)
+      )
+    ).toMatchObject({ value: { evidence: [{ key: url(2), state: 'failed' }] } });
     expect(planNeoAskEvidenceNote([], null)).toEqual({ reason: 'quiet' });
+  });
+
+  test('reads what an earlier whole-list signature told', () => {
+    const legacy = { signature: JSON.stringify([[url(1), 'done', 'merged', []]]) };
+    expect(planNeoAskEvidenceNote([news(1)], legacy)).toEqual({ reason: 'told' });
+    expect(planNeoAskEvidenceNote([news(1)], { signature: 'not json' })).toMatchObject({
+      value: { evidence: [news(1)] },
+    });
   });
 });
 
