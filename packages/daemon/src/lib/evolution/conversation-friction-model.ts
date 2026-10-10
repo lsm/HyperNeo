@@ -1,3 +1,4 @@
+import { EVOLUTION_CONVERSATION_FRICTION_PROMPT, fillPrompt } from '@hyperneo/prompts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import { getAvailableModels } from '../model-service.ts';
@@ -16,36 +17,14 @@ export function buildConversationFrictionPrompt(input: ConversationFrictionPromp
         `[${index + 1}] id=${message.metadata.messageId} role=${message.role} session=${message.metadata.sessionId}\n${message.text}`
     )
     .join('\n\n');
-  return `Analyze this task conversation for conversation friction patterns that rule-based tool analysis cannot detect.
-
-Return only JSON matching this TypeScript shape:
-{
-  "patterns": [{
-    "kind": "human_correction" | "human_repetition" | "agent_misunderstanding" | "scope_creep" | "requirement_confusion" | "agent_apology" | "synthetic_interruption",
-    "confidence": number,
-    "summary": string,
-    "involvedMessages": string[],
-    "severity": "low" | "medium" | "high"
-  }],
-  "humanInterventionCount": number,
-  "syntheticInterventionCount": number,
-  "agentUncertaintyCount": number,
-  "overallAssessment": string
-}
-
-Rules:
-- Use only supplied message ids in involvedMessages.
-- Focus on actionable struggle patterns, miscommunications, repeated corrections, interruptions, uncertainty, apologies, or scope drift.
-- Do not report ordinary tool failures or test failures unless conversation text shows misunderstanding or friction.
-- Include only patterns with confidence >= ${input.confidenceThreshold}.
-- Keep summaries concise and actionable.
-
-Task: ${input.task.title}
-Task description: ${input.task.description}
-Scope: ${input.scope.name} — ${input.scope.objective}
-
-Transcript:
-${transcript}`;
+  return fillPrompt(EVOLUTION_CONVERSATION_FRICTION_PROMPT, {
+    confidence_threshold: String(input.confidenceThreshold),
+    task_title: input.task.title,
+    task_description: input.task.description,
+    scope_name: input.scope.name,
+    scope_objective: input.scope.objective,
+    transcript,
+  });
 }
 
 export async function analyzeConversationWithModel(

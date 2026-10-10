@@ -1,3 +1,12 @@
+import {
+  fillPrompt,
+  SPACE_SCOPE_BRIEFING,
+  SPACE_SCOPE_ROLE_AGENT,
+  SPACE_SCOPE_ROLE_DIRECT_WORKER,
+  SPACE_SCOPE_ROLE_NAMED_AGENT,
+  SPACE_SCOPE_ROLE_WORKFLOW_WORKER,
+  SPACE_SCOPE_STANDING_INSTRUCTIONS,
+} from '@hyperneo/prompts';
 import type { ScopeContribution } from '../../briefings/contribution.ts';
 import type { OperationCallerRole } from '../../operations/registry.ts';
 
@@ -25,26 +34,26 @@ function roleLine(scope: SpaceSessionScope): string {
   switch (scope.role) {
     case 'long_term_agent': {
       const name = scope.agentDisplayName?.trim();
-      return name
-        ? `Your role in it is the Space agent "${name}".`
-        : 'Your role in it is one of its standing Space agents.';
+      return name ? fillPrompt(SPACE_SCOPE_ROLE_NAMED_AGENT, { name }) : SPACE_SCOPE_ROLE_AGENT;
     }
     case 'workflow_worker':
-      return 'Your role in it is a worker session running one node of a Space workflow for an assigned task.';
+      return SPACE_SCOPE_ROLE_WORKFLOW_WORKER;
     case 'direct_task_worker':
-      return 'Your role in it is a worker session running one assigned Space task directly, outside any workflow.';
+      return SPACE_SCOPE_ROLE_DIRECT_WORKER;
   }
 }
 
 export function spaceScopeContribution(scope: SpaceSessionScope): ScopeContribution {
   const sections = [
-    '## Your Space',
-    '',
-    `You are working inside the Space "${scope.spaceName}" (id: ${scope.spaceId}) — a shared workspace with its own tasks, goals, agents, and workflows. ${roleLine(scope)}`,
+    fillPrompt(SPACE_SCOPE_BRIEFING, {
+      space_name: scope.spaceName,
+      space_id: scope.spaceId,
+      role: roleLine(scope),
+    }),
   ];
   const instructions = scope.spaceInstructions?.trim();
   if (instructions) {
-    sections.push('', '### Space Standing Instructions', '', instructions);
+    sections.push('', fillPrompt(SPACE_SCOPE_STANDING_INSTRUCTIONS, { instructions }));
   }
   return { facet: 'space', briefing: sections.join('\n') };
 }

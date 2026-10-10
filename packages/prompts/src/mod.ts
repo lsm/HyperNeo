@@ -113,6 +113,31 @@ import mdneoWorkSummary from './neo/work/summary.md' with { type: 'text' };
 
 export { fillPrompt } from './loader.ts';
 
+import mdagentsDefaultInstructions from './agents/default-instructions.md' with { type: 'text' };
+import mdevolutionEpisodeJudge from './evolution/episode-judge.md' with { type: 'text' };
+import mdprovidersCodexProbeInstructions from './providers/codex-probe-instructions.md' with {
+  type: 'text',
+};
+import mdsessionCloneBrief from './session/clone-brief.md' with { type: 'text' };
+import mdspaceScopeBriefing from './space/scope/briefing.md' with { type: 'text' };
+import mdspaceScopeRoleAgent from './space/scope/role-agent.md' with { type: 'text' };
+import mdspaceScopeRoleDirectWorker from './space/scope/role-direct-worker.md' with {
+  type: 'text',
+};
+import mdspaceScopeRoleNamedAgent from './space/scope/role-named-agent.md' with { type: 'text' };
+import mdspaceScopeRoleWorkflowWorker from './space/scope/role-workflow-worker.md' with {
+  type: 'text',
+};
+import mdspaceScopeStandingInstructions from './space/scope/standing-instructions.md' with {
+  type: 'text',
+};
+import mdworkflowsSelectionPrompt from './workflows/selection-prompt.md' with { type: 'text' };
+import mdagentLimitErrorClassifier from './agent/limit-error-classifier.md' with { type: 'text' };
+import mdevolutionConversationFriction from './evolution/conversation-friction.md' with {
+  type: 'text',
+};
+import mdsessionMinimalWorktree from './session/minimal-worktree.md' with { type: 'text' };
+import mdsessionWorktreeIsolation from './session/worktree-isolation.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
 import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
@@ -282,6 +307,21 @@ const registry: Record<string, string> = {
   'neo/work/stuck-check.md': mdneoWorkStuckCheck,
   'neo/work/stuck.md': mdneoWorkStuck,
   'neo/work/summary.md': mdneoWorkSummary,
+  'agents/default-instructions.md': mdagentsDefaultInstructions,
+  'evolution/episode-judge.md': mdevolutionEpisodeJudge,
+  'providers/codex-probe-instructions.md': mdprovidersCodexProbeInstructions,
+  'session/clone-brief.md': mdsessionCloneBrief,
+  'space/scope/briefing.md': mdspaceScopeBriefing,
+  'space/scope/role-agent.md': mdspaceScopeRoleAgent,
+  'space/scope/role-direct-worker.md': mdspaceScopeRoleDirectWorker,
+  'space/scope/role-named-agent.md': mdspaceScopeRoleNamedAgent,
+  'space/scope/role-workflow-worker.md': mdspaceScopeRoleWorkflowWorker,
+  'space/scope/standing-instructions.md': mdspaceScopeStandingInstructions,
+  'workflows/selection-prompt.md': mdworkflowsSelectionPrompt,
+  'agent/limit-error-classifier.md': mdagentLimitErrorClassifier,
+  'evolution/conversation-friction.md': mdevolutionConversationFriction,
+  'session/minimal-worktree.md': mdsessionMinimalWorktree,
+  'session/worktree-isolation.md': mdsessionWorktreeIsolation,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
@@ -398,6 +438,21 @@ export const {
   NEO_WORK_STUCK_CHECK,
   NEO_WORK_STUCK,
   NEO_WORK_SUMMARY_NOTE,
+  AGENT_DEFAULT_INSTRUCTIONS,
+  EVOLUTION_EPISODE_JUDGE_PROMPT,
+  CODEX_PROBE_INSTRUCTIONS,
+  SESSION_CLONE_BRIEF,
+  SPACE_SCOPE_BRIEFING,
+  SPACE_SCOPE_ROLE_AGENT,
+  SPACE_SCOPE_ROLE_DIRECT_WORKER,
+  SPACE_SCOPE_ROLE_NAMED_AGENT,
+  SPACE_SCOPE_ROLE_WORKFLOW_WORKER,
+  SPACE_SCOPE_STANDING_INSTRUCTIONS,
+  WORKFLOW_SELECTION_PROMPT,
+  LIMIT_ERROR_CLASSIFIER_PROMPT,
+  EVOLUTION_CONVERSATION_FRICTION_PROMPT,
+  MINIMAL_WORKTREE_PROMPT,
+  WORKTREE_ISOLATION_PROMPT,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,

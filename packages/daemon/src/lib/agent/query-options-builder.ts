@@ -1,3 +1,4 @@
+import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
   McpServerConfig as SdkMcpServerConfig,
@@ -777,37 +778,20 @@ export class QueryOptionsBuilder {
 
   private getWorktreeIsolationText(): string {
     const wt = this.ctx.session.worktree!;
-    return `
-IMPORTANT: Git Worktree Isolation
-
-Work only inside this isolated worktree:
-${wt.worktreePath}
-
-Branch: ${wt.branch}
-Main repository (read-only unless post-approval instructions say otherwise): ${wt.mainRepoPath}
-
-Your cwd is already the worktree path. Do not modify files in the main repository.
-`.trim();
+    return fillPrompt(WORKTREE_ISOLATION_PROMPT, {
+      worktree_path: wt.worktreePath,
+      branch: wt.branch,
+      main_repo_path: wt.mainRepoPath,
+    });
   }
 
   private getMinimalWorktreePrompt(): string {
     const wt = this.ctx.session.worktree!;
-    return `
-You are an AI assistant helping with coding tasks.
-
-IMPORTANT: Git Worktree Isolation
-
-This session is running in an isolated git worktree at:
-${wt.worktreePath}
-
-Branch: ${wt.branch}
-Main repository: ${wt.mainRepoPath}
-
-CRITICAL RULES:
-1. ALL file operations MUST stay within the worktree directory: ${wt.worktreePath}
-2. NEVER modify files in the main repository at: ${wt.mainRepoPath}
-3. Your current working directory (cwd) is already set to the worktree path
-`.trim();
+    return fillPrompt(MINIMAL_WORKTREE_PROMPT, {
+      worktree_path: wt.worktreePath,
+      branch: wt.branch,
+      main_repo_path: wt.mainRepoPath,
+    });
   }
 
   private getDisallowedTools(): string[] {

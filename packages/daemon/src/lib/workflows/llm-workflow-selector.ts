@@ -1,4 +1,8 @@
-import { WORKFLOW_SELECTOR_INSTRUCTIONS } from '@hyperneo/prompts';
+import {
+  fillPrompt,
+  WORKFLOW_SELECTION_PROMPT,
+  WORKFLOW_SELECTOR_INSTRUCTIONS,
+} from '@hyperneo/prompts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import { Logger } from '../logger.ts';
@@ -75,7 +79,6 @@ function truncate(value: string, max: number): string {
 export function buildSelectionPrompt(task: SpaceTask, workflows: SpaceWorkflow[]): string {
   const title = truncate(task.title ?? '', MAX_TASK_INPUT_CHARS);
   const description = truncate(task.description ?? '', MAX_TASK_INPUT_CHARS);
-  const taskBlock = `Task title: ${title}\nTask description: ${description || '(empty)'}`;
 
   const list = workflows
     .map((w) => {
@@ -86,14 +89,12 @@ export function buildSelectionPrompt(task: SpaceTask, workflows: SpaceWorkflow[]
     })
     .join('\n');
 
-  return `You are selecting the best workflow to execute a task.
-
-${taskBlock}
-
-Candidate workflows:
-${list}
-
-Instructions:\n${WORKFLOW_SELECTOR_INSTRUCTIONS}`;
+  return fillPrompt(WORKFLOW_SELECTION_PROMPT, {
+    title,
+    description: description || '(empty)',
+    workflows: list,
+    instructions: WORKFLOW_SELECTOR_INSTRUCTIONS,
+  });
 }
 
 function cleanIdResponse(raw: string): string | null {

@@ -1,3 +1,4 @@
+import { CODEX_PROBE_INSTRUCTIONS } from '@hyperneo/prompts';
 import { getDataDir } from '../data-dir.ts';
 import type {
   Provider,
@@ -644,7 +645,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       stream: isChatgptOAuth,
     };
     if (isChatgptOAuth) {
-      body.instructions = 'You are a concise assistant.';
+      body.instructions = CODEX_PROBE_INSTRUCTIONS;
       body.store = false;
     } else {
       body.max_output_tokens = 1;
