@@ -1,6 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import { neoDoneCheckMessageId } from './ask-origin.ts';
+import { neoDoneCheckMessageId, neoWorkReturnMessageId } from './ask-origin.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 type Gate<T> = { value: T } | { reason: boolean };
@@ -38,6 +38,23 @@ export function neoDoneCheckToldIds(
   return (followed ? [work.updatedAt] : [undefined, work.updatedAt]).map((at) =>
     neoDoneCheckMessageId(work.id, continued, revision, at)
   );
+}
+
+export function neoWorkReturnToldIds(
+  work: Pick<NeoWork, 'id' | 'updatedAt'>,
+  card: { retries: number; continued: number; prRevision: number | undefined }
+): string[] {
+  return [
+    neoWorkReturnMessageId(work.id, card.retries, card.continued),
+    ...neoDoneCheckToldIds(work, card.continued, undefined, false),
+    ...(card.prRevision ? neoDoneCheckToldIds(work, card.continued, card.prRevision, false) : []),
+  ];
+}
+
+export function requireNeoWorkReturnUntold(told: {
+  told: boolean;
+}): { value: true } | { reason: null } {
+  return told.told ? { reason: null } : { value: true };
 }
 
 export function requireNeoDoneCheckUntold<T>(read: { told: boolean }, value: T): Gate<T> {

@@ -116,6 +116,8 @@ import {
   requireNeoDoneCheck,
   requireNeoDoneCheckDue,
   requireNeoDoneCheckUntold,
+  neoWorkReturnToldIds,
+  requireNeoWorkReturnUntold,
 } from './done-check.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
@@ -1228,7 +1230,7 @@ export class NeoService {
     let work = this.repo.getWork(id);
     if (!work?.sessionId) {
       if ((work?.status === 'reported' || work?.status === 'failed') && this.driverTargets.get(id))
-        await this.returnReport(work);
+        await this.recoverWorkReturn(work);
       return;
     }
     if (work.status === 'cancelled' || work.status === 'proposed') return;
@@ -1239,8 +1241,28 @@ export class NeoService {
       return;
     }
     if (work && (work.status === 'reported' || work.status === 'failed'))
-      await this.returnReport(work);
+      await this.recoverWorkReturn(work);
   }
+
+  private readonly recoverWorkReturn = (superpipe({})('neo-work-recover-return') as PipelineAPI)
+    .input(['work'])
+    .pipe(
+      (work: NeoWork) => ({
+        told: this.toldDoneCheck(
+          work,
+          neoWorkReturnToldIds(work, {
+            retries: this.driverTargets.readRetries(work.id),
+            continued: this.workContinues.get(work.id)?.count ?? 0,
+            prRevision: this.workPrs.get(work.id)?.revision,
+          })
+        ),
+      }),
+      'work',
+      'told'
+    )
+    .pipe(requireNeoWorkReturnUntold, 'told', 'result:recover')
+    .pipe((work: NeoWork) => this.returnReport(work), 'work')
+    .endAsync('recover') as (work: NeoWork) => Promise<unknown>;
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
@@ -1268,7 +1290,7 @@ export class NeoService {
       if (this.db.getSession(target))
         await this.deliver(
           target,
-          neoWorkReturnMessageId(work.id, retries),
+          neoWorkReturnMessageId(work.id, retries, this.workContinues.get(work.id)?.count ?? 0),
           content,
           work.sessionId ?? work.originSessionId
         );
