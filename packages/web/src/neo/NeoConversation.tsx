@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -63,8 +64,10 @@ export function NeoConversation({
   pendingAsks,
   onRetryAsk,
   onEditAsk,
+  onEditUndelivered,
 }: {
   store: SessionStore;
+  onEditUndelivered?: (ask: NeoConversationAsk) => void;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;
@@ -150,6 +153,7 @@ export function NeoConversation({
             }}
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
+            onEditUndelivered={onEditUndelivered}
           />
         )}
         {pendingAsks

@@ -99,6 +99,7 @@ function ask(value: unknown, page: Cursor): NeoConversationAsk | null {
     sequence: row.sequence,
     createdAt: row.createdAt,
     content,
+    ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
   };
 }
 
