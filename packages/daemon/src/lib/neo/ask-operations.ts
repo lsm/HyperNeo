@@ -37,6 +37,8 @@ export const NeoAskSchema = z.object({
   pack: z.string().nullable().optional(),
   approvedAt: z.number().nullable().optional(),
   approvedContinues: z.number().optional(),
+  approvedUntil: z.number().optional(),
+  approvedContinueLimit: z.number().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),

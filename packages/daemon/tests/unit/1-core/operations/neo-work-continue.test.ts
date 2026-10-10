@@ -8,6 +8,7 @@ import {
 } from '../../../../src/lib/neo/driver-work.ts';
 import {
   neoContinuedReport,
+  requireNeoAskContinueReserved,
   requireNeoContinueDelivered,
   requireNeoWorkContinuable,
   requireNeoWorkStillContinuable,
@@ -59,6 +60,17 @@ describe('readNeoWorkContinueBudget', () => {
     expect(readNeoWorkContinueBudget({ count: 5 }, 0, null, HOUR)).toContain(
       'already continued 5 times'
     );
+  });
+});
+
+describe('requireNeoAskContinueReserved', () => {
+  test('refuses a continue the shared budget could not reserve', () => {
+    expect(requireNeoAskContinueReserved({ ask: null, ok: true })).toEqual({
+      value: { ask: null, ok: true },
+    });
+    expect(requireNeoAskContinueReserved({ ask: null, ok: false })).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining('approve it again') },
+    });
   });
 });
 
@@ -162,6 +174,7 @@ describe('neo.work.continue', () => {
   let recentInputs: Array<{ at: number; text: string }> | undefined;
   let duringSend: () => Promise<void>;
   let delivered: boolean;
+  let unreachable: boolean;
   const human: OperationCaller = { source: 'rpc', principal: 'local' };
 
   beforeEach(async () => {
@@ -172,6 +185,7 @@ describe('neo.work.continue', () => {
     recentInputs = undefined;
     duringSend = async () => {};
     delivered = true;
+    unreachable = false;
     const driverRegistry = createOperationRegistry([
       defineOperation({
         name: 'work.status',
@@ -193,7 +207,9 @@ describe('neo.work.continue', () => {
         execute: async (input: { ref: unknown; message: string }) => {
           sent.push(input);
           await duringSend();
-          return { ok: true, value: { delivered } };
+          return unreachable
+            ? { ok: false, reason: 'unreachable', detail: 'down' }
+            : { ok: true, value: { delivered } };
         },
       }),
     ]);
@@ -276,7 +292,18 @@ describe('neo.work.continue', () => {
       expect(await invoke({ id: work.id, message: `Step ${index}.` })).toMatchObject({
         value: { ok: true },
       });
+    expect(service.askRecords.get(opened.id)).toMatchObject({
+      approvedContinues: 6,
+      approvedContinueLimit: 20,
+      approvedUntil: expect.any(Number),
+    });
+    expect(service.askRecords.reserveApprovedContinue(opened.id, 6)).toBe(false);
+    unreachable = true;
+    expect(await invoke({ id: work.id, message: 'Not delivered.' })).toMatchObject({
+      value: { ok: false },
+    });
     expect(service.askRecords.get(opened.id)?.approvedContinues).toBe(6);
+    unreachable = false;
     db.getDatabase()
       .prepare('UPDATE neo_asks SET approved_continues = 20 WHERE id = ?')
       .run(opened.id);

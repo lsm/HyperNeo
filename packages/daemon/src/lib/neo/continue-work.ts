@@ -4,7 +4,12 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import { isNeoAskLive } from './done-check.ts';
-import { type DriverSent, readDriverOutcome, readNeoWorkContinueBudget } from './driver-work.ts';
+import {
+  type DriverSent,
+  NEO_ASK_CONTINUES_SPENT,
+  readDriverOutcome,
+  readNeoWorkContinueBudget,
+} from './driver-work.ts';
 
 export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
@@ -37,7 +42,8 @@ export interface NeoContinueDeps {
   send(target: NeoContinueTarget, message: string): Promise<OperationOutcome>;
   recordSent(id: string, startedAt: number | null, sent: DriverSent | null): void;
   recordContinue(id: string, message: string, now: number): number | null;
-  spendAskContinue(ask: NeoAsk): void;
+  reserveAskContinue(ask: NeoAsk): boolean;
+  refundAskContinue(ask: NeoAsk): void;
   reopen(id: string, current: NeoWork, report: string): NeoWork | null;
   reopenAsk(id: string): void;
 }
@@ -62,6 +68,14 @@ export function requireNeoWorkContinuable(
   if (evidence.inFlight)
     return reject('This work is already being continued; wait for that first.');
   return { value: { work, ref } };
+}
+
+type NeoAskContinueReserve = { ask: NeoAsk | null; ok: boolean };
+
+export function requireNeoAskContinueReserved(
+  reserved: NeoAskContinueReserve
+): { value: NeoAskContinueReserve } | { reason: Rejection } {
+  return reserved.ok ? { value: reserved } : reject(NEO_ASK_CONTINUES_SPENT);
 }
 
 export function requireNeoContinueDelivered(
@@ -121,10 +135,32 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
     'probe'
   )
   .pipe(
+    (deps: NeoContinueDeps, target: NeoContinueTarget) => {
+      const ask = deps.readAsk(target.work.id);
+      if (ask?.approvedAt == null || !isNeoAskLive(ask)) return { ask: null, ok: true };
+      return { ask, ok: deps.reserveAskContinue(ask) };
+    },
+    ['deps', 'target'],
+    'reserved'
+  )
+  .pipe(requireNeoAskContinueReserved, 'reserved', 'result:continued')
+  .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget, sending: { text: string }) =>
       deps.send(target, sending.text),
     ['deps', 'target', 'sending'],
     'outcome'
+  )
+  .pipe(
+    (
+      deps: NeoContinueDeps,
+      target: NeoContinueTarget,
+      reserved: NeoAskContinueReserve,
+      outcome: OperationOutcome
+    ) => {
+      if (reserved.ask && 'reason' in requireNeoContinueDelivered(target, outcome))
+        deps.refundAskContinue(reserved.ask);
+    },
+    ['deps', 'target', 'reserved', 'outcome']
   )
   .pipe(requireNeoContinueDelivered, ['target', 'outcome'], 'result:continued')
   .pipe(
@@ -142,13 +178,6 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
     }),
     ['deps', 'target', 'message', 'now'],
     'record'
-  )
-  .pipe(
-    (deps: NeoContinueDeps, target: NeoContinueTarget) => {
-      const ask = deps.readAsk(target.work.id);
-      if (ask?.approvedAt != null && isNeoAskLive(ask)) deps.spendAskContinue(ask);
-    },
-    ['deps', 'target']
   )
   .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget) => ({

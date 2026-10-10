@@ -1,4 +1,10 @@
-import type { NeoAsk, NeoAskItem, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_ASK_CONTINUE_LIMIT,
+  NEO_ASK_CONTINUE_WINDOW_MS,
+  type NeoAsk,
+  type NeoAskItem,
+  type NeoAskStatus,
+} from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
@@ -237,10 +243,22 @@ export class NeoAskRepository {
     return this.withWork([row])[0];
   }
 
-  spendApprovedContinue(id: string): void {
+  reserveApprovedContinue(id: string, limit: number): boolean {
+    if (!this.hasTable() || !this.hasColumn('approved_continues')) return true;
+    return (
+      this.db
+        .prepare(`UPDATE neo_asks SET approved_continues = approved_continues + 1
+          WHERE id = ? AND approved_continues < ?`)
+        .run(id, limit).changes === 1
+    );
+  }
+
+  refundApprovedContinue(id: string): void {
     if (!this.hasTable() || !this.hasColumn('approved_continues')) return;
     this.db
-      .prepare('UPDATE neo_asks SET approved_continues = approved_continues + 1 WHERE id = ?')
+      .prepare(
+        'UPDATE neo_asks SET approved_continues = MAX(0, approved_continues - 1) WHERE id = ?'
+      )
       .run(id);
   }
 
@@ -298,6 +316,12 @@ export class NeoAskRepository {
       : [];
     return rows.map((row) => ({
       ...row,
+      ...(row.approvedAt != null
+        ? {
+            approvedUntil: row.approvedAt + NEO_ASK_CONTINUE_WINDOW_MS,
+            approvedContinueLimit: NEO_ASK_CONTINUE_LIMIT,
+          }
+        : {}),
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)

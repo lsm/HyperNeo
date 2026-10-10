@@ -29,6 +29,7 @@ import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   NEO_ASK_CONTINUE_LIMIT,
+  NEO_ASK_CONTINUE_WINDOW_MS,
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkContinue,
   type NeoWorkGoal,
@@ -154,7 +155,7 @@ export function readContinueBudget(
   return null;
 }
 
-export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
+export const NEO_ASK_CONTINUES_SPENT = `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
 
 export function readNeoWorkContinueBudget(
   continued: Pick<NeoWorkContinue, 'count'> | null,
@@ -164,8 +165,7 @@ export function readNeoWorkContinueBudget(
 ): string | null {
   if (ask?.approvedAt == null || !isNeoAskLive(ask))
     return readContinueBudget(continued, startedAt, now);
-  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT)
-    return `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
+  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT) return NEO_ASK_CONTINUES_SPENT;
   if (now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS)
     return 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.';
   return null;
