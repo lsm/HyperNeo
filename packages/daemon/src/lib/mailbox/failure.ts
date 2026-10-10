@@ -1,3 +1,4 @@
+import { fillPrompt, MAILBOX_DELIVERY_FAILED } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -174,7 +175,11 @@ export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFail
 }
 
 export function renderMailboxFailureNotice(notice: MailboxFailureNotice): string {
-  return `Your message ${notice.messageUuid} to session ${notice.targetSessionId} was not delivered (${notice.reason}). The target never saw it. Send it to a live session instead.`;
+  return fillPrompt(MAILBOX_DELIVERY_FAILED, {
+    message_uuid: notice.messageUuid,
+    target_session_id: notice.targetSessionId,
+    reason: notice.reason,
+  });
 }
 
 export function createMailboxSenderNotifier(
