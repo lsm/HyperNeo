@@ -1,3 +1,4 @@
+import type { NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -52,6 +53,52 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
   );
 }
 
+const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> = {
+  met: { mark: '✓', color: 'text-success' },
+  needs_you: { mark: '!', color: 'text-warning' },
+  pending: { mark: '○', color: 'text-fg-faint' },
+};
+
+function ItemRow({ item }: { item: NeoAskItem }) {
+  const glyph = itemGlyphs[item.state];
+  const tags = [
+    item.removed && 'removed',
+    item.addedAt !== null && !item.removed && 'added',
+    item.state === 'met' && item.metBy === 'daemon' && 'verified',
+    item.state === 'needs_you' && 'needs you',
+  ].filter(Boolean);
+  return (
+    <li data-ask-item={item.id} class="flex min-w-0 items-baseline gap-2 text-sm">
+      <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
+        {glyph.mark}
+      </span>
+      <span class="min-w-0 flex-1">
+        <span
+          class={`break-words ${item.removed ? 'text-fg-faint line-through' : item.state === 'met' ? 'text-fg-muted' : 'text-fg'}`}
+        >
+          {item.text}
+        </span>
+        {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
+        {item.evidence && item.state === 'met' && (
+          <span class="block truncate text-xs text-fg-faint" title={item.evidence}>
+            {item.evidence}
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+function Checklist({ items, label }: { items: readonly NeoAskItem[]; label: string }) {
+  return (
+    <ul aria-label={label} class="space-y-1.5">
+      {items.map((item) => (
+        <ItemRow key={item.id} item={item} />
+      ))}
+    </ul>
+  );
+}
+
 export function NeoAskCard({
   view,
   drivers,
@@ -79,6 +126,9 @@ export function NeoAskCard({
           : 'running';
   const steps = view.scenes.length;
   const single = steps === 1 ? view.scenes[0] : undefined;
+  const needsYouItems = view.settled
+    ? []
+    : view.items.filter((item) => item.state === 'needs_you' && !item.removed);
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -142,6 +192,11 @@ export function NeoAskCard({
       {view.summary && (
         <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
       )}
+      {needsYouItems.length > 0 && (
+        <div data-ask-needs-you class="mt-3 rounded-lg bg-warning/10 px-3 py-2">
+          <Checklist items={needsYouItems} label="Needs you" />
+        </div>
+      )}
       {steps > 0 && (
         <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
           {view.scenes.map((scene) =>
@@ -157,7 +212,13 @@ export function NeoAskCard({
         <div data-ask-details class="mt-3 space-y-3">
           <div class="text-sm text-fg-muted">
             <p class="text-xs font-medium text-fg-faint">Done when</p>
-            <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
+            {view.items.length > 0 ? (
+              <div class="mt-1.5">
+                <Checklist items={view.items} label="Done when" />
+              </div>
+            ) : (
+              <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
+            )}
           </div>
           {ask.outcome && ask.outcome.trim() !== view.summary && (
             <div class="text-sm text-fg-muted">

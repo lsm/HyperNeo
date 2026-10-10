@@ -1,6 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
+  NeoAskItem,
   NeoAskStatus,
   NeoWorkDriverReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
@@ -24,6 +25,7 @@ export type NeoAskView = {
   readonly total: number;
   readonly scenes: readonly NeoScene[];
   readonly summary: string | null;
+  readonly items: readonly NeoAskItem[];
 };
 
 export type NeoAskOpenTarget = {
@@ -94,6 +96,10 @@ export function neoAskSummary(
     : `${sentence.slice(0, NEO_ASK_SUMMARY_LIMIT - 1).trimEnd()}…`;
 }
 
+export function neoAskItems(ask: NeoAsk): readonly NeoAskItem[] {
+  return ask.doneItems ?? [];
+}
+
 export function describeNeoAsk(
   ask: NeoAsk,
   scenes: readonly NeoScene[],
@@ -115,16 +121,22 @@ export function describeNeoAsk(
       )
       .map((scene) => scene.ref.id)
   );
+  const items = neoAskItems(ask);
+  const counted = items.filter((item) => !item.removed);
   return {
     ask,
     group: needsYou ? 'attention' : truth.group,
     label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : truth.label,
     settled,
-    done: doneIds.size,
+    done: counted.length > 0 ? counted.filter((item) => item.state === 'met').length : doneIds.size,
     doneIds,
-    total: Math.max(ask.workIds.length, scenes.length) - (scenes.length - live.length),
+    total:
+      counted.length > 0
+        ? counted.length
+        : Math.max(ask.workIds.length, scenes.length) - (scenes.length - live.length),
     scenes: live,
     summary: neoAskSummary(ask, live, prs),
+    items,
   };
 }
 
