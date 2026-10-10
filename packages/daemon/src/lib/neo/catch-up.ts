@@ -8,6 +8,7 @@ import {
 import { neoTurnLine } from './router.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { fitLines } from './fit-lines.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
 const SHOWN_ROUTES = 12;
 const READ_ROUTES = 200;
@@ -72,9 +73,7 @@ export function requireMissedRoutes(
 
 export function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
   return new Map(
-    (
-      db.prepare('SELECT id, title FROM neo_concerns').all() as Array<{ id: string; title: string }>
-    ).map((row) => [row.id, row.title.trim()])
+    new NeoRepository(db).listConcernTitles().map((concern) => [concern.id, concern.title.trim()])
   );
 }
 

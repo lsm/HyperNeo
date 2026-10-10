@@ -39,6 +39,13 @@ export class NeoRepository {
       .all() as NeoConcern[];
   }
 
+  listConcernTitles(): Array<{ id: string; title: string }> {
+    return this.db.prepare('SELECT id, title FROM neo_concerns').all() as Array<{
+      id: string;
+      title: string;
+    }>;
+  }
+
   getConcern(id: string): NeoConcern | null {
     return this.db
       .prepare(`SELECT ${concernColumns} FROM neo_concerns WHERE id = ?`)
