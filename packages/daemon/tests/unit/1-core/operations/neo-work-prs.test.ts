@@ -3,6 +3,7 @@ import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
   neoWorkPrSignature,
+  countNeoWorkPrApprovals,
   planNeoWorkPrBlockers,
   planNeoWorkPrRefresh,
   readGithubPrs,
@@ -199,7 +200,7 @@ describe('planNeoWorkPrBlockers', () => {
     },
   ];
   const unsigned = { commits: [{ oid: '1bad987012', signed: false }], unresolved: 0 };
-  const base = { base: 'dev', review: 'approved' as const, rules };
+  const base = { base: 'dev', approvals: 1, rules };
   test.each<[string, Parameters<typeof planNeoWorkPrBlockers>[0], string[]]>([
     [
       'an unsigned commit on a branch that requires signatures',
@@ -220,11 +221,25 @@ describe('planNeoWorkPrBlockers', () => {
       'a missing required approval',
       {
         ...base,
-        review: 'none',
+        approvals: 1,
+        rules: [{ type: 'pull_request', parameters: { required_approving_review_count: 2 } }],
+        detail: null,
+      },
+      ['needs 2 approving reviews, has 1'],
+    ],
+    [
+      'an approval from before the last push that still counts',
+      {
+        ...base,
         rules: [{ type: 'pull_request', parameters: { required_approving_review_count: 1 } }],
         detail: null,
       },
-      ['needs 1 approving review'],
+      [],
+    ],
+    [
+      'a pull request GitHub calls mergeable',
+      { ...base, mergeState: 'CLEAN', detail: unsigned },
+      [],
     ],
     ['a branch behind its base', { ...base, mergeState: 'BEHIND', detail: null }, ['behind dev']],
     ['conflicts', { ...base, mergeState: 'DIRTY', detail: null }, ['merge conflicts with dev']],
@@ -235,6 +250,18 @@ describe('planNeoWorkPrBlockers', () => {
     ],
   ])('%s', (_label, input, blockers) => {
     expect(planNeoWorkPrBlockers(input)).toEqual(blockers);
+  });
+});
+
+describe('countNeoWorkPrApprovals', () => {
+  const by = (login: string, state: string) => ({ state, author: { login } });
+  test.each<[string, ReturnType<typeof by>[], number]>([
+    ['two reviewers who approved', [by('a', 'APPROVED'), by('b', 'APPROVED')], 2],
+    ['an approval later dismissed', [by('a', 'APPROVED'), by('a', 'DISMISSED')], 0],
+    ['changes requested after approving', [by('a', 'APPROVED'), by('a', 'CHANGES_REQUESTED')], 0],
+    ['a comment after approving', [by('a', 'APPROVED'), by('a', 'COMMENTED')], 1],
+  ])('%s', (_label, reviews, approvals) => {
+    expect(countNeoWorkPrApprovals(reviews)).toBe(approvals);
   });
 });
 
@@ -306,5 +333,24 @@ describe('readGithubPrs blockers', () => {
     ]);
     await readGithubPrs([url], spawn as never);
     expect(asked.filter((args) => args[2]?.startsWith('repos/'))).toHaveLength(1);
+
+    const release = 'https://github.com/lsm/blockers-release/pull/1';
+    const view = reply;
+    asked.length = 0;
+    await readGithubPrs([release], ((args: string[]) => {
+      asked.push(args);
+      const body =
+        args[2] === 'view' ? ghPr({ url: release, baseRefName: 'release/1.x' }) : view(args);
+      return {
+        stdout: new Response(JSON.stringify(body)).body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    }) as never);
+    expect(asked.find((args) => args[2]?.startsWith('repos/'))?.[2]).toBe(
+      'repos/lsm/blockers-release/rules/branches/release%2F1.x'
+    );
   });
 });

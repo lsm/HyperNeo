@@ -17,7 +17,11 @@ const GhPrSchema = z.object({
   state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
   headRefOid: z.string(),
   reviews: z.array(
-    z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullish() })
+    z.object({
+      state: z.string(),
+      commit: z.object({ oid: z.string() }).nullish(),
+      author: z.object({ login: z.string() }).nullish(),
+    })
   ),
   statusCheckRollup: z.array(
     z.object({
@@ -168,13 +172,24 @@ export function wantsNeoWorkPrBlockers(pr: NeoWorkPr, base: string | undefined):
   );
 }
 
+export function countNeoWorkPrApprovals(
+  reviews: readonly { state: string; author?: { login: string } | null }[]
+): number {
+  const latest = new Map<string, string>();
+  for (const review of reviews)
+    if (review.author && ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state))
+      latest.set(review.author.login, review.state);
+  return [...latest.values()].filter((state) => state === 'APPROVED').length;
+}
+
 export function planNeoWorkPrBlockers(input: {
   base: string;
   mergeState?: string;
-  review: NeoWorkPr['review'];
+  approvals: number;
   rules: readonly BranchRule[];
   detail: PrDetail | null;
 }): string[] {
+  if (['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(input.mergeState ?? '')) return [];
   const pull = input.rules.find((rule) => rule.type === 'pull_request')?.parameters;
   const unsigned = input.detail?.commits.filter((commit) => !commit.signed) ?? [];
   const unresolved = input.detail?.unresolved ?? 0;
@@ -191,8 +206,8 @@ export function planNeoWorkPrBlockers(input: {
     ...(pull?.required_review_thread_resolution && unresolved
       ? [`${unresolved} unresolved review thread${unresolved === 1 ? '' : 's'}`]
       : []),
-    ...(approvals > 0 && input.review !== 'approved'
-      ? [`needs ${approvals} approving review${approvals === 1 ? '' : 's'}`]
+    ...(input.approvals < approvals
+      ? [`needs ${approvals} approving review${approvals === 1 ? '' : 's'}, has ${input.approvals}`]
       : []),
     ...(input.mergeState === 'BEHIND' ? [`behind ${input.base}`] : []),
     ...(input.mergeState === 'DIRTY' ? [`merge conflicts with ${input.base}`] : []),
@@ -208,7 +223,7 @@ async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
   const cached = rulesCache.get(key);
   if (cached && Date.now() - cached.at < RULES_MS) return cached.rules;
   const outcome = await gh(
-    ['gh', 'api', `repos/${repo}/rules/branches/${base}`],
+    ['gh', 'api', `repos/${repo}/rules/branches/${encodeURIComponent(base)}`],
     spawnImpl,
     'core'
   );
@@ -276,7 +291,14 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
       const pr = summarizeNeoWorkPr(read.raw);
       const meta = GhPrSchema.safeParse(read.raw);
       return pr && meta.success
-        ? { value: { pr, base: meta.data.baseRefName, mergeState: meta.data.mergeStateStatus } }
+        ? {
+            value: {
+              pr,
+              base: meta.data.baseRefName,
+              mergeState: meta.data.mergeStateStatus,
+              approvals: countNeoWorkPrApprovals(meta.data.reviews),
+            },
+          }
         : { reason: null };
     },
     'read',
@@ -296,14 +318,14 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
   )
   .pipe(
     (
-      found: { pr: NeoWorkPr; base?: string; mergeState?: string },
+      found: { pr: NeoWorkPr; base?: string; mergeState?: string; approvals: number },
       extra: { rules: BranchRule[]; detail: PrDetail | null }
     ) => {
       const blockers = found.base
         ? planNeoWorkPrBlockers({
             base: found.base,
             mergeState: found.mergeState,
-            review: found.pr.review,
+            approvals: found.approvals,
             ...extra,
           })
         : [];
