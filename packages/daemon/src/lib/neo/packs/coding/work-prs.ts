@@ -416,7 +416,6 @@ export function mergeNeoWorkPrReads(
   read: readonly NeoWorkPr[],
   stored: readonly NeoWorkPr[] = []
 ): NeoWorkPr[] {
-  return urls.flatMap(
-    (url) => read.find((pr) => pr.url === url) ?? stored.find((pr) => pr.url === url) ?? []
-  );
+  const same = (url: string) => (pr: NeoWorkPr) => pr.url.toLowerCase() === url.toLowerCase();
+  return [...new Set(urls.flatMap((url) => read.find(same(url)) ?? stored.find(same(url)) ?? []))];
 }

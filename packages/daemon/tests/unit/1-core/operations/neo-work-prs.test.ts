@@ -248,6 +248,10 @@ describe('readGithubPrs', () => {
 });
 
 describe('mergeNeoWorkPrReads', () => {
+  test("matches a report's URL to gh's canonical one whatever its case, once", () => {
+    expect(mergeNeoWorkPrReads([pr.url.toUpperCase(), pr.url], [pr])).toEqual([pr]);
+  });
+
   test('keeps the stored copy of a pull request this read missed, in URL order', () => {
     const other = {
       ...pr,
