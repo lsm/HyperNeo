@@ -25,6 +25,7 @@ import {
   NEO_WORK_UNANCHORED_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
+  requireNeoWorkRetryable,
   NEO_CARD_CONFIRM_MS,
   readDriverSettlement,
   readNeoStartFolder,
@@ -58,6 +59,40 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
+
+describe('requireNeoWorkRetryable', () => {
+  test.each<
+    [
+      string,
+      { status: NeoWork['status']; report: string | null },
+      { target: boolean; ref: boolean },
+      boolean,
+    ]
+  >([
+    [
+      'a hand-off that failed before it started',
+      { status: 'failed', report: 'down' },
+      { target: true, ref: false },
+      true,
+    ],
+    ['started work', { status: 'failed', report: 'down' }, { target: true, ref: true }, false],
+    [
+      'work with no driver target',
+      { status: 'failed', report: null },
+      { target: false, ref: false },
+      false,
+    ],
+    ['work still queued', { status: 'queued', report: null }, { target: true, ref: false }, false],
+    [
+      'a start that was interrupted',
+      { status: 'failed', report: 'Starting was interrupted before codex confirmed it.' },
+      { target: true, ref: false },
+      false,
+    ],
+  ])('%s', (_label, work, card, retryable) => {
+    expect('value' in requireNeoWorkRetryable(work, card)).toBe(retryable);
+  });
+});
 
 describe('requireNeoExecutionChoice', () => {
   const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
@@ -2232,6 +2267,7 @@ describe('Neo work with a drivers target', () => {
       });
       expect(calls).toEqual([]);
       expect(service.repo.getWork('work-1')?.status).toBe('failed');
+      expect(service.isRetryable('work-1')).toBe(false);
     } finally {
       db.close();
     }
@@ -2286,6 +2322,8 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       expect(delivered.map(([, id]) => id)).toEqual(['work-1']);
       expect(delivered[0][2]).toContain('call neo.work.retry {id} on this same work');
+      expect(service.isRetryable('work-1')).toBe(true);
+      expect(service.driverTargets.receipts(['work-1'])).toHaveLength(1);
 
       expect(await service.retryWork('work-1')).toMatchObject({
         ok: true,
@@ -2304,6 +2342,7 @@ describe('Neo work with a drivers target', () => {
       expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(3);
       expect(service.repo.listWork()).toHaveLength(1);
       expect(await service.retryWork('work-1')).toMatchObject({ ok: false });
+      expect(service.isRetryable('work-1')).toBe(false);
     } finally {
       db.close();
     }
