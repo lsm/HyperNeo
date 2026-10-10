@@ -199,6 +199,12 @@ import mddriversClaudeDesktopOpening from './drivers/claude-desktop-opening.md' 
   type: 'text',
 };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
+import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
+  type: 'text',
+};
 import mdmailboxDeliveryFailed from './mailbox/delivery-failed.md' with { type: 'text' };
 import mdmessagingReplyProtocol from './messaging/reply-protocol.md' with { type: 'text' };
 import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { type: 'text' };
@@ -421,6 +427,8 @@ const registry: Record<string, string> = {
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
   'drivers/claude-desktop-opening.md': mddriversClaudeDesktopOpening,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
+  'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
+  'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
   'messaging/reply-protocol.md': mdmessagingReplyProtocol,
   'messaging/reply-to-target.md': mdmessagingReplyToTarget,
@@ -590,6 +598,8 @@ export const {
   GOAL_OUTCOME_READY,
   CLAUDE_DESKTOP_OPENING,
   CLAUDE_DESKTOP_RELAY,
+  CLAUDE_RC_TOGGLE_BRIEF,
+  CLAUDE_RC_TOGGLE_REQUEST,
   MAILBOX_DELIVERY_FAILED,
   MESSAGING_REPLY_PROTOCOL,
   MESSAGING_REPLY_TO_TARGET,

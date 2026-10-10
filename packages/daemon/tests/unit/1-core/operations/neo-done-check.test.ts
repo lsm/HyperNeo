@@ -5,6 +5,8 @@ import {
   requireNeoDoneCheck,
   requireNeoDoneCheckDue,
   requireNeoDoneCheckUntold,
+  neoWorkReturnToldIds,
+  requireNeoWorkReturnUntold,
 } from '../../../../src/lib/neo/done-check.ts';
 
 const goal = { workId: 'w1', goal: 'Fix it', doneWhen: '- merged' };
@@ -64,6 +66,48 @@ describe('neoDoneCheckToldIds', () => {
     ['a follow-up', 3, true, ['w1:done-check:2:pr:3:at:900']],
   ])('%s', (_label, revision, followed, ids) => {
     expect(neoDoneCheckToldIds({ id: 'w1', updatedAt: 900 }, 2, revision, followed)).toEqual(ids);
+  });
+});
+
+describe('neoWorkReturnToldIds', () => {
+  const work = { id: 'w1', updatedAt: 50 };
+  test.each([
+    [
+      'a fresh card',
+      { retries: 0, continued: 0, prRevision: undefined },
+      ['w1', 'w1:done-check:0', 'w1:done-check:0:at:50'],
+    ],
+    [
+      'a continued card with a pull request',
+      { retries: 0, continued: 1, prRevision: 2 },
+      [
+        'w1:continued:1',
+        'w1:done-check:1',
+        'w1:done-check:1:at:50',
+        'w1:done-check:1:pr:2',
+        'w1:done-check:1:pr:2:at:50',
+      ],
+    ],
+  ])('%s is told by its current ids only', (_name, card, ids) => {
+    expect(neoWorkReturnToldIds(work, card)).toEqual(ids);
+  });
+
+  test('told at continue 0 does not count as told at continue 1', () => {
+    const toldBefore = new Set(
+      neoWorkReturnToldIds(work, { retries: 0, continued: 0, prRevision: undefined })
+    );
+    expect(
+      neoWorkReturnToldIds(work, { retries: 0, continued: 1, prRevision: undefined }).some((id) =>
+        toldBefore.has(id)
+      )
+    ).toBe(false);
+  });
+});
+
+describe('requireNeoWorkReturnUntold', () => {
+  test('recovery returns only an untold report', () => {
+    expect(requireNeoWorkReturnUntold({ told: false })).toEqual({ value: true });
+    expect(requireNeoWorkReturnUntold({ told: true })).toEqual({ reason: null });
   });
 });
 

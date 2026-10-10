@@ -854,15 +854,16 @@ describe('Neo work with a drivers target', () => {
       const at = Date.now() - ms;
       const sqlite = db.getDatabase();
       sqlite.prepare('UPDATE neo_work SET updated_at = ? WHERE id = ?').run(at, 'work-1');
-      sqlite
-        .prepare('UPDATE neo_work_prs SET delivered_at = ?, read_at = 0 WHERE work_id = ?')
-        .run(at, 'work-1');
+      sqlite.prepare('UPDATE neo_work_prs SET read_at = 0 WHERE work_id = ?').run('work-1');
+      sqlite.prepare('UPDATE neo_work_checks SET told_at = ? WHERE work_id = ?').run(at, 'work-1');
       return at;
     };
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:1']);
+      const signature = service.workPrs.get('work-1')?.delivered;
+      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: null });
       reply = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
 
       quietFor(10 * 60_000);
@@ -876,6 +877,8 @@ describe('Neo work with a drivers target', () => {
         `work-1:done-check:0:pr:1:at:${toldAt}`,
       ]);
       expect(notes[1][1]).toContain('still open and nothing has moved');
+      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: signature });
+      expect(service.workPrs.get('work-1')).toMatchObject({ reminded: signature });
 
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
@@ -1096,6 +1099,44 @@ describe('Neo work with a drivers target', () => {
       });
       await service.reconcile('work-1');
       expect(returned).toEqual(['work-1']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('restart recovery returns only reports Neo was not told yet', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Shipped.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const delivered = new Set<string>();
+    const sent: string[] = [];
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (_target: string, messageId: string) => {
+        delivered.add(messageId);
+        sent.push(messageId);
+      },
+      hasDelivery: (_session: string, messageId: string) => delivered.has(messageId),
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(sent).toContain('work-1');
+      sent.length = 0;
+      await service.reconcile('work-1');
+      expect(sent).toEqual([]);
+
+      delivered.clear();
+      delivered.add('work-1:done-check:0');
+      await service.reconcile('work-1');
+      expect(sent).toEqual([]);
+
+      service.workContinues.record('work-1', 'Also the footer.', Date.now());
+      await service.reconcile('work-1');
+      expect(sent).toContain('work-1:continued:1');
     } finally {
       db.close();
     }

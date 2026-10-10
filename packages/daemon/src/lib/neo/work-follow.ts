@@ -18,6 +18,7 @@ export function requireNeoWorkFollow(
     goal: boolean;
     ask: Pick<NeoAsk, 'status'> | null;
     readAt: number | null;
+    superseded: boolean;
   },
   now: number
 ): Gate<WorkRef> {
@@ -26,6 +27,7 @@ export function requireNeoWorkFollow(
     work.report !== NEO_WORK_CLOSED_DONE &&
     card.ref &&
     card.goal &&
+    !card.superseded &&
     isNeoAskLive(card.ask) &&
     due &&
     now - work.updatedAt < NEO_WORK_FOLLOW_MAX_AGE_MS

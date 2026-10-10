@@ -684,7 +684,7 @@ export function selectClaudeStartFolder(
   return selectLocalStartFolder(request, deps, 'A Claude Code session needs a folder to work in.');
 }
 
-async function runToExit(
+export async function runToExit(
   deps: ClaudeDesktopAdapterDeps,
   args: string[],
   cwd: string
@@ -704,7 +704,22 @@ async function runToExit(
   }
 }
 
-async function waitUntilLive(
+export function launchInClaudeDesktop(
+  cliSessionId: string,
+  cwd: string,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
+): void {
+  deps
+    .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
+      cwd,
+      stdout: 'ignore',
+      stderr: 'ignore',
+      detached: true,
+    })
+    .exited.catch(() => undefined);
+}
+
+export async function waitUntilLive(
   cliSessionId: string,
   deps: ClaudeDesktopAdapterDeps
 ): Promise<readonly ClaudeLiveSession[] | null> {
@@ -751,14 +766,7 @@ export async function startClaudeSession(
     if (opened.code !== 0) {
       return claudeCliFailure(opened, `claude -p exited with ${opened.code}.`);
     }
-    deps
-      .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
-        cwd,
-        stdout: 'ignore',
-        stderr: 'ignore',
-        detached: true,
-      })
-      .exited.catch(() => undefined);
+    launchInClaudeDesktop(cliSessionId, cwd, deps);
   } catch (error) {
     return reject('not_delivered', error instanceof Error ? error.message : String(error));
   }

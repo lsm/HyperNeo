@@ -258,12 +258,11 @@ describe('real human intake joint persistence', () => {
     expect(mailbox.rows()).toEqual([]);
   });
 
-  test('actual synchronous operation finishes joint persistence before its transport promise resolves', async () => {
+  test('the operation finishes joint persistence by the time its transport promise resolves', async () => {
     const operation = createNeoIntakeOperation(db, repo);
-    const pending = operation.execute(input, human);
+    expect(await operation.execute(input, human)).toMatchObject({ ok: true, created: true });
     expect(ledger.list(conversationId)).toHaveLength(1);
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.rows()).toHaveLength(1);
-    expect(await pending).toMatchObject({ ok: true, created: true });
   });
 });

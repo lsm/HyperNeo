@@ -52,10 +52,14 @@ export function NeoComposer({
   const voiceBusy = voicePhase !== 'idle';
   const recordingVoice = voicePhase === 'recording';
   const listening = recordingVoice || voicePhase === 'working';
+  const attachments = useNeoAttachments(sessionId);
+  const hasAttachments = attachments.files.length > 0 || attachments.reading > 0;
   const voiceStatus = recordingVoice
-    ? coarsePointer
-      ? 'Recording · Tap the arrow to stop and send'
-      : 'Recording · Click the arrow to stop and send'
+    ? hasAttachments
+      ? 'Recording · Stop adds it to your draft; send it with your attachments'
+      : coarsePointer
+        ? 'Recording · Tap the arrow to stop and send'
+        : 'Recording · Click the arrow to stop and send'
     : voicePhase === 'drafting'
       ? 'Transcribing into your draft…'
       : voicePhase === 'sending' && draft.trim()
@@ -73,11 +77,10 @@ export function NeoComposer({
     }
     wasVoiceBusy.current = voiceBusy;
   }, [voiceBusy, coarsePointer, draft]);
-  const sendFromVoice = useRef<(() => void) | null>(null);
-  const registerSendFromVoice = useCallback((send: (() => void) | null) => {
-    sendFromVoice.current = send;
+  const finishVoice = useRef<((intent: 'draft' | 'send') => void) | null>(null);
+  const registerFinishVoice = useCallback((finish: ((intent: 'draft' | 'send') => void) | null) => {
+    finishVoice.current = finish;
   }, []);
-  const attachments = useNeoAttachments(sessionId);
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const sendingText = useRef<string | null>(null);
@@ -95,7 +98,14 @@ export function NeoComposer({
   const connected = connectionState.value === 'connected';
   async function send() {
     if (recordingVoice) {
-      sendFromVoice.current?.();
+      if (!hasAttachments) {
+        finishVoice.current?.('send');
+        return;
+      }
+      finishVoice.current?.('draft');
+      onError(
+        `Added to your draft so it goes out with your attachments. ${coarsePointer ? 'Tap' : 'Click'} send when ready.`
+      );
       return;
     }
     const submitted = draft;
@@ -275,17 +285,23 @@ export function NeoComposer({
               if (!record) return { kind: 'unconfirmed' } as const;
               return sendVoice(record, text);
             }}
-            onSendHandle={registerSendFromVoice}
+            onSendHandle={registerFinishVoice}
             onError={onError}
             onPhase={setVoicePhase}
           />
           <Button
             type="submit"
             size="sm"
-            aria-label={recordingVoice ? 'Stop recording and send the message' : 'Send message'}
+            aria-label={
+              recordingVoice && hasAttachments
+                ? 'Stop recording and add it to your draft'
+                : recordingVoice
+                  ? 'Stop recording and send the message'
+                  : 'Send message'
+            }
             title={
-              recordingVoice && attachments.files.length > 0
-                ? 'Send or remove your attachments first, or use Stop to keep this as a draft'
+              recordingVoice && hasAttachments
+                ? 'Stop and add it to your draft, to send with your attachments'
                 : recordingVoice
                   ? 'Stop recording and send it now'
                   : undefined

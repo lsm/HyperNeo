@@ -3,6 +3,12 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { readContinueBudget } from '../../../../src/lib/neo/driver-work.ts';
+import {
+  neoContinuedReport,
+  requireNeoContinueDelivered,
+  requireNeoWorkContinuable,
+  requireNeoWorkStillContinuable,
+} from '../../../../src/lib/neo/continue-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -27,6 +33,98 @@ describe('readContinueBudget', () => {
     expect(readContinueBudget({ count: 4 }, 0, 11 * HOUR)).toBeNull();
     expect(readContinueBudget({ count: 5 }, 0, HOUR)).toContain('continue_budget_spent');
     expect(readContinueBudget({ count: 1 }, 0, 12 * HOUR)).toContain('continue_budget_spent');
+  });
+});
+
+const continued: NeoWork = Object.freeze({
+  id: 'work-1',
+  requestKey: 'root:k',
+  originSessionId: 'root',
+  originMessageId: 'm1',
+  concernId: null,
+  title: 'Font',
+  instruction: 'Raise the font.',
+  targetSessionId: null,
+  sessionId: null,
+  status: 'reported',
+  report: 'Done.',
+  createdAt: 0,
+  updatedAt: 0,
+});
+const rejected = (reason: string) => ({ reason: { ok: false as const, reason } });
+
+describe('requireNeoWorkContinuable', () => {
+  const evidence = { work: continued, ref, continuedCount: null, inFlight: false };
+
+  test('admits started work that is queued or reported', () => {
+    expect(requireNeoWorkContinuable(evidence, HOUR)).toEqual({ value: { work: continued, ref } });
+  });
+
+  test.each([
+    ['unstarted work', { ...evidence, ref: null }, 'Only started driver work can be continued.'],
+    ['missing work', { ...evidence, work: null }, 'Only started driver work can be continued.'],
+    [
+      'failed work',
+      { ...evidence, work: { ...continued, status: 'failed' as const } },
+      'This work already failed; it cannot be continued.',
+    ],
+    [
+      'an in-flight continue',
+      { ...evidence, inFlight: true },
+      'This work is already being continued; wait for that first.',
+    ],
+  ])('rejects %s', (_name, input, reason) => {
+    expect(requireNeoWorkContinuable(input, HOUR)).toEqual(rejected(reason));
+  });
+
+  test('a spent budget is reported before an in-flight continue', () => {
+    expect(
+      requireNeoWorkContinuable({ ...evidence, continuedCount: 5, inFlight: true }, HOUR)
+    ).toMatchObject({ reason: { reason: expect.stringContaining('continue_budget_spent') } });
+  });
+});
+
+describe('requireNeoContinueDelivered', () => {
+  const target = { work: continued, ref };
+
+  test('a delivered or queued send passes and a failed one rejects with the driver reason', () => {
+    expect(
+      requireNeoContinueDelivered(target, {
+        kind: 'completed',
+        value: { ok: true, value: { delivered: true } },
+      })
+    ).toEqual({ value: { ref } });
+    expect(
+      requireNeoContinueDelivered(target, {
+        kind: 'completed',
+        value: { ok: true, value: { delivered: false } },
+      })
+    ).toEqual({ value: { ref, queued: true } });
+    expect(
+      requireNeoContinueDelivered(target, {
+        kind: 'failed',
+        code: 'execution_failed',
+        message: 'offline',
+      })
+    ).toEqual(rejected('offline'));
+  });
+});
+
+describe('requireNeoWorkStillContinuable', () => {
+  test('work cancelled while the message was in flight stays cancelled', () => {
+    expect(requireNeoWorkStillContinuable({ work: continued })).toEqual({ value: continued });
+    expect(requireNeoWorkStillContinuable({ work: { ...continued, status: 'cancelled' } })).toEqual(
+      rejected('The message was sent, but this work was cancelled meanwhile; it stays cancelled.')
+    );
+  });
+});
+
+describe('neoContinuedReport', () => {
+  test('counts the continue against the limit and keeps the message short', () => {
+    expect(neoContinuedReport(2, 'Also fix the footer.')).toBe(
+      'Continued 2/5: Also fix the footer.'
+    );
+    expect(neoContinuedReport(1, 'x'.repeat(400))).toHaveLength('Continued 1/5: '.length + 300);
   });
 });
 
