@@ -1,8 +1,9 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
-import type { NeoPack, NeoPackBrief, NeoPackFragment } from './types.ts';
+import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './types.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 
@@ -88,6 +89,33 @@ export async function readNeoPackEvidence(
       )
     )
   );
+}
+
+export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPackCheck> {
+  return Object.assign({}, ...[...packs].reverse().map((pack) => pack.checks ?? {}));
+}
+
+export function requireNeoPackTickable(read: {
+  ask: NeoAsk | null;
+}): { value: NeoAsk } | { reason: null } {
+  return read.ask &&
+    isNeoAskLive(read.ask) &&
+    (read.ask.doneItems ?? []).some((item) => item.check && !item.removed && item.state !== 'met')
+    ? { value: read.ask }
+    : { reason: null };
+}
+
+export function planNeoPackTicks(
+  ask: NeoAsk | null,
+  evidence: readonly NeoEvidence[],
+  checks: Record<string, NeoPackCheck>
+): { id: string; evidence: string }[] {
+  if (!ask || !isNeoAskLive(ask) || !evidence.length) return [];
+  return (ask.doneItems ?? []).flatMap((item) => {
+    const check = item.check && !item.removed && item.state !== 'met' ? checks[item.check] : null;
+    const gate = check ? check(item, evidence) : null;
+    return gate && 'value' in gate ? [{ id: item.id, evidence: gate.value }] : [];
+  });
 }
 
 export async function readNeoAskPackEvidence(

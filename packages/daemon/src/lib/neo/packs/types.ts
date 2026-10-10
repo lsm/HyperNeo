@@ -5,7 +5,7 @@ import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
 export type NeoPackCheck = (
   item: NeoAskItem,
   evidence: readonly NeoEvidence[]
-) => { value: true } | { reason: string };
+) => { value: string } | { reason: string };
 
 export interface NeoPackBrief {
   id: string;

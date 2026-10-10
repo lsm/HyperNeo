@@ -1,3 +1,4 @@
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -107,6 +108,34 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
     summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
     blockers: pr.blockers ?? [],
   }));
+}
+
+export function neoAskPrEvidence(
+  works: readonly Pick<NeoWork, 'id' | 'status' | 'report'>[],
+  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[]
+): NeoEvidence[] {
+  const live = works.filter((work) => work.status !== 'cancelled');
+  const tracked = new Set(rows.map((row) => row.workId));
+  const prs = new Map(
+    rows
+      .filter((row) => live.some((work) => work.id === row.workId))
+      .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
+  );
+  const unread = new Set(
+    live.flatMap((work) => extractNeoWorkPrUrls(work.report).filter((url) => !prs.has(url)))
+  );
+  const untracked = live.filter((work) => !tracked.has(work.id));
+  const pending = (key: string, summary: string): NeoEvidence => ({
+    key,
+    state: 'pending',
+    summary,
+    blockers: [],
+  });
+  return [
+    ...neoWorkPrEvidence([...prs.values()]),
+    ...[...unread].map((url) => pending(url, 'not read yet')),
+    ...untracked.map((work) => pending(`work:${work.id}`, 'no pull request tracked')),
+  ];
 }
 
 type StoredPrs = {
