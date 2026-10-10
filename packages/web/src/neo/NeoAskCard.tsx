@@ -65,7 +65,7 @@ export function NeoAskCard({
   onOpen?: (workId: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
-  const [open, setOpen] = useState(view.group === 'attention' && view.scenes.length === 1);
+  const [open, setOpen] = useState(false);
   const { ask } = view;
   const tone =
     view.group === 'attention'
@@ -76,7 +76,6 @@ export function NeoAskCard({
           ? 'ended'
           : 'running';
   const steps = view.scenes.length;
-  const several = steps > 1;
   const single = steps === 1 ? view.scenes[0] : undefined;
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
@@ -141,7 +140,7 @@ export function NeoAskCard({
       {view.summary && (
         <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
       )}
-      {several && (
+      {steps > 0 && (
         <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
           {view.scenes.map((scene) =>
             scene.group === 'attention' ? (
@@ -164,7 +163,7 @@ export function NeoAskCard({
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
             </div>
           )}
-          {single && renderCard?.(single)}
+          {single && single.group !== 'attention' && renderCard?.(single)}
         </div>
       )}
       <div class={neoFooterClass}>

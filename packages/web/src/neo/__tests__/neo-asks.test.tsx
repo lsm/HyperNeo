@@ -234,9 +234,12 @@ describe('neoAskOpenTarget', () => {
 });
 
 describe('NeoAskCard', () => {
-  it('shows progress, and keeps the done definition and its one card behind Details', () => {
+  it('shows progress and names its card, and keeps the done definition and the full card behind Details', () => {
     const view = describeNeoAsk(ask('a', 'waiting', ['a1', 'a2']), scenes.running.slice(0, 1));
     const card = render(<NeoAskCard view={view} renderCard={() => <p>Step card</p>} />);
+    expect(card.container.querySelector('[data-ask-step]')?.textContent).toBe(
+      '●Card a2Handed to HyperNeo'
+    );
     expect(card.getByText('Waiting on checks or review')).toBeTruthy();
     expect(card.getByText('0 of 2 done')).toBeTruthy();
     expect(card.queryByText('Merged to dev with CI green')).toBeNull();
