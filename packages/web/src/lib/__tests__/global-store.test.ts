@@ -801,18 +801,142 @@ describe('GlobalStore - initialize()', () => {
     expect(store.sessions.value).toHaveLength(1);
   });
 
-  it('should stay uninitialized when getHub fails', async () => {
+  it('should surface a getHub failure and allow a retry to succeed', async () => {
     vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('Network error'));
 
-    await store.initialize();
-    await store.refresh();
+    await expect(store.initialize()).rejects.toThrow('Network error');
 
+    expect(store.initializationError.value?.message).toBe('Network error');
+    expect(store.initialized).toBe(false);
     expect(hub.request).not.toHaveBeenCalled();
     expect(hub.onEvent).not.toHaveBeenCalled();
 
     await store.initialize();
 
+    expect(store.initializationError.value).toBeNull();
+    expect(store.initialized).toBe(true);
     expect(subscribeCalls()).toHaveLength(1);
+  });
+});
+
+describe('GlobalStore - single-flight initialization', () => {
+  let store: GlobalStore;
+
+  beforeEach(() => {
+    resetHub();
+    store = new GlobalStore();
+  });
+
+  afterEach(() => {
+    store.destroy();
+  });
+
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: unknown) => void;
+  } {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it('shares one setup between two concurrent initialize() calls', async () => {
+    const gate = deferred<Awaited<ReturnType<typeof connectionManager.getHub>>>();
+    vi.mocked(connectionManager.getHub).mockReturnValueOnce(gate.promise);
+
+    const first = store.initialize();
+    const second = store.initialize();
+
+    gate.resolve(hub as unknown as Awaited<ReturnType<typeof connectionManager.getHub>>);
+    await Promise.all([first, second]);
+
+    expect(connectionManager.getHub).toHaveBeenCalledTimes(1);
+    expect(hub.onEvent).toHaveBeenCalledTimes(5);
+    expect(hub.onConnection).toHaveBeenCalledTimes(1);
+    expect(subscribeCalls()).toHaveLength(1);
+  });
+
+  it('notifies only one failure when concurrent initialize() calls reject', async () => {
+    const gate = deferred<Awaited<ReturnType<typeof connectionManager.getHub>>>();
+    vi.mocked(connectionManager.getHub).mockReturnValueOnce(gate.promise);
+
+    const first = store.initialize();
+    const second = store.initialize();
+    gate.reject(new Error('boom'));
+
+    await expect(first).rejects.toThrow('boom');
+    await expect(second).rejects.toThrow('boom');
+
+    expect(connectionManager.getHub).toHaveBeenCalledTimes(1);
+    expect(hub.onEvent).not.toHaveBeenCalled();
+    expect(store.initializationError.value?.message).toBe('boom');
+  });
+
+  it('rolls back partial resources when the initial snapshot rejects, then retries', async () => {
+    hub.request.mockImplementation((method: string) => {
+      if (method === 'state.global.snapshot') return Promise.reject(new Error('snapshot failed'));
+      return defaultRequest(method);
+    });
+
+    await expect(store.initialize()).rejects.toThrow('snapshot failed');
+
+    expect(hub.unsubscribers).toHaveLength(6);
+    for (const unsub of [...hub.unsubscribers]) expect(unsub).toHaveBeenCalledTimes(1);
+    const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
+    expect(privateStore.cleanupFunctions).toHaveLength(0);
+    expect(store.initialized).toBe(false);
+    expect(hub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+      subscriptionId: 'sessions-list',
+    });
+    expect(store.initializationError.value?.message).toBe('snapshot failed');
+
+    hub.request.mockImplementation(defaultRequest);
+    hub.state.snapshot = { system: createSystemState(), settings: settingsState(createSettings()) };
+
+    await store.initialize();
+
+    expect(store.initializationError.value).toBeNull();
+    expect(store.systemState.value).toEqual(createSystemState());
+    expect(subscribeCalls()).toHaveLength(2);
+  });
+
+  it('retries a failed initialization when refresh() is called', async () => {
+    hub.request.mockImplementation((method: string) => {
+      if (method === 'state.global.snapshot') return Promise.reject(new Error('snapshot failed'));
+      return defaultRequest(method);
+    });
+
+    await expect(store.initialize()).rejects.toThrow('snapshot failed');
+
+    hub.request.mockImplementation(defaultRequest);
+    hub.state.snapshot = { system: createSystemState(), settings: settingsState(createSettings()) };
+
+    await expect(store.refresh()).resolves.toBeUndefined();
+
+    expect(store.initializationError.value).toBeNull();
+    expect(store.initialized).toBe(true);
+    expect(store.systemState.value).toEqual(createSystemState());
+  });
+
+  it('does not resurrect the store when destroyed during pending initialization', async () => {
+    const gate = deferred<Awaited<ReturnType<typeof connectionManager.getHub>>>();
+    vi.mocked(connectionManager.getHub).mockReturnValueOnce(gate.promise);
+
+    const pending = store.initialize();
+    store.destroy();
+    gate.resolve(hub as unknown as Awaited<ReturnType<typeof connectionManager.getHub>>);
+
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(hub.onEvent).not.toHaveBeenCalled();
+    expect(hub.onConnection).not.toHaveBeenCalled();
+    expect(store.initialized).toBe(false);
+    expect(store.initializationError.value).toBeNull();
   });
 });
 

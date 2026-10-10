@@ -58,41 +58,120 @@ export class GlobalStore {
     () => this.systemState.value?.credentialStore || null
   );
 
+  readonly initializationError = signal<Error | null>(null);
+
   private cleanupFunctions: Array<() => void> = [];
 
-  private initialized = false;
+  private initState: 'idle' | 'initializing' | 'ready' | 'failed' = 'idle';
+
+  private initPromise: Promise<void> | null = null;
+
+  private initEpoch = 0;
+
+  get initialized(): boolean {
+    return this.initState === 'ready';
+  }
 
   async initialize(): Promise<void> {
-    if (this.initialized) {
+    if (this.initState === 'ready') {
       return;
     }
 
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    const epoch = this.initEpoch;
+    this.initState = 'initializing';
+    this.initializationError.value = null;
+    const promise = this.runInitialize(epoch);
+    this.initPromise = promise;
+
     try {
-      const hub = await connectionManager.getHub();
+      await promise;
+    } finally {
+      if (this.initPromise === promise) {
+        this.initPromise = null;
+      }
+    }
+  }
 
-      this.subscribeSessions(hub);
+  private async runInitialize(epoch: number): Promise<void> {
+    let hub: Awaited<ReturnType<typeof connectionManager.getHub>>;
+    try {
+      hub = await connectionManager.getHub();
+    } catch (error) {
+      if (this.initEpoch === epoch) {
+        this.recordInitFailure(error);
+      }
+      throw error;
+    }
 
-      const unsubSystem = hub.onEvent<SystemState>(STATE_CHANNELS.GLOBAL_SYSTEM, (state) => {
-        this.systemState.value = state;
-      });
-      this.cleanupFunctions.push(unsubSystem);
+    if (this.initEpoch !== epoch) {
+      return;
+    }
 
-      const unsubSettings = hub.onEvent<SettingsState>(STATE_CHANNELS.GLOBAL_SETTINGS, (state) => {
-        this.settings.value = state.settings || null;
-      });
-      this.cleanupFunctions.push(unsubSettings);
+    this.subscribeSessions(hub);
 
-      this.initialized = true;
+    const unsubSystem = hub.onEvent<SystemState>(STATE_CHANNELS.GLOBAL_SYSTEM, (state) => {
+      this.systemState.value = state;
+    });
+    this.cleanupFunctions.push(unsubSystem);
 
-      const snapshot = await hub.request<GlobalSystemSnapshot>(
+    const unsubSettings = hub.onEvent<SettingsState>(STATE_CHANNELS.GLOBAL_SETTINGS, (state) => {
+      this.settings.value = state.settings || null;
+    });
+    this.cleanupFunctions.push(unsubSettings);
+
+    let snapshot: GlobalSystemSnapshot | null;
+    try {
+      snapshot = await hub.request<GlobalSystemSnapshot>(
         STATE_CHANNELS.GLOBAL_SNAPSHOT,
         GLOBAL_SYSTEM_SNAPSHOT_REQUEST
       );
-      if (snapshot) {
-        this.systemState.value = snapshot.system || null;
-        this.settings.value = snapshot.settings?.settings || null;
+    } catch (error) {
+      if (this.initEpoch !== epoch) {
+        return;
       }
-    } catch {}
+      this.teardownResources(hub);
+      this.recordInitFailure(error);
+      throw error;
+    }
+
+    if (this.initEpoch !== epoch) {
+      return;
+    }
+
+    if (snapshot) {
+      this.systemState.value = snapshot.system || null;
+      this.settings.value = snapshot.settings?.settings || null;
+    }
+
+    this.initState = 'ready';
+  }
+
+  private recordInitFailure(error: unknown): void {
+    this.initState = 'failed';
+    this.initializationError.value = error instanceof Error ? error : new Error(String(error));
+  }
+
+  private teardownResources(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>> | null
+  ): void {
+    if (hub) {
+      hub
+        .request('liveQuery.unsubscribe', {
+          subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+        })
+        .catch(() => {});
+    }
+
+    for (const cleanup of this.cleanupFunctions) {
+      try {
+        cleanup();
+      } catch {}
+    }
+    this.cleanupFunctions = [];
   }
 
   private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
@@ -170,6 +249,11 @@ export class GlobalStore {
   }
 
   async refresh(): Promise<void> {
+    if (this.initState === 'failed') {
+      await this.initialize().catch(() => {});
+      return;
+    }
+
     if (!this.initialized) {
       return;
     }
@@ -197,22 +281,12 @@ export class GlobalStore {
   }
 
   destroy(): void {
-    const hub = connectionManager.getHubIfConnected();
-    if (hub) {
-      hub
-        .request('liveQuery.unsubscribe', {
-          subscriptionId: SESSIONS_SUBSCRIPTION_ID,
-        })
-        .catch(() => {});
-    }
+    this.initEpoch++;
+    this.initPromise = null;
+    this.initState = 'idle';
+    this.initializationError.value = null;
 
-    for (const cleanup of this.cleanupFunctions) {
-      try {
-        cleanup();
-      } catch {}
-    }
-    this.cleanupFunctions = [];
-    this.initialized = false;
+    this.teardownResources(connectionManager.getHubIfConnected());
   }
 
   getSession(sessionId: string): Session | undefined {
