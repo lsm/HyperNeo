@@ -94,6 +94,15 @@ describe('durable conversation ask client', () => {
     expect(presentConversationAskPage({ ok: false }, page)).toEqual({ reason: denied });
   });
 
+  it('keeps a failed delivery and drops any other delivery value', () => {
+    const failed = { ...ask(), delivery: { state: 'failed' } };
+    const odd = { ...ask(2), delivery: { state: 'lost' } };
+    const read = presentConversationAskPage(response([failed, odd]), page);
+    expect(read).toEqual({
+      value: { state: 'ready', items: [failed, ask(2)], nextAfter: 2 },
+    });
+  });
+
   it.each([
     { conversationId: 'legacy-root', after: 0 },
     { conversationId, after: -1 },

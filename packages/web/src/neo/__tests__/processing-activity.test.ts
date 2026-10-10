@@ -323,6 +323,18 @@ describe('neoAwaitingReply', () => {
     expect(neoAwaitingReply([])).toBe(false);
   });
 
+  it('does not wait on an ask Neo never got', () => {
+    const lost = (messageId: string) =>
+      ({
+        kind: 'ask',
+        key: messageId,
+        ask: { askOrigin: { sessionId: 'holder', messageId }, delivery: { state: 'failed' } },
+      }) as never;
+    expect(neoAwaitingReply([lost('A')])).toBe(false);
+    expect(neoAwaitingReply([ask('A'), reply('A'), lost('B')])).toBe(false);
+    expect(neoAwaitingReply([ask('A'), lost('B')])).toBe(true);
+  });
+
   it('keeps waiting for a newer ask when an earlier ask is answered after it', () => {
     expect(neoAwaitingReply([ask('A'), reply('A', true), ask('B'), reply('A')])).toBe(true);
     expect(neoAwaitingReply([ask('A'), ask('B'), reply('A'), reply('B')])).toBe(false);

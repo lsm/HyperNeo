@@ -12,6 +12,7 @@ import { NeoActivity } from './NeoActivity.tsx';
 import { NeoAskCard } from './NeoAskCard.tsx';
 import { NeoComposer } from './NeoComposer.tsx';
 import { NeoConversation } from './NeoConversation.tsx';
+import { publicAskImages, publicAskText } from './NeoPublicConversation.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
 import { NeoWorkCard } from './NeoWorkCard.tsx';
@@ -530,6 +531,18 @@ export function NeoLive() {
                 if (!neo.discardSend(requestId)) return;
                 acceptedCleanups.delete(requestId);
                 writeDraft(failed.text);
+              }}
+              onEditUndelivered={(ask) => {
+                if (!neo.sessionId) return false;
+                const images = publicAskImages(ask.content);
+                if (!restoreNeoImages(neo.sessionId, images)) {
+                  neo.setError(
+                    'Remove some attachments first: a message can carry up to 6 files, 8 MB in all.'
+                  );
+                  return false;
+                }
+                const text = publicAskText(ask.content);
+                writeDraft([draft?.trim(), text].filter(Boolean).join('\n\n'));
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;

@@ -23,6 +23,11 @@ vi.mock('../../lib/connection-manager.ts', () => ({
   },
 }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
+const restoreImages = vi.hoisted(() => vi.fn(() => true));
+vi.mock('../neo-attachments.ts', async (original) => ({
+  ...(await original<typeof import('../neo-attachments.ts')>()),
+  restoreNeoImages: restoreImages,
+}));
 vi.mock('../NeoComposer.tsx', () => ({
   NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
     <textarea
@@ -256,6 +261,38 @@ describe('NeoLive durable conversation activation', () => {
     expect(screen.getByRole('heading', { name: 'Full a-reply' })).toBeTruthy();
     expect(within(publicView()).getAllByRole('img', { name: 'Message accepted' })).toHaveLength(3);
     expect(screen.getByLabelText('Draft')).toBeTruthy();
+  });
+
+  it('restores an undelivered holder-routed photo to the composer Neo shows', async () => {
+    const photo = {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'YWJj' },
+    };
+    asks.value = {
+      ...asks.value,
+      items: [{ ...ask('lost', holder), content: [photo], delivery: { state: 'failed' } }],
+    };
+    render(<NeoLive />);
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    expect(restoreImages).toHaveBeenCalledWith(root, [{ data: 'YWJj', media_type: 'image/png' }]);
+  });
+
+  it('puts an undelivered ask back in the composer after the typed draft', async () => {
+    asks.value = {
+      ...asks.value,
+      items: [
+        {
+          ...ask('lost'),
+          content: [{ type: 'text', text: 'drop it' }],
+          delivery: { state: 'failed' },
+        },
+      ],
+    };
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.input(draft, { target: { value: 'typed' } });
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() => expect(draft.value).toBe('typed\n\ndrop it'));
   });
 
   it('keeps saved rows visible during SDK loading and honest native-control failure', async () => {

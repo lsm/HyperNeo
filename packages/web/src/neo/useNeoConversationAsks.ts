@@ -64,6 +64,25 @@ export function placeAskTail(
   };
 }
 
+export function syncAskDelivery(state: NeoAskState, response: ConversationAskRead): NeoAskState {
+  if (response.state !== 'ready') return state;
+  const read = new Map(
+    response.items.map((item) => [item.requestId, item.delivery?.state === 'failed'] as const)
+  );
+  const stale = (item: NeoConversationAsk) =>
+    read.has(item.requestId) && read.get(item.requestId) !== (item.delivery?.state === 'failed');
+  if (!state.items.some(stale)) return state;
+  return {
+    ...state,
+    items: state.items.map((item) => {
+      if (!stale(item)) return item;
+      if (read.get(item.requestId)) return { ...item, delivery: { state: 'failed' as const } };
+      const { delivery: _, ...delivered } = item;
+      return delivered;
+    }),
+  };
+}
+
 export function prependAskWindow(
   state: NeoAskState,
   page: Extract<ConversationAskRead, { state: 'ready' }>
@@ -129,7 +148,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
       .getHub()
       .then((hub) => {
         if (!current()) return;
-        const update = async () => {
+        const update = async (changed = false) => {
           if (!current()) return;
           if (inFlight) {
             pending = true;
@@ -149,8 +168,17 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           );
           if (!current()) return;
           publish((tail ? applyAskTail : applyAskPage)(before, response));
+          if (changed && !tail && value.status === 'ready' && value.items.length > 0) {
+            const recent = await readNeoConversationAsks(
+              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: LIMIT },
+              async () => hub,
+              current
+            );
+            if (!current()) return;
+            publish(syncAskDelivery(value, recent));
+          }
           inFlight = false;
-          if (pending && value.status === 'ready') void update();
+          if (pending && value.status === 'ready') void update(true);
         };
         const loadEarlier = async () => {
           const oldest = value.items[0]?.sequence;
@@ -166,13 +194,13 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           if (!current()) return;
           publish(applyEarlierAsks(before, response));
           inFlight = false;
-          if (pending && value.status === 'ready') void update();
+          if (pending && value.status === 'ready') void update(true);
         };
         advance.current = () => void update();
         earlier.current = () => void loadEarlier();
-        unsubscribe = hub.onEvent('neo.changed', () => void update());
+        unsubscribe = hub.onEvent('neo.changed', () => void update(true));
         reconnect = hub.onConnection((connection) => {
-          if (connection === 'connected') void update();
+          if (connection === 'connected') void update(true);
         });
         void update();
       })

@@ -109,6 +109,59 @@ describe('durable public conversation presentation', () => {
     expect(container.querySelectorAll('article')).toHaveLength(2);
   });
 
+  it('marks an ask Neo never got and hands it back for editing', () => {
+    const failed = ask({
+      content: [{ type: 'text', text: 'drop it' }, photo],
+      delivery: { state: 'failed' },
+    });
+    const onEditUndelivered = vi.fn();
+    render(
+      <NeoPublicConversation
+        conversation={conversation([failed], [])}
+        onEditUndelivered={onEditUndelivered}
+      />
+    );
+    expect(screen.queryByLabelText('Message accepted')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Not delivered: Neo never got this message.'));
+    expect(screen.getByText('Not delivered: Neo never got this message.')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Edit and send again'));
+    expect(onEditUndelivered).toHaveBeenCalledWith(failed);
+    expect(screen.queryByLabelText('Edit and send again')).toBeNull();
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      'neo:restored-undelivered',
+      JSON.stringify([failed.requestId])
+    );
+    vi.mocked(localStorage.getItem).mockReturnValueOnce(JSON.stringify([failed.requestId]));
+    cleanup();
+    render(
+      <NeoPublicConversation
+        conversation={conversation([failed], [])}
+        onEditUndelivered={onEditUndelivered}
+      />
+    );
+    expect(screen.queryByLabelText('Edit and send again')).toBeNull();
+  });
+
+  it('keeps the edit action when the composer refuses the photos', () => {
+    const failed = ask({ delivery: { state: 'failed' } });
+    render(
+      <NeoPublicConversation
+        conversation={conversation([failed], [])}
+        onEditUndelivered={() => false}
+      />
+    );
+    fireEvent.click(screen.getByLabelText('Edit and send again'));
+    expect(screen.getByLabelText('Edit and send again')).toBeTruthy();
+  });
+
+  it('shows no edit action on a delivered ask', () => {
+    render(
+      <NeoPublicConversation conversation={conversation([ask()], [])} onEditUndelivered={vi.fn()} />
+    );
+    expect(screen.getByLabelText('Message accepted')).toBeTruthy();
+    expect(screen.queryByLabelText('Edit and send again')).toBeNull();
+  });
+
   it('shows the short reply, the full one on demand, and copies the full one without scene labels', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(

@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import type { MessageImage } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
@@ -13,6 +14,15 @@ import type {
   NeoPublicEntry,
 } from './public-conversation.ts';
 
+export function publicAskImages(content: NeoConversationAsk['content']): MessageImage[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block) =>
+    block.type === 'image' && block.source.type === 'base64'
+      ? [{ data: block.source.data, media_type: block.source.media_type }]
+      : []
+  );
+}
+
 export function publicAskText(content: NeoConversationAsk['content']): string {
   if (typeof content === 'string') return content;
   return (Array.isArray(content) ? content : [])
@@ -24,20 +34,46 @@ export function publicAskText(content: NeoConversationAsk['content']): string {
     .join('\n\n');
 }
 
+const NOT_DELIVERED = 'Not delivered: Neo never got this message.';
+const RESTORED_KEY = 'neo:restored-undelivered';
+
+function restoredUndelivered(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(RESTORED_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function markRestored(requestId: string) {
+  try {
+    const ids = [...restoredUndelivered().filter((id) => id !== requestId), requestId];
+    localStorage.setItem(RESTORED_KEY, JSON.stringify(ids.slice(-200)));
+  } catch {}
+}
+
 function PublicEntry({
   entry,
   onOpenScene,
   canOpenScene,
+  onEditUndelivered,
   topics,
 }: {
   entry: NeoPublicEntry;
   topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
+  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
+  const undelivered = ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
+  const [showReason, setShowReason] = useState(false);
+  const [restored, setRestored] = useState(
+    () => !!ask && restoredUndelivered().includes(ask.requestId)
+  );
   const short = publication?.shortText.trim() ?? '';
   const full = publication?.fullText.trim() ?? '';
   const hasDetails = !!short && !!full && full !== short;
@@ -68,7 +104,7 @@ function PublicEntry({
             {time.label}
           </time>
         )}
-        {ask && (
+        {ask && !undelivered && (
           <span
             role="img"
             aria-label="Message accepted"
@@ -78,9 +114,21 @@ function PublicEntry({
             <NeoIcon name="received" class="!h-3.5 !w-3.5" />
           </span>
         )}
+        {undelivered && (
+          <button
+            type="button"
+            aria-label={NOT_DELIVERED}
+            title={NOT_DELIVERED}
+            aria-expanded={showReason}
+            onClick={() => setShowReason((shown) => !shown)}
+            class="inline-flex self-center text-danger"
+          >
+            <NeoIcon name="alert" class="!h-3.5 !w-3.5" />
+          </button>
+        )}
       </div>
       <div
-        class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+        class={`neo-message-bubble rounded-2xl border px-4 py-3 ${ask ? 'rounded-tr-sm' : 'rounded-tl-sm'} ${undelivered ? '!border-danger' : ''}`}
       >
         {images.length > 0 && (
           <div class="mb-3 flex flex-wrap gap-2">
@@ -139,7 +187,25 @@ function PublicEntry({
           </>
         )}
       </div>
+      {undelivered && showReason && (
+        <p class="mt-1 px-1 text-right text-xs text-danger">{NOT_DELIVERED}</p>
+      )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
+        {undelivered && onEditUndelivered && !restored && (
+          <button
+            type="button"
+            aria-label="Edit and send again"
+            title="Edit and send again"
+            onClick={() => {
+              if (onEditUndelivered(ask!) === false) return;
+              markRestored(ask!.requestId);
+              setRestored(true);
+            }}
+            class="rounded-full p-1.5 text-fg-muted hover:bg-fill-soft hover:text-fg"
+          >
+            <NeoIcon name="edit" class="!h-4 !w-4" />
+          </button>
+        )}
         <CopyButton
           text={ask ? text : full || text}
           label={ask ? 'Copy your message' : 'Copy Neo’s message'}
@@ -256,12 +322,14 @@ export function NeoPublicConversation({
   canOpenScene,
   onRetry,
   onLoadEarlier,
+  onEditUndelivered,
   topics,
 }: {
   conversation: Conversation;
   topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
+  onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
 }) {
@@ -300,6 +368,7 @@ export function NeoPublicConversation({
           entry={entry}
           onOpenScene={onOpenScene}
           canOpenScene={canOpenScene}
+          onEditUndelivered={onEditUndelivered}
           topics={topics}
         />
       ))}
