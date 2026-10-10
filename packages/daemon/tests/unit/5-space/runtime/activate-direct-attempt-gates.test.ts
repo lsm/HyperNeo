@@ -4,6 +4,7 @@ import type { DirectTaskAttempt } from '../../../../src/storage/repositories/dir
 import {
   requireActivationCapacity,
   requireAdmittedGeneration,
+  requireKickoffRecorded,
 } from '../../../../src/lib/tasks/activate-direct-attempt';
 
 type Target = Parameters<typeof requireActivationCapacity>[0];
@@ -51,5 +52,13 @@ describe('requireAdmittedGeneration', () => {
     expect(
       requireAdmittedGeneration(target({ admittedGeneration: 3, lifecycleGeneration: null }))
     ).toEqual(unavailable);
+  });
+});
+
+describe('requireKickoffRecorded', () => {
+  test('refuses only a kickoff that was lost', () => {
+    expect(requireKickoffRecorded('none')).toEqual({ value: true });
+    expect(requireKickoffRecorded('recorded')).toEqual({ value: true });
+    expect(requireKickoffRecorded('lost')).toEqual(unavailable);
   });
 });

@@ -4,6 +4,7 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import {
   classifyStopTarget,
+  requireStopProofRecorded,
   requireStopSessionOrProof,
   requireStopWorkerIdentity,
   requireVerifiableStopTarget,
@@ -109,5 +110,13 @@ describe('requireStopWorkerIdentity', () => {
         current
       )
     ).toEqual(unverified);
+  });
+});
+
+describe('requireStopProofRecorded', () => {
+  test('passes the token once its proof is recorded and refuses a lost one', () => {
+    const plan = { token: 'p', record: true };
+    expect(requireStopProofRecorded(plan, 'recorded')).toEqual({ value: 'p' });
+    expect(requireStopProofRecorded(plan, 'lost')).toEqual(unavailable);
   });
 });
