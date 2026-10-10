@@ -645,7 +645,9 @@ export function NeoLive() {
           )}
           <NeoActivity
             key={sceneScope}
-            scenes={scenes?.running ?? []}
+            scenes={(scenes?.running ?? []).filter(
+              (scene) => !askGroups.settledWork.has(scene.ref.id)
+            )}
             concerns={concerns}
             enabled={connected && conversationReady}
             reply={

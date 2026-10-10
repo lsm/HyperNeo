@@ -12,16 +12,18 @@ import type {
   NeoScenePrs,
 } from './neo-scenes.ts';
 import { neoWorkDriverLink } from './work-driver.ts';
-import { neoWorkPrSetback } from './work-prs.ts';
+import { neoWorkPrNumbers, neoWorkPrSetback } from './work-prs.ts';
 
 export type NeoAskView = {
   readonly ask: NeoAsk;
   readonly group: NeoSceneGroup;
   readonly label: string;
+  readonly settled: boolean;
   readonly done: number;
   readonly doneIds: ReadonlySet<string>;
   readonly total: number;
   readonly scenes: readonly NeoScene[];
+  readonly summary: string | null;
 };
 
 export type NeoAskOpenTarget = {
@@ -33,7 +35,10 @@ export type NeoAskOpenTarget = {
 export type NeoAskGroups = {
   readonly asks: Readonly<Record<NeoSceneGroup, readonly NeoAskView[]>>;
   readonly loose: Readonly<Record<NeoSceneGroup, readonly NeoScene[]>>;
+  readonly settledWork: ReadonlySet<string>;
 };
+
+const NEO_ASK_SUMMARY_LIMIT = 160;
 
 const askScenes: Record<NeoAskStatus, { group: NeoSceneGroup; label: string }> = {
   open: { group: 'running', label: 'Working on it' },
@@ -47,6 +52,48 @@ export type NeoAskOutcome = 'achieved' | 'abandoned';
 
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
+export function neoSupersededAttempts(scenes: readonly NeoScene[]): ReadonlySet<string> {
+  const works = scenes.flatMap((scene) => (scene.receipt.kind === 'work' ? [scene.receipt] : []));
+  return new Set(
+    works
+      .filter(
+        (work) =>
+          work.status === 'failed' &&
+          works.some(
+            (later) =>
+              later.id !== work.id &&
+              later.createdAt > work.createdAt &&
+              later.title.trim() === work.title.trim()
+          )
+      )
+      .map((work) => work.id)
+  );
+}
+
+function dropped(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
+  return (
+    scene.receipt.kind === 'work' &&
+    (scene.receipt.status === 'cancelled' || superseded.has(scene.ref.id))
+  );
+}
+
+export function neoAskSummary(
+  ask: NeoAsk,
+  scenes: readonly NeoScene[],
+  prs: NeoScenePrs = new Map()
+): string | null {
+  const outcome = ask.outcome?.trim() || null;
+  if (!outcome || outcome.length <= NEO_ASK_SUMMARY_LIMIT) return outcome;
+  const merged = [
+    ...new Set(scenes.flatMap((scene) => neoWorkPrNumbers(prs.get(scene.ref.id), 'MERGED'))),
+  ];
+  if (ask.status === 'achieved' && merged.length > 0) return `Merged in ${merged.join(', ')}.`;
+  const sentence = outcome.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? outcome;
+  return sentence.length <= NEO_ASK_SUMMARY_LIMIT
+    ? sentence
+    : `${sentence.slice(0, NEO_ASK_SUMMARY_LIMIT - 1).trimEnd()}…`;
+}
+
 export function describeNeoAsk(
   ask: NeoAsk,
   scenes: readonly NeoScene[],
@@ -54,9 +101,11 @@ export function describeNeoAsk(
 ): NeoAskView {
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
-  const needsYou = !settled && scenes.some((scene) => scene.group === 'attention');
+  const superseded = neoSupersededAttempts(scenes);
+  const live = scenes.filter((scene) => !dropped(scene, superseded));
+  const needsYou = !settled && live.some((scene) => scene.group === 'attention');
   const doneIds = new Set(
-    scenes
+    live
       .filter(
         (scene) =>
           scene.group === 'outcomes' &&
@@ -70,10 +119,12 @@ export function describeNeoAsk(
     ask,
     group: needsYou ? 'attention' : truth.group,
     label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : truth.label,
+    settled,
     done: doneIds.size,
     doneIds,
-    total: Math.max(ask.workIds.length, scenes.length),
-    scenes,
+    total: Math.max(ask.workIds.length, scenes.length) - (scenes.length - live.length),
+    scenes: live,
+    summary: neoAskSummary(ask, live, prs),
   };
 }
 
@@ -87,6 +138,8 @@ export function groupNeoAsks(
     all.filter((scene) => scene.ref.kind === 'work').map((scene) => [scene.ref.id, scene])
   );
   const owned = new Set<string>();
+  const settledWork = new Set<string>();
+  const superseded = neoSupersededAttempts(all);
   const views = (asks ?? []).map((ask) => {
     const scenes = ask.workIds.flatMap((id) => {
       const scene = byWork.get(id);
@@ -94,11 +147,15 @@ export function groupNeoAsks(
       owned.add(id);
       return [scene];
     });
-    return describeNeoAsk(ask, scenes, prs);
+    const view = describeNeoAsk(ask, scenes, prs);
+    if (view.settled) for (const scene of scenes) settledWork.add(scene.ref.id);
+    return view;
   });
   const pick = (group: NeoSceneGroup) => views.filter((view) => view.group === group);
   const loose = (group: NeoSceneGroup) =>
-    (groups?.[group] ?? []).filter((scene) => !owned.has(scene.ref.id));
+    (groups?.[group] ?? []).filter(
+      (scene) => !owned.has(scene.ref.id) && !superseded.has(scene.ref.id)
+    );
   return {
     asks: { attention: pick('attention'), running: pick('running'), outcomes: pick('outcomes') },
     loose: {
@@ -106,6 +163,7 @@ export function groupNeoAsks(
       running: loose('running'),
       outcomes: loose('outcomes'),
     },
+    settledWork,
   };
 }
 
