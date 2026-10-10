@@ -24,6 +24,17 @@ export interface OneShotRuntime {
   executable: 'bun' | undefined;
 }
 
+export function oneShotModelIds(
+  provider: string,
+  providerModelId: string,
+  providerEnv: Record<string, string | undefined>
+): Pick<OneShotModelRequest, 'model' | 'thinkingModelId'> {
+  return {
+    model: provider === 'glm' ? 'haiku' : (providerEnv.ANTHROPIC_MODEL ?? providerModelId),
+    thinkingModelId: providerModelId,
+  };
+}
+
 function readOneShotRuntime(): OneShotRuntime {
   return { cliPath: resolveSDKCliPath(), executable: isRunningUnderBun() ? 'bun' : undefined };
 }
