@@ -114,6 +114,7 @@ import {
   neoPacks,
   planNeoPackTicks,
   readNeoPackEvidence,
+  requireNeoPackTickable,
 } from './packs/index.ts';
 import type { NeoPack } from './packs/types.ts';
 import {
@@ -191,7 +192,6 @@ type NeoDoneCheckCard = {
   stored: NeoWorkPrRow | null;
 };
 type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
-type NeoDoneCheckLinked = { works: NeoWork[]; rows: NeoWorkPrRow[] };
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -981,6 +981,13 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
+    for (const ask of this.askRecords.list().filter(isNeoAskLive)) {
+      try {
+        this.runAskPackTicks(ask.id);
+      } catch (error) {
+        this.log.warn('Neo ask ticks pending', error);
+      }
+    }
   }
 
   async refreshDriverWork(): Promise<void> {
@@ -1385,6 +1392,65 @@ export class NeoService {
     }
   }
 
+  private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)
+    .input(['askId'])
+    .pipe((askId: string) => ({ ask: this.askRecords.get(askId) }), 'askId', 'read')
+    .pipe(requireNeoPackTickable, 'read', 'result:ticks')
+    .pipe(
+      (ask: NeoAsk) => ({
+        works: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        rows: this.workPrs.list(ask.workIds),
+      }),
+      'ticks',
+      'linked'
+    )
+    .pipe(
+      (ask: NeoAsk, linked: { works: NeoWork[]; rows: NeoWorkPrRow[] }) => ({
+        ticks: planNeoPackTicks(
+          ask,
+          neoAskPrEvidence(linked.works, linked.rows),
+          neoPackChecks(this.packs())
+        ),
+      }),
+      ['ticks', 'linked'],
+      'plan'
+    )
+    .pipe(
+      (ask: NeoAsk, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => {
+        for (const tick of plan.ticks)
+          this.askRecords.tickItem(
+            ask.id,
+            { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
+            Date.now()
+          );
+        return { ask: plan.ticks.length ? this.askRecords.get(ask.id) : null };
+      },
+      ['ticks', 'plan'],
+      'ticked'
+    )
+    .pipe(
+      (ticked: { ask: NeoAsk | null }) => ({
+        plan: ticked.ask ? planNeoAskTickStatus(ticked.ask) : null,
+      }),
+      'ticked',
+      'status'
+    )
+    .pipe(
+      (
+        ask: NeoAsk,
+        ticked: { ask: NeoAsk | null },
+        status: { plan: ReturnType<typeof planNeoAskTickStatus> | null }
+      ) => ({
+        value:
+          ticked.ask && status.plan
+            ? (writeNeoAskTickStatus(this.askRecords, ticked.ask, status.plan) ?? ticked.ask)
+            : ask,
+      }),
+      ['ticks', 'ticked', 'status'],
+      'result:ticks'
+    )
+    .end('ticks') as (askId: string) => NeoAsk | null;
+
   private deliverDoneCheck(
     work: NeoWork,
     goal: NeoWorkGoal,
@@ -1397,61 +1463,10 @@ export class NeoService {
   private readonly runDoneCheckDelivery = (superpipe({})('neo-done-check-delivery') as PipelineAPI)
     .input(['work', 'goal', 'found', 'options'])
     .pipe(
-      (work: NeoWork, options: NeoDoneCheckDelivery) => {
-        const ids = [...new Set([work.id, ...(options.ask?.workIds ?? [])])];
-        return {
-          works: ids.flatMap((id) => this.repo.getWork(id) ?? []),
-          rows: this.workPrs.list(ids),
-        };
-      },
-      ['work', 'options'],
-      'linked'
-    )
-    .pipe(
-      (options: NeoDoneCheckDelivery, linked: NeoDoneCheckLinked) => ({
-        ticks: planNeoPackTicks(
-          options.ask ?? null,
-          neoAskPrEvidence(linked.works, linked.rows),
-          neoPackChecks(this.packs())
-        ),
+      (options: NeoDoneCheckDelivery) => ({
+        ask: options.ask ? (this.runAskPackTicks(options.ask.id) ?? options.ask) : null,
       }),
-      ['options', 'linked'],
-      'plan'
-    )
-    .pipe(
-      (options: NeoDoneCheckDelivery, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => {
-        const ask = options.ask ?? null;
-        if (ask)
-          for (const tick of plan.ticks)
-            this.askRecords.tickItem(
-              ask.id,
-              { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-              Date.now()
-            );
-        return { ask: ask && plan.ticks.length ? this.askRecords.get(ask.id) : null };
-      },
-      ['options', 'plan'],
-      'ticked'
-    )
-    .pipe(
-      (ticked: { ask: NeoAsk | null }) => ({
-        plan: ticked.ask ? planNeoAskTickStatus(ticked.ask) : null,
-      }),
-      'ticked',
-      'status'
-    )
-    .pipe(
-      (
-        options: NeoDoneCheckDelivery,
-        ticked: { ask: NeoAsk | null },
-        status: { plan: ReturnType<typeof planNeoAskTickStatus> | null }
-      ) => ({
-        ask:
-          ticked.ask && status.plan
-            ? (writeNeoAskTickStatus(this.askRecords, ticked.ask, status.plan) ?? ticked.ask)
-            : (options.ask ?? null),
-      }),
-      ['options', 'ticked', 'status'],
+      'options',
       'current'
     )
     .pipe(
@@ -1460,7 +1475,6 @@ export class NeoService {
         goal: NeoWorkGoal,
         found: NeoDoneCheckFound,
         options: NeoDoneCheckDelivery,
-        linked: NeoDoneCheckLinked,
         current: { ask: NeoAsk | null }
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
@@ -1476,12 +1490,18 @@ export class NeoService {
               stale: options.stale ?? false,
               ready: options.ready ?? false,
               ask: current.ask,
-              cards: current.ask ? projectNeoAskCards(work.id, linked.works, linked.rows) : [],
+              cards: current.ask
+                ? projectNeoAskCards(
+                    work.id,
+                    current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+                    this.workPrs.list(current.ask.workIds)
+                  )
+                : [],
             }
           ),
         };
       },
-      ['work', 'goal', 'found', 'options', 'linked', 'current'],
+      ['work', 'goal', 'found', 'options', 'current'],
       'note'
     )
     .pipe(

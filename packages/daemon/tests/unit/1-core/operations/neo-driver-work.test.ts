@@ -1109,6 +1109,42 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('ticks merged-PR items on recovery for asks told about the merge before', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: { id: 't1' } } });
+    db.createSession(createTestSession('neo:root'));
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-icons',
+        requestKey: 'neo:root:icons',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Icons',
+        ask: 'Regenerate the icons',
+        doneWhen: '- merged to dev',
+        doneSource: 'human',
+      },
+      [{ text: 'Icons merged to dev', check: 'pr_merged' }]
+    )!;
+    service.askRecords.link(opened.id, 'work-1');
+    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
+    service.workPrs.record(
+      'work-1',
+      [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }],
+      Date.now()
+    );
+    try {
+      await service.recover();
+      expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
+        state: 'met',
+        metBy: 'daemon',
+        evidence: `Merged: ${url}`,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test('stays quiet about pull requests of cards with no ask or a settled one', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6013';

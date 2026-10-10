@@ -13,6 +13,7 @@ import {
   neoPacks,
   planNeoPackTicks,
   readNeoPackEvidence,
+  requireNeoPackTickable,
 } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
@@ -175,5 +176,22 @@ describe('planNeoPackTicks', () => {
     ['a card with no ask', null, [merged], []],
   ])('%s', (_label, current, evidence, ticks) => {
     expect(planNeoPackTicks(current, evidence, checks)).toEqual(ticks);
+  });
+});
+
+describe('requireNeoPackTickable', () => {
+  const ask = (items: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
+    ({ id: 'a1', status, doneItems: items }) as NeoAsk;
+  test.each<[string, NeoAsk | null, boolean]>([
+    ['a live ask with an unmet checked item', ask([item()]), true],
+    ['a waiting ask too', ask([item({ state: 'needs_you' })], 'waiting'), true],
+    ['an ask settled meanwhile', ask([item()], 'achieved'), false],
+    ['an ask whose checked items are met', ask([item({ state: 'met' })]), false],
+    ['an ask with only unchecked items', ask([item({ check: null })]), false],
+    ['an ask gone', null, false],
+  ])('%s', (_label, current, tickable) => {
+    expect(requireNeoPackTickable({ ask: current })).toEqual(
+      tickable ? { value: current } : { reason: null }
+    );
   });
 });

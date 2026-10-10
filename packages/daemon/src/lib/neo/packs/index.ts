@@ -40,6 +40,16 @@ export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPack
   return Object.assign({}, ...[...packs].reverse().map((pack) => pack.checks ?? {}));
 }
 
+export function requireNeoPackTickable(read: {
+  ask: NeoAsk | null;
+}): { value: NeoAsk } | { reason: null } {
+  return read.ask &&
+    isNeoAskLive(read.ask) &&
+    (read.ask.doneItems ?? []).some((item) => item.check && !item.removed && item.state !== 'met')
+    ? { value: read.ask }
+    : { reason: null };
+}
+
 export function planNeoPackTicks(
   ask: NeoAsk | null,
   evidence: readonly NeoEvidence[],
