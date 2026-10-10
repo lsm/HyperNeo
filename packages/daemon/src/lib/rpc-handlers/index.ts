@@ -39,6 +39,7 @@ import {
   WORK_FEED_CODEX,
 } from '../drivers/codex-feed.ts';
 import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations } from '../neo/operations.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
@@ -458,7 +459,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus
   );
 
-  setupGitHandlers(deps.messageHub, deps.sessionManager.getWorktreeManager(), deps.sessionManager);
+  setupGitHandlers(
+    deps.messageHub,
+    deps.sessionManager.getWorktreeManager(),
+    deps.sessionManager,
+    (sessionId) => !!neoCoordinatorBinding(deps.db, sessionId)
+  );
 
   const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
