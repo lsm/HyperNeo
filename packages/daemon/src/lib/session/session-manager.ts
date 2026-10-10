@@ -898,7 +898,7 @@ export class SessionManager {
   }
 
   getTotalSessions(): number {
-    return this.db.listSessions({ includeArchived: true }).length;
+    return this.db.countHumanSessions();
   }
 
   private async preserveRootPids(agentSession: AgentSession): Promise<void> {

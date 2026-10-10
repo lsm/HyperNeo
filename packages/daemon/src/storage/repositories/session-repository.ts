@@ -180,6 +180,13 @@ export class SessionRepository {
     return rows.map((r) => this.rowToSession(r));
   }
 
+  countHumanSessions(): number {
+    const row = this.db.prepare(`SELECT total_count FROM session_counters WHERE id = 1`).get() as
+      | { total_count: number }
+      | undefined;
+    return row?.total_count ?? 0;
+  }
+
   clearAcpSessionIds(): void {
     this.db
       .prepare(
