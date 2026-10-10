@@ -137,6 +137,21 @@ describe('durable Neo intake operation', () => {
     expect(routed).toBe(0);
   });
 
+  test('a conversation archived while the ask is being routed rejects it before any write', async () => {
+    const router: NeoRouter = async () => {
+      sessions.set(input.sessionId, { ...target, status: 'archived' as never });
+      return { choice: null };
+    };
+    const registry = createOperationRegistry([
+      createNeoIntakeOperation(db, repo, undefined, router),
+    ]);
+    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
+      value: { ok: false, reason: 'This Neo conversation is no longer available.' },
+    });
+    expect(mailbox.sdkRows()).toEqual([]);
+    expect(mailbox.rows()).toEqual([]);
+  });
+
   test('registers the operation in the real Neo operation family', () => {
     const registry = createOperationRegistry(createNeoOperations({ db, repo } as NeoService));
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');

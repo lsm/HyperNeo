@@ -239,21 +239,22 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
   router: NeoRouter | null
 ) => Promise<NeoRouted>;
 
-const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
-  .input(['input', 'caller', 'db', 'repo', 'notify', 'router'])
-  .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
+type IntakeTarget = { binding: NeoBinding; target: Target; conversationId: string };
+
+const readNeoIntakeTarget = (superpipe({})('neo-intake-target') as PipelineAPI)
+  .input(['input', 'db', 'repo'])
   .pipe(
     (input: IntakeInput, repo: NeoRepository) => repo.getBindingBySession(input.sessionId),
-    ['receipt', 'repo'],
+    ['input', 'repo'],
     'binding'
   )
   .pipe(
     (input: IntakeInput, db: Database) => db.getSession(input.sessionId),
-    ['receipt', 'db'],
+    ['input', 'db'],
     'session'
   )
-  .pipe(requireNeoIntakeTarget, ['receipt', 'binding', 'session'], 'result:receipt')
-  .pipe((session: Target) => session, 'receipt', 'target')
+  .pipe(requireNeoIntakeTarget, ['input', 'binding', 'session'], 'result:admission')
+  .pipe((session: Target) => session, 'admission', 'target')
   .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
   .pipe(
     (root: NeoBinding | null, db: Database) =>
@@ -261,17 +262,53 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['root', 'db'],
     'rootSession'
   )
-  .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:receipt')
-  .pipe(routeNeoAsk, ['input', 'binding', 'db', 'router'], 'route')
+  .pipe(requireNeoIntakeConversation, ['root', 'rootSession'], 'result:admission')
   .pipe(
-    (
-      binding: NeoBinding,
-      target: Target,
-      route: NeoRouted,
-      repo: NeoRepository,
-      db: Database
-    ): Routed => applyNeoRoute(binding, target, route.choice, repo, db, route.fallback),
-    ['binding', 'target', 'route', 'repo', 'db'],
+    (binding: NeoBinding, target: Target, conversationId: string) => ({
+      value: { binding, target, conversationId },
+    }),
+    ['binding', 'target', 'admission'],
+    'result:admission'
+  )
+  .end('admission') as (
+  input: IntakeInput,
+  db: Database,
+  repo: NeoRepository
+) => IntakeTarget | Extract<IntakeResult, { ok: false }>;
+
+export function requireNeoIntakeTargetRead(
+  read: IntakeTarget | Extract<IntakeResult, { ok: false }>
+): Gate<IntakeTarget> {
+  return 'ok' in read ? { reason: read } : { value: read };
+}
+
+const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
+  .input(['input', 'caller', 'db', 'repo', 'notify', 'router'])
+  .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
+  .pipe(
+    (input: IntakeInput, db: Database, repo: NeoRepository) =>
+      requireNeoIntakeTargetRead(readNeoIntakeTarget(input, db, repo)),
+    ['input', 'db', 'repo'],
+    'result:receipt'
+  )
+  .pipe((admitted: IntakeTarget) => admitted, 'receipt', 'admitted')
+  .pipe(
+    (input: IntakeInput, admitted: IntakeTarget, db: Database, router: NeoRouter | null) =>
+      routeNeoAsk(input, admitted.binding, db, router),
+    ['input', 'admitted', 'db', 'router'],
+    'route'
+  )
+  .pipe(
+    (input: IntakeInput, db: Database, repo: NeoRepository) =>
+      requireNeoIntakeTargetRead(readNeoIntakeTarget(input, db, repo)),
+    ['input', 'db', 'repo'],
+    'result:receipt'
+  )
+  .pipe((fresh: IntakeTarget) => fresh, 'receipt', 'fresh')
+  .pipe(
+    (fresh: IntakeTarget, route: NeoRouted, repo: NeoRepository, db: Database): Routed =>
+      applyNeoRoute(fresh.binding, fresh.target, route.choice, repo, db, route.fallback),
+    ['fresh', 'route', 'repo', 'db'],
     'routed'
   )
   .pipe(
@@ -279,9 +316,9 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['input', 'routed'],
     'message'
   )
-  .pipe((conversationId: string) => conversationId, 'receipt', 'conversationId')
+  .pipe((fresh: IntakeTarget) => fresh.conversationId, 'fresh', 'conversationId')
   .pipe((routed: Routed) => routed.target, 'routed', 'routedTarget')
-  .pipe(persistNeoIntake, ['message', 'routedTarget', 'db', 'receipt'], 'receipt')
+  .pipe(persistNeoIntake, ['message', 'routedTarget', 'db', 'conversationId'], 'receipt')
   .pipe(logNeoRoute, ['receipt', 'message', 'routed', 'conversationId', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify'], 'receipt')
   .endAsync('receipt') as (
