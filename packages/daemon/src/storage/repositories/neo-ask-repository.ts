@@ -3,8 +3,7 @@ import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
-  title, ask, done_when AS doneWhen, done_source AS doneSource, status, outcome, evidence,
-  created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
+  title, ask, done_when AS doneWhen, done_source AS doneSource`;
 
 type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
 export type NeoAskInput = Omit<
@@ -36,6 +35,17 @@ export class NeoAskRepository {
       .get();
   }
 
+  private hasPack(): boolean {
+    return (this.db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).some(
+      (column) => column.name === 'pack'
+    );
+  }
+
+  private askColumns(): string {
+    return `${askColumns}${this.hasPack() ? ', pack' : ''}, status, outcome, evidence,
+  created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
+  }
+
   private hasItems(): boolean {
     return !!this.db
       .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_ask_items' AND type = 'table'")
@@ -59,17 +69,18 @@ export class NeoAskRepository {
     })();
     if (created) this.notify();
     const row = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks WHERE request_key = ?`)
+      .prepare(`SELECT ${this.askColumns()} FROM neo_asks WHERE request_key = ?`)
       .get(input.requestKey) as NeoAskRow;
     return this.withWork([row])[0];
   }
 
   private insertAsk(input: NeoAskInput, now: number): boolean {
+    const pack = this.hasPack();
     const result = this.db
       .prepare(`INSERT INTO neo_asks
         (id, request_key, concern_id, origin_session_id, origin_message_id, title, ask,
-          done_when, done_source, status, outcome, created_at, updated_at, settled_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, NULL)
+          done_when, done_source${pack ? ', pack' : ''}, status, outcome, created_at, updated_at, settled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${pack ? ', ?' : ''}, 'open', NULL, ?, ?, NULL)
         ON CONFLICT(request_key) DO NOTHING`)
       .run(
         input.id,
@@ -81,6 +92,7 @@ export class NeoAskRepository {
         input.ask,
         input.doneWhen,
         input.doneSource,
+        ...(pack ? [input.pack ?? null] : []),
         now,
         now
       );
@@ -89,7 +101,7 @@ export class NeoAskRepository {
 
   get(id: string): NeoAsk | null {
     if (!this.hasTable()) return null;
-    const row = this.db.prepare(`SELECT ${askColumns} FROM neo_asks WHERE id = ?`).get(id) as
+    const row = this.db.prepare(`SELECT ${this.askColumns()} FROM neo_asks WHERE id = ?`).get(id) as
       | NeoAskRow
       | undefined;
     return row ? this.withWork([row])[0] : null;
@@ -107,7 +119,9 @@ export class NeoAskRepository {
     if (!this.hasTable()) return [];
     const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
     const rows = this.db
-      .prepare(`SELECT ${askColumns} FROM neo_asks ${condition} ORDER BY updated_at DESC, id`)
+      .prepare(
+        `SELECT ${this.askColumns()} FROM neo_asks ${condition} ORDER BY updated_at DESC, id`
+      )
       .all(...(concernId === undefined ? [] : [concernId])) as NeoAskRow[];
     return this.withWork(rows);
   }
@@ -155,7 +169,7 @@ export class NeoAskRepository {
   reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
     const row = this.db
       .prepare(`UPDATE neo_asks SET status = 'open', outcome = NULL, settled_at = NULL,
-        updated_at = ? WHERE id = ? AND status = ? RETURNING ${askColumns}`)
+        updated_at = ? WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
       .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
@@ -205,7 +219,7 @@ export class NeoAskRepository {
     const now = Date.now();
     const row = this.db
       .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
-        settled_at = ? WHERE id = ? AND status = ? RETURNING ${askColumns}`)
+        settled_at = ? WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
       .get(status, outcome, evidence, now, now, expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
@@ -215,7 +229,7 @@ export class NeoAskRepository {
   waitingFor(sessionId: string): (NeoAsk & { remindedAt: number | null })[] {
     if (!this.hasTable() || !this.hasReminders()) return [];
     const rows = this.db
-      .prepare(`SELECT ${askColumns}, reminded_at AS remindedAt FROM neo_asks
+      .prepare(`SELECT ${this.askColumns()}, reminded_at AS remindedAt FROM neo_asks
         WHERE origin_session_id = ? AND status IN ('waiting', 'blocked') ORDER BY updated_at, id`)
       .all(sessionId) as (NeoAskRow & { remindedAt: number | null })[];
     return this.withWork(rows) as (NeoAsk & { remindedAt: number | null })[];

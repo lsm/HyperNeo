@@ -1,6 +1,7 @@
 import {
   fillPrompt,
   NEO_WORK_DELEGATED,
+  NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_RETURNED_RETRY,
@@ -100,6 +101,7 @@ import {
 } from './saved-rules.ts';
 import { neoFolderPath } from './folder.ts';
 import { neoPrompt } from './prompt.ts';
+import type { NeoPackFragment } from './packs/types.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { neoCoordinatorAllowedTools, neoCoordinatorNativeTools } from './session-policy.ts';
 import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
@@ -111,6 +113,7 @@ import { createCodingPack } from './packs/coding/pack.ts';
 import {
   NEO_DEFAULT_PACKS,
   neoPackChecks,
+  neoPackFragment,
   neoPacks,
   planNeoPackTicks,
   readNeoPackEvidence,
@@ -182,6 +185,7 @@ type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
 type NeoDoneCheckDelivery = {
   stale?: boolean;
   ready?: boolean;
+  remind?: boolean;
   ask?: NeoAsk | null;
   followedAt?: number;
 };
@@ -1089,6 +1093,7 @@ export class NeoService {
             ? {
                 ask: card.ask,
                 ready: true,
+                remind: true,
                 followedAt: told.row?.toldAt ?? work.updatedAt,
               }
             : { stale: !refreshed.read?.read.ok, ask: card.ask }
@@ -1104,6 +1109,27 @@ export class NeoService {
       filePacks: this.filePacks,
       enabled: NEO_DEFAULT_PACKS,
     });
+  }
+
+  installedPacks(): NeoPack[] {
+    const seen = new Set<string>();
+    return [...this.builtinPacks, ...this.filePacks].filter((pack) => {
+      if (seen.has(pack.id)) return false;
+      seen.add(pack.id);
+      return true;
+    });
+  }
+
+  pack(id: string): NeoPack | null {
+    return this.installedPacks().find((pack) => pack.id === id) ?? null;
+  }
+
+  packBriefing(ask: NeoAsk): string | undefined {
+    return ask.pack ? (this.pack(ask.pack)?.instructions(ask) ?? undefined) : undefined;
+  }
+
+  askPackFragment(ask: NeoAsk | null | undefined): NeoPackFragment | null {
+    return neoPackFragment(ask, this.installedPacks());
   }
 
   private recordWorkPrs(
@@ -1380,7 +1406,11 @@ export class NeoService {
               : '',
           })}`
         : '';
-    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, concernId: work.concernId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
+    const packNote = this.askPackFragment(this.askRecords.forWork(work.id));
+    const packLine = packNote
+      ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: packNote.id })}\n${packNote.instructions}\n`
+      : '';
+    const content = `${fillPrompt(NEO_WORK_RETURNED, { retry: retryNote, summary: NEO_WORK_SUMMARY_NOTE })}${packLine}\n${JSON.stringify({ workId: work.id, originSessionId: work.originSessionId, originMessageId: work.originMessageId, concernId: work.concernId, status: work.status, executionSessionId: work.sessionId, title: work.title, report: work.report })}`;
     for (const target of targets) {
       if (this.db.getSession(target))
         await this.deliver(
@@ -1490,6 +1520,7 @@ export class NeoService {
               stale: options.stale ?? false,
               ready: options.ready ?? false,
               ask: current.ask,
+              pack: options.remind ? null : this.askPackFragment(current.ask),
               cards: current.ask
                 ? projectNeoAskCards(
                     work.id,

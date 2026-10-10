@@ -432,6 +432,7 @@ describe('Neo MVP', () => {
       'neo.concern.respond',
       'neo.open',
       'neo.rule.save',
+      'neo.pack.read',
       'neo.snapshot',
       'neo.concern.save',
       'neo.work.propose',

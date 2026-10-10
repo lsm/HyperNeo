@@ -1,9 +1,15 @@
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../evidence.ts';
-import type { NeoPack, NeoPackCheck } from '../types.ts';
+import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import { extractNeoWorkPrUrls, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
+
+export const CODING_PACK_BRIEF: NeoPackBrief = {
+  id: 'coding',
+  describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+};
 
 export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) =>
   evidence.length && evidence.every((item) => item.state === 'done')
@@ -20,9 +26,8 @@ export function createCodingPack(deps: {
   ) => NeoWorkPrRow | null;
 }): NeoPack {
   return {
-    id: 'coding',
-    describe: 'Software work in git repositories: pull requests, CI, review and merging.',
-    instructions: () => null,
+    ...CODING_PACK_BRIEF,
+    instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { pr_merged: codingPrMergedCheck },
     readEvidence: async (work: NeoWork) => {
       const stored = deps.workPrs.get(work.id);

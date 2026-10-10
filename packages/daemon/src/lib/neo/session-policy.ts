@@ -80,9 +80,10 @@ export function restrictNeoQuery(
     options.cwd = neoCoordinatorRuntimePath(sessionId);
     mkdirSync(options.cwd, { recursive: true });
   }
+  const prompt = neoPrompt(concernId);
   options.systemPrompt = {
     type: 'custom',
-    prompt: catchUp ? `${neoPrompt(concernId)}\n\n${catchUp}` : neoPrompt(concernId),
+    prompt: catchUp ? `${prompt}\n\n${catchUp}` : prompt,
     snapshot: false,
   };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
