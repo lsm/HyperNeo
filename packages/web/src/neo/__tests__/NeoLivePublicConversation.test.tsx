@@ -258,6 +258,24 @@ describe('NeoLive durable conversation activation', () => {
     expect(screen.getByLabelText('Draft')).toBeTruthy();
   });
 
+  it('puts an undelivered ask back in the composer after the typed draft', async () => {
+    asks.value = {
+      ...asks.value,
+      items: [
+        {
+          ...ask('lost'),
+          content: [{ type: 'text', text: 'drop it' }],
+          delivery: { state: 'failed' },
+        },
+      ],
+    };
+    render(<NeoLive />);
+    const draft = (await screen.findByLabelText('Draft')) as HTMLTextAreaElement;
+    fireEvent.input(draft, { target: { value: 'typed' } });
+    fireEvent.click(await within(publicView()).findByLabelText('Edit and send again'));
+    await waitFor(() => expect(draft.value).toBe('typed\n\ndrop it'));
+  });
+
   it('keeps saved rows visible during SDK loading and honest native-control failure', async () => {
     store.messagesLoaded.value = false;
     store.loadErrorKind.value = 'not-found';
