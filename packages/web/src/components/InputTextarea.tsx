@@ -8,6 +8,7 @@ import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
 import MentionAutocomplete from './space/MentionAutocomplete.tsx';
 import type { ReferenceSearchResult } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
+import { VoiceDraftPreview } from './voice/VoiceDraftPreview.tsx';
 
 export interface InputTextareaProps {
   content: string;
@@ -41,6 +42,7 @@ export interface InputTextareaProps {
   voiceControl?: ComponentChildren;
   recordingBody?: ComponentChildren;
   recordingCursor?: { start: number; end: number };
+  transcribing?: boolean;
   leadingElement?: ComponentChildren;
   leadingPaddingClass?: string;
   textareaRef?: MutableRef<HTMLTextAreaElement | null>;
@@ -79,6 +81,7 @@ export function InputTextarea({
   voiceControl,
   recordingBody,
   recordingCursor,
+  transcribing = false,
   leadingElement,
   leadingPaddingClass,
   textareaRef: externalTextareaRef,
@@ -89,8 +92,7 @@ export function InputTextarea({
   const textareaRef = externalTextareaRef ?? internalTextareaRef;
   const [isMultiline, setIsMultiline] = useState(false);
   const wasRecording = useRef(false);
-  const recordingDraftRef = useRef<HTMLDivElement>(null);
-  const recordingCaretRef = useRef<HTMLSpanElement>(null);
+  const idleHeight = useRef(40);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -120,6 +122,7 @@ export function InputTextarea({
     textarea.style.minHeight = '40px';
     const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
     textarea.style.height = `${newHeight}px`;
+    idleHeight.current = newHeight;
     setIsMultiline(newHeight > 45);
     onHeightChange?.(newHeight);
   }, [content, onHeightChange, recordingBody]);
@@ -133,13 +136,6 @@ export function InputTextarea({
       textareaRef.current?.focus();
     wasRecording.current = !!recordingBody;
   }, [recordingBody]);
-
-  useLayoutEffect(() => {
-    const draft = recordingDraftRef.current;
-    const caret = recordingCaretRef.current;
-    if (!draft || !caret) return;
-    draft.scrollTop = Math.max(0, caret.offsetTop - draft.clientHeight / 2);
-  }, [recordingBody, content, recordingCursor?.start, recordingCursor?.end]);
 
   useEffect(() => {
     if (!onSelect) return;
@@ -163,12 +159,6 @@ export function InputTextarea({
   const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
   const controlCount = 1 + (showQueue ? 1 : 0) + (voiceControl ? 1 : 0);
   const textareaRightPadding = controlCount >= 3 ? 'pr-36' : controlCount === 2 ? 'pr-24' : 'pr-14';
-
-  const draftStart = Math.min(recordingCursor?.start ?? content.length, content.length);
-  const draftEnd = Math.min(
-    Math.max(recordingCursor?.end ?? draftStart, draftStart),
-    content.length
-  );
 
   const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
 
@@ -246,31 +236,14 @@ export function InputTextarea({
         {recordingBody ? (
           <>
             {hasContent && (
-              <div
-                ref={recordingDraftRef}
-                role="textbox"
-                tabIndex={0}
-                aria-readonly="true"
-                aria-label="Draft, read-only while recording"
-                data-testid="voice-recording-draft"
-                class="relative max-h-[5.125rem] overflow-y-auto whitespace-pre-wrap break-words px-5 pt-2.5 text-base leading-normal text-fg-muted"
-              >
-                {content.slice(0, draftStart)}
-                {draftEnd > draftStart && (
-                  <mark
-                    data-testid="voice-recording-selection"
-                    class="rounded-sm bg-warning/30 text-fg-muted line-through"
-                  >
-                    {content.slice(draftStart, draftEnd)}
-                  </mark>
-                )}
-                <span
-                  ref={recordingCaretRef}
-                  aria-hidden="true"
-                  class="inline-block h-[1.1em] w-0.5 translate-y-[0.15em] bg-danger motion-safe:animate-pulse"
-                />
-                {content.slice(draftEnd)}
-              </div>
+              <VoiceDraftPreview
+                text={content}
+                start={recordingCursor?.start ?? content.length}
+                end={recordingCursor?.end ?? recordingCursor?.start ?? content.length}
+                transcribing={transcribing}
+                heightPx={idleHeight.current}
+                class={`${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-base leading-normal text-fg-muted`}
+              />
             )}
             <div class="flex h-10 w-full items-center gap-2 pl-1.5 pr-1.5">
               <div class="min-w-0 flex-1">{recordingBody}</div>

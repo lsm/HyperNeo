@@ -64,23 +64,43 @@ afterEach(() => {
 
 describe('Neo composer draft while voice is active', () => {
   it.each<VoicePhase>(['recording', 'working', 'drafting', 'sending'])(
-    'keeps the draft visible, muted and read-only during %s, then editable and focused',
+    'shows the draft read-only at the same height during %s, then editable and focused',
     (phase) => {
-      voice.phase = phase;
       const { rerender } = render(composer());
-      expect(textarea().classList.contains('invisible')).toBe(false);
-      expect(textarea().classList.contains('text-fg-muted')).toBe(true);
-      expect(textarea().disabled).toBe(true);
+      const idleHeight = textarea().style.height;
+      expect(idleHeight).not.toBe('');
+
+      voice.phase = phase;
+      rerender(composer());
+      expect(screen.queryByRole('textbox', { name: 'Message Neo' })).toBeNull();
+      const preview = screen.getByTestId('voice-recording-draft');
+      expect(preview.textContent).toContain('Fictional draft about lunch');
+      expect(preview.getAttribute('aria-readonly')).toBe('true');
+      expect(preview.style.height).toBe(idleHeight);
 
       voice.phase = 'idle';
       rerender(composer());
-      expect(textarea().classList.contains('text-fg')).toBe(true);
-      expect(textarea().disabled).toBe(false);
+      expect(textarea().style.height).toBe(idleHeight);
       expect(document.activeElement).toBe(textarea());
       expect(textarea().selectionStart).toBe('Fictional draft about lunch'.length);
       expect(onDraft).not.toHaveBeenCalled();
     }
   );
+
+  it.each<VoicePhase>(['drafting', 'sending'])(
+    'marks where the transcript will appear while %s',
+    (phase) => {
+      voice.phase = phase;
+      render(composer());
+      expect(screen.getByTestId('voice-transcribing-placeholder')).toBeTruthy();
+    }
+  );
+
+  it('shows a caret, not the transcribing placeholder, while recording', () => {
+    voice.phase = 'recording';
+    render(composer());
+    expect(screen.queryByTestId('voice-transcribing-placeholder')).toBeNull();
+  });
 
   it('hands the attach and model controls over to the voice bar while voice is active', () => {
     voice.phase = 'recording';
@@ -96,7 +116,7 @@ describe('Neo composer draft while voice is active', () => {
   it('tells an empty draft where the dictated words will appear', () => {
     voice.phase = 'recording';
     render(composer(''));
-    expect(screen.getByLabelText('Message Neo').getAttribute('placeholder')).toBe(
+    expect(screen.getByTestId('voice-recording-draft').textContent).toBe(
       'Listening. Your words appear here.'
     );
   });

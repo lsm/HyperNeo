@@ -47,6 +47,9 @@ vi.mock('../../hooks', () => ({
     get recordingCursor() {
       return recorderState.cursor;
     },
+    get recordingSessionId() {
+      return recorderState.cursor ? 's1' : null;
+    },
     isStarting: false,
     durationLimitHit: false,
     start: vi.fn(async () => {}),
@@ -227,6 +230,50 @@ describe('MessageInput — recording UI', () => {
 
     expect(container.querySelector('textarea')?.selectionStart).toBe(
       'Fictional draft about lunch'.length
+    );
+  });
+
+  it('keeps the draft height while recording and marks where the transcript will land', async () => {
+    recorderState.isRecording = false;
+    draft.value = 'Fictional draft about lunch';
+    const { container, rerender } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    const idleHeight = container.querySelector('textarea')?.style.height;
+
+    recorderState.isRecording = true;
+    rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    expect(screen.getByTestId('voice-recording-draft').style.height).toBe(idleHeight);
+    expect(screen.queryByTestId('voice-transcribing-placeholder')).toBeNull();
+
+    let finish: (value: { text: string }) => void = () => {};
+    transcribeRequest.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and transcribe' }));
+    await waitFor(() => expect(screen.getByTestId('voice-transcribing-placeholder')).toBeTruthy());
+
+    expect(screen.getByTestId('voice-recording-draft').style.height).toBe(idleHeight);
+    finish({ text: 'hello world' });
+  });
+
+  it('leaves the caret right after a transcript that replaced the selection', async () => {
+    draft.value = 'Deploy to staging tonight';
+    recorderState.cursor = { start: 10, end: 17 };
+    voiceStop.mockImplementationOnce(async () => {
+      recorderState.isRecording = false;
+      return { audioBase64: 'aGk=', mimeType: 'audio/wav', peakLevel: 0.5 };
+    });
+    const { container } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop recording and transcribe' }));
+
+    await waitFor(() => expect(draft.value).toBe('Deploy to hello world tonight'));
+    await waitFor(() =>
+      expect(container.querySelector('textarea')?.selectionStart).toBe(
+        'Deploy to hello world'.length
+      )
     );
   });
 

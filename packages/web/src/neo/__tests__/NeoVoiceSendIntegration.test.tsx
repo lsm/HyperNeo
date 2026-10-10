@@ -220,7 +220,7 @@ describe('NeoComposer and NeoVoice send integration', () => {
     expect(store.records.size).toBe(1);
 
     hubRequest.mockImplementation(defaultHub);
-    fireEvent.click(screen.getByTestId('resend-voice-audio'));
+    fireEvent.click(await screen.findByTestId('resend-voice-audio'));
 
     await waitFor(() => expect(asks()).toHaveLength(2));
     expect(asks()[1]?.[1].input).toEqual(asks()[0]?.[1].input);

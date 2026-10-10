@@ -603,9 +603,11 @@ describe('Neo real composer draft recovery', () => {
       },
     });
     mount();
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
-    );
+    const stop = screen.getByRole('button', {
+      name: 'Stop recording and keep the text as a draft',
+    });
+    voice.recording = false;
+    fireEvent.click(stop);
     await waitFor(() => expect(value()).toBe('Current fictional transcript'));
     await waitFor(() => expect(persisted.get(root)).toBe('Current fictional transcript'));
   });
