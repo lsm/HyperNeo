@@ -307,6 +307,32 @@ export function isNeoCardUnconfirmed(
   return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
 }
 
+export function isNeoReceiptUnconfirmed(
+  card: {
+    ref: boolean;
+    workStatus: string | null;
+    workCreatedAt: number | null;
+    startedAt: number | null;
+    inputBefore: number | null;
+    status: WorkStatus | null;
+  },
+  now: number
+): boolean {
+  return (
+    card.ref &&
+    card.workStatus === 'queued' &&
+    card.workCreatedAt !== null &&
+    card.startedAt === null &&
+    card.status !== null &&
+    card.status !== 'queued' &&
+    isNeoCardUnconfirmed(
+      { createdAt: card.workCreatedAt },
+      card.inputBefore === null ? null : { inputBefore: card.inputBefore },
+      now
+    )
+  );
+}
+
 export function readDriverSendBaseline(
   outcome: OperationOutcome,
   sentAt: number,
