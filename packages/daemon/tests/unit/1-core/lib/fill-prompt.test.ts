@@ -18,6 +18,11 @@ describe('fillPrompt', () => {
     expect(() => fillPrompt('Hi {{userId2}}', {})).toThrow('missing prompt value userId2');
   });
 
+  test('renders a present but undefined value the way a template literal does', () => {
+    const values = { name: undefined } as unknown as Record<string, string>;
+    expect(fillPrompt('Hi {{name}}', values)).toBe(`Hi ${undefined}`);
+  });
+
   test('leaves no placeholder in either Neo system prompt', () => {
     expect(neoPrompt(null)).not.toContain('{{');
     expect(neoPrompt('concern-1')).not.toContain('{{');

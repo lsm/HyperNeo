@@ -31,9 +31,8 @@ const placeholderPattern = /\{\{([A-Za-z0-9_]+)\}\}/g;
 
 export function fillPrompt(template: string, values: Readonly<Record<string, string>>): string {
   return template.replace(placeholderPattern, (_all, key: string) => {
-    const value = values[key];
-    if (value === undefined) throw new Error(`missing prompt value ${key}`);
-    return value;
+    if (!Object.hasOwn(values, key)) throw new Error(`missing prompt value ${key}`);
+    return String(values[key]);
   });
 }
 
