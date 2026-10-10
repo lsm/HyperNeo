@@ -6,6 +6,10 @@ import { FileIndex } from '../../../src/lib/file-index';
 
 const NO_POLL = 9_999_999;
 
+function indexedPaths(idx: FileIndex): string[] {
+  return idx.search('', 10_000).map((e) => e.path);
+}
+
 async function makeWorkspace(): Promise<string> {
   const path = join(
     tmpdir(),
@@ -373,6 +377,374 @@ describe('FileIndex (Unit)', () => {
       expect(idx.search('file2.ts')).toEqual([]);
       expect(idx.search('fileAB.ts').length).toBeGreaterThan(0);
       expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+    });
+
+    it('anchors a leading slash to the workspace root', async () => {
+      await writeFile(join(workspace, '.gitignore'), '/dist/\n');
+      await mkdir(join(workspace, 'dist'), { recursive: true });
+      await writeFile(join(workspace, 'dist', 'bundle.js'), '');
+      await mkdir(join(workspace, 'src', 'dist'), { recursive: true });
+      await writeFile(join(workspace, 'src', 'dist', 'vendored.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('bundle.js')).toEqual([]);
+      expect(idx.search('vendored.js').length).toBeGreaterThan(0);
+    });
+
+    it('treats square brackets as character classes', async () => {
+      await writeFile(join(workspace, '.gitignore'), '[ab].tmp\n');
+      await writeFile(join(workspace, 'a.tmp'), '');
+      await writeFile(join(workspace, 'b.tmp'), '');
+      await writeFile(join(workspace, 'c.tmp'), '');
+      await writeFile(join(workspace, 'ab.tmp'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('a.tmp');
+      expect(paths).not.toContain('b.tmp');
+      expect(paths).toContain('c.tmp');
+      expect(paths).toContain('ab.tmp');
+    });
+
+    it('treats an escaped dash in a character class as a literal', async () => {
+      await writeFile(join(workspace, '.gitignore'), '[a\\-z].tmp\n');
+      await writeFile(join(workspace, 'a.tmp'), '');
+      await writeFile(join(workspace, '-.tmp'), '');
+      await writeFile(join(workspace, 'z.tmp'), '');
+      await writeFile(join(workspace, 'm.tmp'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('a.tmp');
+      expect(paths).not.toContain('-.tmp');
+      expect(paths).not.toContain('z.tmp');
+      expect(paths).toContain('m.tmp');
+    });
+
+    it('treats an escaped closing bracket in a character class as a literal', async () => {
+      await writeFile(join(workspace, '.gitignore'), '[a\\]b].tmp\n');
+      await writeFile(join(workspace, 'a.tmp'), '');
+      await writeFile(join(workspace, 'b.tmp'), '');
+      await writeFile(join(workspace, 'x.tmp'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('a.tmp');
+      expect(paths).not.toContain('b.tmp');
+      expect(paths).toContain('x.tmp');
+    });
+
+    it('supports negated character classes', async () => {
+      await writeFile(join(workspace, '.gitignore'), '[!a].tmp\n');
+      await writeFile(join(workspace, 'a.tmp'), '');
+      await writeFile(join(workspace, 'b.tmp'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('a.tmp').length).toBeGreaterThan(0);
+      expect(idx.search('b.tmp')).toEqual([]);
+    });
+
+    it('treats a bracket without a closing bracket as a literal', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'a[b\n');
+      await writeFile(join(workspace, 'a[b'), '');
+      await writeFile(join(workspace, 'ab'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('a[b')).toEqual([]);
+      expect(idx.search('ab').length).toBeGreaterThan(0);
+    });
+
+    it('matches patterns case-insensitively on a case-insensitive filesystem', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'Build/\n');
+      await mkdir(join(workspace, 'build'), { recursive: true });
+      await writeFile(join(workspace, 'build', 'out.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL, false);
+      await idx.init();
+
+      expect(idx.search('out.js')).toEqual([]);
+    });
+
+    it('matches patterns case-sensitively on a case-sensitive filesystem', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'Build/\n');
+      await mkdir(join(workspace, 'build'), { recursive: true });
+      await writeFile(join(workspace, 'build', 'out.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL, true);
+      await idx.init();
+
+      expect(idx.search('out.js').length).toBeGreaterThan(0);
+    });
+
+    it('skips only the malformed pattern, keeping the rest of the file', async () => {
+      await writeFile(join(workspace, '.gitignore'), '[z-a]\n*.log\n');
+      await writeFile(join(workspace, 'drop.log'), '');
+      await writeFile(join(workspace, 'keep.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('drop.log')).toEqual([]);
+      expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+    });
+
+    it('keeps a non-adjacent ** within a single path segment', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'foo**bar\n');
+      await writeFile(join(workspace, 'foobar'), '');
+      await writeFile(join(workspace, 'foo1zzbar'), '');
+      await mkdir(join(workspace, 'foo', 'x'), { recursive: true });
+      await writeFile(join(workspace, 'foo', 'x', 'bar'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('foobar');
+      expect(paths).not.toContain('foo1zzbar');
+      expect(paths).toContain('foo/x/bar');
+    });
+
+    it('does not let a negated character class match the path separator', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'a[!b]c\n');
+      await writeFile(join(workspace, 'axc'), '');
+      await mkdir(join(workspace, 'a'), { recursive: true });
+      await writeFile(join(workspace, 'a', 'c'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('axc');
+      expect(paths).toContain('a/c');
+    });
+
+    it('honors backslash escapes for leading ! and #', async () => {
+      await writeFile(join(workspace, '.gitignore'), '\\!keep\n\\#hash.ts\n');
+      await writeFile(join(workspace, '!keep'), '');
+      await writeFile(join(workspace, '#hash.ts'), '');
+      await writeFile(join(workspace, 'other.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('!keep');
+      expect(paths).not.toContain('#hash.ts');
+      expect(paths).toContain('other.ts');
+    });
+
+    it('honors backslash-escaped wildcards as literals', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'lit\\*eral\n');
+      await writeFile(join(workspace, 'lit*eral'), '');
+      await writeFile(join(workspace, 'litXeral'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('lit*eral');
+      expect(paths).toContain('litXeral');
+    });
+
+    it('strips a UTF-8 BOM before the first pattern', async () => {
+      await writeFile(join(workspace, '.gitignore'), '\uFEFF*.log\n');
+      await writeFile(join(workspace, 'drop.log'), '');
+      await writeFile(join(workspace, 'keep.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('drop.log');
+      expect(paths).toContain('keep.ts');
+    });
+
+    it('does not let a dir-only negation un-ignore a file inside it', async () => {
+      await writeFile(join(workspace, '.gitignore'), '*.log\n!logs/\n');
+      await mkdir(join(workspace, 'logs'), { recursive: true });
+      await writeFile(join(workspace, 'logs', 'a.log'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(indexedPaths(idx)).not.toContain('logs/a.log');
+    });
+
+    it('keeps files inside a directory ignored by a directory rule', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'build/\n!build/keep.js\n');
+      await mkdir(join(workspace, 'build'), { recursive: true });
+      await writeFile(join(workspace, 'build', 'keep.js'), '');
+      await writeFile(join(workspace, 'build', 'drop.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('build/keep.js');
+      expect(paths).not.toContain('build/drop.js');
+    });
+
+    it('anchors a slash-containing pattern to the workspace root', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'logs/debug.log\n');
+      await mkdir(join(workspace, 'logs'), { recursive: true });
+      await mkdir(join(workspace, 'src', 'logs'), { recursive: true });
+      await writeFile(join(workspace, 'logs', 'debug.log'), '');
+      await writeFile(join(workspace, 'src', 'logs', 'debug.log'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      const paths = indexedPaths(idx);
+      expect(paths).not.toContain('logs/debug.log');
+      expect(paths).toContain('src/logs/debug.log');
+    });
+
+    it('matches slash-less patterns at any depth', async () => {
+      await writeFile(join(workspace, '.gitignore'), '*.log\n');
+      await mkdir(join(workspace, 'logs'), { recursive: true });
+      await mkdir(join(workspace, 'src', 'logs'), { recursive: true });
+      await writeFile(join(workspace, 'root.log'), '');
+      await writeFile(join(workspace, 'logs', 'a.log'), '');
+      await writeFile(join(workspace, 'src', 'logs', 'b.log'), '');
+      await writeFile(join(workspace, 'keep.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('root.log')).toEqual([]);
+      expect(idx.search('a.log')).toEqual([]);
+      expect(idx.search('b.log')).toEqual([]);
+      expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+    });
+
+    it('restricts directory-only patterns to directories', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'dist/\n');
+      await mkdir(join(workspace, 'dist'), { recursive: true });
+      await writeFile(join(workspace, 'dist', 'bundle.js'), '');
+      await writeFile(join(workspace, 'distfile'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('bundle.js')).toEqual([]);
+      expect(idx.search('distfile').length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('nested .gitignore files', () => {
+    it('applies a nested .gitignore to its own directory', async () => {
+      await writeFile(join(workspace, '.gitignore'), '\n');
+      await mkdir(join(workspace, 'sub'), { recursive: true });
+      await writeFile(join(workspace, 'sub', '.gitignore'), '*.log\n');
+      await writeFile(join(workspace, 'sub', 'drop.log'), '');
+      await writeFile(join(workspace, 'sub', 'keep.ts'), '');
+      await writeFile(join(workspace, 'root.log'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('drop.log')).toEqual([]);
+      expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+      expect(idx.search('root.log').length).toBeGreaterThan(0);
+    });
+
+    it('scopes a nested anchored pattern to that directory', async () => {
+      await writeFile(join(workspace, '.gitignore'), '\n');
+      await mkdir(join(workspace, 'sub'), { recursive: true });
+      await writeFile(join(workspace, 'sub', '.gitignore'), '/drop/\n');
+      await mkdir(join(workspace, 'sub', 'drop'), { recursive: true });
+      await writeFile(join(workspace, 'sub', 'drop', 'x.js'), '');
+      await mkdir(join(workspace, 'drop'), { recursive: true });
+      await writeFile(join(workspace, 'drop', 'y.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('x.js')).toEqual([]);
+      expect(idx.search('y.js').length).toBeGreaterThan(0);
+    });
+
+    it('lets a nested negation override a parent ignore', async () => {
+      await writeFile(join(workspace, '.gitignore'), '*.log\n');
+      await mkdir(join(workspace, 'sub'), { recursive: true });
+      await writeFile(join(workspace, 'sub', '.gitignore'), '!keep.log\n');
+      await writeFile(join(workspace, 'sub', 'keep.log'), '');
+      await writeFile(join(workspace, 'sub', 'drop.log'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('keep.log').length).toBeGreaterThan(0);
+      expect(idx.search('drop.log')).toEqual([]);
+    });
+
+    it('does not descend into an ignored parent directory', async () => {
+      await writeFile(join(workspace, '.gitignore'), 'node_modules/\n');
+      await mkdir(join(workspace, 'node_modules', 'pkg'), { recursive: true });
+      await writeFile(join(workspace, 'node_modules', '.gitignore'), '!important.js\n');
+      await writeFile(join(workspace, 'node_modules', 'pkg', 'index.js'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+
+      expect(idx.search('index.js')).toEqual([]);
+    });
+  });
+
+  describe('ignore file refresh semantics', () => {
+    it('applies a .gitignore edited after init on refresh', async () => {
+      await writeFile(join(workspace, '.gitignore'), '');
+      await writeFile(join(workspace, 'keep.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+      expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+
+      await writeFile(join(workspace, '.gitignore'), '*.ts\n');
+      await idx.refresh();
+
+      expect(idx.search('keep.ts')).toEqual([]);
+    });
+
+    it('drops a .gitignore removed after init on refresh', async () => {
+      await writeFile(join(workspace, '.gitignore'), '*.ts\n');
+      await writeFile(join(workspace, 'keep.ts'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+      expect(idx.search('keep.ts')).toEqual([]);
+
+      await rm(join(workspace, '.gitignore'));
+      await idx.refresh();
+
+      expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+    });
+
+    it('picks up a nested .gitignore created after init on refresh', async () => {
+      await writeFile(join(workspace, '.gitignore'), '');
+      await mkdir(join(workspace, 'sub'), { recursive: true });
+      await writeFile(join(workspace, 'sub', 'drop.log'), '');
+
+      idx = new FileIndex(workspace, NO_POLL);
+      await idx.init();
+      expect(idx.search('drop.log').length).toBeGreaterThan(0);
+
+      await writeFile(join(workspace, 'sub', '.gitignore'), '*.log\n');
+      await idx.refresh();
+
+      expect(idx.search('drop.log')).toEqual([]);
     });
   });
 

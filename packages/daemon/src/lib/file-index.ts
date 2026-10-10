@@ -1,6 +1,6 @@
 import { join, normalize, relative } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 
 export interface FileIndexEntry {
   path: string;
@@ -9,83 +9,207 @@ export interface FileIndexEntry {
 }
 
 interface IgnorePattern {
-  pattern: string;
+  regex: RegExp;
   negated: boolean;
   dirOnly: boolean;
+  baseDir: string;
 }
 
 const BUILTIN_IGNORE_NAMES = new Set(['.git', 'node_modules', '.DS_Store']);
 
-function parseGitignoreLines(lines: string[]): IgnorePattern[] {
-  const patterns: IgnorePattern[] = [];
+const UTF8_BOM = '\uFEFF';
 
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    let pattern = line;
-    const negated = pattern.startsWith('!');
-    if (negated) pattern = pattern.slice(1);
-
-    const dirOnly = pattern.endsWith('/');
-    if (dirOnly) pattern = pattern.slice(0, -1);
-
-    if (!pattern) continue;
-
-    patterns.push({ pattern, negated, dirOnly });
+function detectCaseSensitiveFs(workspacePath: string): boolean {
+  const flipped = workspacePath.replace(/[a-zA-Z]/, (c) =>
+    c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()
+  );
+  if (flipped === workspacePath) return true;
+  try {
+    return statSync(flipped).ino !== statSync(workspacePath).ino;
+  } catch {
+    return true;
   }
-
-  return patterns;
 }
 
-function buildGlobRegex(pattern: string): string {
+function toPosix(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
+function escapeRegexChar(ch: string): string {
+  return /[.+^${}()|\\]/.test(ch) ? `\\${ch}` : ch;
+}
+
+function escapeRegexLiteral(ch: string): string {
+  return /[.*+?^${}()|[\]\\/]/.test(ch) ? `\\${ch}` : ch;
+}
+
+function findCharClassEnd(pattern: string, start: number): number {
+  let i = start + 1;
+  if (pattern[i] === '!' || pattern[i] === '^') i++;
+  if (pattern[i] === ']') i++;
+  for (; i < pattern.length; i++) {
+    if (pattern[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (pattern[i] === ']') return i;
+  }
+  return -1;
+}
+
+function translateCharClass(source: string): string {
+  const end = source.length - 1;
+  let i = 1;
+  let negated = false;
+  if (source[i] === '!' || source[i] === '^') {
+    negated = true;
+    i++;
+  }
+
+  let inner = '';
+  for (; i < end; i++) {
+    const ch = source[i];
+    if (ch === '\\' && i + 1 < end) {
+      const next = source[i + 1];
+      i++;
+      if (next === '/') continue;
+      inner += /[\\\]^-]/.test(next) ? `\\${next}` : next;
+    } else if (ch === '/') {
+      continue;
+    } else {
+      inner += /[\\\]^]/.test(ch) ? `\\${ch}` : ch;
+    }
+  }
+
+  if (negated) return `[^${inner}/]`;
+  return `[${inner}]`;
+}
+
+function globToRegexSource(pattern: string): string {
   let rx = '';
   let i = 0;
+  let atSegmentStart = true;
   while (i < pattern.length) {
     const ch = pattern[i];
-    if (ch === '*' && pattern[i + 1] === '*') {
-      i += 2;
-      if (pattern[i] === '/') {
-        i++;
-        rx += '(?:.*/)?';
+    if (ch === '*') {
+      let j = i;
+      while (pattern[j] === '*') j++;
+      const doubles = j - i >= 2;
+      const nextIsSlash = pattern[j] === '/';
+      const nextIsEnd = j >= pattern.length;
+      if (doubles && atSegmentStart && (nextIsSlash || nextIsEnd)) {
+        if (nextIsSlash) {
+          rx += '(?:.*/)?';
+          i = j + 1;
+          atSegmentStart = true;
+        } else {
+          rx += '.*';
+          i = j;
+          atSegmentStart = false;
+        }
       } else {
-        rx += '.*';
+        rx += '[^/]*';
+        i = j;
+        atSegmentStart = false;
       }
-    } else if (ch === '*') {
-      rx += '[^/]*';
-      i++;
     } else if (ch === '?') {
       rx += '[^/]';
       i++;
+      atSegmentStart = false;
+    } else if (ch === '[') {
+      const end = findCharClassEnd(pattern, i);
+      if (end === -1) {
+        rx += '\\[';
+        i++;
+      } else {
+        rx += translateCharClass(pattern.slice(i, end + 1));
+        i = end + 1;
+      }
+      atSegmentStart = false;
+    } else if (ch === '\\') {
+      const next = pattern[i + 1];
+      rx += next === undefined ? '\\\\' : escapeRegexLiteral(next);
+      i += next === undefined ? 1 : 2;
+      atSegmentStart = false;
     } else {
-      let esc = ch;
-      if (ch === '.') esc = '\\.';
-      else if (ch === '+') esc = '\\+';
-      else if (ch === '^') esc = '\\^';
-      else if (ch === '$') esc = '\\$';
-      else if (ch === '{') esc = '\\{';
-      else if (ch === '}') esc = '\\}';
-      else if (ch === '(') esc = '\\(';
-      else if (ch === ')') esc = '\\)';
-      else if (ch === '|') esc = '\\|';
-      else if (ch === '[') esc = '\\[';
-      else if (ch === ']') esc = '\\]';
-      else if (ch === '\\') esc = '\\\\';
-      rx += esc;
+      rx += escapeRegexChar(ch);
       i++;
+      atSegmentStart = ch === '/';
     }
   }
   return rx;
 }
 
-function matchSegment(pattern: string, segment: string): boolean {
-  const rx = new RegExp('^' + buildGlobRegex(pattern) + '$', 'i');
-  return rx.test(segment);
+function stripTrailingWhitespace(line: string): string {
+  let end = line.length;
+  if (end > 0 && line[end - 1] === '\r') end--;
+  while (end > 0) {
+    const ch = line[end - 1];
+    if (ch !== ' ' && ch !== '\t') break;
+    let backslashes = 0;
+    let k = end - 2;
+    while (k >= 0 && line[k] === '\\') {
+      backslashes++;
+      k--;
+    }
+    if (backslashes % 2 === 1) break;
+    end--;
+  }
+  return line.slice(0, end);
 }
 
-function matchFullPath(pattern: string, relPath: string): boolean {
-  const rx = new RegExp('^' + buildGlobRegex(pattern) + '$', 'i');
-  return rx.test(relPath);
+function parseGitignoreLines(
+  lines: string[],
+  baseDir: string,
+  caseSensitive: boolean
+): IgnorePattern[] {
+  const patterns: IgnorePattern[] = [];
+
+  for (const rawLine of lines) {
+    const stripped = rawLine.startsWith(UTF8_BOM) ? rawLine.slice(1) : rawLine;
+    const line = stripTrailingWhitespace(stripped);
+    if (!line || line.startsWith('#')) continue;
+
+    let body = line;
+    const negated = body.startsWith('!');
+    if (negated) body = body.slice(1);
+
+    const dirOnly = body.endsWith('/');
+    if (dirOnly) body = body.slice(0, -1);
+
+    if (!body) continue;
+
+    const anchored = body.startsWith('/') || body.includes('/');
+    if (body.startsWith('/')) body = body.slice(1);
+    if (!body) continue;
+
+    const source = globToRegexSource(body);
+    let regex: RegExp;
+    try {
+      regex = new RegExp(
+        anchored ? `^${source}$` : `^(?:.*/)?${source}$`,
+        caseSensitive ? '' : 'i'
+      );
+    } catch {
+      continue;
+    }
+
+    patterns.push({ regex, negated, dirOnly, baseDir });
+  }
+
+  return patterns;
+}
+
+function relativeToBase(relPath: string, baseDir: string): string | null {
+  if (baseDir === '') return relPath;
+  if (relPath === baseDir) return null;
+  if (relPath.startsWith(`${baseDir}/`)) return relPath.slice(baseDir.length + 1);
+  return null;
+}
+
+function patternMatches(pattern: IgnorePattern, relToBase: string, isDirectory: boolean): boolean {
+  if (!pattern.regex.test(relToBase)) return false;
+  return !pattern.dirOnly || isDirectory;
 }
 
 function shouldIgnore(relPath: string, isDirectory: boolean, patterns: IgnorePattern[]): boolean {
@@ -97,20 +221,21 @@ function shouldIgnore(relPath: string, isDirectory: boolean, patterns: IgnorePat
 
   let ignored = false;
 
-  for (const { pattern, negated, dirOnly } of patterns) {
-    if (dirOnly && !isDirectory) continue;
+  for (let i = 1; i <= segments.length; i++) {
+    const prefix = segments.slice(0, i).join('/');
+    const isLast = i === segments.length;
+    const prefixIsDir = isLast ? isDirectory : true;
 
-    let matches = false;
+    for (const pattern of patterns) {
+      const relToBase = relativeToBase(prefix, pattern.baseDir);
+      if (relToBase === null) continue;
 
-    if (pattern.includes('/')) {
-      matches = matchFullPath(pattern, relPath);
-    } else {
-      matches = segments.some((seg) => matchSegment(pattern, seg));
+      if (patternMatches(pattern, relToBase, prefixIsDir)) {
+        ignored = !pattern.negated;
+      }
     }
 
-    if (matches) {
-      ignored = !negated;
-    }
+    if (!isLast && ignored) return true;
   }
 
   return ignored;
@@ -150,32 +275,41 @@ export class FileIndex {
   private ready = false;
   private scanning = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private ignorePatterns: IgnorePattern[] = [];
   private extraPatterns: IgnorePattern[] = [];
   private readonly pollInterval: number;
+  private readonly caseSensitive: boolean;
 
   constructor(
     private readonly workspacePath: string | undefined,
-    pollIntervalMs?: number
+    pollIntervalMs?: number,
+    caseSensitive?: boolean
   ) {
     this.pollInterval =
       pollIntervalMs ?? parseInt(process.env.HYPERNEO_FILE_INDEX_POLL_MS ?? '60000', 10);
+    this.caseSensitive =
+      caseSensitive ?? (workspacePath ? detectCaseSensitiveFs(workspacePath) : true);
   }
 
-  private async loadGitignore(): Promise<void> {
-    const gitignorePath = join(this.workspacePath!, '.gitignore');
+  private async readDirPatterns(absDir: string, relDir: string): Promise<IgnorePattern[]> {
+    const gitignorePath = join(absDir, '.gitignore');
+    if (!existsSync(gitignorePath)) return [];
     try {
-      if (!existsSync(gitignorePath)) return;
       const content = await readFile(gitignorePath, 'utf-8');
-      this.ignorePatterns = parseGitignoreLines(content.split('\n'));
-    } catch {}
+      return parseGitignoreLines(content.split('\n'), relDir, this.caseSensitive);
+    } catch {
+      return [];
+    }
   }
 
-  private get allPatterns(): IgnorePattern[] {
-    return [...this.ignorePatterns, ...this.extraPatterns];
-  }
+  private async scanDirectory(
+    absDir: string,
+    relDir: string,
+    inherited: IgnorePattern[],
+    seen: Set<string>
+  ): Promise<void> {
+    const local = await this.readDirPatterns(absDir, relDir);
+    const patterns = local.length === 0 ? inherited : [...inherited, ...local];
 
-  private async scanDirectory(absDir: string): Promise<void> {
     let entries;
     try {
       entries = await readdir(absDir, { withFileTypes: true });
@@ -183,9 +317,11 @@ export class FileIndex {
       return;
     }
 
+    const active = [...patterns, ...this.extraPatterns];
+
     for (const entry of entries) {
       const absPath = join(absDir, entry.name);
-      const relPath = relative(this.workspacePath!, absPath);
+      const relPath = toPosix(relative(this.workspacePath!, absPath));
 
       if (!isSafePath(this.workspacePath!, relPath)) continue;
 
@@ -193,46 +329,7 @@ export class FileIndex {
         try {
           const targetStat = await stat(absPath);
           const symType = targetStat.isDirectory() ? 'folder' : 'file';
-          if (shouldIgnore(relPath, symType === 'folder', this.allPatterns)) continue;
-          this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
-        } catch {}
-        continue;
-      }
-
-      const isDir = entry.isDirectory();
-      if (shouldIgnore(relPath, isDir, this.allPatterns)) continue;
-
-      this.cache.set(relPath, {
-        path: relPath,
-        name: entry.name,
-        type: isDir ? 'folder' : 'file',
-      });
-
-      if (isDir) {
-        await this.scanDirectory(absPath);
-      }
-    }
-  }
-
-  private async refreshDirectory(absDir: string, seen: Set<string>): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(absDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const absPath = join(absDir, entry.name);
-      const relPath = relative(this.workspacePath!, absPath);
-
-      if (!isSafePath(this.workspacePath!, relPath)) continue;
-
-      if (entry.isSymbolicLink()) {
-        try {
-          const targetStat = await stat(absPath);
-          const symType = targetStat.isDirectory() ? 'folder' : 'file';
-          if (shouldIgnore(relPath, symType === 'folder', this.allPatterns)) continue;
+          if (shouldIgnore(relPath, symType === 'folder', active)) continue;
           seen.add(relPath);
           if (!this.cache.has(relPath)) {
             this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
@@ -242,7 +339,7 @@ export class FileIndex {
       }
 
       const isDir = entry.isDirectory();
-      if (shouldIgnore(relPath, isDir, this.allPatterns)) continue;
+      if (shouldIgnore(relPath, isDir, active)) continue;
 
       seen.add(relPath);
 
@@ -255,7 +352,7 @@ export class FileIndex {
       }
 
       if (isDir) {
-        await this.refreshDirectory(absPath, seen);
+        await this.scanDirectory(absPath, relPath, patterns, seen);
       }
     }
   }
@@ -267,16 +364,10 @@ export class FileIndex {
 
     try {
       const seen = new Set<string>();
-      await this.refreshDirectory(this.workspacePath!, seen);
+      await this.scanDirectory(this.workspacePath!, '', [], seen);
 
       for (const key of this.cache.keys()) {
         if (!seen.has(key)) {
-          this.cache.delete(key);
-        }
-      }
-
-      for (const [key, entry] of this.cache) {
-        if (shouldIgnore(entry.path, entry.type === 'folder', this.allPatterns)) {
           this.cache.delete(key);
         }
       }
@@ -289,8 +380,7 @@ export class FileIndex {
     if (this.workspacePath === undefined) {
       return;
     }
-    await this.loadGitignore();
-    await this.scanDirectory(this.workspacePath!);
+    await this.runRefresh();
     this.ready = true;
 
     this.pollTimer = setInterval(() => {
@@ -345,9 +435,9 @@ export class FileIndex {
   }
 
   setIgnorePatterns(patterns: string[]): void {
-    this.extraPatterns = parseGitignoreLines(patterns);
+    this.extraPatterns = parseGitignoreLines(patterns, '', this.caseSensitive);
     for (const [key, entry] of this.cache) {
-      if (shouldIgnore(entry.path, entry.type === 'folder', this.allPatterns)) {
+      if (shouldIgnore(entry.path, entry.type === 'folder', this.extraPatterns)) {
         this.cache.delete(key);
       }
     }
