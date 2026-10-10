@@ -31,6 +31,7 @@ import {
   workEntryTime,
   workInput,
 } from './work-messages.ts';
+import { matchChatsBy } from './match-chats.ts';
 import { readTailLines } from './transcript-tail.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
@@ -207,11 +208,7 @@ function codexStatus(thread: CodexThreadRow, now: number): WorkStatus {
 export function matchCodexThreads(
   chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  return new Map(
-    chats.flatMap((chat) =>
-      chat.kind === 'codex' && chat.sessionId ? [[chat.sessionId, chat] as const] : []
-    )
-  );
+  return matchChatsBy(chats, (chat) => (chat.kind === 'codex' ? chat.sessionId : null));
 }
 
 export function buildCodexGroups(

@@ -20,6 +20,7 @@ import type {
 } from './types.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
+import { matchChatsBy } from './match-chats.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
@@ -197,11 +198,7 @@ export function loadHyperneoSessions(
 export function matchHyperneoSessions(
   chats: readonly WorkChatMatch[]
 ): ReadonlyMap<string, WorkChatMatch> {
-  return new Map(
-    chats.flatMap((chat) =>
-      chat.taskId === null && chat.sessionId ? [[chat.sessionId, chat] as const] : []
-    )
-  );
+  return matchChatsBy(chats, (chat) => (chat.taskId === null ? chat.sessionId : null));
 }
 
 export function skipSpaceQuery(query: FindQuery): { value: FindQuery } | { reason: PlaceGroup[] } {
