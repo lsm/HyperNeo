@@ -634,7 +634,7 @@ export class NeoService {
         parentSessionId: rootSession ? root : undefined,
         title: concern ? `Neo · ${concern.title}` : 'Neo',
         workspacePath: neoFolderPath(),
-        worktreeMode: 'direct',
+        detectGit: false,
         config: {
           systemPrompt: neoPrompt(concernId),
           sdkToolsPreset: neoCoordinatorNativeTools(concernId),

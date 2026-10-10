@@ -208,7 +208,7 @@ describe('Neo MVP', () => {
       sdkToolsPreset: neoCoordinatorNativeTools(null),
       allowedTools: neoCoordinatorAllowedTools(null),
     });
-    expect(created[0]).toMatchObject({ workspacePath: neoFolderPath(), worktreeMode: 'direct' });
+    expect(created[0]).toMatchObject({ workspacePath: neoFolderPath(), detectGit: false });
     expect(service.repo.listConcerns()).toEqual([]);
     expect(await service.open(null)).toBe(ids[0]);
     expect(neoCoordinatorBinding(db, ids[0])?.kind).toBe('neo');

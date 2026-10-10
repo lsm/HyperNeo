@@ -271,6 +271,7 @@ describe('SessionLifecycle.create', () => {
   let lifecycle: SessionLifecycle;
   let createdSessions: Session[];
   let mockDb: Database;
+  let detectGitSupport: ReturnType<typeof mock>;
 
   beforeEach(() => {
     createdSessions = [];
@@ -290,8 +291,9 @@ describe('SessionLifecycle.create', () => {
       })),
     } as unknown as Database;
 
+    detectGitSupport = mock(async () => ({ isGitRepo: false, isBare: false }));
     const mockWorktreeManager = {
-      detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
+      detectGitSupport,
       createWorktree: mock(async () => null),
       removeWorktree: mock(async () => {}),
       getCurrentBranch: mock(async () => null),
@@ -383,6 +385,18 @@ describe('SessionLifecycle.create', () => {
     expect(stored.maxTokens).toBe(8192);
     expect(stored.sandbox).toEqual({ enabled: true });
     expect(stored.settingSources).toEqual(['user']);
+  });
+
+  it('files a session under a folder without looking for a repository when asked', async () => {
+    await lifecycle.create({ workspacePath: '/home/me/.hyperneo/Neo', detectGit: false });
+
+    expect(detectGitSupport).not.toHaveBeenCalled();
+    expect(createdSessions[0]).toMatchObject({
+      workspacePath: '/home/me/.hyperneo/Neo',
+      status: 'active',
+      gitBranch: undefined,
+      worktree: undefined,
+    });
   });
 
   it('refuses a host process control field and creates no session', async () => {

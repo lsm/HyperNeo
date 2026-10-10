@@ -60,6 +60,7 @@ export interface CreateSessionParams {
   config?: Partial<Session['config']>;
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
+  detectGit?: false;
   title?: string;
   sessionId?: string;
   lobbyId?: string;
@@ -111,7 +112,7 @@ export class SessionLifecycle {
 
     let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
     let isGitRepo = false;
-    if (baseWorkspacePath !== undefined) {
+    if (baseWorkspacePath !== undefined && params.detectGit !== false) {
       gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
       isGitRepo = gitSupport.isGitRepo;
     }
@@ -128,6 +129,7 @@ export class SessionLifecycle {
 
     const shouldCreateWorktree =
       baseWorkspacePath !== undefined &&
+      params.detectGit !== false &&
       supportsWorktreeChoice &&
       !this.config.disableWorktrees &&
       (!isGitRepo || explicitWorktreeMode === 'worktree');
