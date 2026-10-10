@@ -43,6 +43,7 @@ describe('SessionManager', () => {
         settingSources: ['user', 'project', 'local'],
       })),
       listSessions: mock(() => []),
+      countHumanSessions: mock(() => 0),
       getGlobalToolsConfig: mock(() => ({
         systemPrompt: {
           claudeCodePreset: { allowed: true, defaultEnabled: true },
@@ -1845,13 +1846,11 @@ describe('SessionManager', () => {
   });
 
   describe('getTotalSessions', () => {
-    it('should return count from database', () => {
-      (mockDb.listSessions as ReturnType<typeof mock>).mockReturnValue([
-        { id: '1' } as Session,
-        { id: '2' } as Session,
-      ]);
+    it('should return the maintained session counter without listing sessions', () => {
+      (mockDb.countHumanSessions as ReturnType<typeof mock>).mockReturnValue(2);
 
       expect(sessionManager.getTotalSessions()).toBe(2);
+      expect(mockDb.listSessions).not.toHaveBeenCalled();
     });
   });
 

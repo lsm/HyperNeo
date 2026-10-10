@@ -217,6 +217,10 @@ export class Database {
     return this.sessionRepo.listSessions(options);
   }
 
+  countHumanSessions(): number {
+    return this.sessionRepo.countHumanSessions();
+  }
+
   listSessionsBySpaceAgent(spaceId: string, agentId: string): Session[] {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
