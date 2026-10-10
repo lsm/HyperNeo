@@ -1,4 +1,9 @@
 import { existsSync } from 'node:fs';
+import {
+  NEO_CONSULTATION_RECEIPT_CLOSED,
+  NEO_CONSULTATION_RECEIPT_PENDING,
+  NEO_CONSULTATION_RECEIPT_RETURNED,
+} from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -297,10 +302,10 @@ export function presentNeoConsultationReply(
   const status = 'consultation' in receipt ? receipt.consultation.status : receipt.waiter.status;
   const replyGuidance =
     status === 'pending' || status === 'queued'
-      ? 'The context check is still pending. Reply with one short acknowledgement in the user’s language, then end this turn. Do not give a preliminary answer from summaries or older history, list facts or actions not taken, discuss revisions, or poll. Its attributed answer arrives separately.'
+      ? NEO_CONSULTATION_RECEIPT_PENDING
       : status === 'reported'
-        ? 'This check has already returned. Give its useful conclusion in one or two conversational sentences for this ask only; include only evidence limits or a decision that matters. This is reported context, not proof of external execution. Do not consult again automatically.'
-        : 'This check is no longer pending. Briefly explain its recorded reason without inventing an answer or restarting it.';
+        ? NEO_CONSULTATION_RECEIPT_RETURNED
+        : NEO_CONSULTATION_RECEIPT_CLOSED;
   return { ...receipt, replyGuidance };
 }
 
