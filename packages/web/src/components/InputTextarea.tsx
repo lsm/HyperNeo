@@ -243,6 +243,7 @@ export function InputTextarea({
               <div
                 ref={recordingDraftRef}
                 role="textbox"
+                tabIndex={0}
                 aria-readonly="true"
                 aria-label="Draft, read-only while recording"
                 data-testid="voice-recording-draft"

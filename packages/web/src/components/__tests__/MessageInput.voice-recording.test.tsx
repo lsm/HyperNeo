@@ -194,6 +194,7 @@ describe('MessageInput — recording UI', () => {
     const shown = screen.getByTestId('voice-recording-draft');
     expect(shown.textContent).toBe('Fictional draft about lunch');
     expect(shown.getAttribute('aria-readonly')).toBe('true');
+    expect(shown.tabIndex).toBe(0);
     expect(screen.getByTestId('voice-recording-panel')).toBeTruthy();
 
     recorderState.isRecording = false;
