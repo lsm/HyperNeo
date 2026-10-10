@@ -292,6 +292,15 @@ const RulesResult = z.union([
   z.object({ ok: z.literal(true), standingRules: z.array(z.string()) }),
 ]);
 const Close = z.object({ id: z.string().min(1), outcome: z.enum(['done', 'cancelled']) });
+const PackRead = z.object({ id: z.string().trim().min(1).max(80) });
+const PackReadResult = z.union([
+  Failure,
+  z.object({
+    ok: z.literal(true),
+    pack: z.object({ id: z.string(), describe: z.string() }),
+    instructions: z.string(),
+  }),
+]);
 const Continue = z.object({
   id: z.string().min(1),
   message: z.string().trim().min(1).max(16000),
@@ -1064,6 +1073,22 @@ export function createNeoOperations(service: NeoService) {
       return { ok: true as const, work: service.repo.getWork(id)! };
     }
   );
+  const readPack = path(
+    'neo.pack.read',
+    (_input: z.infer<typeof PackRead>) => undefined,
+    ({ id }) => {
+      const pack = service.pack(id);
+      if (!pack)
+        return { ok: false as const, reason: `pack_not_found: no pack "${id}" is installed.` };
+      const instructions = pack.instructions(null);
+      return instructions === null
+        ? {
+            ok: false as const,
+            reason: `pack_without_instructions: "${id}" carries no instructions to read.`,
+          }
+        : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
+    }
+  );
   return [
     createNeoIntakeOperation(
       service.db,
@@ -1125,6 +1150,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => saveRules(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.pack.read',
+      description:
+        'Read the full instructions of an installed domain pack (enabled or not), the guidance an ask names with its pack field: what work in that domain looks like and what done means there. neo.snapshot and the system prompt carry only each enabled pack’s one-line describe.',
+      inputSchema: PackRead,
+      resultSchema: PackReadResult,
+      policy: { safetyClass: 'read', roles: ['neo'] },
+      execute: readPack,
     }),
     defineOperation({
       name: 'neo.snapshot',
