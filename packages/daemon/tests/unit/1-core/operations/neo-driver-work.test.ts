@@ -288,7 +288,10 @@ describe('readDriverSent and readDriverLanded', () => {
       readDriverSent(status([{ at: 4, text: 'earlier' }]), '  Raise the  font.\nThen stop.')
     ).toEqual({ inputBefore: 4, opening: 'Raise the font.' });
     expect(readDriverSent(status([]), 'Go on.')).toEqual({ inputBefore: 0, opening: 'Go on.' });
-    expect(readDriverSent(status(), 'Go on.')).toEqual({ inputBefore: 0, opening: 'Go on.' });
+    expect(readDriverSent(status(), 'Go on.', 700)).toEqual({
+      inputBefore: 700,
+      opening: 'Go on.',
+    });
     expect(readDriverSent(status([]), '   ')).toBeNull();
   });
 
@@ -303,11 +306,15 @@ describe('readDriverSent and readDriverLanded', () => {
       'a send recorded without its opening',
       null,
       'Raise it.\nThen stop.',
-      { inputBefore: 0, opening: 'Raise it.' },
+      { inputBefore: 900, opening: 'Raise it.' },
     ],
     ['a card with no instruction', null, '', null],
-  ])('neoCardSent keeps %s findable', (_label, stored, instruction, sent) => {
-    expect(neoCardSent(stored, instruction)).toEqual(sent);
+  ])('neoCardSent keeps %s findable from the card on', (_label, stored, instruction, sent) => {
+    expect(neoCardSent(stored, { instruction, createdAt: 900 })).toEqual(sent);
+  });
+
+  test('neoCardSent has nothing to find for a missing card', () => {
+    expect(neoCardSent(null, null)).toBeNull();
   });
 
   test('anchors only on Neo’s own message landing after the send, not on one the human typed', () => {
@@ -613,26 +620,32 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('a send card whose opening was never recorded still finds its message landing', async () => {
-    const { db, service } = await setup(
+  test('a send card whose opening was never recorded finds its own message after the card began', async () => {
+    let inputs: Array<{ at: number; text: string }> = [];
+    const { db, service, calls } = await setup(
       { ok: true, value: { ref: sendTarget.ref } },
       undefined,
       () => ({
         ok: true,
-        value: {
-          status: 'running',
-          lastActivityAt: 5_000,
-          recentInputs: [{ at: 3_000, text: `${work.instruction}\n\nGoal: …` }],
-        },
+        value: { status: 'running', lastActivityAt: 5_000, recentInputs: inputs },
       }),
       sendTarget
     );
     try {
       await service.start('work-1');
+      const createdAt = service.repo.getWork('work-1')!.createdAt;
+      inputs = [
+        { at: createdAt - 10, text: `${work.instruction} (an older ask)` },
+        { at: createdAt + 50, text: `${work.instruction}\n\nGoal: …` },
+      ];
       service.driverTargets.recordStartedAt('work-1', null);
       service.driverTargets.recordSent('work-1', null);
       await service.refreshDriverWork();
-      expect(service.driverTargets.readStartedAt('work-1')).toBe(3_000);
+      expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
+        ref: sendTarget.ref,
+        since: createdAt,
+      });
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(createdAt + 50);
     } finally {
       db.close();
     }

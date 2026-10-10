@@ -805,7 +805,7 @@ export class NeoService {
     );
     return {
       baseline: readDriverSendBaseline(outcome, sentAt, !!ref.daemon),
-      sent: readDriverSent(outcome, message),
+      sent: readDriverSent(outcome, message, work.createdAt),
     };
   }
 
@@ -1087,10 +1087,7 @@ export class NeoService {
   private readonly driverSettleDeps: NeoDriverSettleDeps = {
     readStartedAt: (workId) => this.driverTargets.readStartedAt(workId),
     readSent: (workId) =>
-      neoCardSent(
-        this.driverTargets.readSent(workId),
-        this.repo.getWork(workId)?.instruction ?? ''
-      ),
+      neoCardSent(this.driverTargets.readSent(workId), this.repo.getWork(workId)),
     readLiveStatus: (workId) => this.driverTargets.readLiveStatus(workId),
     isContinuing: (workId) =>
       !!this.workContinues.get(workId) || this.driverTargets.get(workId)?.verb === 'send',

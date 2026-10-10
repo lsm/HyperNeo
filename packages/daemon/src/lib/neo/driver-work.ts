@@ -320,16 +320,26 @@ function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 
-export function readDriverSent(outcome: OperationOutcome, message: string): DriverSent | null {
+export function readDriverSent(
+  outcome: OperationOutcome,
+  message: string,
+  floor = 0
+): DriverSent | null {
   const opening = messageOpening(message);
   if (!opening) return null;
-  const inputs = readDriverInputs(outcome) ?? [];
-  return { inputBefore: Math.max(0, ...inputs.map((input) => input.at)), opening };
+  const inputs = readDriverInputs(outcome);
+  return {
+    inputBefore: inputs ? Math.max(0, ...inputs.map((input) => input.at)) : floor,
+    opening,
+  };
 }
 
-export function neoCardSent(stored: DriverSent | null, instruction: string): DriverSent | null {
-  const opening = messageOpening(instruction);
-  return stored ?? (opening ? { inputBefore: 0, opening } : null);
+export function neoCardSent(
+  stored: DriverSent | null,
+  work: Pick<NeoWork, 'instruction' | 'createdAt'> | null
+): DriverSent | null {
+  const opening = work ? messageOpening(work.instruction) : '';
+  return stored ?? (work && opening ? { inputBefore: work.createdAt, opening } : null);
 }
 
 export function readDriverLanded(
