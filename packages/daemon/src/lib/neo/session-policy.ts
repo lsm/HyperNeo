@@ -1,5 +1,6 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
+import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
@@ -21,6 +22,15 @@ export function neoCoordinatorRuntimePath(sessionId: string): string {
   return sdkTranscriptsExist(legacy)
     ? legacy
     : join(neoFolderPath(), '.coordinators', sessionId.replace(/[^a-zA-Z0-9-]/g, '-'));
+}
+
+export function sessionSdkPath(
+  db: Database | undefined,
+  session: Pick<Session, 'id' | 'workspacePath' | 'worktree'>
+): string | null {
+  return neoCoordinatorBinding(db, session.id)
+    ? neoCoordinatorRuntimePath(session.id)
+    : (session.worktree?.worktreePath ?? session.workspacePath);
 }
 
 export function neoCoordinatorBinding(

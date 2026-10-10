@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { neoCoordinatorRuntimePath } from '../../../../src/lib/neo/session-policy.ts';
+import {
+  neoCoordinatorRuntimePath,
+  sessionSdkPath,
+} from '../../../../src/lib/neo/session-policy.ts';
+import type { Database } from '../../../../src/storage/database.ts';
 
 describe('neoCoordinatorRuntimePath', () => {
   let home: string;
@@ -42,5 +46,43 @@ describe('neoCoordinatorRuntimePath', () => {
     const encoded = `/private${legacy}`.replace(/[/.]/g, '-');
     mkdirSync(join(home, '.claude', 'projects', encoded), { recursive: true });
     expect(neoCoordinatorRuntimePath('neo:gone-session')).toBe(legacy);
+  });
+});
+
+describe('sessionSdkPath', () => {
+  test.each<
+    [
+      string,
+      string,
+      { workspacePath: string | null; worktree?: { worktreePath: string } },
+      string | null,
+    ]
+  >([
+    [
+      'a Neo session filed under the Neo project',
+      'neo:root',
+      { workspacePath: '/data/Neo' },
+      'coordinator',
+    ],
+    [
+      'a worktree session',
+      'plain',
+      { workspacePath: '/repo', worktree: { worktreePath: '/repo-wt' } },
+      '/repo-wt',
+    ],
+    ['a project session', 'plain', { workspacePath: '/repo' }, '/repo'],
+    ['an unbound session', 'plain', { workspacePath: null }, null],
+  ])('keeps SDK history of %s where its query runs', (_label, id, session, path) => {
+    const db = {
+      getDatabase: () => ({
+        prepare: () => ({
+          get: (sessionId: string) =>
+            sessionId === 'neo:root' ? { sessionId, concernId: null, kind: 'neo' } : null,
+        }),
+      }),
+    } as unknown as Database;
+    expect(sessionSdkPath(db, { id, ...session } as Parameters<typeof sessionSdkPath>[1])).toBe(
+      path === 'coordinator' ? neoCoordinatorRuntimePath(id) : path
+    );
   });
 });

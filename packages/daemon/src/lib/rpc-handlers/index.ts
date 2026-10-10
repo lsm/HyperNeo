@@ -1633,8 +1633,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
 
-  if (process.env.NODE_ENV !== 'test')
-    fileNeoSessions(deps.db, neoService.repo, ensureNeoProject(deps.db.workspaceHistory));
+  if (process.env.NODE_ENV !== 'test') {
+    const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
+    fileNeoSessions(deps.db, neoService.repo, neoFolder);
+  }
   void neoService.recover();
   deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
     recoverNeoConsultations(deps.jobQueue, neoService)

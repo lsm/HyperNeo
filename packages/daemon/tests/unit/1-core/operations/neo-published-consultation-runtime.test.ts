@@ -293,5 +293,9 @@ describe('published consultation runtime activation', () => {
     expect(options.cwd).toBe(neoCoordinatorRuntimePath(root));
     expect(options.resume).toBe(session.sdkSessionId);
     expect(options.settingSources).toEqual([]);
+    expect(
+      (agent as unknown as { settingsManager: { workspacePath?: string } }).settingsManager
+        .workspacePath
+    ).toBeUndefined();
   });
 });
