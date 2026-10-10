@@ -20,7 +20,7 @@ export const neoEvidenceSignature = (evidence: readonly NeoEvidence[]) =>
   JSON.stringify(
     [...evidence]
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-      .map(({ key, state, summary, blockers }) => [key, state, summary, blockers])
+      .map(({ key, state, summary, blockers }) => [key, state, summary, [...blockers].sort()])
   );
 
 export function planNeoDoneCheck(

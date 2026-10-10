@@ -1,10 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence';
-import {
-  neoWorkPrEvidence,
-  neoWorkPrSignature,
-} from '../../../../src/lib/neo/packs/coding/work-prs';
 import { NeoWorkCheckRepository } from '../../../../src/storage/repositories/neo-work-check-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
@@ -27,7 +22,7 @@ describe('runMigration323', () => {
     runMigration314(db);
     runMigration317(db);
     runMigration320(db);
-    const legacy = neoWorkPrSignature([pr]);
+    const legacy = JSON.stringify([[pr.url, 'OPEN', 'passing', 'approved']]);
     db.prepare(
       `INSERT INTO neo_work_prs(work_id, prs_json, open, revision, read_at, read_ok_at)
          VALUES (?, ?, 1, 1, 0, 0)`
@@ -44,7 +39,9 @@ describe('runMigration323', () => {
     runMigration323(db);
     runMigration323(db);
 
-    const evidence = neoEvidenceSignature(neoWorkPrEvidence([pr]));
+    const evidence = JSON.stringify([
+      [pr.url, 'ready', 'open, checks passing, review approved', []],
+    ]);
     expect(['w1', 'w2', 'w3'].map((id) => checks.get(id))).toEqual([
       { workId: 'w1', signature: evidence, toldAt: 10, reminded: evidence },
       { workId: 'w2', signature: legacy, toldAt: 20, reminded: null },

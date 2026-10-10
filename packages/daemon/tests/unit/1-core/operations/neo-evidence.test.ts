@@ -16,6 +16,12 @@ describe('neoEvidenceSignature', () => {
     expect(neoEvidenceSignature([open, other])).toBe(neoEvidenceSignature([other, open]));
   });
 
+  test('compares blockers as a set', () => {
+    expect(neoEvidenceSignature([{ ...open, blockers: ['b', 'a'] }])).toBe(
+      neoEvidenceSignature([{ ...open, blockers: ['a', 'b'] }])
+    );
+  });
+
   test.each<[string, Partial<NeoEvidence>]>([
     ['state', { state: 'failed' }],
     ['summary', { summary: 'open, checks failing' }],
