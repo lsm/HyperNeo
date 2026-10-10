@@ -156,6 +156,25 @@ export function useNeo() {
     }
   }
 
+  async function approveAsk(askId: string) {
+    if (busyWork) return;
+    setBusyWork(askId);
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.approve', {
+        askId,
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That ask could not be approved.');
+    } finally {
+      if (alive.current) setBusyWork(null);
+    }
+  }
+
   async function tickAskItem(askId: string, itemId: string) {
     if (busyWork) return;
     setBusyWork(itemId);
@@ -206,6 +225,7 @@ export function useNeo() {
     refresh,
     act,
     settleAsk,
+    approveAsk,
     tickAskItem,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
