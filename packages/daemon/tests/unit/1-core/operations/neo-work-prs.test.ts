@@ -406,8 +406,8 @@ describe('readGithubPrs blockers', () => {
 
 describe('requireNeoWorkPrRefresh', () => {
   const row = { readAt: 0 };
-  type Card = { goal: boolean; row: { readAt: number } | null; session: boolean; live: boolean };
-  const card: Card = { goal: true, row, session: true, live: true };
+  type Card = { goal: boolean; row: { readAt: number } | null; session: boolean };
+  const card: Card = { goal: true, row, session: true };
   const reported = { status: 'reported', report: 'Merged.' };
   test.each<[string, typeof reported, Partial<Card>, number, boolean]>([
     ['a reported card read over two minutes ago', reported, {}, 3 * 60_000, true],
@@ -417,7 +417,6 @@ describe('requireNeoWorkPrRefresh', () => {
     ['one with no done list', reported, { goal: false }, 3 * 60_000, false],
     ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
     ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
-    ['one with no live ask', reported, { live: false }, 3 * 60_000, false],
   ])('%s', (_label, work, overrides, now, refreshes) => {
     expect(requireNeoWorkPrRefresh(work, { ...card, ...overrides }, now, 'closed')).toEqual(
       refreshes ? { value: row } : { reason: null }
@@ -432,8 +431,13 @@ describe('requireNeoWorkPrDelivery', () => {
     ['wait', false],
     ['unchanged', false],
   ])('%s', (plan, delivers) => {
-    const gate = requireNeoWorkPrDelivery(plan);
+    const gate = requireNeoWorkPrDelivery(plan, true);
     expect('value' in gate).toBe(delivers);
     if ('value' in gate) expect(gate.value as string).toBe(plan);
+  });
+
+  test('never delivers for a card whose ask is settled or missing', () => {
+    expect(requireNeoWorkPrDelivery('deliver', false)).toEqual({ reason: null });
+    expect(requireNeoWorkPrDelivery('remind', false)).toEqual({ reason: null });
   });
 });

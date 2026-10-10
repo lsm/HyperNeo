@@ -966,12 +966,7 @@ export class NeoService {
     )
     .pipe(
       (work: NeoWork, card: NeoWorkPrCard, now: number) =>
-        requireNeoWorkPrRefresh(
-          work,
-          { ...card, goal: !!card.goal, live: isNeoAskLive(card.ask) },
-          now,
-          NEO_WORK_CLOSED_DONE
-        ),
+        requireNeoWorkPrRefresh(work, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
       ['work', 'card', 'now'],
       'result:row'
     )
@@ -995,7 +990,12 @@ export class NeoService {
       ['work', 'card', 'refreshed', 'now'],
       'plan'
     )
-    .pipe(requireNeoWorkPrDelivery, 'plan', 'result:delivery')
+    .pipe(
+      (plan: ReturnType<typeof planNeoWorkPrRefresh>, card: NeoWorkPrCard) =>
+        requireNeoWorkPrDelivery(plan, isNeoAskLive(card.ask)),
+      ['plan', 'card'],
+      'result:delivery'
+    )
     .pipe(
       async (
         work: NeoWork,

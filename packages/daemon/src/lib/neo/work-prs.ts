@@ -139,14 +139,13 @@ export function planNeoWorkPrRefresh(
 
 export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
   work: { status: string; report: string | null },
-  card: { goal: boolean; row: Row | null; session: boolean; live: boolean },
+  card: { goal: boolean; row: Row | null; session: boolean },
   now: number,
   closedDone: string
 ): { value: Row } | { reason: null } {
   return work.status === 'reported' &&
     work.report !== closedDone &&
     card.goal &&
-    card.live &&
     card.session &&
     card.row &&
     now - card.row.readAt >= NEO_WORK_PR_READ_MS
@@ -155,9 +154,10 @@ export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
 }
 
 export function requireNeoWorkPrDelivery(
-  plan: ReturnType<typeof planNeoWorkPrRefresh>
+  plan: ReturnType<typeof planNeoWorkPrRefresh>,
+  live: boolean
 ): { value: 'deliver' | 'remind' } | { reason: null } {
-  return plan === 'deliver' || plan === 'remind' ? { value: plan } : { reason: null };
+  return live && (plan === 'deliver' || plan === 'remind') ? { value: plan } : { reason: null };
 }
 
 type BranchRule = {

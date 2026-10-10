@@ -910,15 +910,18 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
+      service.workPrs.record('work-1', [open], 0);
       prs = [{ ...open, checks: 'passing', review: 'approved' }];
       await refreshLater();
       expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs[0]?.review).toBe('approved');
 
       const ask = fileUnderAsk(service);
       service.askRecords.settle(ask, 'achieved', 'Merged.', 'Merged.');
       prs = [{ ...open, state: 'MERGED', checks: 'passing', review: 'approved' }];
       await refreshLater();
       expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs[0]?.state).toBe('MERGED');
     } finally {
       db.close();
     }
