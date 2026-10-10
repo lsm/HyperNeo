@@ -1,11 +1,18 @@
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
+
+export function gitSessionView(session: Session, neoCoordinator: boolean): Session {
+  return neoCoordinator
+    ? { ...session, workspacePath: null, worktree: undefined, gitBranch: undefined }
+    : session;
+}
 
 export function setupGitHandlers(
   messageHub: MessageHub,
   worktreeManager: WorktreeManager,
-  sessionManager: SessionManager
+  sessionManager: SessionManager,
+  isNeoCoordinator: (sessionId: string) => boolean = () => false
 ): void {
   messageHub.onRequest('git.branches', async (data) => {
     const { path } = (data ?? {}) as { path?: unknown };
@@ -29,7 +36,12 @@ export function setupGitHandlers(
       throw new Error('Session not found');
     }
 
-    return worktreeManager.getSessionGitStatus(session, { includeGitHub: includeGitHub !== false });
+    return worktreeManager.getSessionGitStatus(
+      gitSessionView(session, isNeoCoordinator(session.id)),
+      {
+        includeGitHub: includeGitHub !== false,
+      }
+    );
   });
 
   messageHub.onRequest('git.fileDiff', async (data) => {
@@ -46,6 +58,9 @@ export function setupGitHandlers(
       throw new Error('Session not found');
     }
 
-    return worktreeManager.getSessionFileDiff(session, path);
+    return worktreeManager.getSessionFileDiff(
+      gitSessionView(session, isNeoCoordinator(session.id)),
+      path
+    );
   });
 }

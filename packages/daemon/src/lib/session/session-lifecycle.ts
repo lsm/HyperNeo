@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
+import { sessionSdkPath } from '../neo/session-policy.ts';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -59,6 +60,7 @@ export interface CreateSessionParams {
   config?: Partial<Session['config']>;
   worktreeBaseBranch?: string;
   worktreeMode?: 'worktree' | 'direct';
+  detectGit?: false;
   title?: string;
   sessionId?: string;
   lobbyId?: string;
@@ -110,7 +112,7 @@ export class SessionLifecycle {
 
     let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
     let isGitRepo = false;
-    if (baseWorkspacePath !== undefined) {
+    if (baseWorkspacePath !== undefined && params.detectGit !== false) {
       gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
       isGitRepo = gitSupport.isGitRepo;
     }
@@ -127,6 +129,7 @@ export class SessionLifecycle {
 
     const shouldCreateWorktree =
       baseWorkspacePath !== undefined &&
+      params.detectGit !== false &&
       supportsWorktreeChoice &&
       !this.config.disableWorktrees &&
       (!isGitRepo || explicitWorktreeMode === 'worktree');
@@ -616,9 +619,7 @@ export class SessionLifecycle {
         }
       | undefined;
     try {
-      const sdkWorkspacePath = session.worktree
-        ? session.worktree.worktreePath
-        : session.workspacePath;
+      const sdkWorkspacePath = sessionSdkPath(this.db, session);
       if (sdkWorkspacePath) {
         const result = archiveSDKSessionFiles(
           sdkWorkspacePath,
@@ -754,9 +755,7 @@ export class SessionLifecycle {
 
       if (session) {
         try {
-          const sdkWorkspacePath = session.worktree
-            ? session.worktree.worktreePath
-            : session.workspacePath;
+          const sdkWorkspacePath = sessionSdkPath(this.db, session);
           if (!sdkWorkspacePath) {
             completedPhases.push('sdk-files-delete-skipped');
           } else {
