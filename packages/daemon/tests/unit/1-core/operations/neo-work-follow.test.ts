@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
-import { planNeoWorkFollow, requireNeoWorkFollow } from '../../../../src/lib/neo/work-follow.ts';
+import {
+  planNeoWorkFollow,
+  planNeoWorkFollowLive,
+  requireNeoWorkFollow,
+  requireNeoWorkFollowUp,
+} from '../../../../src/lib/neo/work-follow.ts';
 
 const now = 10_000_000;
 const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 's1' };
@@ -12,7 +17,14 @@ const work = {
   updatedAt: now - 60 * 60_000,
 } as NeoWork;
 type Card = Parameters<typeof requireNeoWorkFollow>[1];
-const card: Card = { ref, goal: true, ask: { status: 'open' }, readAt: null, superseded: false };
+const card: Card = {
+  ref,
+  goal: true,
+  ask: { status: 'open' },
+  readAt: null,
+  superseded: false,
+  live: 'done',
+};
 
 describe('requireNeoWorkFollow', () => {
   test.each<[string, NeoWork, Partial<Card>, boolean]>([
@@ -30,9 +42,56 @@ describe('requireNeoWorkFollow', () => {
     ['a card read three minutes ago', work, { readAt: now - 3 * 60_000 }, true],
     ['a card reported over a week ago', { ...work, updatedAt: now - 8 * 86_400_000 }, {}, false],
     ['a card whose session has since taken a newer card', work, { superseded: true }, false],
+    [
+      'an achieved ask whose session still shows running',
+      work,
+      { ask: { status: 'achieved' }, live: 'running' },
+      true,
+    ],
+    [
+      'a card with no ask whose session shows needs you',
+      work,
+      { ask: null, goal: false, live: 'needs_you' },
+      true,
+    ],
+    ['a card with no ask whose session finished', work, { ask: null, live: 'stopped' }, false],
+    [
+      'a card the user closed as done, still running',
+      { ...work, report: NEO_WORK_CLOSED_DONE },
+      { live: 'running' },
+      false,
+    ],
   ])('%s', (_label, at, overrides, following) => {
     const gate = requireNeoWorkFollow(at, { ...card, ...overrides }, now);
     expect(gate).toEqual(following ? { value: ref } : { reason: null });
+  });
+});
+
+describe('requireNeoWorkFollowUp', () => {
+  test('follows up only for a card under a live ask with a done list', () => {
+    expect(requireNeoWorkFollowUp(work, card)).toEqual({ value: ref });
+    expect(requireNeoWorkFollowUp(work, { ...card, ask: { status: 'achieved' } })).toEqual({
+      reason: null,
+    });
+    expect(requireNeoWorkFollowUp(work, { ...card, goal: false })).toEqual({ reason: null });
+  });
+});
+
+describe('planNeoWorkFollowLive', () => {
+  test("takes the session's own state, or nothing when it could not be read", () => {
+    expect(
+      planNeoWorkFollowLive({
+        outcome: {
+          kind: 'completed',
+          value: { ok: true, value: { status: 'done', lastActivityAt: 5, link: '/session/s1' } },
+        },
+      })
+    ).toEqual({ status: 'done', link: '/session/s1', remoteLink: undefined });
+    expect(
+      planNeoWorkFollowLive({
+        outcome: { kind: 'completed', value: { ok: false, reason: 'unreachable', detail: 'down' } },
+      })
+    ).toBe(null);
   });
 });
 

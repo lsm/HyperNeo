@@ -814,6 +814,51 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test("keeps reading a reported card's session after its ask settles, until the session finishes", async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    let reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Icons regenerated.',
+      },
+    };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { ref } },
+      undefined,
+      () => reply
+    );
+    db.createSession(createTestSession('neo:root'));
+    const opened = fileUnderAsk(service);
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    const statusCalls = () => calls.filter((call) => call.name === 'work.status').length;
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      const reported = service.repo.getWork('work-1')!;
+      expect(reported.status).toBe('reported');
+      service.askRecords.settle(service.askRecords.get(opened.id)!, 'achieved', 'Done.', 'Done.');
+      service.driverTargets.recordLive('work-1', 'running', undefined, undefined);
+      reply = { ok: true, value: { status: 'done', lastActivityAt: now } };
+
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      expect(service.driverTargets.readLiveStatus('work-1')).toBe('done');
+      expect(service.repo.getWork('work-1')?.report).toBe(reported.report);
+
+      const before = statusCalls();
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      expect(statusCalls()).toBe(before);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('a reported card follows its session when it merges on its own later', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/neo-ios/pull/25';
