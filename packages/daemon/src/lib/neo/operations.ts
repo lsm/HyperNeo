@@ -1074,7 +1074,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationOperation(service.publish),
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoPublicationReadOperation(service.repo, service.publications),
-    createNeoConversationAskReadOperation(service.repo, service.asks),
+    createNeoConversationAskReadOperation(service.repo, service.asks, (sessionId, messageId) =>
+      service.db.getSDKMessageRepo().getUserSendStatus(sessionId, messageId)
+    ),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
     ...createNeoAskOperations(service, (caller, name, concernId) =>

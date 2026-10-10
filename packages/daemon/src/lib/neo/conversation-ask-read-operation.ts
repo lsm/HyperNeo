@@ -28,16 +28,44 @@ const StoredAsk = z
   .preprocess(
     (value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-      const { sequence, createdAt, ...ask } = value as Record<string, unknown>;
-      return { sequence, createdAt, ask };
+      const { sequence, createdAt, delivery, ...ask } = value as Record<string, unknown>;
+      return { sequence, createdAt, delivery, ask };
     },
     z.object({
       sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       createdAt: z.iso.datetime(),
+      delivery: z
+        .object({ state: z.literal('failed') })
+        .strict()
+        .optional(),
       ask: NeoConversationAskSchema,
     })
   )
-  .transform(({ sequence, createdAt, ask }) => ({ ...ask, sequence, createdAt }));
+  .transform(({ sequence, createdAt, delivery, ask }) => ({
+    ...ask,
+    sequence,
+    createdAt,
+    ...(delivery ? { delivery } : {}),
+  }));
+
+export type NeoAskSendStatusReader = (sessionId: string, messageId: string) => string | null;
+
+export function presentNeoAskDelivery(
+  items: readonly NeoConversationAsk[],
+  statuses: readonly (string | null)[]
+): NeoConversationAsk[] {
+  return items.map((item, index) =>
+    statuses[index] === 'failed' ? { ...item, delivery: { state: 'failed' as const } } : item
+  );
+}
+
+function readAskDelivery(result: Result, readSendStatus: NeoAskSendStatusReader): Result {
+  if (!result.ok) return result;
+  const statuses = result.items.map((item) =>
+    readSendStatus(item.askOrigin.sessionId, item.askOrigin.messageId)
+  );
+  return { ...result, items: presentNeoAskDelivery(result.items, statuses) };
+}
 
 function readAskPage(page: Page, ledger: NeoConversationAskRepository): Result {
   const items =
@@ -54,26 +82,29 @@ function readAskPage(page: Page, ledger: NeoConversationAskRepository): Result {
 }
 
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
-  .input(['page', 'caller', 'repo', 'ledger'])
+  .input(['page', 'caller', 'repo', 'ledger', 'readSendStatus'])
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
   .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
   .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
   .pipe(readAskPage, ['page', 'ledger'], 'page')
+  .pipe(readAskDelivery, ['page', 'readSendStatus'], 'page')
   .end('page') as (
   page: Page,
   caller: OperationCaller,
   repo: NeoRepository,
-  ledger: NeoConversationAskRepository
+  ledger: NeoConversationAskRepository,
+  readSendStatus: NeoAskSendStatusReader
 ) => Result;
 
 export function createNeoConversationAskReadOperation(
   repo: NeoRepository,
-  ledger: NeoConversationAskRepository
+  ledger: NeoConversationAskRepository,
+  readSendStatus: NeoAskSendStatusReader = () => null
 ) {
   return defineOperation({
     name: 'neo.conversation.asks.read',
     description:
-      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence.',
+      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered carries delivery: { state: "failed" }.',
     policy: { safetyClass: 'human_only' },
     inputSchema: Input,
     resultSchema: z.union([
@@ -85,6 +116,6 @@ export function createNeoConversationAskReadOperation(
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => read(page, caller, repo, ledger),
+    execute: async (page, caller) => read(page, caller, repo, ledger, readSendStatus),
   });
 }

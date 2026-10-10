@@ -2082,6 +2082,17 @@ export class SDKMessageRepository {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail');
   }
 
+  getUserSendStatus(sessionId: string, uuid: string): SendStatus | null {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(send_status, 'consumed') AS status FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { status: SendStatus } | undefined;
+    return row?.status ?? null;
+  }
+
   findMessageIdByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(

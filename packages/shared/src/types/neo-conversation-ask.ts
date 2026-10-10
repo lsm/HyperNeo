@@ -11,6 +11,7 @@ export interface NeoConversationAskInput {
 export interface NeoConversationAsk extends NeoConversationAskInput {
   readonly sequence: number;
   readonly createdAt: string;
+  readonly delivery?: { readonly state: 'failed' };
 }
 
 export type NeoConversationAskAppendResult =
