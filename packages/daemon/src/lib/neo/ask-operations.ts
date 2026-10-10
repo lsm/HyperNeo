@@ -1,5 +1,5 @@
 import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -79,6 +79,13 @@ const Settle = z.object({
   outcome: z.enum(['achieved', 'abandoned', 'blocked', 'waiting']),
   summary: z.string().trim().min(1).max(200).optional(),
   evidence: z.string().trim().min(1).max(4000),
+});
+
+const Tick = z.object({
+  askId: z.string().min(1),
+  itemId: z.string().min(1),
+  state: z.enum(['pending', 'met', 'needs_you']),
+  evidence: z.string().trim().min(1).max(2000).optional(),
 });
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
@@ -232,6 +239,57 @@ export function requireNeoAskSettlement(
     : { value: ask };
 }
 
+export function requireNeoAskChecklistMet(
+  input: z.infer<typeof Settle>,
+  ask: NeoAsk,
+  caller: OperationCaller
+): Gate<NeoAsk> {
+  const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state !== 'met');
+  return input.outcome === 'achieved' && caller.source === 'mcp' && open.length
+    ? {
+        reason: fail(
+          `checklist_incomplete: ${open.map((item) => `${item.id} "${item.text}" is ${item.state}`).join('; ')}. Tick each item met with neo.ask.tick first, or settle waiting or blocked.`
+        ),
+      }
+    : { value: ask };
+}
+
+export function requireNeoAskTick(
+  input: z.infer<typeof Tick>,
+  current: { ask: NeoAsk | null },
+  caller: OperationCaller
+): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
+  const { ask } = current;
+  if (!ask) return { reason: fail('ask_not_found') };
+  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
+    return { reason: fail('Only the Neo session that opened this ask or the user can tick it.') };
+  if (isFinal(ask)) return { reason: fail(`ask_settled: this ask is already ${ask.status}.`) };
+  const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
+  if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  return input.state !== 'pending' && !input.evidence
+    ? {
+        reason: fail(
+          'evidence_required: say what shows the item is met, or what the human must decide.'
+        ),
+      }
+    : { value: { ask, item } };
+}
+
+export function planNeoAskTickStatus(
+  ask: NeoAsk
+): { status: 'waiting'; outcome: string } | { status: 'open' } | { status: 'unchanged' } {
+  if (isFinal(ask)) return { status: 'unchanged' };
+  const items = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const asked = items.find((item) => item.state === 'needs_you');
+  if (asked)
+    return ask.status === 'waiting' && ask.outcome === asked.text
+      ? { status: 'unchanged' }
+      : { status: 'waiting', outcome: asked.text };
+  return ask.status === 'waiting' && items.some((item) => item.text === ask.outcome)
+    ? { status: 'open' }
+    : { status: 'unchanged' };
+}
+
 export function requireNeoAskWritten(written: { ask: NeoAsk | null }): Gate<AskReceipt> {
   return written.ask
     ? { value: { ok: true, ask: written.ask } }
@@ -327,6 +385,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     )
     .pipe(requireNeoAskSummary, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskSettlement, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(requireNeoAskChecklistMet, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Settle>, ask: NeoAsk) => ({
         ask: isNeoAskReplay(ask, input)
@@ -358,6 +417,66 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     input: z.infer<typeof Settle>,
     caller: OperationCaller
   ) => Promise<AskReceipt | Rejection>;
+  const tick = (superpipe({})('neo.ask.tick') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Tick>) => ({ ask: service.askRecords.get(input.askId) }),
+      'input',
+      'current'
+    )
+    .pipe(
+      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
+        admit(caller, 'neo.ask.tick', current.ask?.concernId),
+      ['caller', 'current'],
+      'result:admission'
+    )
+    .pipe(requireNeoAskTick, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
+        service.askRecords.tickItem(
+          target.ask.id,
+          {
+            id: input.itemId,
+            state: input.state,
+            evidence: input.evidence ?? null,
+            metBy: input.state === 'met' ? (caller.source === 'mcp' ? 'neo' : 'human') : null,
+          },
+          Date.now()
+        );
+        return { ask: service.askRecords.get(target.ask.id) };
+      },
+      ['input', 'admission', 'caller'],
+      'ticked'
+    )
+    .pipe(requireNeoAskWritten, 'ticked', 'result:admission')
+    .pipe(
+      (receipt: AskReceipt) => ({ receipt, plan: planNeoAskTickStatus(receipt.ask) }),
+      'admission',
+      'planned'
+    )
+    .pipe(
+      ({
+        receipt,
+        plan,
+      }: {
+        receipt: AskReceipt;
+        plan: ReturnType<typeof planNeoAskTickStatus>;
+      }) => ({
+        ask:
+          plan.status === 'waiting'
+            ? service.askRecords.settle(receipt.ask, 'waiting', plan.outcome, plan.outcome)
+            : plan.status === 'open'
+              ? service.askRecords.reopen(receipt.ask)
+              : receipt.ask,
+      }),
+      'planned',
+      'written'
+    )
+    .pipe(requireNeoAskWritten, 'written', 'result:admission')
+    .end('admission') as (
+    input: z.infer<typeof Tick>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
   return [
     defineOperation({
       name: 'neo.ask.open',
@@ -369,9 +488,18 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       execute: async (input, caller) => open(input, caller),
     }),
     defineOperation({
+      name: 'neo.ask.tick',
+      description:
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, needs_you with what the human must decide, or back to pending. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+      inputSchema: Tick,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => tick(input, caller),
+    }),
+    defineOperation({
       name: 'neo.ask.settle',
       description:
-        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; waiting when the next step is the human\'s (an offer to start work, or a delivered result that leaves them decisions), never achieved while decisions are pending; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for waiting and blocked what the human must decide ("Merged in #6099.", "Start the composer redesign?", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
+        'Settle an ask when its outcome is decided: achieved when every checklist item is ticked met with neo.ask.tick (refused otherwise; the user\'s close still overrides); waiting when the next step is the human\'s (an offer to start work, or a delivered result that leaves them decisions), never achieved while decisions are pending; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for waiting and blocked what the human must decide ("Merged in #6099.", "Start the composer redesign?", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

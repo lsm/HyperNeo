@@ -112,6 +112,34 @@ export class NeoAskRepository {
     return this.withWork(rows);
   }
 
+  tickItem(
+    askId: string,
+    item: Pick<NeoAskItem, 'id' | 'state' | 'evidence' | 'metBy'>,
+    at: number
+  ): boolean {
+    if (!this.hasItems()) return false;
+    const changed = this.db.transaction(() => {
+      const ticked = this.db
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, updated_at = ?
+          WHERE ask_id = ? AND id = ? AND removed = 0`)
+        .run(item.state, item.evidence, item.metBy, at, askId, item.id).changes;
+      if (ticked) this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+      return ticked > 0;
+    })();
+    if (changed) this.notify();
+    return changed;
+  }
+
+  reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
+    const row = this.db
+      .prepare(`UPDATE neo_asks SET status = 'open', outcome = NULL, settled_at = NULL,
+        updated_at = ? WHERE id = ? AND status = ? RETURNING ${askColumns}`)
+      .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
+    if (!row) return null;
+    this.notify();
+    return this.withWork([row])[0];
+  }
+
   reopenForWork(workId: string): void {
     if (!this.hasTable()) return;
     const reopened = this.db

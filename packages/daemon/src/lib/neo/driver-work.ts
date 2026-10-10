@@ -380,6 +380,12 @@ export function projectNeoAskCards(
     });
 }
 
+export function neoAskChecklist(ask: NeoAsk): { id: string; text: string; state: string }[] {
+  return (ask.doneItems ?? [])
+    .filter((item) => !item.removed)
+    .map(({ id, text, state }) => ({ id, text, state }));
+}
+
 export function driverDoneCheckNote(
   work: Pick<NeoWork, 'id' | 'title' | 'report' | 'originSessionId'>,
   goal: NeoWorkGoal,
@@ -421,7 +427,7 @@ export function driverDoneCheckNote(
     : owned
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards } : {}) } } : {}) })}`;
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards, items: neoAskChecklist(ask) } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(
