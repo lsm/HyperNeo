@@ -3,8 +3,11 @@ import { isNeoAskSettled } from './done-check.ts';
 
 type NeoAskResume = { ask: NeoAsk; items: string[]; reopen: boolean };
 
-export function planNeoAskResume(ask: NeoAsk | null): NeoAskResume | null {
-  if (!ask || isNeoAskSettled(ask)) return null;
+export function planNeoAskResume(
+  ask: NeoAsk | null,
+  siblingsWaiting: boolean
+): NeoAskResume | null {
+  if (!ask || isNeoAskSettled(ask) || siblingsWaiting) return null;
   const items = (ask.doneItems ?? [])
     .filter((item) => !item.removed && item.state === 'needs_you')
     .map((item) => item.id);
@@ -15,11 +18,14 @@ export function planNeoAskResume(ask: NeoAsk | null): NeoAskResume | null {
 export function planNeoNeedsYou(
   state: { needsYou: boolean; since: number } | null,
   noted: number | null,
-  ask: NeoAsk | null
+  ask: NeoAsk | null,
+  siblingsWaiting = false
 ): { notify: number | null; record: number | null | undefined; resume: NeoAskResume | null } {
   const none = { notify: null, record: undefined, resume: null };
   if (!state) return none;
   if (state.needsYou)
     return noted === null ? { notify: state.since, record: state.since, resume: null } : none;
-  return noted === null ? none : { notify: null, record: null, resume: planNeoAskResume(ask) };
+  return noted === null
+    ? none
+    : { notify: null, record: null, resume: planNeoAskResume(ask, siblingsWaiting) };
 }

@@ -165,6 +165,7 @@ type NeoNeedsYouCard = {
   state: ReturnType<typeof readDriverNeedsYou>;
   noted: number | null;
   ask: NeoAsk | null;
+  siblingsWaiting: boolean;
 };
 type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
 type NeoWorkTold = { row: NeoWorkCheckRow | null };
@@ -1160,16 +1161,23 @@ export class NeoService {
   private readonly noteDriverNeedsYou = (superpipe({})('neo-work-needs-you') as PipelineAPI)
     .input(['work', 'ref', 'outcome'])
     .pipe(
-      (work: NeoWork, outcome: OperationOutcome) => ({
-        state: readDriverNeedsYou(outcome),
-        noted: this.driverTargets.readNeedsYouSince(work.id),
-        ask: this.askRecords.forWork(work.id),
-      }),
+      (work: NeoWork, outcome: OperationOutcome) => {
+        const ask = this.askRecords.forWork(work.id);
+        return {
+          state: readDriverNeedsYou(outcome),
+          noted: this.driverTargets.readNeedsYouSince(work.id),
+          ask,
+          siblingsWaiting: (ask?.workIds ?? []).some(
+            (id) => id !== work.id && this.driverTargets.readNeedsYouSince(id) !== null
+          ),
+        };
+      },
       ['work', 'outcome'],
       'card'
     )
     .pipe(
-      (card: NeoNeedsYouCard) => planNeoNeedsYou(card.state, card.noted, card.ask),
+      (card: NeoNeedsYouCard) =>
+        planNeoNeedsYou(card.state, card.noted, card.ask, card.siblingsWaiting),
       'card',
       'plan'
     )

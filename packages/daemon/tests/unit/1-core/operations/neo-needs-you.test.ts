@@ -19,8 +19,9 @@ const ask = {
 } as NeoAsk;
 
 describe('planNeoAskResume', () => {
-  test.each<[string, NeoAsk | null, ReturnType<typeof planNeoAskResume>]>([
+  test.each<[string, NeoAsk | null, ReturnType<typeof planNeoAskResume>, boolean?]>([
     ['a waiting ask with a question item', ask, { ask, items: ['i1'], reopen: true }],
+    ['an ask another of its cards still waits on', ask, null, true],
     [
       'a blocked ask with no question items',
       { ...ask, status: 'blocked', doneItems: [] },
@@ -29,8 +30,8 @@ describe('planNeoAskResume', () => {
     ['an open ask with nothing to undo', { ...ask, status: 'open', doneItems: [] }, null],
     ['a settled ask', { ...ask, status: 'achieved' }, null],
     ['a card with no ask', null, null],
-  ])('%s', (_label, current, plan) => {
-    expect(planNeoAskResume(current)).toEqual(plan);
+  ])('%s', (_label, current, plan, siblingsWaiting = false) => {
+    expect(planNeoAskResume(current, siblingsWaiting)).toEqual(plan);
   });
 });
 
@@ -70,5 +71,13 @@ describe('planNeoNeedsYou', () => {
     ['an unreadable status', null, 5, { notify: null, record: undefined, resume: null }],
   ])('%s', (_label, state, noted, plan) => {
     expect(planNeoNeedsYou(state, noted, ask)).toEqual(plan);
+  });
+
+  test('keeps the ask waiting while another of its cards still needs the human', () => {
+    expect(planNeoNeedsYou({ needsYou: false, since: 7 }, 5, ask, true)).toEqual({
+      notify: null,
+      record: null,
+      resume: null,
+    });
   });
 });
