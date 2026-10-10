@@ -1,3 +1,4 @@
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -107,6 +108,19 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
     summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
     blockers: pr.blockers ?? [],
   }));
+}
+
+export function neoAskPrEvidence(
+  works: readonly Pick<NeoWork, 'id' | 'status'>[],
+  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[]
+): NeoEvidence[] {
+  const live = new Set(works.filter((work) => work.status !== 'cancelled').map((work) => work.id));
+  const prs = new Map(
+    rows
+      .filter((row) => live.has(row.workId))
+      .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
+  );
+  return neoWorkPrEvidence([...prs.values()]);
 }
 
 type StoredPrs = {

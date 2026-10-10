@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   countNeoWorkPrApprovals,
@@ -125,6 +126,43 @@ describe('neoWorkPrEvidence', () => {
         blockers: ['behind dev'],
       },
     ]);
+  });
+});
+
+describe('neoAskPrEvidence', () => {
+  const merged: NeoWorkPr = { ...pr, state: 'MERGED' };
+  const other: NeoWorkPr = { ...pr, url: 'https://github.com/lsm/HyperNeo/pull/43' };
+  test('covers the pull requests of every live card under the ask, each once', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported' },
+          { id: 'w2', status: 'queued' },
+        ],
+        [
+          { workId: 'w1', prs: [merged] },
+          { workId: 'w2', prs: [merged, other] },
+        ]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      [other.url, 'pending'],
+    ]);
+  });
+
+  test('leaves out cards that were cancelled', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported' },
+          { id: 'w2', status: 'cancelled' },
+        ],
+        [
+          { workId: 'w1', prs: [merged] },
+          { workId: 'w2', prs: [other] },
+        ]
+      ).map((item) => item.key)
+    ).toEqual([pr.url]);
   });
 });
 

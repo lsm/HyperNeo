@@ -6,6 +6,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type {
   NeoAskInput,
   NeoAskItemInput,
+  NeoAskRepository,
 } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
@@ -331,6 +332,18 @@ export function planNeoAskTickStatus(
     : { status: 'unchanged' };
 }
 
+export function writeNeoAskTickStatus(
+  records: Pick<NeoAskRepository, 'settle' | 'reopen'>,
+  ask: NeoAsk,
+  plan: ReturnType<typeof planNeoAskTickStatus>
+): NeoAsk | null {
+  return plan.status === 'waiting'
+    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome)
+    : plan.status === 'open'
+      ? records.reopen(ask)
+      : ask;
+}
+
 export function requireNeoAskWritten(written: { ask: NeoAsk | null }): Gate<AskReceipt> {
   return written.ask
     ? { value: { ok: true, ask: written.ask } }
@@ -502,14 +515,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       }: {
         receipt: AskReceipt;
         plan: ReturnType<typeof planNeoAskTickStatus>;
-      }) => ({
-        ask:
-          plan.status === 'waiting'
-            ? service.askRecords.settle(receipt.ask, 'waiting', plan.outcome, plan.outcome)
-            : plan.status === 'open'
-              ? service.askRecords.reopen(receipt.ask)
-              : receipt.ask,
-      }),
+      }) => ({ ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, plan) }),
       'planned',
       'written'
     )
@@ -554,14 +560,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       }: {
         receipt: AskReceipt;
         plan: ReturnType<typeof planNeoAskTickStatus>;
-      }) => ({
-        ask:
-          plan.status === 'waiting'
-            ? service.askRecords.settle(receipt.ask, 'waiting', plan.outcome, plan.outcome)
-            : plan.status === 'open'
-              ? service.askRecords.reopen(receipt.ask)
-              : receipt.ask,
-      }),
+      }) => ({ ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, plan) }),
       'planned',
       'written'
     )

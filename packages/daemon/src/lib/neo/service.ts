@@ -34,6 +34,7 @@ import {
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
+import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -117,6 +118,7 @@ import {
 import type { NeoPack } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   requireNeoWorkPrDelivery,
@@ -189,6 +191,7 @@ type NeoDoneCheckCard = {
   stored: NeoWorkPrRow | null;
 };
 type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
+type NeoDoneCheckLinked = { works: NeoWork[]; rows: NeoWorkPrRow[] };
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -1394,14 +1397,25 @@ export class NeoService {
   private readonly runDoneCheckDelivery = (superpipe({})('neo-done-check-delivery') as PipelineAPI)
     .input(['work', 'goal', 'found', 'options'])
     .pipe(
-      (found: NeoDoneCheckFound, options: NeoDoneCheckDelivery) => ({
+      (work: NeoWork, options: NeoDoneCheckDelivery) => {
+        const ids = [...new Set([work.id, ...(options.ask?.workIds ?? [])])];
+        return {
+          works: ids.flatMap((id) => this.repo.getWork(id) ?? []),
+          rows: this.workPrs.list(ids),
+        };
+      },
+      ['work', 'options'],
+      'linked'
+    )
+    .pipe(
+      (options: NeoDoneCheckDelivery, linked: NeoDoneCheckLinked) => ({
         ticks: planNeoPackTicks(
           options.ask ?? null,
-          found.row ? neoWorkPrEvidence(found.row.prs) : [],
+          neoAskPrEvidence(linked.works, linked.rows),
           neoPackChecks(this.packs())
         ),
       }),
-      ['found', 'options'],
+      ['options', 'linked'],
       'plan'
     )
     .pipe(
@@ -1414,9 +1428,30 @@ export class NeoService {
               { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
               Date.now()
             );
-        return { ask: ask && plan.ticks.length ? (this.askRecords.get(ask.id) ?? ask) : ask };
+        return { ask: ask && plan.ticks.length ? this.askRecords.get(ask.id) : null };
       },
       ['options', 'plan'],
+      'ticked'
+    )
+    .pipe(
+      (ticked: { ask: NeoAsk | null }) => ({
+        plan: ticked.ask ? planNeoAskTickStatus(ticked.ask) : null,
+      }),
+      'ticked',
+      'status'
+    )
+    .pipe(
+      (
+        options: NeoDoneCheckDelivery,
+        ticked: { ask: NeoAsk | null },
+        status: { plan: ReturnType<typeof planNeoAskTickStatus> | null }
+      ) => ({
+        ask:
+          ticked.ask && status.plan
+            ? (writeNeoAskTickStatus(this.askRecords, ticked.ask, status.plan) ?? ticked.ask)
+            : (options.ask ?? null),
+      }),
+      ['options', 'ticked', 'status'],
       'current'
     )
     .pipe(
@@ -1425,6 +1460,7 @@ export class NeoService {
         goal: NeoWorkGoal,
         found: NeoDoneCheckFound,
         options: NeoDoneCheckDelivery,
+        linked: NeoDoneCheckLinked,
         current: { ask: NeoAsk | null }
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
@@ -1440,18 +1476,12 @@ export class NeoService {
               stale: options.stale ?? false,
               ready: options.ready ?? false,
               ask: current.ask,
-              cards: current.ask
-                ? projectNeoAskCards(
-                    work.id,
-                    current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-                    this.workPrs.list(current.ask.workIds)
-                  )
-                : [],
+              cards: current.ask ? projectNeoAskCards(work.id, linked.works, linked.rows) : [],
             }
           ),
         };
       },
-      ['work', 'goal', 'found', 'options', 'current'],
+      ['work', 'goal', 'found', 'options', 'linked', 'current'],
       'note'
     )
     .pipe(
