@@ -12,7 +12,7 @@ import {
   shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
   wantsNeoWorkPrBlockers,
-} from '../../../../src/lib/neo/work-prs.ts';
+} from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
 const head = 'abc123';

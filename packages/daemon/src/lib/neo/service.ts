@@ -34,10 +34,7 @@ import {
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
-import {
-  NeoWorkPrRepository,
-  type NeoWorkPrRow,
-} from '../../storage/repositories/neo-work-pr-repository.ts';
+import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -116,7 +113,7 @@ import {
   readGithubPrs,
   shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
-} from './work-prs.ts';
+} from './packs/coding/work-prs.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import {
   isNeoAskLive,

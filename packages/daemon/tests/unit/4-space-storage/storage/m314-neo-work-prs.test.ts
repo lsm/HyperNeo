@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import { NeoWorkPrRepository } from '../../../../src/storage/repositories/neo-work-pr-repository';
+import { NeoWorkPrRepository } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
 import { Database } from '../../../../src/storage/sqlite-compat';

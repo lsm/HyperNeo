@@ -1,7 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDoneCheckMessageId, neoWorkReturnMessageId } from './ask-origin.ts';
-import { isNeoWorkPrWaiting } from './work-prs.ts';
+import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 
 type Gate<T> = { value: T } | { reason: boolean };
 
