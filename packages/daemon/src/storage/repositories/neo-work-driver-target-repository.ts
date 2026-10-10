@@ -52,6 +52,33 @@ export class NeoWorkDriverTargetRepository {
     return row ? (JSON.parse(row.ref) as WorkRef) : null;
   }
 
+  readFollowAnchor(workId: string): number | null {
+    const row = this.db
+      .prepare('SELECT follow_anchor AS at FROM neo_work_driver_targets WHERE work_id = ?')
+      .get(workId) as { at: number | null } | null | undefined;
+    return row?.at ?? null;
+  }
+
+  recordFollowAnchor(workId: string, at: number): void {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET follow_anchor = ? WHERE work_id = ?')
+      .run(at, workId);
+  }
+
+  readSupersededAt(workId: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(other.started_at) AS at
+           FROM neo_work_driver_targets card
+           JOIN neo_work_driver_targets other
+             ON other.ref = card.ref AND other.work_id != card.work_id
+          WHERE card.work_id = ? AND card.started_at IS NOT NULL
+            AND other.started_at > card.started_at`
+      )
+      .get(workId) as { at: number | null } | null | undefined;
+    return row?.at ?? null;
+  }
+
   readLiveStatus(workId: string): WorkStatus | null {
     const row = this.db
       .prepare('SELECT live_status AS status FROM neo_work_driver_targets WHERE work_id = ?')

@@ -124,6 +124,15 @@ function fixtures() {
   };
 }
 
+describe('neoWorkReturnMessageId', () => {
+  test('a continued card returns under a new id so its next report is not swallowed', () => {
+    expect(neoWorkReturnMessageId('w1', 0)).toBe('w1');
+    expect(neoWorkReturnMessageId('w1', 2)).toBe('w1:retry:2');
+    expect(neoWorkReturnMessageId('w1', 0, 1)).toBe('w1:continued:1');
+    expect(neoWorkReturnMessageId('w1', 2, 3)).toBe('w1:retry:2:continued:3');
+  });
+});
+
 describe('recorded ask lineage gates', () => {
   test.each([
     { sessionId: '', messageId: 'x' },
