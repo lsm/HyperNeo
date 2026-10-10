@@ -110,6 +110,7 @@ import {
 } from './work-prs.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import {
+  isNeoAskLive,
   neoDoneCheckToldIds,
   requireNeoDoneCheck,
   requireNeoDoneCheckDue,
@@ -965,7 +966,12 @@ export class NeoService {
     )
     .pipe(
       (work: NeoWork, card: NeoWorkPrCard, now: number) =>
-        requireNeoWorkPrRefresh(work, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
+        requireNeoWorkPrRefresh(
+          work,
+          { ...card, goal: !!card.goal, live: isNeoAskLive(card.ask) },
+          now,
+          NEO_WORK_CLOSED_DONE
+        ),
       ['work', 'card', 'now'],
       'result:row'
     )

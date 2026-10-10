@@ -139,13 +139,14 @@ export function planNeoWorkPrRefresh(
 
 export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
   work: { status: string; report: string | null },
-  card: { goal: boolean; row: Row | null; session: boolean },
+  card: { goal: boolean; row: Row | null; session: boolean; live: boolean },
   now: number,
   closedDone: string
 ): { value: Row } | { reason: null } {
   return work.status === 'reported' &&
     work.report !== closedDone &&
     card.goal &&
+    card.live &&
     card.session &&
     card.row &&
     now - card.row.readAt >= NEO_WORK_PR_READ_MS

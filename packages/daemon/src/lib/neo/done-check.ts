@@ -1,15 +1,28 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDoneCheckMessageId } from './ask-origin.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
 
 type Gate<T> = { value: T } | { reason: boolean };
 
+export const isNeoAskLive = (ask: Pick<NeoAsk, 'status'> | null) =>
+  !!ask && ask.status !== 'achieved' && ask.status !== 'abandoned';
+
 export function requireNeoDoneCheck(
   work: Pick<NeoWork, 'status'>,
-  card: { goal: NeoWorkGoal | null; driver: boolean; session: boolean }
+  card: {
+    goal: NeoWorkGoal | null;
+    driver: boolean;
+    session: boolean;
+    ask: Pick<NeoAsk, 'status'> | null;
+  }
 ): Gate<NeoWorkGoal> {
-  return work.status === 'reported' && card.goal?.doneWhen && card.driver && card.session
+  if (card.ask && !isNeoAskLive(card.ask)) return { reason: true };
+  return work.status === 'reported' &&
+    card.goal?.doneWhen &&
+    card.driver &&
+    card.session &&
+    card.ask
     ? { value: card.goal }
     : { reason: false };
 }
