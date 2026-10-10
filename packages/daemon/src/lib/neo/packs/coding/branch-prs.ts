@@ -7,6 +7,7 @@ import { NEO_WORK_PR_READ_MS } from './work-prs.ts';
 export type NeoWorkBranch = { branch: string; cwd: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
 
+export const NEO_BRANCH_PR_MAX = 2;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const read = new Map<string, { at: number; urls: string[] }>();
 
@@ -16,6 +17,10 @@ export function neoWorkBranch(
   return session?.worktree?.branch
     ? { branch: session.worktree.branch, cwd: session.worktree.worktreePath }
     : null;
+}
+
+export function neoCardPrUrls(base: readonly string[], opened: readonly string[]): string[] {
+  return [...base, ...opened.filter((url) => !base.includes(url)).slice(0, NEO_BRANCH_PR_MAX)];
 }
 
 export async function readGithubBranchPrs(
@@ -37,11 +42,11 @@ export async function readGithubBranchPrs(
       '--json',
       'url',
       '--limit',
-      '5',
+      String(NEO_BRANCH_PR_MAX),
     ],
     branch.cwd,
     spawnImpl,
-    { resourceHint: 'graphql' }
+    { resourceHint: 'graphql', stripGHRepo: true }
   );
   const parsed = outcome.ok ? BranchPrsSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) return cached?.urls ?? [];

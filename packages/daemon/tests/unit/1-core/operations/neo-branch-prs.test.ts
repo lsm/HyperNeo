@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  neoCardPrUrls,
   neoWorkBranch,
   readGithubBranchPrs,
 } from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
@@ -19,6 +20,20 @@ describe('neoWorkBranch', () => {
     });
     expect(neoWorkBranch({})).toBe(null);
     expect(neoWorkBranch(null)).toBe(null);
+  });
+});
+
+describe('neoCardPrUrls', () => {
+  test('adds at most two branch pull requests after the stored and report-cited ones', () => {
+    const base = Array.from({ length: 8 }, (_, index) => `https://github.com/o/r/pull/${index}`);
+    expect(
+      neoCardPrUrls(base, [
+        base[0],
+        'https://github.com/o/r/pull/90',
+        'https://github.com/o/r/pull/91',
+        'https://github.com/o/r/pull/92',
+      ])
+    ).toEqual([...base, 'https://github.com/o/r/pull/90', 'https://github.com/o/r/pull/91']);
   });
 });
 
@@ -42,6 +57,18 @@ describe('readGithubBranchPrs', () => {
     ]);
     await readGithubBranchPrs(branch, spawn as never);
     expect(calls).toHaveLength(1);
-    expect(calls[0].args.slice(0, 5)).toEqual(['gh', 'pr', 'list', '--head', 'neo/fix-5546']);
+    expect(calls[0].args).toEqual([
+      'gh',
+      'pr',
+      'list',
+      '--head',
+      'neo/fix-5546',
+      '--state',
+      'all',
+      '--json',
+      'url',
+      '--limit',
+      '2',
+    ]);
   });
 });

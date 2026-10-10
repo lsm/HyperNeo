@@ -1,17 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
+import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
+import {
+  codingPrMergedCheck,
+  createCodingPack,
+} from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { extractNeoWorkPrUrls } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
   neoPackBriefs,
+  neoPackChecks,
   neoPackFragment,
   neoPacks,
+  planNeoPackTicks,
   readNeoPackEvidence,
   requireNeoAskPack,
+  requireNeoPackTickable,
 } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
@@ -189,5 +196,86 @@ describe('readNeoPackEvidence', () => {
     );
     expect(read).toEqual({ evidence: [evidence], read: { ok: true, okAt: 7 } });
     expect(warned).toEqual(['broken']);
+  });
+});
+
+const merged: NeoEvidence = { key: 'pr/1', state: 'done', summary: 'merged', blockers: [] };
+const open: NeoEvidence = { ...merged, key: 'pr/2', state: 'pending', summary: 'open' };
+const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
+  id: 'i1',
+  text: 'Fix merged to dev',
+  state: 'pending',
+  evidence: null,
+  check: 'pr_merged',
+  metBy: null,
+  removed: false,
+  addedAt: null,
+  ...overrides,
+});
+
+describe('codingPrMergedCheck', () => {
+  test.each<[string, NeoEvidence[], ReturnType<typeof codingPrMergedCheck>]>([
+    ['every tracked pull request merged', [merged], { value: 'Merged: pr/1' }],
+    ['one still open', [merged, open], { reason: 'not_merged' }],
+    ['no pull requests', [], { reason: 'not_merged' }],
+  ])('%s', (_label, evidence, gate) => {
+    expect(codingPrMergedCheck(item(), evidence)).toEqual(gate);
+  });
+});
+
+describe('neoPackChecks', () => {
+  test('takes each kind from the first pack that defines it', () => {
+    const first = () => ({ value: 'first' });
+    const second = () => ({ value: 'second' });
+    const checks = neoPackChecks([
+      { ...pack('coding'), checks: { pr_merged: first } },
+      { ...pack('other'), checks: { pr_merged: second, filed: second } },
+    ]);
+    expect(checks).toEqual({ pr_merged: first, filed: second });
+  });
+});
+
+describe('planNeoPackTicks', () => {
+  const ask = (items: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
+    ({ id: 'a1', status, doneItems: items }) as NeoAsk;
+  const checks = { pr_merged: codingPrMergedCheck };
+  test.each<[string, NeoAsk | null, NeoEvidence[], ReturnType<typeof planNeoPackTicks>]>([
+    [
+      'a merged item on a live ask',
+      ask([item()]),
+      [merged],
+      [{ id: 'i1', evidence: 'Merged: pr/1' }],
+    ],
+    [
+      'a waiting ask too',
+      ask([item()], 'waiting'),
+      [merged],
+      [{ id: 'i1', evidence: 'Merged: pr/1' }],
+    ],
+    ['an item already met', ask([item({ state: 'met' })]), [merged], []],
+    ['a removed item', ask([item({ removed: true })]), [merged], []],
+    ['an item with no check', ask([item({ check: null })]), [merged], []],
+    ['a pull request still open', ask([item()]), [merged, open], []],
+    ['a settled ask', ask([item()], 'achieved'), [merged], []],
+    ['a card with no ask', null, [merged], []],
+  ])('%s', (_label, current, evidence, ticks) => {
+    expect(planNeoPackTicks(current, evidence, checks)).toEqual(ticks);
+  });
+});
+
+describe('requireNeoPackTickable', () => {
+  const ask = (items: NeoAskItem[], status: NeoAsk['status'] = 'open') =>
+    ({ id: 'a1', status, doneItems: items }) as NeoAsk;
+  test.each<[string, NeoAsk | null, boolean]>([
+    ['a live ask with an unmet checked item', ask([item()]), true],
+    ['a waiting ask too', ask([item({ state: 'needs_you' })], 'waiting'), true],
+    ['an ask settled meanwhile', ask([item()], 'achieved'), false],
+    ['an ask whose checked items are met', ask([item({ state: 'met' })]), false],
+    ['an ask with only unchecked items', ask([item({ check: null })]), false],
+    ['an ask gone', null, false],
+  ])('%s', (_label, current, tickable) => {
+    expect(requireNeoPackTickable({ ask: current })).toEqual(
+      tickable ? { value: current } : { reason: null }
+    );
   });
 });

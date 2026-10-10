@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   countNeoWorkPrApprovals,
@@ -125,6 +126,75 @@ describe('neoWorkPrEvidence', () => {
         blockers: ['behind dev'],
       },
     ]);
+  });
+});
+
+describe('neoAskPrEvidence', () => {
+  const merged: NeoWorkPr = { ...pr, state: 'MERGED' };
+  const other: NeoWorkPr = { ...pr, url: 'https://github.com/lsm/HyperNeo/pull/43' };
+  test('covers the pull requests of every live card under the ask, each once', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'queued', report: null },
+        ],
+        [
+          { workId: 'w1', prs: [merged] },
+          { workId: 'w2', prs: [merged, other] },
+        ]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      [other.url, 'pending'],
+    ]);
+  });
+
+  test('holds every live card with no pull request tracked, and each unread one, as pending', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'queued', report: null },
+          { id: 'w3', status: 'reported', report: `Opened ${other.url}.` },
+          { id: 'w4', status: 'reported', report: 'Wrote the notes.' },
+        ],
+        [{ workId: 'w1', prs: [merged] }]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      [other.url, 'pending'],
+      ['work:w2', 'pending'],
+      ['work:w3', 'pending'],
+      ['work:w4', 'pending'],
+    ]);
+  });
+
+  test('holds a pull request a card reported after its last read as pending', () => {
+    expect(
+      neoAskPrEvidence(
+        [{ id: 'w1', status: 'reported', report: `Merged ${pr.url}, then opened ${other.url}.` }],
+        [{ workId: 'w1', prs: [merged] }]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      [other.url, 'pending'],
+    ]);
+  });
+
+  test('leaves out cards that were cancelled', () => {
+    expect(
+      neoAskPrEvidence(
+        [
+          { id: 'w1', status: 'reported', report: null },
+          { id: 'w2', status: 'cancelled', report: null },
+        ],
+        [
+          { workId: 'w1', prs: [merged] },
+          { workId: 'w2', prs: [other] },
+        ]
+      ).map((item) => item.key)
+    ).toEqual([pr.url]);
   });
 });
 

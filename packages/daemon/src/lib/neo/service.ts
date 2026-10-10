@@ -35,6 +35,7 @@ import {
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
+import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -114,6 +115,7 @@ import {
   planNeoDoneCheck,
 } from './evidence.ts';
 import {
+  neoCardPrUrls,
   neoWorkBranch,
   readGithubBranchPrs,
   type NeoBranchPrReader,
@@ -123,14 +125,18 @@ import { createCodingPack } from './packs/coding/pack.ts';
 import {
   neoEnabledPacks,
   neoPackBriefs,
+  neoPackChecks,
   neoPackFragment,
   neoPacks,
+  planNeoPackTicks,
   readNeoAskPackEvidence,
   readNeoPackEvidence,
+  requireNeoPackTickable,
 } from './packs/index.ts';
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   requireNeoWorkPrDelivery,
@@ -207,6 +213,13 @@ type NeoNeedsYouCard = {
   siblingsWaiting: boolean;
 };
 type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
+type NeoDoneCheckDelivery = {
+  stale?: boolean;
+  ready?: boolean;
+  remind?: boolean;
+  ask?: NeoAsk | null;
+  followedAt?: number;
+};
 type NeoWorkTold = { row: NeoWorkCheckRow | null };
 type NeoDoneCheckCard = {
   ask: NeoAsk | null;
@@ -1091,6 +1104,13 @@ export class NeoService {
       );
     }
     for (const ask of this.askRecords.listLive()) {
+      try {
+        this.runAskPackTicks(ask.id);
+      } catch (error) {
+        this.log.warn('Neo ask ticks pending', error);
+      }
+    }
+    for (const ask of this.askRecords.listLive()) {
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
@@ -1567,55 +1587,155 @@ export class NeoService {
     const ref = this.driverTargets.readRef(work.id);
     const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
     const opened = branch ? await this.readBranchPrs(branch) : [];
-    return extractNeoWorkPrUrls(work.report, [
-      ...(stored?.prs ?? []),
-      ...opened.map((url) => ({ url })),
-    ]);
+    return neoCardPrUrls(extractNeoWorkPrUrls(work.report, stored?.prs), opened);
   }
 
-  private async deliverDoneCheck(
+  private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)
+    .input(['askId'])
+    .pipe((askId: string) => ({ ask: this.askRecords.get(askId) }), 'askId', 'read')
+    .pipe(requireNeoPackTickable, 'read', 'result:ticks')
+    .pipe(
+      (ask: NeoAsk) => ({
+        works: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        rows: this.workPrs.list(ask.workIds),
+      }),
+      'ticks',
+      'linked'
+    )
+    .pipe(
+      (ask: NeoAsk, linked: { works: NeoWork[]; rows: NeoWorkPrRow[] }) => ({
+        ticks: planNeoPackTicks(
+          ask,
+          neoAskPrEvidence(linked.works, linked.rows),
+          neoPackChecks(this.packs())
+        ),
+      }),
+      ['ticks', 'linked'],
+      'plan'
+    )
+    .pipe(
+      (ask: NeoAsk, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => {
+        for (const tick of plan.ticks)
+          this.askRecords.tickItem(
+            ask.id,
+            { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
+            Date.now()
+          );
+        return { ask: plan.ticks.length ? this.askRecords.get(ask.id) : null };
+      },
+      ['ticks', 'plan'],
+      'ticked'
+    )
+    .pipe(
+      (ticked: { ask: NeoAsk | null }) => ({
+        plan: ticked.ask ? planNeoAskTickStatus(ticked.ask) : null,
+      }),
+      'ticked',
+      'status'
+    )
+    .pipe(
+      (
+        ask: NeoAsk,
+        ticked: { ask: NeoAsk | null },
+        status: { plan: ReturnType<typeof planNeoAskTickStatus> | null }
+      ) => ({
+        value:
+          ticked.ask && status.plan
+            ? (writeNeoAskTickStatus(this.askRecords, ticked.ask, status.plan) ?? ticked.ask)
+            : ask,
+      }),
+      ['ticks', 'ticked', 'status'],
+      'result:ticks'
+    )
+    .end('ticks') as (askId: string) => NeoAsk | null;
+
+  private deliverDoneCheck(
     work: NeoWork,
     goal: NeoWorkGoal,
     row: NeoWorkPrRow | null,
-    {
-      stale = false,
-      ready = false,
-      remind = false,
-      ask,
-      followedAt,
-    }: {
-      stale?: boolean;
-      ready?: boolean;
-      remind?: boolean;
-      ask?: NeoAsk | null;
-      followedAt?: number;
-    } = {}
-  ): Promise<void> {
-    const continued = this.workContinues.get(work.id)?.count ?? 0;
-    await this.deliver(
-      work.originSessionId,
-      neoDoneCheckMessageId(work.id, continued, row?.revision, followedAt),
-      driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), {
-        prs: row?.prs,
-        stale,
-        ready,
-        ask,
-        pack: remind ? null : this.askPackFragment(ask),
-        cards: ask
-          ? projectNeoAskCards(
-              work.id,
-              ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-              this.workPrs.list(ask.workIds)
-            )
-          : [],
-      }),
-      work.originSessionId
-    );
-    if (!row) return;
-    const at = Date.now();
-    this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs), at, ready);
-    this.workChecks.markTold(work.id, neoEvidenceSignature(neoWorkPrEvidence(row.prs)), at, ready);
+    options: NeoDoneCheckDelivery = {}
+  ): Promise<unknown> {
+    return this.runDoneCheckDelivery(work, goal, { row }, options);
   }
+
+  private readonly runDoneCheckDelivery = (superpipe({})('neo-done-check-delivery') as PipelineAPI)
+    .input(['work', 'goal', 'found', 'options'])
+    .pipe(
+      (options: NeoDoneCheckDelivery) => ({
+        ask: options.ask ? (this.runAskPackTicks(options.ask.id) ?? options.ask) : null,
+      }),
+      'options',
+      'current'
+    )
+    .pipe(
+      (
+        work: NeoWork,
+        goal: NeoWorkGoal,
+        found: NeoDoneCheckFound,
+        options: NeoDoneCheckDelivery,
+        current: { ask: NeoAsk | null }
+      ) => {
+        const continued = this.workContinues.get(work.id)?.count ?? 0;
+        return {
+          id: neoDoneCheckMessageId(work.id, continued, found.row?.revision, options.followedAt),
+          content: driverDoneCheckNote(
+            work,
+            goal,
+            continued,
+            this.continueBudget(work, Date.now()),
+            {
+              prs: found.row?.prs,
+              stale: options.stale ?? false,
+              ready: options.ready ?? false,
+              ask: current.ask,
+              pack: options.remind ? null : this.askPackFragment(current.ask),
+              cards: current.ask
+                ? projectNeoAskCards(
+                    work.id,
+                    current.ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+                    this.workPrs.list(current.ask.workIds)
+                  )
+                : [],
+            }
+          ),
+        };
+      },
+      ['work', 'goal', 'found', 'options', 'current'],
+      'note'
+    )
+    .pipe(
+      async (work: NeoWork, note: { id: string; content: string }) => {
+        await this.deliver(work.originSessionId, note.id, note.content, work.originSessionId);
+        return { at: Date.now() };
+      },
+      ['work', 'note'],
+      'sent'
+    )
+    .pipe(
+      (
+        work: NeoWork,
+        found: NeoDoneCheckFound,
+        options: NeoDoneCheckDelivery,
+        sent: { at: number }
+      ) => {
+        if (!found.row) return;
+        const ready = options.ready ?? false;
+        this.workPrs.markDelivered(work.id, neoWorkPrSignature(found.row.prs), sent.at, ready);
+        this.workChecks.markTold(
+          work.id,
+          neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
+          sent.at,
+          ready
+        );
+      },
+      ['work', 'found', 'options', 'sent']
+    )
+    .endAsync('sent') as (
+    work: NeoWork,
+    goal: NeoWorkGoal,
+    found: NeoDoneCheckFound,
+    options: NeoDoneCheckDelivery
+  ) => Promise<unknown>;
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
