@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence';
+import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -84,6 +85,37 @@ describe('NeoAskRepository', () => {
     expect(asks.get('a1')?.status).toBe('waiting');
     asks.reopenForWork('w1');
     expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null });
+  });
+
+  test('keeps checklist items with the ask that created them, once', () => {
+    const db = withWork();
+    runMigration313(db);
+    runMigration316(db);
+    runMigration318(db);
+    runMigration318(db);
+    const asks = new NeoAskRepository(db);
+    const items = [
+      { text: 'Merged', check: 'pr_merged' as const },
+      { text: 'Docs', check: null },
+    ];
+    expect(asks.open(input, items)?.doneItems?.map((item) => [item.id, item.state])).toEqual([
+      ['i1', 'pending'],
+      ['i2', 'pending'],
+    ]);
+    expect(
+      asks.open({ ...input, id: 'a2' }, [{ text: 'Other', check: null }])?.doneItems
+    ).toHaveLength(2);
+    expect(() =>
+      db.prepare("UPDATE neo_ask_items SET state = 'done' WHERE id = 'i1'").run()
+    ).toThrow();
+  });
+
+  test('shows no items on databases from before checklists', () => {
+    const db = withWork();
+    runMigration313(db);
+    runMigration316(db);
+    const asks = new NeoAskRepository(db);
+    expect(asks.open(input, [{ text: 'Merged', check: null }])?.doneItems).toEqual([]);
   });
 
   test('reads nothing before the migration has run', () => {
