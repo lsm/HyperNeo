@@ -321,10 +321,15 @@ function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
 }
 
 export function readDriverSent(outcome: OperationOutcome, message: string): DriverSent | null {
-  const inputs = readDriverInputs(outcome);
   const opening = messageOpening(message);
-  if (!inputs || !opening) return null;
+  if (!opening) return null;
+  const inputs = readDriverInputs(outcome) ?? [];
   return { inputBefore: Math.max(0, ...inputs.map((input) => input.at)), opening };
+}
+
+export function neoCardSent(stored: DriverSent | null, instruction: string): DriverSent | null {
+  const opening = messageOpening(instruction);
+  return stored ?? (opening ? { inputBefore: 0, opening } : null);
 }
 
 export function readDriverLanded(

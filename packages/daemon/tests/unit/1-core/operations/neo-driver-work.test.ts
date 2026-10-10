@@ -15,6 +15,8 @@ import {
   driverExchangeReport,
   readDriverLanded,
   readDriverSent,
+  neoCardSent,
+  type DriverSent,
   readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
@@ -286,7 +288,26 @@ describe('readDriverSent and readDriverLanded', () => {
       readDriverSent(status([{ at: 4, text: 'earlier' }]), '  Raise the  font.\nThen stop.')
     ).toEqual({ inputBefore: 4, opening: 'Raise the font.' });
     expect(readDriverSent(status([]), 'Go on.')).toEqual({ inputBefore: 0, opening: 'Go on.' });
-    expect(readDriverSent(status(), 'Go on.')).toBeNull();
+    expect(readDriverSent(status(), 'Go on.')).toEqual({ inputBefore: 0, opening: 'Go on.' });
+    expect(readDriverSent(status([]), '   ')).toBeNull();
+  });
+
+  test.each<[string, DriverSent | null, string, DriverSent | null]>([
+    [
+      'a recorded send',
+      { inputBefore: 4, opening: 'Go on.' },
+      'Raise it.',
+      { inputBefore: 4, opening: 'Go on.' },
+    ],
+    [
+      'a send recorded without its opening',
+      null,
+      'Raise it.\nThen stop.',
+      { inputBefore: 0, opening: 'Raise it.' },
+    ],
+    ['a card with no instruction', null, '', null],
+  ])('neoCardSent keeps %s findable', (_label, stored, instruction, sent) => {
+    expect(neoCardSent(stored, instruction)).toEqual(sent);
   });
 
   test('anchors only on Neo’s own message landing after the send, not on one the human typed', () => {
@@ -587,6 +608,31 @@ describe('Neo work with a drivers target', () => {
         value: { ok: false, reason: expect.stringContaining('does not exist') },
       });
       expect(calls.filter((call) => call.name === 'work.start')).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a send card whose opening was never recorded still finds its message landing', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { ref: sendTarget.ref } },
+      undefined,
+      () => ({
+        ok: true,
+        value: {
+          status: 'running',
+          lastActivityAt: 5_000,
+          recentInputs: [{ at: 3_000, text: `${work.instruction}\n\nGoal: …` }],
+        },
+      }),
+      sendTarget
+    );
+    try {
+      await service.start('work-1');
+      service.driverTargets.recordStartedAt('work-1', null);
+      service.driverTargets.recordSent('work-1', null);
+      await service.refreshDriverWork();
+      expect(service.driverTargets.readStartedAt('work-1')).toBe(3_000);
     } finally {
       db.close();
     }
