@@ -51,7 +51,7 @@ describe('Neo MVP', () => {
     const prompt = neoPrompt(null);
     expect(prompt).toContain('permission to create its record now');
     expect(prompt).toContain('call neo.work.propose in that turn');
-    expect(prompt).toContain('never render a pretend card');
+    expect(prompt).toContain('never render a pretend work item');
     expect(prompt).toContain('Start work button is the approval to execute');
     expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
     expect(prompt).toContain('ask one short clarifying question');

@@ -481,7 +481,7 @@ export function driverExchangeReport(
 export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
 
 export const NEO_WORK_UNANCHORED_NOTE =
-  "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the card. Check it against the card before telling the human.";
+  "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the work item. Check it against the work item before telling the human.";
 
 export function readUnanchoredSettlement(
   work: Pick<NeoWork, 'updatedAt'>,

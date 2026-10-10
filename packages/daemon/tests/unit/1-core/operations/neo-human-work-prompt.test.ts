@@ -28,8 +28,8 @@ describe('current human work guidance', () => {
       .split('You and the concern holders NEVER')[1]!
       .split('\n\n')[0]!;
     expect(delegation).toContain('only to a proposal created for the current human message');
-    expect(delegation).toContain('later says “yes, run it” about an earlier card');
-    expect(delegation).toContain('they must use that card’s Start work button');
+    expect(delegation).toContain('later says “yes, run it” about an earlier work item');
+    expect(delegation).toContain('they must use that work item’s Start work button');
     expect(delegation).toContain('do not invoke neo.work.start for it');
     expect(delegation).toContain('or re-propose the same work with a new requestKey');
     expect(delegation).toContain('to evade its original input binding');
@@ -38,7 +38,7 @@ describe('current human work guidance', () => {
   test.each(turns)('keeps the card-only request pending in $concernId', (turn) => {
     const prompt = neoPrompt(turn.concernId);
     const card = prompt.split('When the user asks only')[1]!.split('\n\n')[0]!;
-    expect(card).toContain('to set up or show a work card');
+    expect(card).toContain('to set up or show a work item without starting work');
     expect(card).toContain('call neo.work.propose in that turn without starting it');
     expect(card).toContain('For this proposal-only request');
     expect(card).toContain('the Start work button is the approval to execute');

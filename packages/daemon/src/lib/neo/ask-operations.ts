@@ -161,7 +161,7 @@ export function requireNeoAskSummary(
   return caller.source === 'mcp' && !input.summary
     ? {
         reason: fail(
-          'summary_required: pass summary, one short sentence the card shows ("Merged in #6099."), and keep the proof in evidence.'
+          'summary_required: pass summary, one short sentence the ask shows ("Merged in #6099."), and keep the proof in evidence.'
         ),
       }
     : { value: caller };
@@ -301,7 +301,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneWhen is the outcome that finishes it (for code, usually merged and not just a pull request opened); doneSource is "human" when the human said it, or the id of the standing rule it came from. Propose every card for this request with its askId. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneWhen is the outcome that finishes it (for code, usually merged and not just a pull request opened); doneSource is "human" when the human said it, or the id of the standing rule it came from. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -310,7 +310,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask card shows: the outcome, or for blocked what the human must decide ("Merged in #6099.", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the card does not show. Achieved and abandoned are final and stop the ask\'s live work: queued cards close (done for achieved, cancelled for abandoned) and proposed cards are cancelled. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
+        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for blocked what the human must decide ("Merged in #6099.", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
