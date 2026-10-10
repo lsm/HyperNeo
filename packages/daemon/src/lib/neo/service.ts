@@ -1117,17 +1117,18 @@ export class NeoService {
     const stored = this.workPrs.get(work.id);
     const continued = this.workContinues.get(work.id)?.count ?? 0;
     const followedAt = followed ? work.updatedAt : undefined;
-    if (
-      !stored &&
-      this.hasDelivery(
-        work.originSessionId,
-        neoDoneCheckMessageId(work.id, continued, undefined, followedAt)
-      )
-    )
-      return true;
+    const told = (revision?: number) =>
+      (followed ? [followedAt] : [undefined, work.updatedAt]).some((at) =>
+        this.hasDelivery(
+          work.originSessionId,
+          neoDoneCheckMessageId(work.id, continued, revision, at)
+        )
+      );
+    if (!stored && told()) return true;
     const urls = extractNeoWorkPrUrls(work.report, stored?.prs);
     const prs = shouldReadNeoWorkPrs(stored, urls, Date.now()) ? await this.readPrs(urls) : null;
     const row = prs ? this.recordWorkPrs(work.id, prs, stored) : stored;
+    if (!followed && row && told(row.revision)) return true;
     if (!row || !isNeoWorkPrWaiting(row.prs))
       await this.deliverDoneCheck(work, goal, row, { ask, followedAt });
     return true;

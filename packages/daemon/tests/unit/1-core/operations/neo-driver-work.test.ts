@@ -754,6 +754,7 @@ describe('Neo work with a drivers target', () => {
       deliver: async (_target: string, messageId: string) => {
         notes.push(messageId);
       },
+      hasDelivery: (_target: string, messageId: string) => notes.includes(messageId),
     });
     const statusCalls = () => calls.filter((call) => call.name === 'work.status').length;
     try {
@@ -793,6 +794,9 @@ describe('Neo work with a drivers target', () => {
 
       await service.refreshDriverWork();
       expect(statusCalls()).toBe(before + 1);
+
+      await service.reconcile('work-1');
+      expect(notes).toHaveLength(2);
     } finally {
       db.close();
     }
