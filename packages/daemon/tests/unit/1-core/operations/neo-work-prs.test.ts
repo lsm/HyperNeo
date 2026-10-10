@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
+  neoWorkPrEvidence,
   neoWorkPrSignature,
   countNeoWorkPrApprovals,
   planNeoWorkPrBlockers,
-  planNeoWorkPrRefresh,
   readGithubPrs,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
@@ -14,6 +14,7 @@ import {
   wantsNeoWorkPrBlockers,
 } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoEvidenceState } from '../../../../src/lib/neo/evidence.ts';
 
 const head = 'abc123';
 const ghPr = (overrides: Record<string, unknown> = {}) => ({
@@ -93,105 +94,37 @@ describe('summarizeNeoWorkPr', () => {
   });
 });
 
-describe('planNeoWorkPrRefresh', () => {
-  const at = (prs: NeoWorkPr[], delivered: string | null, readOkAt = 0) => ({
-    prs,
-    delivered,
-    readAt: 0,
-    readOkAt,
-  });
-  const halfHour = 30 * 60_000;
-
-  test.each<
-    [string, ReturnType<typeof at>, boolean, number, ReturnType<typeof planNeoWorkPrRefresh>]
-  >([
-    ['an open PR with running checks', at([{ ...pr, checks: 'pending' }], null), true, 0, 'wait'],
+describe('neoWorkPrEvidence', () => {
+  test.each<[string, Partial<NeoWorkPr>, NeoEvidenceState]>([
     [
-      'a merged PR with leftover pending checks',
-      at([{ ...pr, state: 'MERGED', checks: 'pending' }], null),
-      true,
-      0,
-      'deliver',
+      'a merged PR, even with leftover pending checks',
+      { state: 'MERGED', checks: 'pending' },
+      'done',
     ],
-    ['a state Neo has not seen', at([pr], null), true, 0, 'deliver'],
-    ['the state Neo already saw', at([pr], neoWorkPrSignature([pr])), true, 0, 'unchanged'],
+    ['a PR closed unmerged', { state: 'CLOSED' }, 'failed'],
     [
-      'a new review',
-      at([{ ...pr, review: 'approved' }], neoWorkPrSignature([pr])),
-      true,
-      0,
-      'deliver',
+      'an open PR still running checks',
+      { checks: 'pending', review: 'changes_requested' },
+      'waiting',
     ],
-    [
-      'a failed read soon after a good one',
-      at([{ ...pr, checks: 'pending' }], null),
-      false,
-      halfHour - 1,
-      'wait',
-    ],
-    [
-      'reads failing for half an hour',
-      at([{ ...pr, checks: 'pending' }], null),
-      false,
-      halfHour,
-      'deliver',
-    ],
-    [
-      'reads still failing after Neo was told',
-      at([pr], neoWorkPrSignature([pr])),
-      false,
-      halfHour,
-      'wait',
-    ],
-  ])('%s', (_case, row, read, now, plan) => {
-    expect(planNeoWorkPrRefresh(row, read, now)).toBe(plan);
+    ['an open PR with failing checks', { checks: 'failing' }, 'failed'],
+    ['an open PR with changes requested', { review: 'changes_requested' }, 'failed'],
+    ['an approved PR with green checks', { review: 'approved' }, 'ready'],
+    ['an approved PR with no checks', { checks: 'none', review: 'approved' }, 'ready'],
+    ['an open PR waiting for review', {}, 'pending'],
+  ])('%s', (_label, overrides, state) => {
+    expect(neoWorkPrEvidence([{ ...pr, ...overrides }])[0].state).toBe(state);
   });
 
-  const ready: NeoWorkPr = { ...pr, state: 'OPEN', checks: 'passing', review: 'approved' };
-  const seen = neoWorkPrSignature([ready]);
-  const now = 10 * halfHour;
-  const told: Parameters<typeof planNeoWorkPrRefresh>[0] = {
-    ...at([ready], seen),
-    deliveredAt: now - halfHour,
-    reminded: null,
-  };
-  const quiet = { quietSince: now - halfHour, remindable: true };
-  test.each<
-    [
-      string,
-      typeof told,
-      Parameters<typeof planNeoWorkPrRefresh>[3],
-      ReturnType<typeof planNeoWorkPrRefresh>,
-    ]
-  >([
-    ['an approved green PR left open for half an hour', told, quiet, 'remind'],
-    [
-      'one Neo was told about a minute ago',
-      { ...told, deliveredAt: now - 60_000 },
-      quiet,
-      'unchanged',
-    ],
-    ['one whose session moved since', told, { ...quiet, quietSince: now - 60_000 }, 'unchanged'],
-    ['one already reminded in this state', { ...told, reminded: seen }, quiet, 'unchanged'],
-    [
-      'one under an ask that is settled or waits on the human',
-      told,
-      { ...quiet, remindable: false },
-      'unchanged',
-    ],
-    ['one told before delivery times were kept', { ...told, deliveredAt: null }, quiet, 'remind'],
-    [
-      'one still waiting for review',
+  test('keeps the checks, the review and the blockers, so any change is new evidence', () => {
+    expect(neoWorkPrEvidence([{ ...pr, blockers: ['behind dev'] }])).toEqual([
       {
-        ...told,
-        prs: [{ ...ready, review: 'none' }],
-        delivered: neoWorkPrSignature([{ ...ready, review: 'none' }]),
+        key: pr.url,
+        state: 'pending',
+        summary: 'open, checks passing, review none',
+        blockers: ['behind dev'],
       },
-      quiet,
-      'unchanged',
-    ],
-  ])('%s', (_case, row, card, plan) => {
-    expect(planNeoWorkPrRefresh(row, true, now, card)).toBe(plan);
+    ]);
   });
 });
 

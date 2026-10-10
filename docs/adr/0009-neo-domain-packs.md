@@ -129,7 +129,9 @@ Delivery bookkeeping is core's. A new `neo_work_checks` table holds, per card,
 the signature of the evidence Neo was last told about, when, and whether a
 reminder went out. The signature is canonical: evidence sorted by `key`, with
 volatile fields such as read times excluded, so an unchanged state never
-re-delivers. Until the old `neo_work_prs` columns are dropped, writes go to
+re-delivers. A pack's `summary` is part of that signature, so it must be a pure
+function of the state it describes (no read times, counts or relative ages);
+`blockers` compare as a set. Until the old `neo_work_prs` columns are dropped, writes go to
 both, so a rollback reads current state.
 
 The done-check path is one core pipeline: read evidence (effect), a pure
