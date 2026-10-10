@@ -1,5 +1,6 @@
 import { CLAUDE_RC_TOGGLE_BRIEF, CLAUDE_RC_TOGGLE_REQUEST, fillPrompt } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { Logger } from '../logger.ts';
 import {
   type ClaudeDesktopAdapterDeps,
   type ClaudeDesktopRecord,
@@ -13,7 +14,7 @@ import {
   sendClaudeMessage,
   waitUntilLive,
 } from './claude-desktop-adapter.ts';
-import type { Rejected, Result, WorkAdapter } from './types.ts';
+import type { Result, WorkAdapter } from './types.ts';
 import { reject } from './work-operations.ts';
 
 export const RC_TOGGLE_TITLE = 'rc-toggle';
@@ -23,22 +24,23 @@ export interface RemoteControlTarget {
   title: string;
 }
 
-type Gate<Value> = { value: Value } | { reason: Rejected };
+const log = new Logger('claude-remote-control');
+
+type RemoteControlOutcome = Result<{ delivered: boolean }>;
+type Gate<Value> = { value: Value } | { reason: RemoteControlOutcome };
+const alreadySet: { reason: RemoteControlOutcome } = {
+  reason: { ok: true, value: { delivered: false } },
+};
 type RcToggle = { record: ClaudeDesktopRecord & { cliSessionId: string }; live: boolean };
 
 export function requireDisconnectedTarget(
   target: RemoteControlTarget,
   records: readonly ClaudeDesktopRecord[]
 ): Gate<RemoteControlTarget> {
-  if (target.title === RC_TOGGLE_TITLE) {
-    return { reason: reject('not_delivered', 'rc-toggle does not switch itself on.') };
-  }
+  if (target.title === RC_TOGGLE_TITLE) return alreadySet;
   const record = records.find((candidate) => candidate.sessionId === target.sessionId);
-  if (record && (record.remoteControlUserEnabled === false || claudeRemoteLink(record))) {
-    return {
-      reason: reject('not_delivered', `${target.sessionId} already has its Remote Control set.`),
-    };
-  }
+  if (record && (record.remoteControlUserEnabled === false || claudeRemoteLink(record)))
+    return alreadySet;
   return { value: target };
 }
 
@@ -164,7 +166,20 @@ export function withClaudeRemoteControl(
       const started = await start(startRequest, context);
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
-        queue = queue.then(() => request(target, deps, new Map())).catch(() => undefined);
+        queue = queue
+          .then(() => request(target, deps, new Map()))
+          .then(
+            (outcome) => {
+              if (!outcome.ok)
+                log.warn(
+                  `Remote Control for ${target.sessionId} was not set: ${outcome.reason}: ${outcome.detail}`
+                );
+            },
+            (error: unknown) =>
+              log.warn(
+                `Remote Control for ${target.sessionId} threw: ${error instanceof Error ? error.message : String(error)}`
+              )
+          );
       }
       return started;
     },
