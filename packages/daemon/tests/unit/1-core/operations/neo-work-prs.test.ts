@@ -150,7 +150,7 @@ describe('neoAskPrEvidence', () => {
     ]);
   });
 
-  test('holds a live card whose pull request is not read yet as pending', () => {
+  test('holds every live card with no pull request tracked, and each unread one, as pending', () => {
     expect(
       neoAskPrEvidence(
         [
@@ -165,6 +165,8 @@ describe('neoAskPrEvidence', () => {
       [pr.url, 'done'],
       [other.url, 'pending'],
       ['work:w2', 'pending'],
+      ['work:w3', 'pending'],
+      ['work:w4', 'pending'],
     ]);
   });
 

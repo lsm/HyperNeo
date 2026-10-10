@@ -20,6 +20,7 @@ export interface NeoPackFragment {
 export interface NeoPack extends NeoPackBrief {
   instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork): Promise<NeoEvidenceRead | null>;
+  readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   checks?: Record<string, NeoPackCheck>;
   workerSkills?: string[];
   workerMcpServers?: string[];

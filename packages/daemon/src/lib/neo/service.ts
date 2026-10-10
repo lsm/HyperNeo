@@ -108,7 +108,12 @@ import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
-import { type NeoEvidenceRead, neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
+import {
+  type NeoEvidence,
+  type NeoEvidenceRead,
+  neoEvidenceSignature,
+  planNeoDoneCheck,
+} from './evidence.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import {
   neoEnabledPacks,
@@ -117,6 +122,7 @@ import {
   neoPackFragment,
   neoPacks,
   planNeoPackTicks,
+  readNeoAskPackEvidence,
   readNeoPackEvidence,
   requireNeoPackTickable,
 } from './packs/index.ts';
@@ -142,7 +148,24 @@ import {
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
 } from './done-check.ts';
-import { planNeoWaitingReminders } from './waiting-reminders.ts';
+import {
+  neoReminderTurn,
+  planNeoReminderListings,
+  planNeoRemindersSpent,
+  planNeoWaitingReminders,
+  type NeoReminderListing,
+} from './waiting-reminders.ts';
+import {
+  neoAskEvidenceMessageId,
+  neoAskEvidenceNote,
+  planNeoAskEvidenceNote,
+  requireNeoAskEvidenceDue,
+} from './ask-evidence.ts';
+import { readGithubPrStates, type NeoPrStateReader } from './packs/coding/ask-prs.ts';
+import {
+  NeoAskCheckRepository,
+  type NeoAskCheckRow,
+} from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
@@ -197,6 +220,8 @@ type NeoDoneCheckCard = {
   stored: NeoWorkPrRow | null;
 };
 type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
+type NeoReminderTurnInput = { sessionId: string; messageId: string };
+type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -210,9 +235,12 @@ export class NeoService {
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly workChecks: NeoWorkCheckRepository;
+  readonly askChecks: NeoAskCheckRepository;
+  private readonly askEvidenceReads = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
+  readPrStates: NeoPrStateReader = readGithubPrStates;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -346,6 +374,7 @@ export class NeoService {
     .endAsync('check') as (work: NeoWork, followed: boolean) => Promise<boolean>;
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
+  private readonly reminderListings = new Map<string, NeoReminderListing>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -369,9 +398,11 @@ export class NeoService {
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
+    this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
+        readPrStates: (urls) => this.readPrStates(urls),
         workPrs: this.workPrs,
         record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
       }),
@@ -582,10 +613,7 @@ export class NeoService {
     const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
     if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
     if (receipt.accepted && receipt.created && !input.interim)
-      this.askRecords.markReminded(
-        this.waitingReminders(input.producerInput).map((ask) => ask.id),
-        Date.now()
-      );
+      this.spendWaitingReminders(input.producerInput);
     return receipt;
   }
 
@@ -597,6 +625,53 @@ export class NeoService {
       ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
       : [];
   }
+
+  readonly listWaitingReminders = (superpipe({})('neo-waiting-reminders-list') as PipelineAPI)
+    .input(['turn'])
+    .pipe(
+      (turn: NeoReminderTurnInput) => ({
+        key: neoReminderTurn(turn),
+        asks: this.waitingReminders(turn),
+      }),
+      'turn',
+      'due'
+    )
+    .pipe(
+      (due: NeoRemindersDue) => planNeoReminderListings(this.reminderListings, due.asks, due.key),
+      'due',
+      'plan'
+    )
+    .pipe((plan: ReturnType<typeof planNeoReminderListings>) => {
+      for (const id of plan.evict) this.reminderListings.delete(id);
+      for (const [id, listing] of plan.entries) {
+        this.reminderListings.delete(id);
+        this.reminderListings.set(id, listing);
+      }
+    }, 'plan')
+    .end('due') as (turn: NeoReminderTurnInput) => NeoRemindersDue;
+
+  private readonly spendWaitingReminders = (
+    superpipe({})('neo-waiting-reminders-spend') as PipelineAPI
+  )
+    .input(['turn'])
+    .pipe(
+      (turn: NeoReminderTurnInput) => ({
+        key: neoReminderTurn(turn),
+        asks: this.waitingReminders(turn),
+      }),
+      'turn',
+      'due'
+    )
+    .pipe(
+      (due: NeoRemindersDue) => planNeoRemindersSpent(this.reminderListings, due.asks, due.key),
+      'due',
+      'plan'
+    )
+    .pipe((plan: ReturnType<typeof planNeoRemindersSpent>) => {
+      this.askRecords.markReminded(plan.spent, Date.now());
+      for (const id of plan.drop) this.reminderListings.delete(id);
+    }, 'plan')
+    .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
     const root = this.repo.getBindingForConcern(null)?.sessionId;
@@ -1007,14 +1082,70 @@ export class NeoService {
         this.log.warn('Work pull request refresh pending', error)
       );
     }
-    for (const ask of this.askRecords.list().filter(isNeoAskLive)) {
+    for (const ask of this.askRecords.listLive()) {
       try {
         this.runAskPackTicks(ask.id);
       } catch (error) {
         this.log.warn('Neo ask ticks pending', error);
       }
     }
+    for (const ask of this.askRecords.listLive()) {
+      await this.checkAskEvidence(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask evidence check pending', error)
+      );
+    }
   }
+
+  private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk, now: number) =>
+        requireNeoAskEvidenceDue(
+          ask,
+          {
+            readAt: this.askEvidenceReads.get(ask.id),
+            session: !!this.db.getSession(ask.originSessionId),
+          },
+          now
+        ),
+      ['ask', 'now'],
+      'result:check'
+    )
+    .pipe(
+      (check: NeoAsk, now: number) => {
+        this.askEvidenceReads.set(check.id, now);
+      },
+      ['check', 'now']
+    )
+    .pipe(
+      async (check: NeoAsk) => ({
+        evidence: await readNeoAskPackEvidence(this.packs(), check, (id, error) =>
+          this.log.warn(`Neo pack ${id} ask evidence read failed`, error)
+        ),
+        told: this.askChecks.get(check.id),
+      }),
+      'check',
+      'read'
+    )
+    .pipe(
+      (read: { evidence: NeoEvidence[]; told: NeoAskCheckRow | null }) =>
+        planNeoAskEvidenceNote(read.evidence, read.told),
+      'read',
+      'result:note'
+    )
+    .pipe(
+      async (check: NeoAsk, note: { signature: string; evidence: NeoEvidence[] }) => {
+        await this.deliver(
+          check.originSessionId,
+          neoAskEvidenceMessageId(check.id, note.signature),
+          neoAskEvidenceNote(check, note.evidence),
+          check.originSessionId
+        );
+        this.askChecks.markTold(check.id, note.signature, Date.now());
+      },
+      ['check', 'note']
+    )
+    .endAsync('note') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly refreshWorkPrs = (superpipe({})('neo-work-pr-refresh') as PipelineAPI)
     .input(['workId', 'now'])

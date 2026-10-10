@@ -117,3 +117,21 @@ export function planNeoPackTicks(
     return gate && 'value' in gate ? [{ id: item.id, evidence: gate.value }] : [];
   });
 }
+
+export async function readNeoAskPackEvidence(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  warn: (id: string, error: unknown) => void
+): Promise<NeoEvidence[]> {
+  const reads = await Promise.all(
+    packs
+      .filter((pack) => !ask.pack || pack.id === ask.pack)
+      .map((pack) =>
+        pack.readAskEvidence?.(ask).catch((error: unknown) => {
+          warn(pack.id, error);
+          return [];
+        })
+      )
+  );
+  return reads.flatMap((read) => read ?? []);
+}

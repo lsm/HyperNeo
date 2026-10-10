@@ -95,6 +95,7 @@ interface NeoPack {
   describe: string;
   instructions(ask: NeoAsk): string | null;
   readEvidence?(work: NeoWork, report: string | null): Promise<NeoEvidence[]>;
+  readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   checks?: Record<string, (item: NeoAskItem, evidence: readonly NeoEvidence[]) => Gate>;
   workerSkills?: string[];
   workerMcpServers?: string[];
@@ -113,6 +114,11 @@ interface NeoPack {
   card with no live ask (no ask, or one that has settled) still has its
   evidence read the same way, so its state stays current, but it never wakes
   Neo: delivery waits for a live ask (#6222).
+- `readAskEvidence`: what changed since a live ask opened in the things it names
+  itself, outside its cards (for coding, a pull request named by URL or
+  `owner/repo#N` that merged or closed). Core runs it on the same pack choice
+  as `readEvidence`, at most every 15 minutes per ask, and tells the ask's Neo
+  session once per change (`neo_ask_checks`); Neo judges and settles (#6286).
 - `checks`: pure gates, one per item kind.
 - `workerSkills` / `workerMcpServers`: ids in the existing skills and app MCP
   registries that sessions working on the pack's asks should get. A pack

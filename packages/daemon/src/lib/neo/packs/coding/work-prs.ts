@@ -124,9 +124,7 @@ export function neoAskPrEvidence(
   const unread = new Set(
     live.flatMap((work) => extractNeoWorkPrUrls(work.report).filter((url) => !prs.has(url)))
   );
-  const starting = live.filter(
-    (work) => !tracked.has(work.id) && (work.status === 'proposed' || work.status === 'queued')
-  );
+  const untracked = live.filter((work) => !tracked.has(work.id));
   const pending = (key: string, summary: string): NeoEvidence => ({
     key,
     state: 'pending',
@@ -136,7 +134,7 @@ export function neoAskPrEvidence(
   return [
     ...neoWorkPrEvidence([...prs.values()]),
     ...[...unread].map((url) => pending(url, 'not read yet')),
-    ...starting.map((work) => pending(`work:${work.id}`, 'no pull request yet')),
+    ...untracked.map((work) => pending(`work:${work.id}`, 'no pull request tracked')),
   ];
 }
 

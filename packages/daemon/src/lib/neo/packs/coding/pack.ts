@@ -1,8 +1,9 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
+import { extractNeoAskPrUrls, neoAskPrNews, type NeoPrStateReader } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import { extractNeoWorkPrUrls, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
 
@@ -18,7 +19,8 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
 
 export function createCodingPack(deps: {
   readPrs: NeoWorkPrReader;
-  workPrs: Pick<NeoWorkPrRepository, 'get' | 'recordFailedRead'>;
+  readPrStates: NeoPrStateReader;
+  workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
     prs: readonly NeoWorkPr[],
@@ -39,6 +41,13 @@ export function createCodingPack(deps: {
       return row
         ? { evidence: neoWorkPrEvidence(row.prs), read: { ok: !!prs, okAt: row.readOkAt } }
         : null;
+    },
+    readAskEvidence: async (ask: NeoAsk) => {
+      const tracked = new Set(
+        deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url))
+      );
+      const urls = extractNeoAskPrUrls(ask, tracked);
+      return urls.length ? neoAskPrNews(await deps.readPrStates(urls), ask.createdAt) : [];
     },
   };
 }
