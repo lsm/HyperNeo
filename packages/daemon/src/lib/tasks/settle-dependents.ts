@@ -64,7 +64,7 @@ export interface DependentSettlementDeps {
     params: { status: 'blocked'; blockReason: 'dependency_failed'; result: string },
     expected: { expectedStatus: SpaceTaskStatus }
   ) => Promise<SpaceTask | null>;
-  requestDirectOutcome?: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
+  requestDirectOutcome: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 }
 
 async function readDependents(
@@ -116,13 +116,15 @@ async function applySettlement(
           : null;
       case 'stop_direct': {
         const { attempt } = settlement;
-        deps.requestDirectOutcome?.({
+        const ack = deps.requestDirectOutcome({
           attemptId: attempt.id,
           sessionId: attempt.sessionId,
           generation: attempt.generation,
           status: 'blocked',
           options: { blockReason: 'dependency_failed', result },
         });
+        if (!ack.accepted)
+          log.warn(`Could not stop direct dependent "${task.id}" of "${ended.id}": ${ack.reason}`);
         return null;
       }
     }

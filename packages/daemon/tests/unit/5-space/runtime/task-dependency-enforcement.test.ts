@@ -29,7 +29,11 @@ function settlingManager(db: BunDatabase): SpaceTaskManager {
     undefined,
     undefined,
     (ended) =>
-      settleTaskDependents(ended, { getTaskManager: () => manager, getActiveAttempt: () => null })
+      settleTaskDependents(ended, {
+        getTaskManager: () => manager,
+        getActiveAttempt: () => null,
+        requestDirectOutcome: () => ({ accepted: true, jobId: null }),
+      })
   );
   return manager;
 }
@@ -519,6 +523,7 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
     const unblocked = await settleTaskDependents(prereq, {
       getTaskManager: () => taskManager,
       getActiveAttempt: () => null,
+      requestDirectOutcome: () => ({ accepted: true, jobId: null }),
     });
     expect(unblocked).toHaveLength(0);
   });
