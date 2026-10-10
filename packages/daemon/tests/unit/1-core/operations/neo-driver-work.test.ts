@@ -1098,7 +1098,6 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
-      await service.recover();
       expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
         state: 'pending',
         metBy: null,
@@ -1157,7 +1156,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('ticks merged-PR items on recovery for asks told about the merge before', async () => {
+  test('ticks merged-PR items on the next refresh for asks told about the merge before', async () => {
     const { db, service } = await setup({ ok: true, value: { ref: { id: 't1' } } });
     db.createSession(createTestSession('neo:root'));
     const opened = service.askRecords.open(
@@ -1182,7 +1181,7 @@ describe('Neo work with a drivers target', () => {
       Date.now()
     );
     try {
-      await service.recover();
+      await service.refreshDriverWork();
       expect(service.askRecords.get(opened.id)?.doneItems?.[0]).toMatchObject({
         state: 'met',
         metBy: 'daemon',

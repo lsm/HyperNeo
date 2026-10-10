@@ -985,13 +985,6 @@ export class NeoService {
         this.log.warn('Neo recovery pending', error);
       }
     }
-    for (const ask of this.askRecords.list().filter(isNeoAskLive)) {
-      try {
-        this.runAskPackTicks(ask.id);
-      } catch (error) {
-        this.log.warn('Neo ask ticks pending', error);
-      }
-    }
   }
 
   async refreshDriverWork(): Promise<void> {
@@ -1012,6 +1005,13 @@ export class NeoService {
       await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
       );
+    }
+    for (const ask of this.askRecords.list().filter(isNeoAskLive)) {
+      try {
+        this.runAskPackTicks(ask.id);
+      } catch (error) {
+        this.log.warn('Neo ask ticks pending', error);
+      }
     }
   }
 
