@@ -1,8 +1,14 @@
 import type { Database } from '../sqlite-compat.ts';
 
+const REQUIRED_COLUMNS = ['status', 'type', 'session_context', 'archived_at'];
+
 export function runMigration319(db: Database, now: string = new Date().toISOString()): void {
-  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sessions' AND type = 'table'").get())
-    return;
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>).map(
+      (column) => column.name
+    )
+  );
+  if (!REQUIRED_COLUMNS.every((column) => columns.has(column))) return;
   db.prepare(
     `UPDATE sessions
         SET status = 'archived', archived_at = COALESCE(archived_at, ?)

@@ -65,4 +65,17 @@ describe('runMigration319', () => {
     runMigration319(db, NOW);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([]);
   });
+
+  test('skips sessions tables without the archive columns', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, session_context TEXT)');
+    db.prepare('INSERT INTO sessions (id, session_context) VALUES (?, ?)').run(
+      'room-worker',
+      '{"roomId":"room-1"}'
+    );
+    runMigration319(db, NOW);
+    expect(db.prepare('SELECT id, session_context FROM sessions').all()).toEqual([
+      { id: 'room-worker', session_context: '{"roomId":"room-1"}' },
+    ]);
+  });
 });
