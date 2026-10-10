@@ -7,7 +7,9 @@ import {
   requireNeoAskConcern,
   isNeoAskReplay,
   planNeoAskItems,
+  planNeoAskEdit,
   planNeoAskTickStatus,
+  requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
   isNeoCardAsk,
@@ -405,6 +407,43 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(second)?.workIds).toEqual([]);
     expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
   });
+
+  test('edits the checklist in view: removed items stay listed, and dropping a question reopens the ask', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.tick', {
+      askId,
+      itemId: 'i2',
+      state: 'needs_you',
+      evidence: 'Is red CI on main acceptable?',
+    });
+    expect(
+      await invoke('neo.ask.edit', { askId, remove: ['i2'], add: [{ text: 'Release notes' }] })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'open',
+          doneItems: [
+            expect.objectContaining({ id: 'i1', removed: false }),
+            expect.objectContaining({ id: 'i2', text: 'CI green', removed: true }),
+            expect.objectContaining({
+              id: 'i3',
+              text: 'Release notes',
+              state: 'pending',
+              removed: false,
+              addedAt: expect.any(Number),
+            }),
+          ],
+        },
+      },
+    });
+    expect(await invoke('neo.ask.edit', { askId, remove: ['i2'] })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('item_not_found: i2') },
+    });
+    expect(
+      await invoke('neo.ask.edit', { askId, add: [{ text: 'x' }] }, { ...neo, sessionId: 'other' })
+    ).toMatchObject({ value: { ok: false } });
+  });
 });
 
 const ask: NeoAsk = {
@@ -617,6 +656,64 @@ describe('planNeoAskItems', () => {
   });
 });
 
+describe('requireNeoAskEdit', () => {
+  const owned = {
+    ...ask,
+    originSessionId: 'root',
+    doneItems: [
+      { id: 'i1', removed: false },
+      { id: 'i2', removed: true },
+    ],
+  } as unknown as NeoAsk;
+  const items = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
+  test.each<
+    [
+      string,
+      Partial<NeoAsk> | null,
+      { add?: ReturnType<typeof items>; remove?: string[] },
+      string | null,
+    ]
+  >([
+    ['an edit by the owner', {}, { add: items(1) }, null],
+    ['a missing ask', null, { add: items(1) }, 'ask_not_found'],
+    ['a settled ask', { status: 'achieved' }, { add: items(1) }, 'ask_settled'],
+    ['an item already removed', {}, { remove: ['i2'] }, 'item_not_found'],
+    ['removing the last item', {}, { remove: ['i1'] }, 'checklist_empty'],
+    ['more than twelve items', {}, { add: items(12) }, 'checklist_full'],
+  ])('%s', (_label, overrides, change, reason) => {
+    const target = overrides ? { ...owned, ...overrides } : null;
+    const gate = requireNeoAskEdit(
+      { askId: 'a1', add: change.add ?? [], remove: change.remove ?? [] },
+      { ask: target },
+      neo
+    );
+    const expected: unknown = reason
+      ? { reason: { ok: false, reason: expect.stringContaining(reason) } }
+      : { value: target };
+    expect(gate as unknown).toEqual(expected);
+  });
+});
+
+describe('planNeoAskEdit', () => {
+  test('numbers added items past every earlier one, removed ones included', () => {
+    const edited = {
+      ...ask,
+      doneItems: [
+        { id: 'i1', removed: false },
+        { id: 'i2', removed: true },
+      ],
+    } as unknown as NeoAsk;
+    expect(
+      planNeoAskEdit(edited, {
+        askId: 'a1',
+        add: [{ text: 'Docs', check: null }],
+        remove: ['i1', 'i1'],
+      })
+    ).toEqual({ add: [{ text: 'Docs', check: null, id: 'i3', position: 2 }], remove: ['i1'] });
+  });
+});
+
 describe('planNeoAskTickStatus', () => {
   const item = (id: string, state: 'pending' | 'met' | 'needs_you', removed = false) => ({
     id,
@@ -653,6 +750,11 @@ describe('planNeoAskTickStatus', () => {
       'a removed item that needed the human',
       { doneItems: [item('i1', 'needs_you', true)] },
       { status: 'unchanged' },
+    ],
+    [
+      'a question whose item was removed',
+      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you', true)] },
+      { status: 'open' },
     ],
     [
       'a settled ask',

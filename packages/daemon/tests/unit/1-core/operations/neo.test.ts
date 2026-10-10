@@ -424,6 +424,7 @@ describe('Neo MVP', () => {
       'neo.preferences.set',
       'neo.ask.open',
       'neo.ask.tick',
+      'neo.ask.edit',
       'neo.ask.settle',
       'neo.concern.cancel',
       'neo.concern.consult',
