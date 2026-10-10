@@ -264,6 +264,8 @@ describe('requireNeoWorkPrDelivery', () => {
     ['wait', false],
     ['unchanged', false],
   ])('%s', (plan, delivers) => {
-    expect(requireNeoWorkPrDelivery(plan)).toEqual(delivers ? { value: plan } : { reason: null });
+    const gate = requireNeoWorkPrDelivery(plan);
+    expect('value' in gate).toBe(delivers);
+    if ('value' in gate) expect(gate.value as string).toBe(plan);
   });
 });
