@@ -1,3 +1,4 @@
+import { AGENT_DEFAULT_INSTRUCTIONS, fillPrompt } from '@hyperneo/prompts';
 import type {
   AgentModelPoolEntry,
   CreateSpaceAgentTemplateParams,
@@ -32,7 +33,7 @@ export function deriveAgentTemplate(
 ): CreateSpaceAgentTemplateParams {
   const emptyInstructions =
     options.emptyInstructions ??
-    `You are ${source.displayName}. Carry out the tasks assigned to you in this Space.`;
+    fillPrompt(AGENT_DEFAULT_INSTRUCTIONS, { name: source.displayName });
   return {
     key: options.key,
     handle: slugifyWithinLimit(source.handle?.trim() || source.displayName),

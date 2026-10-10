@@ -1,3 +1,4 @@
+import { fillPrompt, SESSION_CLONE_BRIEF } from '@hyperneo/prompts';
 import { THINKING_LEVELS, type Session, type Space, type ThinkingLevel } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -144,14 +145,7 @@ export async function buildCloneParams(
 }
 
 export function buildBrief(parent: Session, brief: string): string {
-  return [
-    '## 分身 brief',
-    `You are a shadow clone of session "${parent.title}" (id ${parent.id}): same configuration and workspace, not its conversation.`,
-    '',
-    brief,
-    '',
-    'When finished, invoke the operation session.clone.return with a concise summary of what you learned; it is delivered to your parent.',
-  ].join('\n');
+  return fillPrompt(SESSION_CLONE_BRIEF, { title: parent.title, id: parent.id, brief });
 }
 
 export async function createClone(
