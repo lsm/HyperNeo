@@ -733,6 +733,74 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('a reported card follows its session when it merges on its own later', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/neo-ios/pull/25';
+    let reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Waiting for the build.',
+      },
+    };
+    const { db, service, calls } = await setup(
+      { ok: true, value: { ref } },
+      undefined,
+      () => reply
+    );
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the tap target', '- merged');
+    service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    const statusCalls = () => calls.filter((call) => call.name === 'work.status').length;
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      const reported = service.repo.getWork('work-1')!;
+      expect(reported.report).toContain('Waiting for the build.');
+      expect(notes).toEqual(['work-1:done-check:0']);
+
+      const later = reported.updatedAt + 60_000;
+      reply = {
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: later,
+          lastReplyAt: later,
+          exchange: [{ at: later, role: 'agent', text: `CI passed; merged ${url}.` }],
+        },
+      };
+      const before = statusCalls();
+      await service.refreshDriverWork();
+      const followed = service.repo.getWork('work-1')!;
+      expect(statusCalls()).toBe(before + 1);
+      expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
+        ref,
+        since: reported.updatedAt,
+      });
+      expect(followed.report).toContain(`merged ${url}`);
+      expect(followed.report).toContain('Earlier report:');
+      expect(service.workPrs.get('work-1')?.prs).toEqual([
+        { url, state: 'MERGED', checks: 'passing', review: 'approved' },
+      ]);
+      expect(notes).toEqual([
+        'work-1:done-check:0',
+        `work-1:done-check:0:pr:1:at:${followed.updatedAt}`,
+      ]);
+
+      await service.refreshDriverWork();
+      expect(statusCalls()).toBe(before + 1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('waits while its pull request runs CI, then checks it with the live state', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/42';
