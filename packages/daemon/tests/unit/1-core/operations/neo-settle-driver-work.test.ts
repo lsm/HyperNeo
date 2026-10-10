@@ -90,6 +90,7 @@ describe('settleNeoDriverWork', () => {
         calls.push(`live ${cardStatus}`);
         return true;
       },
+      recordCheck: () => false,
       notifyChanged: () => calls.push('changed'),
       noteUnsettled: async () => {
         calls.push('note');
@@ -106,6 +107,18 @@ describe('settleNeoDriverWork', () => {
     };
     return { deps, calls };
   };
+
+  test('a failed status read is recorded as unchecked and tells the UI once it flips', async () => {
+    const { deps, calls } = harness({ kind: 'failed', error: 'offline' } as never, null);
+    const checks: Array<[string, boolean]> = [];
+    deps.recordCheck = (id, read) => {
+      checks.push([id, read]);
+      return true;
+    };
+    expect(await settleNeoDriverWork(deps, work, ref)).toBe('unsettled');
+    expect(checks).toEqual([[work.id, false]]);
+    expect(calls).toContain('changed');
+  });
 
   test('finished work is reported, anchored for follow-up and returned to Neo', async () => {
     const reported = { ...work, status: 'reported' as const, report: 'Shipped.' };

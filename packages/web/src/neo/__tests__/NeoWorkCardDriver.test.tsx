@@ -52,6 +52,17 @@ describe('neoWorkDriverLabel', () => {
 });
 
 describe('neoWorkDriverLink', () => {
+  it('says when Neo could not check the session lately', () => {
+    const since = new Date(2026, 9, 10, 15, 42).getTime();
+    const time = new Date(since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    expect(
+      neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', uncheckedSince: since })
+    ).toBe(`Running in Codex Desktop · not checked since ${time}`);
+    expect(
+      neoWorkDriverLabel({ ...driver, daemon: null, status: 'stopped', uncheckedSince: since })
+    ).toBe('Stopped in Codex Desktop');
+  });
+
   it('keeps app and in-app links and drops anything else', () => {
     expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
     expect(neoWorkDriverLink({ ...driver, link: 'ghapp://sessions/s1' })).toBe(
