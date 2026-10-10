@@ -98,11 +98,17 @@ export function InputTextarea({
 
     if (textarea.value !== content) {
       const { selectionStart, selectionEnd } = textarea;
+      const restored = textarea.value === '' || document.activeElement !== textarea;
 
       textarea.value = content;
 
       const maxPos = content.length;
-      textarea.setSelectionRange(Math.min(selectionStart, maxPos), Math.min(selectionEnd, maxPos));
+      if (restored) textarea.setSelectionRange(maxPos, maxPos);
+      else
+        textarea.setSelectionRange(
+          Math.min(selectionStart, maxPos),
+          Math.min(selectionEnd, maxPos)
+        );
     }
   }, [content, recordingBody]);
 

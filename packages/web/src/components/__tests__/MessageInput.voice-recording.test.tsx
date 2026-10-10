@@ -220,6 +220,16 @@ describe('MessageInput — recording UI', () => {
     expect(document.activeElement).not.toBe(container.querySelector('textarea'));
   });
 
+  it('puts the caret after a restored draft so dictation appends to it', () => {
+    recorderState.isRecording = false;
+    draft.value = 'Fictional draft about lunch';
+    const { container } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(container.querySelector('textarea')?.selectionStart).toBe(
+      'Fictional draft about lunch'.length
+    );
+  });
+
   it('marks the selected text the transcript will replace', () => {
     draft.value = 'Deploy to staging tonight';
     recorderState.cursor = { start: 10, end: 17 };
