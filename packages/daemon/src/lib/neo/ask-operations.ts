@@ -54,6 +54,10 @@ export const NeoAskSchema = z.object({
   settledAt: z.number().nullable(),
 });
 const AskResult = z.union([Failure, z.object({ ok: z.literal(true), ask: NeoAskSchema })]);
+const Item = z.object({
+  text: z.string().trim().min(1).max(300),
+  check: z.enum(['pr_merged']).nullable().default(null),
+});
 const Open = z
   .object({
     requestKey: z.string().min(1).max(160),
@@ -61,16 +65,7 @@ const Open = z
     title: z.string().trim().min(1).max(160),
     ask: z.string().trim().min(1).max(4000),
     doneWhen: z.string().trim().min(1).max(2000).optional(),
-    doneItems: z
-      .array(
-        z.object({
-          text: z.string().trim().min(1).max(300),
-          check: z.enum(['pr_merged']).nullable().default(null),
-        })
-      )
-      .min(1)
-      .max(12)
-      .optional(),
+    doneItems: z.array(Item).min(1).max(12).optional(),
     doneSource: z.string().trim().min(1).max(160),
   })
   .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.');
@@ -88,6 +83,14 @@ const Tick = z.object({
   state: z.enum(['pending', 'met', 'needs_you']),
   evidence: z.string().trim().min(1).max(2000).optional(),
 });
+
+const Edit = z
+  .object({
+    askId: z.string().min(1),
+    add: z.array(Item).max(12).default([]),
+    remove: z.array(z.string().min(1)).max(12).default([]),
+  })
+  .refine((input) => input.add.length || input.remove.length, 'Pass items to add or remove.');
 
 const fail = (reason: string): Rejection => ({ ok: false, reason });
 const isFinal = isNeoAskSettled;
@@ -276,6 +279,43 @@ export function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
+export function requireNeoAskEdit(
+  input: z.infer<typeof Edit>,
+  current: { ask: NeoAsk | null },
+  caller: OperationCaller
+): Gate<NeoAsk> {
+  const { ask } = current;
+  if (!ask) return { reason: fail('ask_not_found') };
+  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
+    return { reason: fail('Only the Neo session that opened this ask or the user can edit it.') };
+  if (isFinal(ask)) return { reason: fail(`ask_settled: this ask is already ${ask.status}.`) };
+  const active = (ask.doneItems ?? []).filter((item) => !item.removed);
+  const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
+  if (missing.length)
+    return { reason: fail(`item_not_found: ${missing.join(', ')} is not on this checklist.`) };
+  const left = active.length - new Set(input.remove).size + input.add.length;
+  if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
+  return left > 12
+    ? { reason: fail('checklist_full: an ask holds at most 12 items.') }
+    : { value: ask };
+}
+
+export function planNeoAskEdit(
+  ask: NeoAsk,
+  input: z.infer<typeof Edit>
+): { add: (NeoAskItemInput & { id: string; position: number })[]; remove: string[] } {
+  const items = ask.doneItems ?? [];
+  const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
+  return {
+    add: input.add.map((item, index) => ({
+      ...item,
+      id: `i${next + index + 1}`,
+      position: items.length + index,
+    })),
+    remove: [...new Set(input.remove)],
+  };
+}
+
 export function planNeoAskTickStatus(
   ask: NeoAsk
 ): { status: 'waiting'; outcome: string } | { status: 'open' } | { status: 'unchanged' } {
@@ -286,7 +326,7 @@ export function planNeoAskTickStatus(
     return ask.status === 'waiting' && ask.outcome === asked.text
       ? { status: 'unchanged' }
       : { status: 'waiting', outcome: asked.text };
-  return ask.status === 'waiting' && items.some((item) => item.text === ask.outcome)
+  return ask.status === 'waiting' && (ask.doneItems ?? []).some((item) => item.text === ask.outcome)
     ? { status: 'open' }
     : { status: 'unchanged' };
 }
@@ -478,6 +518,58 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     input: z.infer<typeof Tick>,
     caller: OperationCaller
   ) => AskReceipt | Rejection;
+  const edit = (superpipe({})('neo.ask.edit') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Edit>) => ({ ask: service.askRecords.get(input.askId) }),
+      'input',
+      'current'
+    )
+    .pipe(
+      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
+        admit(caller, 'neo.ask.edit', current.ask?.concernId),
+      ['caller', 'current'],
+      'result:admission'
+    )
+    .pipe(requireNeoAskEdit, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
+    .pipe(
+      (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {
+        service.askRecords.editItems(ask.id, plan, Date.now());
+        return { ask: service.askRecords.get(ask.id) };
+      },
+      ['admission', 'plan'],
+      'edited'
+    )
+    .pipe(requireNeoAskWritten, 'edited', 'result:admission')
+    .pipe(
+      (receipt: AskReceipt) => ({ receipt, plan: planNeoAskTickStatus(receipt.ask) }),
+      'admission',
+      'planned'
+    )
+    .pipe(
+      ({
+        receipt,
+        plan,
+      }: {
+        receipt: AskReceipt;
+        plan: ReturnType<typeof planNeoAskTickStatus>;
+      }) => ({
+        ask:
+          plan.status === 'waiting'
+            ? service.askRecords.settle(receipt.ask, 'waiting', plan.outcome, plan.outcome)
+            : plan.status === 'open'
+              ? service.askRecords.reopen(receipt.ask)
+              : receipt.ask,
+      }),
+      'planned',
+      'written'
+    )
+    .pipe(requireNeoAskWritten, 'written', 'result:admission')
+    .end('admission') as (
+    input: z.infer<typeof Edit>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
   return [
     defineOperation({
       name: 'neo.ask.open',
@@ -496,6 +588,15 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => tick(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.ask.edit',
+      description:
+        "Change an open ask's done checklist when what done means changes: add items, or remove ones that no longer apply. Removed items stay listed as removed, so the change is visible; never reword an item by removing and re-adding it silently, say why in your reply. Only the Neo session that opened the ask or the user can edit it.",
+      inputSchema: Edit,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => edit(input, caller),
     }),
     defineOperation({
       name: 'neo.ask.settle',

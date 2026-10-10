@@ -130,6 +130,28 @@ export class NeoAskRepository {
     return changed;
   }
 
+  editItems(
+    askId: string,
+    edit: { add: (NeoAskItemInput & { id: string; position: number })[]; remove: string[] },
+    at: number
+  ): boolean {
+    if (!this.hasItems()) return false;
+    this.db.transaction(() => {
+      const insert = this.db.prepare(`INSERT INTO neo_ask_items
+        (ask_id, id, position, text, state, check_kind, added_at, updated_at)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`);
+      for (const item of edit.add)
+        insert.run(askId, item.id, item.position, item.text, item.check, at, at);
+      this.db
+        .prepare(`UPDATE neo_ask_items SET removed = 1, updated_at = ?
+          WHERE ask_id = ? AND id IN (SELECT value FROM json_each(?))`)
+        .run(at, askId, JSON.stringify(edit.remove));
+      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
+    })();
+    this.notify();
+    return true;
+  }
+
   reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
     const row = this.db
       .prepare(`UPDATE neo_asks SET status = 'open', outcome = NULL, settled_at = NULL,
