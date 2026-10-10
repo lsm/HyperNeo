@@ -49,9 +49,7 @@ describe('neoWorkDriverLabel', () => {
       'Idle in GitHub Copilot on laptop · Neo is checking'
     );
   });
-});
 
-describe('neoWorkDriverLink', () => {
   it('says when Neo could not check the session lately', () => {
     const since = new Date(2026, 9, 10, 15, 42).getTime();
     const time = new Date(since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -62,7 +60,9 @@ describe('neoWorkDriverLink', () => {
       neoWorkDriverLabel({ ...driver, daemon: null, status: 'stopped', uncheckedSince: since })
     ).toBe('Stopped in Codex Desktop');
   });
+});
 
+describe('neoWorkDriverLink', () => {
   it('keeps app and in-app links and drops anything else', () => {
     expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
     expect(neoWorkDriverLink({ ...driver, link: 'ghapp://sessions/s1' })).toBe(
