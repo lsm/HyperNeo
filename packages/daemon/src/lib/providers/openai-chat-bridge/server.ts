@@ -30,6 +30,20 @@ import { createHttpWsServer } from '../../runtime-server/index.js';
 
 const logger = new Logger('openai-chat-bridge-server');
 
+const KNOWN_MODEL_THINKING_OFF_EFFORT: Readonly<Record<string, ThinkingOffEffort>> = {
+  o1: 'low',
+  o3: 'low',
+  'o3-mini': 'low',
+  'o4-mini': 'low',
+  'gpt-5': 'minimal',
+  'gpt-5-mini': 'minimal',
+  'gpt-5-nano': 'minimal',
+  'gpt-5.1': 'none',
+  'gpt-5.2': 'none',
+  'gpt-5.4': 'none',
+  'gpt-5.5': 'none',
+};
+
 export type OpenAIChatBridgeServer = {
   port: number;
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
@@ -295,7 +309,13 @@ function buildChatRequest(
     if (choice) request.tool_choice = choice;
   }
   if (thinkingSupported) {
-    const effort = thinkingToReasoningEffort(body.thinking, thinkingOffEffort);
+    const knownModel = model.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+    const offEffort =
+      thinkingOffEffort ??
+      (Object.hasOwn(KNOWN_MODEL_THINKING_OFF_EFFORT, knownModel)
+        ? KNOWN_MODEL_THINKING_OFF_EFFORT[knownModel]
+        : undefined);
+    const effort = thinkingToReasoningEffort(body.thinking, offEffort);
     if (effort) request.reasoning_effort = effort;
   }
   if (chatTemplateKwargs) {
@@ -308,8 +328,7 @@ function thinkingToReasoningEffort(
   thinking: AnthropicRequest['thinking'],
   thinkingOffEffort?: ThinkingOffEffort
 ): OpenAIChatRequest['reasoning_effort'] {
-  if (!thinking) return undefined;
-  if (thinking.type === 'disabled') return thinkingOffEffort;
+  if (!thinking || thinking.type === 'disabled') return thinkingOffEffort;
   if (thinking.type === 'adaptive') return 'medium';
   if (thinking.type === 'enabled') {
     const budget = thinking.budget_tokens;
