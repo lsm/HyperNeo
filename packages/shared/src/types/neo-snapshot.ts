@@ -70,6 +70,7 @@ export interface NeoWorkPr {
   state: 'OPEN' | 'MERGED' | 'CLOSED';
   checks: 'pending' | 'failing' | 'passing' | 'none';
   review: 'approved' | 'changes_requested' | 'none';
+  blockers?: string[];
 }
 
 export interface NeoWorkPrReceipt {
