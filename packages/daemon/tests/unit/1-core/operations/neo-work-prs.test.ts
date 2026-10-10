@@ -3,10 +3,12 @@ import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
   neoWorkPrSignature,
+  planNeoWorkPrBlockers,
   planNeoWorkPrRefresh,
   readGithubPrs,
   shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
+  wantsNeoWorkPrBlockers,
 } from '../../../../src/lib/neo/work-prs.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 
@@ -178,5 +180,124 @@ describe('readGithubPrs', () => {
       await readGithubPrs([pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], spawn as never)
     ).toBe(null);
     expect(asked[0].slice(0, 4)).toEqual(['gh', 'pr', 'view', pr.url]);
+  });
+});
+
+describe('planNeoWorkPrBlockers', () => {
+  const rules = [
+    { type: 'required_signatures' },
+    {
+      type: 'pull_request',
+      parameters: { required_approving_review_count: 0, required_review_thread_resolution: true },
+    },
+  ];
+  const unsigned = { commits: [{ oid: '1bad987012', signed: false }], unresolved: 0 };
+  const base = { base: 'dev', review: 'approved' as const, rules };
+  test.each<[string, Parameters<typeof planNeoWorkPrBlockers>[0], string[]]>([
+    [
+      'an unsigned commit on a branch that requires signatures',
+      { ...base, detail: unsigned },
+      ['unsigned commits: dev requires signed commits (1bad987)'],
+    ],
+    [
+      'an unsigned commit where signatures are optional',
+      { ...base, rules: [], detail: unsigned },
+      [],
+    ],
+    [
+      'unresolved threads where they must be resolved',
+      { ...base, detail: { commits: [], unresolved: 2 } },
+      ['2 unresolved review threads'],
+    ],
+    [
+      'a missing required approval',
+      {
+        ...base,
+        review: 'none',
+        rules: [{ type: 'pull_request', parameters: { required_approving_review_count: 1 } }],
+        detail: null,
+      },
+      ['needs 1 approving review'],
+    ],
+    ['a branch behind its base', { ...base, mergeState: 'BEHIND', detail: null }, ['behind dev']],
+    ['conflicts', { ...base, mergeState: 'DIRTY', detail: null }, ['merge conflicts with dev']],
+    [
+      'a clean signed pull request',
+      { ...base, detail: { commits: [{ oid: 'abc', signed: true }], unresolved: 0 } },
+      [],
+    ],
+  ])('%s', (_label, input, blockers) => {
+    expect(planNeoWorkPrBlockers(input)).toEqual(blockers);
+  });
+});
+
+describe('wantsNeoWorkPrBlockers', () => {
+  test.each<[string, NeoWorkPr, string | undefined, boolean]>([
+    ['an open green pull request', pr, 'dev', true],
+    ['one without checks', { ...pr, checks: 'none' }, 'dev', true],
+    ['one still running CI', { ...pr, checks: 'pending' }, 'dev', false],
+    ['one with changes requested', { ...pr, review: 'changes_requested' }, 'dev', false],
+    ['a merged one', { ...pr, state: 'MERGED' }, 'dev', false],
+    ['one whose base is unknown', pr, undefined, false],
+  ])('%s', (_label, at, base, wants) => {
+    expect(wantsNeoWorkPrBlockers(at, base)).toBe(wants);
+  });
+});
+
+describe('neoWorkPrSignature', () => {
+  test('changes when blockers appear, and keeps its old form without them', () => {
+    expect(neoWorkPrSignature([pr])).toBe(JSON.stringify([[pr.url, 'OPEN', 'passing', 'none']]));
+    expect(neoWorkPrSignature([{ ...pr, blockers: ['behind dev'] }])).not.toBe(
+      neoWorkPrSignature([pr])
+    );
+  });
+});
+
+describe('readGithubPrs blockers', () => {
+  test('names the unsigned commit that keeps a green pull request from merging', async () => {
+    const url = 'https://github.com/lsm/blockers-test/pull/6013';
+    const reply = (args: string[]) => {
+      if (args[2] === 'view')
+        return ghPr({
+          url,
+          baseRefName: 'dev',
+          mergeStateStatus: 'BLOCKED',
+          headRefOid: '1bad987',
+        });
+      if (args[2] === 'graphql')
+        return {
+          data: {
+            repository: {
+              pullRequest: {
+                commits: { nodes: [{ commit: { oid: '1bad987012', signature: null } }] },
+                reviewThreads: { nodes: [{ isResolved: true }] },
+              },
+            },
+          },
+        };
+      return [{ type: 'required_signatures' }, { type: 'pull_request', parameters: {} }];
+    };
+    const asked: string[][] = [];
+    const spawn = (args: string[]) => {
+      asked.push(args);
+      return {
+        stdout: new Response(JSON.stringify(reply(args))).body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    };
+    expect(await readGithubPrs([url], spawn as never)).toEqual([
+      {
+        url,
+        state: 'OPEN',
+        checks: 'none',
+        review: 'none',
+        blockers: ['unsigned commits: dev requires signed commits (1bad987)'],
+      },
+    ]);
+    await readGithubPrs([url], spawn as never);
+    expect(asked.filter((args) => args[2]?.startsWith('repos/'))).toHaveLength(1);
   });
 });
