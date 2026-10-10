@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { NEO_BUILTIN_PACK_BRIEFS } from './index.ts';
 import type { NeoPack } from './types.ts';
 
 export interface NeoPackSkill {
@@ -70,6 +71,17 @@ export function neoPackIds(entries: readonly string[]): string[] {
   return entries.filter((entry) => PACK_ID.test(entry)).sort();
 }
 
+export function requireNeoPackIdFree(
+  id: string,
+  reserved: readonly string[]
+): { value: string } | { reason: string } {
+  return reserved.includes(id)
+    ? {
+        reason: `The pack id ${id} is reserved by a built-in pack; rename the folder and its SKILL.md.`,
+      }
+    : { value: id };
+}
+
 export function loadNeoFilePacks(deps: {
   root: string;
   read?: (file: string) => string;
@@ -90,7 +102,14 @@ export function loadNeoFilePacks(deps: {
     try {
       const loaded = loadNeoPackSkill(id, deps.root, read);
       if (typeof loaded === 'string') warn(id, new Error(loaded));
-      else packs.push(loaded);
+      else {
+        const free = requireNeoPackIdFree(
+          loaded.id,
+          NEO_BUILTIN_PACK_BRIEFS.map((brief) => brief.id)
+        );
+        if ('reason' in free) warn(id, new Error(free.reason));
+        else packs.push(loaded);
+      }
     } catch (error) {
       warn(id, error);
     }

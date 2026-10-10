@@ -94,32 +94,41 @@ describe('loadNeoPackSkill', () => {
 });
 
 describe('loadNeoFilePacks', () => {
-  const setup = (folders: Record<string, string>) => {
-    const warned: [string, unknown][] = [];
-    const packs = loadNeoFilePacks({
-      root: '/packs',
-      read: (file) => {
-        const folder = file.split('/').at(-2)!;
-        const body = folders[folder];
-        if (body === undefined) throw new Error(`ENOENT: ${file}`);
-        return body;
-      },
-      list: () => Object.keys(folders),
-      warn: (id, error) => warned.push([id, error]),
-    });
-    return { packs, warned };
+  const folders = (entries: Record<string, string>) => (file: string) => {
+    const body = entries[file.split('/').at(-2)!];
+    if (body === undefined) throw new Error(`ENOENT: ${file}`);
+    return body;
   };
 
   test('loads every valid folder and skips invalid or non-pack entries', () => {
-    const { packs, warned } = setup({
-      'life-admin': skill(),
-      Notes: skill('notes'),
-      broken: 'no frontmatter',
-      'pack-2': skill('pack-2'),
+    const warned: [string, unknown][] = [];
+    const packs = loadNeoFilePacks({
+      root: '/packs',
+      read: folders({
+        'life-admin': skill(),
+        Notes: skill('notes'),
+        broken: 'no frontmatter',
+        'pack-2': skill('pack-2'),
+      }),
+      list: () => ['life-admin', 'Notes', 'broken', 'pack-2'],
+      warn: (id, error) => warned.push([id, error]),
     });
     expect(packs.map((pack) => pack.id)).toEqual(['life-admin', 'pack-2']);
     expect(packs[0].instructions(null)).toBe('File the inbox daily.');
     expect(warned.map(([id]) => id)).toEqual(['broken']);
+  });
+
+  test('a file pack id a built-in owns is refused at load', () => {
+    const warned: [string, unknown][] = [];
+    const packs = loadNeoFilePacks({
+      root: '/packs',
+      read: folders({ coding: skill('coding') }),
+      list: () => ['coding'],
+      warn: (id, error) => warned.push([id, error]),
+    });
+    expect(packs).toEqual([]);
+    expect(warned.map(([id]) => id)).toEqual(['coding']);
+    expect((warned[0][1] as Error).message).toContain('reserved by a built-in pack');
   });
 
   test('an unreadable root is no packs at all', () => {
