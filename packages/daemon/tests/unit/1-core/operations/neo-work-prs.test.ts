@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrWaiting,
+  mergeNeoWorkPrReads,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
@@ -222,7 +223,7 @@ describe('shouldReadNeoWorkPrs', () => {
 });
 
 describe('readGithubPrs', () => {
-  test('reads each pull request with gh and gives up on any it cannot read', async () => {
+  test('reads each pull request with gh, skips one it cannot read, and fails only when none read', async () => {
     const asked: string[][] = [];
     const spawn = (args: string[]) => {
       asked.push(args);
@@ -238,8 +239,25 @@ describe('readGithubPrs', () => {
     expect(await readGithubPrs([pr.url], spawn as never)).toEqual([{ ...pr, checks: 'none' }]);
     expect(
       await readGithubPrs([pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], spawn as never)
-    ).toBe(null);
+    ).toEqual([{ ...pr, checks: 'none' }]);
+    expect(await readGithubPrs(['https://github.com/lsm/HyperNeo/pull/7'], spawn as never)).toBe(
+      null
+    );
     expect(asked[0].slice(0, 4)).toEqual(['gh', 'pr', 'view', pr.url]);
+  });
+});
+
+describe('mergeNeoWorkPrReads', () => {
+  test('keeps the stored copy of a pull request this read missed, in URL order', () => {
+    const other = {
+      ...pr,
+      url: 'https://github.com/lsm/HyperNeo/pull/43',
+      state: 'MERGED' as const,
+    };
+    const fresh = { ...pr, checks: 'passing' as const };
+    expect(
+      mergeNeoWorkPrReads([other.url, pr.url, 'https://x/pull/1'], [fresh], [pr, other])
+    ).toEqual([other, fresh]);
   });
 });
 
