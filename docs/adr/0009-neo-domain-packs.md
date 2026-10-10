@@ -77,8 +77,9 @@ daemon can verify itself).
   `packages/prompts/src/neo/packs/<id>/`, bundled and imported like today's
   prompts.
 - File packs: `~/.hyperneo/neo-packs/<id>/`, read at startup.
-- Pack ids are kebab-case. Check kinds are pack-qualified (`coding.pr_merged`),
-  so one column holds every pack's kinds.
+- Pack ids are kebab-case. Kinds a pack defines are pack-qualified
+  (`coding.pr_merged`), so one column holds every pack's kinds; kinds core
+  defines stay bare.
 
 `packs/` is a container inside `neo/`, not a new top-level subsystem, so the
 flat `lib/` rule is unaffected.
@@ -103,9 +104,12 @@ interface NeoPack {
 - `describe`: one line, always in Neo's prompt.
 - `instructions`: the full domain guidance, pure, in Agent Skills format
   (`SKILL.md` frontmatter `name` and `description`, body on use), so packs
-  follow the cross-vendor standard.
-- `readEvidence`: the pack's one effect stage. Core runs it across the enabled
-  pack of each card's ask.
+  follow the cross-vendor standard. A built-in pack may vary it by ask; for a
+  file pack it is the static `SKILL.md` body, with no templating layer.
+- `readEvidence`: the pack's one effect stage. For a card under a live ask,
+  core runs the ask's pack's `readEvidence`; for an ask with no pack (every
+  ask until slice d, and generic asks after it) it runs every enabled pack's,
+  coding first, so PR tracking never lapses for asks opened without a pack.
 - `checks`: pure gates, one per item kind.
 - `workerSkills` / `workerMcpServers`: ids in the existing skills and app MCP
   registries that sessions working on the pack's asks should get. A pack
@@ -122,7 +126,8 @@ Delivery bookkeeping is core's. A new `neo_work_checks` table holds, per card,
 the signature of the evidence Neo was last told about, when, and whether a
 reminder went out. The signature is canonical: evidence sorted by `key`, with
 volatile fields such as read times excluded, so an unchanged state never
-re-delivers.
+re-delivers. Until the old `neo_work_prs` columns are dropped, writes go to
+both, so a rollback reads current state.
 
 The done-check path is one core pipeline: read evidence (effect), a pure
 `planDoneCheck(evidence, checks, bookkeeping)` deciding wait, deliver or
@@ -157,6 +162,9 @@ per-ask switch.
 
 ### 7. Operations
 
+`neo.pack.read` and the `pack` field of `neo.ask.open` are core: the new
+operation gets its entry in `OPERATION_NAMES` like any other.
+
 Built-in packs may contribute operations. They are always registered, so the
 catalog, `OPERATION_NAMES` and discovery stay static and checked. Enablement is
 a pure admission gate (`{ reason: 'pack_disabled' }`), and a disabled pack's
@@ -167,10 +175,10 @@ every agent.
 ### 8. Trust
 
 Built-in packs are TypeScript in this repository. File packs are knowledge
-only in their first version: markdown instructions plus references to registry
-skills and MCP servers. Their templates are dry-filled with the keys core
-supplies when they are installed, so a missing key fails the install rather
-than a live turn. They never run code inside the daemon. Evidence from file
+only in their first version: a static `SKILL.md` plus references to registry
+skills and MCP servers. Installing one validates its frontmatter and refuses a
+body with unfilled `{{…}}` placeholders, so a bad pack fails at install rather
+than in a live turn. They never run code inside the daemon. Evidence from file
 packs is deferred; when it comes, it arrives through MCP tools, out of
 process.
 
@@ -214,8 +222,9 @@ the ask opens, much like a Goose recipe.
   an enable switch.
 - `pr_merged` becomes `coding.pr_merged`, which needs a migration of the m318
   constraint and existing rows.
-- Delivery bookkeeping moves out of `neo_work_prs`. The old columns are copied
-  first and dropped later, so a rollback still reads.
+- Delivery bookkeeping moves out of `neo_work_prs`. The old columns are copied,
+  written alongside the new table until slice g, then dropped, so a rollback
+  before g still reads current state.
 
 ## Migration
 
@@ -225,7 +234,7 @@ One PR per rung (ADR 0004 ladder):
 |---|---|---|
 | a | Pin: already covered by `neo-work-prs`, `neo-driver-work` and `neo-done-check` tests | — |
 | b | Extract: move `work-prs.ts`, `NeoWorkPrRepository`, `goal-merge.md` and `done-check-prs-*.md` into `packs/coding/`, verbatim | daemon-code |
-| c1 | Core `neo_work_checks` table, migration and repository; bookkeeping copied, coding still the only producer | Neo backend |
+| c1 | Core `neo_work_checks` table, migration and repository; bookkeeping copied and dual-written, coding still the only producer | Neo backend |
 | c2 | `NeoEvidence`, `NeoPack`, the coding pack implementing it, core pipelines wired through it | Neo backend |
 | d | Prompt split: core plus coding fragment, `neo.ask.open {pack}`, `neo.pack.read`; gated on the eval | Neo backend |
 | e | Second pack: legal review, knowledge only, shipped disabled; the enable setting; the file-pack loader | first free |
