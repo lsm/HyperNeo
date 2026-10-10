@@ -26,8 +26,14 @@ const GhPrSchema = z.object({
 });
 type GhCheck = z.infer<typeof GhPrSchema>['statusCheckRollup'][number];
 
-export function extractNeoWorkPrUrls(report: string | null): string[] {
-  return [...new Set(report?.match(PR_URL) ?? [])].slice(0, 5);
+export function extractNeoWorkPrUrls(
+  report: string | null,
+  tracked: readonly { url: string }[] = []
+): string[] {
+  return [...new Set([...tracked.map((pr) => pr.url), ...(report?.match(PR_URL) ?? [])])].slice(
+    0,
+    8
+  );
 }
 
 function checkResult(check: GhCheck): NeoWorkPr['checks'] {

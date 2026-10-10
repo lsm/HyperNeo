@@ -100,7 +100,6 @@ import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import {
   extractNeoWorkPrUrls,
-  isNeoWorkPrWaiting,
   NEO_WORK_PR_READ_MS,
   neoWorkPrSignature,
   planNeoWorkPrRefresh,
@@ -109,6 +108,13 @@ import {
   type NeoWorkPrReader,
 } from './work-prs.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
+import {
+  neoDoneCheckToldIds,
+  requireNeoDoneCheck,
+  requireNeoDoneCheckDue,
+  requireNeoDoneCheckUntold,
+} from './done-check.ts';
+import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -132,6 +138,13 @@ const dispatchNeoConsultationWaiter = (
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
 const DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
+
+type NeoDoneCheckCard = {
+  ask: NeoAsk | null;
+  continued: number;
+  stored: NeoWorkPrRow | null;
+};
+type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -158,6 +171,124 @@ export class NeoService {
   private readonly interruptedSessions = new Set<string>();
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
+  private readonly followReads = new Map<string, number>();
+  private readonly followAnchors = new Map<string, number>();
+  private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
+    .input(['work', 'now'])
+    .pipe(
+      (work: NeoWork) => ({
+        ref: this.driverTargets.readRef(work.id),
+        goal: !!this.workDoneGoal(work.id)?.doneWhen,
+        ask: this.askRecords.forWork(work.id),
+        readAt: this.followReads.get(work.id) ?? null,
+        since: this.followAnchors.get(work.id) ?? work.updatedAt,
+      }),
+      'work',
+      'card'
+    )
+    .pipe(requireNeoWorkFollow, ['work', 'card', 'now'], 'result:follow')
+    .pipe(
+      async (work: NeoWork, ref: WorkRef, now: number, card: { since: number }) => {
+        this.followReads.set(work.id, now);
+        return {
+          outcome: await invokeOperation(
+            this.sessions.getOperationRegistry(),
+            'work.status',
+            { ref, since: card.since },
+            driverWorkCaller(work)
+          ),
+        };
+      },
+      ['work', 'follow', 'now', 'card'],
+      'read'
+    )
+    .pipe(planNeoWorkFollow, ['work', 'read', 'now', 'card'], 'result:follow')
+    .pipe(
+      (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
+        const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });
+        const seen = readDriverActivity(read.outcome)?.lastActivityAt;
+        if (followed && seen !== undefined) this.followAnchors.set(work.id, seen);
+        return { work: followed };
+      },
+      ['work', 'follow', 'read'],
+      'follow'
+    )
+    .pipe(async (followed: { work: NeoWork | null }) => {
+      if (followed.work) await this.checkDone(followed.work, true);
+    }, 'follow')
+    .endAsync('follow') as (work: NeoWork, now: number) => Promise<unknown>;
+  private readonly checkDone = (superpipe({})('neo-work-done-check') as PipelineAPI)
+    .input(['work', 'followed'])
+    .pipe(
+      (work: NeoWork) => {
+        const ask = this.askRecords.forWork(work.id);
+        return {
+          ask,
+          goal: neoWorkDoneGoal(work.id, this.workGoals.get(work.id), ask),
+          driver: !!this.driverTargets.get(work.id),
+          session: !!this.db.getSession(work.originSessionId),
+          stored: this.workPrs.get(work.id),
+          continued: this.workContinues.get(work.id)?.count ?? 0,
+        };
+      },
+      'work',
+      'card'
+    )
+    .pipe(requireNeoDoneCheck, ['work', 'card'], 'result:check')
+    .pipe(
+      (work: NeoWork, card: NeoDoneCheckCard, followed: boolean) => ({
+        told:
+          !card.stored &&
+          this.toldDoneCheck(work, neoDoneCheckToldIds(work, card.continued, undefined, followed)),
+      }),
+      ['work', 'card', 'followed'],
+      'unread'
+    )
+    .pipe(requireNeoDoneCheckUntold, ['unread', 'check'], 'result:check')
+    .pipe(
+      async (work: NeoWork, card: NeoDoneCheckCard) => {
+        const urls = extractNeoWorkPrUrls(work.report, card.stored?.prs);
+        const prs = shouldReadNeoWorkPrs(card.stored, urls, Date.now())
+          ? await this.readPrs(urls)
+          : null;
+        return { row: prs ? this.recordWorkPrs(work.id, prs, card.stored) : card.stored };
+      },
+      ['work', 'card'],
+      'found'
+    )
+    .pipe(
+      (work: NeoWork, card: NeoDoneCheckCard, followed: boolean, found: NeoDoneCheckFound) => ({
+        told:
+          !followed &&
+          !!found.row &&
+          this.toldDoneCheck(
+            work,
+            neoDoneCheckToldIds(work, card.continued, found.row.revision, false)
+          ),
+      }),
+      ['work', 'card', 'followed', 'found'],
+      'reread'
+    )
+    .pipe(requireNeoDoneCheckUntold, ['reread', 'check'], 'result:check')
+    .pipe(requireNeoDoneCheckDue, ['found', 'check'], 'result:check')
+    .pipe(
+      async (
+        work: NeoWork,
+        goal: NeoWorkGoal,
+        card: NeoDoneCheckCard,
+        found: NeoDoneCheckFound,
+        followed: boolean
+      ) => {
+        await this.deliverDoneCheck(work, goal, found.row, {
+          ask: card.ask,
+          followedAt: followed ? work.updatedAt : undefined,
+        });
+        return true;
+      },
+      ['work', 'check', 'card', 'found', 'followed'],
+      'check'
+    )
+    .endAsync('check') as (work: NeoWork, followed: boolean) => Promise<boolean>;
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly log = new Logger('Neo');
@@ -782,11 +913,17 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    for (const work of this.repo.listWork()) {
+    const works = this.repo.listWork();
+    for (const work of works) {
       const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
       if (!ref) continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
+      );
+    }
+    for (const work of works.filter((item) => item.status === 'reported')) {
+      await this.followWork(work, Date.now()).catch((error) =>
+        this.log.warn('Reported work follow-up pending', error)
       );
     }
     for (const workId of this.workPrs.listOpen()) {
@@ -864,6 +1001,7 @@ export class NeoService {
       status: settled.status,
       report: settled.report.slice(0, 12000),
     });
+    if (done && live) this.followAnchors.set(work.id, live.lastActivityAt);
     if (done) await this.returnReport(done);
   }
 
@@ -1025,7 +1163,7 @@ export class NeoService {
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
-    if (await this.askDoneCheck(work)) return;
+    if (await this.checkDone(work, false)) return;
     const rootId = await this.open(null);
     if (work.concernId) {
       await returnWorkThroughHolder(this, work, rootId);
@@ -1056,36 +1194,20 @@ export class NeoService {
     }
   }
 
-  private async askDoneCheck(work: NeoWork): Promise<boolean> {
-    const ask = this.askRecords.forWork(work.id);
-    const goal = neoWorkDoneGoal(work.id, this.workGoals.get(work.id), ask);
-    if (work.status !== 'reported' || !goal?.doneWhen || !this.driverTargets.get(work.id))
-      return false;
-    if (!this.db.getSession(work.originSessionId)) return false;
-    const stored = this.workPrs.get(work.id);
-    const continued = this.workContinues.get(work.id)?.count ?? 0;
-    if (
-      !stored &&
-      this.hasDelivery(work.originSessionId, neoDoneCheckMessageId(work.id, continued))
-    )
-      return true;
-    const urls = extractNeoWorkPrUrls(work.report);
-    const prs = shouldReadNeoWorkPrs(stored, urls, Date.now()) ? await this.readPrs(urls) : null;
-    const row = prs ? this.recordWorkPrs(work.id, prs, stored) : stored;
-    if (!row || !isNeoWorkPrWaiting(row.prs)) await this.deliverDoneCheck(work, goal, row, { ask });
-    return true;
-  }
-
   private async deliverDoneCheck(
     work: NeoWork,
     goal: NeoWorkGoal,
     row: NeoWorkPrRow | null,
-    { stale = false, ask }: { stale?: boolean; ask?: NeoAsk | null } = {}
+    {
+      stale = false,
+      ask,
+      followedAt,
+    }: { stale?: boolean; ask?: NeoAsk | null; followedAt?: number } = {}
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
     await this.deliver(
       work.originSessionId,
-      neoDoneCheckMessageId(work.id, continued, row?.revision),
+      neoDoneCheckMessageId(work.id, continued, row?.revision, followedAt),
       driverDoneCheckNote(work, goal, continued, this.continueBudget(work, Date.now()), {
         prs: row?.prs,
         stale,
@@ -1101,6 +1223,10 @@ export class NeoService {
       work.originSessionId
     );
     if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs));
+  }
+
+  private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
+    return ids.some((id) => this.hasDelivery(work.originSessionId, id));
   }
 
   private hasDelivery(sessionId: string, messageId: string): boolean {
