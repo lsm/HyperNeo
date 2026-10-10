@@ -267,7 +267,13 @@ describe('useNeoConversationAsks resource shell', () => {
     await act(async () => gate.resolve(pageOf([ask(1)])));
     await waitFor(() => expect(texts().rows).toContain(ask(2).requestId));
     expect(readInput()[1]).toEqual({ conversationId, after: 1, limit: 50 });
-    expect(readCount()).toBe(2);
+    await waitFor(() => expect(readCount()).toBe(3));
+    expect(readInput()[2]).toEqual({
+      conversationId,
+      after: 0,
+      before: Number.MAX_SAFE_INTEGER,
+      limit: 50,
+    });
   });
 
   it('marks an ask already shown as undelivered when a later change reports it failed', async () => {
@@ -292,6 +298,22 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(texts().cursor).toBe('Cursor: 1');
   });
 
+  it('marks a failure that lands while a newer ask arrives', async () => {
+    serve(
+      pageOf([ask(1)]),
+      pageOf([ask(2)]),
+      pageOf([{ ...ask(1), delivery: { state: 'failed' } }, ask(2)])
+    );
+    online();
+    render(<Probe sessionId={root} />);
+    await waitFor(() => expect(texts().status).toBe('Status: ready'));
+    await act(async () => fake.changed.forEach((callback) => callback()));
+    await waitFor(() =>
+      expect(screen.getByText(/^Failed:/).textContent).toContain(ask(1).requestId)
+    );
+    expect(texts().cursor).toBe('Cursor: 2');
+  });
+
   it('reads the next page when the connection recovers', async () => {
     serve(pageOf([ask(1)]), pageOf([ask(2)]));
     online();
@@ -300,7 +322,13 @@ describe('useNeoConversationAsks resource shell', () => {
     connected();
     await waitFor(() => expect(texts().rows).toContain(ask(2).requestId));
     expect(readInput()[1]).toEqual({ conversationId, after: 1, limit: 50 });
-    expect(readCount()).toBe(2);
+    await waitFor(() => expect(readCount()).toBe(3));
+    expect(readInput()[2]).toEqual({
+      conversationId,
+      after: 0,
+      before: Number.MAX_SAFE_INTEGER,
+      limit: 50,
+    });
   });
 
   it('never auto-retries a refused pending burst and keeps admitted rows and cursor', async () => {
