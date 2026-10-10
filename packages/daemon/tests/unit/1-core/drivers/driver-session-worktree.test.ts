@@ -1,4 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ModelInfo } from '@hyperneo/shared';
 import {
   type CreateSessionParams,
@@ -11,7 +14,8 @@ import {
 
 function sessionManager(
   isGitRepo: boolean,
-  canRun: (params: CreateSessionParams) => boolean = () => true
+  canRun: (params: CreateSessionParams) => boolean = () => true,
+  gitRoot = '/repo'
 ) {
   const created: CreateSessionParams[] = [];
   return {
@@ -23,7 +27,7 @@ function sessionManager(
         return 'new';
       }),
       getWorktreeManager: () => ({
-        detectGitSupport: async () => ({ isGitRepo, gitRoot: isGitRepo ? '/repo' : null }),
+        detectGitSupport: async () => ({ isGitRepo, gitRoot: isGitRepo ? gitRoot : null }),
       }),
     },
   };
@@ -36,6 +40,22 @@ describe('createDriverSession', () => {
     expect(created).toEqual([
       { workspacePath: '/repo', title: 'font size', worktreeMode: 'worktree' },
     ]);
+  });
+
+  test('starts work in a linked worktree in place', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'driver-linked-'));
+    const linked = join(root, 'feature');
+    mkdirSync(linked);
+    writeFileSync(join(linked, '.git'), `gitdir: ${root}/repo/.git/worktrees/feature\n`);
+    try {
+      const { created, manager } = sessionManager(true, () => true, linked);
+      await createDriverSession(manager as never, linked, 'font size');
+      expect(created).toEqual([
+        { workspacePath: linked, title: 'font size', worktreeMode: 'direct' },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('starts work in a plain folder directly', async () => {

@@ -48,7 +48,7 @@ import type { ModelInfo, Provider } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
 import { usableModels } from '../../usable-models.ts';
-import type { GitCheckout } from '../../drivers/work-placement.ts';
+import { planWorkPlacement, type GitCheckout } from '../../drivers/work-placement.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
@@ -72,12 +72,13 @@ export async function createDriverSession(
   model?: string,
   availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
 ): Promise<string> {
-  const { isGitRepo } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
+  const placement = planWorkPlacement(checkoutAt(gitRoot));
   const create = (config?: { model: string; provider?: Provider }) =>
     sessionManager.createSession({
       workspacePath,
       title,
-      worktreeMode: isGitRepo ? 'worktree' : 'direct',
+      worktreeMode: placement.kind === 'worktree' ? 'worktree' : 'direct',
       ...(config ? { config } : {}),
     });
   if (model) {
@@ -95,10 +96,13 @@ export async function createDriverSession(
   }
 }
 
-async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
-  const { gitRoot } = await new WorktreeManager().detectGitSupport(folder);
+function checkoutAt(gitRoot: string | null): GitCheckout | null {
   const repo = gitRoot ? gitWorktreeProject(gitRoot) : null;
   return gitRoot && repo ? { repo, linked: repo !== gitRoot } : null;
+}
+
+async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
+  return checkoutAt((await new WorktreeManager().detectGitSupport(folder)).gitRoot);
 }
 
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
