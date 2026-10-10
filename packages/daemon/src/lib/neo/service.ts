@@ -186,6 +186,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import {
+  NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
   planNeoWorkFollowLive,
   requireNeoWorkFollow,
@@ -1173,7 +1174,11 @@ export class NeoService {
         const value =
           outcome.kind === 'completed' ? (outcome.value as { places?: PlaceGroup[] } | null) : null;
         return {
-          sessions: listNeoWatchedSessions(value?.places ?? [], this.driverTargets.refs(), now),
+          sessions: listNeoWatchedSessions(
+            value?.places ?? [],
+            this.driverTargets.followedRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS),
+            now
+          ),
         };
       },
       ['root', 'now'],

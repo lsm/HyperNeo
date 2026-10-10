@@ -44,11 +44,13 @@ export class NeoWorkDriverTargetRepository {
     return target.success ? target.data : null;
   }
 
-  refs(): WorkRef[] {
+  followedRefs(reportedSince: number): WorkRef[] {
     if (!this.hasTable()) return [];
     const rows = this.db
-      .prepare('SELECT ref FROM neo_work_driver_targets WHERE ref IS NOT NULL')
-      .all() as { ref: string }[];
+      .prepare(`SELECT t.ref FROM neo_work_driver_targets t JOIN neo_work w ON w.id = t.work_id
+        WHERE t.ref IS NOT NULL
+          AND (w.status IN ('proposed', 'queued') OR (w.status = 'reported' AND w.updated_at > ?))`)
+      .all(reportedSince) as { ref: string }[];
     return rows.map((row) => JSON.parse(row.ref) as WorkRef);
   }
 
