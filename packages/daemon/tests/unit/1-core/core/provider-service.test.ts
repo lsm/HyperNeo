@@ -6,7 +6,6 @@ import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import {
   ProviderService,
   getProviderService,
-  mergeProviderEnvVars,
   resetProviderServiceInstance,
 } from '../../../../src/lib/provider-service';
 import {
@@ -322,6 +321,13 @@ class AnthropicMockProvider extends MockProvider {
   translateModelIdForSdk(modelId: string): string {
     return modelId;
   }
+}
+
+async function applyForModel(service: ProviderService, modelId: string, providerId: string) {
+  return service.applyResolvedProviderEnvVarsToProcess(
+    { config: { provider: providerId } } as unknown as Session,
+    await service.getEnvVarsForModel(modelId, providerId)
+  );
 }
 
 describe('ProviderService', () => {
@@ -1960,9 +1966,9 @@ describe('ProviderService', () => {
     });
   });
 
-  describe('applyEnvVarsToProcess', () => {
+  describe('applyResolvedProviderEnvVarsToProcess', () => {
     it('should return empty object for anthropic model', async () => {
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
       expect(original).toEqual({});
     });
 
@@ -1972,7 +1978,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'user-oauth-token';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(original.API_TIMEOUT_MS).toBe('120000');
@@ -1986,7 +1992,7 @@ describe('ProviderService', () => {
     it('should apply OpenCode Go client headers and clear them on restore', async () => {
       registry.register(new OpencodeProvider({ OPENCODE_API_KEY: 'go-key' }));
 
-      const original = await service.applyEnvVarsToProcess('minimax-m3', 'opencode');
+      const original = await applyForModel(service, 'minimax-m3', 'opencode');
 
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://opencode.ai/zen/go');
       expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
@@ -2001,7 +2007,7 @@ describe('ProviderService', () => {
     it('should clear leaked OpenCode Go client headers for an anthropic model', async () => {
       process.env.ANTHROPIC_CUSTOM_HEADERS = 'x-opencode-session: leaked';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(original.ANTHROPIC_CUSTOM_HEADERS).toBe('x-opencode-session: leaked');
       expect(process.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
@@ -2011,7 +2017,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_BASE_URL = 'original-url';
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(original.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
       expect(original.ANTHROPIC_BASE_URL).toBe('original-url');
@@ -2072,7 +2078,7 @@ describe('ProviderService', () => {
       process.env.ENABLE_TOOL_SEARCH = 'true';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
       expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k2.7-code');
@@ -2094,7 +2100,7 @@ describe('ProviderService', () => {
       registry.register(new BridgeMockProvider());
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'real-oauth-token';
 
-      const original = await service.applyEnvVarsToProcess('bridge-model', 'bridge');
+      const original = await applyForModel(service, 'bridge-model', 'bridge');
 
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
       expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
@@ -2108,7 +2114,7 @@ describe('ProviderService', () => {
       registry.register(new CopilotMockProvider());
       process.env.ANTHROPIC_API_KEY = 'real-key';
 
-      const original = await service.applyEnvVarsToProcess('claude-opus-4.6', 'anthropic-copilot');
+      const original = await applyForModel(service, 'claude-opus-4.6', 'anthropic-copilot');
 
       expect(process.env.ANTHROPIC_API_KEY).toBe('');
       expect(original.ANTHROPIC_API_KEY).toBe('real-key');
@@ -2121,7 +2127,7 @@ describe('ProviderService', () => {
       registry.clear();
       registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.ANTHROPIC_API_KEY).toBe('stored-key');
       expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
@@ -2137,7 +2143,7 @@ describe('ProviderService', () => {
         new AnthropicMockProvider(true, { CLAUDE_CODE_OAUTH_TOKEN: 'stored-oauth-token' })
       );
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
       expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -2152,7 +2158,7 @@ describe('ProviderService', () => {
       process.env.ENABLE_TOOL_SEARCH = 'false';
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '262144';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
       expect(process.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
@@ -2173,7 +2179,7 @@ describe('ProviderService', () => {
     it('clears stale Kimi model env before a provider that does not set ANTHROPIC_MODEL', async () => {
       process.env.ANTHROPIC_MODEL = 'kimi-k2.7-code';
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(process.env.ANTHROPIC_MODEL).toBeUndefined();
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -2186,15 +2192,12 @@ describe('ProviderService', () => {
     it('should clear provider-leaked GLM base URL after GLM query', async () => {
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 
-      const originalFromGlm = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const originalFromGlm = await applyForModel(service, 'glm-4', 'glm');
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
       service.restoreEnvVars(originalFromGlm);
 
-      const originalFromAnthropic = await service.applyEnvVarsToProcess(
-        'claude-3-opus',
-        'anthropic'
-      );
+      const originalFromAnthropic = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
     });
@@ -2202,7 +2205,7 @@ describe('ProviderService', () => {
     it('clears PORT from process.env for Anthropic model and restores it afterward', async () => {
       process.env.PORT = '9283';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.PORT).toBeUndefined();
       expect(original.PORT).toBe('9283');
@@ -2214,7 +2217,7 @@ describe('ProviderService', () => {
     it('clears HYPERNEO_PORT from process.env for Anthropic model and restores it afterward', async () => {
       process.env.HYPERNEO_PORT = '9983';
 
-      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await applyForModel(service, 'claude-3-opus', 'anthropic');
 
       expect(process.env.HYPERNEO_PORT).toBeUndefined();
       expect(original.HYPERNEO_PORT).toBe('9983');
@@ -2227,7 +2230,7 @@ describe('ProviderService', () => {
       process.env.PORT = '8399';
       process.env.HYPERNEO_PORT = '9983';
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(process.env.PORT).toBeUndefined();
       expect(process.env.HYPERNEO_PORT).toBeUndefined();
@@ -2237,51 +2240,6 @@ describe('ProviderService', () => {
       service.restoreEnvVars(original);
       expect(process.env.PORT).toBe('8399');
       expect(process.env.HYPERNEO_PORT).toBe('9983');
-    });
-  });
-
-  describe('applyEnvVarsToProcessForProvider', () => {
-    it('should clear leaked GLM routing vars for anthropic provider', async () => {
-      process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
-      process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
-
-      const original = await service.applyEnvVarsToProcessForProvider('anthropic');
-
-      expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
-      expect(original.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4');
-      expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
-      expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
-    });
-
-    it('should clear leaked routing vars even when stored Anthropic credentials are present', async () => {
-      registry.unregister('anthropic');
-      registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
-      process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
-      process.env.ANTHROPIC_AUTH_TOKEN = 'stale-glm-token';
-
-      const original = await service.applyEnvVarsToProcessForProvider('anthropic');
-
-      expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
-      expect(original.ANTHROPIC_AUTH_TOKEN).toBe('stale-glm-token');
-      expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
-      expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-      expect(process.env.ANTHROPIC_API_KEY).toBe('stored-key');
-    });
-
-    it('should apply GLM env vars for GLM provider', async () => {
-      const original = await service.applyEnvVarsToProcessForProvider('glm', 'glm-4');
-
-      expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
-      expect(original).toBeDefined();
-    });
-
-    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
-      registry.register(new ThrowingMockProvider());
-
-      const original = await service.applyEnvVarsToProcessForProvider(
-        'throwing' as unknown as ProviderId
-      );
-      expect(original).toEqual({});
     });
   });
 
@@ -2313,7 +2271,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_BASE_URL = 'original-url';
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
@@ -2327,7 +2285,7 @@ describe('ProviderService', () => {
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.ANTHROPIC_BASE_URL;
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
@@ -2364,7 +2322,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'haiku-model';
       process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'opus-model';
 
-      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await applyForModel(service, 'glm-4', 'glm');
 
       service.restoreEnvVars(original);
 
@@ -2420,7 +2378,7 @@ describe('getProviderService', () => {
     expect(typeof service.getDefaultProvider).toBe('function');
     expect(typeof service.getProviderApiKey).toBe('function');
     expect(typeof service.isProviderAvailable).toBe('function');
-    expect(typeof service.applyEnvVarsToProcessForProvider).toBe('function');
+    expect(typeof service.applyEnvVarsToProcessForSession).toBe('function');
     expect(typeof service.restoreEnvVars).toBe('function');
   });
 });
@@ -2430,20 +2388,3 @@ function hasSameMethods(a: object, b: object): boolean {
   const bKeys = Object.getOwnPropertyNames(b).sort();
   return JSON.stringify(aKeys) === JSON.stringify(bKeys);
 }
-
-describe('mergeProviderEnvVars', () => {
-  it('should spread provider env vars over process.env', async () => {
-    const merged = mergeProviderEnvVars({
-      OVERRIDE_VAR: 'provider',
-      NEW_VAR: 'new',
-    });
-
-    expect(merged.OVERRIDE_VAR).toBe('provider');
-    expect(merged.NEW_VAR).toBe('new');
-  });
-
-  it('should return a new object when provider env vars is empty', async () => {
-    const merged = mergeProviderEnvVars({});
-    expect(merged).not.toBe(process.env);
-  });
-});
