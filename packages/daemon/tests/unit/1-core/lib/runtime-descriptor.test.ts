@@ -54,4 +54,20 @@ describe('runtime-descriptor', () => {
     remove();
     expect(readFileSync(path, 'utf8')).toContain('"port":1');
   });
+
+  test('does not clobber the advert of a daemon that is still alive', () => {
+    writeFileSync(path, JSON.stringify({ pid: 1, port: 4321 }), 'utf8');
+    const remove = writeRuntimeDescriptor('127.0.0.1', 9283, dir);
+    expect(readFileSync(path, 'utf8')).toContain('"port":4321');
+    remove();
+    expect(readFileSync(path, 'utf8')).toContain('"port":4321');
+  });
+
+  test('takes over an advert whose pid is dead', () => {
+    writeFileSync(path, JSON.stringify({ pid: 2_147_483_646, port: 4321 }), 'utf8');
+    writeRuntimeDescriptor('127.0.0.1', 9283, dir);
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { pid: number; port: number };
+    expect(parsed.pid).toBe(process.pid);
+    expect(parsed.port).toBe(9283);
+  });
 });

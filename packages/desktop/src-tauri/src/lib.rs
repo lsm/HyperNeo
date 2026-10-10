@@ -90,11 +90,21 @@ fn daemon_url(port: u16) -> String {
 	format!("http://127.0.0.1:{port}")
 }
 
-async fn probe_daemon(url: &str, attempts: u32, delay: Duration) -> bool {
+// Bounded per attempt: an advertised host may be non-loopback, and a
+// black-holed address would otherwise stall on the OS TCP timeout.
+fn health_client() -> reqwest::Client {
+	reqwest::Client::builder()
+		.connect_timeout(Duration::from_secs(2))
+		.timeout(Duration::from_secs(2))
+		.build()
+		.unwrap_or_else(|_| reqwest::Client::new())
+}
+
+async fn probe_daemon(client: &reqwest::Client, url: &str, attempts: u32, delay: Duration) -> bool {
 	let target = format!("{}/", url.trim_end_matches('/'));
 	for attempt in 1..=attempts {
 		tokio::time::sleep(delay).await;
-		match reqwest::get(&target).await {
+		match client.get(&target).send().await {
 			Ok(response) if response.status().is_success() => {
 				log::info!("Daemon answered at {} after {} attempt(s)", target, attempt);
 				return true;
@@ -252,8 +262,11 @@ pub fn run() {
 
 			// In release mode the desktop app owns the daemon lifecycle: it first
 			// attaches to a daemon that is already running (advertised in
-			// <data-dir>/runtime.json), and otherwise spawns the bundled sidecar on
-			// its own data dir so it never collides with a CLI or launchd daemon.
+			// <data-dir>/runtime.json), and otherwise spawns the bundled sidecar.
+			// The sidecar inherits the default data dir, so attach-first is what
+			// keeps it off a CLI or launchd daemon's SQLite PID lock; a stale or
+			// absent advert leaves the sidecar to fail there, and that failure is
+			// reported in the window rather than hidden.
 			// In debug mode the developer runs `make dev` separately and the webview
 			// points straight at devUrl, so there's nothing to spawn.
 			#[cfg(not(debug_assertions))]
@@ -268,6 +281,7 @@ pub fn run() {
 
 				tauri::async_runtime::spawn(async move {
 					let startup = app_handle.state::<StartupState>();
+					let client = health_client();
 
 					// 1. Prefer a daemon that is already running, so the desktop app
 					// shares one dataset with a CLI or launchd daemon.
@@ -281,7 +295,7 @@ pub fn run() {
 							descriptor.pid,
 							url
 						);
-						if probe_daemon(&url, 6, Duration::from_millis(200)).await {
+						if probe_daemon(&client, &url, 6, Duration::from_millis(200)).await {
 							log::info!("Attaching to the running daemon at {}", url);
 							navigate(&window, &url, &startup);
 							return;
@@ -389,7 +403,7 @@ pub fn run() {
 
 					// 3. Wait for the daemon, then move the webview off the splash.
 					let url = daemon_url(DAEMON_PORT);
-					if probe_daemon(&url, 30, Duration::from_millis(500)).await {
+					if probe_daemon(&client, &url, 30, Duration::from_millis(500)).await {
 						navigate(&window, &url, &startup);
 					} else {
 						fail_startup(

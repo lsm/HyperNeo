@@ -24,6 +24,24 @@ function descriptorFilePath(dataDir: string): string {
   return join(dataDir, 'runtime.json');
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function readDescriptorPid(path: string): number | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RuntimeDescriptor>;
+    return typeof parsed.pid === 'number' ? parsed.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function writeRuntimeDescriptor(
   bindHost: string,
   port: number,
@@ -39,6 +57,11 @@ export function writeRuntimeDescriptor(
     version: BUILD_METADATA.version,
     startedAt: Date.now(),
   };
+
+  const existingPid = readDescriptorPid(path);
+  if (existingPid !== undefined && existingPid !== process.pid && isProcessAlive(existingPid)) {
+    return () => {};
+  }
 
   try {
     mkdirSync(dirname(path), { recursive: true });
