@@ -3,6 +3,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../../src/lib/tasks/task-manager.ts';
+import { settleTaskDependents } from '../../../../src/lib/tasks/settle-dependents.ts';
 
 const SPACE_ID = 'space-dep-test';
 
@@ -652,5 +653,89 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
     await taskManager.setTaskStatus(taskA.id, 'done');
     const finalB = await taskManager.getTask(taskB.id);
     expect(finalB!.status).toBe('open');
+  });
+});
+
+describe('setTaskStatus with settleTaskDependents', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    const managers = (): SpaceTaskManager => taskManager;
+    taskManager = new SpaceTaskManager(
+      db,
+      SPACE_ID,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (ended) =>
+        settleTaskDependents(ended, { getTaskManager: managers, getActiveAttempt: () => null })
+    );
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('cancelling a dependency blocks open and running dependents alike', async () => {
+    const prereq = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Prerequisite',
+      description: '',
+      status: 'in_progress',
+    });
+    const waiting = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Waiting',
+      description: '',
+      status: 'open',
+      dependsOn: [prereq.id],
+    });
+    const running = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Running',
+      description: '',
+      status: 'in_progress',
+      dependsOn: [prereq.id],
+    });
+    const cascaded: string[] = [];
+
+    await taskManager.setTaskStatus(prereq.id, 'cancelled', {
+      onCascadedTasks: async (tasks) => {
+        cascaded.push(...tasks.map((t) => t.id));
+      },
+    });
+
+    for (const id of [waiting.id, running.id]) {
+      const dependent = await taskManager.getTask(id);
+      expect(dependent?.status).toBe('blocked');
+      expect(dependent?.blockReason).toBe('dependency_failed');
+    }
+    expect(cascaded.sort()).toEqual([waiting.id, running.id].sort());
+  });
+
+  test('finishing the last dependency reopens a dependency-blocked task', async () => {
+    const prereq = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Prerequisite',
+      description: '',
+      status: 'in_progress',
+    });
+    const dependent = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Dependent',
+      description: '',
+      status: 'blocked',
+      dependsOn: [prereq.id],
+    });
+    taskRepo.updateTask(dependent.id, { blockReason: 'dependency_failed' });
+
+    await taskManager.setTaskStatus(prereq.id, 'done');
+
+    expect((await taskManager.getTask(dependent.id))?.status).toBe('open');
   });
 });

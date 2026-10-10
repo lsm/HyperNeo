@@ -48,7 +48,7 @@ import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-sc
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import type { MessageHub, SessionMetadata } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata, SpaceTask } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -630,19 +630,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           task,
         })
         .catch((error) => log.warn('Failed to emit direct outcome task update:', error)),
-    settleDependents: (task) =>
-      settleTaskDependents(task, {
-        getTaskManager: spaceTaskManagerFactory,
-        getActiveAttempt: (taskId) =>
-          new DirectTaskExecutionRepository(deps.db.getDatabase()).getActive(taskId),
-        stopForStatus: (spaceId, taskId, params, expected) =>
-          spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
-        requestDirectOutcome: createDirectOutcomeRequester(deps.db.getDatabase(), deps.jobQueue),
-      }),
+    settleDependents: (task) => settleEndedTask(task),
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTerminalTransition: (taskId, fromStatus) =>
       spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
   });
+
+  const settleEndedTask = (task: SpaceTask) =>
+    settleTaskDependents(task, {
+      getTaskManager: spaceTaskManagerFactory,
+      getActiveAttempt: (taskId) =>
+        new DirectTaskExecutionRepository(deps.db.getDatabase()).getActive(taskId),
+      stopForStatus: (spaceId, taskId, params, expected) =>
+        spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
+      requestDirectOutcome: createDirectOutcomeRequester(deps.db.getDatabase(), deps.jobQueue),
+    });
 
   const spaceTaskManagerFactory = (spaceId: string): SpaceTaskManager => {
     return new SpaceTaskManager(
@@ -653,7 +655,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
       (taskId, fromStatus) =>
         spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
-      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
+      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
+      settleEndedTask
     );
   };
 

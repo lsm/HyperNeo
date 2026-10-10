@@ -91,7 +91,8 @@ export class SpaceTaskManager {
     private evolutionScopeService?: EvolutionScopeService,
     private onTaskReopened?: (taskId: string) => void,
     private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void,
-    private resolveWorkspacePath?: WorkspacePathResolver
+    private resolveWorkspacePath?: WorkspacePathResolver,
+    private settleEndedTask?: (ended: SpaceTask) => Promise<SpaceTask[]>
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.worktreeRepo = new SpaceWorktreeRepository(db);
@@ -348,7 +349,9 @@ export class SpaceTaskManager {
 
     if (newStatus === 'done' || newStatus === 'cancelled') {
       try {
-        const settled = await this.settleDependents(taskId, newStatus);
+        const settled = this.settleEndedTask
+          ? await this.settleEndedTask(updated)
+          : await this.settleDependents(taskId, newStatus);
         if (settled.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(settled);
         }
