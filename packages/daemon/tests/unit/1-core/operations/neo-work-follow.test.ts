@@ -18,7 +18,8 @@ describe('requireNeoWorkFollow', () => {
   test.each<[string, NeoWork, Partial<Card>, boolean]>([
     ['a reported card under an open ask', work, {}, true],
     ['a blocked ask', work, { ask: { status: 'blocked' } }, true],
-    ['a card without an ask but with a done list', work, { ask: null }, true],
+    ['an old card with a done list but no ask', work, { ask: null }, false],
+    ['a card under an ask that waits on the human', work, { ask: { status: 'waiting' } }, true],
     ['a card still running', { ...work, status: 'queued' }, {}, false],
     ['a card the user closed as done', { ...work, report: NEO_WORK_CLOSED_DONE }, {}, false],
     ['a card with no driver ref', work, { ref: null }, false],

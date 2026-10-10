@@ -20,13 +20,13 @@ export function requireNeoWorkFollow(
   },
   now: number
 ): Gate<WorkRef> {
-  const settled = card.ask?.status === 'achieved' || card.ask?.status === 'abandoned';
+  const live = !!card.ask && card.ask.status !== 'achieved' && card.ask.status !== 'abandoned';
   const due = card.readAt === null || now - card.readAt >= NEO_WORK_FOLLOW_READ_MS;
   return work.status === 'reported' &&
     work.report !== NEO_WORK_CLOSED_DONE &&
     card.ref &&
     card.goal &&
-    !settled &&
+    live &&
     due &&
     now - work.updatedAt < NEO_WORK_FOLLOW_MAX_AGE_MS
     ? { value: card.ref }
