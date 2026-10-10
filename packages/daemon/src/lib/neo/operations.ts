@@ -33,8 +33,9 @@ import {
   requireNeoAgentWorkReference,
   requireNeoAgentWorkSession,
   requireNeoAgentWorkBinding,
-  requireNeoProposalReceipt,
+  requireNeoProposal,
   type NeoAgentWorkOwner,
+  type NeoProposal,
 } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
@@ -910,57 +911,34 @@ export function createNeoOperations(service: NeoService) {
       ['admission', 'targetBinding'],
       'result:admission'
     )
+    .pipe((target: NeoWorkTarget) => target, 'admission', 'target')
+    .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(
       (
         input: z.infer<typeof Propose>,
         origin: NeoWorkOrigin,
-        caller: OperationCaller,
         target: NeoWorkTarget
-      ) => {
-        const live = requireLiveNeoWorkOrigin(origin, caller);
-        if ('reason' in live) return live;
+      ): NeoProposal => {
+        const proposal = {
+          ...input,
+          ...origin,
+          requestKey: `${origin.originSessionId}:${input.requestKey}`,
+          id: target.id,
+        };
         if (input.work) {
-          const proposed = service.driverTargets.propose(
-            service.repo,
-            {
-              ...input,
-              ...origin,
-              requestKey: `${origin.originSessionId}:${input.requestKey}`,
-              id: target.id,
-            },
-            input.work
-          );
-          if (JSON.stringify(proposed.target) !== JSON.stringify(input.work))
-            return {
-              reason: {
-                ok: false,
-                reason: 'This request key belongs to another execution target.',
-              },
-            };
-          return requireNeoProposalReceipt(target, origin, { work: proposed.work, agent: null });
-        }
-        const receipt = service.agentTargets.propose(
-          service.repo,
-          {
-            ...input,
-            ...origin,
-            requestKey: `${origin.originSessionId}:${input.requestKey}`,
-            id: target.id,
-          },
-          target.agent
-        );
-        if (service.driverTargets.get(receipt.work.id))
+          const proposed = service.driverTargets.propose(service.repo, proposal, input.work);
           return {
-            reason: {
-              ok: false,
-              reason: 'This request key belongs to another execution target.',
-            },
+            receipt: { work: proposed.work, agent: null },
+            crossTarget: JSON.stringify(proposed.target) !== JSON.stringify(input.work),
           };
-        return requireNeoProposalReceipt(target, origin, receipt);
+        }
+        const receipt = service.agentTargets.propose(service.repo, proposal, target.agent);
+        return { receipt, crossTarget: !!service.driverTargets.get(receipt.work.id) };
       },
-      ['input', 'origin', 'caller', 'admission'],
-      'result:admission'
+      ['input', 'origin', 'target'],
+      'proposal'
     )
+    .pipe(requireNeoProposal, ['target', 'origin', 'proposal'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
         const planned = planNeoCardAsk(input, origin);
