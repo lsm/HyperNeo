@@ -81,6 +81,7 @@ import {
   requireNeoWorkAskLink,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './work-prs.ts';
+import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 
@@ -220,6 +221,19 @@ const Snapshot = z.union([
       .max(100)
       .optional(),
     asks: z.array(NeoAskSchema).optional(),
+    waitingOnHuman: z
+      .object({
+        note: z.string(),
+        asks: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            status: NeoAskSchema.shape.status,
+            question: z.string(),
+          })
+        ),
+      })
+      .optional(),
     preferences: z
       .object({
         model: z.string(),
@@ -517,6 +531,15 @@ export function createNeoOperations(service: NeoService) {
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
+      waitingOnHuman:
+        caller.neoTurn?.human && caller.sessionId
+          ? neoWaitingOnHuman(
+              service.waitingReminders({
+                sessionId: caller.sessionId,
+                messageId: caller.neoTurn.messageId,
+              })
+            )
+          : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listConcernBindings(scope ?? undefined) : [],
