@@ -14,6 +14,7 @@ import type {
   WorkAdapter,
   WorkCallContext,
   WorkDetail,
+  WorkInput,
   WorkRef,
   WorkStatus,
   WorkSummary,
@@ -21,6 +22,7 @@ import type {
 import { selectLocalStartFolder } from './start-folder.ts';
 import { reject } from './work-operations.ts';
 import { matchChatsBy } from './match-chats.ts';
+import { recentWorkInputs, workEntryTime, workInput } from './work-messages.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
@@ -31,6 +33,11 @@ const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at 
 const SESSIONS_PER_PLACE = 20;
 const CLOSED_SESSIONS = 500;
 const REPLY_LIMIT = 4_000;
+const TAIL_INPUTS = 8;
+const INPUTS_AFTER = 50;
+const LANDED_INPUT = `message_type = 'user' AND COALESCE(send_status, 'consumed') = 'consumed'
+  AND COALESCE(json_extract(sdk_message, '$.inputKind'), '') <> 'system'
+  AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') = 'text'`;
 
 export interface HyperneoPlaceRow {
   folder: string | null;
@@ -288,6 +295,43 @@ export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLas
   return row ?? null;
 }
 
+export function hyperneoInputText(message: string): string {
+  const content = (JSON.parse(message) as { message?: { content?: unknown } }).message?.content;
+  if (typeof content === 'string') return content;
+  return Array.isArray(content)
+    ? content
+        .flatMap((block: { type?: string; text?: string }) =>
+          block.type === 'text' && block.text ? [block.text] : []
+        )
+        .join(' ')
+    : '';
+}
+
+export function readHyperneoInputs(db: BunDatabase, id: string, since?: number): WorkInput[] {
+  const rows = (
+    since === undefined
+      ? db
+          .prepare(
+            `SELECT timestamp, sdk_message AS message FROM sdk_messages
+              WHERE session_id = ? AND ${LANDED_INPUT} ORDER BY timestamp DESC LIMIT ${TAIL_INPUTS}`
+          )
+          .all(id)
+          .reverse()
+      : db
+          .prepare(
+            `SELECT timestamp, sdk_message AS message FROM sdk_messages
+              WHERE session_id = ? AND timestamp > ? AND ${LANDED_INPUT}
+              ORDER BY timestamp ASC LIMIT ${INPUTS_AFTER}`
+          )
+          .all(id, new Date(since).toISOString())
+  ) as { timestamp: string; message: string }[];
+  const inputs = rows.flatMap((row) => {
+    const input = workInput(workEntryTime(row.timestamp), hyperneoInputText(row.message));
+    return input ? [input] : [];
+  });
+  return recentWorkInputs(inputs, since);
+}
+
 export function requireHyperneoSession(
   ref: WorkRef,
   deps: HyperneoAdapterDeps
@@ -309,7 +353,8 @@ export function requireOpenHyperneoSession(row: HyperneoSessionRow): Gate<Hypern
 
 export function describeHyperneoWork(
   row: HyperneoSessionRow,
-  deps: HyperneoAdapterDeps
+  deps: HyperneoAdapterDeps,
+  since?: number
 ): Result<WorkDetail> {
   const work = toWork(row, deps.machine);
   const last = readHyperneoLastResult(deps.db(), row.id);
@@ -319,6 +364,7 @@ export function describeHyperneoWork(
       ...work,
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
       ...(last?.reply ? { lastReply: last.reply.slice(0, REPLY_LIMIT) } : {}),
+      recentInputs: readHyperneoInputs(deps.db(), row.id, since),
     },
   };
 }
@@ -406,10 +452,14 @@ const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<{ stopped: boolean }>;
 
 const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
-  .input(['ref', 'deps'])
+  .input(['ref', 'deps', 'since'])
   .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
-  .pipe(describeHyperneoWork, ['outcome', 'deps'], 'outcome')
-  .end('outcome') as (ref: WorkRef, deps: HyperneoAdapterDeps) => Result<WorkDetail>;
+  .pipe(describeHyperneoWork, ['outcome', 'deps', 'since'], 'outcome')
+  .end('outcome') as (
+  ref: WorkRef,
+  deps: HyperneoAdapterDeps,
+  since?: number
+) => Result<WorkDetail>;
 
 const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
   .input(['ref', 'message', 'context', 'deps'])
@@ -435,7 +485,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       ),
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
-    status: async (ref) => runHyperneoStatus(ref, deps),
+    status: async (ref, since) => runHyperneoStatus(ref, deps, since),
     stop: async (ref) => runHyperneoStop(ref, deps),
   };
 }

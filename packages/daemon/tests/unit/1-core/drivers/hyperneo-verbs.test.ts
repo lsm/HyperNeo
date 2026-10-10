@@ -49,7 +49,7 @@ describe('hyperneo adapter send and status', () => {
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
       status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT)`);
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
-      timestamp TEXT, parent_tool_use_id TEXT)`);
+      timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT)`);
     const session =
       db.prepare(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at,
       processing_state, type, space_id) VALUES (?, ?, '/focus/dolmen', ?, '2026-10-04T10:00:00.000Z', ?, 'worker', ?)`);
@@ -57,7 +57,10 @@ describe('hyperneo adapter send and status', () => {
     session.run('busy', 'parser', 'active', '{"status":"processing"}', null);
     session.run('gone', 'old', 'archived', null, null);
     session.run('space', 'space work', 'active', null, 'sp1');
-    const result = db.prepare(`INSERT INTO sdk_messages VALUES (?, 'result', ?, ?, ?)`);
+    const result = db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+        VALUES (?, 'result', ?, ?, ?)`
+    );
     result.run(
       'idle',
       '{"result":"first answer","is_error":false}',
@@ -114,7 +117,35 @@ describe('hyperneo adapter send and status', () => {
         lastActivityAt: Date.parse('2026-10-04T10:00:00.000Z'),
         link: '/session/idle',
         lastReply: 'loader is fixed',
+        recentInputs: [],
       },
+    });
+  });
+
+  test('status reports the inputs that reached the session, from its own messages', async () => {
+    const input = db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, send_status)
+        VALUES ('busy', 'user', ?, ?, ?)`
+    );
+    const user = (content: unknown, inputKind?: string) =>
+      JSON.stringify({ type: 'user', ...(inputKind && { inputKind }), message: { content } });
+    input.run(user('Fix the parser'), '2026-10-04T10:01:00.000Z', 'consumed');
+    input.run(user([{ type: 'tool_result', content: 'ok' }]), '2026-10-04T10:02:00.000Z', null);
+    input.run(user('Done check for w1', 'system'), '2026-10-04T10:03:00.000Z', 'consumed');
+    input.run(user([{ type: 'text', text: 'Also add tests' }]), '2026-10-04T10:04:00.000Z', null);
+    input.run(user('Still queued'), '2026-10-04T10:05:00.000Z', 'enqueued');
+    const at = (iso: string) => Date.parse(iso);
+
+    expect(await adapter().status?.(ref('busy'))).toMatchObject({
+      value: {
+        recentInputs: [
+          { at: at('2026-10-04T10:01:00.000Z'), text: 'Fix the parser' },
+          { at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' },
+        ],
+      },
+    });
+    expect(await adapter().status?.(ref('busy'), at('2026-10-04T10:02:00.000Z'))).toMatchObject({
+      value: { recentInputs: [{ at: at('2026-10-04T10:04:00.000Z'), text: 'Also add tests' }] },
     });
   });
 
