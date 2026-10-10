@@ -533,13 +533,13 @@ export function NeoLive() {
                 writeDraft(failed.text);
               }}
               onEditUndelivered={(ask) => {
-                if (!neo.sessionId) return;
+                if (!neo.sessionId) return false;
                 const images = publicAskImages(ask.content);
                 if (!restoreNeoImages(neo.sessionId, images)) {
                   neo.setError(
                     'Remove some attachments first: a message can carry up to 6 files, 8 MB in all.'
                   );
-                  return;
+                  return false;
                 }
                 const text = publicAskText(ask.content);
                 writeDraft([draft?.trim(), text].filter(Boolean).join('\n\n'));
