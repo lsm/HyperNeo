@@ -13,7 +13,7 @@ const request = { place, title: 'Bigger font', message: 'Raise the body font to 
 function adapter(
   server: Partial<CodexAppServer> | Error,
   folders = ['/focus/dolmen'],
-  git: { root?: string; exit?: number } = {}
+  git: { root?: string; exit?: number; linked?: boolean } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
@@ -49,7 +49,7 @@ function adapter(
     folderExists: (folder) => folders.includes(folder),
     makeFolder: () => {},
     homeDir: '/Users/test',
-    gitRoot: async () => git.root ?? null,
+    gitCheckout: async () => (git.root ? { repo: git.root, linked: git.linked ?? false } : null),
     newId: () => 'abcd1234-0000',
   });
   return { instance, calls, spawned, closed: () => closed };
@@ -105,6 +105,17 @@ describe('codex-desktop start', () => {
       },
     ]);
     expect(calls[0]).toEqual(['thread/start', { cwd: '/codex/worktrees/abcd1234/dolmen' }]);
+  });
+
+  test('runs in place when the folder is already a linked worktree', async () => {
+    const { instance, calls, spawned } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen'],
+      { root: '/focus/dolmen-main', linked: true }
+    );
+    expect(await instance.start?.(request, user)).toMatchObject({ ok: true, value: { place } });
+    expect(spawned).toEqual([]);
+    expect(calls[0]).toEqual(['thread/start', { cwd: '/focus/dolmen' }]);
   });
 
   test('runs a subfolder start at the worktree root', async () => {
