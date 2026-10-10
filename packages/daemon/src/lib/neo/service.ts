@@ -11,7 +11,6 @@ import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-contex
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   NEO_WORK_CLOSED_DONE,
-  NEO_WORK_CONTINUE_LIMIT,
   type NeoAsk,
   type NeoWorkGoal,
   type NeoWorkPr,
@@ -84,6 +83,12 @@ import {
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
+import {
+  admitNeoWorkContinue,
+  type NeoContinueDeps,
+  type NeoContinueResult,
+  sendNeoWorkContinue,
+} from './continue-work.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
@@ -716,52 +721,41 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
-  async continueWork(
-    id: string,
-    message: string,
-    now = Date.now()
-  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
-    const work = this.repo.getWork(id);
-    const ref = this.driverTargets.readRef(id);
-    if (!work || !ref) return { ok: false, reason: 'Only started driver work can be continued.' };
-    if (work.status !== 'queued' && work.status !== 'reported')
-      return { ok: false, reason: `This work already ${work.status}; it cannot be continued.` };
-    const budget = this.continueBudget(work, now);
-    if (budget) return { ok: false, reason: budget };
-    if (this.continuing.has(id))
-      return { ok: false, reason: 'This work is already being continued; wait for that first.' };
+  async continueWork(id: string, message: string, now = Date.now()): Promise<NeoContinueResult> {
+    const admitted = admitNeoWorkContinue(this.continueDeps, id, now);
+    if ('ok' in admitted) return admitted;
     this.continuing.add(id);
     try {
-      const sending = withWorkGoal(message, this.workDoneGoal(id));
-      const probe = await this.readSendBaseline(ref, work, sending);
-      const outcome = await invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.send',
-        { ref, message: sending },
-        driverWorkCaller(work)
-      );
-      const sent = readDriverOutcome({ verb: 'send', ref }, outcome);
-      if ('failure' in sent) return { ok: false, reason: sent.failure };
-      this.driverTargets.recordStartedAt(id, 'queued' in sent ? null : probe.baseline);
-      this.driverTargets.recordSent(id, probe.sent);
-      const continued = this.workContinues.record(id, message, now);
-      const count = continued?.count ?? 1;
-      const current = this.repo.getWork(id) ?? work;
-      if (current.status !== 'queued' && current.status !== 'reported')
-        return {
-          ok: false,
-          reason: `The message was sent, but this work was ${current.status} meanwhile; it stays ${current.status}.`,
-        };
-      const reopened = this.repo.transitionWork(id, current, {
-        status: 'queued',
-        report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
-      });
-      this.askRecords.reopenForWork(id);
-      return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
+      return await sendNeoWorkContinue(this.continueDeps, admitted, message, now);
     } finally {
       this.continuing.delete(id);
     }
   }
+
+  private readonly continueDeps: NeoContinueDeps = {
+    readWork: (id) => this.repo.getWork(id),
+    readRef: (id) => this.driverTargets.readRef(id),
+    readContinuedCount: (id) => this.workContinues.get(id)?.count ?? null,
+    isContinuing: (id) => this.continuing.has(id),
+    withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
+    readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
+    send: ({ ref, work }, message) =>
+      invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.send',
+        { ref, message },
+        driverWorkCaller(work)
+      ),
+    recordSent: (id, startedAt, sent) => {
+      this.driverTargets.recordStartedAt(id, startedAt);
+      this.driverTargets.recordSent(id, sent);
+    },
+    recordContinue: (id, message, now) =>
+      this.workContinues.record(id, message, now)?.count ?? null,
+    reopen: (id, current, report) =>
+      this.repo.transitionWork(id, current, { status: 'queued', report }),
+    reopenAsk: (id) => this.askRecords.reopenForWork(id),
+  };
 
   private async readSendBaseline(
     ref: WorkRef,
