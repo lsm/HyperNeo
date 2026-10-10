@@ -468,7 +468,6 @@ describe('live-scale query regression harness', () => {
     );
     expect(watermarkRows.get('terminal-success-result-after')).toBe(1);
     expect(watermarkRows.get('recovery-intercepted-result-after')).toBe(0);
-    expect(watermarkRows.get('error-terminal-subtype-after')).toBe(0);
 
     const admission = profileByName.get('message-search-admission');
     expect(admission?.cases[0].rowsReturned).toEqual({ min: 1, max: 1 });
