@@ -38,14 +38,16 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
   const glyph = stepGlyph(scene, done);
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
   return (
-    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-center gap-2 text-sm">
+    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-baseline gap-2 text-sm">
       <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
         {glyph.mark}
       </span>
-      <span class="min-w-0 flex-1 truncate" title={title}>
-        {title}
+      <span class="min-w-0 flex-1">
+        <span class="line-clamp-2 break-words" title={title}>
+          {title}
+        </span>
+        <span class="block truncate text-xs text-fg-faint">{scene.label}</span>
       </span>
-      <span class="max-w-[45%] shrink-0 truncate text-xs text-fg-faint">{scene.label}</span>
     </div>
   );
 }
