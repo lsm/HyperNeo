@@ -325,6 +325,10 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+type NeoWorkRetryFound = {
+  work: NeoWork | null;
+  target: ReturnType<NeoService['driverTargets']['get']>;
+};
 type NeoWorkStartFound = { work: NeoWork | null; ask: NeoAsk | null };
 
 export function presentNeoConsultationReply(
@@ -1097,20 +1101,48 @@ export function createNeoOperations(service: NeoService) {
       return service.continueWork(id, message);
     }
   );
-  const retry = path(
-    'neo.work.retry',
-    (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }, caller) => {
-      const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
-      const admission = requireNeoWorkContinuation(work, caller);
-      if ('reason' in admission) return admission.reason;
-      const target = service.driverTargets.get(id);
-      const folder = requireNeoStartFolder(target, readNeoStartFolder(target, existsSync), work);
-      if ('reason' in folder) return folder.reason;
-      return service.retryWork(id);
-    }
-  );
+  const retry = (superpipe({})('neo.work.retry') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.work.retry', undefined),
+      'caller',
+      'result:retry'
+    )
+    .pipe(
+      (input: z.infer<typeof WorkId>) => ({
+        work: service.repo.getWork(input.id),
+        target: service.driverTargets.get(input.id),
+      }),
+      'input',
+      'found'
+    )
+    .pipe(
+      (found: NeoWorkRetryFound) =>
+        found.work ? { value: found.work } : { reason: { ok: false, reason: 'work_not_found' } },
+      'found',
+      'result:retry'
+    )
+    .pipe(requireNeoWorkContinuation, ['retry', 'caller'], 'result:retry')
+    .pipe(
+      (found: NeoWorkRetryFound) => readNeoStartFolder(found.target, existsSync),
+      'found',
+      'folder'
+    )
+    .pipe(
+      (found: NeoWorkRetryFound, folder: { exists: boolean | null }, work: NeoWork) =>
+        requireNeoStartFolder(found.target, folder, work),
+      ['found', 'folder', 'retry'],
+      'result:retry'
+    )
+    .pipe(
+      async (work: NeoWork) => ({ value: await service.retryWork(work.id) }),
+      'retry',
+      'result:retry'
+    )
+    .endAsync('retry') as (
+    input: z.infer<typeof WorkId>,
+    caller: OperationCaller
+  ) => Promise<Awaited<ReturnType<NeoService['retryWork']>> | Rejection>;
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
