@@ -820,6 +820,14 @@ describe('isNeoCardAsk', () => {
   });
 });
 
+describe('neoPrompt stale failures', () => {
+  test('tells Neo to re-check an old failure before repeating it', () => {
+    expect(neoPrompt(null)).toContain(
+      'before you tell the human something is still broken, or skip or refuse work because of it, check it again now'
+    );
+  });
+});
+
 describe('neoPrompt reply length', () => {
   test('keeps shortText to the outcome and the next action', () => {
     expect(neoPrompt(null)).toContain(
