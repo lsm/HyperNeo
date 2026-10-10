@@ -2,8 +2,8 @@ import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { runGhJson } from '../github/gh-lookup-helpers.ts';
-import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
+import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 

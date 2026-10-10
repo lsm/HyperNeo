@@ -1,5 +1,5 @@
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import type { Database } from '../sqlite-compat.ts';
+import type { Database } from '../../../../storage/sqlite-compat.ts';
 
 export interface NeoWorkPrRow {
   workId: string;

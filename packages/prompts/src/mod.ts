@@ -91,13 +91,19 @@ import mdneoWorkDoneCheckAskNext from './neo/work/done-check-ask-next.md' with {
 import mdneoWorkDoneCheckAskOwned from './neo/work/done-check-ask-owned.md' with { type: 'text' };
 import mdneoWorkDoneCheckBudget from './neo/work/done-check-budget.md' with { type: 'text' };
 import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsLive from './neo/work/done-check-prs-live.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsReady from './neo/work/done-check-prs-ready.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsStale from './neo/work/done-check-prs-stale.md' with { type: 'text' };
+import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md' with {
+  type: 'text',
+};
+import mdneoWorkDoneCheckPrsReady from './neo/packs/coding/done-check-prs-ready.md' with {
+  type: 'text',
+};
+import mdneoWorkDoneCheckPrsStale from './neo/packs/coding/done-check-prs-stale.md' with {
+  type: 'text',
+};
 import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
 import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
 import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
-import mdneoWorkGoalMerge from './neo/work/goal-merge.md' with { type: 'text' };
+import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: 'text' };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
 import mdneoWorkReturnReview from './neo/work/return-review.md' with { type: 'text' };
@@ -347,13 +353,13 @@ const registry: Record<string, string> = {
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
   'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
-  'neo/work/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
-  'neo/work/done-check-prs-ready.md': mdneoWorkDoneCheckPrsReady,
-  'neo/work/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
+  'neo/packs/coding/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
+  'neo/packs/coding/done-check-prs-ready.md': mdneoWorkDoneCheckPrsReady,
+  'neo/packs/coding/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
   'neo/work/done-check.md': mdneoWorkDoneCheck,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
-  'neo/work/goal-merge.md': mdneoWorkGoalMerge,
+  'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,

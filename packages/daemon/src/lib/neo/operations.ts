@@ -80,7 +80,7 @@ import {
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from './ask-operations.ts';
-import { isNeoWorkPrWaiting } from './work-prs.ts';
+import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 
