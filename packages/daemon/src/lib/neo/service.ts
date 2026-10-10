@@ -108,6 +108,7 @@ import {
   shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
 } from './work-prs.ts';
+import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 
 const dispatchNeoConsultationWaiter = (
   superpipe({})('neo-consultation-waiter-dispatch') as PipelineAPI
@@ -534,6 +535,7 @@ export class NeoService {
   private async startReservedWork(id: string): Promise<void> {
     let work = this.repo.getWork(id);
     if (!work || !['proposed', 'queued'].includes(work.status)) return;
+    this.askRecords.reopenForWork(id);
     const driver = this.driverTargets.get(id);
     if (driver) return this.startDriverWork(work, driver);
     const target = this.resolveWorkTarget(id);
@@ -608,6 +610,7 @@ export class NeoService {
         status: 'queued',
         report: `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`,
       });
+      this.askRecords.reopenForWork(id);
       return { ok: true, work: reopened ?? this.repo.getWork(id) ?? current };
     } finally {
       this.continuing.delete(id);
@@ -632,36 +635,21 @@ export class NeoService {
     };
   }
 
-  async close(
-    id: string,
-    outcome: 'done' | 'cancelled'
-  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
-    const work = this.repo.getWork(id);
-    if (!work) return { ok: false, reason: 'work_not_found' };
-    if (work.status === 'cancelled')
-      return outcome === 'cancelled'
-        ? { ok: true, work }
-        : { ok: false, reason: 'work_closed: cancelled work stays cancelled' };
-    if (outcome === 'done' && work.status === 'reported') return { ok: true, work };
-    const closed = this.repo.transitionWork(
+  close(id: string, outcome: NeoWorkCloseOutcome): Promise<NeoWorkCloseResult> {
+    return closeNeoWork(
+      {
+        repo: this.repo,
+        readDriverRef: (workId: string) => this.driverTargets.readRef(workId),
+        stopDriver: (ref: WorkRef, work: NeoWork) => this.stopDriverWork(ref, work),
+      },
       id,
-      work,
-      outcome === 'done'
-        ? { status: 'reported', report: NEO_WORK_CLOSED_DONE }
-        : { status: 'cancelled' }
+      outcome
     );
-    if (!closed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
-    const ref = this.driverTargets.readRef(id);
-    if (ref && work.status === 'queued') await this.stopDriverWork(ref, closed);
-    return { ok: true, work: closed };
   }
 
   async cancel(id: string): Promise<void> {
     const work = this.repo.getWork(id);
-    if (!work || !['proposed', 'queued'].includes(work.status)) return;
-    const cancelled = this.repo.transitionWork(id, work, { status: 'cancelled' });
-    const driverRef = cancelled ? this.driverTargets.readRef(id) : null;
-    if (cancelled && driverRef) await this.stopDriverWork(driverRef, cancelled);
+    if (work?.status === 'proposed' || work?.status === 'queued') await this.close(id, 'cancelled');
   }
 
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {

@@ -76,7 +76,7 @@ const Open = z
 type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 const Settle = z.object({
   id: z.string().min(1),
-  outcome: z.enum(['achieved', 'abandoned', 'blocked']),
+  outcome: z.enum(['achieved', 'abandoned', 'blocked', 'waiting']),
   summary: z.string().trim().min(1).max(200).optional(),
   evidence: z.string().trim().min(1).max(4000),
 });
@@ -242,7 +242,7 @@ export function planNeoAskWorkStops(
   works: readonly Pick<NeoWork, 'id' | 'status'>[],
   outcome: z.infer<typeof Settle>['outcome']
 ): { id: string; close: 'done' | 'cancelled' }[] {
-  if (outcome === 'blocked') return [];
+  if (outcome === 'blocked' || outcome === 'waiting') return [];
   return works.flatMap((work) =>
     work.status === 'queued'
       ? [
@@ -371,7 +371,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for blocked what the human must decide ("Merged in #6099.", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing new work under a blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
+        'Settle an ask when its outcome is decided: achieved when every doneWhen item is met; waiting when the next step is the human\'s (an offer to start work, or a delivered result that leaves them decisions), never achieved while decisions are pending; blocked when only the human can unblock it; abandoned when it is no longer wanted. summary is one short sentence the ask shows: the outcome, or for waiting and blocked what the human must decide ("Merged in #6099.", "Start the composer redesign?", "Needs you: pick the release date."). evidence holds the proof (PR state, commits, checks), which the ask does not show. Achieved and abandoned are final and stop the ask\'s live work: queued work items close (done for achieved, cancelled for abandoned) and proposed work items are cancelled. Proposing, starting or continuing work under a waiting or blocked ask reopens it. Only the Neo session that opened the ask or the user can settle it; the user\'s close button calls this too.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

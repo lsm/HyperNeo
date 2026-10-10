@@ -187,32 +187,6 @@ export const HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL = `SELECT 1
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
           LIMIT 1`;
 
-export const GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL = `SELECT CASE
-            WHEN r.message_subtype = 'success' THEN 'error'
-            ELSE r.message_subtype END AS subtype
-           FROM sdk_messages r
-          WHERE r.session_id = ?
-            AND r.message_type = 'result'
-            AND r.is_terminal = 1
-            AND r.message_subtype IS NOT NULL
-            AND (r.message_subtype != 'success' OR (
-              json_extract(r.sdk_message, '$.is_error') = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
-              AND NOT (
-                COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-                AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
-              )
-            ))
-            AND r.parent_tool_use_id IS NULL
-            AND r.consumed_seq IS NOT NULL
-            AND r.consumed_seq >= (
-              SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ?
-               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
-            )
-          ORDER BY r.consumed_seq DESC
-          LIMIT 1`;
-
 export const MESSAGE_SUPERSEDED_PROBE_SQL = `SELECT 1
            FROM sdk_message_replacements replacement
            WHERE replacement.session_id = ?
@@ -2037,10 +2011,7 @@ export class SDKMessageRepository {
   }
 
   getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL)
-      .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
-    return row?.subtype ?? null;
+    return this.getTurnErrorResultSubtype(sessionId, uuid);
   }
 
   getTurnErrorResultSubtype(sessionId: string, uuid: string): string | null {

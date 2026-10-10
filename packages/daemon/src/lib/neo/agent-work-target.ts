@@ -92,3 +92,20 @@ export function requireNeoProposalReceipt(
       ? { value: { ok: true, work } }
       : { reason: { ok: false, reason: 'This request key belongs to another native target.' } };
 }
+
+export interface NeoProposal {
+  receipt: { work: NeoWork; agent: NeoWorkTarget['agent'] | null };
+  crossTarget: boolean;
+}
+
+export function requireNeoProposal(
+  target: NeoWorkTarget,
+  origin: NeoWorkOrigin,
+  proposal: NeoProposal
+): ReturnType<typeof requireNeoProposalReceipt> {
+  return proposal.crossTarget
+    ? {
+        reason: { ok: false, reason: 'This request key belongs to another execution target.' },
+      }
+    : requireNeoProposalReceipt(target, origin, proposal.receipt);
+}

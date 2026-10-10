@@ -78,6 +78,13 @@ describe('NeoAskRepository', () => {
 
     asks.link('a1', 'w1');
     expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null, workIds: ['w1'] });
+
+    const waiting = asks.settle(asks.get('a1')!, 'waiting', 'Start it?', 'Offered.')!;
+    expect(waiting).toMatchObject({ status: 'waiting', outcome: 'Start it?' });
+    asks.reopenForWork('w2');
+    expect(asks.get('a1')?.status).toBe('waiting');
+    asks.reopenForWork('w1');
+    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null });
   });
 
   test('keeps checklist items with the ask that created them, once', () => {

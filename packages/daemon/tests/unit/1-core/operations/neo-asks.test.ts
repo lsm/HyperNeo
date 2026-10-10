@@ -211,6 +211,28 @@ describe('neo.ask operations', () => {
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
   });
 
+  test('an offer waits on the human, and starting its work item reopens the ask', async () => {
+    const askId = await openAsk();
+    const offered = (await propose('card-1', askId)).value!.work!.id;
+    expect(
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'waiting',
+        summary: 'Start the login fix?',
+        evidence: 'Offered a work item; nothing started.',
+      })
+    ).toMatchObject({
+      value: { ok: true, ask: { status: 'waiting', outcome: 'Start the login fix?' } },
+    });
+    expect(service.repo.getWork(offered)?.status).toBe('proposed');
+    expect((await invoke('neo.snapshot', {})).value?.asks).toEqual([
+      expect.objectContaining({ id: askId, status: 'waiting' }),
+    ]);
+
+    await service.start(offered).catch(() => {});
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+  });
+
   test("settling for good stops its live work; only the user can settle another session's ask", async () => {
     const askId = await openAsk();
     const running = (await propose('card-1', askId)).value!.work!.id;
@@ -512,27 +534,28 @@ describe('planNeoAskWorkStops', () => {
     { id: 'r', status: 'reported' as const },
   ];
 
-  test.each<[string, 'achieved' | 'abandoned' | 'blocked', ReturnType<typeof planNeoAskWorkStops>]>(
+  test.each<
+    [string, Parameters<typeof planNeoAskWorkStops>[1], ReturnType<typeof planNeoAskWorkStops>]
+  >([
     [
+      'achieved closes queued work as done',
+      'achieved',
       [
-        'achieved closes queued work as done',
-        'achieved',
-        [
-          { id: 'q', close: 'done' },
-          { id: 'p', close: 'cancelled' },
-        ],
+        { id: 'q', close: 'done' },
+        { id: 'p', close: 'cancelled' },
       ],
+    ],
+    [
+      'abandoned cancels live work',
+      'abandoned',
       [
-        'abandoned cancels live work',
-        'abandoned',
-        [
-          { id: 'q', close: 'cancelled' },
-          { id: 'p', close: 'cancelled' },
-        ],
+        { id: 'q', close: 'cancelled' },
+        { id: 'p', close: 'cancelled' },
       ],
-      ['blocked leaves work alone', 'blocked', []],
-    ]
-  )('%s', (_case, outcome, stops) => {
+    ],
+    ['blocked leaves work alone', 'blocked', []],
+    ['waiting leaves the offered work for the human to start', 'waiting', []],
+  ])('%s', (_case, outcome, stops) => {
     expect(planNeoAskWorkStops(works, outcome)).toEqual(stops);
   });
 });
@@ -560,6 +583,9 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('Propose every work item for that request with its askId');
     expect(prompt).toContain('neo.ask.settle {id,outcome,summary,evidence}');
     expect(prompt).toContain('the proof goes in evidence, never in summary');
+    expect(prompt).toContain('Never offer work only in text');
+    expect(prompt).toContain('settle waiting with summary naming them, never achieved');
+    expect(prompt).toContain('then ask about the waiting one in one short line');
     expect(neoPrompt('book-club')).toContain('File work only under asks you opened yourself');
     expect(prompt).toContain('save it straight away with neo.rule.save');
     expect(prompt).toContain('Never ask whether to save it.');
