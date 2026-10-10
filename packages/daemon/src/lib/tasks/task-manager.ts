@@ -673,10 +673,6 @@ export class SpaceTaskManager {
     return this.doBlockCascade(taskId, []);
   }
 
-  async cancelDependentTasks(taskId: string): Promise<SpaceTask[]> {
-    return this.doCancelDependentsCascade(taskId, []);
-  }
-
   private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
     const dependents = [
       ...(await this.listTasksByStatus('in_progress')),
@@ -692,35 +688,6 @@ export class SpaceTaskManager {
         });
         acc.push(blocked);
         await this.doBlockCascade(t.id, acc);
-      }
-    }
-    return acc;
-  }
-
-  private async doCancelDependentsCascade(
-    taskId: string,
-    acc: SpaceTask[],
-    visited: Set<string> = new Set()
-  ): Promise<SpaceTask[]> {
-    const allTasks = await this.listTasks(false);
-    for (const t of allTasks) {
-      if (visited.has(t.id)) continue;
-      if (!t.dependsOn?.includes(taskId)) continue;
-      visited.add(t.id);
-
-      let propagate = false;
-      if (t.status === 'open' || t.status === 'in_progress' || isRateOrUsageLimited(t.status)) {
-        const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
-          result: `Dependency task ${taskId} was cancelled`,
-        });
-        acc.push(cancelled);
-        propagate = true;
-      } else if (t.status === 'cancelled') {
-        propagate = true;
-      }
-
-      if (propagate) {
-        await this.doCancelDependentsCascade(t.id, acc, visited);
       }
     }
     return acc;

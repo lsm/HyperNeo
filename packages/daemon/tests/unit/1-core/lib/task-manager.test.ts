@@ -504,22 +504,6 @@ describe('SpaceTaskManager', () => {
       expect((await manager.getTask(t1.id))!.status).toBe('cancelled');
       expect((await manager.getTask(t2.id))!.status).toBe('blocked');
     });
-
-    it('cascades cancel to a rate/usage-limited dependent (not just open/in_progress)', async () => {
-      const t1 = await manager.createTask({ title: 'T1', description: '' });
-      const t2 = await manager.createTask({
-        title: 'T2',
-        description: '',
-        dependsOn: [t1.id],
-      });
-      await manager.setTaskStatus(t2.id, 'in_progress');
-      db.prepare(`UPDATE space_tasks SET status = 'usage_limited' WHERE id = ?`).run(t2.id);
-      db.prepare(`UPDATE space_tasks SET status = 'cancelled' WHERE id = ?`).run(t1.id);
-
-      await manager.cancelDependentTasks(t1.id);
-
-      expect((await manager.getTask(t2.id))!.status).toBe('cancelled');
-    });
   });
 
   describe('blockDependentTasks cascade', () => {
