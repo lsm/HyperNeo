@@ -164,6 +164,20 @@ describe('withNeoSavedRules', () => {
       `Started #5559.\nSaved: ${rule}`,
       `${reply.fullText}\n\nSaved: ${rule}`,
     ],
+    [
+      'a reply that says only one of two saved rules',
+      { ...reply, shortText: `Started #5559.\nSaved: ${rule}` },
+      [rule, 'Docs ship with the code.'],
+      `Started #5559.\nSaved: ${rule}\n\nSaved: Docs ship with the code.`,
+      `${reply.fullText}\n\nSaved: ${rule}\nSaved: Docs ship with the code.`,
+    ],
+    [
+      'a reply with some other saved line',
+      { ...reply, shortText: 'Started #5559.\nSaved: something else' },
+      [rule],
+      `Started #5559.\nSaved: something else\n\nSaved: ${rule}`,
+      `${reply.fullText}\n\nSaved: ${rule}`,
+    ],
     ['an interim update', { ...reply, interim: true }, [rule], reply.shortText, reply.fullText],
   ])('%s', (_label, input, saved, shortText, fullText) => {
     expect(withNeoSavedRules(input, saved)).toMatchObject({ shortText, fullText });
