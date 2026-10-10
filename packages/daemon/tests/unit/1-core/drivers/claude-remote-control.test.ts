@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import type { ClaudeDesktopAdapterDeps } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import {
   findRcToggle,
@@ -10,6 +11,7 @@ import {
   withClaudeRemoteControl,
 } from '../../../../src/lib/drivers/claude-remote-control';
 import type { WorkAdapter, WorkSummary } from '../../../../src/lib/drivers/types';
+import { Logger } from '../../../../src/lib/logger';
 
 function record(id: string, fields: Record<string, unknown> = {}) {
   return {
@@ -152,7 +154,7 @@ describe('runClaudeRemoteControlRequest', () => {
   test('leaves a session that already has its Remote Control set alone', async () => {
     write(record('t1', { title: target.title, bridgeSessionIds: ['session_01Abc'] }));
     const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome.ok).toBe(false);
+    expect(outcome).toEqual({ ok: true, value: { delivered: false } });
     expect(spawned).toEqual([]);
   });
 });
@@ -184,5 +186,29 @@ describe('withClaudeRemoteControl', () => {
     await wrapped.start?.({} as never, {} as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(asked).toEqual(['local_t1 Fix the parser']);
+  });
+
+  test('logs a request that fails or throws instead of dropping it', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const adapter = {
+      id: 'claude-desktop',
+      capabilities: ['start'],
+      find: async () => [],
+      start: async () => ({ ok: true as const, value: summary }),
+    } as unknown as WorkAdapter;
+    let call = 0;
+    const wrapped = withClaudeRemoteControl(adapter, {} as ClaudeDesktopAdapterDeps, async () => {
+      call += 1;
+      if (call === 2) throw new Error('desktop gone');
+      return { ok: false, reason: 'not_delivered', detail: 'rc-toggle missing' };
+    });
+    await wrapped.start?.({} as never, {} as never);
+    await wrapped.start?.({} as never, {} as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warn.mock.calls.map(([message]) => String(message))).toEqual([
+      'Remote Control for local_t1 was not set: not_delivered: rc-toggle missing',
+      'Remote Control for local_t1 threw: desktop gone',
+    ]);
+    warn.mockRestore();
   });
 });
