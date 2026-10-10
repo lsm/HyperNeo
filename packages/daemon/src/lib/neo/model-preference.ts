@@ -9,6 +9,7 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { getAvailableModels } from '../model-service.ts';
+import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoService } from './service.ts';
 
@@ -36,12 +37,6 @@ export function clampNeoThinking(
   if (levels.includes(requested)) return requested;
   const rank = THINKING_LEVELS.indexOf(requested);
   return [...levels].reverse().find((level) => THINKING_LEVELS.indexOf(level) <= rank) ?? 'off';
-}
-
-export function requireNeoUser(caller: OperationCaller): Gate<OperationCaller> {
-  return caller.source === 'rpc' && caller.principal === 'local'
-    ? { value: caller }
-    : { reason: { ok: false, reason: 'This action needs the user.' } };
 }
 
 export function requireNeoPreferenceModel(
@@ -95,7 +90,7 @@ export function planNeoAlignment(
 export function createNeoPreferenceOperation(service: NeoService) {
   const set = (superpipe({})('neo.preferences.set') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(requireNeoUser, 'caller', 'result:admission')
+    .pipe(requireLocalUser, 'caller', 'result:admission')
     .pipe(() => ({ models: getAvailableModels('global') }), 'input', 'catalog')
     .pipe(requireNeoPreferenceModel, ['input', 'catalog'], 'result:admission')
     .pipe(
