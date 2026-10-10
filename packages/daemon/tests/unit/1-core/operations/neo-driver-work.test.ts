@@ -355,6 +355,22 @@ describe('driverExchangeReport', () => {
 });
 
 describe('Neo work with a drivers target', () => {
+  function fileUnderAsk(service: NeoService, workId = 'work-1') {
+    const ask = service.askRecords.open({
+      id: `ask-${workId}`,
+      requestKey: `neo:root:${workId}`,
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'ask-1',
+      title: 'Fix it',
+      ask: 'Fix it',
+      doneWhen: '- merged',
+      doneSource: 'human',
+    })!;
+    service.askRecords.link(ask.id, workId);
+    return ask;
+  }
+
   async function setup(
     reply: unknown,
     during?: (service: NeoService) => Promise<void>,
@@ -609,6 +625,7 @@ describe('Neo work with a drivers target', () => {
     }));
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'A full Neo iOS app', '- chat works\n- voice works');
+    fileUnderAsk(service);
     const notes: Array<[string, string, string]> = [];
     Object.assign(service, {
       deliver: async (target: string, messageId: string, content: string) => {
@@ -824,6 +841,7 @@ describe('Neo work with a drivers target', () => {
     const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'Lower reasoning effort', '- merged to dev');
+    fileUnderAsk(service);
     const ready: NeoWorkPr = { url, state: 'OPEN', checks: 'passing', review: 'approved' };
     service.readPrs = async () => [ready];
     const notes: Array<[string, string]> = [];
@@ -867,6 +885,48 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('stays quiet about pull requests of cards with no ask or a settled one', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6013';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- merged to dev');
+    const open: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+    let prs = [open];
+    service.readPrs = async () => prs;
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    const refreshLater = async () => {
+      service.workPrs.recordFailedRead('work-1', 0);
+      await service.refreshDriverWork();
+    };
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      service.workPrs.record('work-1', [open], 0);
+      prs = [{ ...open, checks: 'passing', review: 'approved' }];
+      await refreshLater();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs[0]?.review).toBe('approved');
+
+      const ask = fileUnderAsk(service);
+      service.askRecords.settle(ask, 'achieved', 'Merged.', 'Merged.');
+      prs = [{ ...open, state: 'MERGED', checks: 'passing', review: 'approved' }];
+      await refreshLater();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(service.workPrs.get('work-1')?.prs[0]?.state).toBe('MERGED');
+    } finally {
+      db.close();
+    }
+  });
+
   test('waits while its pull request runs CI, then checks it with the live state', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/42';
@@ -880,6 +940,7 @@ describe('Neo work with a drivers target', () => {
     }));
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    fileUnderAsk(service);
     const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
     let prs = [running];
     service.readPrs = async () => prs;
@@ -951,6 +1012,7 @@ describe('Neo work with a drivers target', () => {
     }));
     db.createSession(createTestSession('neo:root'));
     service.workGoals.record('work-1', 'Fix the bug', '- merged to dev');
+    fileUnderAsk(service);
     const running: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
     let reads = 0;
     let readable = true;

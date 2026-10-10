@@ -8,7 +8,7 @@ import {
 } from '../../../../src/lib/neo/done-check.ts';
 
 const goal = { workId: 'w1', goal: 'Fix it', doneWhen: '- merged' };
-const card = { goal, driver: true, session: true };
+const card = { goal, driver: true, session: true, ask: { status: 'open' as const } };
 const pr: NeoWorkPr = {
   url: 'https://github.com/lsm/HyperNeo/pull/1',
   state: 'OPEN',
@@ -17,15 +17,38 @@ const pr: NeoWorkPr = {
 };
 
 describe('requireNeoDoneCheck', () => {
-  test.each<[string, string, Partial<typeof card>, boolean]>([
+  test.each<
+    [
+      string,
+      string,
+      Partial<Omit<typeof card, 'ask'>> & { ask?: { status: 'open' } | null },
+      boolean,
+    ]
+  >([
     ['a reported driver card with a done list', 'reported', {}, true],
     ['a card still running', 'queued', {}, false],
     ['a card with no done list', 'reported', { goal: { ...goal, doneWhen: '' } }, false],
     ['a card that is not driver work', 'reported', { driver: false }, false],
     ['a card whose Neo session is gone', 'reported', { session: false }, false],
+    ['a card with no ask', 'reported', { ask: null }, false],
   ])('%s', (_label, status, overrides, checks) => {
     const gate = requireNeoDoneCheck({ status: status as 'reported' }, { ...card, ...overrides });
     expect(gate).toEqual(checks ? { value: goal } : { reason: false });
+  });
+
+  test.each(['achieved', 'abandoned'] as const)(
+    'stays quiet for a card whose ask is %s',
+    (status) => {
+      expect(requireNeoDoneCheck({ status: 'reported' }, { ...card, ask: { status } })).toEqual({
+        reason: true,
+      });
+    }
+  );
+
+  test('still lets failed work under a settled ask send its plain return note', () => {
+    expect(
+      requireNeoDoneCheck({ status: 'failed' }, { ...card, ask: { status: 'achieved' } })
+    ).toEqual({ reason: false });
   });
 });
 

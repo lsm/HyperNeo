@@ -431,8 +431,13 @@ describe('requireNeoWorkPrDelivery', () => {
     ['wait', false],
     ['unchanged', false],
   ])('%s', (plan, delivers) => {
-    const gate = requireNeoWorkPrDelivery(plan);
+    const gate = requireNeoWorkPrDelivery(plan, true);
     expect('value' in gate).toBe(delivers);
     if ('value' in gate) expect(gate.value as string).toBe(plan);
+  });
+
+  test('never delivers for a card whose ask is settled or missing', () => {
+    expect(requireNeoWorkPrDelivery('deliver', false)).toEqual({ reason: null });
+    expect(requireNeoWorkPrDelivery('remind', false)).toEqual({ reason: null });
   });
 });

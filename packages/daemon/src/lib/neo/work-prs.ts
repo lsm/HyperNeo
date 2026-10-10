@@ -154,9 +154,10 @@ export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
 }
 
 export function requireNeoWorkPrDelivery(
-  plan: ReturnType<typeof planNeoWorkPrRefresh>
+  plan: ReturnType<typeof planNeoWorkPrRefresh>,
+  live: boolean
 ): { value: 'deliver' | 'remind' } | { reason: null } {
-  return plan === 'deliver' || plan === 'remind' ? { value: plan } : { reason: null };
+  return live && (plan === 'deliver' || plan === 'remind') ? { value: plan } : { reason: null };
 }
 
 type BranchRule = {

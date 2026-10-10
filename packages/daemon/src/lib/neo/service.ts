@@ -107,6 +107,7 @@ import {
 } from './work-prs.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import {
+  isNeoAskLive,
   neoDoneCheckToldIds,
   requireNeoDoneCheck,
   requireNeoDoneCheckDue,
@@ -986,7 +987,12 @@ export class NeoService {
       ['work', 'card', 'refreshed', 'now'],
       'plan'
     )
-    .pipe(requireNeoWorkPrDelivery, 'plan', 'result:delivery')
+    .pipe(
+      (plan: ReturnType<typeof planNeoWorkPrRefresh>, card: NeoWorkPrCard) =>
+        requireNeoWorkPrDelivery(plan, isNeoAskLive(card.ask)),
+      ['plan', 'card'],
+      'result:delivery'
+    )
     .pipe(
       async (
         work: NeoWork,
