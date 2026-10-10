@@ -20,6 +20,13 @@ function headlinePr(receipt: NeoWorkPrReceipt | undefined): NeoWorkPr | undefine
 
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.split('/').pop() ?? pr.url}`;
 
+export function neoWorkPrNumbers(
+  receipt: NeoWorkPrReceipt | undefined,
+  state: NeoWorkPr['state']
+): string[] {
+  return (receipt?.prs ?? []).filter((pr) => pr.state === state).map(prNumber);
+}
+
 export function neoWorkPrNumber(receipt: NeoWorkPrReceipt | undefined): string | null {
   const pr = headlinePr(receipt);
   return pr ? prNumber(pr) : null;

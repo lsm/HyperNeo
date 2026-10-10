@@ -38,14 +38,16 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
   const glyph = stepGlyph(scene, done);
   const title = scene.receipt.kind === 'work' ? scene.receipt.title : scene.label;
   return (
-    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-center gap-2 text-sm">
+    <div data-ask-step={scene.ref.id} class="flex min-w-0 items-baseline gap-2 text-sm">
       <span aria-hidden="true" class={`w-3 shrink-0 text-center text-xs ${glyph.color}`}>
         {glyph.mark}
       </span>
-      <span class="min-w-0 flex-1 truncate" title={title}>
-        {title}
+      <span class="min-w-0 flex-1">
+        <span class="line-clamp-2 break-words" title={title}>
+          {title}
+        </span>
+        <span class="block truncate text-xs text-fg-faint">{scene.label}</span>
       </span>
-      <span class="max-w-[45%] shrink-0 truncate text-xs text-fg-faint">{scene.label}</span>
     </div>
   );
 }
@@ -65,7 +67,7 @@ export function NeoAskCard({
   onOpen?: (workId: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
-  const [open, setOpen] = useState(view.group === 'attention');
+  const [open, setOpen] = useState(false);
   const { ask } = view;
   const tone =
     view.group === 'attention'
@@ -76,7 +78,7 @@ export function NeoAskCard({
           ? 'ended'
           : 'running';
   const steps = view.scenes.length;
-  const several = steps > 1;
+  const single = steps === 1 ? view.scenes[0] : undefined;
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -109,7 +111,7 @@ export function NeoAskCard({
           pulse={tone === 'running'}
         />
         <span class="flex-1" />
-        {view.total > 0 && (
+        {!view.settled && view.total > 0 && (
           <span class="shrink-0 text-xs text-fg-muted">
             {view.done} of {view.total} done
           </span>
@@ -137,8 +139,19 @@ export function NeoAskCard({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
-      {ask.outcome && (
-        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{ask.outcome}</p>
+      {view.summary && (
+        <p class="mt-1.5 line-clamp-2 break-words text-sm text-fg-muted">{view.summary}</p>
+      )}
+      {steps > 0 && (
+        <div class="mt-3 space-y-2 border-l-2 border-line pl-3">
+          {view.scenes.map((scene) =>
+            scene.group === 'attention' ? (
+              renderCard?.(scene)
+            ) : (
+              <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
+            )
+          )}
+        </div>
       )}
       {open && (
         <div data-ask-details class="mt-3 space-y-3">
@@ -146,17 +159,13 @@ export function NeoAskCard({
             <p class="text-xs font-medium text-fg-faint">Done when</p>
             <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
           </div>
-          {steps > 0 && (
-            <div class="space-y-2 border-l-2 border-line pl-3">
-              {view.scenes.map((scene) =>
-                several && scene.group !== 'attention' ? (
-                  <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
-                ) : (
-                  renderCard?.(scene)
-                )
-              )}
+          {ask.outcome && ask.outcome.trim() !== view.summary && (
+            <div class="text-sm text-fg-muted">
+              <p class="text-xs font-medium text-fg-faint">Outcome</p>
+              <p class="mt-1 whitespace-pre-wrap break-words">{ask.outcome}</p>
             </div>
           )}
+          {single && single.group !== 'attention' && renderCard?.(single)}
         </div>
       )}
       <div class={neoFooterClass}>
@@ -168,7 +177,7 @@ export function NeoAskCard({
           onClick={() => setOpen(!open)}
           class={neoPlainClass}
         >
-          {several ? 'Steps' : 'Details'}
+          Details
           <NeoIcon
             name="chevron"
             class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
