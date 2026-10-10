@@ -14,6 +14,7 @@ import { awaitsWorkerHandoff, isRetryableTaskStatus, retryTargetStatus } from '.
 import { isActiveSessionInSpace, resolveSpaceTaskOwner } from './metadata.ts';
 import {
   claimsTaskSlot,
+  guardTaskSlot,
   readTaskSlotUsage,
   requireTaskSlot,
   type TaskSlotUsage,
@@ -90,12 +91,16 @@ export function readRetrySlotUsage(plan: RetryPlan, db: Database): TaskSlotUsage
 export async function applyRetry(
   plan: RetryPlan,
   input: Input,
-  tasks: RetryTaskDependencies
+  tasks: RetryTaskDependencies,
+  db: Database
 ): Promise<Result> {
   try {
-    return await writeRetry(plan, input, tasks);
+    return await writeRetry(plan, input, tasks, db);
   } catch (error) {
-    if (error instanceof StaleTaskGuardError) return 'invalid_transition';
+    if (error instanceof StaleTaskGuardError)
+      return error.guardReason === 'space_at_task_capacity'
+        ? 'space_at_task_capacity'
+        : 'invalid_transition';
     throw error;
   }
 }
@@ -103,12 +108,14 @@ export async function applyRetry(
 async function writeRetry(
   plan: RetryPlan,
   input: Input,
-  tasks: RetryTaskDependencies
+  tasks: RetryTaskDependencies,
+  db: Database
 ): Promise<Result> {
   if (plan.recoverTo === undefined) {
     return tasks.getTaskManager(plan.task.spaceId).retryTask(plan.task.id, {
       description: input.description,
       expectedStatus: plan.task.status,
+      guardWrite: guardTaskSlot(db, retryTargetStatus(plan.task.status)),
     });
   }
   if (!tasks.recoverWorkflowTask) return 'retry_unavailable';
@@ -139,7 +146,7 @@ export function createRetryTaskOperation(
     .pipe(routeRetry, 'outcome', 'result:outcome')
     .pipe(readRetrySlotUsage, ['outcome', 'db'], 'slots')
     .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
-    .pipe(applyRetry, ['outcome', 'input', 'tasks'], 'outcome')
+    .pipe(applyRetry, ['outcome', 'input', 'tasks', 'db'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'task.retry',
