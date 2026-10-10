@@ -2774,17 +2774,28 @@ export class AgentSession
     const aborted = waitForDeliveryAbort(signal);
     const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
     let failedPoll: ReturnType<typeof setInterval> | undefined;
+    const spentTurn =
+      this.queryRunner instanceof QueryRunner &&
+      !this.queryRunner.acceptsPrompt(this.getQueryGeneration())
+        ? this.queryPromise
+        : null;
+    let waitSettled = false;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          ackTimedOut = true;
-          reject(
-            new MessageDeliveryRecoverableTurnError(
-              'Delivery not consumed within timeout',
-              'admission_timeout'
-            )
-          );
-        }, timeoutMs);
+        const arm = () => {
+          if (waitSettled) return;
+          timeoutId = setTimeout(() => {
+            ackTimedOut = true;
+            reject(
+              new MessageDeliveryRecoverableTurnError(
+                'Delivery not consumed within timeout',
+                'admission_timeout'
+              )
+            );
+          }, timeoutMs);
+        };
+        if (spentTurn) void spentTurn.catch(() => undefined).then(arm);
+        else arm();
       });
     const failedBeforeAcceptance = (): Promise<never> =>
       new Promise<never>((_, reject) => {
@@ -2834,6 +2845,7 @@ export class AgentSession
       }
       throw error;
     } finally {
+      waitSettled = true;
       clearTimeout(timeoutId);
       if (failedPoll !== undefined) clearInterval(failedPoll);
       consumption.cancel();
