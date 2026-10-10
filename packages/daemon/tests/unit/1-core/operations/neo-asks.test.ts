@@ -802,17 +802,32 @@ describe('planNeoAskTickStatus', () => {
     [
       'an item that needs the human',
       { doneItems: [item('i1', 'needs_you')] },
-      { status: 'waiting', outcome: 'Item i1' },
+      { status: 'waiting', outcome: 'Item i1', item: 'i1' },
     ],
     [
       'the same question already asked',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you')] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'needs_you')],
+      },
       { status: 'unchanged' },
     ],
     [
       'the last question answered',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'met')] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'met')],
+      },
       { status: 'open' },
+    ],
+    [
+      'a deliberate wait whose summary happens to match an item',
+      { status: 'waiting', outcome: 'Item i1', waitingItem: null, doneItems: [item('i1', 'met')] },
+      { status: 'unchanged' },
     ],
     [
       'an offer that waits for another reason',
@@ -826,7 +841,12 @@ describe('planNeoAskTickStatus', () => {
     ],
     [
       'a question whose item was removed',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you', true)] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'needs_you', true)],
+      },
       { status: 'open' },
     ],
     [
