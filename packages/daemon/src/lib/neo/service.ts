@@ -1168,7 +1168,10 @@ export class NeoService {
           noted: this.driverTargets.readNeedsYouSince(work.id),
           ask,
           siblingsWaiting: (ask?.workIds ?? []).some(
-            (id) => id !== work.id && this.driverTargets.readNeedsYouSince(id) !== null
+            (id) =>
+              id !== work.id &&
+              this.repo.getWork(id)?.status === 'queued' &&
+              this.driverTargets.readNeedsYouSince(id) !== null
           ),
         };
       },

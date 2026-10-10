@@ -1317,6 +1317,54 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test.each([
+    ['still runs', 'queued', 'waiting'],
+    ['already reported', 'reported', 'open'],
+  ] as const)(
+    'reopens the ask on an answer only when no sibling card that %s needs the human',
+    async (_label, siblingStatus, askStatus) => {
+      const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' };
+      let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 0 } };
+      const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+      db.createSession(createTestSession('neo:root'));
+      Object.assign(service, { deliver: async () => {} });
+      const opened = fileUnderAsk(service);
+      service.driverTargets.propose(
+        service.repo,
+        {
+          id: 'work-2',
+          requestKey: 'root:font-2',
+          concernId: null,
+          originSessionId: 'neo:root',
+          originMessageId: 'ask-1',
+          title: work.title,
+          instruction: work.instruction,
+        },
+        startTarget
+      );
+      service.askRecords.link(opened.id, 'work-2');
+      const sibling = service.repo.getWork('work-2')!;
+      const queued = service.repo.transitionWork('work-2', sibling, { status: 'queued' })!;
+      if (siblingStatus === 'reported')
+        service.repo.transitionWork('work-2', queued, { status: 'reported', report: 'Done.' });
+      service.driverTargets.recordNeedsYouSince('work-2', 4);
+      try {
+        await service.start('work-1');
+        reply = {
+          ok: true,
+          value: { status: 'needs_you', lastActivityAt: 5, lastReply: 'A or B?' },
+        };
+        await service.refreshDriverWork();
+        service.askRecords.settle(service.askRecords.get(opened.id)!, 'waiting', 'A or B?', 'x');
+        reply = { ok: true, value: { status: 'running', lastActivityAt: 6 } };
+        await service.refreshDriverWork();
+        expect(service.askRecords.get(opened.id)?.status).toBe(askStatus);
+      } finally {
+        db.close();
+      }
+    }
+  );
+
   test("card status follows the session only after Neo's message landed and stays done after a reply", () => {
     const running = { status: 'running' as const, lastActivityAt: 30 };
     expect(decideCardLiveStatus(running, null, null)).toBe('queued');
