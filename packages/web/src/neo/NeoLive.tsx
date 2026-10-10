@@ -613,6 +613,7 @@ export function NeoLive() {
                     drivers={drivers}
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
+                    onDone={(itemId) => void neo.tickAskItem(ask.ask.id, itemId)}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     renderCard={(scene) => renderScene(scene, ask.group)}
                   />
