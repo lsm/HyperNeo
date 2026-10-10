@@ -134,8 +134,8 @@ describe('Neo voice', () => {
     });
     const onSendVoice = vi.fn(async () => ({ kind: 'accepted' }) as const);
     const onTranscript = vi.fn();
-    let sendFromComposer: (() => void) | undefined;
-    const register = (send: (() => void) | null) => {
+    let sendFromComposer: ((intent: 'draft' | 'send') => void) | undefined;
+    const register = (send: ((intent: 'draft' | 'send') => void) | null) => {
       sendFromComposer = send ?? undefined;
     };
     render(
@@ -154,7 +154,7 @@ describe('Neo voice', () => {
     expect(
       screen.queryByRole('button', { name: 'Stop recording and send the message' })
     ).toBeNull();
-    (sendFromComposer as () => void)();
+    (sendFromComposer as (intent: 'draft' | 'send') => void)('send');
     await waitFor(() => expect(onSendVoice).toHaveBeenCalledTimes(1));
     expect(onSendVoice).toHaveBeenCalledWith('Send me now', 'recording');
     expect(onTranscript).not.toHaveBeenCalled();
@@ -217,14 +217,14 @@ describe('Neo voice', () => {
         })
       );
       const onPhase = vi.fn();
-      let sendFromComposer: (() => void) | null = null;
+      let sendFromComposer: ((intent: 'draft' | 'send') => void) | null = null;
       const props = {
         sessionId: 'neo:club',
         connected: true,
         draftText: 'typed first',
         onTranscript: vi.fn(),
         onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
-        onSendHandle: (send: (() => void) | null) => {
+        onSendHandle: (send: ((intent: 'draft' | 'send') => void) | null) => {
           sendFromComposer = send;
         },
         onError: vi.fn(),
@@ -236,7 +236,7 @@ describe('Neo voice', () => {
       });
       voice.recording = false;
       if (via === 'Stop') fireEvent.click(stop);
-      else (sendFromComposer as unknown as () => void)();
+      else (sendFromComposer as unknown as (intent: 'draft' | 'send') => void)('send');
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith(phase));
       finish({ kind: 'silent-recording' });
       await waitFor(() => expect(onPhase).toHaveBeenLastCalledWith('idle'));
@@ -251,7 +251,7 @@ describe('Neo voice', () => {
       recordId: 'recording',
     });
     const onError = vi.fn();
-    let sendFromComposer: (() => void) | undefined;
+    let sendFromComposer: ((intent: 'draft' | 'send') => void) | undefined;
     render(
       <NeoVoice
         sessionId="neo:club"
@@ -266,7 +266,7 @@ describe('Neo voice', () => {
         }}
       />
     );
-    (sendFromComposer as () => void)();
+    (sendFromComposer as (intent: 'draft' | 'send') => void)('send');
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(voice.deleteRecord).not.toHaveBeenCalled();
   });

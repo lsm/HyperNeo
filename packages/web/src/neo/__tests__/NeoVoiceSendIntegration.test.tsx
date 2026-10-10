@@ -230,14 +230,29 @@ describe('NeoComposer and NeoVoice send integration', () => {
     await waitFor(() => expect(store.records.size).toBe(0));
   });
 
-  it('keeps the recording Send available and explains staged attachments', async () => {
+  it('with attachments staged, the arrow adds the transcript to the draft instead of sending', async () => {
     attachmentFiles.current = [{ id: 'f1', kind: 'text', name: 'notes.txt', text: 'hi' }];
-    renderComposer();
-    await awaitRecordingComposer();
+    const { onTranscript, onError } = renderComposer();
+    await waitFor(() =>
+      expect(buttonNamed('Stop recording and add it to your draft')).toBeTruthy()
+    );
+    const arrow = buttonNamed('Stop recording and add it to your draft');
+    expect(arrow.disabled).toBe(false);
+    expect(arrow.title).toContain('attachments');
+    expect(screen.getByRole('status').textContent).toBe(
+      'Recording · Stop adds it to your draft; send it with your attachments'
+    );
 
-    expect(sendControl().disabled).toBe(false);
-    expect(sendControl().title).toContain('attachments');
-    expect(stopControl().disabled).toBe(false);
+    fireEvent.click(arrow);
+
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken second'));
+    expect(asks()).toHaveLength(0);
+    expect(reportedErrors(onError)).toContain(
+      'Added to your draft so it goes out with your attachments. Click send when ready.'
+    );
+    expect(reportedErrors(onError)).not.toContain(
+      'Could not send that recording. It is saved below so you can retry.'
+    );
   });
 
   it('persists the typed draft at record creation, before transcription finishes', async () => {
