@@ -12,7 +12,7 @@ import type { NodeExecution } from '@hyperneo/shared';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
-import { resolveMetadataSessionSpace, type SpaceTaskMetadataDependencies } from './metadata.ts';
+import { isActiveSessionInSpace, type SpaceTaskMetadataDependencies } from './metadata.ts';
 import type { SpaceTaskManager } from './task-manager.ts';
 import { taskRejectionKind, type TaskRejectionKind } from './transitions.ts';
 import { Logger } from '../logger.ts';
@@ -98,10 +98,9 @@ export function requireSubmitterInSpace(
 ): { value: SpaceTask } | { reason: Ack } {
   if (caller.source !== 'mcp') return { value: task };
   const session = evidence.callerSession;
-  return session?.status !== 'active' ||
-    resolveMetadataSessionSpace(session, policy) !== task.spaceId
-    ? reject('review_submission_denied')
-    : { value: task };
+  return isActiveSessionInSpace(session, task.spaceId, policy)
+    ? { value: task }
+    : reject('review_submission_denied');
 }
 
 export function requireNoUnownedAttempt(

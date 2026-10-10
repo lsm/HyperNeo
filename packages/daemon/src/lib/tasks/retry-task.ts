@@ -11,7 +11,7 @@ import {
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
-import { resolveMetadataSessionSpace, resolveSpaceTaskOwner } from './metadata.ts';
+import { isActiveSessionInSpace, resolveSpaceTaskOwner } from './metadata.ts';
 import {
   claimsTaskSlot,
   readTaskSlotUsage,
@@ -64,12 +64,7 @@ export function admitRetrier(
   if (owner.kind === 'standalone') return { reason: 'task_not_in_space' };
   if (caller.source === 'mcp') {
     const session = caller.sessionId ? tasks.getSession(caller.sessionId) : null;
-    if (
-      session?.status !== 'active' ||
-      resolveMetadataSessionSpace(session, tasks) !== owner.spaceId
-    ) {
-      return { reason: 'retry_denied' };
-    }
+    if (!isActiveSessionInSpace(session, owner.spaceId, tasks)) return { reason: 'retry_denied' };
   }
   const task = new SpaceTaskRepository(db).getTask(input.taskId);
   return task ? { value: task } : { reason: 'task_not_found' };

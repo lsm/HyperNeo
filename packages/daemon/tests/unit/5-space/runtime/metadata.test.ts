@@ -18,6 +18,7 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { agentOwnedMetadata } from '../../helpers/space-agent-owner';
 import {
   createSpaceTaskMetadataEditor,
+  isActiveSessionInSpace,
   requireMetadataCallerScope,
   resolveMetadataSessionSpace,
 } from '../../../../src/lib/tasks/metadata';
@@ -89,6 +90,25 @@ test.each([
 
 test('missing session has no inferred membership', () => {
   expect(resolveMetadataSessionSpace(null, {})).toBeUndefined();
+});
+
+test.each([
+  ['active', 'own', true],
+  ['active', 'other', false],
+  ['ended', 'own', false],
+  ['paused', 'own', false],
+] as const)('a %s session in the %s Space is an active caller: %s', (status, space, allowed) => {
+  const session = persistSession({
+    type: 'worker',
+    status,
+    context: { spaceId },
+    metadata: agentOwnedMetadata(db, 'session-1', spaceId, createTestSession('s').metadata),
+  });
+  const policy = { longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db) };
+  expect(isActiveSessionInSpace(session, space === 'own' ? spaceId : 'other', policy)).toBe(
+    allowed
+  );
+  expect(isActiveSessionInSpace(null, spaceId, policy)).toBe(false);
 });
 
 test.each(['rpc', 'internal'] as const)(
