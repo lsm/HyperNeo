@@ -212,6 +212,7 @@ describe('readAskEvidence', () => {
     const read: NeoRef[][] = [];
     const pack = createCodingPack({
       readPrs: async () => [],
+      prUrls: async () => [],
       readRefStates: async (refs) => {
         read.push([...refs]);
         return [merged(6159, 200), merged(6205, 50)];
