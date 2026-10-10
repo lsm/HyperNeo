@@ -5,6 +5,7 @@ import type { DirectTaskAttempt } from '../../../../src/storage/repositories/dir
 import {
   decideStartFollowUp,
   decideStartRequeue,
+  requireDeadStartReservation,
   requireLinkedStart,
   requireStartNotFinished,
 } from '../../../../src/lib/tasks/direct-start-jobs';
@@ -147,5 +148,28 @@ describe('decideStartRequeue', () => {
     expect(() =>
       decideStartRequeue(job({ __parkCount: DIRECT_TASK_PARK_BUDGET.maxParks }), result, requeue, 0)
     ).toThrow('park_count_exceeded');
+  });
+});
+
+describe('requireDeadStartReservation', () => {
+  const dead = { id: 'j1' } as Job;
+  test.each([
+    ['a non-start job', null],
+    ['a missing attempt', { attemptId, attempt: null, requestJobId: 'j1' }],
+    [
+      'a running attempt',
+      { attemptId, attempt: attempt({ phase: 'running' }), requestJobId: 'j1' },
+    ],
+    ['a request owned by another job', { attemptId, attempt: attempt(), requestJobId: 'j2' }],
+  ] as const)('leaves %s alone', (_label, evidence) => {
+    expect(requireDeadStartReservation(dead, { evidence })).toEqual({ reason: 'not_reserved' });
+  });
+
+  test('retires a reserved attempt its own job still owns', () => {
+    expect(
+      requireDeadStartReservation(dead, {
+        evidence: { attemptId, attempt: attempt(), requestJobId: 'j1' },
+      })
+    ).toEqual({ value: { attemptId, sessionId: 'w', taskId: 't1' } });
   });
 });

@@ -153,11 +153,17 @@ function recordActivationKickoff(
   db: Database,
   input: DirectAttemptActivationInput,
   kickoffMessage: MailboxMessage | undefined
+): 'none' | 'recorded' | 'lost' {
+  if (!kickoffMessage) return 'none';
+  return recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
+    ? 'recorded'
+    : 'lost';
+}
+
+export function requireKickoffRecorded(
+  kickoff: 'none' | 'recorded' | 'lost'
 ): ActivationGate<boolean> {
-  return kickoffMessage &&
-    !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
-    ? unavailable
-    : { value: true };
+  return kickoff === 'lost' ? unavailable : { value: true };
 }
 
 function readActivationEvidence(
@@ -226,7 +232,8 @@ const runActivation = (superpipe({})('activate-direct-attempt-in-transaction') a
   .pipe(readActivationTarget, ['db', 'input'], 'target')
   .pipe(requireActivationCapacity, 'target', 'result:activation')
   .pipe(requireAdmittedGeneration, 'target', 'result:activation')
-  .pipe(recordActivationKickoff, ['db', 'input', 'kickoffMessage'], 'result:activation')
+  .pipe(recordActivationKickoff, ['db', 'input', 'kickoffMessage'], 'kickoff')
+  .pipe(requireKickoffRecorded, 'kickoff', 'result:activation')
   .pipe(readActivationEvidence, ['db', 'input', 'target'], 'evidence')
   .pipe(() => Date.now(), undefined, 'now')
   .pipe(requireDirectActivation, ['input', 'evidence', 'now'], 'admission')
