@@ -534,10 +534,10 @@ export function createNeoOperations(service: NeoService) {
       waitingOnHuman:
         caller.neoTurn && caller.sessionId
           ? neoWaitingOnHuman(
-              service.waitingReminders({
+              service.listWaitingReminders({
                 sessionId: caller.sessionId,
                 messageId: caller.neoTurn.messageId,
-              })
+              }).asks
             )
           : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
