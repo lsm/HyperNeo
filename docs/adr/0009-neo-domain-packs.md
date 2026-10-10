@@ -115,8 +115,9 @@ interface NeoPack {
   evidence read the same way, so its state stays current, but it never wakes
   Neo: delivery waits for a live ask (#6222).
 - `readAskEvidence`: what changed since a live ask opened in the things it names
-  itself, outside its cards (for coding, a pull request named by URL or
-  `owner/repo#N` that merged or closed). Core runs it on the same pack choice
+  itself, outside its cards (for coding, a pull request or issue named by URL,
+  `owner/repo#N`, or a bare `#N` when the ask points at one repo, that merged
+  or closed). Core runs it on the same pack choice
   as `readEvidence`, at most every 15 minutes per ask, and tells the ask's Neo
   session once per change (`neo_ask_checks`); Neo judges and settles (#6286).
 - `checks`: pure gates, one per item kind.
