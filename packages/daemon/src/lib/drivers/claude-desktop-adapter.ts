@@ -33,6 +33,7 @@ import {
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { readTailLines } from './transcript-tail.ts';
+import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 5_000;
@@ -84,7 +85,7 @@ export interface ClaudeDesktopAdapterDeps {
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
-  gitCheckout: (folder: string) => Promise<{ repo: string; linked: boolean } | null>;
+  gitCheckout: (folder: string) => Promise<GitCheckout | null>;
   newId: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
@@ -727,9 +728,12 @@ export async function startClaudeSession(
 ): Promise<Result<WorkSummary>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
-  const checkout = await deps.gitCheckout(folder).catch(() => null);
-  const worktree = checkout && !checkout.linked ? `neo-${cliSessionId.slice(0, 8)}` : null;
-  const cwd = checkout && worktree ? join(checkout.repo, '.claude', 'worktrees', worktree) : folder;
+  const placement = planWorkPlacement(await deps.gitCheckout(folder).catch(() => null));
+  const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
+  const cwd =
+    placement.kind === 'worktree' && worktree
+      ? join(placement.repo, '.claude', 'worktrees', worktree)
+      : folder;
   try {
     const opened = await runToExit(
       deps,

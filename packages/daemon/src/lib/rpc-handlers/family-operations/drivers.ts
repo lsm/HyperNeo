@@ -48,6 +48,7 @@ import type { ModelInfo, Provider } from '@hyperneo/shared';
 import type { FamilyOperationContext } from './context.ts';
 import { embedQueryOrNull } from '../../../storage/vector-similarity.ts';
 import { usableModels } from '../../usable-models.ts';
+import type { GitCheckout } from '../../drivers/work-placement.ts';
 
 const WORK_CHAT_LIMIT = 200;
 const SEARCH_REUSE_MS = 2_000;
@@ -92,6 +93,12 @@ export async function createDriverSession(
     if (!newest) throw error;
     return create({ model: newest.id, provider: newest.provider as Provider });
   }
+}
+
+async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
+  const { gitRoot } = await new WorktreeManager().detectGitSupport(folder);
+  const repo = gitRoot ? gitWorktreeProject(gitRoot) : null;
+  return gitRoot && repo ? { repo, linked: repo !== gitRoot } : null;
 }
 
 function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
@@ -159,11 +166,7 @@ function claudeDesktopAdapters(
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
-      gitCheckout: async (folder) => {
-        const { gitRoot } = await new WorktreeManager().detectGitSupport(folder);
-        const repo = gitRoot ? gitWorktreeProject(gitRoot) : null;
-        return gitRoot && repo ? { repo, linked: repo !== gitRoot } : null;
-      },
+      gitCheckout: readGitCheckout,
       newId: () => crypto.randomUUID(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
@@ -208,7 +211,7 @@ function codexDesktopAdapters(
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
-      gitRoot: async (folder) => (await new WorktreeManager().detectGitSupport(folder)).gitRoot,
+      gitCheckout: readGitCheckout,
       newId: () => crypto.randomUUID(),
       searchChats: (text) => searchChats(text, ['codex']),
     }),

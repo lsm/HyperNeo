@@ -736,13 +736,10 @@ describe('Neo work with a drivers target', () => {
   test('a reported card follows its session when it merges on its own later', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/neo-ios/pull/25';
+    const reportedAt = Date.now() + 1_000;
     let reply: unknown = {
       ok: true,
-      value: {
-        status: 'done',
-        lastActivityAt: Date.now() + 1_000,
-        lastReply: 'Waiting for the build.',
-      },
+      value: { status: 'done', lastActivityAt: reportedAt, lastReply: 'Waiting for the build.' },
     };
     const { db, service, calls } = await setup(
       { ok: true, value: { ref } },
@@ -782,7 +779,7 @@ describe('Neo work with a drivers target', () => {
       expect(statusCalls()).toBe(before + 1);
       expect(calls.filter((call) => call.name === 'work.status').at(-1)?.input).toEqual({
         ref,
-        since: reported.updatedAt,
+        since: reportedAt,
       });
       expect(followed.report).toContain(`merged ${url}`);
       expect(followed.report).toContain('Earlier report:');

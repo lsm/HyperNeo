@@ -66,8 +66,24 @@ describe('planNeoWorkFollow', () => {
       null,
     ],
   ])('%s', (_label, status, report) => {
-    expect(planNeoWorkFollow(work, status, now)).toEqual(
+    expect(planNeoWorkFollow(work, status, now, { since: work.updatedAt })).toEqual(
       report === null ? { reason: null } : { value: report }
     );
+  });
+
+  test('judges freshness by the work machine clock, even when it runs behind', () => {
+    const remoteSince = work.updatedAt - 60 * 60_000;
+    const behind = read({
+      status: 'done',
+      lastActivityAt: remoteSince + 60_000,
+      lastReplyAt: remoteSince + 60_000,
+      lastReply: 'Merged.',
+    });
+    expect(planNeoWorkFollow(work, behind, now, { since: remoteSince })).toMatchObject({
+      value: expect.stringContaining('Merged.'),
+    });
+    expect(planNeoWorkFollow(work, behind, now, { since: work.updatedAt })).toEqual({
+      reason: null,
+    });
   });
 });

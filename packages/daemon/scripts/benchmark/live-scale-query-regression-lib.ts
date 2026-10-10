@@ -8,7 +8,6 @@ import {
   LIST_SPACE_WORKFLOW_NODES_SQL,
 } from '../../src/storage/repositories/space-workflow-repository';
 import {
-  GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL,
   HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL,
   HAS_TERMINAL_RESULT_AFTER_SQL,
   MESSAGE_SUPERSEDED_PROBE_SQL,
@@ -590,7 +589,6 @@ function buildWatermarkCases(db: CompatDatabase, sessionId: string, sdkUuid: str
   const definitions = [
     { name: 'terminal-success-result-after', sql: HAS_TERMINAL_RESULT_AFTER_SQL },
     { name: 'recovery-intercepted-result-after', sql: HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL },
-    { name: 'error-terminal-subtype-after', sql: GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL },
   ];
   return definitions.map(({ name, sql }) => {
     const stmt = prepareQuery(db, sql);

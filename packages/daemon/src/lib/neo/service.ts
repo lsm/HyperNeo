@@ -108,6 +108,7 @@ import {
   shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
 } from './work-prs.ts';
+import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -159,6 +160,7 @@ export class NeoService {
   private readonly continuing = new Set<string>();
   private readonly activitySeen = new Map<string, { at: number; seenAt: number }>();
   private readonly followReads = new Map<string, number>();
+  private readonly followAnchors = new Map<string, number>();
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
     .pipe(
@@ -167,32 +169,36 @@ export class NeoService {
         goal: !!this.workDoneGoal(work.id)?.doneWhen,
         ask: this.askRecords.forWork(work.id),
         readAt: this.followReads.get(work.id) ?? null,
+        since: this.followAnchors.get(work.id) ?? work.updatedAt,
       }),
       'work',
       'card'
     )
     .pipe(requireNeoWorkFollow, ['work', 'card', 'now'], 'result:follow')
     .pipe(
-      async (work: NeoWork, ref: WorkRef, now: number) => {
+      async (work: NeoWork, ref: WorkRef, now: number, card: { since: number }) => {
         this.followReads.set(work.id, now);
         return {
           outcome: await invokeOperation(
             this.sessions.getOperationRegistry(),
             'work.status',
-            { ref, since: work.updatedAt },
+            { ref, since: card.since },
             driverWorkCaller(work)
           ),
         };
       },
-      ['work', 'follow', 'now'],
+      ['work', 'follow', 'now', 'card'],
       'read'
     )
-    .pipe(planNeoWorkFollow, ['work', 'read', 'now'], 'result:follow')
+    .pipe(planNeoWorkFollow, ['work', 'read', 'now', 'card'], 'result:follow')
     .pipe(
-      (work: NeoWork, report: string) => ({
-        work: this.repo.transitionWork(work.id, work, { status: 'reported', report }),
-      }),
-      ['work', 'follow'],
+      (work: NeoWork, report: string, read: { outcome: OperationOutcome }) => {
+        const followed = this.repo.transitionWork(work.id, work, { status: 'reported', report });
+        const seen = readDriverActivity(read.outcome)?.lastActivityAt;
+        if (followed && seen !== undefined) this.followAnchors.set(work.id, seen);
+        return { work: followed };
+      },
+      ['work', 'follow', 'read'],
       'follow'
     )
     .pipe(async (followed: { work: NeoWork | null }) => {
@@ -674,36 +680,21 @@ export class NeoService {
     };
   }
 
-  async close(
-    id: string,
-    outcome: 'done' | 'cancelled'
-  ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
-    const work = this.repo.getWork(id);
-    if (!work) return { ok: false, reason: 'work_not_found' };
-    if (work.status === 'cancelled')
-      return outcome === 'cancelled'
-        ? { ok: true, work }
-        : { ok: false, reason: 'work_closed: cancelled work stays cancelled' };
-    if (outcome === 'done' && work.status === 'reported') return { ok: true, work };
-    const closed = this.repo.transitionWork(
+  close(id: string, outcome: NeoWorkCloseOutcome): Promise<NeoWorkCloseResult> {
+    return closeNeoWork(
+      {
+        repo: this.repo,
+        readDriverRef: (workId: string) => this.driverTargets.readRef(workId),
+        stopDriver: (ref: WorkRef, work: NeoWork) => this.stopDriverWork(ref, work),
+      },
       id,
-      work,
-      outcome === 'done'
-        ? { status: 'reported', report: NEO_WORK_CLOSED_DONE }
-        : { status: 'cancelled' }
+      outcome
     );
-    if (!closed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
-    const ref = this.driverTargets.readRef(id);
-    if (ref && work.status === 'queued') await this.stopDriverWork(ref, closed);
-    return { ok: true, work: closed };
   }
 
   async cancel(id: string): Promise<void> {
     const work = this.repo.getWork(id);
-    if (!work || !['proposed', 'queued'].includes(work.status)) return;
-    const cancelled = this.repo.transitionWork(id, work, { status: 'cancelled' });
-    const driverRef = cancelled ? this.driverTargets.readRef(id) : null;
-    if (cancelled && driverRef) await this.stopDriverWork(driverRef, cancelled);
+    if (work?.status === 'proposed' || work?.status === 'queued') await this.close(id, 'cancelled');
   }
 
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
@@ -924,6 +915,7 @@ export class NeoService {
       status: settled.status,
       report: settled.report.slice(0, 12000),
     });
+    if (done && live) this.followAnchors.set(work.id, live.lastActivityAt);
     if (done) await this.returnReport(done);
   }
 

@@ -210,7 +210,7 @@ describe('codex-desktop adapter status and send', () => {
       folderExists: () => true,
       makeFolder: () => {},
       homeDir: '/Users/test',
-      gitRoot: async () => null,
+      gitCheckout: async () => null,
       newId: () => 'abcd1234-0000',
     });
   }

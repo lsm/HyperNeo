@@ -3495,6 +3495,29 @@ describe('SDKMessageRepository', () => {
       );
     });
 
+    it('getErrorTerminalResultSubtypeAfter ignores later turns and auto-recovered errors', () => {
+      const at = (minute: number) => `2026-08-11T17:${String(minute).padStart(2, '0')}:00.000Z`;
+      insertMessage('session-1', 'user', { uuid: 'ask', timestamp: at(0) });
+      insertMessage('session-1', 'result', { timestamp: at(1), terminal: true });
+      insertMessage('session-1', 'user', { uuid: 'later', timestamp: at(2) });
+      insertMessage('session-1', 'result', {
+        timestamp: at(3),
+        terminal: true,
+        subtype: 'error_max_turns',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'ask')).toBeNull();
+
+      insertMessage('session-1', 'user', { uuid: 'recovered', timestamp: at(4) });
+      insertMessage('session-1', 'result', {
+        uuid: 'recovered-result',
+        timestamp: at(5),
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      repository.markResultRecoveryIntercepted('session-1', 'recovered-result', false);
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'recovered')).toBeNull();
+    });
+
     it('getTurnErrorResultSubtype reads only the turn of the given input', () => {
       const at = (minute: number) => `2026-08-11T16:${String(minute).padStart(2, '0')}:00.000Z`;
       insertMessage('session-1', 'user', { uuid: 'brief-a', timestamp: at(0) });

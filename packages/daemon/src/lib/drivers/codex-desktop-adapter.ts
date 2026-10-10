@@ -33,6 +33,7 @@ import {
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { readTailLines } from './transcript-tail.ts';
+import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -85,7 +86,7 @@ export interface CodexDesktopAdapterDeps {
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
-  gitRoot: (folder: string) => Promise<string | null>;
+  gitCheckout: (folder: string) => Promise<GitCheckout | null>;
   newId: () => string;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
 }
@@ -576,8 +577,11 @@ export async function prepareCodexWorkFolder(
   folder: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<CodexWorkFolder>> {
-  const repo = await deps.gitRoot(folder).catch(() => null);
-  if (!repo) return { ok: true, value: { cwd: folder, release: async () => {} } };
+  const placement = planWorkPlacement(await deps.gitCheckout(folder).catch(() => null));
+  if (placement.kind === 'in_place') {
+    return { ok: true, value: { cwd: folder, release: async () => {} } };
+  }
+  const { repo } = placement;
   const worktree = join(deps.worktreesDir, deps.newId().slice(0, 8), basename(repo));
   const added = await runGit(['worktree', 'add', '--detach', worktree, 'HEAD'], repo, deps);
   if (added.code !== 0) {

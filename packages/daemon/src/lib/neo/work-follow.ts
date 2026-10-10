@@ -36,9 +36,10 @@ export function requireNeoWorkFollow(
 export function planNeoWorkFollow(
   work: Pick<NeoWork, 'updatedAt' | 'report'>,
   read: { outcome: OperationOutcome },
-  now: number
+  now: number,
+  card: { since: number }
 ): Gate<string> {
-  const settled = readDriverSettlement(work, read.outcome, now, work.updatedAt, true);
+  const settled = readDriverSettlement(work, read.outcome, now, card.since, true);
   if (settled?.status !== 'reported' || settled.report === NEO_DRIVER_NO_REPLY)
     return { reason: null };
   const report = `${settled.report}\n\nEarlier report:\n${work.report ?? ''}`;
