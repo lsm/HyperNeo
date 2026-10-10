@@ -854,15 +854,16 @@ describe('Neo work with a drivers target', () => {
       const at = Date.now() - ms;
       const sqlite = db.getDatabase();
       sqlite.prepare('UPDATE neo_work SET updated_at = ? WHERE id = ?').run(at, 'work-1');
-      sqlite
-        .prepare('UPDATE neo_work_prs SET delivered_at = ?, read_at = 0 WHERE work_id = ?')
-        .run(at, 'work-1');
+      sqlite.prepare('UPDATE neo_work_prs SET read_at = 0 WHERE work_id = ?').run('work-1');
+      sqlite.prepare('UPDATE neo_work_checks SET told_at = ? WHERE work_id = ?').run(at, 'work-1');
       return at;
     };
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
       expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0:pr:1']);
+      const signature = service.workPrs.get('work-1')?.delivered;
+      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: null });
       reply = { ok: true, value: { status: 'done', lastActivityAt: 1 } };
 
       quietFor(10 * 60_000);
@@ -876,6 +877,8 @@ describe('Neo work with a drivers target', () => {
         `work-1:done-check:0:pr:1:at:${toldAt}`,
       ]);
       expect(notes[1][1]).toContain('still open and nothing has moved');
+      expect(service.workChecks.get('work-1')).toMatchObject({ signature, reminded: signature });
+      expect(service.workPrs.get('work-1')).toMatchObject({ reminded: signature });
 
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
