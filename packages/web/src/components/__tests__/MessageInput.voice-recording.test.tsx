@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mockAgentWorking = signal(false);
 
 const draft = signal('');
-const recorderState = { isRecording: true };
+const recorderState = { isRecording: true, cursor: null };
 const voiceStop = vi.fn(async () => {
   recorderState.isRecording = false;
   return { audioBase64: 'aGk=', mimeType: 'audio/wav' };
@@ -43,6 +43,9 @@ vi.mock('../../hooks', () => ({
   useVoiceRecorder: () => ({
     get isRecording() {
       return recorderState.isRecording;
+    },
+    get recordingCursor() {
+      return recorderState.cursor;
     },
     isStarting: false,
     durationLimitHit: false,
@@ -137,6 +140,7 @@ describe('MessageInput — recording UI', () => {
     mockAgentWorking.value = false;
     draft.value = '';
     recorderState.isRecording = true;
+    recorderState.cursor = null;
     voiceStop.mockClear();
     voiceCancel.mockClear();
     transcribeRequest.mockClear();
@@ -182,18 +186,67 @@ describe('MessageInput — recording UI', () => {
     expect(screen.queryByTestId('send-button')).toBeNull();
   });
 
-  it('hides the draft behind the waveform and restores it untouched when recording ends', () => {
+  it('shows the draft read-only above the waveform and restores it untouched when recording ends', () => {
     draft.value = 'Fictional draft about lunch';
     const { container, rerender } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
 
     expect(container.querySelector('textarea')).toBeNull();
-    expect(container.textContent).not.toContain('Fictional draft about lunch');
+    const shown = screen.getByTestId('voice-recording-draft');
+    expect(shown.textContent).toBe('Fictional draft about lunch');
+    expect(shown.getAttribute('aria-readonly')).toBe('true');
+    expect(shown.tabIndex).toBe(0);
+    expect(screen.getByTestId('voice-recording-panel')).toBeTruthy();
 
     recorderState.isRecording = false;
     rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
 
+    expect(screen.queryByTestId('voice-recording-draft')).toBeNull();
     expect(container.querySelector('textarea')?.value).toBe('Fictional draft about lunch');
     expect(draft.value).toBe('Fictional draft about lunch');
+  });
+
+  it('focuses the draft after recording on desktop but leaves the touch keyboard closed', () => {
+    draft.value = 'Fictional draft about lunch';
+    const { container, rerender } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    recorderState.isRecording = false;
+    rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    expect(document.activeElement).toBe(container.querySelector('textarea'));
+
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    recorderState.isRecording = true;
+    rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    recorderState.isRecording = false;
+    rerender(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+    expect(document.activeElement).not.toBe(container.querySelector('textarea'));
+  });
+
+  it('puts the caret after a restored draft so dictation appends to it', () => {
+    recorderState.isRecording = false;
+    draft.value = 'Fictional draft about lunch';
+    const { container } = render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(container.querySelector('textarea')?.selectionStart).toBe(
+      'Fictional draft about lunch'.length
+    );
+  });
+
+  it('marks the selected text the transcript will replace', () => {
+    draft.value = 'Deploy to staging tonight';
+    recorderState.cursor = { start: 10, end: 17 };
+    render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(screen.getByTestId('voice-recording-selection').textContent).toBe('staging');
+    expect(screen.getByTestId('voice-recording-draft').textContent).toBe(
+      'Deploy to staging tonight'
+    );
+  });
+
+  it('shows only the waveform when there is no draft', () => {
+    draft.value = '';
+    render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(screen.queryByTestId('voice-recording-draft')).toBeNull();
+    expect(screen.getByTestId('voice-recording-panel')).toBeTruthy();
   });
 
   it('Send stops, transcribes and auto-submits the transcript', async () => {

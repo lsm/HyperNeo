@@ -59,6 +59,7 @@ import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
 import { PendingVoiceAudioTray } from './voice/PendingVoiceAudioTray.tsx';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
+import { isCoarsePointer } from '../neo/useCoarsePointer.ts';
 
 export function replaceActiveAtQuery(content: string, type: string, id: string): string {
   const replacement = `@ref{${type}:${id}} `;
@@ -430,8 +431,10 @@ export default function MessageInput({
       setContent(nextValue);
       const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
-        textareaInputRef.current?.focus();
-        textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
+        const textarea = textareaInputRef.current;
+        if (!textarea) return;
+        if (!isCoarsePointer()) textarea.focus();
+        textarea.setSelectionRange(nextCursor, nextCursor);
       }, 0);
       return true;
     },
@@ -1329,6 +1332,14 @@ export default function MessageInput({
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
               transparent={true}
+              recordingCursor={
+                voiceActive
+                  ? (voiceRecorder.recordingCursor ?? {
+                      start: lastCursorRef.current,
+                      end: lastSelectionEndRef.current,
+                    })
+                  : undefined
+              }
               recordingBody={
                 voiceActive ? (
                   <VoiceWaveform
