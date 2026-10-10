@@ -105,14 +105,9 @@ import { neoAskStartedWork, readNeoTurnReply } from './turn-reply.ts';
 import { createNeoWorkReporter } from './work-report.ts';
 import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
-import {
-  combineNeoEvidenceReads,
-  type NeoEvidenceRead,
-  neoEvidenceSignature,
-  planNeoDoneCheck,
-} from './evidence.ts';
+import { type NeoEvidenceRead, neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
-import { NEO_DEFAULT_PACKS, neoPacks } from './packs/index.ts';
+import { NEO_DEFAULT_PACKS, neoPacks, readNeoPackEvidence } from './packs/index.ts';
 import type { NeoPack } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
@@ -1024,8 +1019,8 @@ export class NeoService {
     )
     .pipe(
       async (work: NeoWork) => ({
-        read: combineNeoEvidenceReads(
-          await Promise.all(this.packs().map((pack) => pack.readEvidence?.(work)))
+        read: await readNeoPackEvidence(this.packs(), work, (id, error) =>
+          this.log.warn(`Neo pack ${id} evidence read failed`, error)
         ),
       }),
       ['work', 'row'],

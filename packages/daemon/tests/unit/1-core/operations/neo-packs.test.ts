@@ -3,7 +3,11 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
-import { NEO_DEFAULT_PACKS, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
+import {
+  NEO_DEFAULT_PACKS,
+  neoPacks,
+  readNeoPackEvidence,
+} from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
 const pack = (id: string, describe = id): NeoPack => ({ id, describe, instructions: () => null });
@@ -80,5 +84,26 @@ describe('readEvidence', () => {
 
   test('has no evidence for a card with no pull requests', async () => {
     expect(await setup(null, [pr]).coding.readEvidence?.(work('No PR yet.'))).toBeNull();
+  });
+});
+
+describe('readNeoPackEvidence', () => {
+  test('keeps the other packs evidence when one pack fails to read', async () => {
+    const evidence = { key: 'pr/1', state: 'ready' as const, summary: 'approved', blockers: [] };
+    const warned: string[] = [];
+    const read = await readNeoPackEvidence(
+      [
+        { ...pack('broken'), readEvidence: async () => Promise.reject(new Error('mcp down')) },
+        pack('knowledge'),
+        {
+          ...pack('coding'),
+          readEvidence: async () => ({ evidence: [evidence], read: { ok: true, okAt: 7 } }),
+        },
+      ],
+      { id: 'w1' } as NeoWork,
+      (id) => warned.push(id)
+    );
+    expect(read).toEqual({ evidence: [evidence], read: { ok: true, okAt: 7 } });
+    expect(warned).toEqual(['broken']);
   });
 });
