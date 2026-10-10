@@ -3,6 +3,7 @@ import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
+import { extractNeoWorkPrUrls } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
@@ -82,6 +83,7 @@ describe('neoPackFragment', () => {
 describe('coding pack instructions', () => {
   test('carry the moved coding guidance', () => {
     const coding = createCodingPack({
+      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
       record: () => null,
@@ -135,6 +137,7 @@ describe('readEvidence', () => {
     const failed: number[] = [];
     const recorded: NeoWorkPr[][] = [];
     const coding = createCodingPack({
+      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
       record: (_id, prs) => {

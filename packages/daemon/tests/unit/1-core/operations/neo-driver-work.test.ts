@@ -954,6 +954,45 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test("tracks the pull request a card's session opened on its branch without naming it", async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6301';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Fixed it.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the font', '- merged to dev');
+    fileUnderAsk(service);
+    const worktree = {
+      isWorktree: true as const,
+      worktreePath: '/repo/.worktrees/font',
+      mainRepoPath: '/repo',
+      branch: 'neo/font',
+    };
+    const branches: string[] = [];
+    service.readBranchPrs = async (branch) => {
+      branches.push(branch.branch);
+      return [url];
+    };
+    service.readPrs = async (urls) =>
+      urls.map((item) => ({ url: item, state: 'OPEN', checks: 'pending', review: 'none' }));
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      await service.start('work-1');
+      const work = service.repo.getWork('work-1')!;
+      db.createSession({ ...createTestSession('card-session'), worktree });
+      db.getDatabase()
+        .prepare('UPDATE neo_work SET session_id = ? WHERE id = ?')
+        .run('card-session', work.id);
+      await service.refreshDriverWork();
+      expect(branches).toContain('neo/font');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('stays quiet about pull requests of cards with no ask or a settled one', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6013';

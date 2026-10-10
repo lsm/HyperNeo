@@ -113,6 +113,11 @@ import {
   neoEvidenceSignature,
   planNeoDoneCheck,
 } from './evidence.ts';
+import {
+  neoWorkBranch,
+  readGithubBranchPrs,
+  type NeoBranchPrReader,
+} from './packs/coding/branch-prs.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import {
   neoEnabledPacks,
@@ -228,6 +233,7 @@ export class NeoService {
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
+  readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
   readPrStates: NeoPrStateReader = readGithubPrStates;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -318,7 +324,7 @@ export class NeoService {
     .pipe(requireNeoDoneCheckUntold, ['unread', 'check'], 'result:check')
     .pipe(
       async (work: NeoWork, card: NeoDoneCheckCard) => {
-        const urls = extractNeoWorkPrUrls(work.report, card.stored?.prs);
+        const urls = await this.cardPrUrls(work, card.stored);
         const prs = shouldReadNeoWorkPrs(card.stored, urls, Date.now())
           ? await this.readPrs(urls)
           : null;
@@ -390,6 +396,7 @@ export class NeoService {
     this.builtinPacks = [
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
+        prUrls: (work, stored) => this.cardPrUrls(work, stored),
         readPrStates: (urls) => this.readPrStates(urls),
         workPrs: this.workPrs,
         record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
@@ -1537,6 +1544,20 @@ export class NeoService {
           work.sessionId ?? work.originSessionId
         );
     }
+  }
+
+  private async cardPrUrls(
+    work: NeoWork,
+    stored: { prs: readonly NeoWorkPr[] } | null
+  ): Promise<string[]> {
+    const ref = this.driverTargets.readRef(work.id);
+    const sessionId = ref?.adapter === 'hyperneo' ? ref.id : work.sessionId;
+    const branch = neoWorkBranch(sessionId ? this.db.getSession(sessionId) : null);
+    const opened = branch ? await this.readBranchPrs(branch) : [];
+    return extractNeoWorkPrUrls(work.report, [
+      ...(stored?.prs ?? []),
+      ...opened.map((url) => ({ url })),
+    ]);
   }
 
   private async deliverDoneCheck(

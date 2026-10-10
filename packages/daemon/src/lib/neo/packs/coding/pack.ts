@@ -4,7 +4,7 @@ import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoPack, NeoPackBrief } from '../types.ts';
 import { extractNeoAskPrUrls, neoAskPrNews, type NeoPrStateReader } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
-import { extractNeoWorkPrUrls, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
+import { neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -13,6 +13,7 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 
 export function createCodingPack(deps: {
   readPrs: NeoWorkPrReader;
+  prUrls: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<string[]>;
   readPrStates: NeoPrStateReader;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
@@ -26,7 +27,7 @@ export function createCodingPack(deps: {
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     readEvidence: async (work: NeoWork) => {
       const stored = deps.workPrs.get(work.id);
-      const urls = extractNeoWorkPrUrls(work.report, stored?.prs);
+      const urls = await deps.prUrls(work, stored);
       if (!urls.length) return null;
       const prs = await deps.readPrs(urls);
       if (!prs) deps.workPrs.recordFailedRead(work.id, Date.now());
