@@ -1,3 +1,4 @@
+import { AGENT_TASK_NOTIFICATION_CONTINUE } from '@hyperneo/prompts';
 import { getSdkResultOriginKind, type SDKMessage } from '@hyperneo/shared/sdk';
 import type { SpaceWorkflowRunNeedsAttentionEvent } from '../internal-event-bus.ts';
 import { isHollowTaskNotificationResult } from '../session/last-message-classifier.ts';
@@ -19,9 +20,7 @@ export function taskNotificationRequeryDelayMs(attempt: number): number {
   return Math.min(base * 2 ** (attempt - 1), TASK_NOTIFICATION_REQUERY_DELAY_CAP_MS);
 }
 
-export const TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE =
-  '[Runtime continue] A completed background task notification is pending consumption by the ' +
-  'model. Continue your current work.';
+export const TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE = AGENT_TASK_NOTIFICATION_CONTINUE;
 
 export type TaskNotificationRequeryDecision =
   | { action: 'requery'; delayMs: number }

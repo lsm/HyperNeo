@@ -1,3 +1,4 @@
+import { AGENT_BASH_LOOP_RECOVERY, AGENT_LOOP_RECOVERY, fillPrompt } from '@hyperneo/prompts';
 import { resolve as resolvePath } from 'node:path';
 
 export interface LoopStreakEntry {
@@ -74,12 +75,11 @@ export function summariseArgs(toolName: string, input: Record<string, unknown>):
 }
 
 export function buildRecoveryMessage(toolName: string, count: number, argSummary: string): string {
-  return [
-    `Loop detected: ${toolName} was called ${count} times in a row with identical arguments (${argSummary}).`,
-    'The result has not changed since the previous call. STOP re-running this tool — move on to the next step in your task.',
-    'If you have a TodoWrite list, mark progress and proceed to the next item.',
-    'If you genuinely need fresh data, perform a *different* action (edit a file, run a command, ask a question) before retrying.',
-  ].join(' ');
+  return fillPrompt(AGENT_LOOP_RECOVERY, {
+    tool_name: toolName,
+    count: String(count),
+    args: argSummary,
+  });
 }
 
 export function buildBashRecoveryMessage(
@@ -87,14 +87,11 @@ export function buildBashRecoveryMessage(
   argSummary: string,
   failures: number
 ): string {
-  return [
-    `Bash dead-loop detected: the same command was run ${count} times in a row and the last ${failures} attempts all failed (${argSummary}).`,
-    'Re-running the same failing command will not change the outcome. STOP and reconsider:',
-    '(1) read the previous error output carefully,',
-    '(2) inspect the relevant files or run a *different* diagnostic command,',
-    '(3) only retry after you have changed something that could plausibly affect the outcome.',
-    'If you are checking for a file or path, run a different probe (e.g. `ls` on the parent directory) instead of re-running the failing command.',
-  ].join(' ');
+  return fillPrompt(AGENT_BASH_LOOP_RECOVERY, {
+    count: String(count),
+    failures: String(failures),
+    args: argSummary,
+  });
 }
 
 export function scopeKey(input: { session_id: string; agent_id?: string }): string {

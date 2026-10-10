@@ -1,3 +1,4 @@
+import { AGENT_INACTIVITY_NAG } from '@hyperneo/prompts';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type {
   SpaceAgentInactivityClaimRepository,
@@ -10,8 +11,7 @@ export const INACTIVITY_NAG_PROMPT_MAX_CHARS = 4000;
 export const INACTIVITY_NAG_DELIVERY_TIMEOUT_MS = 30_000;
 export const INACTIVITY_CLAIM_LEASE_MS = 5 * 60 * 1000;
 
-export const DEFAULT_INACTIVITY_NAG_PROMPT =
-  'You have been idle for a while. Check your goals, reminders, and pending reviews; if nothing needs you, say so briefly and stand by.';
+export const DEFAULT_INACTIVITY_NAG_PROMPT = AGENT_INACTIVITY_NAG;
 
 export type InactivityNagDeliveryOutcome =
   | 'consumed'

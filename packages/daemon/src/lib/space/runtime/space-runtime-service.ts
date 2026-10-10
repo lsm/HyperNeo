@@ -1,3 +1,4 @@
+import { fillPrompt, GOAL_OUTCOME_READY } from '@hyperneo/prompts';
 import type { TaskTransitionExpectation } from '../../tasks/task-manager.ts';
 import type {
   McpServerConfig,
@@ -557,7 +558,12 @@ export class SpaceRuntimeService {
       spaceId: goal.spaceId,
       senderActorId: 'system:runtime',
       targets: [actor.actorId],
-      body: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
+      body: fillPrompt(GOAL_OUTCOME_READY, {
+        goal_title: goalTitle,
+        task_title: taskTitle,
+        task_status: taskStatus,
+        detail,
+      }),
       kind: 'message',
       taskId: notification.taskId,
       idempotencyKey: `goal-outcome:${notification.id}`,
