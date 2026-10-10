@@ -133,7 +133,7 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   });
 
-  test('links a session with Remote Control on to its claude.ai page', async () => {
+  test('links a session Remote Control connected to its claude.ai page', async () => {
     const scope = join(dir, 'acct-a/scope-1');
     const write = (id: string, fields: Record<string, unknown>) =>
       writeFileSync(
@@ -148,6 +148,8 @@ describe('claude-desktop adapter against the app session records', () => {
     });
     write('r2', { remoteControlUserEnabled: false, bridgeSessionIds: ['session_01Off'] });
     write('r3', { remoteControlUserEnabled: true, bridgeSessionIds: ['https://evil.example'] });
+    write('r4', { bridgeSessionIds: ['session_01Auto'] });
+    write('r5', {});
     const status = async (id: string) =>
       (await adapter().status?.({ adapter: 'claude-desktop', id: `local_${id}` })) as {
         value: { link?: string; remoteLink?: string };
@@ -158,6 +160,8 @@ describe('claude-desktop adapter against the app session records', () => {
     });
     expect((await status('r2')).value.remoteLink).toBeUndefined();
     expect((await status('r3')).value.remoteLink).toBeUndefined();
+    expect((await status('r4')).value.remoteLink).toBe('https://claude.ai/code/session_01Auto');
+    expect((await status('r5')).value.remoteLink).toBeUndefined();
   });
 
   test('adds archived sessions as stopped when asked for closed work', async () => {
