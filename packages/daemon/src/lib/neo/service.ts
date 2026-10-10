@@ -107,7 +107,13 @@ import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 import { type NeoEvidenceRead, neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
-import { NEO_DEFAULT_PACKS, neoPacks, readNeoPackEvidence } from './packs/index.ts';
+import {
+  NEO_DEFAULT_PACKS,
+  neoPackChecks,
+  neoPacks,
+  planNeoPackTicks,
+  readNeoPackEvidence,
+} from './packs/index.ts';
 import type { NeoPack } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
@@ -1382,6 +1388,19 @@ export class NeoService {
     }: { stale?: boolean; ready?: boolean; ask?: NeoAsk | null; followedAt?: number } = {}
   ): Promise<void> {
     const continued = this.workContinues.get(work.id)?.count ?? 0;
+    const ticks = planNeoPackTicks(
+      ask ?? null,
+      row ? neoWorkPrEvidence(row.prs) : [],
+      neoPackChecks(this.packs())
+    );
+    if (ask)
+      for (const tick of ticks)
+        this.askRecords.tickItem(
+          ask.id,
+          { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
+          Date.now()
+        );
+    const current = ask && ticks.length ? (this.askRecords.get(ask.id) ?? ask) : ask;
     await this.deliver(
       work.originSessionId,
       neoDoneCheckMessageId(work.id, continued, row?.revision, followedAt),
@@ -1389,12 +1408,12 @@ export class NeoService {
         prs: row?.prs,
         stale,
         ready,
-        ask,
-        cards: ask
+        ask: current,
+        cards: current
           ? projectNeoAskCards(
               work.id,
-              ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-              this.workPrs.list(ask.workIds)
+              current.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+              this.workPrs.list(current.workIds)
             )
           : [],
       }),

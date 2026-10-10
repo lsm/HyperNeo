@@ -954,6 +954,58 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('ticks a merged-PR item itself when the card reports its PR merged', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6265';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Merged ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Regenerate icons', '- merged to dev');
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-icons',
+        requestKey: 'neo:root:icons',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Icons',
+        ask: 'Regenerate the icons',
+        doneWhen: '- merged to dev',
+        doneSource: 'human',
+      },
+      [
+        { text: 'Icons merged to dev', check: 'pr_merged' },
+        { text: 'App shows them', check: null },
+      ]
+    )!;
+    service.askRecords.link(opened.id, 'work-1');
+    service.readPrs = async () => [{ url, state: 'MERGED', checks: 'passing', review: 'approved' }];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, _id: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.askRecords.get(opened.id)?.doneItems).toEqual([
+        expect.objectContaining({
+          id: 'i1',
+          state: 'met',
+          metBy: 'daemon',
+          evidence: `Merged: ${url}`,
+        }),
+        expect.objectContaining({ id: 'i2', state: 'pending' }),
+      ]);
+      expect(notes.at(-1)).toContain('"state":"met"');
+    } finally {
+      db.close();
+    }
+  });
+
   test('stays quiet about pull requests of cards with no ask or a settled one', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6013';

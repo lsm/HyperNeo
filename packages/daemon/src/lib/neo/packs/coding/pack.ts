@@ -1,8 +1,14 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoPack } from '../types.ts';
+import type { NeoEvidence } from '../../evidence.ts';
+import type { NeoPack, NeoPackCheck } from '../types.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import { extractNeoWorkPrUrls, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
+
+export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) =>
+  evidence.length && evidence.every((item) => item.state === 'done')
+    ? { value: `Merged: ${evidence.map((item) => item.key).join(', ')}` }
+    : { reason: 'not_merged' };
 
 export function createCodingPack(deps: {
   readPrs: NeoWorkPrReader;
@@ -17,6 +23,7 @@ export function createCodingPack(deps: {
     id: 'coding',
     describe: 'Software work in git repositories: pull requests, CI, review and merging.',
     instructions: () => null,
+    checks: { pr_merged: codingPrMergedCheck },
     readEvidence: async (work: NeoWork) => {
       const stored = deps.workPrs.get(work.id);
       const urls = extractNeoWorkPrUrls(work.report, stored?.prs);
