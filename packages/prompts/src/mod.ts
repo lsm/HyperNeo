@@ -177,6 +177,16 @@ import mdspaceTaskMessageGoalOutcome from './space/task-message/goal-outcome.md'
 import mdspaceTaskMessageVerificationLabel from './space/task-message/verification-label.md' with {
   type: 'text',
 };
+import mdagentBashLoopRecovery from './agent/bash-loop-recovery.md' with { type: 'text' };
+import mdagentCompactionResume from './agent/compaction-resume.md' with { type: 'text' };
+import mdagentLoopRecovery from './agent/loop-recovery.md' with { type: 'text' };
+import mdagentQuestionCancelled from './agent/question-cancelled.md' with { type: 'text' };
+import mdagentRepeatedToolError from './agent/repeated-tool-error.md' with { type: 'text' };
+import mdagentTaskNotificationContinue from './agent/task-notification-continue.md' with {
+  type: 'text',
+};
+import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
+import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
 import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
 import mdneoResponseFocus from './neo/response-focus.md' with { type: 'text' };
@@ -382,6 +392,14 @@ const registry: Record<string, string> = {
   'space/task-message/gated-handoff.md': mdspaceTaskMessageGatedHandoff,
   'space/task-message/goal-outcome.md': mdspaceTaskMessageGoalOutcome,
   'space/task-message/verification-label.md': mdspaceTaskMessageVerificationLabel,
+  'agent/bash-loop-recovery.md': mdagentBashLoopRecovery,
+  'agent/compaction-resume.md': mdagentCompactionResume,
+  'agent/loop-recovery.md': mdagentLoopRecovery,
+  'agent/question-cancelled.md': mdagentQuestionCancelled,
+  'agent/repeated-tool-error.md': mdagentRepeatedToolError,
+  'agent/task-notification-continue.md': mdagentTaskNotificationContinue,
+  'agents/inactivity-nag.md': mdagentsInactivityNag,
+  'goals/outcome-ready.md': mdgoalsOutcomeReady,
   'runtime/post-approval-completion.md': mdruntimePostApprovalCompletion,
   'runtime/prompt-too-long-continue-nag.md': mdruntimePromptTooLongContinueNag,
   'runtime/workflow-selector-instructions.md': mdruntimeWorkflowSelectorInstructions,
@@ -534,6 +552,14 @@ export const {
   TASK_MESSAGE_GATED_HANDOFF,
   TASK_MESSAGE_GOAL_OUTCOME,
   TASK_MESSAGE_VERIFICATION_LABEL,
+  AGENT_BASH_LOOP_RECOVERY,
+  AGENT_COMPACTION_RESUME,
+  AGENT_LOOP_RECOVERY,
+  AGENT_QUESTION_CANCELLED,
+  AGENT_REPEATED_TOOL_ERROR,
+  AGENT_TASK_NOTIFICATION_CONTINUE,
+  AGENT_INACTIVITY_NAG,
+  GOAL_OUTCOME_READY,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
   PROMPT_TOO_LONG_CONTINUE_NAG,
   WORKFLOW_SELECTOR_INSTRUCTIONS,

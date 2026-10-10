@@ -1,3 +1,4 @@
+import { AGENT_QUESTION_CANCELLED } from '@hyperneo/prompts';
 import type {
   PendingUserQuestion,
   QuestionCancelReason,
@@ -49,8 +50,7 @@ interface PendingQuestionResolver {
   attemptToken: { isLive(): boolean };
 }
 
-export const QUESTION_CANCEL_MESSAGE =
-  'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
+export const QUESTION_CANCEL_MESSAGE = AGENT_QUESTION_CANCELLED;
 
 const ATTEMPT_TOKEN_ALWAYS_LIVE: { isLive(): boolean } = { isLive: () => true };
 

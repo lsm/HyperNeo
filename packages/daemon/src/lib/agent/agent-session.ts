@@ -1,3 +1,4 @@
+import { AGENT_COMPACTION_RESUME } from '@hyperneo/prompts';
 import type {
   AgentProcessingState,
   ChatMessage,
@@ -1763,11 +1764,7 @@ export class AgentSession
     this.pendingResumeAfterCompaction = false;
     if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
     void this.messageQueue
-      .enqueue(
-        'Context was compacted to stay within the configured window. Continue the task you were working on.',
-        false,
-        { durable: true }
-      )
+      .enqueue(AGENT_COMPACTION_RESUME, false, { durable: true })
       .catch((error) => {
         this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
       });

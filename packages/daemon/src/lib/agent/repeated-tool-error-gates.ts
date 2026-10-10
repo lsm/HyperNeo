@@ -1,3 +1,4 @@
+import { AGENT_REPEATED_TOOL_ERROR, fillPrompt } from '@hyperneo/prompts';
 export interface RepeatedToolErrorKey {
   toolName: string;
   fingerprint: string;
@@ -144,13 +145,11 @@ export function buildRepeatedToolErrorEvidence(args: {
 
 export function buildRecoveryMessage(toolName: string, errorText: string, count: number): string {
   const shortError = errorText.length > 200 ? `${errorText.slice(0, 200)}…` : errorText;
-  return [
-    `⚠️ Repeated tool error detected: \`${toolName}\` failed ${count} consecutive times with the same error.`,
-    '',
-    `Error: ${shortError}`,
-    '',
-    'Stop retrying this operation. Re-validate the arguments, try an alternative path, or ask the operator for help.',
-  ].join('\n');
+  return fillPrompt(AGENT_REPEATED_TOOL_ERROR, {
+    tool_name: toolName,
+    count: String(count),
+    error: shortError,
+  });
 }
 
 function extractText(content: unknown): string {
