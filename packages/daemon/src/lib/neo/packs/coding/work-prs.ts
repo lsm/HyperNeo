@@ -121,21 +121,22 @@ export function neoAskPrEvidence(
       .filter((row) => live.some((work) => work.id === row.workId))
       .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
   );
-  const untracked = live.filter(
-    (work) =>
-      !tracked.has(work.id) &&
-      (work.status === 'proposed' ||
-        work.status === 'queued' ||
-        extractNeoWorkPrUrls(work.report).length > 0)
+  const unread = new Set(
+    live.flatMap((work) => extractNeoWorkPrUrls(work.report).filter((url) => !prs.has(url)))
   );
+  const starting = live.filter(
+    (work) => !tracked.has(work.id) && (work.status === 'proposed' || work.status === 'queued')
+  );
+  const pending = (key: string, summary: string): NeoEvidence => ({
+    key,
+    state: 'pending',
+    summary,
+    blockers: [],
+  });
   return [
     ...neoWorkPrEvidence([...prs.values()]),
-    ...untracked.map((work) => ({
-      key: `work:${work.id}`,
-      state: 'pending' as const,
-      summary: 'no pull request read yet',
-      blockers: [],
-    })),
+    ...[...unread].map((url) => pending(url, 'not read yet')),
+    ...starting.map((work) => pending(`work:${work.id}`, 'no pull request yet')),
   ];
 }
 

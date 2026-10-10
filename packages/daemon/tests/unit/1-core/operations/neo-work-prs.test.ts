@@ -163,8 +163,20 @@ describe('neoAskPrEvidence', () => {
       ).map((item) => [item.key, item.state])
     ).toEqual([
       [pr.url, 'done'],
+      [other.url, 'pending'],
       ['work:w2', 'pending'],
-      ['work:w3', 'pending'],
+    ]);
+  });
+
+  test('holds a pull request a card reported after its last read as pending', () => {
+    expect(
+      neoAskPrEvidence(
+        [{ id: 'w1', status: 'reported', report: `Merged ${pr.url}, then opened ${other.url}.` }],
+        [{ workId: 'w1', prs: [merged] }]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([
+      [pr.url, 'done'],
+      [other.url, 'pending'],
     ]);
   });
 
