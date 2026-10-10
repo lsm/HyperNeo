@@ -64,22 +64,22 @@ export function placeAskTail(
   };
 }
 
-export function markUndeliveredAsks(
-  state: NeoAskState,
-  response: ConversationAskRead
-): NeoAskState {
+export function syncAskDelivery(state: NeoAskState, response: ConversationAskRead): NeoAskState {
   if (response.state !== 'ready') return state;
-  const failed = new Set(
-    response.items.filter((item) => item.delivery?.state === 'failed').map((item) => item.requestId)
+  const read = new Map(
+    response.items.map((item) => [item.requestId, item.delivery?.state === 'failed'] as const)
   );
-  if (!state.items.some((item) => failed.has(item.requestId) && !item.delivery)) return state;
+  const stale = (item: NeoConversationAsk) =>
+    read.has(item.requestId) && read.get(item.requestId) !== (item.delivery?.state === 'failed');
+  if (!state.items.some(stale)) return state;
   return {
     ...state,
-    items: state.items.map((item) =>
-      failed.has(item.requestId) && !item.delivery
-        ? { ...item, delivery: { state: 'failed' as const } }
-        : item
-    ),
+    items: state.items.map((item) => {
+      if (!stale(item)) return item;
+      if (read.get(item.requestId)) return { ...item, delivery: { state: 'failed' as const } };
+      const { delivery: _, ...delivered } = item;
+      return delivered;
+    }),
   };
 }
 
@@ -175,7 +175,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
               current
             );
             if (!current()) return;
-            publish(markUndeliveredAsks(value, recent));
+            publish(syncAskDelivery(value, recent));
           }
           inFlight = false;
           if (pending && value.status === 'ready') void update(true);
@@ -194,7 +194,7 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           if (!current()) return;
           publish(applyEarlierAsks(before, response));
           inFlight = false;
-          if (pending && value.status === 'ready') void update();
+          if (pending && value.status === 'ready') void update(true);
         };
         advance.current = () => void update();
         earlier.current = () => void loadEarlier();

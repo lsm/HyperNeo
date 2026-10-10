@@ -314,6 +314,25 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(texts().cursor).toBe('Cursor: 2');
   });
 
+  it('clears the mark when a retried ask reads back delivered', async () => {
+    serve(
+      pageOf([ask(1)]),
+      pageOf([], conversationId, 1),
+      pageOf([{ ...ask(1), delivery: { state: 'failed' } }]),
+      pageOf([], conversationId, 1),
+      pageOf([ask(1)])
+    );
+    online();
+    render(<Probe sessionId={root} />);
+    await waitFor(() => expect(texts().status).toBe('Status: ready'));
+    await act(async () => fake.changed.forEach((callback) => callback()));
+    await waitFor(() =>
+      expect(screen.getByText(/^Failed:/).textContent).toContain(ask(1).requestId)
+    );
+    await act(async () => fake.changed.forEach((callback) => callback()));
+    await waitFor(() => expect(screen.getByText(/^Failed:/).textContent).toBe('Failed: none'));
+  });
+
   it('reads the next page when the connection recovers', async () => {
     serve(pageOf([ask(1)]), pageOf([ask(2)]));
     online();
