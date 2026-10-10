@@ -115,6 +115,17 @@ export class NeoAskRepository {
     return link ? this.get(link.askId) : null;
   }
 
+  listLive(): NeoAsk[] {
+    if (!this.hasTable()) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT ${this.askColumns()} FROM neo_asks WHERE status NOT IN ('achieved', 'abandoned')
+          ORDER BY updated_at DESC, id`
+      )
+      .all() as NeoAskRow[];
+    return this.withWork(rows);
+  }
+
   list(concernId?: string | null): NeoAsk[] {
     if (!this.hasTable()) return [];
     const condition = concernId === undefined ? '' : 'WHERE concern_id IS ?';
