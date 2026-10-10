@@ -19,6 +19,21 @@ function makeDb(): BunDatabase {
   return db;
 }
 
+function settlingManager(db: BunDatabase): SpaceTaskManager {
+  const manager: SpaceTaskManager = new SpaceTaskManager(
+    db,
+    SPACE_ID,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (ended) =>
+      settleTaskDependents(ended, { getTaskManager: () => manager, getActiveAttempt: () => null })
+  );
+  return manager;
+}
+
 describe('Gap 1: updateTask dependency re-check', () => {
   let db: BunDatabase;
   let taskRepo: SpaceTaskRepository;
@@ -27,7 +42,7 @@ describe('Gap 1: updateTask dependency re-check', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -191,7 +206,7 @@ describe('Gap 1 review fix: re-evaluate blocked tasks on dep edits', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -313,7 +328,7 @@ describe('Gap 1 review fix: auto-block triggers cascade to dependents', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -360,7 +375,7 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -501,7 +516,10 @@ describe('Gap 2: done -> unblock dependents cascade', () => {
       status: 'done',
     });
 
-    const unblocked = await taskManager.unblockDependentTasks(prereq.id);
+    const unblocked = await settleTaskDependents(prereq, {
+      getTaskManager: () => taskManager,
+      getActiveAttempt: () => null,
+    });
     expect(unblocked).toHaveLength(0);
   });
 });
@@ -514,7 +532,7 @@ describe('Gap 2 review fix: unblock triggers on all done paths', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -575,7 +593,7 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    taskManager = new SpaceTaskManager(db, SPACE_ID);
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
@@ -664,18 +682,7 @@ describe('setTaskStatus with settleTaskDependents', () => {
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
-    const managers = (): SpaceTaskManager => taskManager;
-    taskManager = new SpaceTaskManager(
-      db,
-      SPACE_ID,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (ended) =>
-        settleTaskDependents(ended, { getTaskManager: managers, getActiveAttempt: () => null })
-    );
+    taskManager = settlingManager(db);
   });
   afterEach(() => {
     db.close();
