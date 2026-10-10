@@ -10,7 +10,7 @@ import {
   type NeoRefStateReader,
 } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
-import { neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
+import { mergeNeoWorkPrReads, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -44,7 +44,9 @@ export function createCodingPack(deps: {
       if (!urls.length) return null;
       const prs = await deps.readPrs(urls);
       if (!prs) deps.workPrs.recordFailedRead(work.id, Date.now());
-      const row = prs ? deps.record(work.id, prs, stored) : stored;
+      const row = prs
+        ? deps.record(work.id, mergeNeoWorkPrReads(urls, prs, stored?.prs), stored)
+        : stored;
       return row
         ? { evidence: neoWorkPrEvidence(row.prs), read: { ok: !!prs, okAt: row.readOkAt } }
         : null;

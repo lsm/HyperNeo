@@ -136,6 +136,7 @@ import {
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
+  mergeNeoWorkPrReads,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
@@ -359,7 +360,15 @@ export class NeoService {
         const prs = shouldReadNeoWorkPrs(card.stored, urls, Date.now())
           ? await this.readPrs(urls)
           : null;
-        return { row: prs ? this.recordWorkPrs(work.id, prs, card.stored) : card.stored };
+        return {
+          row: prs
+            ? this.recordWorkPrs(
+                work.id,
+                mergeNeoWorkPrReads(urls, prs, card.stored?.prs),
+                card.stored
+              )
+            : card.stored,
+        };
       },
       ['work', 'card'],
       'found'

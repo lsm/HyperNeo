@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
@@ -157,7 +157,7 @@ describe('neoAskRefNews', () => {
 });
 
 describe('readGithubRefStates', () => {
-  test('reads pull requests and issues, keeps a merge, skips non-refs, retries the rest', async () => {
+  test('reads pull requests and issues, keeps a merge, skips non-refs for an hour, retries the rest', async () => {
     const asked: number[] = [];
     const node = (number: number) =>
       number === 9001
@@ -214,6 +214,14 @@ describe('readGithubRefStates', () => {
     expect([9001, 9002, 9003, 9004].map((n) => asked.filter((m) => m === n).length)).toEqual([
       1, 2, 1, 2,
     ]);
+    const later = Date.now() + 60 * 60_000;
+    const clock = spyOn(Date, 'now').mockImplementation(() => later);
+    try {
+      await readGithubRefStates([ref(9003)], spawn as never);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(asked.filter((m) => m === 9003)).toHaveLength(2);
   });
 });
 
