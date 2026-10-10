@@ -40,7 +40,10 @@ export function assertTaskTransitionSnapshot(
 }
 
 export class StaleTaskGuardError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly guardReason?: string
+  ) {
     super(message);
     this.name = 'StaleTaskGuardError';
   }
@@ -263,7 +266,10 @@ export class SpaceTaskManager {
           }
           const rejectionReason = options.guardWrite(current);
           if (rejectionReason !== undefined) {
-            throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+            throw new StaleTaskGuardError(
+              `Task ${taskId} rejected: ${rejectionReason}`,
+              rejectionReason
+            );
           }
         }
         const result = this.taskRepo.updateTask(
@@ -565,7 +571,10 @@ export class SpaceTaskManager {
           throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
         const rejectionReason = guardWrite(current);
         if (rejectionReason)
-          throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+          throw new StaleTaskGuardError(
+            `Task ${taskId} rejected: ${rejectionReason}`,
+            rejectionReason
+          );
         return quietRepo.updateTask(taskId, repoParams);
       }, 'immediate')();
       this.reactiveDb?.notifyChange('space_tasks');
@@ -606,7 +615,11 @@ export class SpaceTaskManager {
 
   async retryTask(
     taskId: string,
-    options?: { description?: string; expectedStatus?: SpaceTaskStatus }
+    options?: {
+      description?: string;
+      expectedStatus?: SpaceTaskStatus;
+      guardWrite?: (current: SpaceTask) => string | undefined;
+    }
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
@@ -621,6 +634,7 @@ export class SpaceTaskManager {
 
     const retried = await this.setTaskStatus(taskId, retryTargetStatus(task.status), {
       expectedStatus: options?.expectedStatus,
+      guardWrite: options?.guardWrite,
     });
 
     if (options?.description !== undefined) {

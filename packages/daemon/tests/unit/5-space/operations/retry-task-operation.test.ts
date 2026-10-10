@@ -96,6 +96,7 @@ describe('task.retry operation', () => {
       expect(harness.retryTask).toHaveBeenCalledWith(task.id, {
         description: 'try again',
         expectedStatus: 'blocked',
+        guardWrite: expect.any(Function),
       });
       expect(harness.recoverWorkflowTask).not.toHaveBeenCalled();
     } finally {
@@ -306,6 +307,41 @@ describe('task.retry operation', () => {
       );
       expect(harness.retryTask).not.toHaveBeenCalled();
       await harness.operation.execute({ taskId: blocked.id }, { source: 'rpc' });
+      expect(harness.retryTask).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  test('re-checks the slot inside the write when the Space fills after admission', async () => {
+    const harness = makeHarness();
+    try {
+      const cancelled = harness.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Cancelled work',
+        description: '',
+        status: 'cancelled',
+      });
+      harness.retryTask.mockImplementation(
+        async (
+          taskId: string,
+          options: { guardWrite: (current: SpaceTask) => string | undefined }
+        ) => {
+          for (let n = 0; n < MIN_SPACE_CONCURRENT_TASKS; n++)
+            harness.taskRepo.createTask({
+              spaceId: SPACE_ID,
+              title: `Racing ${n}`,
+              description: '',
+              status: 'in_progress',
+            });
+          const reason = options.guardWrite(harness.taskRepo.getTask(taskId) as SpaceTask);
+          if (reason) throw new StaleTaskGuardError('rejected', reason);
+          return harness.taskRepo.getTask(taskId) as SpaceTask;
+        }
+      );
+      expect(await harness.operation.execute({ taskId: cancelled.id }, { source: 'rpc' })).toBe(
+        'space_at_task_capacity'
+      );
       expect(harness.retryTask).toHaveBeenCalledTimes(1);
     } finally {
       harness.db.close();
