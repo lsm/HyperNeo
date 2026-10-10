@@ -1104,6 +1104,44 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('restart recovery returns only reports Neo was not told yet', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Shipped.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const delivered = new Set<string>();
+    const sent: string[] = [];
+    Object.assign(service, {
+      open: async () => 'neo:root',
+      deliver: async (_target: string, messageId: string) => {
+        delivered.add(messageId);
+        sent.push(messageId);
+      },
+      hasDelivery: (_session: string, messageId: string) => delivered.has(messageId),
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(sent).toContain('work-1');
+      sent.length = 0;
+      await service.reconcile('work-1');
+      expect(sent).toEqual([]);
+
+      delivered.clear();
+      delivered.add('work-1:done-check:0');
+      await service.reconcile('work-1');
+      expect(sent).toEqual([]);
+
+      service.workContinues.record('work-1', 'Also the footer.', Date.now());
+      await service.reconcile('work-1');
+      expect(sent).toContain('work-1:continued:1');
+    } finally {
+      db.close();
+    }
+  });
+
   test('tells the proposing session once when running work shows no activity for 20 minutes', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     let activity = 5;

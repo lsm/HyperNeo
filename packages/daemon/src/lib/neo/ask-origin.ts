@@ -46,8 +46,9 @@ export function neoStallMessageId(workId: string, since: number): string {
   return `${workId}:stall:${since}`;
 }
 
-export function neoWorkReturnMessageId(workId: string, retries: number): string {
-  return retries ? `${workId}:retry:${retries}` : workId;
+export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {
+  const base = retries ? `${workId}:retry:${retries}` : workId;
+  return continued ? `${base}:continued:${continued}` : base;
 }
 
 export function neoWorkReviewId(workId: string, retries: number): string {
@@ -56,8 +57,9 @@ export function neoWorkReviewId(workId: string, retries: number): string {
 
 function checkedWorkId(messageId: string): string {
   return (
-    /^(.+):(?:done-check|stall|retry):\d+(?::pr:\d+)?(?::at:\d+)?$/.exec(messageId)?.[1] ??
-    messageId
+    /^(.+?)(?::(?:done-check|stall|retry|continued):\d+)+(?::pr:\d+)?(?::at:\d+)?$/.exec(
+      messageId
+    )?.[1] ?? messageId
   );
 }
 
