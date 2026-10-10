@@ -254,6 +254,27 @@ describe('task.retry operation', () => {
     }
   });
 
+  test('rejects a workflow task that needs a worker handoff before reaching the runtime', async () => {
+    const harness = makeHarness();
+    try {
+      const task = harness.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Workflow work',
+        description: '',
+        status: 'blocked',
+      });
+      harness.db
+        .prepare('UPDATE space_tasks SET workflow_run_id = ?, block_reason = ? WHERE id = ?')
+        .run('run-1', 'agent_handoff_required', task.id);
+      const result = await harness.operation.execute({ taskId: task.id }, { source: 'rpc' });
+      expect(result).toBe('handoff_required');
+      expect(harness.recoverWorkflowTask).not.toHaveBeenCalled();
+      expect(harness.retryTask).not.toHaveBeenCalled();
+    } finally {
+      harness.db.close();
+    }
+  });
+
   test('reports retry_unavailable when the workflow runtime cannot recover the task', async () => {
     const harness = makeHarness();
     try {

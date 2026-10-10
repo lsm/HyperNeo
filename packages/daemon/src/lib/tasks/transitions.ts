@@ -1,3 +1,4 @@
+import type { SpaceTask } from '@hyperneo/shared';
 import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import {
   VALID_TASK_TRANSITIONS,
@@ -5,6 +6,12 @@ import {
 } from '@hyperneo/shared/types/task-transitions';
 
 export { VALID_TASK_TRANSITIONS, isValidTaskTransition };
+
+export function awaitsWorkerHandoff(
+  task: Pick<SpaceTask, 'workflowRunId' | 'blockReason'>
+): boolean {
+  return !!task.workflowRunId && task.blockReason === 'agent_handoff_required';
+}
 
 export type TaskRejectionKind =
   | 'task_not_found'

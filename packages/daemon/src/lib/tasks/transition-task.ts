@@ -17,6 +17,7 @@ import {
   type TaskTransitionExpectation,
 } from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
+import { awaitsWorkerHandoff } from './transitions.ts';
 import { createTransitionTaskOperation } from './transition-operation.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import { admitManagedSubmission, admitSubmission } from './submit-for-review.ts';
@@ -226,7 +227,7 @@ export function requireHandoffBeforeReopen(owned: OwnedTask, input: In): Gate<Ow
   const { task } = owned;
   const reopening =
     input.status === 'in_progress' || (input.status === 'open' && task.status !== 'stopped');
-  return reopening && task.workflowRunId && task.blockReason === 'agent_handoff_required'
+  return reopening && awaitsWorkerHandoff(task)
     ? { reason: { accepted: false, reason: 'handoff_required' } }
     : { value: owned };
 }
