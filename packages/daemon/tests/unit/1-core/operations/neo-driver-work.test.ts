@@ -207,6 +207,14 @@ describe('withWorkGoal', () => {
       withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
     ).not.toContain('gh pr merge');
   });
+
+  test("tells a session whose done means merging to subscribe to its pull request's events", () => {
+    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    expect(withWorkGoal('Fix it.', merged)).toContain('event.external.subscribe');
+    expect(
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+    ).not.toContain('event.external.subscribe');
+  });
 });
 
 describe('driverWorkCaller', () => {

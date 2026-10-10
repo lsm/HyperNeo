@@ -13,6 +13,7 @@ import {
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,
+  NEO_WORK_GOAL_PR_EVENTS,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
@@ -160,7 +161,7 @@ export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): str
     NEO_WORK_GOAL,
     ...(goal.goal ? [fillPrompt(NEO_WORK_GOAL_ASKED, { goal: goal.goal })] : []),
     ...(goal.doneWhen ? [fillPrompt(NEO_WORK_GOAL_DONE_WHEN, { done_when: goal.doneWhen })] : []),
-    ...(/merg/i.test(goal.doneWhen ?? '') ? [NEO_WORK_GOAL_MERGE] : []),
+    ...(/merg/i.test(goal.doneWhen ?? '') ? [NEO_WORK_GOAL_MERGE, NEO_WORK_GOAL_PR_EVENTS] : []),
     NEO_WORK_GOAL_REMAINING,
   ].join('\n');
 }
