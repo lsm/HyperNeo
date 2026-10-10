@@ -15,6 +15,7 @@ describe('fillPrompt', () => {
 
   test('throws when a placeholder has no value', () => {
     expect(() => fillPrompt('Hi {{name}}', {})).toThrow('missing prompt value name');
+    expect(() => fillPrompt('Hi {{userId2}}', {})).toThrow('missing prompt value userId2');
   });
 
   test('leaves no placeholder in either Neo system prompt', () => {

@@ -27,7 +27,7 @@ export function expandIncludes(
   });
 }
 
-const placeholderPattern = /\{\{([a-z_]+)\}\}/g;
+const placeholderPattern = /\{\{([A-Za-z0-9_]+)\}\}/g;
 
 export function fillPrompt(template: string, values: Readonly<Record<string, string>>): string {
   return template.replace(placeholderPattern, (_all, key: string) => {
