@@ -16,7 +16,11 @@ import {
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
-import { driverDoneCheckNote, neoWorkDoneGoal } from '../../../../src/lib/neo/driver-work.ts';
+import {
+  driverDoneCheckNote,
+  neoWorkDoneGoal,
+  projectNeoAskCards,
+} from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -485,15 +489,53 @@ describe('driverDoneCheckNote', () => {
   const goal = { workId: 'w', goal: 'Fix it', doneWhen: '- merged' };
   const work = { id: 'w', title: 'Fix it', report: 'Merged.', originSessionId: 'root' };
 
+  const sibling = { id: 'w2', title: 'Ship the docs', status: 'queued' as const };
+
   test('asks the session that opened the ask to settle it, and only that session', () => {
-    expect(driverDoneCheckNote(work, goal, 0, null, { ask })).toContain(
-      'settle it with neo.ask.settle'
-    );
+    const owned = driverDoneCheckNote(work, goal, 0, null, { ask, cards: [sibling] });
+    expect(owned).toContain('Otherwise settle the ask: neo.ask.settle');
+    expect(owned).toContain('end the turn without telling the human');
+    expect(JSON.parse(owned.slice(owned.indexOf('\n{'))).ask.cards).toEqual([sibling]);
     const other = driverDoneCheckNote({ ...work, originSessionId: 'holder' }, goal, 0, null, {
       ask,
+      cards: [sibling],
     });
     expect(other).toContain('do not settle the ask');
-    expect(other).not.toContain('settle it with neo.ask.settle');
+    expect(other).not.toContain('settle the ask: neo.ask.settle');
+    expect(JSON.parse(other.slice(other.indexOf('\n{'))).ask.cards).toBeUndefined();
+  });
+
+  test('tells the owner to settle before telling the human, also once the budget is spent', () => {
+    const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
+    expect(spent).toContain('Do not continue it. Look at every card in ask.cards first.');
+    expect(spent.indexOf('settle the ask')).toBeLessThan(spent.indexOf('Read the whole report'));
+  });
+});
+
+describe('projectNeoAskCards', () => {
+  const pr = {
+    url: 'https://github.com/lsm/HyperNeo/pull/7',
+    state: 'OPEN' as const,
+    checks: 'pending' as const,
+    review: 'none' as const,
+  };
+  const card = (id: string) => ({ id, title: `Card ${id}`, status: 'reported' as const });
+  test.each<[string, Parameters<typeof projectNeoAskCards>, ReturnType<typeof projectNeoAskCards>]>(
+    [
+      ['only the card itself', ['w1', [card('w1')], []], []],
+      [
+        'a sibling with a pull request',
+        ['w1', [card('w1'), card('w2')], [{ workId: 'w2', prs: [pr] }]],
+        [{ ...card('w2'), prs: [pr] }],
+      ],
+      [
+        'more siblings than fit',
+        ['w0', Array.from({ length: 12 }, (_, i) => card(`w${i}`)), []],
+        Array.from({ length: 10 }, (_, i) => card(`w${i + 2}`)),
+      ],
+    ]
+  )('%s', (_label, args, cards) => {
+    expect(projectNeoAskCards(...args)).toEqual(cards);
   });
 });
 

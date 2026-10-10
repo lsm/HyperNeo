@@ -679,6 +679,60 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('shows the whole ask in the done check: the other cards and their pull requests', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Code merged.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const docsPr: NeoWorkPr = {
+      url: 'https://github.com/lsm/HyperNeo/pull/7',
+      state: 'OPEN',
+      checks: 'pending',
+      review: 'none',
+    };
+    const opened = service.askRecords.open({
+      id: 'ask-ship',
+      requestKey: 'neo:root:ship',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'ask-1',
+      title: 'Ship it',
+      ask: 'Ship the fix and its docs',
+      doneWhen: '- fix merged\n- docs merged',
+      doneSource: 'human',
+    })!;
+    service.repo.proposeWork({
+      id: 'work-2',
+      requestKey: 'root:docs',
+      concernId: null,
+      originSessionId: 'neo:root',
+      originMessageId: 'ask-1',
+      title: 'Ship the docs',
+      instruction: 'Write the docs.',
+    });
+    for (const id of ['work-1', 'work-2']) service.askRecords.link(opened.id, id);
+    service.workPrs.record('work-2', [docsPr], Date.now());
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, _messageId: string, content: string) => {
+        notes.push(content);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(JSON.parse(notes[0].slice(notes[0].indexOf('\n{'))).ask.cards).toEqual([
+        { id: 'work-2', title: 'Ship the docs', status: 'proposed', prs: [docsPr] },
+      ]);
+      expect(notes[0]).toContain('end the turn without telling the human');
+    } finally {
+      db.close();
+    }
+  });
+
   test('waits while its pull request runs CI, then checks it with the live state', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/42';
