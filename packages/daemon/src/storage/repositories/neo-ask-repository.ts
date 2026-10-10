@@ -3,7 +3,7 @@ import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
-  title, ask, done_when AS doneWhen, done_source AS doneSource, status, outcome, evidence,
+  title, ask, done_when AS doneWhen, done_source AS doneSource, pack, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
 
 type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
@@ -68,8 +68,8 @@ export class NeoAskRepository {
     const result = this.db
       .prepare(`INSERT INTO neo_asks
         (id, request_key, concern_id, origin_session_id, origin_message_id, title, ask,
-          done_when, done_source, status, outcome, created_at, updated_at, settled_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, NULL)
+          done_when, done_source, pack, status, outcome, created_at, updated_at, settled_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, ?, NULL)
         ON CONFLICT(request_key) DO NOTHING`)
       .run(
         input.id,
@@ -81,6 +81,7 @@ export class NeoAskRepository {
         input.ask,
         input.doneWhen,
         input.doneSource,
+        input.pack ?? null,
         now,
         now
       );

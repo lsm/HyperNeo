@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -170,6 +171,50 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.open', { ...opening, requestKey: 'none', doneWhen: undefined })
     ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+  });
+
+  test('opens an ask under an enabled pack and briefs it in the same value', async () => {
+    const opened = await invoke('neo.ask.open', { ...opening, pack: 'coding' });
+    expect(opened).toMatchObject({
+      value: { ok: true, ask: { id: opened.value!.ask!.id, pack: 'coding' } },
+    });
+    expect((opened.value as { packBriefing?: string }).packBriefing).toBe(
+      NEO_PACK_CODING_INSTRUCTIONS
+    );
+
+    const replay = await invoke('neo.ask.open', { ...opening, pack: 'coding' });
+    expect(replay).toMatchObject({
+      value: { ok: true, ask: { id: opened.value!.ask!.id, pack: 'coding' } },
+    });
+    expect(await invoke('neo.ask.open', { ...opening, pack: 'legal-review' })).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringContaining('pack_not_enabled: "legal-review"'),
+      },
+    });
+    expect(await invoke('neo.ask.open', opening)).toMatchObject({
+      value: { ok: false, reason: 'This request key already belongs to another ask.' },
+    });
+
+    const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
+    expect(asks.find((ask) => ask.id === opened.value!.ask!.id)?.pack).toBe('coding');
+  });
+
+  test('reads an installed pack through neo.pack.read and refuses unknown ids', async () => {
+    const read = await invoke('neo.pack.read', { id: 'coding' });
+    expect(read).toMatchObject({
+      value: {
+        ok: true,
+        pack: {
+          id: 'coding',
+          describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+        },
+        instructions: NEO_PACK_CODING_INSTRUCTIONS,
+      },
+    });
+    expect(await invoke('neo.pack.read', { id: 'legal-review' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('pack_not_found') },
+    });
   });
 
   test('refuses work under a missing or achieved ask, and settling is final', async () => {
@@ -833,6 +878,25 @@ describe('neoPrompt', () => {
     expect(prompt).toContain('corrects you with something lasting');
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save as a rule');
   });
+
+  test('carries the enabled packs and keeps the core prompt free of coding examples', () => {
+    const prompt = neoPrompt(null);
+    expect(prompt).toContain('coding — Software work in git repositories');
+    expect(prompt).toContain('pass its id as pack to neo.ask.open');
+    expect(prompt).toContain('neo.pack.read {id}');
+    for (const gone of [
+      'for code usually merged, not a pull request opened',
+      'Merged in #6099.',
+      'a git remote that matches the repository the human named',
+      'let the app make its own worktree',
+      'HyperNeo code is done when merged to dev',
+      'Fix merged to dev',
+    ]) {
+      expect(prompt).not.toContain(gone);
+    }
+    expect(prompt).toContain('The fix is live');
+    expect(neoPrompt(null, [])).not.toContain('Domain packs');
+  });
 });
 
 describe('driverDoneCheckNote', () => {
@@ -859,6 +923,18 @@ describe('driverDoneCheckNote', () => {
     const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
     expect(spent).toContain('Do not continue it. First tick what this report proves on ask.items');
     expect(spent.indexOf('settle the ask')).toBeLessThan(spent.indexOf('Read the whole report'));
+  });
+
+  test('embeds the ask pack guidance in a delivered note', () => {
+    const noted = driverDoneCheckNote(work, goal, 0, null, {
+      ask: { ...ask, pack: 'coding' },
+      pack: { id: 'coding', instructions: NEO_PACK_CODING_INSTRUCTIONS },
+    });
+    expect(noted).toContain(`Guidance from the coding pack, which this ask works under:`);
+    expect(noted).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(driverDoneCheckNote(work, goal, 0, null, { ask, pack: null })).not.toContain(
+      'which this ask works under'
+    );
   });
 });
 

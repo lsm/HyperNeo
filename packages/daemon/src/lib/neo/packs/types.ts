@@ -7,10 +7,18 @@ export type NeoPackCheck = (
   evidence: readonly NeoEvidence[]
 ) => { value: true } | { reason: string };
 
-export interface NeoPack {
+export interface NeoPackBrief {
   id: string;
   describe: string;
-  instructions(ask: NeoAsk): string | null;
+}
+
+export interface NeoPackFragment {
+  id: string;
+  instructions: string;
+}
+
+export interface NeoPack extends NeoPackBrief {
+  instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork): Promise<NeoEvidenceRead | null>;
   checks?: Record<string, NeoPackCheck>;
   workerSkills?: string[];
