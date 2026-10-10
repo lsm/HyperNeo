@@ -1268,6 +1268,55 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('reopens the ask when the human answers the work session it was waiting on', async () => {
+    const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 't1' };
+    let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 0 } };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    const opened = service.askRecords.open(
+      {
+        id: 'ask-1',
+        requestKey: 'neo:root:startup',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Desktop app stuck on startup',
+        ask: 'Fix the stuck startup',
+        doneWhen: '- app gets past startup',
+        doneSource: 'human',
+      },
+      [{ text: 'App gets past startup', check: null }]
+    )!;
+    service.askRecords.link(opened.id, 'work-1');
+    try {
+      await service.start('work-1');
+      reply = { ok: true, value: { status: 'needs_you', lastActivityAt: 5, lastReply: 'A or B?' } };
+      await service.refreshDriverWork();
+      service.askRecords.tickItem(
+        opened.id,
+        { id: 'i1', state: 'needs_you', evidence: 'A or B?', metBy: null },
+        Date.now()
+      );
+      service.askRecords.settle(
+        service.askRecords.get(opened.id)!,
+        'waiting',
+        'A or B?',
+        'A or B?'
+      );
+
+      reply = { ok: true, value: { status: 'running', lastActivityAt: 6 } };
+      await service.refreshDriverWork();
+
+      expect(service.askRecords.get(opened.id)).toMatchObject({
+        status: 'open',
+        doneItems: [expect.objectContaining({ id: 'i1', state: 'pending', evidence: null })],
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test("card status follows the session only after Neo's message landed and stays done after a reply", () => {
     const running = { status: 'running' as const, lastActivityAt: 30 };
     expect(decideCardLiveStatus(running, null, null)).toBe('queued');

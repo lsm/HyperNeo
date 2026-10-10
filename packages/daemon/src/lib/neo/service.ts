@@ -128,6 +128,7 @@ import {
   requireNeoWorkReturnUntold,
 } from './done-check.ts';
 import { planNeoWaitingReminders } from './waiting-reminders.ts';
+import { planNeoNeedsYou } from './needs-you.ts';
 import { planNeoWorkFollow, requireNeoWorkFollow } from './work-follow.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -160,6 +161,12 @@ type NeoWorkPrCard = {
   session: boolean;
 };
 type NeoWorkPrRefreshed = { next: NeoWorkPrRow | null; read: boolean };
+type NeoNeedsYouCard = {
+  state: ReturnType<typeof readDriverNeedsYou>;
+  noted: number | null;
+  ask: NeoAsk | null;
+};
+type NeoNeedsYouPlan = ReturnType<typeof planNeoNeedsYou>;
 type NeoWorkTold = { row: NeoWorkCheckRow | null };
 type NeoDoneCheckCard = {
   ask: NeoAsk | null;
@@ -1150,28 +1157,48 @@ export class NeoService {
     );
   }
 
-  private async noteDriverNeedsYou(
+  private readonly noteDriverNeedsYou = (superpipe({})('neo-work-needs-you') as PipelineAPI)
+    .input(['work', 'ref', 'outcome'])
+    .pipe(
+      (work: NeoWork, outcome: OperationOutcome) => ({
+        state: readDriverNeedsYou(outcome),
+        noted: this.driverTargets.readNeedsYouSince(work.id),
+        ask: this.askRecords.forWork(work.id),
+      }),
+      ['work', 'outcome'],
+      'card'
+    )
+    .pipe(
+      (card: NeoNeedsYouCard) => planNeoNeedsYou(card.state, card.noted, card.ask),
+      'card',
+      'plan'
+    )
+    .pipe(
+      async (work: NeoWork, ref: WorkRef, card: NeoNeedsYouCard, plan: NeoNeedsYouPlan) => {
+        if (plan.notify !== null && this.db.getSession(work.originSessionId))
+          await this.deliver(
+            work.originSessionId,
+            `${work.id}:needs-you:${plan.notify}`,
+            driverNeedsYouNote(work, ref, card.state?.lastReply),
+            work.originSessionId
+          );
+        if (plan.record !== undefined) this.driverTargets.recordNeedsYouSince(work.id, plan.record);
+        if (!plan.resume) return;
+        for (const id of plan.resume.items)
+          this.askRecords.tickItem(
+            plan.resume.ask.id,
+            { id, state: 'pending', evidence: null, metBy: null },
+            Date.now()
+          );
+        if (plan.resume.reopen) this.askRecords.reopen(plan.resume.ask);
+      },
+      ['work', 'ref', 'card', 'plan']
+    )
+    .endAsync('plan') as (
     work: NeoWork,
     ref: WorkRef,
     outcome: OperationOutcome
-  ): Promise<void> {
-    const state = readDriverNeedsYou(outcome);
-    if (!state) return;
-    const noted = this.driverTargets.readNeedsYouSince(work.id);
-    if (!state.needsYou) {
-      if (noted !== null) this.driverTargets.recordNeedsYouSince(work.id, null);
-      return;
-    }
-    if (noted !== null) return;
-    if (this.db.getSession(work.originSessionId))
-      await this.deliver(
-        work.originSessionId,
-        `${work.id}:needs-you:${state.since}`,
-        driverNeedsYouNote(work, ref, state.lastReply),
-        work.originSessionId
-      );
-    this.driverTargets.recordNeedsYouSince(work.id, state.since);
-  }
+  ) => Promise<unknown>;
 
   async recoverConsultations(): Promise<void> {
     for (const item of this.consultations.unsettled()) {
