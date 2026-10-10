@@ -332,6 +332,11 @@ function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
 }
 
+export function readDriverLastInputAt(outcome: OperationOutcome): number | null {
+  const inputs = readDriverInputs(outcome);
+  return inputs?.length ? Math.max(...inputs.map((input) => input.at)) : null;
+}
+
 export function readDriverSent(
   outcome: OperationOutcome,
   message: string,

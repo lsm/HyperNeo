@@ -70,7 +70,7 @@ import {
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
+import { type WorkRef, WorkRefSchema, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -169,6 +169,19 @@ const Snapshot = z.union([
     workResources: z
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
+      .optional(),
+    sessionNotices: z
+      .array(
+        z.object({
+          key: z.string(),
+          ref: WorkRefSchema,
+          title: z.string(),
+          kind: z.enum(['needs_you', 'failed', 'finished']),
+          at: z.number(),
+          link: z.string().optional(),
+        })
+      )
+      .max(20)
       .optional(),
     workDrivers: z
       .array(
@@ -572,6 +585,7 @@ export function createNeoOperations(service: NeoService) {
           const since = service.uncheckedSince(receipt.workId);
           return since === null ? receipt : { ...receipt, uncheckedSince: since };
         }),
+      ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),

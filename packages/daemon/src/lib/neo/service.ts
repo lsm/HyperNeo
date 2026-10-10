@@ -38,7 +38,7 @@ import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -82,6 +82,8 @@ import {
   driverStallNote,
   NEO_WORK_STALL_MS,
   readDriverActivity,
+  readDriverLastInputAt,
+  readDriverLive,
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
@@ -162,6 +164,15 @@ import {
   planNeoWaitingReminders,
   type NeoReminderListing,
 } from './waiting-reminders.ts';
+import {
+  keepNeoSessionNotices,
+  listNeoWatchedSessions,
+  planNeoSessionNotice,
+  planNeoSessionWatch,
+  type NeoListedSession,
+  type NeoSessionNotice,
+  type NeoSessionSeen,
+} from './session-watch.ts';
 import {
   neoAskEvidenceMessageId,
   neoAskEvidenceNote,
@@ -249,6 +260,8 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
+  sessionNotices: NeoSessionNotice[] = [];
   filePacks: readonly NeoPack[] = [];
   private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
@@ -261,6 +274,7 @@ export class NeoService {
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
+  private readonly announceSessionNotice: (notice: NeoSessionNotice) => void;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -410,6 +424,7 @@ export class NeoService {
     events: InternalEventBus<DaemonInternalEventMap>,
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
+    this.announceSessionNotice = (notice) => hub.event('neo.session.notice', notice);
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
     };
@@ -1132,7 +1147,104 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    await this.watchSessions(Date.now()).catch((error) =>
+      this.log.warn('Session watch pending', error)
+    );
   }
+
+  private readonly watchSessions = (superpipe({})('neo-session-watch') as PipelineAPI)
+    .input(['now'])
+    .pipe(
+      () => {
+        const root = this.repo.getBindingForConcern(null)?.sessionId;
+        return root ? { value: root } : { reason: null };
+      },
+      'now',
+      'result:root'
+    )
+    .pipe(
+      async (root: string, now: number) => {
+        const outcome = await invokeOperation(
+          this.sessions.getOperationRegistry(),
+          'work.find',
+          { localOnly: true, limit: 30 },
+          { source: 'internal', sessionId: root, role: 'neo' }
+        );
+        const value =
+          outcome.kind === 'completed' ? (outcome.value as { places?: PlaceGroup[] } | null) : null;
+        return {
+          sessions: listNeoWatchedSessions(value?.places ?? [], this.driverTargets.refs(), now),
+        };
+      },
+      ['root', 'now'],
+      'listed'
+    )
+    .pipe(
+      (listed: { sessions: NeoListedSession[] }, now: number) =>
+        planNeoSessionWatch(listed.sessions, this.sessionsSeen, now),
+      ['listed', 'now'],
+      'plan'
+    )
+    .pipe(
+      async (root: string, plan: ReturnType<typeof planNeoSessionWatch>) => ({
+        details: await Promise.all(
+          plan.reads.map(async (session) => {
+            const outcome = await invokeOperation(
+              this.sessions.getOperationRegistry(),
+              'work.status',
+              { ref: session.ref },
+              { source: 'internal', sessionId: root, role: 'neo' }
+            );
+            const live = readDriverLive(outcome);
+            return live
+              ? { status: live.status, lastInputAt: readDriverLastInputAt(outcome) }
+              : null;
+          })
+        ),
+      }),
+      ['root', 'plan'],
+      'read'
+    )
+    .pipe(
+      (
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        read: { details: ({ status: WorkStatus; lastInputAt: number | null } | null)[] },
+        now: number
+      ) => ({
+        planned: plan.reads.map((session, index) =>
+          planNeoSessionNotice(
+            session,
+            this.sessionsSeen.get(session.key)!,
+            read.details[index],
+            now
+          )
+        ),
+      }),
+      ['plan', 'read', 'now'],
+      'notices'
+    )
+    .pipe(
+      (
+        listed: { sessions: NeoListedSession[] },
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }
+      ) => {
+        const keep = new Set(listed.sessions.map((session) => session.key));
+        for (const key of [...this.sessionsSeen.keys()])
+          if (!keep.has(key)) this.sessionsSeen.delete(key);
+        for (const [key, seen] of plan.baseline) this.sessionsSeen.set(key, seen);
+        plan.reads.forEach((session, index) =>
+          this.sessionsSeen.set(session.key, notices.planned[index].seen)
+        );
+        const added = notices.planned.flatMap((item) => (item.notice ? [item.notice] : []));
+        if (!added.length) return;
+        this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added);
+        for (const notice of added) this.announceSessionNotice(notice);
+        this.notifyChanged();
+      },
+      ['listed', 'plan', 'notices']
+    )
+    .endAsync('root') as (now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])

@@ -44,6 +44,14 @@ export class NeoWorkDriverTargetRepository {
     return target.success ? target.data : null;
   }
 
+  refs(): WorkRef[] {
+    if (!this.hasTable()) return [];
+    const rows = this.db
+      .prepare('SELECT ref FROM neo_work_driver_targets WHERE ref IS NOT NULL')
+      .all() as { ref: string }[];
+    return rows.map((row) => JSON.parse(row.ref) as WorkRef);
+  }
+
   readRef(workId: string): WorkRef | null {
     if (!this.hasTable()) return null;
     const row = this.db
