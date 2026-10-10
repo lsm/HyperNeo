@@ -109,7 +109,10 @@ interface NeoPack {
 - `readEvidence`: the pack's one effect stage. For a card under a live ask,
   core runs the ask's pack's `readEvidence`; for an ask with no pack (every
   ask until slice d, and generic asks after it) it runs every enabled pack's,
-  coding first, so PR tracking never lapses for asks opened without a pack.
+  coding first, so PR tracking never lapses for asks opened without a pack. A
+  card with no live ask (no ask, or one that has settled) still has its
+  evidence read the same way, so its state stays current, but it never wakes
+  Neo: delivery waits for a live ask (#6222).
 - `checks`: pure gates, one per item kind.
 - `workerSkills` / `workerMcpServers`: ids in the existing skills and app MCP
   registries that sessions working on the pack's asks should get. A pack
