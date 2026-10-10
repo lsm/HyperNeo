@@ -1,6 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import { combineNeoEvidenceReads, type NeoEvidenceRead } from '../evidence.ts';
+import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import type { NeoPack, NeoPackBrief, NeoPackFragment } from './types.ts';
 
@@ -73,4 +73,22 @@ export async function readNeoPackEvidence(
       )
     )
   );
+}
+
+export async function readNeoAskPackEvidence(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  warn: (id: string, error: unknown) => void
+): Promise<NeoEvidence[]> {
+  const reads = await Promise.all(
+    packs
+      .filter((pack) => !ask.pack || pack.id === ask.pack)
+      .map((pack) =>
+        pack.readAskEvidence?.(ask).catch((error: unknown) => {
+          warn(pack.id, error);
+          return [];
+        })
+      )
+  );
+  return reads.flatMap((read) => read ?? []);
 }
