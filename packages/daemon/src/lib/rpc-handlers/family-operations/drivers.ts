@@ -14,9 +14,11 @@ import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
+  type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
 } from '../../drivers/claude-desktop-adapter.ts';
 import { createClaudeCodeAdapter } from '../../drivers/claude-code-adapter.ts';
+import { withClaudeRemoteControl } from '../../drivers/claude-remote-control.ts';
 import { connectCodexAppServer } from '../../drivers/codex-app-server.ts';
 import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
@@ -160,23 +162,22 @@ function claudeDesktopAdapters(
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
-  return [
-    createClaudeDesktopAdapter({
-      sessionsDir,
-      projectsDir: join(homedir(), '.claude', 'projects'),
-      machine: hostname(),
-      liveSessions: () => readLiveClaudeSessions(spawnProcess),
-      spawn: spawnProcess,
-      folderExists: existsSync,
-      makeFolder: (folder: string) => mkdirSync(folder),
-      homeDir: homedir(),
-      gitCheckout: readGitCheckout,
-      newId: () => crypto.randomUUID(),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      now: Date.now,
-      searchChats: (text) => searchChats(text, ['claude']),
-    }),
-  ];
+  const deps: ClaudeDesktopAdapterDeps = {
+    sessionsDir,
+    projectsDir: join(homedir(), '.claude', 'projects'),
+    machine: hostname(),
+    liveSessions: () => readLiveClaudeSessions(spawnProcess),
+    spawn: spawnProcess,
+    folderExists: existsSync,
+    makeFolder: (folder: string) => mkdirSync(folder),
+    homeDir: homedir(),
+    gitCheckout: readGitCheckout,
+    newId: () => crypto.randomUUID(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: Date.now,
+    searchChats: (text) => searchChats(text, ['claude']),
+  };
+  return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
 
 function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[] {
