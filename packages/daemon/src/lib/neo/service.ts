@@ -11,6 +11,7 @@ import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/type
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
+  NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
   type NeoAsk,
   type NeoWorkGoal,
@@ -83,7 +84,7 @@ import {
   NEO_WORK_STALL_MS,
   readDriverActivity,
   withWorkGoal,
-  readContinueBudget,
+  readNeoWorkContinueBudget,
 } from './driver-work.ts';
 import {
   admitNeoWorkContinue,
@@ -925,6 +926,7 @@ export class NeoService {
     readWork: (id) => this.repo.getWork(id),
     readRef: (id) => this.driverTargets.readRef(id),
     readContinuedCount: (id) => this.workContinues.get(id)?.count ?? null,
+    readAsk: (id) => this.askRecords.forWork(id),
     isContinuing: (id) => this.continuing.has(id),
     withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
     readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
@@ -941,6 +943,9 @@ export class NeoService {
     },
     recordContinue: (id, message, now) =>
       this.workContinues.record(id, message, now)?.count ?? null,
+    reserveAskContinue: (ask) =>
+      this.askRecords.reserveApprovedContinue(ask.id, NEO_ASK_CONTINUE_LIMIT),
+    refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
     reopen: (id, current, report) =>
       this.repo.transitionWork(id, current, { status: 'queued', report }),
     reopenAsk: (id) => this.askRecords.reopenForWork(id),
@@ -1368,7 +1373,12 @@ export class NeoService {
   }
 
   private continueBudget(work: NeoWork, now: number): string | null {
-    return readContinueBudget(this.workContinues.get(work.id), work.createdAt, now);
+    return readNeoWorkContinueBudget(
+      this.workContinues.get(work.id),
+      work.createdAt,
+      this.askRecords.forWork(work.id),
+      now
+    );
   }
 
   private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
