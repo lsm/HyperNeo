@@ -5,8 +5,15 @@ A self-contained desktop wrapper for HyperNeo built with [Tauri 2.x](https://v2.
 The package ships the `hyperneo` daemon as a Tauri **sidecar** (an external binary
 bundled and launched by the Rust shell) and renders the existing web UI inside
 a native webview. There is no separate frontend code — Tauri opens a small
-loading splash, polls the daemon's `/api/health` endpoint, and then navigates
+loading splash, polls the daemon's `GET /` readiness route, and then navigates
 the webview to `http://localhost:9283` once the daemon is ready.
+
+If a daemon is already running it advertises itself in `<data-dir>/runtime.json`
+(`~/.hyperneo/runtime.json` by default); the shell attaches to that instance
+instead of spawning a second daemon onto the same SQLite file, whose PID lock
+would reject it. When neither an advertised daemon nor a freshly spawned sidecar
+comes up, the shell reports the failure inside the window instead of leaving the
+splash spinning.
 
 ```
 ┌─────────────────────────────────────┐
@@ -44,7 +51,7 @@ packages/desktop/
     ├── build.rs
     ├── capabilities/         # Tauri permission manifests
     ├── icons/                # bundle + tray icons
-    ├── loading/index.html    # splash shown until the daemon answers /api/health
+    ├── loading/index.html    # splash shown until the daemon answers GET /
     ├── src/{main.rs,lib.rs}  # Rust shell: tray, global shortcut, sidecar mgmt
     └── binaries/             # populated by build-sidecar.sh — gitignored
 ```
@@ -119,10 +126,15 @@ workspace packages.
 Tauri's [sidecar](https://v2.tauri.app/develop/sidecar/) feature lets the
 desktop app ship and launch a precompiled child process. The Rust shell:
 
-- Spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace` on startup (release mode only).
+- Attaches to a daemon advertised in `<data-dir>/runtime.json` when one is running;
+  otherwise spawns `hyperneo --port 9283 --workspace ~/.hyperneo/workspace`
+  (release mode only).
 - Streams stdout/stderr into the Tauri log plugin.
-- Polls `http://localhost:9283/api/health` for up to ~15 s and then navigates
+- Polls `http://localhost:9283/` for up to ~15 s and then navigates
   the main window from `loading/index.html` to the live UI.
+- On failure (spawn error, early sidecar exit, or readiness timeout) renders the
+  reason — including the daemon's own error line — inside the splash instead of
+  spinning forever.
 - Hides the window to the system tray on close (instead of quitting).
 - Kills the sidecar when the app exits.
 

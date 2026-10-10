@@ -23,6 +23,8 @@
         }
         .container {
             text-align: center;
+            max-width: 560px;
+            padding: 0 24px;
         }
         .logo {
             font-size: 48px;
@@ -49,13 +51,57 @@
             color: #888;
             font-size: 14px;
         }
+        .error {
+            display: none;
+            margin-top: 8px;
+            padding: 16px;
+            border: 1px solid #5a2020;
+            border-radius: 8px;
+            background: #1a0d0d;
+            text-align: left;
+        }
+        .error-title {
+            color: #ff6b6b;
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .error-detail {
+            color: #b8b8b8;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .error-hint {
+            color: #888;
+            font-size: 12px;
+            margin-top: 12px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="logo">HyperNeo</div>
-        <div class="spinner"></div>
-        <div class="status">Starting AI assistant...</div>
+        <div class="spinner" id="spinner"></div>
+        <div class="status" id="status">Starting AI assistant...</div>
+        <div class="error" id="error">
+            <div class="error-title">HyperNeo could not start</div>
+            <div class="error-detail" id="error-detail"></div>
+            <div class="error-hint">Quit HyperNeo from the tray menu and try again.</div>
+        </div>
     </div>
+    <script>
+        window.__hyperneoShowStartupError = function (message) {
+            var status = document.getElementById('status');
+            var spinner = document.getElementById('spinner');
+            var box = document.getElementById('error');
+            var detail = document.getElementById('error-detail');
+            if (detail) detail.textContent = message;
+            if (spinner) spinner.style.display = 'none';
+            if (status) status.style.display = 'none';
+            if (box) box.style.display = 'block';
+        };
+    </script>
 </body>
 </html>
