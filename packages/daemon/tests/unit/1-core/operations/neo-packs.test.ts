@@ -1,16 +1,97 @@
 import { describe, expect, test } from 'bun:test';
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
+  neoPackBriefs,
+  neoPackFragment,
   neoPacks,
   readNeoPackEvidence,
+  requireNeoAskPack,
 } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
 const pack = (id: string, describe = id): NeoPack => ({ id, describe, instructions: () => null });
+
+describe('neoPackBriefs', () => {
+  test('lists the enabled built-in packs by default', () => {
+    expect(neoPackBriefs(NEO_DEFAULT_PACKS)).toEqual([
+      {
+        id: 'coding',
+        describe: 'Software work in git repositories: pull requests, CI, review and merging.',
+      },
+    ]);
+  });
+
+  test('keeps only installed packs the enable list names', () => {
+    const briefs = neoPackBriefs(['coding', 'legal-review'], [{ id: 'coding', describe: 'code' }]);
+    expect(briefs.map((brief) => brief.id)).toEqual(['coding']);
+  });
+});
+
+describe('requireNeoAskPack', () => {
+  const enabled = [pack('coding')];
+
+  test('a generic ask passes without a pack', () => {
+    expect(requireNeoAskPack(undefined, enabled)).toEqual({ value: null });
+  });
+
+  test('an enabled pack passes', () => {
+    expect(requireNeoAskPack('coding', enabled)).toEqual({ value: 'coding' });
+  });
+
+  test('a pack the enable list does not name is refused with the enabled ids', () => {
+    const refused = requireNeoAskPack('legal-review', enabled);
+    expect(refused).toEqual({
+      reason: {
+        ok: false,
+        reason:
+          'pack_not_enabled: "legal-review" is not an enabled pack (enabled: coding). Open the ask without pack, or enable the pack first.',
+      },
+    });
+  });
+});
+
+describe('neoPackFragment', () => {
+  const ask = { pack: 'coding' } as NeoAsk;
+  const speaking = (id: string): NeoPack => ({
+    id,
+    describe: id,
+    instructions: () => `${id} guidance`,
+  });
+
+  test('returns the pack instructions an ask names', () => {
+    expect(neoPackFragment(ask, [speaking('coding'), speaking('other')])).toEqual({
+      id: 'coding',
+      instructions: 'coding guidance',
+    });
+  });
+
+  test('an ask without a pack or a pack without instructions has no fragment', () => {
+    expect(neoPackFragment({ ...ask, pack: null }, [speaking('coding')])).toBeNull();
+    expect(neoPackFragment(null, [speaking('coding')])).toBeNull();
+    expect(neoPackFragment(undefined, [speaking('coding')])).toBeNull();
+    expect(neoPackFragment(ask, [pack('coding')])).toBeNull();
+    expect(neoPackFragment(ask, [speaking('unknown')])).toBeNull();
+  });
+});
+
+describe('coding pack instructions', () => {
+  test('carry the moved coding guidance', () => {
+    const coding = createCodingPack({
+      readPrs: async () => [],
+      workPrs: { get: () => null, recordFailedRead: () => {} },
+      record: () => null,
+    });
+    expect(coding.instructions(null)).toBe(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('merged to the');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('git remote');
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('own worktree');
+  });
+});
 
 describe('neoPacks', () => {
   const coding = pack('coding');

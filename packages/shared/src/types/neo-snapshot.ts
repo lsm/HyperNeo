@@ -55,6 +55,7 @@ export interface NeoAsk {
   ask: string;
   doneWhen: string;
   doneSource: string;
+  pack?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;

@@ -8,6 +8,7 @@ export type NeoReminderListing = { updatedAt: number; turns: readonly string[] }
 type NeoReminderListings = ReadonlyMap<string, NeoReminderListing>;
 
 export const NEO_REMINDER_LISTINGS = 2;
+const NEO_REMINDER_ASKS = 200;
 
 export function neoReminderTurn(turn: { sessionId: string; messageId: string }): string {
   return `${turn.sessionId}:${nudgedMessageId(turn.messageId) ?? turn.messageId}`;
@@ -38,8 +39,8 @@ export function planNeoReminderListings(
   listings: NeoReminderListings,
   asks: readonly Pick<NeoAsk, 'id' | 'updatedAt'>[],
   turn: string
-): [string, NeoReminderListing][] {
-  return asks.map((ask) => {
+): { entries: [string, NeoReminderListing][]; evict: string[] } {
+  const entries = asks.map((ask): [string, NeoReminderListing] => {
     const listed = listings.get(ask.id);
     const turns = listed?.updatedAt === ask.updatedAt ? listed.turns : [];
     return [
@@ -47,6 +48,11 @@ export function planNeoReminderListings(
       { updatedAt: ask.updatedAt, turns: turns.includes(turn) ? turns : [...turns, turn] },
     ];
   });
+  const kept = [...listings.keys()].filter((id) => !asks.some((ask) => ask.id === id));
+  return {
+    entries,
+    evict: kept.slice(0, Math.max(0, kept.length + entries.length - NEO_REMINDER_ASKS)),
+  };
 }
 
 export function planNeoRemindersSpent(

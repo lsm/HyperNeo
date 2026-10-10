@@ -15,6 +15,7 @@ import {
   NEO_WORK_GOAL_MERGE,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_NEEDS_YOU,
+  NEO_WORK_PACK_NOTE,
   NEO_WORK_STALL,
   NEO_WORK_STALL_BUDGET,
   NEO_WORK_STALL_CHECK,
@@ -44,6 +45,7 @@ import {
   type WorkRef,
   type WorkStatus,
 } from '../drivers/types.ts';
+import type { NeoPackFragment } from './packs/types.ts';
 import { WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -411,12 +413,14 @@ export function driverDoneCheckNote(
     stale = false,
     ready = false,
     ask,
+    pack = null,
     cards = [],
   }: {
     prs?: readonly NeoWorkPr[];
     stale?: boolean;
     ready?: boolean;
     ask?: NeoAsk | null;
+    pack?: NeoPackFragment | null;
     cards?: readonly NeoAskCard[];
   } = {}
 ): string {
@@ -442,7 +446,10 @@ export function driverDoneCheckNote(
     : owned
       ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
       : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
-  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards, items: neoAskChecklist(ask) } : {}) } } : {}) })}`;
+  const packNote = pack
+    ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}\n${pack.instructions}`
+    : '';
+  return `${fillPrompt(NEO_WORK_DONE_CHECK, { prs: live, ask: owner, next })}${packNote}\n${JSON.stringify({ workId: work.id, title: work.title, goal: goal.goal, doneWhen: goal.doneWhen, continued, report: work.report?.slice(0, 12000) ?? null, ...(prs ? { prs } : {}), ...(ask ? { ask: { id: ask.id, doneWhen: ask.doneWhen, status: ask.status, ...(owned ? { cards, items: neoAskChecklist(ask) } : {}) } } : {}) })}`;
 }
 
 export function neoWorkDoneGoal(

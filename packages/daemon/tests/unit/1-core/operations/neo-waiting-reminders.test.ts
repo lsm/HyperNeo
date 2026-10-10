@@ -89,7 +89,18 @@ describe('planNeoReminderListings', () => {
       [['a1', { updatedAt: 100, turns: ['t2'] }]],
     ],
   ])('%s', (_label, before, after) => {
-    expect(planNeoReminderListings(listings(before), [ask], 't2')).toEqual(after);
+    expect(planNeoReminderListings(listings(before), [ask], 't2')).toEqual({
+      entries: after,
+      evict: [],
+    });
+  });
+
+  test('evicts the oldest other listings past 200 asks', () => {
+    const others = Array.from({ length: 200 }, (_, index): [string, NeoReminderListing] => [
+      `old-${index}`,
+      { updatedAt: 1, turns: ['t0'] },
+    ]);
+    expect(planNeoReminderListings(listings(others), [ask], 't2').evict).toEqual(['old-0']);
   });
 });
 

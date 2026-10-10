@@ -9,6 +9,7 @@ import type {
 } from '../../storage/repositories/neo-ask-repository.ts';
 import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
+import { requireNeoAskPack } from './packs/index.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -19,6 +20,7 @@ type NeoAdmit = (
   concernId?: string | null
 ) => Gate<OperationCaller>;
 type AskReceipt = { ok: true; ask: NeoAsk };
+type AskOpened = AskReceipt & { packBriefing?: string };
 
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
@@ -31,6 +33,7 @@ export const NeoAskSchema = z.object({
   ask: z.string(),
   doneWhen: z.string(),
   doneSource: z.string(),
+  pack: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
@@ -53,7 +56,10 @@ export const NeoAskSchema = z.object({
   updatedAt: z.number(),
   settledAt: z.number().nullable(),
 });
-const AskResult = z.union([Failure, z.object({ ok: z.literal(true), ask: NeoAskSchema })]);
+const AskResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), ask: NeoAskSchema, packBriefing: z.string().optional() }),
+]);
 const Item = z.object({
   text: z.string().trim().min(1).max(300),
   check: z.enum(['pr_merged']).nullable().default(null),
@@ -67,6 +73,7 @@ const Open = z
     doneWhen: z.string().trim().min(1).max(2000).optional(),
     doneItems: z.array(Item).min(1).max(12).optional(),
     doneSource: z.string().trim().min(1).max(160),
+    pack: z.string().trim().min(1).max(80).optional(),
   })
   .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.');
 type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
@@ -202,7 +209,7 @@ export function requireNeoAskReceipt(
   const same = (['concernId', 'title', 'ask', 'doneWhen', 'doneSource'] as const).every(
     (field) => ask[field] === input[field]
   );
-  return same
+  return same && (ask.pack ?? null) === (input.pack ?? null)
     ? { value: { ok: true, ask } }
     : { reason: fail('This request key already belongs to another ask.') };
 }
@@ -374,6 +381,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     )
     .pipe(requireNeoAskConcern, ['input', 'concern', 'admission'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Open>) => requireNeoAskPack(input.pack, service.packs()),
+      'input',
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Open>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
@@ -407,10 +419,18 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'opened'
     )
     .pipe(requireNeoAskReceipt, ['opening', 'opened'], 'result:admission')
+    .pipe(
+      (receipt: AskReceipt): AskOpened => {
+        const packBriefing = service.packBriefing(receipt.ask);
+        return packBriefing ? { ...receipt, packBriefing } : receipt;
+      },
+      'admission',
+      'admission'
+    )
     .end('admission') as (
     input: z.infer<typeof Open>,
     caller: OperationCaller
-  ) => AskReceipt | Rejection;
+  ) => AskOpened | Rejection;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -574,7 +594,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item (for code, usually merged and not just a pull request opened); a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

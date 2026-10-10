@@ -95,6 +95,7 @@ import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with 
 import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md' with {
   type: 'text',
 };
+import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
 import mdneoWorkDoneCheckPrsReady from './neo/packs/coding/done-check-prs-ready.md' with {
   type: 'text',
 };
@@ -107,6 +108,7 @@ import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 't
 import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: 'text' };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
+import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
 import mdneoWorkReturnReview from './neo/work/return-review.md' with { type: 'text' };
 import mdneoWorkReturned from './neo/work/returned.md' with { type: 'text' };
 import mdneoWorkReturnedRetried from './neo/work/returned-retried.md' with { type: 'text' };
@@ -367,10 +369,12 @@ const registry: Record<string, string> = {
   'neo/work/done-check.md': mdneoWorkDoneCheck,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
+  'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,
+  'neo/work/pack-note.md': mdneoWorkPackNote,
   'neo/work/return-review.md': mdneoWorkReturnReview,
   'neo/work/returned-retried.md': mdneoWorkReturnedRetried,
   'neo/work/returned-retry.md': mdneoWorkReturnedRetry,
@@ -512,6 +516,7 @@ export const {
   NEO_CONSULTATION_SETTLED_REPORTED,
   NEO_CONSULTATION_SETTLED_STOPPED,
   NEO_CONSULTATION_SETTLED,
+  NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PUBLISH_NUDGE,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
@@ -543,6 +548,7 @@ export const {
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
   NEO_WORK_NEEDS_YOU,
+  NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURN_REVIEW,
   NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_RETURNED_RETRY,
