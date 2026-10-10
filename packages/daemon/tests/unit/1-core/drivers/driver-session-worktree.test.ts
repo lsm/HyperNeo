@@ -46,10 +46,7 @@ describe('createDriverSession', () => {
     const root = mkdtempSync(join(tmpdir(), 'driver-linked-'));
     const linked = join(root, 'feature');
     mkdirSync(linked);
-    writeFileSync(
-      join(linked, '.git'),
-      `gitdir: ${join(root, 'repo', '.git', 'worktrees', 'feature')}\n`
-    );
+    writeFileSync(join(linked, '.git'), `gitdir: ${root}/repo/.git/worktrees/feature\n`);
     try {
       const { created, manager } = sessionManager(true, () => true, linked);
       await createDriverSession(manager as never, linked, 'font size');
