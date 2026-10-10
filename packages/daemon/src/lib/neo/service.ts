@@ -63,14 +63,10 @@ import {
   type DriverSent,
   type NeoDriverTarget,
   readDriverOutcome,
-  readDriverLive,
   readDriverSendBaseline,
   readDriverSent,
   messageOpening,
-  readDriverLanded,
-  decideCardLiveStatus,
   readDriverNeedsYou,
-  readDriverSettlement,
   driverNeedsYouNote,
   driverStuckNote,
   decideStuckReminder,
@@ -84,6 +80,7 @@ import {
   withWorkGoal,
   readContinueBudget,
 } from './driver-work.ts';
+import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
   type NeoSavedRulesNote,
@@ -1026,50 +1023,40 @@ export class NeoService {
   }
 
   private async settleDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
-    const startedAt = this.driverTargets.readStartedAt(work.id);
-    const sent = this.driverTargets.readSent(work.id);
-    const since = startedAt ?? sent?.inputBefore ?? null;
-    const outcome = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.status',
-      { ref, ...(since !== null ? { since } : {}) },
-      driverWorkCaller(work)
-    );
-    const landed = startedAt === null ? readDriverLanded(outcome, sent) : null;
-    if (landed !== null) this.driverTargets.recordStartedAt(work.id, landed);
-    const live = readDriverLive(outcome);
-    const cardStatus = live
-      ? decideCardLiveStatus(live, startedAt ?? landed, this.driverTargets.readLiveStatus(work.id))
-      : null;
-    if (
-      live &&
-      cardStatus &&
-      this.driverTargets.recordLive(work.id, cardStatus, live.link, live.remoteLink)
-    )
-      this.notifyChanged();
-    const settled =
-      landed === null &&
-      readDriverSettlement(
-        work,
-        outcome,
-        Date.now(),
-        startedAt,
-        !!this.workContinues.get(work.id) || this.driverTargets.get(work.id)?.verb === 'send',
-        sent?.opening ?? (messageOpening(work.instruction) || null)
-      );
-    if (!settled) {
+    await settleNeoDriverWork(this.driverSettleDeps, work, ref);
+  }
+
+  private readonly driverSettleDeps: NeoDriverSettleDeps = {
+    readStartedAt: (workId) => this.driverTargets.readStartedAt(workId),
+    readSent: (workId) => this.driverTargets.readSent(workId),
+    readLiveStatus: (workId) => this.driverTargets.readLiveStatus(workId),
+    isContinuing: (workId) =>
+      !!this.workContinues.get(workId) || this.driverTargets.get(workId)?.verb === 'send',
+    readStatus: (work, ref, since) =>
+      invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.status',
+        { ref, ...(since !== null ? { since } : {}) },
+        driverWorkCaller(work)
+      ),
+    recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
+    recordLive: (workId, status, live) =>
+      this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),
+    notifyChanged: () => this.notifyChanged(),
+    noteUnsettled: async (work, ref, outcome) => {
       await this.noteDriverStall(work, outcome);
       await this.noteDriverStuck(work);
-      return this.noteDriverNeedsYou(work, ref, outcome);
-    }
-    this.activitySeen.delete(work.id);
-    const done = this.repo.transitionWork(work.id, work, {
-      status: settled.status,
-      report: settled.report.slice(0, 12000),
-    });
-    if (done && live) this.followAnchors.set(work.id, live.lastActivityAt);
-    if (done) await this.returnReport(done);
-  }
+      await this.noteDriverNeedsYou(work, ref, outcome);
+    },
+    forgetActivity: (workId) => this.activitySeen.delete(workId),
+    transition: (work, settled) =>
+      this.repo.transitionWork(work.id, work, {
+        status: settled.status,
+        report: settled.report.slice(0, 12000),
+      }),
+    anchorFollow: (workId, at) => this.followAnchors.set(workId, at),
+    returnReport: (work) => this.returnReport(work),
+  };
 
   private workDoneGoal(workId: string): NeoWorkGoal | null {
     return neoWorkDoneGoal(workId, this.workGoals.get(workId), this.askRecords.forWork(workId));
