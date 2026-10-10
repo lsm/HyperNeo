@@ -423,6 +423,7 @@ describe('Neo MVP', () => {
       'neo.draft.recover',
       'neo.preferences.set',
       'neo.ask.open',
+      'neo.ask.tick',
       'neo.ask.settle',
       'neo.concern.cancel',
       'neo.concern.consult',

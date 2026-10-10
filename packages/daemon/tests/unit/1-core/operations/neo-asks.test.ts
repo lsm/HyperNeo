@@ -7,6 +7,7 @@ import {
   requireNeoAskConcern,
   isNeoAskReplay,
   planNeoAskItems,
+  planNeoAskTickStatus,
   planNeoAskWorkStops,
   planNeoCardAsk,
   isNeoCardAsk,
@@ -185,6 +186,19 @@ describe('neo.ask operations', () => {
     });
     expect(await invoke('neo.ask.settle', settle)).toMatchObject({
       value: {
+        ok: false,
+        reason: expect.stringContaining('checklist_incomplete: i1 "merged to dev"'),
+      },
+    });
+    for (const itemId of ['i1', 'i2'])
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId,
+        state: 'met',
+        evidence: 'PR #12 merged, CI green.',
+      });
+    expect(await invoke('neo.ask.settle', settle)).toMatchObject({
+      value: {
         ok: true,
         ask: { status: 'achieved', outcome: 'Merged in #12.', evidence: settle.evidence },
       },
@@ -209,6 +223,82 @@ describe('neo.ask operations', () => {
     await propose('card-1', askId);
 
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+  });
+
+  test('ticks checklist items, and an item that needs the human makes the ask wait on it', async () => {
+    const askId = await openAsk();
+    expect(await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met' })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('evidence_required') },
+    });
+    expect(
+      await invoke('neo.ask.tick', { askId, itemId: 'i9', state: 'met', evidence: 'x' })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('item_not_found') } });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'PR #12 merged.',
+      })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'open',
+          doneItems: [
+            expect.objectContaining({
+              id: 'i1',
+              state: 'met',
+              metBy: 'neo',
+              evidence: 'PR #12 merged.',
+            }),
+            expect.objectContaining({ id: 'i2', state: 'pending', metBy: null }),
+          ],
+        },
+      },
+    });
+
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i2',
+        state: 'needs_you',
+        evidence: 'Is red CI on main acceptable?',
+      })
+    ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', outcome: 'CI green' } } });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i2', state: 'met', evidence: 'The human said yes.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'open',
+          doneItems: [expect.anything(), expect.objectContaining({ metBy: 'human' })],
+        },
+      },
+    });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i1', state: 'pending' },
+        { ...neo, sessionId: 'other' }
+      )
+    ).toMatchObject({ value: { ok: false } });
+  });
+
+  test('the user can close an ask as done even with items still open', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke(
+        'neo.ask.settle',
+        { id: askId, outcome: 'achieved', evidence: 'Closed by the user.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true, ask: { status: 'achieved' } } });
   });
 
   test('an offer waits on the human, and starting its work item reopens the ask', async () => {
@@ -527,6 +617,53 @@ describe('planNeoAskItems', () => {
   });
 });
 
+describe('planNeoAskTickStatus', () => {
+  const item = (id: string, state: 'pending' | 'met' | 'needs_you', removed = false) => ({
+    id,
+    text: `Item ${id}`,
+    state,
+    evidence: null,
+    check: null,
+    metBy: null,
+    removed,
+    addedAt: null,
+  });
+  test.each<[string, Partial<NeoAsk>, ReturnType<typeof planNeoAskTickStatus>]>([
+    [
+      'an item that needs the human',
+      { doneItems: [item('i1', 'needs_you')] },
+      { status: 'waiting', outcome: 'Item i1' },
+    ],
+    [
+      'the same question already asked',
+      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you')] },
+      { status: 'unchanged' },
+    ],
+    [
+      'the last question answered',
+      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'met')] },
+      { status: 'open' },
+    ],
+    [
+      'an offer that waits for another reason',
+      { status: 'waiting', outcome: 'Start it?', doneItems: [item('i1', 'met')] },
+      { status: 'unchanged' },
+    ],
+    [
+      'a removed item that needed the human',
+      { doneItems: [item('i1', 'needs_you', true)] },
+      { status: 'unchanged' },
+    ],
+    [
+      'a settled ask',
+      { status: 'achieved', doneItems: [item('i1', 'needs_you')] },
+      { status: 'unchanged' },
+    ],
+  ])('%s', (_label, overrides, plan) => {
+    expect(planNeoAskTickStatus({ ...ask, ...overrides })).toEqual(plan);
+  });
+});
+
 describe('planNeoAskWorkStops', () => {
   const works = [
     { id: 'q', status: 'queued' as const },
@@ -617,7 +754,7 @@ describe('driverDoneCheckNote', () => {
 
   test('tells the owner to settle before telling the human, also once the budget is spent', () => {
     const spent = driverDoneCheckNote(work, goal, 5, 'continue_budget_spent', { ask });
-    expect(spent).toContain('Do not continue it. Look at every card in ask.cards first.');
+    expect(spent).toContain('Do not continue it. First tick what this report proves on ask.items');
     expect(spent.indexOf('settle the ask')).toBeLessThan(spent.indexOf('Read the whole report'));
   });
 });
