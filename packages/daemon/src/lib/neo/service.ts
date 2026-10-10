@@ -28,6 +28,10 @@ import { NeoConversationAskRepository } from '../../storage/repositories/neo-con
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
+import {
+  NeoWorkCheckRepository,
+  type NeoWorkCheckRow,
+} from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import {
@@ -145,6 +149,7 @@ type NeoWorkPrCard = {
   session: boolean;
 };
 type NeoWorkPrRefreshed = { next: NeoWorkPrRow | null; read: boolean };
+type NeoWorkTold = { row: NeoWorkCheckRow | null };
 type NeoDoneCheckCard = {
   ask: NeoAsk | null;
   continued: number;
@@ -163,6 +168,7 @@ export class NeoService {
   readonly workContinues: NeoWorkContinueRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
+  readonly workChecks: NeoWorkCheckRepository;
   readPrs: NeoWorkPrReader = readGithubPrs;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -319,6 +325,7 @@ export class NeoService {
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
     );
@@ -976,15 +983,29 @@ export class NeoService {
       ['work', 'row'],
       'refreshed'
     )
+    .pipe((work: NeoWork) => ({ row: this.workChecks.get(work.id) }), 'work', 'told')
     .pipe(
-      (work: NeoWork, card: NeoWorkPrCard, refreshed: NeoWorkPrRefreshed, now: number) =>
+      (
+        work: NeoWork,
+        card: NeoWorkPrCard,
+        refreshed: NeoWorkPrRefreshed,
+        told: NeoWorkTold,
+        now: number
+      ) =>
         refreshed.next
-          ? planNeoWorkPrRefresh(refreshed.next, refreshed.read, now, {
-              quietSince: work.updatedAt,
-              remindable: !card.ask || card.ask.status === 'open',
-            })
+          ? planNeoWorkPrRefresh(
+              {
+                ...refreshed.next,
+                delivered: told.row?.signature ?? null,
+                deliveredAt: told.row?.toldAt ?? null,
+                reminded: told.row?.reminded ?? null,
+              },
+              refreshed.read,
+              now,
+              { quietSince: work.updatedAt, remindable: !card.ask || card.ask.status === 'open' }
+            )
           : 'wait',
-      ['work', 'card', 'refreshed', 'now'],
+      ['work', 'card', 'refreshed', 'told', 'now'],
       'plan'
     )
     .pipe(
@@ -998,6 +1019,7 @@ export class NeoService {
         work: NeoWork,
         card: NeoWorkPrCard,
         refreshed: NeoWorkPrRefreshed,
+        told: NeoWorkTold,
         delivery: 'deliver' | 'remind'
       ) => {
         if (!card.goal) return;
@@ -1009,12 +1031,12 @@ export class NeoService {
             ? {
                 ask: card.ask,
                 ready: true,
-                followedAt: refreshed.next?.deliveredAt ?? work.updatedAt,
+                followedAt: told.row?.toldAt ?? work.updatedAt,
               }
             : { stale: !refreshed.read, ask: card.ask }
         );
       },
-      ['work', 'card', 'refreshed', 'delivery']
+      ['work', 'card', 'refreshed', 'told', 'delivery']
     )
     .endAsync('delivery') as (workId: string, now: number) => Promise<unknown>;
 
@@ -1283,7 +1305,11 @@ export class NeoService {
       }),
       work.originSessionId
     );
-    if (row) this.workPrs.markDelivered(work.id, neoWorkPrSignature(row.prs), Date.now(), ready);
+    if (!row) return;
+    const signature = neoWorkPrSignature(row.prs);
+    const at = Date.now();
+    this.workPrs.markDelivered(work.id, signature, at, ready);
+    this.workChecks.markTold(work.id, signature, at, ready);
   }
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
