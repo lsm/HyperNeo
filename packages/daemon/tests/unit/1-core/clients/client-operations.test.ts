@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   createClientOperations,
   requireClientData,
-  requireLocalUser,
 } from '../../../../src/lib/clients/client-operations.ts';
+import { requireLocalUser } from '../../../../src/lib/operations/caller.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

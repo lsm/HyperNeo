@@ -8,6 +8,18 @@ export type CallerIdentity = Omit<OperationCaller, 'source' | 'principal'>;
 
 export const LOCAL_RPC_PRINCIPAL = 'local';
 
+export function isLocalUser(caller: Pick<OperationCaller, 'source' | 'principal'>): boolean {
+  return caller.source === 'rpc' && caller.principal === LOCAL_RPC_PRINCIPAL;
+}
+
+export function requireLocalUser(
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: { ok: false; reason: string } } {
+  return isLocalUser(caller)
+    ? { value: caller }
+    : { reason: { ok: false, reason: 'This action needs the user.' } };
+}
+
 export const NO_CALLER_SCOPE: CallerScopeResolver = () => null;
 
 export function resolveCallerIdentity(

@@ -6,7 +6,6 @@ import {
   effectiveNeoPreference,
   planNeoAlignment,
   requireNeoPreferenceModel,
-  requireNeoUser,
 } from '../../../../src/lib/neo/model-preference.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -74,15 +73,6 @@ describe('requireNeoPreferenceModel', () => {
       )
     ).toEqual({
       value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
-    });
-  });
-});
-
-describe('requireNeoUser', () => {
-  test('admits only the local user', () => {
-    expect(requireNeoUser(user)).toEqual({ value: user });
-    expect(requireNeoUser({ source: 'mcp', sessionId: 'neo:root', role: 'neo' })).toMatchObject({
-      reason: { ok: false },
     });
   });
 });

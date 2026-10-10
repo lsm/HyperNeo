@@ -1,5 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { isLocalUser } from '../operations/caller.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { isNeoAskLive } from './done-check.ts';
 
@@ -22,7 +23,7 @@ export function requireNeoHumanWorkOrigin(
   origin: NeoWorkOrigin,
   caller: OperationCaller
 ): Admission {
-  if (caller.source === 'rpc' && caller.principal === 'local') return { value: origin };
+  if (isLocalUser(caller)) return { value: origin };
   return caller.neoTurn?.human && !caller.neoTurn.consultationId
     ? requireLiveNeoWorkOrigin(origin, caller)
     : { reason: { ok: false, reason: 'This action needs the user.' } };
