@@ -1,6 +1,10 @@
 import { stampActiveAttemptList } from '../tasks/direct-attempt-flag.ts';
 import { registerDirectStartJobs } from '../tasks/direct-start-jobs.ts';
-import { registerDirectOutcomeJobs } from '../tasks/direct-outcome-jobs.ts';
+import {
+  createDirectOutcomeRequester,
+  registerDirectOutcomeJobs,
+} from '../tasks/direct-outcome-jobs.ts';
+import { settleTaskDependents } from '../tasks/settle-dependents.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
@@ -44,7 +48,7 @@ import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-sc
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
-import type { MessageHub, SessionMetadata, SpaceTask } from '@hyperneo/shared';
+import type { MessageHub, SessionMetadata } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -617,22 +621,24 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
     onAttemptRetired: emitClaimedTaskUpdate,
-    onTaskUpdated: (task) => {
-      const publish = (updated: SpaceTask) =>
-        void deps.internalEventBus
-          .publish('space.task.updated', {
-            sessionId: 'global',
-            spaceId: updated.spaceId,
-            taskId: updated.id,
-            task: updated,
-          })
-          .catch((error) => log.warn('Failed to emit direct outcome task update:', error));
-      publish(task);
-      void spaceTaskManagerFactory(task.spaceId)
-        .settleDependents(task.id, task.status)
-        .then((settled) => settled.forEach(publish))
-        .catch((error) => log.warn('Failed to settle direct task dependents:', error));
-    },
+    onTaskUpdated: (task) =>
+      void deps.internalEventBus
+        .publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId: task.spaceId,
+          taskId: task.id,
+          task,
+        })
+        .catch((error) => log.warn('Failed to emit direct outcome task update:', error)),
+    settleDependents: (task) =>
+      settleTaskDependents(task, {
+        getTaskManager: spaceTaskManagerFactory,
+        getActiveAttempt: (taskId) =>
+          new DirectTaskExecutionRepository(deps.db.getDatabase()).getActive(taskId),
+        stopForStatus: (spaceId, taskId, params, expected) =>
+          spaceRuntimeService.stopWorkflowBackedTaskForStatus(spaceId, taskId, params, expected),
+        requestDirectOutcome: createDirectOutcomeRequester(deps.db.getDatabase(), deps.jobQueue),
+      }),
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTerminalTransition: (taskId, fromStatus) =>
       spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
