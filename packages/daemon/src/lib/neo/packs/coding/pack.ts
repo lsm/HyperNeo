@@ -3,7 +3,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
-import { extractNeoAskPrUrls, neoAskPrNews, type NeoPrStateReader } from './ask-prs.ts';
+import { extractNeoAskRefs, neoAskRefNews, type NeoRefStateReader } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import { extractNeoWorkPrUrls, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
 
@@ -19,7 +19,7 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
 
 export function createCodingPack(deps: {
   readPrs: NeoWorkPrReader;
-  readPrStates: NeoPrStateReader;
+  readRefStates: NeoRefStateReader;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
@@ -43,11 +43,9 @@ export function createCodingPack(deps: {
         : null;
     },
     readAskEvidence: async (ask: NeoAsk) => {
-      const tracked = new Set(
-        deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url))
-      );
-      const urls = extractNeoAskPrUrls(ask, tracked);
-      return urls.length ? neoAskPrNews(await deps.readPrStates(urls), ask.createdAt) : [];
+      const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
+      const refs = extractNeoAskRefs(ask, tracked);
+      return refs.length ? neoAskRefNews(await deps.readRefStates(refs), ask.createdAt) : [];
     },
   };
 }
