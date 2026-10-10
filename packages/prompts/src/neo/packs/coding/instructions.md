@@ -5,7 +5,11 @@ Software work lives in git repositories. What done means here is merged to the
 project's default or release branch after its own CI and review requirements,
 never a pull request merely opened; write checklist items that can only be
 ticked once that has happened ("Fix merged to dev", "Docs updated"), and settle
-an achieved ask with a summary that names the merge ("Merged in #6099.").
+an achieved ask with a summary that names the merge ("Merged in
+lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,
+summary and evidence as owner/repo#N or a full URL, never a bare #N ("fix
+HyperNeo #5546" is recorded as lsm/HyperNeo#5546): the daemon watches what an
+ask names and tells you when it merges or closes.
 
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product

@@ -12,10 +12,11 @@ import {
 } from '../../../../src/lib/neo/ask-evidence.ts';
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
-  extractNeoAskPrUrls,
-  neoAskPrNews,
-  readGithubPrStates,
-  type NeoPrState,
+  extractNeoAskRefs,
+  neoAskRefNews,
+  readGithubRefStates,
+  type NeoRef,
+  type NeoRefState,
 } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { readNeoAskPackEvidence } from '../../../../src/lib/neo/packs/index.ts';
@@ -59,7 +60,15 @@ const ask: NeoAsk = {
     },
   ],
 };
-const merged = (n: number, at: number): NeoPrState => ({ url: url(n), state: 'MERGED', at });
+const ref = (number: number, repo = 'HyperNeo', owner = 'lsm'): NeoRef => ({ owner, repo, number });
+const merged = (n: number, at: number): NeoRefState => ({
+  url: url(n),
+  kind: 'pr',
+  state: 'MERGED',
+  at,
+  done: true,
+  closedBy: null,
+});
 const news = (n: number): NeoEvidence => ({
   key: url(n),
   state: 'done',
@@ -67,86 +76,145 @@ const news = (n: number): NeoEvidence => ({
   blockers: [],
 });
 
-describe('extractNeoAskPrUrls', () => {
-  test('takes full pull request URLs and owner/repo#N references, never bare #N', () => {
-    expect(extractNeoAskPrUrls(ask, new Set())).toEqual([
-      url(6159),
-      url(32, 'lsm/neo-ios'),
-      url(6205),
-    ]);
+describe('extractNeoAskRefs', () => {
+  test('takes URLs and owner/repo#N, and leaves bare #N alone when the ask names two repos', () => {
+    expect(extractNeoAskRefs(ask, [])).toEqual([ref(6159), ref(32, 'neo-ios'), ref(6205)]);
   });
 
   test('leaves out pull requests the ask cards already track', () => {
-    expect(extractNeoAskPrUrls(ask, new Set([url(6159)]))).toEqual([
-      url(32, 'lsm/neo-ios'),
-      url(6205),
-    ]);
+    expect(extractNeoAskRefs(ask, [url(6159)])).toEqual([ref(32, 'neo-ios'), ref(6205)]);
+  });
+
+  test('resolves bare #N against the one repo the ask and its cards point at', () => {
+    const plain = { ...ask, ask: 'Fix HyperNeo #5546', evidence: null, doneItems: [] };
+    expect(extractNeoAskRefs(plain, [url(6300)])).toEqual([ref(5546)]);
+    expect(extractNeoAskRefs(plain, [])).toEqual([]);
+    expect(
+      extractNeoAskRefs(
+        { ...plain, outcome: 'See https://github.com/lsm/HyperNeo/issues/5546' },
+        []
+      )
+    ).toEqual([ref(5546)]);
   });
 });
 
-describe('neoAskPrNews', () => {
-  test.each<[string, NeoPrState, NeoEvidence[]]>([
-    ['merged after the ask opened', merged(1, 200), [news(1)]],
-    ['merged before the ask opened', merged(1, 50), []],
+describe('neoAskRefNews', () => {
+  const issue = (overrides: Partial<NeoRefState>): NeoRefState => ({
+    url: 'https://github.com/lsm/HyperNeo/issues/1',
+    kind: 'issue',
+    state: 'CLOSED',
+    at: 200,
+    done: true,
+    closedBy: null,
+    ...overrides,
+  });
+  test.each<[string, NeoRefState, NeoEvidence[]]>([
+    ['a pull request merged after the ask opened', merged(1, 200), [news(1)]],
+    ['a pull request merged before the ask opened', merged(1, 50), []],
     [
-      'closed unmerged after the ask opened',
-      { url: url(1), state: 'CLOSED', at: 200 },
+      'a pull request closed unmerged',
+      { ...merged(1, 200), state: 'CLOSED', done: false },
       [{ key: url(1), state: 'failed', summary: 'closed unmerged', blockers: [] }],
     ],
-    ['still open', { url: url(1), state: 'OPEN', at: null }, []],
+    ['a pull request still open', { ...merged(1, 200), state: 'OPEN', at: null }, []],
+    [
+      'an issue closed by a pull request',
+      issue({ closedBy: url(7) }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'done',
+          summary: `closed as completed by ${url(7)}`,
+          blockers: [],
+        },
+      ],
+    ],
+    [
+      'an issue closed as not planned',
+      issue({ done: false }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'failed',
+          summary: 'closed as not planned',
+          blockers: [],
+        },
+      ],
+    ],
   ])('%s', (_label, state, evidence) => {
-    expect(neoAskPrNews([state], 100)).toEqual(evidence);
+    expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
-describe('readGithubPrStates', () => {
-  test('reads a pull request once it merged, skips what is not one, and retries the rest', async () => {
-    const asked: string[] = [];
+describe('readGithubRefStates', () => {
+  test('reads pull requests and issues, keeps a merge, skips non-refs, retries the rest', async () => {
+    const asked: number[] = [];
+    const node = (number: number) =>
+      number === 9001
+        ? {
+            __typename: 'PullRequest',
+            url: url(9001),
+            state: 'MERGED',
+            mergedAt: '2026-10-10T14:31:00Z',
+            closedAt: '2026-10-10T14:31:00Z',
+          }
+        : number === 9002
+          ? {
+              __typename: 'Issue',
+              url: 'https://github.com/lsm/HyperNeo/issues/9002',
+              state: 'CLOSED',
+              stateReason: 'COMPLETED',
+              closedAt: '2026-10-10T15:00:00Z',
+              closedByPullRequestsReferences: { nodes: [{ url: url(9001), merged: true }] },
+            }
+          : null;
     const spawn = (args: string[]) => {
-      asked.push(args[3]);
-      const raw = args[3].endsWith('/9001')
-        ? { url: args[3], state: 'MERGED', mergedAt: '2026-10-10T14:31:00Z', closedAt: null }
-        : args[3].endsWith('/9002')
-          ? { url: args[3], state: 'OPEN', mergedAt: null, closedAt: null }
-          : args[3].endsWith('/9005')
-            ? { url: args[3], state: 'CLOSED', mergedAt: null, closedAt: '2026-10-10T15:00:00Z' }
-            : null;
+      const number = Number(args.at(-1)?.slice(2));
+      asked.push(number);
+      const found = node(number);
       return {
-        stdout: new Response(raw ? JSON.stringify(raw) : '').body,
+        stdout: new Response(
+          found ? JSON.stringify({ data: { repository: { issueOrPullRequest: found } } }) : ''
+        ).body,
         stderr: new Response(
-          raw
+          found
             ? ''
-            : args[3].endsWith('/9003')
-              ? 'GraphQL: Could not resolve to a PullRequest with the number of 9003.'
+            : number === 9003
+              ? 'GraphQL: Could not resolve to an issue or pull request with the number of 9003.'
               : 'gh: To get started with GitHub CLI, please run: gh auth login'
         ).body,
-        exited: Promise.resolve(raw ? 0 : 1),
-        exitCode: raw ? 0 : 1,
+        exited: Promise.resolve(found ? 0 : 1),
+        exitCode: found ? 0 : 1,
         kill: () => {},
       };
     };
-    const urls = [url(9001), url(9002), url(9003), url(9004), url(9005)];
-    expect(await readGithubPrStates(urls, spawn as never)).toEqual([
-      { url: url(9001), state: 'MERGED', at: Date.parse('2026-10-10T14:31:00Z') },
-      { url: url(9002), state: 'OPEN', at: null },
-      { url: url(9005), state: 'CLOSED', at: Date.parse('2026-10-10T15:00:00Z') },
+    const refs = [ref(9001), ref(9002), ref(9003), ref(9004)];
+    expect(await readGithubRefStates(refs, spawn as never)).toEqual([
+      merged(9001, Date.parse('2026-10-10T14:31:00Z')),
+      {
+        url: 'https://github.com/lsm/HyperNeo/issues/9002',
+        kind: 'issue',
+        state: 'CLOSED',
+        at: Date.parse('2026-10-10T15:00:00Z'),
+        done: true,
+        closedBy: url(9001),
+      },
     ]);
-    await readGithubPrStates(urls, spawn as never);
-    expect(asked.filter((item) => item === url(9001))).toHaveLength(1);
-    expect(asked.filter((item) => item === url(9002))).toHaveLength(2);
-    expect(asked.filter((item) => item === url(9003))).toHaveLength(1);
-    expect(asked.filter((item) => item === url(9004))).toHaveLength(2);
-    expect(asked.filter((item) => item === url(9005))).toHaveLength(2);
+    await readGithubRefStates(refs, spawn as never);
+    expect([9001, 9002, 9003, 9004].map((n) => asked.filter((m) => m === n).length)).toEqual([
+      1, 2, 1, 2,
+    ]);
   });
 });
 
 describe('readAskEvidence', () => {
-  test('reports pull requests the ask names that merged since it opened', async () => {
-    const read: string[][] = [];
+  test('reports what the ask names that merged or closed since it opened', async () => {
+    const read: NeoRef[][] = [];
     const pack = createCodingPack({
       readPrs: async () => [],
-      readPrStates: async (urls) => {
-        read.push([...urls]);
+      prUrls: async () => [],
+      readRefStates: async (refs) => {
+        read.push([...refs]);
         return [merged(6159, 200), merged(6205, 50)];
       },
       workPrs: {
@@ -157,7 +225,7 @@ describe('readAskEvidence', () => {
       record: () => null,
     });
     expect(await pack.readAskEvidence!({ ...ask, workIds: ['w1'] })).toEqual([news(6159)]);
-    expect(read).toEqual([[url(6159), url(6205)]]);
+    expect(read).toEqual([[ref(6159), ref(6205)]]);
   });
 });
 
@@ -260,7 +328,8 @@ describe('refreshDriverWork', () => {
     })!;
     const waiting = service.askRecords.settle(opened, 'waiting', 'Waiting on you.', '')!;
     const states = [merged(6159, opened.createdAt + 1), merged(6205, opened.createdAt + 2)];
-    service.readPrStates = async (urls) => states.filter((pr) => urls.includes(pr.url));
+    service.readRefStates = async (refs) =>
+      states.filter((pr) => refs.some((item) => url(item.number) === pr.url));
     const notes: string[] = [];
     Object.assign(service, {
       deliver: async (_target: string, messageId: string) => {

@@ -161,7 +161,7 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
-import { readGithubPrStates, type NeoPrStateReader } from './packs/coding/ask-prs.ts';
+import { readGithubRefStates, type NeoRefStateReader } from './packs/coding/ask-prs.ts';
 import {
   NeoAskCheckRepository,
   type NeoAskCheckRow,
@@ -234,7 +234,7 @@ export class NeoService {
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
-  readPrStates: NeoPrStateReader = readGithubPrStates;
+  readRefStates: NeoRefStateReader = readGithubRefStates;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
@@ -397,7 +397,7 @@ export class NeoService {
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
         prUrls: (work, stored) => this.cardPrUrls(work, stored),
-        readPrStates: (urls) => this.readPrStates(urls),
+        readRefStates: (refs) => this.readRefStates(refs),
         workPrs: this.workPrs,
         record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
       }),
