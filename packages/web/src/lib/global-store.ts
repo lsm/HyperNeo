@@ -6,9 +6,10 @@ import type {
   SystemState,
   SettingsState,
   CredentialStoreStatus,
+  GlobalSystemSnapshot,
 } from '@hyperneo/shared';
 import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@hyperneo/shared';
-import { STATE_CHANNELS } from '@hyperneo/shared';
+import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
 import type { GlobalSettings } from '@hyperneo/shared/types/settings';
 import { connectionManager } from './connection-manager';
 
@@ -83,10 +84,10 @@ export class GlobalStore {
 
       this.initialized = true;
 
-      const snapshot = await hub.request<{
-        system: SystemState;
-        settings: SettingsState;
-      }>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+      const snapshot = await hub.request<GlobalSystemSnapshot>(
+        STATE_CHANNELS.GLOBAL_SNAPSHOT,
+        GLOBAL_SYSTEM_SNAPSHOT_REQUEST
+      );
       if (snapshot) {
         this.systemState.value = snapshot.system || null;
         this.settings.value = snapshot.settings?.settings || null;
@@ -184,10 +185,10 @@ export class GlobalStore {
       })
       .catch(() => {});
 
-    const snapshot = await hub.request<{
-      system: SystemState;
-      settings: SettingsState;
-    }>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+    const snapshot = await hub.request<GlobalSystemSnapshot>(
+      STATE_CHANNELS.GLOBAL_SNAPSHOT,
+      GLOBAL_SYSTEM_SNAPSHOT_REQUEST
+    );
 
     if (snapshot) {
       this.systemState.value = snapshot.system || null;

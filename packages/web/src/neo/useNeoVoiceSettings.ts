@@ -1,5 +1,5 @@
-import { STATE_CHANNELS } from '@hyperneo/shared';
-import type { GlobalSettings, SettingsState } from '@hyperneo/shared';
+import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
+import type { GlobalSettings, GlobalSystemSnapshot, SettingsState } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState } from '../lib/state.ts';
@@ -17,7 +17,7 @@ export function useNeoVoiceSettings() {
       if (active) setVoice(state.settings?.voice);
     });
     void hub
-      .request<{ settings: SettingsState }>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {})
+      .request<GlobalSystemSnapshot>(STATE_CHANNELS.GLOBAL_SNAPSHOT, GLOBAL_SYSTEM_SNAPSHOT_REQUEST)
       .then((snapshot) => {
         if (active && !updated) setVoice(snapshot.settings?.settings?.voice);
       })

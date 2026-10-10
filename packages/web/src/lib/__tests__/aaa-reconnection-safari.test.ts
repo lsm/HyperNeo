@@ -141,7 +141,9 @@ describe('Safari Background Tab - Integration Tests', () => {
         subscriptionId: 'sessions-list',
       });
 
-      expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
+      expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {
+        includeSessions: false,
+      });
     });
 
     it('should update system and settings state from snapshot', async () => {
@@ -206,7 +208,6 @@ describe('Safari Background Tab - Integration Tests', () => {
           }
           if (method === 'state.global.snapshot') {
             return {
-              sessions: { sessions: [], hasArchivedSessions: false },
               system: {},
               settings: { settings: {} },
             };

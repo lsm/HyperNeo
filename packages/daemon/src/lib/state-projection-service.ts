@@ -13,6 +13,8 @@ import type {
   SystemState,
   SettingsState,
   GlobalStateSnapshot,
+  GlobalSnapshotRequest,
+  GlobalSystemSnapshot,
   SessionState,
   SDKMessagesState,
   SDKMessagesUpdate,
@@ -244,7 +246,9 @@ export class StateProjectionService {
   }
 
   private setupHandlers(): void {
-    this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async () => {
+    this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SNAPSHOT, async (data) => {
+      const request = data as GlobalSnapshotRequest | undefined;
+      if (request?.includeSessions === false) return await this.getGlobalSystemSnapshot();
       return await this.getGlobalSnapshot();
     });
 
@@ -269,16 +273,20 @@ export class StateProjectionService {
       this.getSettingsState(),
     ]);
 
+    return { sessions, system, settings, meta: this.getGlobalMeta() };
+  }
+
+  async getGlobalSystemSnapshot(): Promise<GlobalSystemSnapshot> {
+    const [system, settings] = await Promise.all([this.getSystemState(), this.getSettingsState()]);
+    return { system, settings, meta: this.getGlobalMeta() };
+  }
+
+  private getGlobalMeta(): GlobalStateSnapshot['meta'] {
     return {
-      sessions,
-      system,
-      settings,
-      meta: {
-        channel: 'global',
-        sessionId: 'global',
-        lastUpdate: Date.now(),
-        version: this.channelVersions.get('global') || 0,
-      },
+      channel: 'global',
+      sessionId: 'global',
+      lastUpdate: Date.now(),
+      version: this.channelVersions.get('global') || 0,
     };
   }
 

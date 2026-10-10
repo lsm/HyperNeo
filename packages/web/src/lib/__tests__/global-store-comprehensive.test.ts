@@ -296,7 +296,9 @@ describe('GlobalStore', () => {
         params: [0],
         subscriptionId: 'sessions-list',
       });
-      expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+      expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {
+        includeSessions: false,
+      });
 
       expect(store.systemState.value?.auth?.method).toBe('oauth');
       expect(store.settings.value?.permissionMode).toBe('acceptEdits');

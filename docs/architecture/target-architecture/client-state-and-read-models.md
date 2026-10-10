@@ -225,6 +225,7 @@ Events:
 Notes:
 
 - Current `state.global.snapshot`, `state.system`, and `state.settings` surfaces must remain available behind fabric during migration. They hydrate auth, credential-store health, system health, and global settings on startup, and should not be replaced by each feature independently refetching its own settings.
+- The web requests `state.global.snapshot` with `{ includeSessions: false }`, so the response carries only `system`, `settings`, and `meta`. The session list and the archived-session indicator come from the `sessions.list` live query and its `session_counters` totals, not from the snapshot. Requests without the flag still receive the legacy `sessions` inventory for older clients.
 
 ### 7.1 RouteStore
 

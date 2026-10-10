@@ -113,6 +113,41 @@ describe('StateProjectionService', () => {
     });
   });
 
+  describe('getGlobalSystemSnapshot', () => {
+    it('omits the session inventory without listing sessions', async () => {
+      const result = await service.getGlobalSystemSnapshot();
+
+      expect(result).not.toHaveProperty('sessions');
+      expect(result.system.health.sessions).toEqual({ active: 2, total: 5 });
+      expect(result.settings).toHaveProperty('settings');
+      expect(result.meta.channel).toBe('global');
+      expect(mockSessionManager.listSessions).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GLOBAL_SNAPSHOT handler', () => {
+    const handlerFor = (): ((data: unknown) => Promise<Record<string, unknown>>) =>
+      mockMessageHub.onRequest.mock.calls.find(
+        ([channel]) => channel === STATE_CHANNELS.GLOBAL_SNAPSHOT
+      )![1];
+
+    it('keeps the session inventory for legacy requests', async () => {
+      const result = await handlerFor()({});
+
+      expect(result).toHaveProperty('sessions');
+      expect(mockSessionManager.listSessions).toHaveBeenCalledWith({ includeArchived: true });
+    });
+
+    it('omits the session inventory when includeSessions is false', async () => {
+      const result = await handlerFor()({ includeSessions: false });
+
+      expect(result).not.toHaveProperty('sessions');
+      expect(result).toHaveProperty('system');
+      expect(result).toHaveProperty('settings');
+      expect(mockSessionManager.listSessions).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getSystemState', () => {
     it('should return unified system state', async () => {
       const result = await service.getSystemState();
