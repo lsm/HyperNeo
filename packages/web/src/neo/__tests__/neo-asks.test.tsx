@@ -100,6 +100,17 @@ describe('groupNeoAsks', () => {
     ]);
     expect(grouped.loose.outcomes.map((scene) => scene.ref.id)).toEqual(['f2', 'lone']);
     expect([...grouped.settledWork]).toEqual(['c1']);
+    const rerun = groupNeoScenes(
+      classifyNeoScenes([{ ...work('f1', 'proposed'), title: 'Fix it', createdAt: 1 } as Receipt])
+    );
+    const retriedLink = groupNeoAsks([], rerun, new Map(), [
+      { workId: 'f1', supersededBy: 'f2', supersededAt: 2 },
+    ]);
+    expect(
+      Object.values(retriedLink.loose)
+        .flat()
+        .map((scene) => scene.ref.id)
+    ).toEqual(['f1']);
   });
 
   it('keeps every card loose when there are no asks', () => {

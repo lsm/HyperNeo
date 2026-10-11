@@ -55,17 +55,24 @@ export type NeoAskOutcome = 'achieved' | 'abandoned';
 
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
-/** Failed or cancelled cards the daemon recorded as replaced by newer work. */
 export function neoSupersededAttempts(
   links: readonly NeoWorkSupersession[] | undefined
 ): ReadonlySet<string> {
   return new Set((links ?? []).map((link) => link.workId));
 }
 
-function dropped(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
+function replaced(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
   return (
     scene.receipt.kind === 'work' &&
-    (scene.receipt.status === 'cancelled' || superseded.has(scene.ref.id))
+    scene.receipt.status === 'failed' &&
+    superseded.has(scene.ref.id)
+  );
+}
+
+function dropped(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
+  return (
+    (scene.receipt.kind === 'work' && scene.receipt.status === 'cancelled') ||
+    replaced(scene, superseded)
   );
 }
 
@@ -157,7 +164,7 @@ export function groupNeoAsks(
   const pick = (group: NeoSceneGroup) => views.filter((view) => view.group === group);
   const loose = (group: NeoSceneGroup) =>
     (groups?.[group] ?? []).filter(
-      (scene) => !owned.has(scene.ref.id) && !superseded.has(scene.ref.id)
+      (scene) => !owned.has(scene.ref.id) && !replaced(scene, superseded)
     );
   return {
     asks: { attention: pick('attention'), running: pick('running'), outcomes: pick('outcomes') },
