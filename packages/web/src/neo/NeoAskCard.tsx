@@ -136,6 +136,7 @@ function SessionRow({
 const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> = {
   met: { mark: '✓', color: 'text-success' },
   needs_you: { mark: '!', color: 'text-warning' },
+  reported: { mark: '?', color: 'text-warning' },
   pending: { mark: '○', color: 'text-fg-faint' },
 };
 
@@ -154,6 +155,7 @@ function ItemRow({
     item.addedAt !== null && !item.removed && 'added',
     item.state === 'met' && item.metBy === 'daemon' && 'verified',
     item.state === 'needs_you' && 'needs you',
+    item.state === 'reported' && 'reported, not verified',
   ].filter(Boolean);
   return (
     <li data-ask-item={item.id} class="flex min-w-0 items-baseline gap-2 text-sm">
@@ -167,21 +169,21 @@ function ItemRow({
           {item.text}
         </span>
         {tags.length > 0 && <span class="ml-2 text-xs text-fg-faint">{tags.join(' · ')}</span>}
-        {item.evidence && item.state === 'met' && (
+        {item.evidence && (item.state === 'met' || item.state === 'reported') && (
           <span class="block truncate text-xs text-fg-faint" title={item.evidence}>
             {item.evidence}
           </span>
         )}
       </span>
-      {onDone && item.state === 'needs_you' && !item.removed && (
+      {onDone && (item.state === 'needs_you' || item.state === 'reported') && !item.removed && (
         <button
           type="button"
           class={neoSecondaryClass}
           disabled={disabled}
-          aria-label={`Mark done: ${item.text}`}
+          aria-label={`${item.state === 'reported' ? 'Confirm' : 'Mark done'}: ${item.text}`}
           onClick={() => onDone(item.id)}
         >
-          Done
+          {item.state === 'reported' ? 'Confirm' : 'Done'}
         </button>
       )}
     </li>
@@ -243,7 +245,9 @@ export function NeoAskCard({
   const single = steps === 1 ? view.scenes[0] : undefined;
   const needsYouItems = view.settled
     ? []
-    : view.items.filter((item) => item.state === 'needs_you' && !item.removed);
+    : view.items.filter(
+        (item) => (item.state === 'needs_you' || item.state === 'reported') && !item.removed
+      );
   const canApprove =
     !view.settled &&
     !ask.approvedAt &&
