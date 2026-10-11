@@ -3,11 +3,14 @@ import type {
   NeoAsk,
   NeoAskItem,
   NeoAskStatus,
+  NeoAskView as NeoAskSnapshotView,
+  NeoCardView,
   NeoWorkDriverReceipt,
   NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type {
   NeoScene,
+  NeoSceneCards,
   NeoSceneDrivers,
   NeoSceneGroup,
   NeoSceneGroups,
@@ -32,6 +35,7 @@ export type NeoAskView = {
 export type NeoAskOpenTarget = {
   readonly work: NeoWork;
   readonly driver: NeoWorkDriverReceipt | undefined;
+  readonly card?: NeoCardView;
   readonly link: string | null;
 };
 
@@ -97,6 +101,29 @@ export function neoAskItems(ask: NeoAsk): readonly NeoAskItem[] {
   return ask.doneItems ?? [];
 }
 
+export function describeNeoAskFromView(
+  ask: NeoAsk,
+  scenes: readonly NeoScene[],
+  published: NeoAskSnapshotView
+): NeoAskView {
+  const liveIds = new Set(published.workIds);
+  const live = scenes.filter((scene) => liveIds.has(scene.ref.id));
+  const needsYou =
+    !published.settled && (published.needsYou || live.some((scene) => scene.group === 'attention'));
+  return {
+    ask,
+    group: needsYou ? 'attention' : published.group,
+    label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : published.label,
+    settled: published.settled,
+    done: published.done,
+    doneIds: new Set(published.doneWorkIds),
+    total: published.total,
+    scenes: live,
+    summary: published.summary,
+    items: neoAskItems(ask),
+  };
+}
+
 export function describeNeoAsk(
   ask: NeoAsk,
   scenes: readonly NeoScene[],
@@ -141,15 +168,21 @@ export function groupNeoAsks(
   asks: readonly NeoAsk[] | undefined,
   groups: NeoSceneGroups | null,
   prs: NeoScenePrs = new Map(),
-  supersessions?: readonly NeoWorkSupersession[]
+  supersessions?: readonly NeoWorkSupersession[],
+  askViews?: readonly NeoAskSnapshotView[],
+  cards: NeoSceneCards = new Map()
 ): NeoAskGroups {
+  const published = new Map((askViews ?? []).map((view) => [view.askId, view]));
   const all = groups ? [...groups.attention, ...groups.running, ...groups.outcomes] : [];
   const byWork = new Map(
     all.filter((scene) => scene.ref.kind === 'work').map((scene) => [scene.ref.id, scene])
   );
   const owned = new Set<string>();
   const settledWork = new Set<string>();
-  const superseded = neoSupersededAttempts(supersessions);
+  const superseded = new Set([
+    ...neoSupersededAttempts(supersessions),
+    ...[...cards.values()].filter((card) => card.superseded).map((card) => card.workId),
+  ]);
   const views = (asks ?? []).map((ask) => {
     const scenes = ask.workIds.flatMap((id) => {
       const scene = byWork.get(id);
@@ -157,7 +190,10 @@ export function groupNeoAsks(
       owned.add(id);
       return [scene];
     });
-    const view = describeNeoAsk(ask, scenes, prs, superseded);
+    const snapshotView = published.get(ask.id);
+    const view = snapshotView
+      ? describeNeoAskFromView(ask, scenes, snapshotView)
+      : describeNeoAsk(ask, scenes, prs, superseded);
     if (view.settled) for (const scene of scenes) settledWork.add(scene.ref.id);
     return view;
   });
@@ -179,14 +215,16 @@ export function groupNeoAsks(
 
 export function neoAskOpenTarget(
   view: NeoAskView,
-  drivers: NeoSceneDrivers = new Map()
+  drivers: NeoSceneDrivers = new Map(),
+  cards: NeoSceneCards = new Map()
 ): NeoAskOpenTarget | null {
   const reachable = view.scenes.flatMap((scene): NeoAskOpenTarget[] => {
     const work = scene.receipt;
     if (work.kind !== 'work') return [];
     const driver = drivers.get(work.id);
-    const link = work.sessionId ? null : neoWorkDriverLink(driver);
-    return work.sessionId || link ? [{ work, driver, link }] : [];
+    const card = cards.get(work.id);
+    const link = work.sessionId ? null : card ? card.primary.link : neoWorkDriverLink(driver);
+    return work.sessionId || link ? [{ work, driver, card, link }] : [];
   });
   return (
     reachable.findLast((target) => target.work.status === 'queued') ?? reachable.at(-1) ?? null
