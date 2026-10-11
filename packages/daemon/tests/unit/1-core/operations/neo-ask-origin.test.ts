@@ -212,6 +212,18 @@ describe('recorded ask lineage gates', () => {
       evidence({ consultation: review, work })
     );
   });
+
+  test('reads the work behind a continued review id, one id per continue', () => {
+    expect(neoWorkReviewId('w1', 0)).toBe('neo-work:w1:review');
+    expect(neoWorkReviewId('w1', 0, 1)).toBe('neo-work:w1:review:continued:1');
+    expect(neoWorkReviewId('w1', 2, 3)).toBe('neo-work:w1:review:retry:2:continued:3');
+    const f = fixtures();
+    const review = { ...consultation, id: neoWorkReviewId(work.id, 1, 2) };
+    f.consultations.set(review.id, review);
+    expect(readNeoAskEvidence(request(review), f.reads)).toEqual(
+      evidence({ consultation: review, work })
+    );
+  });
   test.each([
     { consultation: null },
     { root: null },

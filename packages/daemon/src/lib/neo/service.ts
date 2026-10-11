@@ -138,7 +138,7 @@ import {
   type NeoPrClaimRow,
 } from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
-import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
+import { planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
@@ -206,6 +206,7 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
+import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -305,7 +306,6 @@ export class NeoService {
   private watching: Promise<unknown> | null = null;
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
-  private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
@@ -676,14 +676,26 @@ export class NeoService {
   }
 
   private recordCardCheck(workId: string, read: boolean, now: number): boolean {
-    const { next, changed } = planNeoCardCheck(this.cardChecks.get(workId), read, now);
-    this.cardChecks.set(workId, next);
+    const prior = this.driverTargets.readCardCheck(workId) ?? undefined;
+    const { next, changed } = planNeoCardCheck(prior, read, now);
+    this.driverTargets.recordCardCheck(workId, next);
     return changed;
   }
 
   uncheckedSince(workId: string): number | null {
-    const check = this.cardChecks.get(workId);
+    const check = this.driverTargets.readCardCheck(workId);
     return check?.unchecked ? check.checkedAt : null;
+  }
+
+  private pruneReadThrottles(now: number): void {
+    const followed = new Set(
+      this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).map((card) => card.workId)
+    );
+    for (const workId of this.followReads.keys())
+      if (!followed.has(workId)) this.followReads.delete(workId);
+    const live = new Set(this.askRecords.listLive().map((ask) => ask.id));
+    for (const askId of this.askEvidenceReads.keys())
+      if (!live.has(askId)) this.askEvidenceReads.delete(askId);
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
@@ -1175,15 +1187,20 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    const works = this.repo.listWork();
-    for (const work of works) {
-      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
-      if (!ref) continue;
+    const cards = this.driverTargets
+      .cardRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
+      .flatMap((card) => {
+        const work = this.repo.getWork(card.workId);
+        return work ? [{ work, ref: card.ref }] : [];
+      });
+    for (const { work, ref } of cards) {
+      if (work.status !== 'queued') continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
       );
     }
-    for (const work of works.filter((item) => item.status === 'reported')) {
+    for (const { work } of cards) {
+      if (work.status !== 'reported') continue;
       await this.followWork(work, Date.now()).catch((error) =>
         this.log.warn('Reported work follow-up pending', error)
       );
@@ -1199,12 +1216,16 @@ export class NeoService {
       } catch (error) {
         this.log.warn('Neo ask ticks pending', error);
       }
-    }
-    for (const ask of this.askRecords.listLive()) {
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    for (const ask of this.askRecords.listLive()) {
+      await this.noteAskStall(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask stall note pending', error)
+      );
+    }
+    this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.watchSessions(Date.now())
       .catch((error) => this.log.warn('Session watch pending', error))
@@ -1429,6 +1450,50 @@ export class NeoService {
     this.announceSessionNoticeGroup(group);
   }
 
+  private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk) => ({
+        cards: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        session: !!this.db.getSession(ask.originSessionId),
+        newer:
+          this.workSupersessions
+            .list(ask.workIds)
+            .flatMap((row) => this.askRecords.forWork(row.supersededBy) ?? [])
+            .find((other) => other.id !== ask.id)?.id ?? null,
+      }),
+      'ask',
+      'read'
+    )
+    .pipe(requireNeoAskStalled, ['ask', 'read', 'now'], 'result:stall')
+    .pipe(
+      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
+      ['ask', 'stall'],
+      'note'
+    )
+    .pipe(
+      (ask: NeoAsk, note: { id: string }) =>
+        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
+      ['ask', 'note'],
+      'result:stall'
+    )
+    .pipe(
+      async (
+        ask: NeoAsk,
+        read: { cards: NeoWork[]; newer: string | null },
+        note: { id: string }
+      ) => {
+        await this.deliver(
+          ask.originSessionId,
+          note.id,
+          neoAskStalledNote(ask, read.cards, read.newer),
+          ask.originSessionId
+        );
+      },
+      ['ask', 'read', 'note']
+    )
+    .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
+
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
     .pipe(
@@ -1531,6 +1596,7 @@ export class NeoService {
     .pipe(
       (refreshed: NeoWorkPrRefreshed, now: number) => ({
         read: neoPackEvidenceOrNone(refreshed.read, refreshed.readable, now),
+        stand: !refreshed.read && !refreshed.readable,
       }),
       ['refreshed', 'now'],
       'planned'
@@ -1539,16 +1605,18 @@ export class NeoService {
       (
         refresh: { work: NeoWork },
         card: NeoWorkPrCard,
-        planned: { read: NeoEvidenceRead | null },
+        planned: { read: NeoEvidenceRead | null; stand: boolean },
         told: NeoWorkTold,
         now: number
       ) =>
-        planned.read && card.goal
-          ? planNeoDoneCheck(planned.read.evidence, told.row, planned.read.read, now, {
-              quietSince: refresh.work.updatedAt,
-              remindable: !card.ask || card.ask.status === 'open',
-            })
-          : 'wait',
+        planned.stand && told.row
+          ? 'unchanged'
+          : planned.read && card.goal
+            ? planNeoDoneCheck(planned.read.evidence, told.row, planned.read.read, now, {
+                quietSince: refresh.work.updatedAt,
+                remindable: !card.ask || card.ask.status === 'open',
+              })
+            : 'wait',
       ['refresh', 'card', 'planned', 'told', 'now'],
       'plan'
     )
