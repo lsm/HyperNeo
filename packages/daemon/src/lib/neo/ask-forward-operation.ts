@@ -165,13 +165,12 @@ export function requireForwardTarget(
       };
 }
 
-export function neoForwardContent(from: string, hop: number, message: string): string {
+export function neoForwardContent(from: string, mayForward: boolean, message: string): string {
   return fillPrompt(NEO_ASK_FORWARDED, {
     from: `“${from}”`,
-    next:
-      hop === 0
-        ? ' If it is not your subject either, forward it to main with neo.ask.forward {"to":"main"}; it can go nowhere else.'
-        : '',
+    next: mayForward
+      ? ' If it is not your subject either, forward it to main with neo.ask.forward {"to":"main"}; it can go nowhere else.'
+      : '',
     message,
   });
 }
@@ -254,7 +253,7 @@ function createForward(runtime: NeoAskForwardRuntime) {
           await runtime.deliver(
             session,
             neoForwardMessageId(ask, target.hop),
-            neoForwardContent(from, target.hop, message),
+            neoForwardContent(from, target.hop === 0 && target.to !== NEO_FORWARD_MAIN, message),
             holder.sessionId,
             ask
           );

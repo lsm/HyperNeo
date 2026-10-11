@@ -150,10 +150,14 @@ describe('neoForwardedText', () => {
 });
 
 describe('neoForwardContent', () => {
-  test('tells the first receiver it may still forward to main, and the last one nothing', () => {
-    expect(neoForwardContent('Garden', 0, 'Fix the pond pump')).toContain('forward it to main');
-    expect(neoForwardContent('Pond', 1, 'Fix the pond pump')).toContain('neo.publication.publish');
-    expect(neoForwardContent('Pond', 1, 'Fix the pond pump')).not.toContain('forward it to main');
+  test('tells a topic receiver it may still forward to main, and main or the last one nothing', () => {
+    expect(neoForwardContent('Garden', true, 'Fix the pond pump')).toContain('forward it to main');
+    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).toContain(
+      'neo.publication.publish'
+    );
+    expect(neoForwardContent('Pond', false, 'Fix the pond pump')).not.toContain(
+      'forward it to main'
+    );
   });
 });
 
@@ -263,6 +267,16 @@ describe('neo.ask.forward', () => {
     });
     expect(forwards).toHaveLength(1);
     expect(delivered).toHaveLength(1);
+  });
+
+  test('a forward straight to main does not tell main to forward again', async () => {
+    const { invoke, delivered } = runtime();
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'main')).toMatchObject({
+      value: { ok: true, hop: 0, to: 'main' },
+    });
+    const content = (delivered[0] as unknown[])[2] as string;
+    expect(content).toContain('neo.publication.publish');
+    expect(content).not.toContain('forward it to main');
   });
 
   test('refuses a topic that does not exist', async () => {
