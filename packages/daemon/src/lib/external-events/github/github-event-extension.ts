@@ -1078,8 +1078,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   async watchSessionRepo(owner: string, repo: string): Promise<void> {
-    const context = this.context;
-    if (!context) return;
     const existing = this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, owner, repo);
     if (!existing?.enabled || !existing.pollingEnabled)
       this.repo.upsertWatchedRepo({
@@ -1090,7 +1088,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         pollingEnabled: true,
         webhookEnabled: false,
       });
-    if (this.getPollIntervalMs() <= 0) return;
+    const context = this.context;
+    if (!context || this.getPollIntervalMs() <= 0) return;
     await this.enablePollingCapability(context);
     this.ensurePollingActive();
   }

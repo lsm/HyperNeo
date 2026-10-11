@@ -82,13 +82,13 @@ describe('watchSessionRepo', () => {
     expect((await config.getGlobalConfig('github')).capabilities.polling).toBe(true);
   });
 
-  test('does nothing before the extension has started', async () => {
-    const db = new BunDatabase(':memory:');
-    createTables(db);
-    runMigrations(db, () => {});
+  test('records the watch before the extension has started, so start polls it', async () => {
+    const db = freshDb();
     extension = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
     await extension.watchSessionRepo('acme', 'widgets');
-    expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE)).toEqual([]);
+    expect(extension.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.repo)).toEqual([
+      'widgets',
+    ]);
   });
 });
 
