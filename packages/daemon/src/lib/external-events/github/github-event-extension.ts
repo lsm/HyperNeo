@@ -2776,9 +2776,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
+            let pageHasNewRows = false;
             for (const row of rows) {
               const rowOccurredAt = checkRunOccurredAt(row);
               if (rowOccurredAt < headWatermark) continue;
+              pageHasNewRows = true;
               headPending = Math.max(headPending, rowOccurredAt);
               const checkRunId = checkRunIdFrom(row);
               if (seenCheckRunIds.has(checkRunId)) continue;
@@ -2845,7 +2847,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             const checkRunEtag = response.headers.get('ETag');
-            if (rows.length < 100) {
+            if (rows.length < 100 || !pageHasNewRows) {
               if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
               break;
             }
