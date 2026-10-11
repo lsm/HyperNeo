@@ -1,5 +1,5 @@
 import { NEO_WAITING_REMINDER } from '@hyperneo/prompts';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoWaitingOnHuman } from '@hyperneo/shared/types/neo-snapshot';
 import { nudgedMessageId } from './ask-origin.ts';
 
 type NeoWaitingAsk = NeoAsk & { remindedAt: number | null };
@@ -21,7 +21,7 @@ export function planNeoWaitingReminders(
   return asks.filter((ask) => ask.updatedAt < askedAt && (ask.remindedAt ?? 0) < ask.updatedAt);
 }
 
-export function neoWaitingOnHuman(asks: readonly NeoAsk[]) {
+export function neoWaitingOnHuman(asks: readonly NeoAsk[]): NeoWaitingOnHuman | undefined {
   return asks.length
     ? {
         note: NEO_WAITING_REMINDER,
