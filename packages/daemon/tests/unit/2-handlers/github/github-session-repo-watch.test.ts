@@ -38,8 +38,9 @@ describe('watchSessionRepo', () => {
       webhookEnabled: false,
     });
     await github.watchSessionRepo('acme', 'widgets');
-    expect(github.repo.listPollingRepos(SESSION_EVENT_SCOPE)).toHaveLength(1);
-    expect(github.repo.listPollingRepos(SESSION_EVENT_SCOPE)[0]?.id).toBe(first?.id);
+    expect(github.repo.listPollingRepos(SESSION_EVENT_SCOPE).map((row) => row.id)).toEqual([
+      first?.id ?? 'missing',
+    ]);
   });
 
   test('does nothing before the extension has started', async () => {
