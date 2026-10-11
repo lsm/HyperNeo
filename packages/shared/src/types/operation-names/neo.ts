@@ -20,6 +20,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.route.correct',
   'neo.rule.save',
   'neo.session.mute',
+  'neo.session.track',
   'neo.snapshot',
   'neo.work.cancel',
   'neo.work.close',

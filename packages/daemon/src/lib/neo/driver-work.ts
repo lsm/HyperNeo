@@ -63,6 +63,7 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
     model: z.string().trim().min(1).max(200).optional(),
   }),
   z.object({ verb: z.literal('send'), ref: WorkRefSchema }),
+  z.object({ verb: z.literal('adopt'), ref: WorkRefSchema }),
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
@@ -120,9 +121,9 @@ export function requireNeoDriverVerb<T>(
 ): { value: T } | { reason: { ok: false; reason: string } } {
   if (!target || !adapters) return { value };
   const id = target.verb === 'start' ? target.adapter : target.ref.adapter;
-  if (adapters.some((item) => item.id === id && item.capabilities.includes(target.verb)))
-    return { value };
-  const able = adapters.filter((item) => item.capabilities.includes(target.verb));
+  const verb = target.verb === 'adopt' ? 'status' : target.verb;
+  if (adapters.some((item) => item.id === id && item.capabilities.includes(verb))) return { value };
+  const able = adapters.filter((item) => item.capabilities.includes(verb));
   return {
     reason: {
       ok: false,
@@ -219,6 +220,11 @@ export function driverStartedReport(ref: WorkRef, link?: string, model?: string)
   const where = link ? ` It opens at ${link}.` : '';
   const runs = model ? ` It runs on ${model}.` : '';
   return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${runs}${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
+}
+
+export function driverAdoptedReport(ref: WorkRef, status: WorkStatus, link?: string): string {
+  const where = link ? ` It opens at ${link}.` : '';
+  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; adopting it sent it nothing. It was ${status} when adopted; the card settles only on what it does next, so judge a session that already finished, failed or stopped against doneWhen now and continue it with neo.work.continue.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {

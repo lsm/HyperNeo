@@ -64,6 +64,7 @@ import mdneoPublishNudge from './neo/publish-nudge.md' with { type: 'text' };
 import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 'text' };
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
+import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
@@ -354,6 +355,7 @@ const registry: Record<string, string> = {
   'neo/recent-conversation.md': mdneoRecentConversation,
   'neo/route-classifier.md': mdneoRouteClassifier,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
+  'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-stalled.md': mdneoAskStalled,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
@@ -534,6 +536,7 @@ export const {
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
   NEO_WAITING_REMINDER,
+  NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
   NEO_ASK_STALLED,
   NEO_HOLDER_CONSULTATION_RETURN,

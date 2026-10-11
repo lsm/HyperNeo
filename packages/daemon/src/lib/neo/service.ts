@@ -1,5 +1,6 @@
 import {
   fillPrompt,
+  NEO_SESSION_TRACK,
   NEO_WORK_DELEGATED,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
@@ -82,6 +83,8 @@ import {
   type DriverSent,
   type NeoDriverTarget,
   readDriverOutcome,
+  driverAdoptedReport,
+  readDriverLive,
   readDriverSendBaseline,
   neoCardSent,
   readDriverSent,
@@ -191,6 +194,7 @@ import {
   type NeoReminderListing,
 } from './waiting-reminders.ts';
 import { type NeoSessionNotice, type NeoSessionNoticeGroup } from './session-watch.ts';
+import { keepNeoTrackedSessions } from './session-track.ts';
 import { neoAskPrKeys, type NeoAskPrs } from './session-ask-links.ts';
 import {
   neoAskEvidenceNote,
@@ -305,6 +309,24 @@ export class NeoService {
 
   get askSessions(): Map<string, NeoAskSessionView[]> {
     return this.sessionWatcher.askSessions;
+  }
+
+  get trackableNotices(): NeoSessionNotice[] {
+    return [
+      ...this.sessionWatcher.sessionNoticeGroups.flatMap((group) => group.notices),
+      ...this.sessionWatcher.sessionNotices,
+    ];
+  }
+
+  get trackedSessions(): Map<string, number> {
+    return new Map(Object.entries(this.db.getGlobalSettings?.().neo?.trackedSessions ?? {}));
+  }
+
+  set trackedSessions(tracked: ReadonlyMap<string, number>) {
+    const neo = this.db.getGlobalSettings().neo;
+    this.db.updateGlobalSettings({
+      neo: { ...neo, trackedSessions: Object.fromEntries(tracked) },
+    });
   }
 
   readonly sessionWatcher: NeoSessionWatcher;
@@ -1076,7 +1098,10 @@ export class NeoService {
       {
         repo: this.repo,
         readDriverRef: (workId: string) => this.driverTargets.readRef(workId),
-        stopDriver: (ref: WorkRef, work: NeoWork) => this.stopDriverWork(ref, work),
+        stopDriver: (ref: WorkRef, work: NeoWork) =>
+          this.driverTargets.get(work.id)?.verb === 'adopt'
+            ? Promise.resolve()
+            : this.stopDriverWork(ref, work),
       },
       id,
       outcome
@@ -1091,6 +1116,7 @@ export class NeoService {
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
+      if (target.verb === 'adopt') return this.adoptDriverWork(work, target.ref);
       this.driverTargets.recordStartInterrupted(work.id);
       await this.failWork(
         work,
@@ -1100,6 +1126,7 @@ export class NeoService {
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
+    if (target.verb === 'adopt') return this.adoptDriverWork(queued, target.ref);
     const call = driverWorkCall(target, queued, this.workDoneGoal(queued.id));
     const probe =
       target.verb === 'send'
@@ -1132,6 +1159,23 @@ export class NeoService {
       return;
     }
     await this.failWork(queued, `Could not start the execution: ${result.failure}`);
+  }
+
+  private async adoptDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
+    const live = readDriverLive(await this.invokeAsCard(work, 'work.status', { ref }));
+    if (!live) {
+      await this.failWork(work, `Could not track the session: ${ref.adapter} did not find it.`);
+      return;
+    }
+    this.driverTargets.recordRef(work.id, ref, Date.now(), live.link);
+    this.driverTargets.recordSent(work.id, null);
+    this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink);
+    const current = this.repo.getWork(work.id);
+    if (current?.status === 'queued')
+      this.repo.transitionWork(work.id, current, {
+        status: 'queued',
+        report: driverAdoptedReport(ref, live.status, live.link),
+      });
   }
 
   retryCard(workId: string): NeoWorkRetryCard {
@@ -1301,7 +1345,17 @@ export class NeoService {
     };
   }
 
-  private followedCardRefs(now: number): WorkRef[] {
+  async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
+    this.trackedSessions = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
+    const content = fillPrompt(NEO_SESSION_TRACK, {
+      title: JSON.stringify(notice.title),
+      ref: JSON.stringify(notice.ref),
+    });
+    await this.deliver(root, `neo-track:${notice.key}:${now}`, content, root);
+    return { ok: true };
+  }
+
+  followedCardRefs(now: number): WorkRef[] {
     return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
       const work = this.repo.getWork(card.workId);
       if (!work) return [];
@@ -1603,7 +1657,8 @@ export class NeoService {
       neoCardSent(this.driverTargets.readSent(workId), this.repo.getWork(workId)),
     readLiveStatus: (workId) => this.driverTargets.readLiveStatus(workId),
     isContinuing: (workId) =>
-      !!this.workContinues.get(workId) || this.driverTargets.get(workId)?.verb === 'send',
+      !!this.workContinues.get(workId) ||
+      ['send', 'adopt'].includes(this.driverTargets.get(workId)?.verb ?? ''),
     readStatus: (work, ref, since) =>
       this.invokeAsCard(work, 'work.status', { ref, ...(since !== null ? { since } : {}) }),
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),

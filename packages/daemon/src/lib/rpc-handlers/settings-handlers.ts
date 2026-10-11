@@ -379,9 +379,10 @@ export function keepNeoOwnedSettings(
     standingRules: _rules,
     preferences: _preferences,
     mutedSessions: _muted,
+    trackedSessions: _tracked,
     ...neo
   } = updates.neo;
-  const { standingRules, preferences, mutedSessions } = current.neo ?? {};
+  const { standingRules, preferences, mutedSessions, trackedSessions } = current.neo ?? {};
   return {
     ...updates,
     neo: {
@@ -389,6 +390,7 @@ export function keepNeoOwnedSettings(
       ...(standingRules ? { standingRules } : {}),
       ...(preferences ? { preferences } : {}),
       ...(mutedSessions ? { mutedSessions } : {}),
+      ...(trackedSessions ? { trackedSessions } : {}),
     },
   };
 }
