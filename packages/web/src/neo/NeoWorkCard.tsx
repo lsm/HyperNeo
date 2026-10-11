@@ -125,7 +125,7 @@ export function NeoWorkCard({
   const active = work.status === 'queued';
   const primary = neoWorkPrimaryAction(work, driver, { waiting, chat: !!onOpen });
   const answering = primary.kind === 'answer' && !primary.link;
-  const meta = neoWorkMeta(work, prs);
+  const meta = neoWorkMeta(work, prs, driver);
   const note =
     work.status === 'proposed'
       ? work.instruction

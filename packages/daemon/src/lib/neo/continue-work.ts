@@ -95,8 +95,8 @@ export function requireNeoWorkStillContinuable(current: {
     : reject(`The message was sent, but this work was ${status} meanwhile; it stays ${status}.`);
 }
 
-export function neoContinuedReport(count: number, message: string): string {
-  return `Continued ${count}/${NEO_WORK_CONTINUE_LIMIT}: ${message.slice(0, 300)}`;
+export function neoContinuedReport(count: number, message: string, pooled = false): string {
+  return `Continued ${count}${pooled ? '' : `/${NEO_WORK_CONTINUE_LIMIT}`}: ${message.slice(0, 300)}`;
 }
 
 export const admitNeoWorkContinue = (superpipe({})('neo.work.continue.admit') as PipelineAPI)
@@ -193,11 +193,16 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
       target: NeoContinueTarget,
       current: { work: NeoWork },
       record: { count: number },
-      message: string
+      message: string,
+      reserved: NeoAskContinueReserve
     ) => ({
-      work: deps.reopen(target.work.id, current.work, neoContinuedReport(record.count, message)),
+      work: deps.reopen(
+        target.work.id,
+        current.work,
+        neoContinuedReport(record.count, message, !!reserved.ask)
+      ),
     }),
-    ['deps', 'target', 'current', 'record', 'message'],
+    ['deps', 'target', 'current', 'record', 'message', 'reserved'],
     'reopened'
   )
   .pipe(

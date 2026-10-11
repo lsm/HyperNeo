@@ -65,6 +65,7 @@ export interface NeoAsk {
   approvedContinues?: number;
   approvedUntil?: number;
   approvedContinueLimit?: number;
+  waitingItem?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;
