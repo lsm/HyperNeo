@@ -84,6 +84,7 @@ import {
 } from './session-watch.ts';
 import {
   findNeoSessionNotice,
+  isNeoAdoptOnlyAsk,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -1183,7 +1184,9 @@ export function createNeoOperations(service: NeoService) {
         const tracked = service.trackedSessions;
         tracked.delete(neoSessionKey(input.work.ref));
         service.trackedSessions = tracked;
-        if (ask.askId) service.askRecords.approve(ask.askId, Date.now());
+        const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
+        if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
+          service.askRecords.approve(owned.id, Date.now());
         await service.start(receipt.work.id);
       },
       ['input', 'ask', 'admission']

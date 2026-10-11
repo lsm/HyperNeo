@@ -6,6 +6,7 @@ import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
+  isNeoAdoptOnlyAsk,
   keepNeoTrackedSessions,
   NEO_SESSION_TRACK_MS,
   requireNeoTrackRoot,
@@ -35,6 +36,14 @@ const notice = (overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => 
   kind: 'failed',
   at: 1,
   ...overrides,
+});
+
+describe('isNeoAdoptOnlyAsk', () => {
+  test('approves an ask only when the adopted card is its only work', () => {
+    expect(isNeoAdoptOnlyAsk({ workIds: ['w1'] }, 'w1')).toBe(true);
+    expect(isNeoAdoptOnlyAsk({ workIds: ['w1', 'w2'] }, 'w1')).toBe(false);
+    expect(isNeoAdoptOnlyAsk({ workIds: ['w2'] }, 'w1')).toBe(false);
+  });
 });
 
 describe('requireNeoTrackRoot', () => {

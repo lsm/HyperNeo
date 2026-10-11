@@ -1,3 +1,4 @@
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoDriverTarget } from './driver-work.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
@@ -5,6 +6,10 @@ import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
 export const NEO_SESSION_TRACK_MS = 60 * 60_000;
 
 type Rejection = { ok: false; reason: string };
+
+export function isNeoAdoptOnlyAsk(ask: Pick<NeoAsk, 'workIds'>, workId: string): boolean {
+  return ask.workIds.length === 1 && ask.workIds[0] === workId;
+}
 
 export function requireNeoTrackRoot(
   root: string | undefined
