@@ -17,7 +17,7 @@ import {
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
 
-export function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
+function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
   if (!briefs.length) return '';
   return [
     `Domain packs carry the field an ask works in. Enabled packs: ${briefs

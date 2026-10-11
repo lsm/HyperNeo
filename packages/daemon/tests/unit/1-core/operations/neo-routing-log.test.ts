@@ -36,6 +36,11 @@ describe('neo.message.send routing log', () => {
   let db: Database;
   let repo: NeoRepository;
   let log: NeoRoutingLogRepository;
+  const logged = (after = 0) =>
+    log
+      .recent(100)
+      .reverse()
+      .filter((row) => row.id > after);
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'neo-routing-log-'));
@@ -82,7 +87,7 @@ describe('neo.message.send routing log', () => {
     await send(root.sessionId, ask(1), 'What is the  Cloudflare\npost about?');
     await send(root.sessionId, ask(1), 'What is the  Cloudflare\npost about?');
     await send(holder.sessionId, ask(2), 'x'.repeat(400));
-    const rows = log.listAfter(0, 10);
+    const rows = logged();
     expect(
       rows.map((row) => [row.messageId, row.destination, row.targetSessionId, row.concernId])
     ).toEqual([
@@ -97,14 +102,14 @@ describe('neo.message.send routing log', () => {
       outcome: null,
     });
     expect(rows[1].ask).toBe('x'.repeat(400));
-    expect(log.listAfter(rows[0].id, 10).map((row) => row.messageId)).toEqual([ask(2)]);
+    expect(logged(rows[0].id).map((row) => row.messageId)).toEqual([ask(2)]);
   });
 
   test('logs an accepted retry whose first log write was lost, and never fails intake', async () => {
     await send(root.sessionId, ask(5), 'first try');
     writer.exec('DELETE FROM neo_routing_log');
     expect(await send(root.sessionId, ask(5), 'first try')).toMatchObject({ value: { ok: true } });
-    expect(log.listAfter(0, 10).map((row) => row.messageId)).toEqual([ask(5)]);
+    expect(logged().map((row) => row.messageId)).toEqual([ask(5)]);
     writer.exec('DROP TABLE neo_routing_log');
     expect(await send(root.sessionId, ask(6), 'still accepted')).toMatchObject({
       value: { ok: true, created: true },
@@ -145,12 +150,12 @@ describe('neo.message.send routing log', () => {
       ...(interim ? { interim } : {}),
     });
     publications.append(reply(1, 'Working on it', true));
-    expect(log.listAfter(0, 10)[0].outcome).toBeNull();
+    expect(logged()[0].outcome).toBeNull();
     publications.append(reply(2, 'It announces Artifacts in open beta.'));
     publications.append(reply(3, 'A later follow-up.'));
     writer.exec(`UPDATE neo_routing_log SET outcome = NULL WHERE message_id = '${ask(3)}'`);
     publications.append(reply(2, 'It announces Artifacts in open beta.'));
-    expect(log.listAfter(0, 10)[0]).toMatchObject({
+    expect(logged()[0]).toMatchObject({
       outcome: 'It announces Artifacts in open beta.',
     });
   });

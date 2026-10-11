@@ -482,7 +482,7 @@ export function adoptOwnedNeoTarget<Input extends OwnedLookupInput>(
 const OWNED_TARGET_HINT =
   'target_owned_context: this session belongs to Neo itself or to Space work with no single owner. To continue Space work, propose with work {verb:"send", ref} using the ref of the task or agent from work.find; snippet session ids are only for work.read.';
 
-export function explainOwnedNeoTarget<T>(
+function explainOwnedNeoTarget<T>(
   gate: { value: T } | { reason: { reason: string } }
 ): { value: T } | { reason: { reason: string } } {
   return 'reason' in gate && gate.reason.reason === 'target_owned_context'
@@ -490,7 +490,7 @@ export function explainOwnedNeoTarget<T>(
     : gate;
 }
 
-export function requireNeoWorkCancellation(
+function requireNeoWorkCancellation(
   work: NeoWork,
   caller: OperationCaller
 ): { value: NeoWork } | { reason: Rejection } {
@@ -534,7 +534,7 @@ export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller
   return requireNeoWorkProposer(work, caller, 'retry');
 }
 
-export function admitNeoCaller(
+function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
   name: string,
@@ -545,8 +545,6 @@ export function admitNeoCaller(
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || !binding || binding.kind === 'worker')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (name === 'neo.concern.consult' && binding.kind !== 'neo')
-    return { reason: { ok: false, reason: 'Only root Neo can consult a context holder.' } };
   if (name === 'neo.rule.save' && binding.kind !== 'neo')
     return { reason: { ok: false, reason: 'Only root Neo can save standing rules.' } };
   if (
@@ -794,40 +792,29 @@ export function createNeoOperations(service: NeoService) {
       ['input', 'admission'],
       'result:admission'
     )
-    .pipe((origin: NeoConsultationOrigin) => origin, 'admission', 'origin')
     .pipe((input: z.infer<typeof Consult>) => service.open(input.concernId), 'input', 'sessionId')
     .pipe(
       (origin: NeoConsultationOrigin, caller: OperationCaller) =>
         requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
-      ['origin', 'caller'],
+      ['admission', 'caller'],
       'result:admission'
     )
     .pipe(
-      (
-        input: z.infer<typeof Consult>,
-        root: NeoConsultationOrigin,
-        sessionId: string,
-        caller: OperationCaller
-      ) => {
-        const live = requireLiveNeoConsultationOrigin(root, caller.neoTurn);
-        if ('reason' in live) return live;
-        const item =
-          service.consultations.find(root.originSessionId, input.requestKey) ??
-          service.consultationWaiters.find(root.originSessionId, input.requestKey) ??
-          service.consultationWaiters.enqueue({
-            ...input,
-            id: crypto.randomUUID(),
-            ...root,
-            sessionId,
-          });
-        return { value: item };
-      },
-      ['input', 'admission', 'sessionId', 'caller'],
-      'result:admission'
+      (input: z.infer<typeof Consult>, root: NeoConsultationOrigin, sessionId: string) =>
+        service.consultations.find(root.originSessionId, input.requestKey) ??
+        service.consultationWaiters.find(root.originSessionId, input.requestKey) ??
+        service.consultationWaiters.enqueue({
+          ...input,
+          id: crypto.randomUUID(),
+          ...root,
+          sessionId,
+        }),
+      ['input', 'admission', 'sessionId'],
+      'item'
     )
     .pipe(
       requireNeoConsultationReceipt,
-      ['input', 'admission', 'origin', 'sessionId'],
+      ['input', 'item', 'admission', 'sessionId'],
       'result:admission'
     )
     .pipe(

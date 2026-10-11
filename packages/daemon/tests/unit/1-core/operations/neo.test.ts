@@ -1402,7 +1402,7 @@ describe('Neo MVP', () => {
     let checks = 0;
     const source: OperationCaller = {
       ...holderInput(root),
-      neoTurn: { messageId: 'ask-B', human: true, isLive: () => ++checks < 3 },
+      neoTurn: { messageId: 'ask-B', human: true, isLive: () => ++checks < 2 },
     };
     expect(
       await invoke(
@@ -1411,7 +1411,7 @@ describe('Neo MVP', () => {
         source
       )
     ).toMatchObject({ value: { ok: false } });
-    expect(checks).toBe(3);
+    expect(checks).toBe(2);
     expect(service.consultationWaiters.queued()).toEqual([]);
     expect(service.consultations.list()).toEqual([]);
     expect(jobs).toEqual([]);

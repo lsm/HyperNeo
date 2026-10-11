@@ -4,12 +4,12 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { NEO_WORK_PR_READ_MS } from './work-prs.ts';
 
-export type NeoWorkBranch = { branch: string; cwd: string };
+type NeoWorkBranch = { branch: string; cwd: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
-export type NeoWorkRepo = { owner: string; repo: string };
+type NeoWorkRepo = { owner: string; repo: string };
 export type NeoWorkRepoReader = (cwd: string) => Promise<NeoWorkRepo | null>;
 
-export const NEO_BRANCH_PR_MAX = 2;
+const NEO_BRANCH_PR_MAX = 2;
 const NEO_BRANCH_PR_READ = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const RepoSchema = z.object({ owner: z.object({ login: z.string() }), name: z.string() });

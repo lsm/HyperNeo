@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_BUILTIN_PACK_BRIEFS } from './index.ts';
 import type { NeoPack } from './types.ts';
 
-export interface NeoPackSkill {
+interface NeoPackSkill {
   name: string;
   description: string;
   body: string;
@@ -71,7 +71,7 @@ export function neoPackIds(entries: readonly string[]): string[] {
   return entries.filter((entry) => PACK_ID.test(entry)).sort();
 }
 
-export function requireNeoPackIdFree(
+function requireNeoPackIdFree(
   id: string,
   reserved: readonly string[]
 ): { value: string } | { reason: string } {

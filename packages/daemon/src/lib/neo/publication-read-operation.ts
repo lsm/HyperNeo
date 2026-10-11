@@ -8,7 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { NeoPublicationSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 
-const Input = z
+export const NeoConversationPageInput = z
   .object({
     conversationId: z.uuid(),
     after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
@@ -17,7 +17,7 @@ const Input = z
   })
   .strict()
   .refine((page) => page.before === undefined || page.after === 0);
-type Page = z.infer<typeof Input>;
+type Page = z.infer<typeof NeoConversationPageInput>;
 type Failure = { ok: false; reason: 'human_only' | 'conversation_not_found' };
 type Gate = { value: Page } | { reason: Failure };
 type Result =
@@ -36,12 +36,18 @@ export function requirePublicationConversation(page: Page, root: NeoBinding | nu
     : { reason: { ok: false, reason: 'conversation_not_found' } };
 }
 
-function readPublicationPage(page: Page, ledger: NeoPublicationRepository): Result {
+export function readNeoConversationPage<T extends { sequence: number }>(
+  page: Page,
+  ledger: {
+    list(conversationId: string, after: number, limit: number, before?: number): T[] | null;
+  },
+  kind: string
+): { ok: true; conversationId: string; items: T[]; nextAfter: number } {
   const items =
     page.before === undefined
       ? ledger.list(page.conversationId, page.after, page.limit)
       : ledger.list(page.conversationId, 0, page.limit, page.before);
-  if (!items) throw new Error('Invalid admitted Neo publication page');
+  if (!items) throw new Error(`Invalid admitted Neo ${kind} page`);
   return {
     ok: true,
     conversationId: page.conversationId,
@@ -55,7 +61,12 @@ const read = (superpipe({})('neo-publication-read') as PipelineAPI)
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
   .pipe((repo: NeoRepository) => repo.getBindingForConcern(null), 'repo', 'root')
   .pipe(requirePublicationConversation, ['page', 'root'], 'result:page')
-  .pipe(readPublicationPage, ['page', 'ledger'], 'page')
+  .pipe(
+    (page: Page, ledger: NeoPublicationRepository) =>
+      readNeoConversationPage(page, ledger, 'publication'),
+    ['page', 'ledger'],
+    'page'
+  )
   .end('page') as (
   page: Page,
   caller: OperationCaller,
@@ -72,7 +83,7 @@ export function createNeoPublicationReadOperation(
     description:
       'Read one bounded ascending page of authored Neo replies and full details for the current public conversation. Use nextAfter for the next page or later updates, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence; this never reads SDK transcripts or starts a query.',
     policy: { safetyClass: 'human_only' },
-    inputSchema: Input,
+    inputSchema: NeoConversationPageInput,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.enum(['human_only', 'conversation_not_found']) }),
       z.object({

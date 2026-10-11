@@ -9,7 +9,7 @@ type Stop = 'pending' | 'legacy' | 'inconsistent';
 type ReturnItem = Pick<NeoConsultation, 'id' | 'status' | 'answer'> &
   Partial<Pick<NeoConsultation, 'sessionId'>>;
 type Gate<T> = { value: T } | { reason: Stop };
-export type NeoConsultationReturn = Stop | { kind: 'published'; publication: NeoPublication };
+type NeoConsultationReturn = Stop | { kind: 'published'; publication: NeoPublication };
 
 export function selectConsultationReturn(
   item: ReturnItem,
