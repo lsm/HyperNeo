@@ -13,9 +13,12 @@ import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
   keepNeoCardPrReads,
+  keepNeoUnbeatenPrs,
   planNeoCardPrOwnership,
+  planNeoPrCedes,
   type NeoCardPrCandidate,
   type NeoCardPrOwned,
+  type NeoPrClaimRow,
 } from './card-pr-claims.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
@@ -40,7 +43,7 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
 export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;
   prCandidates: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<NeoCardPrCandidate[]>;
-  claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace'>;
+  claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace' | 'drop'>;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
@@ -125,6 +128,13 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     ['deps', 'work', 'fetched', 'now']
   )
   .pipe(
+    (deps: NeoCardPrDeps, work: NeoWork, plan: NeoCardPrPlan) => ({
+      owned: keepNeoUnbeatenPrs(work, plan.owned, deps.claims.forUrls(ownedUrls(plan))),
+    }),
+    ['deps', 'work', 'read'],
+    'unbeaten'
+  )
+  .pipe(
     (
       deps: NeoCardPrDeps,
       work: NeoWork,
@@ -150,8 +160,26 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
         },
       };
     },
-    ['deps', 'work', 'current', 'read', 'fetched'],
+    ['deps', 'work', 'current', 'unbeaten', 'fetched'],
     'result:read'
+  )
+  .pipe(
+    (deps: NeoCardPrDeps, work: NeoWork, read: NeoCardPrRead) => ({
+      rows: planNeoPrCedes(work, deps.claims.forUrls(read.row?.prs.map((pr) => pr.url) ?? [])),
+    }),
+    ['deps', 'work', 'read'],
+    'ceded'
+  )
+  .pipe(
+    (deps: NeoCardPrDeps, ceded: { rows: NeoPrClaimRow[] }) => {
+      for (const lost of ceded.rows) {
+        const row = deps.workPrs.get(lost.workId);
+        const prs = row?.prs.filter((pr) => pr.url.toLowerCase() !== lost.urlKey);
+        if (row && prs && prs.length !== row.prs.length) deps.record(lost.workId, prs, row, false);
+        deps.claims.drop(lost.workId, lost.urlKey, lost.claim);
+      }
+    },
+    ['deps', 'ceded']
   )
   .endAsync('read') as (
   deps: NeoCardPrDeps,

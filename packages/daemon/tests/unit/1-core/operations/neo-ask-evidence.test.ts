@@ -231,7 +231,7 @@ describe('readAskEvidence', () => {
     const pack = createCodingPack({
       readPrs: async () => [],
       prCandidates: async () => [],
-      claims: { forUrls: () => [], replace: () => {} },
+      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
       readRefStates: async (refs) => {
         read.push([...refs]);
