@@ -140,15 +140,19 @@ import {
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
+import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
   neoEnabledPacks,
   neoPackBriefs,
+  neoPackAskReportEvidence,
   neoPackChecks,
   neoPackFragment,
+  neoPackReportEvidence,
   neoPacks,
   planNeoPackTicks,
   readNeoAskPackEvidence,
   readNeoPackEvidence,
+  requireNeoEvidenceRefresh,
   requireNeoPackTickable,
 } from './packs/index.ts';
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
@@ -158,7 +162,6 @@ import {
   neoWorkPrEvidence,
   requireNeoWorkPrCurrent,
   requireNeoWorkPrDelivery,
-  requireNeoWorkPrRefresh,
   type NeoWorkPrRefreshSkip,
   readGithubPrs,
   type NeoWorkPrReader,
@@ -202,6 +205,7 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
+import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -242,12 +246,15 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_WORK_REPORT_LIMIT = 12_000;
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
   goal: NeoWorkGoal | null;
   row: NeoWorkPrRow | null;
   session: boolean;
+  packEvidence: boolean;
+  toldAt: number | null;
 };
 type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null };
 type NeoNeedsYouCard = {
@@ -263,6 +270,7 @@ type NeoDoneCheckDelivery = {
   remind?: boolean;
   ask?: NeoAsk | null;
   followedAt?: number;
+  signature?: string;
 };
 type NeoWorkTold = { row: NeoWorkCheckRow | null };
 type NeoDoneCheckCard = {
@@ -436,6 +444,10 @@ export class NeoService {
         await this.deliverDoneCheck(work, goal, found.row, {
           ask: card.ask,
           followedAt: followed ? work.updatedAt : undefined,
+          signature: neoEvidenceSignature([
+            ...neoWorkPrEvidence(found.row?.prs ?? []),
+            ...neoPackReportEvidence(this.packs(), [work]),
+          ]),
         });
         return 'checked' as const;
       },
@@ -483,6 +495,7 @@ export class NeoService {
         runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         readRefStates: (refs) => this.readRefStates(refs),
       }),
+      createLifeAdminPack(),
     ];
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
       hub.event('neo.changed', {})
@@ -911,17 +924,13 @@ export class NeoService {
     const current = this.workPending.get(id);
     if (current) return current;
     const operation = this.startReservedWork(id)
-      .catch((error) => {
+      .catch(async (error) => {
         const work = this.repo.getWork(id);
         if (work?.status === 'queued')
-          this.repo.transitionWork(id, work, {
-            status: 'failed',
-            report:
-              `Could not start the execution: ${error instanceof Error ? error.message : String(error)}`.slice(
-                0,
-                12000
-              ),
-          });
+          await this.failWork(
+            work,
+            `Could not start the execution: ${error instanceof Error ? error.message : String(error)}`
+          ).catch((returnError) => this.log.warn('Returning a failed start failed', returnError));
         throw error;
       })
       .finally(() => this.workPending.delete(id));
@@ -959,12 +968,10 @@ export class NeoService {
       await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
       return;
     }
-    const failed = this.repo.transitionWork(id, work, {
-      status: 'failed',
-      report:
-        'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.',
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(
+      work,
+      'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.'
+    );
   }
 
   async continueWork(id: string, message: string, now = Date.now()): Promise<NeoContinueResult> {
@@ -1046,11 +1053,10 @@ export class NeoService {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
       this.driverTargets.recordStartInterrupted(work.id);
-      const interrupted = this.repo.transitionWork(work.id, work, {
-        status: 'failed',
-        report: `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
-      });
-      if (interrupted) await this.returnReport(interrupted);
+      await this.failWork(
+        work,
+        `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`
+      );
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
@@ -1091,11 +1097,7 @@ export class NeoService {
       });
       return;
     }
-    const failed = this.repo.transitionWork(queued.id, queued, {
-      status: 'failed',
-      report: `Could not start the execution: ${result.failure}`.slice(0, 12000),
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(queued, `Could not start the execution: ${result.failure}`);
   }
 
   retryCard(workId: string): NeoWorkRetryCard {
@@ -1134,20 +1136,20 @@ export class NeoService {
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {
     if (work.status !== 'queued') return;
-    const failed = this.repo.transitionWork(work.id, work, {
-      status: 'failed',
-      report: `The chosen execution chat is no longer available: ${reason}.`,
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(work, `The chosen execution chat is no longer available: ${reason}.`);
   }
 
   private async failErroredTurn(work: NeoWork): Promise<void> {
     if (!work.sessionId) return;
     const failure = this.db.getSDKMessageRepo().getTurnErrorResultSubtype(work.sessionId, work.id);
     if (!failure) return;
+    await this.failWork(work, `The chat stopped with an error before reporting: ${failure}.`);
+  }
+
+  private async failWork(work: NeoWork, report: string): Promise<void> {
     const failed = this.repo.transitionWork(work.id, work, {
       status: 'failed',
-      report: `The chat stopped with an error before reporting: ${failure}.`,
+      report: report.slice(0, NEO_WORK_REPORT_LIMIT),
     });
     if (failed) await this.returnReport(failed);
   }
@@ -1197,7 +1199,7 @@ export class NeoService {
         this.log.warn('Reported work follow-up pending', error)
       );
     }
-    for (const workId of this.workPrs.listOpen()) {
+    for (const workId of this.packEvidenceWorkIds()) {
       await this.refreshWorkPrs(workId, Date.now()).catch((error) =>
         this.log.warn('Work pull request refresh pending', error)
       );
@@ -1214,6 +1216,11 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    for (const ask of this.askRecords.listLive()) {
+      await this.noteAskStall(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask stall note pending', error)
+      );
+    }
     this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.watchSessions(Date.now())
@@ -1222,6 +1229,27 @@ export class NeoService {
         this.watching = null;
       });
     await this.watching;
+  }
+
+  private askPackReadsReport(ask: NeoAsk | null): boolean {
+    return (
+      !!ask?.pack && this.packs().some((pack) => pack.id === ask.pack && !!pack.reportEvidence)
+    );
+  }
+
+  private evidencePacks(ask: NeoAsk | null, hasRow: boolean): NeoPack[] {
+    const packs = this.packs();
+    const named = ask?.pack ? packs.find((pack) => pack.id === ask.pack) : null;
+    if (!named?.readEvidence) return packs;
+    return hasRow ? packs.filter((pack) => pack.readEvidence || pack === named) : [named];
+  }
+
+  private packEvidenceWorkIds(): string[] {
+    const ids = new Set(this.workPrs.listOpen());
+    for (const ask of this.askRecords.listLive()) {
+      if (this.askPackReadsReport(ask)) ask.workIds.forEach((id) => ids.add(id));
+    }
+    return [...ids];
   }
 
   private followedCardRefs(now: number): WorkRef[] {
@@ -1418,6 +1446,50 @@ export class NeoService {
     this.announceSessionNoticeGroup(group);
   }
 
+  private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk) => ({
+        cards: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        session: !!this.db.getSession(ask.originSessionId),
+        newer:
+          this.workSupersessions
+            .list(ask.workIds)
+            .flatMap((row) => this.askRecords.forWork(row.supersededBy) ?? [])
+            .find((other) => other.id !== ask.id)?.id ?? null,
+      }),
+      'ask',
+      'read'
+    )
+    .pipe(requireNeoAskStalled, ['ask', 'read', 'now'], 'result:stall')
+    .pipe(
+      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
+      ['ask', 'stall'],
+      'note'
+    )
+    .pipe(
+      (ask: NeoAsk, note: { id: string }) =>
+        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
+      ['ask', 'note'],
+      'result:stall'
+    )
+    .pipe(
+      async (
+        ask: NeoAsk,
+        read: { cards: NeoWork[]; newer: string | null },
+        note: { id: string }
+      ) => {
+        await this.deliver(
+          ask.originSessionId,
+          note.id,
+          neoAskStalledNote(ask, read.cards, read.newer),
+          ask.originSessionId
+        );
+      },
+      ['ask', 'read', 'note']
+    )
+    .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
+
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
     .pipe(
@@ -1481,6 +1553,8 @@ export class NeoService {
           goal: neoWorkDoneGoal(refresh.work.id, this.workGoals.get(refresh.work.id), ask),
           row: this.workPrs.get(refresh.work.id),
           session: !!this.db.getSession(refresh.work.originSessionId),
+          packEvidence: this.askPackReadsReport(ask),
+          toldAt: this.workChecks.get(refresh.work.id)?.toldAt ?? null,
         };
       },
       'refresh',
@@ -1488,17 +1562,24 @@ export class NeoService {
     )
     .pipe(
       (refresh: { work: NeoWork }, card: NeoWorkPrCard, now: number) =>
-        requireNeoWorkPrRefresh(refresh, card, now, NEO_WORK_CLOSED_DONE),
+        requireNeoEvidenceRefresh(
+          refresh,
+          { ...card, goal: !!card.goal },
+          now,
+          NEO_WORK_CLOSED_DONE
+        ),
       ['refresh', 'card', 'now'],
       'result:refresh'
     )
     .pipe(
-      async (refresh: { work: NeoWork }) => ({
-        read: await readNeoPackEvidence(this.packs(), refresh.work, (id, error) =>
-          this.log.warn(`Neo pack ${id} evidence read failed`, error)
+      async (refresh: { work: NeoWork }, card: NeoWorkPrCard) => ({
+        read: await readNeoPackEvidence(
+          this.evidencePacks(card.ask, !!card.row),
+          refresh.work,
+          (id, error) => this.log.warn(`Neo pack ${id} evidence read failed`, error)
         ),
       }),
-      'refresh',
+      ['refresh', 'card'],
       'refreshed'
     )
     .pipe(
@@ -1550,8 +1631,17 @@ export class NeoService {
                 ready: true,
                 remind: true,
                 followedAt: told.row?.toldAt ?? refresh.work.updatedAt,
+                signature: refreshed.read
+                  ? neoEvidenceSignature(refreshed.read.evidence)
+                  : undefined,
               }
-            : { stale: !refreshed.read?.read.ok, ask: card.ask }
+            : {
+                stale: !refreshed.read?.read.ok,
+                ask: card.ask,
+                signature: refreshed.read
+                  ? neoEvidenceSignature(refreshed.read.evidence)
+                  : undefined,
+              }
         );
       },
       ['refresh', 'card', 'refreshed', 'told']
@@ -1649,7 +1739,7 @@ export class NeoService {
     transition: (work, settled) =>
       this.repo.transitionWork(work.id, work, {
         status: settled.status,
-        report: settled.report.slice(0, 12000),
+        report: settled.report.slice(0, NEO_WORK_REPORT_LIMIT),
       }),
     anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),
@@ -1971,7 +2061,10 @@ export class NeoService {
       ) => ({
         ticks: planNeoPackTicks(
           ask,
-          neoAskPrEvidence(linked.works, linked.rows, linked.claims),
+          [
+            ...neoAskPrEvidence(linked.works, linked.rows, linked.claims),
+            ...neoPackAskReportEvidence(this.packs(), ask, linked.works),
+          ],
           neoPackChecks(this.packs())
         ),
       }),
@@ -2083,14 +2176,17 @@ export class NeoService {
         options: NeoDoneCheckDelivery,
         sent: { at: number }
       ) => {
-        if (!found.row) return;
         const ready = options.ready ?? false;
-        this.workChecks.markTold(
-          work.id,
-          neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
-          sent.at,
-          ready
-        );
+        if (found.row) {
+          this.workChecks.markTold(
+            work.id,
+            options.signature ?? neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
+            sent.at,
+            ready
+          );
+          return;
+        }
+        if (options.signature) this.workChecks.markTold(work.id, options.signature, sent.at, ready);
       },
       ['work', 'found', 'options', 'sent']
     )

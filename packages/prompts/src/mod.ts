@@ -65,6 +65,7 @@ import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
+import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -108,6 +109,9 @@ import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
 import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
 import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: 'text' };
 import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' with {
+  type: 'text',
+};
+import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions.md' with {
   type: 'text',
 };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
@@ -351,6 +355,7 @@ const registry: Record<string, string> = {
   'neo/route-classifier.md': mdneoRouteClassifier,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/ask-evidence.md': mdneoAskEvidence,
+  'neo/ask-stalled.md': mdneoAskStalled,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -377,6 +382,7 @@ const registry: Record<string, string> = {
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
+  'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,
@@ -523,11 +529,13 @@ export const {
   NEO_CONSULTATION_SETTLED_STOPPED,
   NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_PUBLISH_NUDGE,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
   NEO_WAITING_REMINDER,
   NEO_ASK_EVIDENCE,
+  NEO_ASK_STALLED,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,

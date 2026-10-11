@@ -144,6 +144,27 @@ describe('readNeoPrRefUrls', () => {
     expect(asked).toEqual(['7001', '7002']);
   });
 
+  test('waits ten minutes before asking again about a ref GitHub gave no answer for', async () => {
+    let reads = 0;
+    const read = async (): Promise<NeoRefState[]> => {
+      reads++;
+      return [];
+    };
+    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7201 }];
+    let now = 1_000_000;
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(reads).toBe(1);
+      now += 10 * 60_000;
+      await readNeoPrRefUrls(refs, read);
+      expect(reads).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('keeps the answer under the cited ref when the repository was renamed', async () => {
     let reads = 0;
     const read = async (): Promise<NeoRefState[]> => {
@@ -218,12 +239,54 @@ describe('neoAskRefNews', () => {
         },
       ],
     ],
+    [
+      'an issue closed as a duplicate',
+      issue({ done: false, duplicate: true }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'failed',
+          summary: 'closed as a duplicate',
+          blockers: [],
+        },
+      ],
+    ],
   ])('%s', (_label, state, evidence) => {
     expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
 describe('readGithubRefStates', () => {
+  test('reads an issue closed as a duplicate as not done', async () => {
+    const issue = {
+      __typename: 'Issue',
+      url: 'https://github.com/lsm/HyperNeo/issues/9105',
+      state: 'CLOSED',
+      stateReason: 'DUPLICATE',
+      closedAt: '2026-10-10T15:00:00Z',
+      closedByPullRequestsReferences: { nodes: [] },
+    };
+    const spawn = () => ({
+      stdout: new Response(JSON.stringify({ data: { repository: { issueOrPullRequest: issue } } }))
+        .body,
+      stderr: new Response('').body,
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      kill: () => {},
+    });
+    expect(await readGithubRefStates([ref(9105)], spawn as never)).toEqual([
+      {
+        url: issue.url,
+        kind: 'issue',
+        state: 'CLOSED',
+        at: Date.parse(issue.closedAt),
+        done: false,
+        closedBy: null,
+        duplicate: true,
+      },
+    ]);
+  });
+
   test('reads pull requests and issues, keeps a merge, skips non-refs for an hour, retries the rest', async () => {
     const asked: number[] = [];
     const node = (number: number) =>

@@ -900,14 +900,15 @@ describe('SkillsManager', () => {
     }
   });
 
-  test('initializeBuiltins registers all five built-in skills total', () => {
+  test('initializeBuiltins registers all six built-in skills total', () => {
     mgr.initializeBuiltins();
 
     const builtIns = mgr.listSkills().filter((s) => s.builtIn);
-    expect(builtIns).toHaveLength(5);
+    expect(builtIns).toHaveLength(6);
     const names = builtIns.map((s) => s.name);
     expect(names).toContain('fetch-mcp');
     expect(names).toContain('chrome-devtools-mcp');
+    expect(names).toContain('chrome-devtools-user-mcp');
     expect(names).toContain('playwright');
     expect(names).toContain('playwright-interactive');
     expect(names).toContain('space-coordination');

@@ -61,10 +61,11 @@ describe('seedDefaultMcpEntries', () => {
     expect(fetchEntries).toHaveLength(1);
   });
 
-  test('total registry size is exactly 2 after seeding', () => {
+  test('total registry size is exactly 3 after seeding', () => {
     seedDefaultMcpEntries(db);
 
-    expect(repo.list()).toHaveLength(2);
+    expect(repo.list()).toHaveLength(3);
+    expect(repo.getByName('chrome-devtools-user')).toMatchObject({ enabled: false });
   });
 
   test('does not seed the removed Brave Search MCP entry', () => {
