@@ -157,7 +157,7 @@ export function NeoLive() {
     drivers,
     prs
   );
-  const askGroups = groupNeoAsks(view?.asks, scenes, prs);
+  const askGroups = groupNeoAsks(view?.asks, scenes, prs, view?.workSupersessions);
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention' },
     { key: 'running', label: 'In progress' },

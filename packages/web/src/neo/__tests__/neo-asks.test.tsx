@@ -95,7 +95,9 @@ describe('groupNeoAsks', () => {
         work('c1', 'reported'),
       ])
     );
-    const grouped = groupNeoAsks([ask('c', 'achieved', ['c1'])], retried);
+    const grouped = groupNeoAsks([ask('c', 'achieved', ['c1'])], retried, new Map(), [
+      { workId: 'f1', supersededBy: 'f2', supersededAt: 2 },
+    ]);
     expect(grouped.loose.outcomes.map((scene) => scene.ref.id)).toEqual(['f2', 'lone']);
     expect([...grouped.settledWork]).toEqual(['c1']);
   });
@@ -140,7 +142,12 @@ describe('describeNeoAsk', () => {
       { ...work('x2', 'cancelled'), title: 'Same', createdAt: 2 } as Receipt,
       { ...work('x3', 'reported'), title: 'Same', createdAt: 3 } as Receipt,
     ]);
-    const retried = describeNeoAsk(ask('x', 'open', ['x1', 'x2', 'x3']), attempts);
+    const retried = describeNeoAsk(
+      ask('x', 'open', ['x1', 'x2', 'x3']),
+      attempts,
+      new Map(),
+      neoSupersededAttempts([{ workId: 'x1', supersededBy: 'x3', supersededAt: 3 }])
+    );
     expect([retried.done, retried.total, retried.scenes.map((scene) => scene.ref.id)]).toEqual([
       1,
       1,
@@ -175,14 +182,11 @@ describe('neoAskItems', () => {
 });
 
 describe('neoSupersededAttempts', () => {
-  it('names failed cards whose title a later card reuses', () => {
-    const scenes = classifyNeoScenes([
-      { ...work('a', 'failed'), title: 'Audit', createdAt: 1 } as Receipt,
-      { ...work('b', 'failed'), title: 'Audit ', createdAt: 2 } as Receipt,
-      { ...work('c', 'failed'), title: 'Audit', createdAt: 3 } as Receipt,
-      { ...work('d', 'reported'), title: 'Other', createdAt: 0 } as Receipt,
-    ]);
-    expect([...neoSupersededAttempts(scenes)]).toEqual(['a', 'b']);
+  it('names only the cards the daemon linked to a replacement, whatever their titles', () => {
+    expect([
+      ...neoSupersededAttempts([{ workId: 'a', supersededBy: 'c', supersededAt: 3 }]),
+    ]).toEqual(['a']);
+    expect([...neoSupersededAttempts(undefined)]).toEqual([]);
   });
 });
 
