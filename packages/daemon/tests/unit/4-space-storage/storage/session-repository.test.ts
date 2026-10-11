@@ -747,7 +747,10 @@ describe('SessionRepository', () => {
           createDefaultSession({ id, processingState: JSON.stringify(state) })
         );
       expect(repository.markRestartInterruptedTurns()).toBe(1);
-      expect(repository.getSession('busy')?.processingState).toBe('{"status":"interrupted"}');
+      expect(JSON.parse(repository.getSession('busy')?.processingState ?? '{}')).toEqual({
+        status: 'interrupted',
+        messageId: 'm1',
+      });
       for (const id of ['idle', 'queued', 'asking'])
         expect(JSON.parse(repository.getSession(id)?.processingState ?? '{}')).toEqual(
           states[id as keyof typeof states]
