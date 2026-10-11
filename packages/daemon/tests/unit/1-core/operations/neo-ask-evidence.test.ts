@@ -143,6 +143,27 @@ describe('readNeoPrRefUrls', () => {
     ]);
     expect(asked).toEqual(['7001', '7002']);
   });
+
+  test('keeps the answer under the cited ref when the repository was renamed', async () => {
+    let reads = 0;
+    const read = async (): Promise<NeoRefState[]> => {
+      reads++;
+      return [
+        {
+          url: 'https://github.com/lsm/neokai/pull/7101',
+          kind: 'pr',
+          state: 'MERGED',
+          at: 1,
+          done: true,
+          closedBy: null,
+        },
+      ];
+    };
+    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7101 }];
+    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
+    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
+    expect(reads).toBe(1);
+  });
 });
 
 describe('neoAskCardRefs', () => {

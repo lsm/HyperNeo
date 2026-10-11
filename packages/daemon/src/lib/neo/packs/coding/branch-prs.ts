@@ -14,7 +14,8 @@ const NEO_BRANCH_PR_READ = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const RepoSchema = z.object({ owner: z.object({ login: z.string() }), name: z.string() });
 const read = new Map<string, { at: number; urls: string[] }>();
-const repos = new Map<string, NeoWorkRepo>();
+const repos = new Map<string, { at: number; repo: NeoWorkRepo | null }>();
+const NEO_WORK_REPO_MS = 60 * 60_000;
 
 export function neoWorkBranch(
   session: { worktree?: WorktreeMetadata } | null
@@ -35,15 +36,14 @@ export async function readGithubWorkRepo(
   spawnImpl: SpawnFn = spawnProcess
 ): Promise<NeoWorkRepo | null> {
   const cached = repos.get(cwd);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.at < NEO_WORK_REPO_MS) return cached.repo;
   const outcome = await runGhJson(['gh', 'repo', 'view', '--json', 'owner,name'], cwd, spawnImpl, {
     resourceHint: 'graphql',
     stripGHRepo: true,
   });
   const parsed = outcome.ok ? RepoSchema.safeParse(outcome.data) : null;
-  if (!parsed?.success) return null;
-  const repo = { owner: parsed.data.owner.login, repo: parsed.data.name };
-  repos.set(cwd, repo);
+  const repo = parsed?.success ? { owner: parsed.data.owner.login, repo: parsed.data.name } : null;
+  repos.set(cwd, { at: Date.now(), repo });
   return repo;
 }
 

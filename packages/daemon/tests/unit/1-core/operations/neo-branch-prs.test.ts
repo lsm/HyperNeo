@@ -106,4 +106,21 @@ describe('readGithubWorkRepo', () => {
       { args: ['gh', 'repo', 'view', '--json', 'owner,name'], cwd: '/repo/a' },
     ]);
   });
+
+  test('keeps a folder that is not a GitHub repository for an hour too', async () => {
+    let calls = 0;
+    const spawn = () => {
+      calls++;
+      return {
+        stdout: new Response('').body,
+        stderr: new Response('not a git repository').body,
+        exited: Promise.resolve(1),
+        exitCode: 1,
+        kill: () => {},
+      };
+    };
+    expect(await readGithubWorkRepo('/tmp/not-a-repo', spawn as never)).toBe(null);
+    expect(await readGithubWorkRepo('/tmp/not-a-repo', spawn as never)).toBe(null);
+    expect(calls).toBe(1);
+  });
 });

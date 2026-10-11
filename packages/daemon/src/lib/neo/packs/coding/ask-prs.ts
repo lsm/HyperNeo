@@ -117,13 +117,9 @@ export async function readNeoPrRefUrls(
   refs: readonly NeoRef[],
   readStates: NeoRefStateReader
 ): Promise<string[]> {
-  const unknown = refs.filter((ref) => !kinds.has(refKey(ref)));
-  if (unknown.length) {
-    const states = await readStates(unknown);
-    for (const state of states) {
-      const found = neoRefFromUrl(state.url);
-      if (found) kinds.set(refKey(found), state.kind === 'pr' ? state.url : null);
-    }
+  for (const ref of refs.filter((item) => !kinds.has(refKey(item)))) {
+    const [state] = await readStates([ref]);
+    if (state) kinds.set(refKey(ref), state.kind === 'pr' ? state.url : null);
   }
   return refs.flatMap((ref) => kinds.get(refKey(ref)) ?? []);
 }
