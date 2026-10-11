@@ -19,6 +19,8 @@ export type NeoRefState = {
   done: boolean;
   closedBy: string | null;
   duplicate?: true;
+  createdAt?: number | null;
+  parent?: { url: string; at: number | null } | null;
 };
 export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState[]>;
 
@@ -27,7 +29,7 @@ const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
-const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt} ...on Issue{url state stateReason closedAt closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged}}}}}}`;
+const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt} ...on Issue{url state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:5,includeClosedPrs:true){nodes{url merged}}}}}}`;
 const GhRefSchema = z.object({
   data: z.object({
     repository: z.object({
@@ -44,7 +46,12 @@ const GhRefSchema = z.object({
           url: z.string(),
           state: z.enum(['OPEN', 'CLOSED']),
           stateReason: z.string().nullish(),
+          createdAt: z.string().nullish(),
           closedAt: z.string().nullish(),
+          parent: z.object({ url: z.string() }).nullish(),
+          timelineItems: z
+            .object({ nodes: z.array(z.object({ createdAt: z.string().nullish() }).nullable()) })
+            .nullish(),
           closedByPullRequestsReferences: z
             .object({ nodes: z.array(z.object({ url: z.string(), merged: z.boolean() })) })
             .nullish(),
@@ -210,6 +217,13 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
           ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
           closedBy:
             found.closedByPullRequestsReferences?.nodes.find((pr) => pr.merged)?.url ?? null,
+          createdAt: Date.parse(found.createdAt ?? '') || null,
+          parent: found.parent
+            ? {
+                url: found.parent.url,
+                at: Date.parse(found.timelineItems?.nodes.at(-1)?.createdAt ?? '') || null,
+              }
+            : null,
         };
   if (state.kind === 'pr' && state.done) settled.set(key, state);
   return state;

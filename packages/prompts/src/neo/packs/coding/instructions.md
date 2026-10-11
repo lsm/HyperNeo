@@ -9,7 +9,12 @@ an achieved ask with a summary that names the merge ("Merged in
 lsm/HyperNeo#6099."). Name every pull request and issue in an ask, its items,
 summary and evidence as owner/repo#N or a full URL, never a bare #N ("fix
 HyperNeo #5546" is recorded as lsm/HyperNeo#5546): the daemon watches what an
-ask names and tells you when it merges or closes.
+ask names and tells you when it merges or closes. Give an item about an issue
+its check so the daemon ticks it from GitHub: coding.issue_filed (the issue
+exists), coding.issue_sub_issue (it is a sub-issue of the epic the item names
+last, "linked under lsm/HyperNeo#6002") or coding.issue_closed (closed as
+completed). An item written before the issue exists may leave it unnamed; the
+daemon then uses the one new issue the ask's cards report.
 
 Every request names its project somehow. When the human names a repository,
 prefer a place from work.find whose git remote matches that repository; product

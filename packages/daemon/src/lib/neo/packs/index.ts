@@ -178,6 +178,25 @@ export function planNeoPackTicks(
   });
 }
 
+export async function readNeoAskPackTicks(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  works: readonly NeoWork[],
+  warn: (id: string, error: unknown) => void
+): Promise<{ id: string; evidence: string }[]> {
+  const reads = await Promise.all(
+    packs
+      .filter((pack) => !ask.pack || pack.id === ask.pack)
+      .map((pack) =>
+        pack.readAskTicks?.(ask, works).catch((error: unknown) => {
+          warn(pack.id, error);
+          return [];
+        })
+      )
+  );
+  return reads.flatMap((read) => read ?? []);
+}
+
 export async function readNeoAskPackEvidence(
   packs: readonly NeoPack[],
   ask: NeoAsk,

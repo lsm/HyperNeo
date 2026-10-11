@@ -283,6 +283,8 @@ describe('readGithubRefStates', () => {
         done: false,
         closedBy: null,
         duplicate: true,
+        createdAt: null,
+        parent: null,
       },
     ]);
   });
@@ -338,6 +340,8 @@ describe('readGithubRefStates', () => {
         at: Date.parse('2026-10-10T15:00:00Z'),
         done: true,
         closedBy: url(9001),
+        createdAt: null,
+        parent: null,
       },
     ]);
     await readGithubRefStates(refs, spawn as never);

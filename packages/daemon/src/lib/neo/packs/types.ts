@@ -23,6 +23,10 @@ export interface NeoPack extends NeoPackBrief {
   reportEvidence?(work: NeoWork): NeoEvidence[];
   askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
   readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
+  readAskTicks?(
+    ask: NeoAsk,
+    works: readonly NeoWork[]
+  ): Promise<{ id: string; evidence: string }[]>;
   checks?: Record<string, NeoPackCheck>;
   workerMcpServers?: string[];
 }
