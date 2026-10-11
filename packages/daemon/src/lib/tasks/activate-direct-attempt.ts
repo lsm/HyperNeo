@@ -270,17 +270,3 @@ export function activateDirectAttemptAtomically(
     throw error;
   }
 }
-
-export function createDirectAttemptActivator(dependencies: {
-  db: Database;
-  reactiveDb?: ReactiveDatabase;
-}) {
-  return (
-    superpipe({ db: dependencies.db, reactiveDb: dependencies.reactiveDb })(
-      'activate-direct-task-attempt'
-    ) as PipelineAPI
-  )
-    .input('input')
-    .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'input'], 'result')
-    .end('result') as (input: DirectAttemptActivationInput) => DirectAttemptActivationResult;
-}

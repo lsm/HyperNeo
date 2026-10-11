@@ -9,7 +9,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { createDirectKickoffRecorder } from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { recordDirectKickoffAtomically } from '../../../../src/lib/tasks/direct-kickoff-intent';
 import { createDirectKickoffReconciler } from '../../../../src/lib/tasks/reconcile-direct-kickoff';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import { type MailboxEntry } from '../../../../src/lib/mailbox/entry';
@@ -68,7 +68,7 @@ beforeEach(() => {
   attempts = new DirectTaskExecutionRepository(db);
   attempts.select(taskId);
   attempts.claim(taskId, input.attemptId, input.sessionId);
-  const recorded = createDirectKickoffRecorder(db)({
+  const recorded = recordDirectKickoffAtomically(db, {
     ...input,
     message: { type: 'user', message: { content: 'Frozen task prompt' }, parent_tool_use_id: null },
   });
