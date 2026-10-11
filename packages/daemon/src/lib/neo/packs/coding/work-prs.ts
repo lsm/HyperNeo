@@ -108,9 +108,22 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   }));
 }
 
+type NeoPrClaimHold = { workId: string; urlKey: string; claim: string };
+
+export function neoCardDisownsPr(
+  claims: readonly NeoPrClaimHold[],
+  workId: string,
+  url: string
+): boolean {
+  const held = claims.filter((claim) => claim.urlKey === url.toLowerCase());
+  const mine = held.find((claim) => claim.workId === workId);
+  return mine ? mine.claim === 'rejected' : held.some((claim) => claim.claim !== 'rejected');
+}
+
 export function neoAskPrEvidence(
   works: readonly Pick<NeoWork, 'id' | 'status' | 'report'>[],
-  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[]
+  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[],
+  claims: readonly NeoPrClaimHold[] = []
 ): NeoEvidence[] {
   const live = works.filter((work) => work.status !== 'cancelled');
   const tracked = new Set(rows.map((row) => row.workId));
@@ -120,7 +133,11 @@ export function neoAskPrEvidence(
       .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
   );
   const unread = new Set(
-    live.flatMap((work) => extractNeoWorkPrUrls(work.report).filter((url) => !prs.has(url)))
+    live.flatMap((work) =>
+      extractNeoWorkPrUrls(work.report).filter(
+        (url) => !prs.has(url) && !neoCardDisownsPr(claims, work.id, url)
+      )
+    )
   );
   const untracked = live.filter((work) => !tracked.has(work.id));
   const pending = (key: string, summary: string): NeoEvidence => ({

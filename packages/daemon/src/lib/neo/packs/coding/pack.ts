@@ -133,12 +133,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
       fetched: { prs: NeoWorkPr[] | null }
     ) => {
       if (!fetched.prs) return { value: { row: current.row, ok: false } };
-      const { kept, pending, rejected } = keepNeoCardPrReads(
-        work,
-        plan.owned,
-        fetched.prs,
-        current.row?.prs ?? []
-      );
+      const { kept, pending, rejected } = keepNeoCardPrReads(work, plan.owned, fetched.prs);
       deps.claims.replace(work.id, [
         ...kept,
         ...rejected.map((item) => ({ ...item, claim: 'rejected' as const })),

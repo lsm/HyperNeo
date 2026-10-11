@@ -146,10 +146,10 @@ describe('keepNeoCardPrReads', () => {
     expect(urls(sorted.pending)).toEqual([pull(4)]);
   });
 
-  test('a stored PR this read could not fetch stays with the card instead of pending', () => {
-    const sorted = keepNeoCardPrReads(card, [owned(4)], [], [{ url: pull(4) }]);
-    expect(sorted.kept.map((item) => item.url)).toEqual([pull(4)]);
-    expect(sorted.pending).toEqual([]);
+  test('a new mention this read could not fetch stays unclaimed until a read dates it', () => {
+    const sorted = keepNeoCardPrReads(card, [owned(4), owned(1)], [pr(1, 150)]);
+    expect(sorted.kept.map((item) => item.url)).toEqual([pull(1)]);
+    expect(sorted.pending.map((item) => item.url)).toEqual([pull(4)]);
   });
 });
 

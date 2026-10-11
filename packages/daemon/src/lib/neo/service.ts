@@ -128,7 +128,11 @@ import {
   readGithubBranchPrs,
   type NeoBranchPrReader,
 } from './packs/coding/branch-prs.ts';
-import { planNeoCardPrCandidates, type NeoCardPrCandidate } from './packs/coding/card-pr-claims.ts';
+import {
+  planNeoCardPrCandidates,
+  type NeoCardPrCandidate,
+  type NeoPrClaimRow,
+} from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
@@ -145,6 +149,7 @@ import {
 } from './packs/index.ts';
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
+  extractNeoWorkPrUrls,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
@@ -1889,18 +1894,27 @@ export class NeoService {
     .pipe((askId: string) => ({ ask: this.askRecords.get(askId) }), 'askId', 'read')
     .pipe(requireNeoPackTickable, 'read', 'result:ticks')
     .pipe(
-      (ask: NeoAsk) => ({
-        works: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-        rows: this.workPrs.list(ask.workIds),
-      }),
+      (ask: NeoAsk) => {
+        const works = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+        return {
+          works,
+          rows: this.workPrs.list(ask.workIds),
+          claims: this.workPrClaims.forUrls(
+            works.flatMap((work) => extractNeoWorkPrUrls(work.report))
+          ),
+        };
+      },
       'ticks',
       'linked'
     )
     .pipe(
-      (ask: NeoAsk, linked: { works: NeoWork[]; rows: NeoWorkPrRow[] }) => ({
+      (
+        ask: NeoAsk,
+        linked: { works: NeoWork[]; rows: NeoWorkPrRow[]; claims: NeoPrClaimRow[] }
+      ) => ({
         ticks: planNeoPackTicks(
           ask,
-          neoAskPrEvidence(linked.works, linked.rows),
+          neoAskPrEvidence(linked.works, linked.rows, linked.claims),
           neoPackChecks(this.packs())
         ),
       }),

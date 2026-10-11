@@ -369,4 +369,38 @@ describe('readNeoCardPrs', () => {
     });
     expect(failed.calls.failed).toEqual([10 * 60_000]);
   });
+
+  test('keeps a stored PR a partial read missed without claiming it', async () => {
+    const second = 'https://github.com/lsm/HyperNeo/pull/2';
+    const replaced: { url: string; claim: string }[][] = [];
+    const recorded: NeoWorkPr[][] = [];
+    const { deps } = harness(null);
+    const result = await readNeoCardPrs(
+      {
+        ...deps,
+        readPrs: async () => [{ ...open, url: second, createdAt: 50 }],
+        prCandidates: async () => [
+          { url, claim: 'mentioned' as const },
+          { url: second, claim: 'mentioned' as const },
+        ],
+        claims: {
+          forUrls: () => [],
+          replace: (_id: string, claims: readonly { url: string; claim: string }[]) =>
+            replaced.push([...claims]),
+        },
+        record: (_id: string, prs: readonly NeoWorkPr[]) => {
+          recorded.push([...prs]);
+          return { ...stored, prs: [...prs] };
+        },
+      },
+      { ...work, createdAt: 10 } as NeoWork,
+      stored,
+      10 * 60_000
+    );
+    expect(replaced.at(-1)?.map((claim) => [claim.url, claim.claim])).toEqual([
+      [second, 'mentioned'],
+    ]);
+    expect(recorded.at(-1)?.map((pr) => pr.url)).toEqual([second, url]);
+    expect(result.ok).toBe(true);
+  });
 });
