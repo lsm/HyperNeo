@@ -1,4 +1,5 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
@@ -32,10 +33,13 @@ import {
   readNeoStartFolder,
   requireNeoStartFolder,
 } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
+  requireNeoWorkContinuation,
+  requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
@@ -67,6 +71,28 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
+
+describe('requireNeoWorkRetryCaller', () => {
+  test('refuses another Neo session in words about retrying, not continuing', () => {
+    const work = { id: 'w1', originSessionId: 'neo:root' } as NeoWork;
+    const other = { source: 'mcp' as const, sessionId: 'neo:other' };
+    expect(requireNeoWorkRetryCaller(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can retry it.',
+      },
+    });
+    expect(requireNeoWorkContinuation(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can continue it.',
+      },
+    });
+    expect(requireNeoWorkRetryCaller(work, { source: 'mcp', sessionId: 'neo:root' })).toEqual({
+      value: work,
+    });
+  });
+});
 
 describe('requireNeoWorkRetryable', () => {
   test.each<
@@ -268,6 +294,14 @@ describe('withWorkGoal', () => {
       doneWhen: 'd'.repeat(2000),
     });
     expect(longest.length).toBeLessThanOrEqual(20000);
+    const merging = withWorkGoal('i'.repeat(16000), {
+      workId: 'w1',
+      goal: 'g'.repeat(1000),
+      doneWhen: `merged ${'d'.repeat(1993)}`,
+    });
+    expect(merging.length).toBeLessThanOrEqual(20000);
+    expect(merging).toContain('mergeStateStatus,mergeable');
+    expect(merging.endsWith(NEO_WORK_GOAL_REMAINING)).toBe(true);
     expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
       'Build it.'
     );
@@ -315,6 +349,23 @@ describe('driverWorkCaller', () => {
       sessionId: 'neo:root',
       role: 'neo',
     });
+  });
+});
+
+describe('readDriverNeedsYou', () => {
+  test('parses one status reply once, however many readers read it', () => {
+    let statusReads = 0;
+    const status = {
+      get status() {
+        statusReads += 1;
+        return 'needs_you';
+      },
+      lastActivityAt: 7,
+    };
+    const outcome = { kind: 'completed' as const, value: { ok: true, value: status } };
+    expect(readDriverNeedsYou(outcome)).toEqual({ needsYou: true, since: 7, lastReply: undefined });
+    expect(readDriverNeedsYou(outcome)?.needsYou).toBe(true);
+    expect(statusReads).toBe(1);
   });
 });
 
