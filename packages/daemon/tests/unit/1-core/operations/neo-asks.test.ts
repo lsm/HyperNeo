@@ -515,6 +515,19 @@ describe('neo.ask operations', () => {
         decision
       )?.doneItems?.[2]
     ).toMatchObject({ id: 'i3', state: 'needs_you', evidence: 'Two dates fit.' });
+    const taken = { id: askId, status: 'waiting' as const };
+    service.askRecords.reopen(taken);
+    expect(
+      service.askRecords.settle(
+        { id: askId, status: 'open' },
+        'waiting',
+        'Pick again.',
+        'A third date.',
+        'i3',
+        decision
+      )
+    ).toBeNull();
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
   });
 
   test('a decision on a full checklist is refused until Neo makes room for it', async () => {

@@ -242,7 +242,8 @@ export class NeoAskRepository {
     decided = false
   ): NeoAsk | null {
     const now = Date.now();
-    const row = this.db.transaction(() => {
+    const lost = new Error('neo-ask-settle-lost');
+    const settle = this.db.transaction(() => {
       const settled = this.db
         .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
           settled_at = ?, waiting_item = ? WHERE id = ? AND status = ?
@@ -257,19 +258,31 @@ export class NeoAskRepository {
           expected.id,
           expected.status
         ) as NeoAskRow | null;
-      if (settled && decision)
+      if (
+        settled &&
+        decision &&
         this.db
           .prepare(`INSERT INTO neo_ask_items
             (ask_id, id, position, text, state, evidence, decision, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?)`)
-          .run(expected.id, decision.id, decision.position, decision.text, evidence, now, now);
-      else if (settled && decided && waitingItem)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?) ON CONFLICT DO NOTHING`)
+          .run(expected.id, decision.id, decision.position, decision.text, evidence, now, now)
+          .changes === 0
+      )
+        throw lost;
+      if (settled && !decision && decided && waitingItem)
         this.db
           .prepare(`UPDATE neo_ask_items SET decision = 1, updated_at = ?
             WHERE ask_id = ? AND id = ? AND state = 'needs_you'`)
           .run(now, expected.id, waitingItem);
       return settled;
-    })();
+    });
+    let row: NeoAskRow | null;
+    try {
+      row = settle();
+    } catch (error) {
+      if (error !== lost) throw error;
+      return null;
+    }
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
