@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { Session, SessionConfig, SessionMetadata, WorktreeMetadata } from '@hyperneo/shared';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SessionRepository', () => {
   let db: Database;
@@ -733,6 +733,26 @@ describe('SessionRepository', () => {
       expect(cleared?.metadata?.acpContextUsageEstimate).toBeUndefined();
       expect((cleared?.metadata as Record<string, unknown> | undefined)?.preserved).toBe(true);
       expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
+    });
+
+    it('marks only turns still processing at startup as interrupted', () => {
+      const states = {
+        busy: { status: 'processing', messageId: 'm1', phase: 'thinking' },
+        idle: { status: 'idle' },
+        queued: { status: 'queued', messageId: 'm2' },
+        asking: { status: 'waiting_for_input', pendingQuestion: {} },
+      };
+      for (const [id, state] of Object.entries(states))
+        repository.createSession(
+          createDefaultSession({ id, processingState: JSON.stringify(state) })
+        );
+      expect(repository.markRestartInterruptedTurns()).toBe(1);
+      expect(repository.getSession('busy')?.processingState).toBe('{"status":"interrupted"}');
+      for (const id of ['idle', 'queued', 'asking'])
+        expect(JSON.parse(repository.getSession(id)?.processingState ?? '{}')).toEqual(
+          states[id as keyof typeof states]
+        );
+      expect(repository.markRestartInterruptedTurns()).toBe(0);
     });
 
     it('persists updateSession acpSessionId undefined as NULL', () => {

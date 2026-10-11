@@ -187,6 +187,16 @@ export class SessionRepository {
     return row?.total_count ?? 0;
   }
 
+  markRestartInterruptedTurns(): number {
+    return this.db
+      .prepare(
+        `UPDATE sessions SET processing_state = '{"status":"interrupted"}'
+         WHERE json_valid(processing_state)
+           AND json_extract(processing_state, '$.status') = 'processing'`
+      )
+      .run().changes;
+  }
+
   clearAcpSessionIds(): void {
     this.db
       .prepare(
