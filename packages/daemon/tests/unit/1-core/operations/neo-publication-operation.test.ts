@@ -133,7 +133,6 @@ describe('runtime-bound publication operation', () => {
     prompt(ask.sessionId, ask.messageId);
     const resolve = createNeoAskOriginResolver({
       getBinding: (id) => repo.getBindingBySession(id),
-      getRootBinding: () => repo.getBindingForConcern(null),
       getPrompts: (sessionId, messageId) =>
         mailbox.sdkMessageRepo.getStoredPromptsByUuid(sessionId, messageId),
       getStamp: (sessionId, messageId) => stamps.get(`${sessionId}\0${messageId}`) ?? null,

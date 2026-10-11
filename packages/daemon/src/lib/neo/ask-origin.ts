@@ -29,10 +29,6 @@ export function neoAskAnswerMessageId(askId: string, itemId: string, at: number)
   return `neo-ask-answer:${askId}:${itemId}:${at}`;
 }
 
-export function neoAskEvidenceAskId(messageId: string): string | null {
-  return /^neo-ask-evidence:(.+):[0-9a-z]+$/.exec(messageId)?.[1] ?? null;
-}
-
 export function neoWorkParent(
   work: Pick<NeoWork, 'originSessionId' | 'originMessageId'>
 ): NeoAskOrigin | null {
