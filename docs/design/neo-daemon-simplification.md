@@ -28,7 +28,7 @@ Proposal: one pure `neoCardPhase(work, driver, evidence)` that every reader uses
 
 Restarts caused #6356, #6389, #6395, #6396 and #6432 (a rate-limit cooldown never retried). `NeoService` holds 17 in-memory maps and sets. Some drive behaviour or the UI: `cardChecks` feeds "not checked since", which silently resets on restart. Several are never pruned (`cardChecks`, `followReads`, `askEvidenceReads`, `processingStatus`).
 
-Proposal: anything in flight is a persisted row with a resume rule. That covers turns, cooldowns, pending deliveries, reminders and checks. One startup reconciler walks those rows. Memory may only cache what can be rebuilt from the database.
+Proposal: anything in flight is a persisted row with a resume rule. That covers turns, cooldowns, pending deliveries, reminders and checks. Memory may only cache what can be rebuilt from the database. There is no second reconciler. The rows hook into the startup pass `app.ts` already runs, and each owner keeps its own resume rule: the session, the Space runtime and Neo. A generic sweep almost broke the Space workers' `TaskAgentManager` rehydrate in #6433.
 
 ### 4. Finish the pack seam
 
@@ -56,7 +56,7 @@ Proposal: converge on ask → card → note → reply. Once other daemons confir
 
 ### 7. Revisit how ADR 0004 applies here
 
-Every business path is a superpipe pipeline, but each is cast to its final signature with `as PipelineAPI`. So the compiler never checks how stages connect. The rule costs identity stages, `result:` round trips and repeated gates without the type safety. Either the wiring becomes typed, or linear paths may be plain function composition. This is a decision for ADR 0004, not a cleanup.
+Every business path is a superpipe pipeline, but each is cast to its final signature with `as PipelineAPI`. So the compiler never checks how stages connect. The rule costs identity stages, `result:` round trips and repeated gates without the type safety. The gate and `result:` discipline has caught real bugs and stays. The proposal is typed helpers, so that stage inputs and outputs are checked rather than cast. This is a decision for ADR 0004 and `CLAUDE.md`, not a cleanup.
 
 ## Cleanups that change no behaviour
 
@@ -65,8 +65,8 @@ Every business path is a superpipe pipeline, but each is cast to its final signa
 | 1 | Stop writing `neo_work_prs.delivered/delivered_at/reminded`. Nothing reads them since m320 moved delivery to `neo_work_checks`. Drop `markDelivered` and `neoWorkPrSignature`. | `service.ts:2008`, `neo-work-pr-repository.ts:71-79`, `work-prs.ts:83,133` | 35 |
 | 2 | The minute pass loads every `neo_work` row ever stored (`listWork()` has no `WHERE`) and does about six reads per reported card before an age gate drops it. Iterate the bounded `driverTargets.cardRefs(...)` instead, and merge the two `listLive()` loops. | `service.ts:1143-1172` | 10, plus bounded DB work |
 | 3 | Read a card's driver-target row once. Today nine single-column getters cost 3–4 queries per card. | `neo-work-driver-target-repository.ts:59-158` | 60 |
-| 4 | Remove about 30 `hasTable()` guards and the per-query `PRAGMA table_info` probes. Migrations always run first (`database-core.ts:84`). Some migration tests build partial schemas, so run the suite. | 7 work repositories, `neo-ask-repository.ts:46-63,239-317` | 80 |
-| 5 | Parse a driver status reply once per settle tick. Today it is parsed up to five times. | `driver-work.ts:278-301,445-563` | 35 |
+| 4 | Remove about 30 `hasTable()` guards and the per-query `PRAGMA table_info` probes. Migrations always run first (`database-core.ts:84`). Some migration tests build partial schemas, so run the migration shards. | 7 work repositories, `neo-ask-repository.ts:46-63,239-317` | 80 |
+| 5 | Parse a driver status reply once per settle tick and pass the parsed value down; don't write a new parser. Today it is parsed up to five times. Do this after #6417. | `driver-work.ts:278-301,445-563` | 35 |
 | 6 | Ask operations: one shared "owned, live ask" opening stage and one "re-plan status" closing stage. Propose's three back-to-back ask gates become one. | `ask-operations.ts:477-667`, `operations.ts:968-985` | 75 |
 | 7 | One check for where proposed work may run. It is written twice today. | `operations.ts:1030-1079`, `work-target.ts:103-150` | 40 |
 | 8 | The snapshot zod schema re-declares `NeoSnapshot` and has drifted (`waitingOnHuman`, `consultations`). Add `satisfies z.ZodType<NeoSnapshot>` so drift fails the build. | `operations.ts:105-283` | 0–60 |
@@ -74,7 +74,7 @@ Every business path is a superpipe pipeline, but each is cast to its final signa
 | 10 | Extract `NeoSessionWatcher`, which is self-contained and about 200 lines. Build the follow card in one `followCard()`: it is assembled twice today and the copies have already drifted. | `service.ts:280-284,1182-1374` | 200 moved, 20 cut |
 | 11 | Remove repeated liveness checks with nothing in between, identity stages and single-stage pipes. Share one page reader between the publication and conversation-ask read ops. | consult and propose pipelines, `intake.ts`, `response-input.ts`, the two read ops | 130 |
 | 12 | Remove dead or test-only code: the consult branch in `admitNeoCaller`, the never-written `'new'` route destination, `NeoRoutingLogRepository.listAfter`, a dozen exports nothing imports, and `NODE_ENV === 'test'` branches in the router. | see slices | 60 |
-| 13 | Parse GitHub URLs with one `neoRefFromUrl` and one lowercase key. They are parsed three ways today. Use one `gh api graphql` argument builder. | `work-prs.ts`, `ask-prs.ts` | 20 |
+| 13 | Parse GitHub URLs through `lib/github/parse-pr-url.ts` (`parsePrUrl`, `parseGitHubTopic`), with the lowercase key added there. They are parsed three ways in Neo today. Use one `gh api graphql` argument builder. | `work-prs.ts`, `ask-prs.ts`, `lib/github/parse-pr-url.ts` | 20 |
 
 Together these remove roughly 700–900 lines, about 7% of the Neo daemon, with no behaviour change.
 
@@ -101,5 +101,5 @@ These come from reading the code. Each needs a failing test before its fix.
 ## Open questions
 
 1. Item 6: do other daemons (Space, remote) use consultations, holders or concerns?
-2. Item 7: typed superpipe wiring, or plain composition for linear paths?
+2. Item 7: which typed helpers, and does the ADR 0004 amendment also change `CLAUDE.md`?
 3. Item 1: replace the seven snapshot arrays, or add the views alongside them for a release?
