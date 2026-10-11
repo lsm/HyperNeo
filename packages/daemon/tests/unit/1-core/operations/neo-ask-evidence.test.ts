@@ -251,12 +251,87 @@ describe('neoAskRefNews', () => {
         },
       ],
     ],
+    [
+      'an issue created after the ask opened',
+      issue({ state: 'OPEN', at: null, done: false, createdAt: 150 }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'pending',
+          summary: 'created',
+          blockers: [],
+        },
+      ],
+    ],
+    [
+      'an issue linked as a sub-issue after the ask opened',
+      issue({
+        state: 'OPEN',
+        at: null,
+        done: false,
+        createdAt: 150,
+        parent: { url: 'https://github.com/lsm/HyperNeo/issues/6002', at: 180 },
+      }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'pending',
+          summary: 'linked as a sub-issue of https://github.com/lsm/HyperNeo/issues/6002',
+          blockers: [],
+        },
+      ],
+    ],
+    [
+      'an open issue created and linked before the ask opened',
+      issue({
+        state: 'OPEN',
+        at: null,
+        done: false,
+        createdAt: 50,
+        parent: { url: 'https://github.com/lsm/HyperNeo/issues/6002', at: 60 },
+      }),
+      [],
+    ],
   ])('%s', (_label, state, evidence) => {
     expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
 describe('readGithubRefStates', () => {
+  test('reads when an open issue was created and linked under its parent', async () => {
+    const issue = {
+      __typename: 'Issue',
+      url: 'https://github.com/lsm/HyperNeo/issues/9106',
+      state: 'OPEN',
+      stateReason: null,
+      createdAt: '2026-10-10T15:00:00Z',
+      closedAt: null,
+      parent: { url: 'https://github.com/lsm/HyperNeo/issues/6002' },
+      timelineItems: { nodes: [{ createdAt: '2026-10-10T15:05:00Z' }] },
+      closedByPullRequestsReferences: { nodes: [] },
+    };
+    const spawn = () => ({
+      stdout: new Response(JSON.stringify({ data: { repository: { issueOrPullRequest: issue } } }))
+        .body,
+      stderr: new Response('').body,
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      kill: () => {},
+    });
+    expect(await readGithubRefStates([ref(9106)], spawn as never)).toEqual([
+      {
+        url: issue.url,
+        kind: 'issue',
+        state: 'OPEN',
+        at: null,
+        done: false,
+        closedBy: null,
+        createdAt: Date.parse(issue.createdAt),
+        parent: { url: issue.parent.url, at: Date.parse('2026-10-10T15:05:00Z') },
+      },
+    ]);
+  });
+
   test('reads an issue closed as a duplicate as not done', async () => {
     const issue = {
       __typename: 'Issue',
@@ -283,6 +358,8 @@ describe('readGithubRefStates', () => {
         done: false,
         closedBy: null,
         duplicate: true,
+        createdAt: null,
+        parent: null,
       },
     ]);
   });
@@ -338,6 +415,8 @@ describe('readGithubRefStates', () => {
         at: Date.parse('2026-10-10T15:00:00Z'),
         done: true,
         closedBy: url(9001),
+        createdAt: null,
+        parent: null,
       },
     ]);
     await readGithubRefStates(refs, spawn as never);
@@ -363,6 +442,7 @@ describe('readAskEvidence', () => {
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
+      cardReports: () => ['Filed https://github.com/lsm/HyperNeo/issues/6600 under the epic.'],
       readRefStates: async (refs) => {
         read.push([...refs]);
         return [merged(6159, 200), merged(6205, 50)];
@@ -375,7 +455,7 @@ describe('readAskEvidence', () => {
       record: () => null,
     });
     expect(await pack.readAskEvidence!({ ...ask, workIds: ['w1'] })).toEqual([news(6159)]);
-    expect(read).toEqual([[ref(6159), ref(6205), ref(6283)]]);
+    expect(read).toEqual([[ref(6159), ref(6205), ref(6600), ref(6283)]]);
   });
 });
 
