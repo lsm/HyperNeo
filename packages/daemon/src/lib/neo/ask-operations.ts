@@ -407,7 +407,36 @@ export function planNeoAskWorkStops(
   );
 }
 
+export function requireNeoOwnedLiveAsk(read: NeoAsk | Rejection): Gate<NeoAsk> {
+  return 'ok' in read ? { reason: read } : { value: read };
+}
+
 export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
+  const readOwnedLiveAsk = (superpipe({})('neo-ask-owned-live') as PipelineAPI)
+    .input(['askId', 'caller', 'name', 'verb'])
+    .pipe((askId: string) => ({ ask: service.askRecords.get(askId) }), 'askId', 'current')
+    .pipe(
+      (caller: OperationCaller, current: { ask: NeoAsk | null }, name: string) =>
+        admit(caller, name, current.ask?.concernId),
+      ['caller', 'current', 'name'],
+      'result:ask'
+    )
+    .pipe(
+      (current: { ask: NeoAsk | null }, caller: OperationCaller, verb: string) =>
+        requireNeoAskOwner(current.ask, caller, verb),
+      ['current', 'caller', 'verb'],
+      'result:ask'
+    )
+    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'ask', 'result:ask')
+    .end('ask') as (
+    askId: string,
+    caller: OperationCaller,
+    name: string,
+    verb: string
+  ) => NeoAsk | Rejection;
+  const replanAsk = (receipt: AskReceipt) => ({
+    ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, planNeoAskTickStatus(receipt.ask)),
+  });
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -531,23 +560,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
   const tick = (superpipe({})('neo.ask.tick') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Tick>) => ({ ask: service.askRecords.get(input.askId) }),
-      'input',
-      'current'
-    )
-    .pipe(
-      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
-        admit(caller, 'neo.ask.tick', current.ask?.concernId),
-      ['caller', 'current'],
+      (input: z.infer<typeof Tick>, caller: OperationCaller) =>
+        requireNeoOwnedLiveAsk(readOwnedLiveAsk(input.askId, caller, 'neo.ask.tick', 'tick')),
+      ['input', 'caller'],
       'result:admission'
     )
-    .pipe(
-      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
-        requireNeoAskOwner(current.ask, caller, 'tick'),
-      ['current', 'caller'],
-      'result:admission'
-    )
-    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
     .pipe(requireNeoAskTick, ['input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
@@ -567,22 +584,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'ticked'
     )
     .pipe(requireNeoAskWritten, 'ticked', 'result:admission')
-    .pipe(
-      (receipt: AskReceipt) => ({ receipt, plan: planNeoAskTickStatus(receipt.ask) }),
-      'admission',
-      'planned'
-    )
-    .pipe(
-      ({
-        receipt,
-        plan,
-      }: {
-        receipt: AskReceipt;
-        plan: ReturnType<typeof planNeoAskTickStatus>;
-      }) => ({ ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, plan) }),
-      'planned',
-      'written'
-    )
+    .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .end('admission') as (
     input: z.infer<typeof Tick>,
@@ -591,23 +593,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
   const approve = (superpipe({})('neo.ask.approve') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Approve>) => ({ ask: service.askRecords.get(input.askId) }),
-      'input',
-      'current'
-    )
-    .pipe(
-      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
-        admit(caller, 'neo.ask.approve', current.ask?.concernId),
-      ['caller', 'current'],
+      (input: z.infer<typeof Approve>, caller: OperationCaller) =>
+        requireNeoOwnedLiveAsk(readOwnedLiveAsk(input.askId, caller, 'neo.ask.approve', 'approve')),
+      ['input', 'caller'],
       'result:admission'
     )
-    .pipe(
-      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
-        requireNeoAskOwner(current.ask, caller, 'approve'),
-      ['current', 'caller'],
-      'result:admission'
-    )
-    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
     .pipe(
       (ask: NeoAsk) => ({ ask: service.askRecords.approve(ask.id, Date.now()) }),
       'admission',
@@ -621,23 +611,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
   const edit = (superpipe({})('neo.ask.edit') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Edit>) => ({ ask: service.askRecords.get(input.askId) }),
-      'input',
-      'current'
-    )
-    .pipe(
-      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
-        admit(caller, 'neo.ask.edit', current.ask?.concernId),
-      ['caller', 'current'],
+      (input: z.infer<typeof Edit>, caller: OperationCaller) =>
+        requireNeoOwnedLiveAsk(readOwnedLiveAsk(input.askId, caller, 'neo.ask.edit', 'edit')),
+      ['input', 'caller'],
       'result:admission'
     )
-    .pipe(
-      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
-        requireNeoAskOwner(current.ask, caller, 'edit'),
-      ['current', 'caller'],
-      'result:admission'
-    )
-    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
@@ -649,22 +627,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'edited'
     )
     .pipe(requireNeoAskWritten, 'edited', 'result:admission')
-    .pipe(
-      (receipt: AskReceipt) => ({ receipt, plan: planNeoAskTickStatus(receipt.ask) }),
-      'admission',
-      'planned'
-    )
-    .pipe(
-      ({
-        receipt,
-        plan,
-      }: {
-        receipt: AskReceipt;
-        plan: ReturnType<typeof planNeoAskTickStatus>;
-      }) => ({ ask: writeNeoAskTickStatus(service.askRecords, receipt.ask, plan) }),
-      'planned',
-      'written'
-    )
+    .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
     .end('admission') as (
     input: z.infer<typeof Edit>,
