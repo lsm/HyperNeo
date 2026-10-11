@@ -282,6 +282,14 @@ describe('withWorkGoal', () => {
     ).not.toContain('gh pr merge');
   });
 
+  test('tells a session whose done means merging to resolve the threads it addresses', () => {
+    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    expect(withWorkGoal('Fix it.', merged)).toContain('resolveReviewThread');
+    expect(
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+    ).not.toContain('resolveReviewThread');
+  });
+
   test("tells a session whose done means merging to subscribe to its pull request's events", () => {
     const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
     expect(withWorkGoal('Fix it.', merged)).toContain('event.external.subscribe');
