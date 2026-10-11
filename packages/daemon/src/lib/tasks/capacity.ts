@@ -57,6 +57,17 @@ export function readTaskSlotUsage(db: Database, spaceId: string): TaskSlotUsage 
   };
 }
 
+export function guardTaskSlot(
+  db: Database,
+  target: SpaceTaskStatus
+): (current: SpaceTask) => 'space_at_task_capacity' | undefined {
+  return (current) =>
+    claimsTaskSlot(target, current) &&
+    'reason' in requireTaskSlot(current, readTaskSlotUsage(db, current.spaceId))
+      ? 'space_at_task_capacity'
+      : undefined;
+}
+
 export function requireTaskSlot<T>(
   subject: T,
   usage: TaskSlotUsage | null

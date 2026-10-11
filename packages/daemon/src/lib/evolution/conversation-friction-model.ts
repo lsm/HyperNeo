@@ -1,6 +1,6 @@
 import { EVOLUTION_CONVERSATION_FRICTION_PROMPT, fillPrompt } from '@hyperneo/prompts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
-import { runOneShotModel } from '../agent/one-shot-model.ts';
+import { oneShotModelIds, runOneShotModel } from '../agent/one-shot-model.ts';
 import { getAvailableModels } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
@@ -37,12 +37,10 @@ export async function analyzeConversationWithModel(
     string,
     string | undefined
   >;
-  const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
   const raw = await runOneShotModel({
     prompt: buildConversationFrictionPrompt(input),
     provider,
-    model: sdkModelId,
-    thinkingModelId: sdkModelId,
+    ...oneShotModelIds(provider, modelId, providerEnvVars),
     env: await providerService.getIsolatedEnvForModel(provider, modelId),
     separator: '\n',
   });

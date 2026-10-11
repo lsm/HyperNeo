@@ -406,8 +406,16 @@ export async function readGithubPrs(
   const prs: NeoWorkPr[] = [];
   for (const url of urls) {
     const pr = await readGithubPr(url, spawnImpl);
-    if (!pr) return null;
-    prs.push(pr);
+    if (pr) prs.push(pr);
   }
-  return prs;
+  return prs.length || !urls.length ? prs : null;
+}
+
+export function mergeNeoWorkPrReads(
+  urls: readonly string[],
+  read: readonly NeoWorkPr[],
+  stored: readonly NeoWorkPr[] = []
+): NeoWorkPr[] {
+  const same = (url: string) => (pr: NeoWorkPr) => pr.url.toLowerCase() === url.toLowerCase();
+  return [...new Set(urls.flatMap((url) => read.find(same(url)) ?? stored.find(same(url)) ?? []))];
 }

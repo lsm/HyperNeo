@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
+import { awaitsWorkerHandoff } from './transitions.ts';
 
 const inputSchema = z.object({ taskId: z.string().min(1) }).strict();
 type Input = z.infer<typeof inputSchema>;
@@ -22,13 +23,8 @@ function admitHandoff(
   if (caller.source !== 'rpc') return { reason: 'handoff_denied' };
   const task = deps.getTask(input.taskId);
   if (!task) return { reason: 'task_not_found' };
-  if (
-    !task.workflowRunId ||
-    task.status !== 'blocked' ||
-    task.blockReason !== 'agent_handoff_required'
-  ) {
+  if (task.status !== 'blocked' || !awaitsWorkerHandoff(task))
     return { reason: 'handoff_unavailable' };
-  }
   return { value: task };
 }
 

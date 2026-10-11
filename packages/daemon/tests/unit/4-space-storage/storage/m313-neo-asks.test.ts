@@ -60,7 +60,7 @@ describe('NeoAskRepository', () => {
     expect(asks.list('other')).toEqual([]);
   });
 
-  test('settles only from the expected status, and new work reopens a blocked ask', () => {
+  test('settles only from the expected status, and new work reopens a blocked ask without its old summary', () => {
     const db = withWork();
     runMigration313(db);
     runMigration316(db);
@@ -77,14 +77,19 @@ describe('NeoAskRepository', () => {
     expect(asks.settle(opened, 'achieved', 'stale', 'stale')).toBe(null);
 
     asks.link('a1', 'w1');
-    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null, workIds: ['w1'] });
+    expect(asks.get('a1')).toMatchObject({
+      status: 'open',
+      outcome: null,
+      settledAt: null,
+      workIds: ['w1'],
+    });
 
     const waiting = asks.settle(asks.get('a1')!, 'waiting', 'Start it?', 'Offered.')!;
     expect(waiting).toMatchObject({ status: 'waiting', outcome: 'Start it?' });
     asks.reopenForWork('w2');
     expect(asks.get('a1')?.status).toBe('waiting');
     asks.reopenForWork('w1');
-    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null });
+    expect(asks.get('a1')).toMatchObject({ status: 'open', outcome: null, settledAt: null });
   });
 
   test('keeps checklist items with the ask that created them, once', () => {

@@ -1,5 +1,5 @@
 import type { TaskMutationDenial } from './mutation-denial.ts';
-import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
+import type { SpaceTask, SpaceTaskStatus, UpdateSpaceTaskParams } from '@hyperneo/shared';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
@@ -7,6 +7,7 @@ import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
   claimsTaskSlot,
+  guardTaskSlot,
   readTaskSlotUsage,
   requireTaskSlot,
   type TaskSlotUsage,
@@ -17,6 +18,7 @@ import {
   type TaskTransitionExpectation,
 } from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
+import { awaitsWorkerHandoff } from './transitions.ts';
 import { createTransitionTaskOperation } from './transition-operation.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import { admitManagedSubmission, admitSubmission } from './submit-for-review.ts';
@@ -226,7 +228,7 @@ export function requireHandoffBeforeReopen(owned: OwnedTask, input: In): Gate<Ow
   const { task } = owned;
   const reopening =
     input.status === 'in_progress' || (input.status === 'open' && task.status !== 'stopped');
-  return reopening && task.workflowRunId && task.blockReason === 'agent_handoff_required'
+  return reopening && awaitsWorkerHandoff(task)
     ? { reason: { accepted: false, reason: 'handoff_required' } }
     : { value: owned };
 }
@@ -294,8 +296,10 @@ async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promis
 }
 function guardActiveExecution(
   deps: Deps,
-  allowActiveRun: boolean
+  allowActiveRun: boolean,
+  target: SpaceTaskStatus
 ): (current: SpaceTask) => string | undefined {
+  const slot = guardTaskSlot(deps.db, target);
   return (current) => {
     if (new DirectTaskExecutionRepository(deps.db).getActive(current.id)) {
       return 'active_direct_attempt';
@@ -307,7 +311,7 @@ function guardActiveExecution(
     ) {
       return 'active_workflow_run';
     }
-    return undefined;
+    return slot(current);
   };
 }
 export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): Promise<Result> {
@@ -319,7 +323,7 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
       approvalSource,
       expectedStatus: task.status,
       expectedWorkflowRunId: task.workflowRunId ?? null,
-      guardWrite: guardActiveExecution(deps, allowActiveRun),
+      guardWrite: guardActiveExecution(deps, allowActiveRun, input.status),
       onCascadedTasks: async (cascaded) => {
         for (const cascadedTask of cascaded) await emitUpdated(spaceId, cascadedTask, deps);
       },
@@ -328,7 +332,9 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
     return updated;
   } catch (error) {
     if (error instanceof StaleTaskGuardError) {
-      return 'invalid_transition';
+      return error.guardReason === 'space_at_task_capacity'
+        ? 'space_at_task_capacity'
+        : 'invalid_transition';
     }
     throw error;
   }

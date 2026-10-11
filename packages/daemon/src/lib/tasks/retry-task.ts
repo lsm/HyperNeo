@@ -10,10 +10,11 @@ import {
 } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
-import { isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
+import { awaitsWorkerHandoff, isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { isActiveSessionInSpace, resolveSpaceTaskOwner } from './metadata.ts';
 import {
   claimsTaskSlot,
+  guardTaskSlot,
   readTaskSlotUsage,
   requireTaskSlot,
   type TaskSlotUsage,
@@ -32,6 +33,7 @@ export type RetryTaskRejection =
   | 'task_not_found'
   | 'task_not_in_space'
   | 'status_not_retryable'
+  | 'handoff_required'
   | 'retry_denied'
   | 'retry_unavailable'
   | 'space_at_task_capacity'
@@ -72,6 +74,7 @@ export function admitRetrier(
 
 export function routeRetry(task: SpaceTask): { value: RetryPlan } | { reason: Rejection } {
   if (!isRetryableTaskStatus(task.status)) return { reason: 'status_not_retryable' };
+  if (awaitsWorkerHandoff(task)) return { reason: 'handoff_required' };
   return {
     value:
       task.workflowRunId != null ? { task, recoverTo: retryTargetStatus(task.status) } : { task },
@@ -88,12 +91,16 @@ export function readRetrySlotUsage(plan: RetryPlan, db: Database): TaskSlotUsage
 export async function applyRetry(
   plan: RetryPlan,
   input: Input,
-  tasks: RetryTaskDependencies
+  tasks: RetryTaskDependencies,
+  db: Database
 ): Promise<Result> {
   try {
-    return await writeRetry(plan, input, tasks);
+    return await writeRetry(plan, input, tasks, db);
   } catch (error) {
-    if (error instanceof StaleTaskGuardError) return 'invalid_transition';
+    if (error instanceof StaleTaskGuardError)
+      return error.guardReason === 'space_at_task_capacity'
+        ? 'space_at_task_capacity'
+        : 'invalid_transition';
     throw error;
   }
 }
@@ -101,12 +108,14 @@ export async function applyRetry(
 async function writeRetry(
   plan: RetryPlan,
   input: Input,
-  tasks: RetryTaskDependencies
+  tasks: RetryTaskDependencies,
+  db: Database
 ): Promise<Result> {
   if (plan.recoverTo === undefined) {
     return tasks.getTaskManager(plan.task.spaceId).retryTask(plan.task.id, {
       description: input.description,
       expectedStatus: plan.task.status,
+      guardWrite: guardTaskSlot(db, retryTargetStatus(plan.task.status)),
     });
   }
   if (!tasks.recoverWorkflowTask) return 'retry_unavailable';
@@ -124,7 +133,7 @@ async function writeRetry(
 }
 
 const RETRY_TASK_DESCRIPTION =
-  'Retry a Space task that stopped in blocked, cancelled, or done so it runs again — blocked tasks reopen as open, cancelled and done tasks resume as in_progress, and an optional description replaces the task brief for the new attempt. Workflow-backed tasks are handed to the workflow runtime for recovery; every other task is retried directly. RPC and internal callers, and MCP sessions that are active in the owning Space, are admitted; other MCP callers are rejected with retry_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when the task is in any other status, retry_unavailable when the workflow runtime cannot recover it, space_at_task_capacity when a task with no workflow run and no agent session would resume as in_progress while the Space has no free concurrency slot, and invalid_transition when the task changed status before the retry was written. Returns the retried task on success.';
+  'Retry a Space task that stopped in blocked, cancelled, or done so it runs again — blocked tasks reopen as open, cancelled and done tasks resume as in_progress, and an optional description replaces the task brief for the new attempt. Workflow-backed tasks are handed to the workflow runtime for recovery; every other task is retried directly. RPC and internal callers, and MCP sessions that are active in the owning Space, are admitted; other MCP callers are rejected with retry_denied. Rejects task_not_found when the task is absent, task_not_in_space when it is standalone rather than Space-owned, status_not_retryable when the task is in any other status, handoff_required when a workflow task is blocked with agent_handoff_required (hand it to a new worker session through task.workerSession.handoff instead), retry_unavailable when the workflow runtime cannot recover it, space_at_task_capacity when a task with no workflow run and no agent session would resume as in_progress while the Space has no free concurrency slot, and invalid_transition when the task changed status before the retry was written. Returns the retried task on success.';
 
 export function createRetryTaskOperation(
   getDatabase: () => Database,
@@ -137,7 +146,7 @@ export function createRetryTaskOperation(
     .pipe(routeRetry, 'outcome', 'result:outcome')
     .pipe(readRetrySlotUsage, ['outcome', 'db'], 'slots')
     .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
-    .pipe(applyRetry, ['outcome', 'input', 'tasks'], 'outcome')
+    .pipe(applyRetry, ['outcome', 'input', 'tasks', 'db'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({
     name: 'task.retry',
@@ -150,6 +159,7 @@ export function createRetryTaskOperation(
         'task_not_found',
         'task_not_in_space',
         'status_not_retryable',
+        'handoff_required',
         'retry_denied',
         'retry_unavailable',
         'space_at_task_capacity',
