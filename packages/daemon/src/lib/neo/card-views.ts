@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   type NeoAsk,
   type NeoCardAction,
+  type NeoCardOpenTarget,
   type NeoCardPhase,
   type NeoCardPrimary,
   type NeoCardPrSummary,
@@ -32,7 +33,7 @@ type CardIndex = {
   drivers: Map<string, NeoWorkDriverReceipt>;
   prs: Map<string, NeoWorkPr[]>;
   goals: Map<string, NeoWorkGoal>;
-  continues: Map<string, number>;
+  continues: Map<string, NeoWorkContinue>;
   superseded: Set<string>;
   pooled: Set<string>;
 };
@@ -106,6 +107,7 @@ export function neoCardPrSummary(prs: readonly NeoWorkPr[]): NeoCardPrSummary | 
     count: prs.length,
     inProgress: neoCardPrInProgress(prs),
     setback: prs.some((item) => neoWorkPrVerdict(item) === 'failed'),
+    merged: prs.filter((item) => item.state === 'MERGED').map(prNumber),
   };
 }
 
@@ -123,14 +125,37 @@ export function neoCardPrimary(
     driver.status !== 'stopped'
   )
     return { kind: 'close', label: 'Close', link };
+  if (driver && work.status === 'queued' && driver.status === 'needs_you')
+    return {
+      kind: 'answer',
+      label: work.sessionId
+        ? 'Answer in chat'
+        : `Answer in ${shortApps[driver.adapter] ?? driver.adapter}`,
+      link,
+    };
   if (!link || !driver)
     return work.sessionId
       ? { kind: 'chat', label: 'Open chat', link: null }
       : { kind: 'none', label: null, link: null };
   const app = shortApps[driver.adapter] ?? driver.adapter;
-  return work.status === 'queued' && driver.status === 'needs_you'
-    ? { kind: 'answer', label: `Answer in ${app}`, link }
-    : { kind: 'open', label: app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`, link };
+  return { kind: 'open', label: app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`, link };
+}
+
+export function neoCardOpenTarget(
+  work: NeoWork,
+  driver: NeoWorkDriverReceipt | undefined
+): NeoCardOpenTarget {
+  const link = neoCardSessionLink(driver);
+  const local =
+    driver?.adapter === 'hyperneo' && !driver.daemon
+      ? link?.match(/^\/session\/([A-Za-z0-9-]+)$/)?.[1]
+      : undefined;
+  return {
+    link,
+    remoteLink: driver?.remoteLink ?? null,
+    sessionId: work.sessionId ?? local ?? null,
+    daemon: driver?.daemon ?? null,
+  };
 }
 
 export function neoCardActions(work: NeoWork, retryable: boolean): NeoCardAction[] {
@@ -160,7 +185,7 @@ export function indexNeoCardParts(parts: NeoCardViewParts): CardIndex {
     drivers: new Map(parts.drivers.map((driver) => [driver.workId, driver])),
     prs: new Map(parts.prs.map((receipt) => [receipt.workId, receipt.prs])),
     goals: new Map(parts.goals.map((goal) => [goal.workId, goal])),
-    continues: new Map(parts.continues.map((row) => [row.workId, row.count])),
+    continues: new Map(parts.continues.map((row) => [row.workId, row])),
     superseded: new Set(parts.supersessions.map((row) => row.workId)),
     pooled: new Set(parts.asks.filter((ask) => ask.pooled).flatMap((ask) => ask.workIds)),
   };
@@ -186,10 +211,12 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
     primary: neoCardPrimary(work, driver),
     actions: neoCardActions(work, retryable),
     adapter: driver?.adapter ?? null,
+    open: neoCardOpenTarget(work, driver),
     pr,
     goal: goal?.goal ?? null,
     doneWhen: goal?.doneWhen ?? null,
-    continued: index.continues.get(work.id) ?? 0,
+    continued: index.continues.get(work.id)?.count ?? 0,
+    continuedMessage: index.continues.get(work.id)?.lastMessage ?? null,
     pooled: index.pooled.has(work.id),
     superseded: index.superseded.has(work.id),
     uncheckedSince: driver?.uncheckedSince ?? null,
