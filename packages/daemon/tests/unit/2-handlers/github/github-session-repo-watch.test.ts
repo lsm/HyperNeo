@@ -65,6 +65,23 @@ describe('watchSessionRepo', () => {
     ]);
   });
 
+  test('watching an already watched repo turns polling back on if it was switched off', async () => {
+    const db = freshDb();
+    const created = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 60_000 });
+    extension = created;
+    const config = new ExternalEventExtensionConfigStore(db);
+    await created.start({
+      publisher: { publish: async (event) => ({ outcome: 'published', eventId: event.id }) },
+      config,
+      onSourceConfigChanged() {},
+    });
+    await created.watchSessionRepo('acme', 'widgets');
+    const global = await config.getGlobalConfig('github');
+    await config.setGlobalConfig('github', { ...global, capabilities: { polling: false } });
+    await created.watchSessionRepo('acme', 'widgets');
+    expect((await config.getGlobalConfig('github')).capabilities.polling).toBe(true);
+  });
+
   test('does nothing before the extension has started', async () => {
     const db = new BunDatabase(':memory:');
     createTables(db);
