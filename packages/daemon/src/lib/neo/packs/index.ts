@@ -147,6 +147,14 @@ export async function readNeoPackEvidence(
   );
 }
 
+export function neoPackEvidenceOrNone(
+  read: NeoEvidenceRead | null,
+  failed: boolean,
+  now: number
+): NeoEvidenceRead | null {
+  return read ?? (failed ? null : { evidence: [], read: { ok: true, okAt: now } });
+}
+
 export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPackCheck> {
   return Object.assign({}, ...[...packs].reverse().map((pack) => pack.checks ?? {}));
 }

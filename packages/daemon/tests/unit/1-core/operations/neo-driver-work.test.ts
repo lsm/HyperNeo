@@ -1278,6 +1278,115 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('without the coding pack enabled, a card already told is not told again', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/10';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: [] } });
+    fileUnderAsk(service);
+    service.workGoals.record('work-1', 'Fix it', '- merged to dev');
+    service.readPrs = async () => [{ url, state: 'OPEN', checks: 'passing', review: 'approved' }];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      const told = notes.filter((id) => id.includes('done-check'));
+      expect(told).toHaveLength(1);
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(told);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
+  test('without the coding pack enabled, a card waiting on its PR still gets its done check', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/8';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: [] } });
+    fileUnderAsk(service);
+    service.workGoals.record('work-1', 'Fix it', '- merged to dev');
+    service.readPrs = async () => [{ url, state: 'OPEN', checks: 'pending', review: 'none' }];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0:pr:1']);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
+  test('with only a pack that cannot read PRs enabled, a card waiting on its PR still gets its done check', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/8';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
+    fileUnderAsk(service);
+    service.workGoals.record('work-1', 'Fix it', '- merged to dev');
+    service.readPrs = async () => [{ url, state: 'OPEN', checks: 'pending', review: 'none' }];
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      now += 3 * 60_000;
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0:pr:1']);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('a life-admin confirmation ticks the ask item that names it', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const reply: unknown = {

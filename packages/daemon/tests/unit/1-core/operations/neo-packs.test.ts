@@ -15,6 +15,7 @@ import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/ca
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
+  neoPackEvidenceOrNone,
   neoPackBriefs,
   neoPackAskReportEvidence,
   neoPackChecks,
@@ -576,5 +577,17 @@ describe('requireNeoEvidenceRefresh', () => {
     expect(requireNeoEvidenceRefresh(current, card as never, 20 * 60_000, 'closed: done')).toEqual(
       gate
     );
+  });
+});
+
+describe('neoPackEvidenceOrNone', () => {
+  test('stands in an empty read unless a pack failed to read the card', () => {
+    const read = { evidence: [], read: { ok: false, okAt: 1 } };
+    expect(neoPackEvidenceOrNone(read, true, 50)).toBe(read);
+    expect(neoPackEvidenceOrNone(null, true, 50)).toBe(null);
+    expect(neoPackEvidenceOrNone(null, false, 50)).toEqual({
+      evidence: [],
+      read: { ok: true, okAt: 50 },
+    });
   });
 });
