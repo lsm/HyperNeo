@@ -169,6 +169,7 @@ describe('StateProjectionService', () => {
       expect(result.version).toBe(daemonPackageJson.version);
       expect(result.health.version).toBe(BUILD_METADATA.version);
       expect(result.claudeSDKVersion).toBe(BUILD_METADATA.claudeSdkVersion);
+      expect(result.commit).toBe(BUILD_METADATA.commit);
       expect(result.claudeSDKVersion).toBe(
         daemonPackageJson.dependencies['@anthropic-ai/claude-agent-sdk']
       );
