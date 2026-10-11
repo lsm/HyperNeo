@@ -325,3 +325,66 @@ describe.skipIf(!isBun)(
     });
   }
 );
+
+describe.skipIf(!isBun)('openai-chat-bridge: a silent upstream', () => {
+  let server: OpenAIChatBridgeServer | undefined;
+
+  afterEach(() => {
+    server?.stop();
+    server = undefined;
+  });
+
+  async function makeSilentServer(upstream: typeof fetch): Promise<OpenAIChatBridgeServer> {
+    return await createOpenAIChatBridgeServer({
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'test-key',
+      fetchImpl: upstream,
+      upstreamSilenceMs: 50,
+    });
+  }
+
+  it('returns a retryable overloaded error when upstream never answers', async () => {
+    let upstreamSignal: AbortSignal | undefined;
+    server = await makeSilentServer(
+      (_url, init) =>
+        new Promise<Response>(() => {
+          upstreamSignal = init?.signal ?? undefined;
+        })
+    );
+
+    const res = await postMessages(server.port);
+
+    expect(res.status).toBe(529);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+    expect(((await res.json()) as { error: { type: string } }).error.type).toBe('overloaded_error');
+    expect(upstreamSignal?.aborted).toBe(true);
+  });
+
+  it('ends a stream that goes silent with an overloaded error event', async () => {
+    let cancelled = false;
+    server = await makeSilentServer(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+              );
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } }
+        )
+    );
+
+    const res = await postMessages(server.port);
+    const events = await readSSEEventTypes(res.body);
+
+    const error = events.find((entry) => entry.event === 'error');
+    expect((error?.data.error as { type?: string } | undefined)?.type).toBe('overloaded_error');
+    expect(events.at(-1)?.event).toBe('message_stop');
+    expect(cancelled).toBe(true);
+  });
+});

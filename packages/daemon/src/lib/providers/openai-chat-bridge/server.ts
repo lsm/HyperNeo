@@ -64,7 +64,25 @@ export type OpenAIChatBridgeConfig = {
   streamUsageSupported?: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
   thinkingOffEffort?: ThinkingOffEffort;
+  upstreamSilenceMs?: number;
 };
+
+const UPSTREAM_SILENCE_MS = 120_000;
+
+class UpstreamSilenceError extends Error {
+  constructor(ms: number) {
+    super(`Upstream sent nothing for ${Math.round(ms / 1000)}s`);
+    this.name = 'UpstreamSilenceError';
+  }
+}
+
+function within<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const silence = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new UpstreamSilenceError(ms)), ms);
+  });
+  return Promise.race([pending, silence]).finally(() => clearTimeout(timer));
+}
 
 type OpenAIChatTextPart = { type: 'text'; text: string };
 type OpenAIChatImagePart = {
@@ -403,13 +421,17 @@ function joinSseDataLines(block: string): string | null {
 }
 
 async function* readChatStream(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
+  silenceMs: number
 ): AsyncGenerator<OpenAIChatStreamChunk> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await within(reader.read(), silenceMs).catch((error: unknown) => {
+      void reader.cancel().catch(() => undefined);
+      throw error;
+    });
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const blocks = buffer.split(/\r?\n\r?\n/);
@@ -475,8 +497,10 @@ async function streamChatToAnthropic(params: {
   model: string;
   inputTokens: number;
   modelContextWindow?: number;
+  upstreamSilenceMs?: number;
 }): Promise<void> {
   const { upstreamResponse, controller, model, inputTokens, modelContextWindow } = params;
+  const silenceMs = params.upstreamSilenceMs ?? UPSTREAM_SILENCE_MS;
   const encoder = new TextEncoder();
   const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
   const messageId = genMessageId();
@@ -550,7 +574,7 @@ async function streamChatToAnthropic(params: {
     if (!upstreamResponse.body) throw new Error('Upstream returned empty stream body');
 
     let sawAnyChunk = false;
-    for await (const chunk of readChatStream(upstreamResponse.body)) {
+    for await (const chunk of readChatStream(upstreamResponse.body, silenceMs)) {
       sawAnyChunk = true;
       const errorBody = chatChunkErrorBody(chunk);
       if (errorBody) {
@@ -660,7 +684,9 @@ async function streamChatToAnthropic(params: {
     const normalized = upstreamErrorBody
       ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
       : undefined;
-    const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
+    const errorType: AnthropicErrorType =
+      normalized?.type ??
+      (error instanceof UpstreamSilenceError ? 'overloaded_error' : 'api_error');
     try {
       ensureStarted();
       closeThinkingBlock();
@@ -691,6 +717,7 @@ export async function createOpenAIChatBridgeServer(
   const chatTemplateKwargs = config.chatTemplateKwargs;
   const thinkingOffEffort = config.thinkingOffEffort;
   const modelContextWindow = config.modelContextWindow;
+  const upstreamSilenceMs = config.upstreamSilenceMs ?? UPSTREAM_SILENCE_MS;
 
   const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
   const sessionTokenPrefix = `Bearer ${config.sessionTokenPrefix ?? 'custom-endpoint'}:`;
@@ -780,18 +807,30 @@ export async function createOpenAIChatBridgeServer(
       }
       let upstreamResponse: Response;
       try {
-        upstreamResponse = await fetchImpl(chatCompletionsUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-            ...config.headers,
-            ...config.sessionHeaders?.(sessionId),
-          },
-          body: JSON.stringify(chatRequest),
-          signal: upstreamAbort.signal,
-        });
+        upstreamResponse = await within(
+          fetchImpl(chatCompletionsUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+              ...config.headers,
+              ...config.sessionHeaders?.(sessionId),
+            },
+            body: JSON.stringify(chatRequest),
+            signal: upstreamAbort.signal,
+          }),
+          upstreamSilenceMs
+        );
       } catch (error) {
+        if (error instanceof UpstreamSilenceError) {
+          upstreamAbort.abort();
+          logger.warn(`openai-chat-bridge: ${error.message}; returning a retryable error`);
+          return sendRetryableUpstreamError({
+            type: 'overloaded_error',
+            status: 529,
+            message: error.message,
+          });
+        }
         return sendJsonError(
           502,
           'api_error',
@@ -840,6 +879,7 @@ export async function createOpenAIChatBridgeServer(
             controller,
             model: body.model,
             inputTokens,
+            upstreamSilenceMs,
             ...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
           });
         },
