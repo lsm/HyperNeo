@@ -16,6 +16,7 @@ import {
   planNeoAskItems,
   planNeoAskEdit,
   planNeoAskTickStatus,
+  requireNeoAskDecisionRoom,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -529,6 +530,20 @@ describe('neo.ask operations', () => {
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('checklist_full') },
     });
+    const settledBefore = {
+      ...service.askRecords.get(askId)!,
+      status: 'waiting' as const,
+      outcome: waiting.summary,
+      evidence: waiting.evidence,
+    };
+    expect(
+      requireNeoAskDecisionRoom(
+        { ...waiting, outcome: 'waiting' } as const,
+        settledBefore,
+        neo,
+        false
+      )
+    ).toEqual({ value: settledBefore });
     await invoke('neo.ask.edit', { askId, remove: ['i3'] });
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } },

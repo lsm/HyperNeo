@@ -387,6 +387,7 @@ export function requireNeoAskDecisionRoom(
   return caller.source === 'mcp' &&
     (input.outcome === 'waiting' || input.outcome === 'blocked') &&
     !offered &&
+    !isNeoAskReplay(ask, input) &&
     active.length >= 12 &&
     !active.some((item) => item.state === 'needs_you')
     ? {

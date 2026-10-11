@@ -1,4 +1,4 @@
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
 type NeoAskResume = { ask: NeoAsk; items: string[]; reopen: boolean };
@@ -8,10 +8,11 @@ export function planNeoAskResume(
   siblingsWaiting: boolean
 ): NeoAskResume | null {
   if (!ask || isNeoAskSettled(ask) || siblingsWaiting) return null;
-  const items = (ask.doneItems ?? [])
-    .filter((item) => !item.removed && item.state === 'needs_you')
-    .map((item) => item.id);
-  const reopen = ask.status === 'waiting' || ask.status === 'blocked';
+  const decided = (item: NeoAskItem) =>
+    item.id === ask.waitingItem && ask.evidence != null && item.evidence === ask.evidence;
+  const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
+  const items = open.filter((item) => !decided(item)).map((item) => item.id);
+  const reopen = (ask.status === 'waiting' || ask.status === 'blocked') && !open.some(decided);
   return items.length || reopen ? { ask, items, reopen } : null;
 }
 

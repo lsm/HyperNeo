@@ -27,6 +27,31 @@ describe('planNeoAskResume', () => {
       { ...ask, status: 'blocked', doneItems: [] },
       { ask: { ...ask, status: 'blocked', doneItems: [] }, items: [], reopen: true },
     ],
+    [
+      'a decision the ask was settled waiting on stays',
+      {
+        ...ask,
+        waitingItem: 'i4',
+        evidence: 'Nobody owns #6545.',
+        doneItems: [
+          item('i1', 'needs_you'),
+          { ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' },
+        ],
+      },
+      {
+        ask: {
+          ...ask,
+          waitingItem: 'i4',
+          evidence: 'Nobody owns #6545.',
+          doneItems: [
+            item('i1', 'needs_you'),
+            { ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' },
+          ],
+        },
+        items: ['i1'],
+        reopen: false,
+      },
+    ],
     ['an open ask with nothing to undo', { ...ask, status: 'open', doneItems: [] }, null],
     ['a settled ask', { ...ask, status: 'achieved' }, null],
     ['a card with no ask', null, null],
