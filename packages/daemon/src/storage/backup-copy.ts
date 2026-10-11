@@ -1,4 +1,5 @@
-import { closeSync, fsyncSync, openSync, readSync, statfsSync, writeSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { closeSync, fsyncSync, openSync, readSync, writeSync } from 'node:fs';
 
 export const STREAM_COPY_MIN_BYTES = 1024 ** 3;
 export const STREAM_COPY_KEEP_MAX = 3;
@@ -23,7 +24,9 @@ export function shouldRotateStreamBackups(progress: {
 }
 
 export function freeBytesAt(path: string): number {
-  const stats = statfsSync(path);
+  const statfs = (fs as { statfsSync?: typeof fs.statfsSync }).statfsSync;
+  if (typeof statfs !== 'function') return Number.POSITIVE_INFINITY;
+  const stats = statfs(path);
   return Number(stats.bavail) * Number(stats.bsize);
 }
 
