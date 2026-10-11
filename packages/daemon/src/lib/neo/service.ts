@@ -68,6 +68,8 @@ import { planNeoConsultationReturn } from './consultation-return-route.ts';
 import {
   NEO_PUBLISH_NUDGE,
   type NeoDirectReplyRuntime,
+  neoIdleReplySessions,
+  neoSessionStatus,
   publishNeoDirectReplyFallback,
 } from './direct-reply-fallback.ts';
 import {
@@ -205,6 +207,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
@@ -468,6 +471,7 @@ export class NeoService {
     work: NeoWork,
     followed: boolean
   ) => Promise<'checked' | NeoDoneCheckSkip>;
+  private readonly directReplies: NeoDirectReplyRuntime;
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly reminderListings = new Map<string, NeoReminderListing>();
@@ -488,6 +492,7 @@ export class NeoService {
       db,
       rootSessionId: () => this.repo.getBindingForConcern(null)?.sessionId,
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
+      seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
       log: this.log,
       registry: () => this.sessions.getOperationRegistry(),
@@ -635,6 +640,7 @@ export class NeoService {
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
     };
+    this.directReplies = directReplies;
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState }) => {
@@ -870,6 +876,24 @@ export class NeoService {
     this.interruptedSessions.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
+  }
+
+  private resumeDirectReplies(): void {
+    const bindings = [this.repo.getBindingForConcern(null), ...this.repo.listConcernBindings()];
+    const idle = neoIdleReplySessions(bindings, (id) =>
+      neoSessionStatus(this.db.getSession(id)?.processingState)
+    );
+    for (const sessionId of idle) {
+      this.processingStatus.set(sessionId, 'idle');
+      try {
+        publishNeoDirectReplyFallback(sessionId, this.directReplies, {
+          settled: false,
+          interrupted: true,
+        });
+      } catch (error) {
+        this.log.warn('Direct reply recovery pending', error);
+      }
+    }
   }
 
   private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
@@ -1159,6 +1183,7 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
+    this.resumeDirectReplies();
     await this.recoverConsultations();
     for (const work of this.repo.listWork()) {
       try {
