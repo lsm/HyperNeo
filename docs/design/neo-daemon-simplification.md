@@ -16,7 +16,7 @@ Five slices were reviewed separately and the main claims were checked by hand: s
 
 The snapshot sends `work` plus seven arrays that clients join by work id: `workDrivers`, `workGoals`, `workContinues`, `workPrs`, `workSupersessions`, `workResources`, `workChecks`. Each client then works out what a card should say. Tonight's fixes each moved one such rule back into the daemon: `retryable`, `uncheckedSince`, the PR verdict (#6400), supersession (#6397) and `pooled`/`approvalSpent` (#6426).
 
-Proposal: the daemon publishes one presentation-ready `NeoCardView` per card and one `NeoAskView` per ask. These carry the phase, its label, the actions allowed, the PR summary, and whether the card is superseded or unchecked. Web and iOS only render them. The seven arrays go once both clients read the views.
+Proposal: the daemon publishes one presentation-ready `NeoCardView` per card and one `NeoAskView` per ask. These carry the phase, its label, the actions allowed, the PR summary, and whether the card is superseded or unchecked. Web and iOS only render them. The views ship alongside the seven arrays for one release, because iOS reaches users through TestFlight. The arrays go after that. Cleanup 8 lands first, or the zod schema strips the new view fields silently.
 
 ### 2. A card has one phase, computed in one place
 
@@ -28,7 +28,7 @@ Proposal: one pure `neoCardPhase(work, driver, evidence)` that every reader uses
 
 Restarts caused #6356, #6389, #6395, #6396 and #6432 (a rate-limit cooldown never retried). `NeoService` holds 17 in-memory maps and sets. Some drive behaviour or the UI: `cardChecks` feeds "not checked since", which silently resets on restart. Several are never pruned (`cardChecks`, `followReads`, `askEvidenceReads`, `processingStatus`).
 
-Proposal: anything in flight is a persisted row with a resume rule. That covers turns, cooldowns, pending deliveries, reminders and checks. Memory may only cache what can be rebuilt from the database. There is no second reconciler. The rows hook into the startup pass `app.ts` already runs, and each owner keeps its own resume rule: the session, the Space runtime and Neo. A generic sweep almost broke the Space workers' `TaskAgentManager` rehydrate in #6433.
+Proposal: persist only state whose loss changes what the user sees or drops work. `cardChecks` is the clear case. Locks and throttles stay in memory and are pruned when their card or ask reaches a final state. Anything in flight is a persisted row with a resume rule. That covers turns, cooldowns, pending deliveries, reminders and checks. Memory may only cache what can be rebuilt from the database. There is no second reconciler. The rows hook into the startup pass `app.ts` already runs, and each owner keeps its own resume rule: the session, the Space runtime and Neo. A generic sweep almost broke the Space workers' `TaskAgentManager` rehydrate in #6433.
 
 ### 4. Finish the pack seam
 
@@ -46,13 +46,13 @@ Proposal: every done check goes through `readEvidence`, "told" is recorded from 
 
 Which ask a turn belongs to is worked out again for every streamed message. The code parses message ids, then walks mutable work and consultation status (`ask-origin.ts`, up to eight hops). Because the status can change during the turn, a reply can lose its ask. That is the "unknown ask origin" refusal (#6394, and B1 below).
 
-Proposal: the daemon stamps the ask id on a turn's input when it delivers it, and resolution reads it in one hop.
+Proposal: an optional ask id on the turn record. Intake sets it once, on a new ask's first turn, and the daemon sets it when it delivers a note for an ask. Resolution reads it in one hop, and the hop walk is deleted.
 
 ### 6. Fewer concepts
 
 The model has concerns, consultations, holders, bindings, a routing log, publications, conversation asks, asks and work. On the main laptop daemon there are 26 asks and 55 cards. There is one concern, and the consultation tables, context write grants, work resources and agent work targets have never held a row. These paths are still reachable: `neo.concern.consult` is in the root prompt.
 
-Proposal: converge on ask → card → note → reply. Once other daemons confirm the same usage, retire or fold consultations, holders and concerns.
+Concerns stay: supersession and `requireNeoWorkAsk` check the concern. Proposal: converge on ask → card → note → reply. Once other daemons confirm the same usage, retire or fold consultations and holders.
 
 ### 7. Revisit how ADR 0004 applies here
 
@@ -98,8 +98,17 @@ These come from reading the code. Each needs a failing test before its fix.
 2. **Cleanups.** One PR per slice, all behaviour-preserving, each green on the existing suite: service core (1, 2, 9, 10), card lifecycle (3, 4, 5), operations (6, 7, 8), intake (11, 12), packs (13).
 3. **Design.** Items 1, 3 and 5 first. They match this week's recurring failures. Items 2, 4 and 6 follow. Item 7 is an ADR 0004 amendment.
 
+## Owners
+
+Once this is approved:
+
+- **neo-outcome-driven:** design items 4 and 5; B4, B6 and B9; cleanups 1, 6 and 13. Cleanup 1 is the remainder of #6322 that was planned for rung g. #6401 touches `neoAskPrEvidence` and lands first.
+- **daemon-code:** design item 3 and cleanups 3, 4 and 5 (5 after #6417).
+- **Neo UI (web and iOS):** design item 1, after cleanup 8.
+- The rest is assigned when its step starts.
+
 ## Open questions
 
-1. Item 6: do other daemons (Space, remote) use consultations, holders or concerns?
+1. Item 6: do other daemons (Space, remote) use consultations or holders?
 2. Item 7: which typed helpers, and does the ADR 0004 amendment also change `CLAUDE.md`?
-3. Item 1: replace the seven snapshot arrays, or add the views alongside them for a release?
+3. Item 7 doesn't block any cleanup: stages wired by name don't type-check either way.
