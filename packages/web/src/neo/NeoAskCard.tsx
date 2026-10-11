@@ -142,10 +142,12 @@ const itemGlyphs: Record<NeoAskItem['state'], { mark: string; color: string }> =
 function ItemRow({
   item,
   onDone,
+  onAnswer,
   disabled,
 }: {
   item: NeoAskItem;
   onDone?: (itemId: string) => void;
+  onAnswer?: (itemId: string, choice: string) => void;
   disabled?: boolean;
 }) {
   const glyph = itemGlyphs[item.state];
@@ -173,16 +175,35 @@ function ItemRow({
           </span>
         )}
       </span>
-      {onDone && item.state === 'needs_you' && !item.removed && (
-        <button
-          type="button"
-          class={neoSecondaryClass}
-          disabled={disabled}
-          aria-label={`Mark done: ${item.text}`}
-          onClick={() => onDone(item.id)}
-        >
-          Done
-        </button>
+      {onAnswer && item.state === 'needs_you' && !item.removed && item.options?.length ? (
+        <span class="flex shrink-0 flex-wrap justify-end gap-1.5">
+          {item.options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              class={neoSecondaryClass}
+              disabled={disabled}
+              aria-label={`Answer ${item.text}: ${option}`}
+              onClick={() => onAnswer(item.id, option)}
+            >
+              {option}
+            </button>
+          ))}
+        </span>
+      ) : (
+        onDone &&
+        item.state === 'needs_you' &&
+        !item.removed && (
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            disabled={disabled}
+            aria-label={`Mark done: ${item.text}`}
+            onClick={() => onDone(item.id)}
+          >
+            Done
+          </button>
+        )
       )}
     </li>
   );
@@ -192,17 +213,25 @@ function Checklist({
   items,
   label,
   onDone,
+  onAnswer,
   disabled,
 }: {
   items: readonly NeoAskItem[];
   label: string;
+  onAnswer?: (itemId: string, choice: string) => void;
   onDone?: (itemId: string) => void;
   disabled?: boolean;
 }) {
   return (
     <ul aria-label={label} class="space-y-1.5">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} onDone={onDone} disabled={disabled} />
+        <ItemRow
+          key={item.id}
+          item={item}
+          onDone={onDone}
+          onAnswer={onAnswer}
+          disabled={disabled}
+        />
       ))}
     </ul>
   );
@@ -214,6 +243,8 @@ export function NeoAskCard({
   disabled = false,
   onSettle,
   onDone,
+  onAnswer,
+  onAnswerInChat,
   onApprove,
   onOpen,
   onOpenSession,
@@ -224,6 +255,8 @@ export function NeoAskCard({
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
   onDone?: (itemId: string) => void;
+  onAnswer?: (itemId: string, choice: string) => void;
+  onAnswerInChat?: (question: string) => void;
   onApprove?: () => void;
   onOpen?: (workId: string) => void;
   onOpenSession?: (sessionId: string, title: string) => void;
@@ -324,7 +357,13 @@ export function NeoAskCard({
       )}
       {needsYouItems.length > 0 && (
         <div data-ask-needs-you class="mt-3 rounded-lg bg-warning/10 px-3 py-2">
-          <Checklist items={needsYouItems} label="Needs you" onDone={onDone} disabled={disabled} />
+          <Checklist
+            items={needsYouItems}
+            label="Needs you"
+            onDone={onDone}
+            onAnswer={onAnswer}
+            disabled={disabled}
+          />
         </div>
       )}
       {steps > 0 && (
@@ -385,7 +424,19 @@ export function NeoAskCard({
         </div>
       )}
       <div class={neoFooterClass}>
-        {openControl}
+        {view.answer && onAnswerInChat ? (
+          <button
+            type="button"
+            class={neoPrimaryClass}
+            disabled={disabled}
+            onClick={() => onAnswerInChat(view.answer?.question ?? '')}
+          >
+            <NeoChatMark />
+            {view.answer.label}
+          </button>
+        ) : (
+          openControl
+        )}
         {canApprove && onApprove && (
           <button
             type="button"
