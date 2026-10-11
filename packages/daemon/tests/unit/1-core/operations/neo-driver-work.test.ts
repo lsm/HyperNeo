@@ -609,6 +609,26 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('the minute pass settles driver cards without loading every stored card', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'running', lastActivityAt: 0 },
+    }));
+    try {
+      await service.start('work-1');
+      Object.assign(service.repo, {
+        listWork: () => {
+          throw new Error('the minute pass must not list every card');
+        },
+      });
+      await service.refreshDriverWork();
+      expect(calls.map((call) => call.name)).toContain('work.status');
+    } finally {
+      db.close();
+    }
+  });
+
   test('settles started work from work.status once it finishes and reports back', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 0 } };
