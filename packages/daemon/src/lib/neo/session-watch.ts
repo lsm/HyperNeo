@@ -6,6 +6,7 @@ export type { NeoSessionNotice, NeoSessionNoticeGroup };
 export const NEO_SESSION_RUN_MS = 3 * 60_000;
 export const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
+export const NEO_SESSION_WATCH_LIMIT = 30;
 export const NEO_SESSION_GROUP_MS = 60_000;
 export const NEO_SESSION_GROUPS_MAX = 10;
 const NEO_SESSION_GROUP_LINE_MAX = 5;
@@ -170,10 +171,10 @@ export function planNeoSessionNoticeGroup(
 ): { open: NeoSessionNotice[]; closed: NeoSessionNoticeGroup | null } {
   const first = open[0];
   const last = open.at(-1);
-  const full = open.length + added.length > NEO_SESSION_NOTICES_MAX;
+  const full = open.length + added.length > NEO_SESSION_WATCH_LIMIT;
   if (!first || !last || (now - last.at < NEO_SESSION_GROUP_MS && !full))
-    return { open: [...open, ...added].slice(-NEO_SESSION_NOTICES_MAX), closed: null };
-  return { open: added.slice(-NEO_SESSION_NOTICES_MAX), closed: neoSessionNoticeGroup(open) };
+    return { open: [...open, ...added].slice(-NEO_SESSION_WATCH_LIMIT), closed: null };
+  return { open: added.slice(-NEO_SESSION_WATCH_LIMIT), closed: neoSessionNoticeGroup(open) };
 }
 
 export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessionNoticeGroup[] {

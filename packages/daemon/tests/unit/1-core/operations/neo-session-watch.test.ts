@@ -12,6 +12,7 @@ import {
   NEO_SESSION_GROUPS_MAX,
   NEO_SESSION_NOTICES_MAX,
   NEO_SESSION_RUN_MS,
+  NEO_SESSION_WATCH_LIMIT,
   neoSessionKey,
   neoSessionNoticeLine,
   planNeoSessionNotice,
@@ -219,11 +220,16 @@ describe('planNeoSessionNoticeGroup', () => {
   });
 
   test('a group that would pass the notice cap closes early and the new notices start the next', () => {
-    const open = Array.from({ length: NEO_SESSION_NOTICES_MAX }, (_, index) => notice(now + index));
+    const open = Array.from({ length: NEO_SESSION_WATCH_LIMIT }, (_, index) => notice(now + index));
     const added = [notice(now + 30, { kind: 'failed' })];
     const grouped = planNeoSessionNoticeGroup(open, added, now + 30);
     expect(grouped.open).toEqual(added);
     expect(grouped.closed?.notices).toEqual(open);
+  });
+
+  test('a whole watch listing of notices fits in one group', () => {
+    const added = Array.from({ length: NEO_SESSION_WATCH_LIMIT }, (_, index) => notice(index));
+    expect(planNeoSessionNoticeGroup([], added, now).open).toEqual(added);
   });
 
   test('nothing open and nothing new leaves nothing to close', () => {

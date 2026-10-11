@@ -185,7 +185,7 @@ const Snapshot = z.union([
           id: z.string(),
           at: z.number(),
           line: z.string(),
-          notices: z.array(SessionNotice).max(20),
+          notices: z.array(SessionNotice).max(30),
         })
       )
       .max(10)

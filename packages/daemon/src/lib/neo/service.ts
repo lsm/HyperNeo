@@ -177,6 +177,7 @@ import {
   planNeoSessionWatch,
   savedNeoSessionNoticeGroups,
   NEO_SESSION_GROUPS_MAX,
+  NEO_SESSION_WATCH_LIMIT,
   type NeoListedSession,
   type NeoSessionNotice,
   type NeoSessionNoticeGroup,
@@ -1207,7 +1208,7 @@ export class NeoService {
         const outcome = await invokeOperation(
           this.sessions.getOperationRegistry(),
           'work.find',
-          { localOnly: true, limit: 30 },
+          { localOnly: true, limit: NEO_SESSION_WATCH_LIMIT },
           { source: 'internal', sessionId: root, role: 'neo' }
         );
         const value =
