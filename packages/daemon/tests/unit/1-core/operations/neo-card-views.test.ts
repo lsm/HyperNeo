@@ -1,8 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoWorkDriverReceipt, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoAsk,
+  NeoAskItem,
+  NeoWorkDriverReceipt,
+  NeoWorkPr,
+} from '@hyperneo/shared/types/neo-snapshot';
+import { projectNeoAskViews } from '../../../../src/lib/neo/ask-views.ts';
 import { neoCardPhase } from '../../../../src/lib/neo/card-phase.ts';
-import { NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
+import { NeoAskViewSchema, NeoCardViewSchema } from '../../../../src/lib/neo/card-view-schema.ts';
 import { type NeoCardViewParts, projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
 
 const work = (id: string, status: NeoWork['status'], sessionId: string | null = null): NeoWork => ({
@@ -197,5 +203,80 @@ describe('projectNeoCardViews', () => {
       })
     );
     expect(NeoCardViewSchema.parse(cards[0])).toEqual(cards[0]);
+  });
+});
+
+const askViews = (input: NeoCardViewParts) =>
+  projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+
+const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskItem => ({
+  id,
+  text: id,
+  state,
+  evidence: null,
+  check: null,
+  metBy: state === 'met' ? 'neo' : null,
+  removed,
+  addedAt: null,
+});
+
+describe('projectNeoAskViews', () => {
+  test('an open ask needs you when a live card does, and skips a superseded failure', () => {
+    const views = askViews(
+      parts({
+        work: [work('old', 'failed'), work('new', 'queued'), work('done', 'reported')],
+        drivers: [driver('new', 'needs_you')],
+        supersessions: [{ workId: 'old', supersededBy: 'new', supersededAt: 1 }],
+        asks: [ask({ workIds: ['old', 'new', 'done'] })],
+      })
+    );
+    expect(views[0]).toEqual({
+      askId: 'a1',
+      group: 'attention',
+      label: 'Needs you',
+      settled: false,
+      needsYou: true,
+      done: 1,
+      total: 2,
+      workIds: ['new', 'done'],
+      doneWorkIds: ['done'],
+      summary: null,
+    });
+  });
+
+  test('done items count instead of cards when the ask has them', () => {
+    const views = askViews(
+      parts({
+        work: [work('w', 'queued')],
+        asks: [
+          ask({
+            workIds: ['w'],
+            doneItems: [item('a', 'met'), item('b', 'pending'), item('c', 'met', true)],
+          }),
+        ],
+      })
+    );
+    expect(views[0]).toMatchObject({ group: 'running', label: 'Working on it', done: 1, total: 2 });
+  });
+
+  test('an achieved ask with a long outcome summarizes its merged PRs', () => {
+    const views = askViews(
+      parts({
+        work: [work('w', 'reported')],
+        prs: [{ workId: 'w', prs: [pr(9, { state: 'MERGED' })], waiting: false }],
+        asks: [ask({ status: 'achieved', outcome: 'x'.repeat(200), workIds: ['w'] })],
+      })
+    );
+    expect(views[0]).toMatchObject({
+      group: 'outcomes',
+      label: 'Done',
+      settled: true,
+      summary: 'Merged in #9.',
+    });
+  });
+
+  test('the snapshot schema keeps every ask view field', () => {
+    const views = askViews(parts({ work: [work('w', 'queued')], asks: [ask({ workIds: ['w'] })] }));
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
   });
 });

@@ -185,6 +185,19 @@ export interface NeoCardView {
   retryable: boolean;
 }
 
+export interface NeoAskView {
+  askId: string;
+  group: NeoCardGroup;
+  label: string;
+  settled: boolean;
+  needsYou: boolean;
+  done: number;
+  total: number;
+  workIds: string[];
+  doneWorkIds: string[];
+  summary: string | null;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -233,6 +246,7 @@ export interface NeoSnapshot {
   standingRules?: string[];
   asks?: NeoAsk[];
   cards?: NeoCardView[];
+  askViews?: NeoAskView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
 }

@@ -1,4 +1,5 @@
 import type {
+  NeoAskView,
   NeoCardPrimary,
   NeoCardPrSummary,
   NeoCardView,
@@ -56,3 +57,16 @@ export const NeoCardViewSchema = z.object({
   abandoned: z.boolean(),
   retryable: z.boolean(),
 } satisfies ZodShape<NeoCardView>);
+
+export const NeoAskViewSchema = z.object({
+  askId: z.string(),
+  group: CardGroup,
+  label: z.string(),
+  settled: z.boolean(),
+  needsYou: z.boolean(),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  workIds: z.array(z.string()),
+  doneWorkIds: z.array(z.string()),
+  summary: z.string().nullable(),
+} satisfies ZodShape<NeoAskView>);
