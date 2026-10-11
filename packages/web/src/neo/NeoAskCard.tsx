@@ -15,7 +15,12 @@ import {
   neoSecondaryClass,
 } from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
-import { type NeoAskOutcome, type NeoAskView, neoAskOpenTarget } from './neo-asks.ts';
+import {
+  type NeoAskOutcome,
+  type NeoAskView,
+  neoAskApproval,
+  neoAskOpenTarget,
+} from './neo-asks.ts';
 import type { NeoScene, NeoSceneDrivers } from './neo-scenes.ts';
 import { neoWorkOpenLabel } from './work-actions.ts';
 import { neoWorkDriverLogo } from './work-driver.ts';
@@ -169,6 +174,7 @@ export function NeoAskCard({
     view.scenes.some(
       (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
     );
+  const approval = neoAskApproval(ask, Date.now());
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
@@ -268,6 +274,24 @@ export function NeoAskCard({
               <p class="mt-1 whitespace-pre-wrap break-words">{ask.doneWhen}</p>
             )}
           </div>
+          {!view.settled && approval && (
+            <div class="text-sm text-fg-muted">
+              <p class="text-xs font-medium text-fg-faint">Approval</p>
+              <p class="mt-1 flex flex-wrap items-center gap-x-3">
+                <span>{approval.line}</span>
+                {approval.spent && onApprove && (
+                  <button
+                    type="button"
+                    class={neoPlainClass}
+                    disabled={disabled}
+                    onClick={onApprove}
+                  >
+                    Approve again
+                  </button>
+                )}
+              </p>
+            </div>
+          )}
           {ask.outcome && ask.outcome.trim() !== view.summary && (
             <div class="text-sm text-fg-muted">
               <p class="text-xs font-medium text-fg-faint">Outcome</p>

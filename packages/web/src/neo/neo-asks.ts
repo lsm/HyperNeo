@@ -194,3 +194,18 @@ export function neoAskOpenTarget(
     reachable.findLast((target) => target.work.status === 'queued') ?? reachable.at(-1) ?? null
   );
 }
+
+export function neoAskApproval(
+  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit' | 'approvedUntil'>,
+  now: number
+): { line: string; spent: boolean } | null {
+  if (!ask.approvedAt) return null;
+  const used = ask.approvedContinues ?? 0;
+  const limit = ask.approvedContinueLimit;
+  const spent =
+    (limit !== undefined && used >= limit) ||
+    (ask.approvedUntil !== undefined && now > ask.approvedUntil);
+  const count =
+    limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
+  return { line: spent ? `${count} · approval ran out` : count, spent };
+}

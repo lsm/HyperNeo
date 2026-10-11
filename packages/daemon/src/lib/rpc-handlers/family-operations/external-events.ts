@@ -4,6 +4,7 @@ import { createExternalEventOperations } from '../../external-events/operations.
 import { createSubscriptionOperations } from '../../external-events/subscription-operations.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
+import { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
 
 export function registerExternalEventOperations(
   context: FamilyOperationContext
@@ -56,6 +57,9 @@ export function registerExternalEventOperations(
           topicPattern
         ),
       sessionSubscriptions: context.spaceSessionEventSubscriptionRepo,
+      unscopedSessionSubscriptions: new SessionEventSubscriptionRepository(
+        context.deps.db.getDatabase()
+      ),
       refreshSessionSubscription: (spaceId, subscriptionId) =>
         context.spaceRuntimeService.refreshSessionSubscription(spaceId, subscriptionId),
       listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>

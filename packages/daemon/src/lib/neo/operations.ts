@@ -193,6 +193,7 @@ const Snapshot = z.union([
           link: z.string().nullable(),
           remoteLink: z.string().optional(),
           uncheckedSince: z.number().optional(),
+          retryable: z.literal(true).optional(),
           unconfirmed: z.literal(true).optional(),
         })
       )
@@ -587,7 +588,11 @@ export function createNeoOperations(service: NeoService) {
         .receipts(visibleWork.map((item) => item.id))
         .map((receipt) => {
           const since = service.uncheckedSince(receipt.workId);
-          return since === null ? receipt : { ...receipt, uncheckedSince: since };
+          return {
+            ...receipt,
+            ...(since === null ? {} : { uncheckedSince: since }),
+            ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+          };
         }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),

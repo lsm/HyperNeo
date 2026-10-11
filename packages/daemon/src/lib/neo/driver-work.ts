@@ -335,6 +335,25 @@ export function isNeoCardUnconfirmed(
   return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
 }
 
+export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
+
+export function requireNeoWorkRetryable(
+  work: Pick<NeoWork, 'status' | 'report'>,
+  card: { target: boolean; ref: boolean }
+): { value: true } | { reason: string } {
+  if (work.report?.startsWith(NEO_DRIVER_START_INTERRUPTED))
+    return {
+      reason:
+        'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+    };
+  return work.status === 'failed' && card.target && !card.ref
+    ? { value: true }
+    : {
+        reason:
+          'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
+      };
+}
+
 export function isNeoReceiptUnconfirmed(
   card: {
     ref: boolean;
