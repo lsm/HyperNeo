@@ -1091,7 +1091,7 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
       });
       expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
       expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.6-terra');
-      expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-sol');
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-terra');
     }
   );
 
