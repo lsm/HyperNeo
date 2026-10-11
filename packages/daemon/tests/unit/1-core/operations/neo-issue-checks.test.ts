@@ -85,6 +85,31 @@ describe('planNeoIssueChecks', () => {
   });
 });
 
+describe('planNeoIssueChecks with URLs', () => {
+  test('reads issues and epics named by full URL, keeping the epic last', () => {
+    const [plan] = planNeoIssueChecks(
+      ask([
+        item(
+          'i1',
+          `${issueUrl(6591)} linked under ${issueUrl(6002)}`,
+          CODING_CHECK_ISSUE_SUB_ISSUE
+        ),
+      ]),
+      []
+    );
+    expect([plan.refs.map((ref) => ref.number), plan.epic?.number, plan.fallback]).toEqual([
+      [6591],
+      6002,
+      false,
+    ]);
+    const [mixed] = planNeoIssueChecks(
+      ask([item('i1', `lsm/HyperNeo#6591 under ${issueUrl(6002)}`, CODING_CHECK_ISSUE_SUB_ISSUE)]),
+      []
+    );
+    expect([mixed.refs.map((ref) => ref.number), mixed.epic?.number]).toEqual([[6591], 6002]);
+  });
+});
+
 describe('judgeNeoIssueCheck', () => {
   const [filed, linked, closed] = planNeoIssueChecks(
     ask([
@@ -130,7 +155,7 @@ describe('judgeNeoIssueCheck', () => {
   test('a reported issue counts only when it is the one new issue the cards name', () => {
     const [fallback] = planNeoIssueChecks(
       ask([item('i1', 'Issue filed for issue evidence', CODING_CHECK_ISSUE_FILED)]),
-      ['Filed lsm/HyperNeo#6591; see also lsm/HyperNeo#6500.']
+      [`Filed ${issueUrl(6591)}; see also lsm/HyperNeo#6500.`]
     );
     expect(
       judgeNeoIssueCheck(fallback, [issue(6591), issue(6500, { createdAt: 500 })], 1_000)

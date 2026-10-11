@@ -1,5 +1,6 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import { GITHUB_REF_PATH } from '../../../github/parse-pr-url.ts';
 import {
   extractNeoAskRefs,
   extractNeoCardRefs,
@@ -35,6 +36,22 @@ function urlKey(url: string): string | null {
   return match ? refKey({ owner: match[1], repo: match[2], number: Number(match[3]) }) : null;
 }
 
+const REF_URL = new RegExp(`https://${GITHUB_REF_PATH.source}`, 'g');
+
+function itemRefs(text: string, repo: Pick<NeoRef, 'owner' | 'repo'> | null): NeoRef[] {
+  const urls = [...text.matchAll(REF_URL)].map((match) => ({
+    at: match.index,
+    ref: { owner: match[1], repo: match[2], number: Number(match[3]) },
+  }));
+  const rest = text.replace(REF_URL, (url) => ' '.repeat(url.length));
+  const named = extractNeoCardRefs(rest, repo).map((ref) => ({
+    at: rest.indexOf(`#${ref.number}`),
+    ref,
+  }));
+  const ordered = [...urls, ...named].sort((a, b) => a.at - b.at).map((item) => item.ref);
+  return [...new Map(ordered.map((ref) => [refKey(ref), ref])).values()];
+}
+
 export function isNeoIssueCheckItem(item: NeoAskItem): boolean {
   return !!item.check && ISSUE_CHECKS.includes(item.check) && !item.removed && item.state !== 'met';
 }
@@ -44,9 +61,9 @@ export function planNeoIssueChecks(ask: NeoAsk, reports: readonly string[]): Neo
     extractNeoAskRefs(ask, []).map((ref) => [`${ref.owner}/${ref.repo}`.toLowerCase(), ref])
   );
   const repo = repos.size === 1 ? [...repos.values()][0] : null;
-  const reported = extractNeoCardRefs(reports.join('\n'), repo);
+  const reported = itemRefs(reports.join('\n'), repo);
   return (ask.doneItems ?? []).filter(isNeoIssueCheckItem).map((item) => {
-    const named = extractNeoCardRefs(item.text, repo);
+    const named = itemRefs(item.text, repo);
     const epic = item.check === CODING_CHECK_ISSUE_SUB_ISSUE ? (named.at(-1) ?? null) : null;
     const own = epic ? named.slice(0, -1) : named;
     const refs = own.length ? own : reported.filter((ref) => !epic || refKey(ref) !== refKey(epic));
