@@ -35,14 +35,14 @@ describe('requireNeoDoneCheck', () => {
     ['a card with no ask', 'reported', { ask: null }, false],
   ])('%s', (_label, status, overrides, checks) => {
     const gate = requireNeoDoneCheck({ status: status as 'reported' }, { ...card, ...overrides });
-    expect(gate).toEqual(checks ? { value: goal } : { reason: false });
+    expect(gate).toEqual(checks ? { value: goal } : { reason: 'not_checked' });
   });
 
   test.each(['achieved', 'abandoned'] as const)(
     'stays quiet for a card whose ask is %s',
     (status) => {
       expect(requireNeoDoneCheck({ status: 'reported' }, { ...card, ask: { status } })).toEqual({
-        reason: true,
+        reason: 'settled',
       });
     }
   );
@@ -50,7 +50,7 @@ describe('requireNeoDoneCheck', () => {
   test('still lets failed work under a settled ask send its plain return note', () => {
     expect(
       requireNeoDoneCheck({ status: 'failed' }, { ...card, ask: { status: 'achieved' } })
-    ).toEqual({ reason: false });
+    ).toEqual({ reason: 'not_checked' });
   });
 });
 
@@ -107,14 +107,14 @@ describe('neoWorkReturnToldIds', () => {
 describe('requireNeoWorkReturnUntold', () => {
   test('recovery returns only an untold report', () => {
     expect(requireNeoWorkReturnUntold({ told: false })).toEqual({ value: true });
-    expect(requireNeoWorkReturnUntold({ told: true })).toEqual({ reason: null });
+    expect(requireNeoWorkReturnUntold({ told: true })).toEqual({ reason: 'told' });
   });
 });
 
 describe('requireNeoDoneCheckUntold', () => {
   test.each<[string, boolean, ReturnType<typeof requireNeoDoneCheckUntold<string>>]>([
     ['a check not sent yet', false, { value: 'goal' }],
-    ['a check Neo already has', true, { reason: true }],
+    ['a check Neo already has', true, { reason: 'told' }],
   ])('%s', (_label, told, gate) => {
     expect(requireNeoDoneCheckUntold({ told }, 'goal')).toEqual(gate);
   });
@@ -125,7 +125,7 @@ describe('requireNeoDoneCheckDue', () => {
     [string, { prs: NeoWorkPr[] } | null, ReturnType<typeof requireNeoDoneCheckDue<string>>]
   >([
     ['no pull requests', null, { value: 'goal' }],
-    ['a pull request still running CI', { prs: [pr] }, { reason: true }],
+    ['a pull request still running CI', { prs: [pr] }, { reason: 'waiting' }],
     [
       'a pull request with green checks',
       { prs: [{ ...pr, checks: 'passing' }] },

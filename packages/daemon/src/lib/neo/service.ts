@@ -144,8 +144,10 @@ import {
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
+  requireNeoWorkPrCurrent,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
+  type NeoWorkPrRefreshSkip,
   readGithubPrs,
   type NeoWorkPrReader,
 } from './packs/coding/work-prs.ts';
@@ -158,6 +160,7 @@ import {
   requireNeoDoneCheckUntold,
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
+  type NeoDoneCheckSkip,
 } from './done-check.ts';
 import {
   neoReminderTurn,
@@ -404,12 +407,15 @@ export class NeoService {
           ask: card.ask,
           followedAt: followed ? work.updatedAt : undefined,
         });
-        return true;
+        return 'checked' as const;
       },
       ['work', 'check', 'card', 'found', 'followed'],
       'check'
     )
-    .endAsync('check') as (work: NeoWork, followed: boolean) => Promise<boolean>;
+    .endAsync('check') as (
+    work: NeoWork,
+    followed: boolean
+  ) => Promise<'checked' | NeoDoneCheckSkip>;
   private readonly replyRechecks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly reminderListings = new Map<string, NeoReminderListing>();
@@ -1328,44 +1334,43 @@ export class NeoService {
   private readonly refreshWorkPrs = (superpipe({})('neo-work-pr-refresh') as PipelineAPI)
     .input(['workId', 'now'])
     .pipe((workId: string) => ({ work: this.repo.getWork(workId) }), 'workId', 'current')
+    .pipe(requireNeoWorkPrCurrent, 'current', 'result:refresh')
     .pipe(
-      (current: { work: NeoWork | null }) =>
-        current.work ? { value: current.work } : { reason: null },
-      'current',
-      'result:work'
-    )
-    .pipe(
-      (work: NeoWork) => {
-        const ask = this.askRecords.forWork(work.id);
+      (refresh: { work: NeoWork }) => {
+        const ask = this.askRecords.forWork(refresh.work.id);
         return {
           ask,
-          goal: neoWorkDoneGoal(work.id, this.workGoals.get(work.id), ask),
-          row: this.workPrs.get(work.id),
-          session: !!this.db.getSession(work.originSessionId),
+          goal: neoWorkDoneGoal(refresh.work.id, this.workGoals.get(refresh.work.id), ask),
+          row: this.workPrs.get(refresh.work.id),
+          session: !!this.db.getSession(refresh.work.originSessionId),
         };
       },
-      'work',
+      'refresh',
       'card'
     )
     .pipe(
-      (work: NeoWork, card: NeoWorkPrCard, now: number) =>
-        requireNeoWorkPrRefresh(work, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
-      ['work', 'card', 'now'],
-      'result:row'
+      (refresh: { work: NeoWork }, card: NeoWorkPrCard, now: number) =>
+        requireNeoWorkPrRefresh(refresh, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
+      ['refresh', 'card', 'now'],
+      'result:refresh'
     )
     .pipe(
-      async (work: NeoWork) => ({
-        read: await readNeoPackEvidence(this.packs(), work, (id, error) =>
+      async (refresh: { work: NeoWork }) => ({
+        read: await readNeoPackEvidence(this.packs(), refresh.work, (id, error) =>
           this.log.warn(`Neo pack ${id} evidence read failed`, error)
         ),
       }),
-      ['work', 'row'],
+      'refresh',
       'refreshed'
     )
-    .pipe((work: NeoWork) => ({ row: this.workChecks.get(work.id) }), 'work', 'told')
+    .pipe(
+      (refresh: { work: NeoWork }) => ({ row: this.workChecks.get(refresh.work.id) }),
+      'refresh',
+      'told'
+    )
     .pipe(
       (
-        work: NeoWork,
+        refresh: { work: NeoWork },
         card: NeoWorkPrCard,
         refreshed: NeoWorkPrRefreshed,
         told: NeoWorkTold,
@@ -1373,45 +1378,50 @@ export class NeoService {
       ) =>
         refreshed.read
           ? planNeoDoneCheck(refreshed.read.evidence, told.row, refreshed.read.read, now, {
-              quietSince: work.updatedAt,
+              quietSince: refresh.work.updatedAt,
               remindable: !card.ask || card.ask.status === 'open',
             })
           : 'wait',
-      ['work', 'card', 'refreshed', 'told', 'now'],
+      ['refresh', 'card', 'refreshed', 'told', 'now'],
       'plan'
     )
     .pipe(
-      (plan: ReturnType<typeof planNeoDoneCheck>, card: NeoWorkPrCard) =>
-        requireNeoWorkPrDelivery(plan, isNeoAskLive(card.ask)),
-      ['plan', 'card'],
-      'result:delivery'
+      (
+        refresh: { work: NeoWork },
+        plan: ReturnType<typeof planNeoDoneCheck>,
+        card: NeoWorkPrCard
+      ) => requireNeoWorkPrDelivery(refresh, plan, isNeoAskLive(card.ask)),
+      ['refresh', 'plan', 'card'],
+      'result:refresh'
     )
     .pipe(
       async (
-        work: NeoWork,
+        refresh: { work: NeoWork; delivery: 'deliver' | 'remind' },
         card: NeoWorkPrCard,
         refreshed: NeoWorkPrRefreshed,
-        told: NeoWorkTold,
-        delivery: 'deliver' | 'remind'
+        told: NeoWorkTold
       ) => {
         if (!card.goal) return;
         await this.deliverDoneCheck(
-          work,
+          refresh.work,
           card.goal,
-          this.workPrs.get(work.id),
-          delivery === 'remind'
+          this.workPrs.get(refresh.work.id),
+          refresh.delivery === 'remind'
             ? {
                 ask: card.ask,
                 ready: true,
                 remind: true,
-                followedAt: told.row?.toldAt ?? work.updatedAt,
+                followedAt: told.row?.toldAt ?? refresh.work.updatedAt,
               }
             : { stale: !refreshed.read?.read.ok, ask: card.ask }
         );
       },
-      ['work', 'card', 'refreshed', 'told', 'delivery']
+      ['refresh', 'card', 'refreshed', 'told']
     )
-    .endAsync('delivery') as (workId: string, now: number) => Promise<unknown>;
+    .endAsync('refresh') as (
+    workId: string,
+    now: number
+  ) => Promise<{ work: NeoWork } | NeoWorkPrRefreshSkip>;
 
   packs(): NeoPack[] {
     return neoPacks({
@@ -1716,7 +1726,7 @@ export class NeoService {
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
-    if (await this.checkDone(work, false)) return;
+    if ((await this.checkDone(work, false)) !== 'not_checked') return;
     const rootId = await this.open(null);
     if (work.concernId) {
       await returnWorkThroughHolder(this, work, rootId);

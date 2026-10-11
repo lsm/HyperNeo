@@ -157,27 +157,42 @@ export function shouldReadNeoWorkPrs(
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
 }
 
-export function requireNeoWorkPrRefresh<Row extends { readAt: number }>(
-  work: { status: string; report: string | null },
+export type NeoWorkPrRefreshSkip = 'missing' | 'not_due' | 'quiet';
+
+export function requireNeoWorkPrCurrent<Work>(current: {
+  work: Work | null;
+}): { value: { work: Work } } | { reason: 'missing' } {
+  return current.work ? { value: { work: current.work } } : { reason: 'missing' };
+}
+
+export function requireNeoWorkPrRefresh<
+  Refresh extends { work: { status: string; report: string | null } },
+  Row extends { readAt: number },
+>(
+  refresh: Refresh,
   card: { goal: boolean; row: Row | null; session: boolean },
   now: number,
   closedDone: string
-): { value: Row } | { reason: null } {
+): { value: Refresh & { row: Row } } | { reason: 'not_due' } {
+  const { work } = refresh;
   return work.status === 'reported' &&
     work.report !== closedDone &&
     card.goal &&
     card.session &&
     card.row &&
     now - card.row.readAt >= NEO_WORK_PR_READ_MS
-    ? { value: card.row }
-    : { reason: null };
+    ? { value: { ...refresh, row: card.row } }
+    : { reason: 'not_due' };
 }
 
-export function requireNeoWorkPrDelivery(
+export function requireNeoWorkPrDelivery<Refresh extends object>(
+  refresh: Refresh,
   plan: ReturnType<typeof planNeoDoneCheck>,
   live: boolean
-): { value: 'deliver' | 'remind' } | { reason: null } {
-  return live && (plan === 'deliver' || plan === 'remind') ? { value: plan } : { reason: null };
+): { value: Refresh & { delivery: 'deliver' | 'remind' } } | { reason: 'quiet' } {
+  return live && (plan === 'deliver' || plan === 'remind')
+    ? { value: { ...refresh, delivery: plan } }
+    : { reason: 'quiet' };
 }
 
 type BranchRule = {
