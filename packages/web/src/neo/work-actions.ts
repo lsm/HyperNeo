@@ -1,5 +1,9 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkDriverReceipt, NeoWorkPrReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoCardView,
+  NeoWorkDriverReceipt,
+  NeoWorkPrReceipt,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { getRelativeTime } from '../lib/utils.ts';
 import { neoWorkDriverApp, neoWorkDriverLink } from './work-driver.ts';
 import { neoWorkPrNumber } from './work-prs.ts';
@@ -50,10 +54,11 @@ export function neoWorkPrimaryAction(
 export function neoWorkPresentation(
   work: NeoWork,
   driver: NeoWorkDriverReceipt | undefined,
-  { compact, attention }: { compact: boolean; attention: boolean }
+  { compact, attention }: { compact: boolean; attention: boolean },
+  card?: NeoCardView
 ): 'summary' | 'detail' {
   if (!compact || attention) return 'detail';
-  const kind = neoWorkPrimaryAction(work, driver).kind;
+  const kind = card ? card.primary.kind : neoWorkPrimaryAction(work, driver).kind;
   return kind === 'retry' || kind === 'close' ? 'detail' : 'summary';
 }
 

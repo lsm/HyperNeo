@@ -1,6 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   NEO_WORK_CONTINUE_LIMIT,
+  type NeoCardView,
   type NeoWorkContinue,
   type NeoWorkDriverReceipt,
   type NeoWorkGoal,
@@ -23,7 +24,14 @@ import {
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
 import { neoWorkMeta, neoWorkOpenLabel, neoWorkPrimaryAction } from './work-actions.ts';
-import { neoWorkDriverLabel, neoWorkDriverLogo } from './work-driver.ts';
+import { neoAppLogo, neoWorkDriverLabel, neoWorkDriverLogo } from './work-driver.ts';
+import {
+  neoCardLabel,
+  neoCardMeta,
+  neoCardOpenLabel,
+  neoCardPrimaryAction,
+  neoCardTone,
+} from './card-view.ts';
 import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
 
 const labels: Record<NeoWork['status'], string> = {
@@ -81,6 +89,7 @@ function insideUserSelection(scope: Element): boolean {
 
 export function NeoWorkCard({
   work,
+  card,
   driver,
   prs,
   goal,
@@ -96,6 +105,7 @@ export function NeoWorkCard({
   summary,
 }: {
   work: NeoWork;
+  card?: NeoCardView;
   driver?: NeoWorkDriverReceipt;
   prs?: NeoWorkPrReceipt;
   goal?: NeoWorkGoal;
@@ -117,15 +127,23 @@ export function NeoWorkCard({
       previous = node;
     };
   }, [work.id, questionSlot]);
-  const label =
-    work.status === 'queued' && driver
+  const label = card
+    ? neoCardLabel(card)
+    : work.status === 'queued' && driver
       ? neoWorkDriverLabel(driver)
       : (work.status === 'reported' && neoWorkPrLabel(prs)) || labels[work.status];
-  const tone = neoWorkTone(work, driver, waiting, prs);
+  const tone = card ? neoCardTone(card, work, waiting) : neoWorkTone(work, driver, waiting, prs);
   const active = work.status === 'queued';
-  const primary = neoWorkPrimaryAction(work, driver, { waiting, chat: !!onOpen });
+  const primary = card
+    ? neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen })
+    : neoWorkPrimaryAction(work, driver, { waiting, chat: !!onOpen });
   const answering = primary.kind === 'answer' && !primary.link;
-  const meta = neoWorkMeta(work, prs, driver);
+  const meta = card ? neoCardMeta(card, work) : neoWorkMeta(work, prs, driver);
+  const logo = card ? neoAppLogo(card.adapter) : neoWorkDriverLogo(driver);
+  const goalText = card ? card.goal : (goal?.goal ?? null);
+  const doneWhen = card ? card.doneWhen : (goal?.doneWhen ?? null);
+  const continuedCount = card ? card.continued : (continued?.count ?? 0);
+  const isPooled = card ? card.pooled : pooled;
   const note =
     work.status === 'proposed'
       ? work.instruction
@@ -146,7 +164,7 @@ export function NeoWorkCard({
         class={primary.kind === 'answer' ? neoPrimaryClass : neoSecondaryClass}
         aria-label={`Open ${work.title}`}
       >
-        <NeoAppMark logo={neoWorkDriverLogo(driver)} />
+        <NeoAppMark logo={logo} />
         {primary.label}
       </a>
     ) : null;
@@ -221,8 +239,8 @@ export function NeoWorkCard({
         </button>
         {primary.link ? (
           <a href={primary.link} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
-            <NeoAppMark logo={neoWorkDriverLogo(driver)} />
-            {neoWorkOpenLabel(driver)}
+            <NeoAppMark logo={logo} />
+            {card ? neoCardOpenLabel(card) : neoWorkOpenLabel(driver)}
           </a>
         ) : (
           chatButton
@@ -331,23 +349,23 @@ export function NeoWorkCard({
           {note}
         </p>
       )}
-      {presentation === 'detail' && goal?.goal && (
+      {presentation === 'detail' && goalText && (
         <p class="mt-2 break-words text-sm text-fg-soft">
           <span class="text-fg-muted">Goal: </span>
-          {goal.goal}
+          {goalText}
         </p>
       )}
-      {presentation === 'detail' && continued && (
-        <p class="mt-1 text-xs text-fg-muted" title={continued.lastMessage}>
-          {pooled
-            ? `Neo continued it ${continued.count}`
-            : `Neo continued it ${continued.count}/${NEO_WORK_CONTINUE_LIMIT}`}
+      {presentation === 'detail' && continuedCount > 0 && (
+        <p class="mt-1 text-xs text-fg-muted" title={continued?.lastMessage}>
+          {isPooled
+            ? `Neo continued it ${continuedCount}`
+            : `Neo continued it ${continuedCount}/${NEO_WORK_CONTINUE_LIMIT}`}
         </p>
       )}
-      {presentation === 'detail' && goal?.doneWhen && (
+      {presentation === 'detail' && doneWhen && (
         <details class="mt-1 text-sm text-fg-muted">
           <summary class="cursor-pointer select-none">Done when</summary>
-          <p class="mt-1 whitespace-pre-wrap break-words">{goal.doneWhen}</p>
+          <p class="mt-1 whitespace-pre-wrap break-words">{doneWhen}</p>
         </details>
       )}
       {active &&

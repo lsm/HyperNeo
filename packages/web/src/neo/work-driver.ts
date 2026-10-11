@@ -58,5 +58,8 @@ export function neoWorkDriverApp(driver: NeoWorkDriverReceipt): string {
 export const neoAppLabel = (adapter: string): string => shortApps[adapter] ?? adapter;
 
 export function neoWorkDriverLogo(driver: NeoWorkDriverReceipt | undefined): string | undefined {
-  return driver ? logos[driver.adapter] : undefined;
+  return neoAppLogo(driver?.adapter);
 }
+
+export const neoAppLogo = (adapter: string | null | undefined): string | undefined =>
+  adapter ? logos[adapter] : undefined;
