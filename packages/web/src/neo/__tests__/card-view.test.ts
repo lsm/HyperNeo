@@ -39,10 +39,12 @@ const card = (workId: string, extra: Partial<NeoCardView> = {}): NeoCardView => 
   primary: { kind: 'open', label: 'Open in Codex', link: 'codex://threads/t1' },
   actions: ['done', 'close'],
   adapter: 'codex-desktop',
+  open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
   pr: null,
   goal: null,
   doneWhen: null,
   continued: 0,
+  continuedMessage: null,
   pooled: false,
   superseded: false,
   uncheckedSince: null,
@@ -127,7 +129,14 @@ describe('neoCardTone', () => {
 
 describe('neoCardMeta', () => {
   it('prefers the PR number and reads retryable from the card', () => {
-    const pr = { number: '#7', label: 'x', count: 1, inProgress: true, setback: false };
+    const pr = {
+      number: '#7',
+      label: 'x',
+      count: 1,
+      inProgress: true,
+      setback: false,
+      merged: [],
+    };
     expect(neoCardMeta(card('w', { pr }), work('w', 'reported'))).toBe('PR #7');
     expect(neoCardMeta(card('w', { retryable: true }), work('w', 'failed'), 1)).not.toMatch(
       /^Started/
