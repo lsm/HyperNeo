@@ -32,6 +32,7 @@ const input = Object.freeze({
   concernId: null,
   title: 'Read existing project evidence',
   instruction: 'Return a bounded draft. No external action.',
+  doneWhen: '- draft returned',
   targetSessionId: agent.sessionId,
   targetAgent: agent,
 });

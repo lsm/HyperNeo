@@ -108,6 +108,7 @@ describe('Neo existing trusted human work input', () => {
         concernId: source.sessionId === holder ? 'fictional-concern' : null,
         title: 'Fictional bounded work',
         instruction: 'Use only the existing fictional target.',
+        doneWhen: '- target used',
         targetSessionId: target,
       },
       source
@@ -161,18 +162,7 @@ describe('Neo existing trusted human work input', () => {
   test('lets Neo start the work items of an ask the user approved, on later turns', async () => {
     storeInput();
     const work = await propose(caller());
-    const opened = service.askRecords.open({
-      id: 'fictional-ask',
-      requestKey: 'fictional-ask',
-      concernId: null,
-      originSessionId: root,
-      originMessageId: ask,
-      title: 'Fictional',
-      ask: 'Do the bounded fictional work.',
-      doneWhen: '- done',
-      doneSource: 'human',
-    })!;
-    service.askRecords.link(opened.id, work.id);
+    const opened = service.askRecords.forWork(work.id)!;
     const later = caller(root, '00000000-0000-4000-8000-000000000009');
     expect(later.neoTurn?.human).toBe(false);
     const refused = { value: { ok: false, reason: 'This action needs the user.' } };
