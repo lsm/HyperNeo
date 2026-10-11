@@ -15,21 +15,25 @@ export class NeoWorkPrClaimRepository {
     return this.db
       .prepare(
         `SELECT c.work_id AS workId, c.url_key AS urlKey, c.claim, c.claimed_at AS claimedAt,
-            w.created_at AS cardCreatedAt
+            w.created_at AS cardCreatedAt, c.score
            FROM neo_work_pr_claims c JOIN neo_work w ON w.id = c.work_id
           WHERE c.url_key IN (SELECT value FROM json_each(?))`
       )
       .all(JSON.stringify(urls.map((url) => url.toLowerCase()))) as NeoPrClaimRow[];
   }
 
-  unclaimedCards(): string[] {
+  cardsToReclaim(): string[] {
     if (!this.hasTable()) return [];
     return (
       this.db
         .prepare(
-          `SELECT p.work_id AS workId FROM neo_work_prs p
-            WHERE p.prs_json <> '[]'
-              AND NOT EXISTS (SELECT 1 FROM neo_work_pr_claims c WHERE c.work_id = p.work_id)`
+          `SELECT w.id AS workId FROM neo_work w
+            WHERE (NOT EXISTS (SELECT 1 FROM neo_work_pr_claims c WHERE c.work_id = w.id)
+                AND (w.report LIKE '%/pull/%'
+                  OR EXISTS (SELECT 1 FROM neo_work_prs p
+                              WHERE p.work_id = w.id AND p.prs_json <> '[]')))
+               OR EXISTS (SELECT 1 FROM neo_work_pr_claims c
+                           WHERE c.work_id = w.id AND c.claim = 'mentioned' AND c.score IS NULL)`
         )
         .all() as { workId: string }[]
     ).map((row) => row.workId);
@@ -44,7 +48,12 @@ export class NeoWorkPrClaimRepository {
 
   replace(
     workId: string,
-    claims: readonly { url: string; claim: NeoPrClaimState; claimedAt: number }[]
+    claims: readonly {
+      url: string;
+      claim: NeoPrClaimState;
+      claimedAt: number;
+      score?: number | null;
+    }[]
   ): void {
     if (!this.hasTable()) return;
     const keys = claims.map((claim) => claim.url.toLowerCase());
@@ -57,11 +66,13 @@ export class NeoWorkPrClaimRepository {
         )
         .run(workId, JSON.stringify(keys));
       const upsert = this.db.prepare(
-        `INSERT INTO neo_work_pr_claims(work_id, url_key, claim, claimed_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT(work_id, url_key) DO UPDATE SET claim = excluded.claim`
+        `INSERT INTO neo_work_pr_claims(work_id, url_key, claim, claimed_at, score)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(work_id, url_key) DO UPDATE SET claim = excluded.claim,
+             score = COALESCE(excluded.score, neo_work_pr_claims.score)`
       );
       claims.forEach((claim, index) =>
-        upsert.run(workId, keys[index], claim.claim, claim.claimedAt)
+        upsert.run(workId, keys[index], claim.claim, claim.claimedAt, claim.score ?? null)
       );
     })();
   }

@@ -1148,14 +1148,18 @@ export class NeoService {
 
   private async reclaimCardPrs(): Promise<void> {
     const works = this.workPrClaims
-      .unclaimedCards()
+      .cardsToReclaim()
       .flatMap((id) => this.repo.getWork(id) ?? [])
       .sort((a, b) => a.createdAt - b.createdAt);
     for (const work of works) {
       if (this.disposed) return;
-      await readNeoCardPrs(this.cardPrDeps, work, this.workPrs.get(work.id), Date.now()).catch(
-        (error) => this.log.warn('Card pull request reclaim pending', error)
-      );
+      await readNeoCardPrs(
+        this.cardPrDeps,
+        work,
+        this.workPrs.get(work.id),
+        Date.now(),
+        true
+      ).catch((error) => this.log.warn('Card pull request reclaim pending', error));
     }
   }
 
