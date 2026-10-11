@@ -16,6 +16,8 @@ describe('runMigration325', () => {
     expect(checks.get('a1')).toEqual({ askId: 'a1', signature: 'sig-2', toldAt: 20 });
     const bare = new Database(':memory:');
     runMigration325(bare);
-    expect(new NeoAskCheckRepository(bare).get('a1')).toBe(null);
+    expect(bare.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_ask_checks'").get()).toBe(
+      null
+    );
   });
 });

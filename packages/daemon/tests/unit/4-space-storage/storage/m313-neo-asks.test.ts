@@ -3,13 +3,35 @@ import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-r
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence';
 import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items';
+import { runMigration322 } from '../../../../src/storage/schema/m322-neo-ask-reminders';
+import { runMigration324 } from '../../../../src/storage/schema/m324-neo-ask-pack';
+import { runMigration326 } from '../../../../src/storage/schema/m326-neo-ask-approved';
+import { runMigration327 } from '../../../../src/storage/schema/m327-neo-ask-approved-continues';
 import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds';
+import { runMigration330 } from '../../../../src/storage/schema/m330-neo-ask-waiting-item';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
   const db = new Database(':memory:');
   db.exec('CREATE TABLE neo_work (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)');
   db.exec("INSERT INTO neo_work VALUES ('w2', 2), ('w1', 1)");
+  return db;
+}
+
+function withAsks() {
+  const db = withWork();
+  for (const migrate of [
+    runMigration313,
+    runMigration316,
+    runMigration318,
+    runMigration322,
+    runMigration324,
+    runMigration326,
+    runMigration327,
+    runMigration328,
+    runMigration330,
+  ])
+    migrate(db);
   return db;
 }
 
@@ -42,9 +64,7 @@ describe('runMigration313', () => {
 
 describe('NeoAskRepository', () => {
   test('opens one ask per request key and lists its cards in creation order', () => {
-    const db = withWork();
-    runMigration313(db);
-    runMigration316(db);
+    const db = withAsks();
     const asks = new NeoAskRepository(db);
 
     expect(asks.open(input)).toMatchObject({ id: 'a1', status: 'open', workIds: [] });
@@ -62,9 +82,7 @@ describe('NeoAskRepository', () => {
   });
 
   test('settles only from the expected status, and new work reopens a blocked ask without its old summary', () => {
-    const db = withWork();
-    runMigration313(db);
-    runMigration316(db);
+    const db = withAsks();
     const asks = new NeoAskRepository(db);
     const opened = asks.open(input)!;
 
@@ -94,12 +112,8 @@ describe('NeoAskRepository', () => {
   });
 
   test('keeps checklist items with the ask that created them, once', () => {
-    const db = withWork();
-    runMigration313(db);
-    runMigration316(db);
+    const db = withAsks();
     runMigration318(db);
-    runMigration318(db);
-    runMigration328(db);
     const asks = new NeoAskRepository(db);
     const items = [
       { text: 'Merged', check: 'coding.pr_merged' as const },
@@ -115,19 +129,5 @@ describe('NeoAskRepository', () => {
     expect(() =>
       db.prepare("UPDATE neo_ask_items SET state = 'done' WHERE id = 'i1'").run()
     ).toThrow();
-  });
-
-  test('shows no items on databases from before checklists', () => {
-    const db = withWork();
-    runMigration313(db);
-    runMigration316(db);
-    const asks = new NeoAskRepository(db);
-    expect(asks.open(input, [{ text: 'Merged', check: null }])?.doneItems).toEqual([]);
-  });
-
-  test('reads nothing before the migration has run', () => {
-    const asks = new NeoAskRepository(withWork());
-    expect(asks.open(input)).toBe(null);
-    expect(asks.list()).toEqual([]);
   });
 });

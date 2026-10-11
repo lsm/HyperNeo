@@ -45,10 +45,4 @@ describe('NeoWorkGoalRepository', () => {
     expect(goals.get('w2')).toBe(null);
     expect(goals.list(['w1', 'w2']).map((goal) => goal.workId)).toEqual(['w1']);
   });
-
-  test('reads nothing before the migration has run', () => {
-    const goals = new NeoWorkGoalRepository(withWork());
-    goals.record('w1', 'A full iOS app', null);
-    expect(goals.get('w1')).toBe(null);
-  });
 });

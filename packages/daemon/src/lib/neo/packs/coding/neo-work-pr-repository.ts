@@ -16,14 +16,7 @@ const columns =
 export class NeoWorkPrRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_prs' AND type = 'table'")
-      .get();
-  }
-
   get(workId: string): NeoWorkPrRow | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare(`SELECT ${columns} FROM neo_work_prs WHERE work_id = ?`)
       .get(workId) as StoredRow | undefined;
@@ -33,7 +26,6 @@ export class NeoWorkPrRepository {
   }
 
   replacePrs(workId: string, prs: readonly NeoWorkPr[]): NeoWorkPrRow | null {
-    if (!this.hasTable()) return null;
     const json = JSON.stringify(prs);
     this.db
       .prepare(
@@ -45,7 +37,6 @@ export class NeoWorkPrRepository {
   }
 
   record(workId: string, prs: readonly NeoWorkPr[], at: number): NeoWorkPrRow | null {
-    if (!this.hasTable()) return null;
     this.db
       .prepare(
         `INSERT INTO neo_work_prs(work_id, prs_json, open, revision, read_at, read_ok_at)
@@ -60,7 +51,7 @@ export class NeoWorkPrRepository {
   }
 
   list(workIds: readonly string[]): NeoWorkPrRow[] {
-    if (!this.hasTable() || workIds.length === 0) return [];
+    if (workIds.length === 0) return [];
     const rows = this.db
       .prepare(
         `SELECT ${columns} FROM neo_work_prs WHERE work_id IN (SELECT value FROM json_each(?))`
@@ -73,12 +64,10 @@ export class NeoWorkPrRepository {
   }
 
   recordFailedRead(workId: string, at: number): void {
-    if (!this.hasTable()) return;
     this.db.prepare('UPDATE neo_work_prs SET read_at = ? WHERE work_id = ?').run(at, workId);
   }
 
   listOpen(): string[] {
-    if (!this.hasTable()) return [];
     return (
       this.db.prepare('SELECT work_id AS workId FROM neo_work_prs WHERE open = 1').all() as {
         workId: string;

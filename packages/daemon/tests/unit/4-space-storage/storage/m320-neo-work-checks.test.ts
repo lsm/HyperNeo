@@ -64,10 +64,4 @@ describe('NeoWorkCheckRepository', () => {
     checks.markTold('w1', 'b', 40, true);
     expect(checks.get('w1')).toMatchObject({ toldAt: 40, reminded: 'b' });
   });
-
-  test('reads and writes nothing before the migration has run', () => {
-    const checks = new NeoWorkCheckRepository(withWork());
-    checks.markTold('w1', 'a', 10);
-    expect(checks.get('w1')).toBe(null);
-  });
 });

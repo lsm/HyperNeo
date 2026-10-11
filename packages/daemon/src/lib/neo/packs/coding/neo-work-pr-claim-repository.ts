@@ -4,14 +4,8 @@ import type { NeoPrClaimRow, NeoPrClaimState } from './card-pr-claims.ts';
 export class NeoWorkPrClaimRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_pr_claims' AND type = 'table'")
-      .get();
-  }
-
   forUrls(urls: readonly string[]): NeoPrClaimRow[] {
-    if (!this.hasTable() || urls.length === 0) return [];
+    if (urls.length === 0) return [];
     return this.db
       .prepare(
         `SELECT c.work_id AS workId, c.url_key AS urlKey, c.claim, c.claimed_at AS claimedAt,
@@ -23,7 +17,6 @@ export class NeoWorkPrClaimRepository {
   }
 
   cardsToReclaim(): string[] {
-    if (!this.hasTable()) return [];
     return (
       this.db
         .prepare(
@@ -40,7 +33,6 @@ export class NeoWorkPrClaimRepository {
   }
 
   drop(workId: string, urlKey: string, claim: NeoPrClaimState): void {
-    if (!this.hasTable()) return;
     this.db
       .prepare('DELETE FROM neo_work_pr_claims WHERE work_id = ? AND url_key = ? AND claim = ?')
       .run(workId, urlKey, claim);
@@ -55,7 +47,6 @@ export class NeoWorkPrClaimRepository {
       score?: number | null;
     }[]
   ): void {
-    if (!this.hasTable()) return;
     const keys = claims.map((claim) => claim.url.toLowerCase());
     this.db.transaction(() => {
       this.db

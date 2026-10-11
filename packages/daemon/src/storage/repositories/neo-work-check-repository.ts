@@ -10,14 +10,7 @@ export interface NeoWorkCheckRow {
 export class NeoWorkCheckRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_checks' AND type = 'table'")
-      .get();
-  }
-
   get(workId: string): NeoWorkCheckRow | null {
-    if (!this.hasTable()) return null;
     return (
       (this.db
         .prepare(
@@ -28,7 +21,6 @@ export class NeoWorkCheckRepository {
   }
 
   markTold(workId: string, signature: string, at: number, reminded = false): void {
-    if (!this.hasTable()) return;
     this.db
       .prepare(
         `INSERT INTO neo_work_checks(work_id, signature, told_at, reminded)

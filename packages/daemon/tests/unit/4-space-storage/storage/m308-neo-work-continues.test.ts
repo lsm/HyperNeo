@@ -44,6 +44,5 @@ describe('NeoWorkContinueRepository', () => {
       lastMessage: 'Build settings',
     });
     expect(continues.list(['w1', 'w2']).map((item) => item.workId)).toEqual(['w1']);
-    expect(new NeoWorkContinueRepository(withWork()).record('w1', 'x', 1)).toBe(null);
   });
 });
