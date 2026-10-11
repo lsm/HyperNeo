@@ -122,36 +122,22 @@ test('completion selection has no effects until invoked and preserves synchronou
   expect(publish).toHaveBeenCalledTimes(1);
 });
 
-test.each(['reject', 'clear', 'replace'] as const)(
-  'cascade %s preserves cleanup guards',
-  async (mode) => {
-    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId });
-    const dependent = tasks.createTask({
-      spaceId,
-      title: 'Dependent',
-      description: '',
-      dependsOn: [target.id],
-      status: 'in_progress',
-    });
-    const replacement = tasks.createTask({ spaceId, title: 'Replacement', description: '' });
-    const publish = mock(async (_space: string, task: SpaceTask) => {
-      if (task.id !== dependent.id) return;
-      if (mode === 'reject') throw new Error('offline');
-      await new SpaceTaskManager(db, spaceId).updateTask(target.id, {
-        dependsOn: mode === 'clear' ? [] : [replacement.id],
-      });
-    });
-    const result = await editor(true, publish)({ taskId: target.id, dependsOn: [dependency.id] });
-    expect(result.dependsOn).toEqual(
-      mode === 'clear' ? [] : mode === 'replace' ? [replacement.id] : [dependency.id]
-    );
-    expect(cleanup).toHaveBeenCalledTimes(mode === 'clear' ? 0 : 1);
-    expect(result.status).toBe(mode === 'clear' ? 'open' : 'blocked');
-    expect(publish.mock.calls.map((call) => call[1].id)).toEqual(
-      mode === 'clear' ? [dependent.id, target.id] : [dependent.id]
-    );
-  }
-);
+test('blocking a task for a new dependency leaves its running dependents alone', async () => {
+  tasks.updateTask(target.id, { status: 'in_progress', workflowRunId });
+  const dependent = tasks.createTask({
+    spaceId,
+    title: 'Dependent',
+    description: '',
+    dependsOn: [target.id],
+    status: 'in_progress',
+  });
+  const publish = mock(async (_space: string, _task: SpaceTask) => {});
+  const result = await editor(true, publish)({ taskId: target.id, dependsOn: [dependency.id] });
+  expect(result.status).toBe('blocked');
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(tasks.getTask(dependent.id)?.status).toBe('in_progress');
+  expect(publish.mock.calls.map((call) => call[1].id)).not.toContain(dependent.id);
+});
 
 test('awaited publication keeps the operation pending until supplied effect completes', async () => {
   let release!: () => void;
