@@ -96,6 +96,15 @@ export interface NeoReceiptAskOrigin {
   origin: { sessionId: string; messageId: string } | null;
 }
 
+export interface NeoSessionNotice {
+  key: string;
+  ref: { adapter: string; daemon?: string; id: string };
+  title: string;
+  kind: 'needs_you' | 'failed' | 'finished';
+  at: number;
+  link?: string;
+}
+
 export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
@@ -107,6 +116,7 @@ export interface NeoSnapshot {
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
+  sessionNotices?: NeoSessionNotice[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
   workPrs?: NeoWorkPrReceipt[];
