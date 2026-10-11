@@ -10,6 +10,17 @@ import {
 import type { Database } from '../sqlite-compat.ts';
 import type { NeoRepository, NeoWorkInput } from './neo-repository.ts';
 
+export type NeoDriverTargetCard = {
+  target: NeoDriverTarget | null;
+  ref: WorkRef | null;
+  followAnchor: number | null;
+  liveStatus: WorkStatus | null;
+  startedAt: number | null;
+  retries: number;
+  startInterrupted: boolean;
+  needsYouSince: number | null;
+};
+
 export class NeoWorkDriverTargetRepository {
   constructor(private readonly db: Database) {}
 
@@ -44,6 +55,42 @@ export class NeoWorkDriverTargetRepository {
     if (!row) return null;
     const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
     return target.success ? target.data : null;
+  }
+
+  readCard(workId: string): NeoDriverTargetCard | null {
+    if (!this.hasTable()) return null;
+    const row = this.db
+      .prepare(
+        `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
+                started_at AS startedAt, retries, start_interrupted AS startInterrupted,
+                needs_you_since AS needsYouSince
+           FROM neo_work_driver_targets WHERE work_id = ?`
+      )
+      .get(workId) as
+      | {
+          target: string;
+          ref: string | null;
+          followAnchor: number | null;
+          liveStatus: WorkStatus | null;
+          startedAt: number | null;
+          retries: number;
+          startInterrupted: number;
+          needsYouSince: number | null;
+        }
+      | null
+      | undefined;
+    if (!row) return null;
+    const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
+    return {
+      target: target.success ? target.data : null,
+      ref: row.ref ? (JSON.parse(row.ref) as WorkRef) : null,
+      followAnchor: row.followAnchor,
+      liveStatus: row.liveStatus,
+      startedAt: row.startedAt,
+      retries: row.retries,
+      startInterrupted: !!row.startInterrupted,
+      needsYouSince: row.needsYouSince,
+    };
   }
 
   cardRefs(reportedSince: number): { workId: string; ref: WorkRef }[] {
