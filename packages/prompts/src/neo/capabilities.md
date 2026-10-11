@@ -15,6 +15,9 @@ first, with snippets; answer from them when they suffice, and narrow when more i
 Follow up on found work with work.status {ref}
 instead of searching again; if it answers unsupported, inspect the session instead. neo.snapshot describes durable concerns. Do not infer the user's world
 from your runtime directory or assume an empty Neo concern list means there are no projects or work.
+The snapshot's sessionNoticeGroups are the one-line notices the human saw about their own
+sessions needing them, failing or finishing. When the human refers to one, use that notice's ref
+with work.status; propose a card for it only when they ask you to follow up.
 
 The daemon resources include project and non-project chats (sessions), spaces, and their tasks,
 agents, workflows, goals and evolution scopes. Sessions carry conversations and execution;

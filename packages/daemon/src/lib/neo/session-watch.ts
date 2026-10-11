@@ -1,11 +1,26 @@
-import type { NeoSessionNotice } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoSessionNotice, NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
 
-export type { NeoSessionNotice };
+export type { NeoSessionNotice, NeoSessionNoticeGroup };
 
 export const NEO_SESSION_RUN_MS = 3 * 60_000;
 export const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
+export const NEO_SESSION_GROUP_MS = 60_000;
+export const NEO_SESSION_GROUPS_MAX = 10;
+const NEO_SESSION_GROUP_LINE_MAX = 5;
+const ADAPTER_LABELS: Record<string, string> = {
+  hyperneo: 'HyperNeo',
+  space: 'Space',
+  'codex-desktop': 'Codex',
+  'claude-desktop': 'Claude',
+  'claude-code': 'Claude Code',
+};
+const KIND_LABELS: Record<NeoSessionNotice['kind'], string> = {
+  needs_you: 'needs you',
+  failed: 'failed',
+  finished: 'finished',
+};
 const NEO_SESSION_ACTIVE_MS = 24 * 60 * 60_000;
 
 type NeoSessionNoticeKind = NeoSessionNotice['kind'];
@@ -118,4 +133,45 @@ export function keepNeoSessionNotices(
   added: readonly NeoSessionNotice[]
 ): NeoSessionNotice[] {
   return [...kept, ...added].slice(-NEO_SESSION_NOTICES_MAX);
+}
+
+export function neoSessionNoticeLine(notices: readonly NeoSessionNotice[]): string {
+  const shown = notices
+    .slice(0, NEO_SESSION_GROUP_LINE_MAX)
+    .map((notice) =>
+      [
+        ADAPTER_LABELS[notice.ref.adapter] ?? notice.ref.adapter,
+        `${notice.title} ${KIND_LABELS[notice.kind]}`,
+        ...(notice.link ? ['Open'] : []),
+      ].join(' · ')
+    );
+  const more = notices.length - shown.length;
+  return [...shown, ...(more > 0 ? [`${more} more`] : [])].join('; ');
+}
+
+export function planNeoSessionNoticeGroup(
+  open: readonly NeoSessionNotice[],
+  added: readonly NeoSessionNotice[],
+  now: number
+): { open: NeoSessionNotice[]; closed: NeoSessionNoticeGroup | null } {
+  const first = open[0];
+  const last = open.at(-1);
+  if (!first || !last || now - last.at < NEO_SESSION_GROUP_MS)
+    return { open: [...open, ...added], closed: null };
+  return {
+    open: [...added],
+    closed: {
+      id: `neo-session-notices:${first.at}:${first.key}`,
+      at: first.at,
+      line: neoSessionNoticeLine(open),
+      notices: [...open],
+    },
+  };
+}
+
+export function keepNeoSessionNoticeGroups(
+  kept: readonly NeoSessionNoticeGroup[],
+  closed: NeoSessionNoticeGroup | null
+): NeoSessionNoticeGroup[] {
+  return closed ? [...kept, closed].slice(-NEO_SESSION_GROUPS_MAX) : [...kept];
 }

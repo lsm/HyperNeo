@@ -1,14 +1,21 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
+  keepNeoSessionNoticeGroups,
   keepNeoSessionNotices,
   listNeoWatchedSessions,
+  NEO_SESSION_GROUP_MS,
+  NEO_SESSION_GROUPS_MAX,
   NEO_SESSION_NOTICES_MAX,
   NEO_SESSION_RUN_MS,
   neoSessionKey,
+  neoSessionNoticeLine,
   planNeoSessionNotice,
+  planNeoSessionNoticeGroup,
   planNeoSessionWatch,
   type NeoListedSession,
   type NeoSessionNotice,
@@ -154,6 +161,80 @@ describe('keepNeoSessionNotices', () => {
   });
 });
 
+const notice = (at: number, overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => ({
+  key: session.key,
+  ref,
+  title: 'Quiet-model research',
+  kind: 'finished',
+  at,
+  link: 'codex://threads/t1',
+  ...overrides,
+});
+
+describe('neoSessionNoticeLine', () => {
+  test('names the app, the session and what happened, with Open only when it can be opened', () => {
+    expect(
+      neoSessionNoticeLine([
+        notice(now),
+        notice(now, {
+          ref: { adapter: 'claude-desktop', id: 'c1' },
+          title: 'Auth fix',
+          kind: 'needs_you',
+          link: undefined,
+        }),
+      ])
+    ).toBe('Codex · Quiet-model research finished · Open; Claude · Auth fix needs you');
+  });
+
+  test('shows the first five and counts the rest', () => {
+    const line = neoSessionNoticeLine(Array.from({ length: 7 }, (_, index) => notice(index)));
+    expect(line.split('; ')).toHaveLength(6);
+    expect(line.endsWith('; 2 more')).toBe(true);
+  });
+});
+
+describe('planNeoSessionNoticeGroup', () => {
+  test('notices within a minute of the last one join the open group', () => {
+    const first = notice(now);
+    const second = notice(now + NEO_SESSION_GROUP_MS - 1, { kind: 'failed' });
+    expect(planNeoSessionNoticeGroup([first], [second], second.at)).toEqual({
+      open: [first, second],
+      closed: null,
+    });
+  });
+
+  test('a minute without a new notice closes the group, and a new notice opens the next one', () => {
+    const first = notice(now);
+    const later = notice(now + NEO_SESSION_GROUP_MS, { kind: 'failed' });
+    expect(planNeoSessionNoticeGroup([first], [later], later.at)).toEqual({
+      open: [later],
+      closed: {
+        id: `neo-session-notices:${now}:${session.key}`,
+        at: now,
+        line: 'Codex · Quiet-model research finished · Open',
+        notices: [first],
+      },
+    });
+  });
+
+  test('nothing open and nothing new leaves nothing to close', () => {
+    expect(planNeoSessionNoticeGroup([], [], now)).toEqual({ open: [], closed: null });
+  });
+});
+
+describe('keepNeoSessionNoticeGroups', () => {
+  test('keeps the most recent closed groups only', () => {
+    const group = (at: number) => ({ id: String(at), at, line: '', notices: [] });
+    const kept = keepNeoSessionNoticeGroups(
+      Array.from({ length: NEO_SESSION_GROUPS_MAX }, (_, index) => group(index)),
+      group(99)
+    );
+    expect(kept).toHaveLength(NEO_SESSION_GROUPS_MAX);
+    expect(kept.at(-1)?.at).toBe(99);
+    expect(keepNeoSessionNoticeGroups(kept, null)).toEqual(kept);
+  });
+});
+
 describe('refreshDriverWork', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
@@ -272,6 +353,60 @@ describe('refreshDriverWork', () => {
 
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('a minute after the last notice, posts its group once to the Neo conversation', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
+
+      clock += NEO_SESSION_GROUP_MS;
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      const groups = events.filter(([name]) => name === 'neo.session.notices');
+      expect(groups).toEqual([
+        [
+          'neo.session.notices',
+          {
+            group: expect.objectContaining({
+              line: 'Codex · Quiet-model research finished · Open',
+              notices: [expect.objectContaining({ kind: 'finished' })],
+            }),
+          },
+        ],
+      ]);
+      expect(service.sessionNoticeGroups).toHaveLength(1);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
+        expect.objectContaining({
+          uuid: service.sessionNoticeGroups[0].id,
+          group: service.sessionNoticeGroups[0],
+        }),
+      ]);
+      const snapshot = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.snapshot',
+        {},
+        {
+          source: 'mcp',
+          sessionId: 'neo:root',
+          role: 'neo',
+          neoTurn: { messageId: 'm1', human: true, isLive: () => true },
+        }
+      );
+      expect('value' in snapshot && snapshot.value).toMatchObject({
+        sessionNoticeGroups: service.sessionNoticeGroups,
+      });
+      expect('value' in snapshot && snapshot.value).not.toHaveProperty('sessionNotices');
     } finally {
       time.mockRestore();
     }

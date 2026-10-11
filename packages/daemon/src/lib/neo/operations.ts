@@ -112,6 +112,14 @@ const Work = z.object({
   updatedAt: z.number(),
 });
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
+const SessionNotice = z.object({
+  key: z.string(),
+  ref: WorkRefSchema,
+  title: z.string(),
+  kind: z.enum(['needs_you', 'failed', 'finished']),
+  at: z.number(),
+  link: z.string().optional(),
+});
 const Consultation = z.object({
   id: z.string(),
   requestKey: z.string(),
@@ -170,18 +178,17 @@ const Snapshot = z.union([
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
       .optional(),
-    sessionNotices: z
+    sessionNotices: z.array(SessionNotice).max(20).optional(),
+    sessionNoticeGroups: z
       .array(
         z.object({
-          key: z.string(),
-          ref: WorkRefSchema,
-          title: z.string(),
-          kind: z.enum(['needs_you', 'failed', 'finished']),
+          id: z.string(),
           at: z.number(),
-          link: z.string().optional(),
+          line: z.string(),
+          notices: z.array(SessionNotice),
         })
       )
-      .max(20)
+      .max(10)
       .optional(),
     workDrivers: z
       .array(
@@ -595,6 +602,7 @@ export function createNeoOperations(service: NeoService) {
           };
         }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: service.sessionNoticeGroups,
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),
