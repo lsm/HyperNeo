@@ -8,7 +8,6 @@ import { requireDependencyExecutionBlock } from '../space/tools/update-task-fiel
 const log = new Logger('SpaceTaskFields');
 export interface SpaceTaskFieldEffects {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;
-  emitTaskUpdated: (spaceId: string, task: SpaceTask) => void | Promise<void>;
   blockExecution?: (
     spaceId: string,
     taskId: string,
@@ -47,7 +46,7 @@ export function selectSpaceTaskFieldWrite(
 }
 
 export async function publishSpaceTaskFieldUpdate(
-  emit: SpaceTaskFieldEffects['emitTaskUpdated'],
+  emit: (spaceId: string, task: SpaceTask) => void | Promise<void>,
   spaceId: string,
   task: SpaceTask
 ) {
