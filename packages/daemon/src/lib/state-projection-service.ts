@@ -296,6 +296,7 @@ export class StateProjectionService {
     return {
       version: BUILD_METADATA.version,
       claudeSDKVersion: BUILD_METADATA.claudeSdkVersion,
+      commit: BUILD_METADATA.commit,
 
       defaultModel: this.config.defaultModel,
       maxSessions: this.config.maxSessions,
