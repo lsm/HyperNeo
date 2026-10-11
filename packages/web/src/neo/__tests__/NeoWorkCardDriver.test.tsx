@@ -50,6 +50,12 @@ describe('neoWorkDriverLabel', () => {
     );
   });
 
+  it('asks the human to close a card with no result for three days', () => {
+    expect(neoWorkDriverLabel({ ...driver, daemon: null, status: 'done', abandoned: true })).toBe(
+      'No result from Codex Desktop in 3 days · close it?'
+    );
+  });
+
   it('says when Neo could not confirm the session got its message', () => {
     expect(
       neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', unconfirmed: true })

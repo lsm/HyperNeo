@@ -246,16 +246,16 @@ describe('neo.ask operations', () => {
 
   test('an enabled file pack joins the registry, the ask door and the prompt', async () => {
     service.filePacks = [
-      { id: 'life-admin', describe: 'Life admin', instructions: () => 'File the inbox daily.' },
+      { id: 'inbox-triage', describe: 'Inbox triage', instructions: () => 'File the inbox daily.' },
     ];
-    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
-    const opened = await invoke('neo.ask.open', { ...opening, pack: 'life-admin' });
-    expect(opened).toMatchObject({ value: { ok: true, ask: { pack: 'life-admin' } } });
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
+    const opened = await invoke('neo.ask.open', { ...opening, pack: 'inbox-triage' });
+    expect(opened).toMatchObject({ value: { ok: true, ask: { pack: 'inbox-triage' } } });
     expect((opened.value as { packBriefing?: string }).packBriefing).toBe('File the inbox daily.');
-    expect(await invoke('neo.pack.read', { id: 'life-admin' })).toMatchObject({
+    expect(await invoke('neo.pack.read', { id: 'inbox-triage' })).toMatchObject({
       value: { ok: true, instructions: 'File the inbox daily.' },
     });
-    expect(neoPrompt(null, service.packBriefs())).toContain('life-admin — Life admin');
+    expect(neoPrompt(null, service.packBriefs())).toContain('inbox-triage — Inbox triage');
     db.updateGlobalSettings({ neo: { packs: ['coding'] } });
     expect(service.packBriefs().map((brief) => brief.id)).toEqual(['coding']);
   });

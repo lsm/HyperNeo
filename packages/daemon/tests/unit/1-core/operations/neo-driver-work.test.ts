@@ -40,6 +40,7 @@ import {
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
 import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
+import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -288,6 +289,14 @@ describe('withWorkGoal', () => {
     expect(
       withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
     ).not.toContain('resolveReviewThread');
+  });
+
+  test('tells a session whose done means merging to find and fix why a merge was refused', () => {
+    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    expect(withWorkGoal('Fix it.', merged)).toContain('mergeStateStatus,mergeable');
+    expect(
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+    ).not.toContain('mergeStateStatus');
   });
 
   test("tells a session whose done means merging to subscribe to its pull request's events", () => {
@@ -905,6 +914,37 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('flags a card abandoned after the last stuck step, and a cancelled card has no live status', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: { status: 'running', lastActivityAt: Date.now(), recentInputs: [] },
+      }),
+      sendTarget
+    );
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0].abandoned).toBeUndefined();
+
+      now += NEO_WORK_STUCK_STEPS_MS[NEO_WORK_STUCK_STEPS_MS.length - 1];
+      expect(service.driverTargets.receipts(['work-1'], now)[0].abandoned).toBe(true);
+
+      await service.cancel('work-1');
+      const cancelled = service.driverTargets.receipts(['work-1'], now)[0];
+      expect([cancelled.status, cancelled.abandoned]).toEqual([null, undefined]);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('marks a card unconfirmed when it shows its session without its message seen landing', async () => {
     const { db, service } = await setup(
       { ok: true, value: { delivered: true } },
@@ -1123,6 +1163,127 @@ describe('Neo work with a drivers target', () => {
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
       expect(notes).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a life-admin ask with a pull request row still reads the row', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/7';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Done. ${url}` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    fileUnderAsk(service);
+    db.getDatabase()
+      .prepare(`UPDATE neo_asks SET pack = 'life-admin' WHERE id = ?`)
+      .run('ask-work-1');
+    service.workGoals.record('work-1', 'Reorder', '- an order confirmation');
+    const open: NeoWorkPr = { url, state: 'OPEN', checks: 'passing', review: 'none' };
+    service.workPrs.record('work-1', [open], 0);
+    let reads = 0;
+    service.readPrs = async () => {
+      reads++;
+      return [open];
+    };
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(reads).toBeGreaterThan(0);
+      expect(service.workPrs.get('work-1')?.readAt).toBeGreaterThan(0);
+      const toldAt = service.workChecks.get('work-1')?.toldAt;
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(service.workChecks.get('work-1')?.toldAt).toBe(toldAt);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a file-pack ask keeps the pull request done check', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/9';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Merged ${url}.` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    service.filePacks = [
+      { id: 'inbox-triage', describe: 'Inbox triage', instructions: () => 'File the inbox daily.' },
+    ];
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'inbox-triage'] } });
+    fileUnderAsk(service);
+    db.getDatabase()
+      .prepare(`UPDATE neo_asks SET pack = 'inbox-triage' WHERE id = ?`)
+      .run('ask-work-1');
+    service.workGoals.record('work-1', 'Triage the inbox', '- merged');
+    const merged: NeoWorkPr = { url, state: 'MERGED', checks: 'passing', review: 'approved' };
+    service.readPrs = async () => [merged];
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        notes.push([messageId, content]);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+      expect(notes[0][0]).toContain('work-1:done-check:');
+      expect(notes[0][1]).toContain(url);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('delivers the done check for a life-admin card from its report confirmation', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const confirmation =
+      'Confirmation: id=<msg-1>; from=orders@example.com; subject=Your order is confirmed';
+    const reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: `Reordered the water filters.\n${confirmation}`,
+      },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    fileUnderAsk(service);
+    db.getDatabase()
+      .prepare(`UPDATE neo_asks SET pack = 'life-admin' WHERE id = ?`)
+      .run('ask-work-1');
+    service.workGoals.record(
+      'work-1',
+      'Reorder the water filters',
+      '- an order confirmation from orders@example.com'
+    );
+    const notes: Array<[string, string]> = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        notes.push([messageId, content]);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(notes.map(([id]) => id)).toEqual(['work-1:done-check:0']);
+      expect(notes[0][1]).toContain('orders@example.com');
+      const reported = service.repo.getWork('work-1')!;
+      expect(reported.report).toContain(confirmation);
+      expect(service.workChecks.get('work-1')?.signature).toBe(
+        neoEvidenceSignature(lifeAdminReportEvidence(reported))
+      );
     } finally {
       db.close();
     }

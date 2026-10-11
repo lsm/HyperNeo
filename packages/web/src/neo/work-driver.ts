@@ -12,6 +12,7 @@ const apps: Record<string, string> = {
 export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
   const app = `${apps[driver.adapter] ?? driver.adapter}${driver.daemon ? ` on ${driver.daemon}` : ''}`;
   if (driver.status === 'failed' || driver.status === 'stopped') return `Stopped in ${app}`;
+  if (driver.abandoned) return `No result from ${app} in 3 days · close it?`;
   const unchecked =
     (driver.unconfirmed ? ' · not confirmed it got this' : '') +
     (driver.uncheckedSince

@@ -73,7 +73,7 @@ Recurring work (weekly inbox triage, a fare watch) uses core's reminders and fol
 ## Rollout
 
 1. ADR 0009 rung e changes from legal review to this pack. The enable setting and the file-pack loader stay in e.
-2. Ship the pack disabled. Dogfood it on our own life admin with option 1, the user's Chrome.
+2. Ship the pack disabled. Dogfood it on our own life admin with option 1, the user's Chrome. Nothing auto-attaches the pack's `workerMcpServers` yet: enabling the pack does not enable `chrome-devtools-user`, so the worker's browser access needs the entry turned on in the app registry once — `workerMcpServers` is the declared attachment point for that wiring when it lands.
 3. Turn it on by default once three task rows (orders, bookings, cancellations) have closed on a real confirmation each.
 
 ## Open questions
