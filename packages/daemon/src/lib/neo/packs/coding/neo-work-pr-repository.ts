@@ -35,6 +35,18 @@ export class NeoWorkPrRepository {
     return { ...rest, prs: JSON.parse(prsJson) as NeoWorkPr[] };
   }
 
+  replacePrs(workId: string, prs: readonly NeoWorkPr[]): NeoWorkPrRow | null {
+    if (!this.hasTable()) return null;
+    const json = JSON.stringify(prs);
+    this.db
+      .prepare(
+        `UPDATE neo_work_prs SET revision = revision + (prs_json IS NOT ?), prs_json = ?, open = ?
+          WHERE work_id = ?`
+      )
+      .run(json, json, prs.some((pr) => pr.state === 'OPEN') ? 1 : 0, workId);
+    return this.get(workId);
+  }
+
   record(workId: string, prs: readonly NeoWorkPr[], at: number): NeoWorkPrRow | null {
     if (!this.hasTable()) return null;
     this.db

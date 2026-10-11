@@ -80,7 +80,8 @@ export function planNeoCardPrOwnership(
 export function keepNeoCardPrReads(
   card: Pick<NeoWork, 'createdAt'>,
   owned: readonly NeoCardPrOwned[],
-  prs: readonly NeoWorkPr[]
+  prs: readonly NeoWorkPr[],
+  stored: readonly { url: string }[] = []
 ): { kept: NeoCardPrOwned[]; pending: NeoCardPrOwned[]; rejected: NeoCardPrOwned[] } {
   const sorted = { kept: [], pending: [], rejected: [] } as {
     kept: NeoCardPrOwned[];
@@ -90,6 +91,8 @@ export function keepNeoCardPrReads(
   for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
     if (candidate.claimed || candidate.claim !== 'mentioned') sorted.kept.push(candidate);
+    else if (!pr && stored.some((item) => key(item.url) === key(candidate.url)))
+      sorted.kept.push(candidate);
     else if (!pr) sorted.pending.push(candidate);
     else if (pr.createdAt != null && pr.createdAt < card.createdAt) sorted.rejected.push(candidate);
     else sorted.kept.push(candidate);

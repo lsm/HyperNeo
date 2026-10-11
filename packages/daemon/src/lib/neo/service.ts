@@ -1469,16 +1469,19 @@ export class NeoService {
       prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
       claims: this.workPrClaims,
       workPrs: this.workPrs,
-      record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
+      record: (workId, prs, before, read) => this.recordWorkPrs(workId, prs, before, read),
     };
   }
 
   private recordWorkPrs(
     workId: string,
     prs: readonly NeoWorkPr[],
-    before: NeoWorkPrRow | null
+    before: NeoWorkPrRow | null,
+    read = true
   ): NeoWorkPrRow | null {
-    const row = this.workPrs.record(workId, prs, Date.now());
+    const row = read
+      ? this.workPrs.record(workId, prs, Date.now())
+      : this.workPrs.replacePrs(workId, prs);
     if (row && row.revision !== before?.revision) this.notifyChanged();
     return row;
   }

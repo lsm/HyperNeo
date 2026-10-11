@@ -230,7 +230,8 @@ describe('readAskEvidence', () => {
     const read: NeoRef[][] = [];
     const pack = createCodingPack({
       readPrs: async () => [],
-      prUrls: async () => [],
+      prCandidates: async () => [],
+      claims: { forUrls: () => [], replace: () => {} },
       runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
       readRefStates: async (refs) => {
         read.push([...refs]);

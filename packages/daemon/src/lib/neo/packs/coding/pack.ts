@@ -45,7 +45,8 @@ export interface NeoCardPrDeps {
   record: (
     workId: string,
     prs: readonly NeoWorkPr[],
-    before: NeoWorkPrRow | null
+    before: NeoWorkPrRow | null,
+    read?: boolean
   ) => NeoWorkPrRow | null;
 }
 
@@ -91,7 +92,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
         work.id,
         plan.owned.filter((item) => item.claimed)
       );
-      return { row: deps.record(work.id, kept, stored) ?? stored };
+      return { row: deps.record(work.id, kept, stored, false) ?? stored };
     },
     ['deps', 'work', 'stored', 'plan'],
     'current'
@@ -132,7 +133,12 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
       fetched: { prs: NeoWorkPr[] | null }
     ) => {
       if (!fetched.prs) return { value: { row: current.row, ok: false } };
-      const { kept, pending, rejected } = keepNeoCardPrReads(work, plan.owned, fetched.prs);
+      const { kept, pending, rejected } = keepNeoCardPrReads(
+        work,
+        plan.owned,
+        fetched.prs,
+        current.row?.prs ?? []
+      );
       deps.claims.replace(work.id, [
         ...kept,
         ...rejected.map((item) => ({ ...item, claim: 'rejected' as const })),

@@ -6,11 +6,15 @@ import {
   keepNeoCardPrReads,
   planNeoCardPrCandidates,
   planNeoCardPrOwnership,
+  type NeoPrClaim,
   type NeoPrClaimRow,
 } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from '../../../../src/lib/neo/packs/coding/neo-work-pr-claim-repository.ts';
 import { readNeoCardPrs } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
+import {
+  NeoWorkPrRepository,
+  type NeoWorkPrRow,
+} from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
 const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
@@ -50,7 +54,8 @@ describe('planNeoCardPrCandidates', () => {
 
 describe('beatsNeoPrClaim', () => {
   const mention = { claim: 'mentioned' as const, claimedAt: 100, cardCreatedAt: 10 };
-  test.each<[string, Partial<NeoPrClaimRow>, Partial<NeoPrClaimRow>, boolean]>([
+  type Ranked = Partial<{ claim: NeoPrClaim; claimedAt: number; cardCreatedAt: number }>;
+  test.each<[string, Ranked, Ranked, boolean]>([
     ['a branch claim beats a mention', { claim: 'branch', claimedAt: 500 }, {}, true],
     ['a named claim beats a mention', { claim: 'named', claimedAt: 500 }, {}, true],
     ['an earlier mention beats a later one', { claimedAt: 50 }, {}, true],
@@ -140,6 +145,12 @@ describe('keepNeoCardPrReads', () => {
     expect(urls(sorted.rejected)).toEqual([pull(1)]);
     expect(urls(sorted.pending)).toEqual([pull(4)]);
   });
+
+  test('a stored PR this read could not fetch stays with the card instead of pending', () => {
+    const sorted = keepNeoCardPrReads(card, [owned(4)], [], [{ url: pull(4) }]);
+    expect(sorted.kept.map((item) => item.url)).toEqual([pull(4)]);
+    expect(sorted.pending).toEqual([]);
+  });
 });
 
 describe('NeoWorkPrClaimRepository', () => {
@@ -203,6 +214,28 @@ describe('NeoWorkPrClaimRepository', () => {
   });
 });
 
+describe('NeoWorkPrRepository.replacePrs', () => {
+  test('changes the stored PRs without stamping a read', async () => {
+    const db = await createTestDb();
+    try {
+      const raw = db.getDatabase();
+      raw
+        .prepare(
+          `INSERT INTO neo_work(id, request_key, origin_session_id, title, instruction, status, created_at, updated_at)
+           VALUES ('w1', 'k1', 'root', 'T', 'I', 'reported', 1, 1)`
+        )
+        .run();
+      const repo = new NeoWorkPrRepository(raw);
+      repo.record('w1', [pr(1), pr(2)], 100);
+      repo.recordFailedRead('w1', 200);
+      const after = repo.replacePrs('w1', [pr(1)]);
+      expect(after).toMatchObject({ prs: [pr(1)], revision: 2, readAt: 200, readOkAt: 100 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('readNeoCardPrs', () => {
   test('rejects a mention of a PR older than the card once, then stops reading it', async () => {
     const rows: NeoPrClaimRow[] = [];
@@ -255,6 +288,7 @@ describe('readNeoCardPrs', () => {
       readOkAt: 1_000,
     } as NeoWorkPrRow;
     const recorded: NeoWorkPr[][] = [];
+    const readFlags: (boolean | undefined)[] = [];
     const replaced: unknown[] = [];
     let reads = 0;
     const result = await readNeoCardPrs(
@@ -276,8 +310,9 @@ describe('readNeoCardPrs', () => {
           replace: (_id, claims) => replaced.push(claims),
         },
         workPrs: { get: () => stored, list: () => [], recordFailedRead: () => {} },
-        record: (_id, prs) => {
+        record: (_id, prs, _before, read) => {
           recorded.push([...prs]);
+          readFlags.push(read);
           return { ...stored, prs: [...prs], revision: 2 };
         },
       },
@@ -287,6 +322,7 @@ describe('readNeoCardPrs', () => {
     );
     expect(reads).toBe(0);
     expect(recorded).toEqual([[pr(1)]]);
+    expect(readFlags).toEqual([false]);
     expect(replaced).toEqual([[{ url: pull(1), claim: 'mentioned', claimedAt: 5, claimed: true }]]);
     expect(result).toEqual({ row: { ...stored, prs: [pr(1)], revision: 2 }, ok: true });
   });
