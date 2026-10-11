@@ -648,6 +648,26 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('the minute pass settles driver cards without loading every stored card', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'running', lastActivityAt: 0 },
+    }));
+    try {
+      await service.start('work-1');
+      Object.assign(service.repo, {
+        listWork: () => {
+          throw new Error('the minute pass must not list every card');
+        },
+      });
+      await service.refreshDriverWork();
+      expect(calls.map((call) => call.name)).toContain('work.status');
+    } finally {
+      db.close();
+    }
+  });
+
   test('settles started work from work.status once it finishes and reports back', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     let reply: unknown = { ok: true, value: { status: 'running', lastActivityAt: 0 } };
@@ -1202,6 +1222,55 @@ describe('Neo work with a drivers target', () => {
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
       expect(notes).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a life-admin confirmation ticks the ask item that names it', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply:
+          'Reordered the water filters.\nConfirmation: id=<msg-1>; from=orders@amazon.com; subject=Your order is confirmed',
+      },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    service.askRecords.open(
+      {
+        id: 'ask-work-1',
+        requestKey: 'neo:root:work-1',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Reorder the water filters',
+        ask: 'Reorder the water filters',
+        doneWhen: '- an order confirmation from Amazon',
+        doneSource: 'human',
+        pack: 'life-admin',
+      },
+      [{ text: 'Order confirmation from Amazon arrives', check: 'life-admin.confirmed' }]
+    );
+    service.askRecords.link('ask-work-1', 'work-1');
+    service.workGoals.record('work-1', 'Reorder the water filters', '- an order confirmation');
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      const ask = service.askRecords.get('ask-work-1');
+      expect(ask?.doneItems).toEqual([
+        expect.objectContaining({
+          text: 'Order confirmation from Amazon arrives',
+          state: 'met',
+          metBy: 'daemon',
+          evidence: expect.stringContaining('orders@amazon.com'),
+        }),
+      ]);
     } finally {
       db.close();
     }

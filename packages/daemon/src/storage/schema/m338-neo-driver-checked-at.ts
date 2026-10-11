@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration337(db: Database): void {
+export function runMigration338(db: Database): void {
   const table = 'neo_work_driver_targets';
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = ? AND type = 'table'").get(table))
     return;

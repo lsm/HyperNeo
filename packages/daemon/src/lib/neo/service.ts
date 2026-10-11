@@ -1186,15 +1186,20 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    const works = this.repo.listWork();
-    for (const work of works) {
-      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
-      if (!ref) continue;
+    const cards = this.driverTargets
+      .cardRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
+      .flatMap((card) => {
+        const work = this.repo.getWork(card.workId);
+        return work ? [{ work, ref: card.ref }] : [];
+      });
+    for (const { work, ref } of cards) {
+      if (work.status !== 'queued') continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
       );
     }
-    for (const work of works.filter((item) => item.status === 'reported')) {
+    for (const { work } of cards) {
+      if (work.status !== 'reported') continue;
       await this.followWork(work, Date.now()).catch((error) =>
         this.log.warn('Reported work follow-up pending', error)
       );
@@ -1210,8 +1215,6 @@ export class NeoService {
       } catch (error) {
         this.log.warn('Neo ask ticks pending', error);
       }
-    }
-    for (const ask of this.askRecords.listLive()) {
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
