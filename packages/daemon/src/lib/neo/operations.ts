@@ -107,6 +107,8 @@ import {
 } from './work-supersede.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
+import { projectNeoCardViews } from './card-views.ts';
+import { NeoCardViewSchema } from './card-view-schema.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -276,6 +278,7 @@ const SnapshotOk = z.object({
     .max(100)
     .optional(),
   asks: z.array(NeoAskSchema).optional(),
+  cards: z.array(NeoCardViewSchema).max(100).optional(),
   waitingOnHuman: z
     .object({
       note: z.string(),
@@ -632,6 +635,35 @@ export function createNeoOperations(service: NeoService) {
     const visibleWork = [...recentWork, ...olderActiveWork];
     const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
     const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
+    const workIds = visibleWork.map((item) => item.id);
+    const workDrivers = service.driverTargets.receipts(workIds).map((receipt) => {
+      const since = service.uncheckedSince(receipt.workId);
+      return {
+        ...receipt,
+        ...(since === null ? {} : { uncheckedSince: since }),
+        ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+      };
+    });
+    const workGoals = service.workGoals.list(workIds);
+    const workContinues = service.workContinues.list(workIds);
+    const workSupersessions = service.workSupersessions.list(workIds);
+    const asks = projectNeoSnapshotAsks(
+      focus ? [focus] : service.askRecords.list(scope === undefined ? undefined : scope),
+      caller.source === 'rpc' ? 50 : 10,
+      Date.now()
+    );
+    const workPrs = service.workPrs
+      .list(workIds)
+      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
+    const cards = projectNeoCardViews({
+      work: visibleWork,
+      drivers: workDrivers,
+      prs: workPrs,
+      goals: workGoals,
+      continues: workContinues,
+      supersessions: workSupersessions,
+      asks,
+    });
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -655,31 +687,17 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
-      workDrivers: service.driverTargets
-        .receipts(visibleWork.map((item) => item.id))
-        .map((receipt) => {
-          const since = service.uncheckedSince(receipt.workId);
-          return {
-            ...receipt,
-            ...(since === null ? {} : { uncheckedSince: since }),
-            ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
-          };
-        }),
+      workDrivers,
       ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: focus ? [] : service.sessionNoticeGroups,
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
-      workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
-      workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
-      workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
+      workGoals,
+      workContinues,
+      workSupersessions,
       preferences: service.modelPreference(),
-      asks: projectNeoSnapshotAsks(
-        focus ? [focus] : service.askRecords.list(scope === undefined ? undefined : scope),
-        caller.source === 'rpc' ? 50 : 10,
-        Date.now()
-      ),
-      workPrs: service.workPrs
-        .list(visibleWork.map((item) => item.id))
-        .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) })),
+      asks,
+      workPrs,
+      cards,
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
