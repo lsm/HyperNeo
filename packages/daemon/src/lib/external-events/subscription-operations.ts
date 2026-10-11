@@ -183,15 +183,13 @@ const SubscriptionListSchema = z.object({
 
 export function isUnscopedSessionCaller(
   input: { spaceId?: string; subject?: Subject },
-  caller: OperationCaller
+  caller: OperationCaller,
+  subs: Pick<SubscriptionDependencies, 'getSession'>
 ): boolean {
-  return (
-    caller.source === 'mcp' &&
-    !caller.spaceId &&
-    !!caller.sessionId &&
-    input.spaceId === undefined &&
-    (input.subject === undefined || input.subject.type === 'session')
-  );
+  if (caller.source !== 'mcp' || caller.spaceId || !caller.sessionId) return false;
+  if (input.spaceId !== undefined) return false;
+  if (input.subject !== undefined && input.subject.type !== 'session') return false;
+  return !subs.getSession(caller.sessionId)?.context?.spaceId;
 }
 
 export function admitSubscriptionSpace(
@@ -199,7 +197,7 @@ export function admitSubscriptionSpace(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: SubscriptionScope } | { reason: 'caller_denied' | 'session_inactive' } {
-  if (isUnscopedSessionCaller(input, caller)) {
+  if (isUnscopedSessionCaller(input, caller, subs)) {
     const session = subs.getSession(caller.sessionId as string);
     return session?.status === 'active'
       ? { value: { spaceId: null } }
@@ -295,7 +293,7 @@ export function admitSubscriptionReader(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: ReaderScope } | { reason: Rejection } {
-  if (isUnscopedSessionCaller(input, caller) && input.workflowRunId === undefined)
+  if (isUnscopedSessionCaller(input, caller, subs) && input.workflowRunId === undefined)
     return {
       value: { spaceId: null, owner: { type: 'session', id: caller.sessionId as string } },
     };

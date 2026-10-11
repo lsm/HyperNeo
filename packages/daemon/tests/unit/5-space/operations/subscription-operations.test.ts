@@ -835,6 +835,33 @@ describe('a session outside any Space', () => {
     expect(unscopedSubscriptions.listBySession('s-pick')).toEqual([]);
   });
 
+  test('a session that belongs to a Space never takes the unscoped path', async () => {
+    sessions.createSession(
+      {
+        ...createTestSession('s-chat'),
+        workspacePath: '/repo',
+        type: 'space_chat',
+        context: { spaceId: SPACE },
+      },
+      { enforceWorkspaceOwnership: false }
+    );
+    const caller: OperationCaller = { source: 'mcp', sessionId: 's-chat', role: 'universal_read' };
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toBe(
+      'caller_denied'
+    );
+    expect(await runParsed('event.external.subscription.list', {}, caller)).toBe('caller_denied');
+    expect(unscopedSubscriptions.listBySession('s-chat')).toEqual([]);
+  });
+
+  test('deleting the session removes its subscriptions', async () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    const caller = plainSession('s-deleted');
+    await runParsed('event.external.subscribe', { prUrl: PR }, caller);
+    expect(unscopedSubscriptions.listBySession('s-deleted')).toHaveLength(1);
+    db.prepare('DELETE FROM sessions WHERE id = ?').run('s-deleted');
+    expect(unscopedSubscriptions.listBySession('s-deleted')).toEqual([]);
+  });
+
   test('is listed for plain and Neo sessions', () => {
     for (const name of [
       'event.external.subscribe',

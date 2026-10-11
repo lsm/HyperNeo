@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { ensureStartFolder } from '../../../../src/lib/drivers/start-folder';
+import {
+  createStartFolder,
+  ensureStartFolder,
+  requireStartFolder,
+} from '../../../../src/lib/drivers/start-folder';
 
 function deps(existing: string[], fail?: string) {
   const made: string[] = [];
@@ -75,5 +79,35 @@ describe('ensureStartFolder', () => {
         detail: 'Could not create /Users/me/focus/neo-ios: EACCES: permission denied',
       },
     });
+  });
+});
+
+describe('requireStartFolder', () => {
+  const home = { homeDir: '/Users/me' };
+  test('decides from what was read, without touching the disk', () => {
+    expect(
+      requireStartFolder('/Users/me/new', true, { exists: false, parentExists: true }, home)
+    ).toEqual({ value: { folder: '/Users/me/new', create: true } });
+    expect(
+      requireStartFolder('/Users/me/a/new', true, { exists: false, parentExists: false }, home)
+    ).toMatchObject({ reason: { reason: 'invalid_place' } });
+    expect(
+      requireStartFolder('/Users/me/old', false, { exists: true, parentExists: true }, home)
+    ).toEqual({ value: { folder: '/Users/me/old', create: false } });
+  });
+});
+
+describe('createStartFolder', () => {
+  test('creates only a folder the gate said to create', () => {
+    const made: string[] = [];
+    const makeFolder = (folder: string) => {
+      made.push(folder);
+    };
+    expect(createStartFolder({ folder: '/Users/me/old', create: false }, { makeFolder })).toEqual({
+      value: '/Users/me/old',
+    });
+    expect(made).toEqual([]);
+    createStartFolder({ folder: '/Users/me/new', create: true }, { makeFolder });
+    expect(made).toEqual(['/Users/me/new']);
   });
 });

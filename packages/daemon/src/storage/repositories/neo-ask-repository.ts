@@ -1,10 +1,18 @@
-import type { NeoAsk, NeoAskItem, NeoAskStatus } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  NEO_ASK_CONTINUE_LIMIT,
+  NEO_ASK_CONTINUE_WINDOW_MS,
+  type NeoAsk,
+  type NeoAskItem,
+  type NeoAskStatus,
+} from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
 const askColumns = `id, request_key AS requestKey, concern_id AS concernId,
   origin_session_id AS originSessionId, origin_message_id AS originMessageId,
   title, ask, done_when AS doneWhen, done_source AS doneSource`;
 
+const REOPEN = "status = 'open', outcome = NULL, settled_at = NULL";
+const REOPENABLE = "status IN ('waiting', 'blocked')";
 type NeoAskRow = Omit<NeoAsk, 'workIds' | 'doneItems'>;
 export type NeoAskInput = Omit<
   NeoAsk,
@@ -46,7 +54,7 @@ export class NeoAskRepository {
   }
 
   private askColumns(): string {
-    return `${askColumns}${this.hasPack() ? ', pack' : ''}${this.hasColumn('approved_at') ? ', approved_at AS approvedAt' : ''}, status, outcome, evidence,
+    return `${askColumns}${this.hasPack() ? ', pack' : ''}${this.hasColumn('approved_at') ? ', approved_at AS approvedAt' : ''}${this.hasColumn('approved_continues') ? ', approved_continues AS approvedContinues' : ''}, status, outcome, evidence,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt`;
   }
 
@@ -183,8 +191,8 @@ export class NeoAskRepository {
 
   reopen(expected: Pick<NeoAsk, 'id' | 'status'>): NeoAsk | null {
     const row = this.db
-      .prepare(`UPDATE neo_asks SET status = 'open', outcome = NULL, settled_at = NULL,
-        updated_at = ? WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
+      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+        WHERE id = ? AND status = ? RETURNING ${this.askColumns()}`)
       .get(Date.now(), expected.id, expected.status) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
@@ -194,9 +202,8 @@ export class NeoAskRepository {
   reopenForWork(workId: string): void {
     if (!this.hasTable()) return;
     const reopened = this.db
-      .prepare(`UPDATE neo_asks SET status = 'open', settled_at = NULL, updated_at = ?
-        WHERE status IN ('waiting', 'blocked')
-          AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
+      .prepare(`UPDATE neo_asks SET ${REOPEN}, updated_at = ?
+        WHERE ${REOPENABLE} AND id = (SELECT ask_id FROM neo_ask_work WHERE work_id = ?)`)
       .run(Date.now(), workId);
     if (reopened.changes > 0) this.notify();
   }
@@ -210,12 +217,9 @@ export class NeoAskRepository {
         )
         .run(workId, askId);
       if (added.changes === 0) return false;
-      this.db
-        .prepare(`UPDATE neo_asks SET updated_at = ?,
-          status = CASE WHEN status IN ('waiting', 'blocked') THEN 'open' ELSE status END,
-          settled_at = CASE WHEN status IN ('waiting', 'blocked') THEN NULL ELSE settled_at END
-          WHERE id = ?`)
-        .run(Date.now(), askId);
+      const now = Date.now();
+      this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
+      this.db.prepare(`UPDATE neo_asks SET ${REOPEN} WHERE id = ? AND ${REOPENABLE}`).run(askId);
       return true;
     })();
     if (linked) this.notify();
@@ -227,13 +231,33 @@ export class NeoAskRepository {
 
   approve(id: string, at: number): NeoAsk | null {
     if (!this.hasTable() || !this.hasColumn('approved_at')) return null;
+    const refill = this.hasColumn('approved_continues') ? ', approved_continues = 0' : '';
     const row = this.db
-      .prepare(`UPDATE neo_asks SET approved_at = COALESCE(approved_at, ?), updated_at = ?
+      .prepare(`UPDATE neo_asks SET approved_at = ?${refill}, updated_at = ?
         WHERE id = ? AND status NOT IN ('achieved', 'abandoned') RETURNING ${this.askColumns()}`)
       .get(at, at, id) as NeoAskRow | null;
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];
+  }
+
+  reserveApprovedContinue(id: string, limit: number): boolean {
+    if (!this.hasTable() || !this.hasColumn('approved_continues')) return true;
+    return (
+      this.db
+        .prepare(`UPDATE neo_asks SET approved_continues = approved_continues + 1
+          WHERE id = ? AND approved_continues < ?`)
+        .run(id, limit).changes === 1
+    );
+  }
+
+  refundApprovedContinue(id: string): void {
+    if (!this.hasTable() || !this.hasColumn('approved_continues')) return;
+    this.db
+      .prepare(
+        'UPDATE neo_asks SET approved_continues = MAX(0, approved_continues - 1) WHERE id = ?'
+      )
+      .run(id);
   }
 
   settle(
@@ -290,6 +314,12 @@ export class NeoAskRepository {
       : [];
     return rows.map((row) => ({
       ...row,
+      ...(row.approvedAt != null
+        ? {
+            approvedUntil: row.approvedAt + NEO_ASK_CONTINUE_WINDOW_MS,
+            approvedContinueLimit: NEO_ASK_CONTINUE_LIMIT,
+          }
+        : {}),
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
