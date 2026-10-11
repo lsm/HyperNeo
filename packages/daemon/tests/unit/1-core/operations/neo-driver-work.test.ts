@@ -1155,6 +1155,32 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('tracks the pull requests of a card with no done list once it reports', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6403';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const notes: string[] = [];
+    service.readPrs = async () => [{ url, state: 'OPEN', checks: 'passing', review: 'approved' }];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
+      expect(notes.some((id) => id.includes('done-check'))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test('ticks a merged-PR item itself when the card reports its PR merged', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';
