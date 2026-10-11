@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import {
   codexExchange,
   codexRecentInputs,
   codexTurnState,
   createCodexDesktopAdapter,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
-import type { CodexAppServer } from '../../../../src/lib/drivers/codex-app-server';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -45,6 +45,38 @@ describe('codexTurnState', () => {
         '{"truncated',
       ])
     ).toEqual({ marker: 'task_started', reply: 'reading the repo' });
+  });
+
+  test('a finished turn that asked the user and was not answered is waiting on them', () => {
+    const ask = line('response_item', {
+      type: 'function_call',
+      name: 'request_user_input_async',
+      call_id: 'c1',
+    });
+    const done = line('event_msg', { type: 'task_complete', last_agent_message: 'Which one?' });
+    const started = line('event_msg', { type: 'task_started' });
+    expect(codexTurnState([started, heard('pick one'), ask, done])).toEqual({
+      marker: 'task_complete',
+      outcome: 'asked',
+      reply: 'Which one?',
+    });
+    expect(codexTurnState([started, ask, heard('the first'), done])).toEqual({
+      marker: 'task_complete',
+      reply: 'Which one?',
+    });
+    expect(codexTurnState([ask, done, started, heard('the first'), said('ok')])).toEqual({
+      marker: 'task_started',
+      reply: 'ok',
+    });
+  });
+
+  test('a finished turn that carries an error failed', () => {
+    expect(
+      codexTurnState([
+        line('event_msg', { type: 'task_started' }),
+        line('event_msg', { type: 'task_complete', error: 'stream disconnected' }),
+      ])
+    ).toEqual({ marker: 'task_complete', outcome: 'errored', reply: null });
   });
 
   test('reports no turn when the tail holds none', () => {
@@ -304,6 +336,26 @@ describe('codex-desktop adapter status and send', () => {
       value: { status: 'done', lastReply: 'Done.' },
     });
     expect(await adapter().status?.(ref('nope'))).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  test('status reports a question waiting on the user and a turn that errored', async () => {
+    const rollout = join(dir, 'finished.jsonl');
+    appendFileSync(
+      rollout,
+      `\n${line('event_msg', { type: 'task_started' })}\n${line('response_item', { type: 'function_call', name: 'request_user_input_async' })}\n${line('event_msg', { type: 'task_complete', last_agent_message: 'Which one?' })}`
+    );
+    expect(await adapter().status?.(ref('idle'))).toMatchObject({
+      ok: true,
+      value: { status: 'needs_you' },
+    });
+    appendFileSync(
+      rollout,
+      `\n${line('event_msg', { type: 'task_started' })}\n${line('event_msg', { type: 'task_complete', error: 'boom' })}`
+    );
+    expect(await adapter().status?.(ref('idle'))).toMatchObject({
+      ok: true,
+      value: { status: 'failed' },
+    });
   });
 
   const user = { from: 'user', caller: { source: 'rpc' as const } };
