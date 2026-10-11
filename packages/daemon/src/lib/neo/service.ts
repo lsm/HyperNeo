@@ -1089,6 +1089,7 @@ export class NeoService {
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
+      if (target.verb === 'adopt') return this.adoptDriverWork(work, target.ref);
       this.driverTargets.recordStartInterrupted(work.id);
       await this.failWork(
         work,

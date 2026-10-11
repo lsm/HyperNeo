@@ -193,6 +193,29 @@ describe('neo.session.track', () => {
     db.close();
   });
 
+  test('a restart mid-adoption finishes adopting instead of failing the card', async () => {
+    const { work: card } = service.driverTargets.propose(
+      service.repo,
+      {
+        id: 'w-adopt',
+        requestKey: 'root:adopt',
+        concernId: null,
+        originSessionId: 'neo:root',
+        title: 'Quiet-model research',
+        instruction: 'Follow the research session.',
+      },
+      { verb: 'adopt', ref }
+    );
+    service.repo.transitionWork(card.id, card, { status: 'queued' });
+    await service.recover();
+    expect(service.repo.getWork(card.id)).toMatchObject({
+      status: 'queued',
+      report: expect.stringContaining('Tracking the codex-desktop session'),
+    });
+    expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
+    expect(sent).not.toHaveBeenCalled();
+  });
+
   test('asks Neo to adopt the session, and the adopted card follows it without sending', async () => {
     const human = { source: 'rpc' as const, principal: 'local' as const };
     const invoke = (input: unknown, caller: Parameters<typeof invokeOperation>[3] = human) =>
