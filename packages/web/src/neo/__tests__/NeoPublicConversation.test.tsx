@@ -538,3 +538,49 @@ describe('PendingAsk', () => {
     expect(onEdit).toHaveBeenCalledWith('pending-1');
   });
 });
+
+describe('session notice rows', () => {
+  const notice = (n: number, kind: 'needs_you' | 'finished', link?: string) => ({
+    key: `claude-desktop::s${n}`,
+    ref: { adapter: 'claude-desktop', id: `s${n}` },
+    title: `Session ${n}`,
+    kind,
+    at: 1_790_000_000_000 + n,
+    ...(link ? { link } : {}),
+  });
+
+  it('shows each session with its own Open link, and the rest behind a more button', () => {
+    const notices = [
+      notice(1, 'needs_you', 'claude://resume?session=s1'),
+      notice(2, 'finished', 'javascript:alert(1)'),
+      ...[3, 4, 5, 6, 7].map((n) => notice(n, 'finished')),
+    ];
+    render(
+      <NeoPublicConversation
+        conversation={{
+          conversationId: 'c1',
+          status: 'ready',
+          hasEarlier: false,
+          hasMore: false,
+          entries: [
+            {
+              kind: 'notices',
+              key: 'notices:1',
+              group: { id: 'g1', at: notices[0].at, line: '', notices },
+            },
+          ],
+        }}
+      />
+    );
+    const row = screen.getByRole('note');
+    expect(row.textContent).toContain('Claude Code · Session 1 needs you');
+    expect(
+      within(row)
+        .getAllByRole('link')
+        .map((a) => a.getAttribute('href'))
+    ).toEqual(['claude://resume?session=s1']);
+    expect(row.textContent).not.toContain('Session 6');
+    fireEvent.click(within(row).getByRole('button', { name: '2 more' }));
+    expect(row.textContent).toContain('Session 7 finished');
+  });
+});

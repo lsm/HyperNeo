@@ -84,7 +84,12 @@ export function useNeo() {
             if (!disposed)
               setError(cause instanceof Error ? cause.message : 'Could not refresh Neo.');
           });
-        unsubscribe = hub.onEvent('neo.changed', update);
+        const offChanged = hub.onEvent('neo.changed', update);
+        const offNotices = hub.onEvent('neo.session.notices', update);
+        unsubscribe = () => {
+          offChanged();
+          offNotices();
+        };
         reconnect = hub.onConnection((state) => {
           if (state === 'connected') update();
         });
@@ -200,7 +205,8 @@ export function useNeo() {
   const publicConversation = projectNeoPublicConversation(
     snapshot?.sessionId ?? null,
     asks,
-    publications
+    publications,
+    snapshot?.sessionNoticeGroups
   );
   return {
     publicConversation,

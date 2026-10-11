@@ -2,12 +2,14 @@ import { useState } from 'preact/hooks';
 import type { MessageImage } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { projectNeoMessageImageSources } from './neo-message-images.ts';
 import { neoMessageAnchor } from './reply-context.ts';
+import { neoAppLabel, neoSessionLink } from './work-driver.ts';
 import type { NeoPendingAsk } from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
@@ -51,6 +53,65 @@ function markRestored(requestId: string) {
     const ids = [...restoredUndelivered().filter((id) => id !== requestId), requestId];
     localStorage.setItem(RESTORED_KEY, JSON.stringify(ids.slice(-200)));
   } catch {}
+}
+
+const NOTICE_KINDS = {
+  needs_you: 'needs you',
+  failed: 'failed',
+  finished: 'finished',
+} as const;
+const NOTICES_SHOWN = 5;
+
+function NoticeRow({ entryKey, group }: { entryKey: string; group: NeoSessionNoticeGroup }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? group.notices : group.notices.slice(0, NOTICES_SHOWN);
+  const more = group.notices.length - shown.length;
+  const time = messageTime(new Date(group.at).toISOString());
+  return (
+    <div
+      role="note"
+      data-public-entry={entryKey}
+      class="neo-arrive mx-auto max-w-[94%] px-1 text-center text-xs text-fg-muted"
+    >
+      {time && (
+        <time dateTime={time.iso} title={time.full} class="mr-2 text-[11px] text-fg-faint">
+          {time.label}
+        </time>
+      )}
+      {shown.map((notice, index) => {
+        const link = neoSessionLink(notice.link, notice.ref.daemon);
+        return (
+          <span key={notice.key + notice.at}>
+            {index > 0 && '; '}
+            {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
+            <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
+              {NOTICE_KINDS[notice.kind]}
+            </span>
+            {link && (
+              <>
+                {' · '}
+                <a
+                  href={link}
+                  class="text-accent hover:underline"
+                  aria-label={`Open ${notice.title}`}
+                >
+                  Open
+                </a>
+              </>
+            )}
+          </span>
+        );
+      })}
+      {more > 0 && (
+        <>
+          {'; '}
+          <button type="button" class="text-accent hover:underline" onClick={() => setAll(true)}>
+            {more} more
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
 function PublicEntry({
@@ -362,16 +423,20 @@ export function NeoPublicConversation({
           Load earlier saved conversation
         </button>
       )}
-      {conversation.entries.map((entry) => (
-        <PublicEntry
-          key={entry.key}
-          entry={entry}
-          onOpenScene={onOpenScene}
-          canOpenScene={canOpenScene}
-          onEditUndelivered={onEditUndelivered}
-          topics={topics}
-        />
-      ))}
+      {conversation.entries.map((entry) =>
+        entry.kind === 'notices' ? (
+          <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} />
+        ) : (
+          <PublicEntry
+            key={entry.key}
+            entry={entry}
+            onOpenScene={onOpenScene}
+            canOpenScene={canOpenScene}
+            onEditUndelivered={onEditUndelivered}
+            topics={topics}
+          />
+        )
+      )}
       {conversation.hasMore && onRetry && (
         <button
           type="button"
