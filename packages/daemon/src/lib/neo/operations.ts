@@ -83,6 +83,7 @@ import {
   NEO_SESSION_MUTES_MAX,
   NeoSessionNoticeGroupSchema,
   NeoSessionNoticeSchema,
+  latestNeoSessionNoticeGroups,
   planNeoSessionMutes,
 } from './session-watch.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
@@ -689,7 +690,7 @@ export function createNeoOperations(service: NeoService) {
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
       workDrivers,
       ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
-      sessionNoticeGroups: focus ? [] : service.sessionNoticeGroups,
+      sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       workGoals,
       workContinues,
@@ -1392,7 +1393,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.session.mute',
       description:
-        'Mute or unmute notices about a session the human started themselves. key is the notice key from snapshot.sessionNoticeGroups or sessionNotices; a muted session gets no more needs-you, failed or finished notices until unmuted. snapshot.mutedSessions lists the muted keys.',
+        'Mute or unmute notices about a session the human started themselves. key is the notice key from snapshot.sessionNoticeGroups or sessionNotices; a muted session gets no more needs-you or failed notices until unmuted. snapshot.mutedSessions lists the muted keys.',
       inputSchema: SessionMute,
       resultSchema: SessionMuteResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
