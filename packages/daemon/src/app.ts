@@ -840,7 +840,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
-      resend: (sessionId, uuid) => {
+      resend: (sessionId, uuid, enqueueDelivery) => {
         const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
         if (!reopenedId) return false;
         void internalEventBus
@@ -850,13 +850,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             status: 'enqueued',
           })
           .catch(() => {});
-        deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+        if (enqueueDelivery)
+          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
         return true;
       },
       sendNote: async (sessionId, promptUuid) => {
         await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
-          origin: 'restart_recovery',
+          origin: 'recovery',
           messageUuid: `restart-recovery:${promptUuid}`,
           deliveryMode: 'immediate',
           message: {

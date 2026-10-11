@@ -1924,7 +1924,9 @@ export class SDKMessageRepository {
             AND sdk_uuid IS NOT NULL AND parent_tool_use_id IS NULL
             AND NOT (json_valid(sdk_message)
               AND json_type(sdk_message, '$.message.content') = 'array'
-              AND json_extract(sdk_message, '$.message.content[0].type') = 'tool_result')
+              AND EXISTS (
+                SELECT 1 FROM json_each(sdk_message, '$.message.content')
+                 WHERE json_extract(value, '$.type') = 'tool_result'))
           ORDER BY timestamp DESC, id DESC LIMIT 1`
       )
       .get(sessionId) as { uuid: string; timestamp: string } | undefined;

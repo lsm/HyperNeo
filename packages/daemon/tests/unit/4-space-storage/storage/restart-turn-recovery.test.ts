@@ -14,16 +14,16 @@ describe('planRestartRecovery', () => {
   test.each([
     ['no prompt', null, false, { kind: 'skip', sessionId: 's', reason: 'no_prompt' }],
     [
-      'a delivery already queued',
-      { promptUuid: 'p', workedAfter: false },
-      true,
-      { kind: 'skip', sessionId: 's', reason: 'delivery_active' },
-    ],
-    [
       'a prompt nothing answered',
       { promptUuid: 'p', workedAfter: false },
       false,
-      { kind: 'resend', sessionId: 's', uuid: 'p' },
+      { kind: 'resend', sessionId: 's', uuid: 'p', enqueueDelivery: true },
+    ],
+    [
+      'a prompt whose stale delivery is still queued',
+      { promptUuid: 'p', workedAfter: false },
+      true,
+      { kind: 'resend', sessionId: 's', uuid: 'p', enqueueDelivery: false },
     ],
     [
       'a turn that had already worked',
@@ -47,8 +47,8 @@ describe('recoverRestartCutTurns', () => {
             ? { promptUuid: 'p2', workedAfter: true }
             : null,
       hasActiveDelivery: () => false,
-      resend: (id, uuid) => {
-        calls.push(`resend ${id} ${uuid}`);
+      resend: (id, uuid, enqueueDelivery) => {
+        calls.push(`resend ${id} ${uuid} ${enqueueDelivery}`);
         return true;
       },
       sendNote: async (id, uuid) => {
@@ -56,7 +56,7 @@ describe('recoverRestartCutTurns', () => {
       },
     };
     const plans = await recoverRestartCutTurns(['fresh', 'busy', 'empty'], deps);
-    expect(calls).toEqual(['resend fresh p1', 'note busy p2']);
+    expect(calls).toEqual(['resend fresh p1 true', 'note busy p2']);
     expect(plans.map((plan) => plan.kind)).toEqual(['resend', 'continue', 'skip']);
   });
 });
@@ -131,6 +131,22 @@ describe('restart recovery reads', () => {
       uuid: 'u3',
       status: 'consumed',
     });
+    row(
+      'working',
+      'user',
+      '2026-10-11T03:00:07.000Z',
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'reminder' },
+            { type: 'tool_result', tool_use_id: 't2', content: 'ok' },
+          ],
+        },
+      },
+      { uuid: 'u4', status: 'consumed' }
+    );
     expect(sdk.readRestartRecoveryEvidence('asked')).toEqual({
       promptUuid: 'u1',
       workedAfter: false,

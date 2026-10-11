@@ -11,14 +11,14 @@ export interface RestartRecoveryEvidence {
 export interface RestartRecoveryDeps {
   readEvidence(sessionId: string): RestartRecoveryEvidence | null;
   hasActiveDelivery(sessionId: string, uuid: string): boolean;
-  resend(sessionId: string, uuid: string): boolean;
+  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): boolean;
   sendNote(sessionId: string, promptUuid: string): Promise<void>;
 }
 
 export type RestartRecoveryPlan =
-  | { kind: 'resend'; sessionId: string; uuid: string }
+  | { kind: 'resend'; sessionId: string; uuid: string; enqueueDelivery: boolean }
   | { kind: 'continue'; sessionId: string; promptUuid: string }
-  | { kind: 'skip'; sessionId: string; reason: 'no_prompt' | 'delivery_active' };
+  | { kind: 'skip'; sessionId: string; reason: 'no_prompt' };
 
 export function planRestartRecovery(
   sessionId: string,
@@ -26,10 +26,14 @@ export function planRestartRecovery(
 ): RestartRecoveryPlan {
   const { evidence, deliveryActive } = found;
   if (!evidence) return { kind: 'skip', sessionId, reason: 'no_prompt' };
-  if (deliveryActive) return { kind: 'skip', sessionId, reason: 'delivery_active' };
   return evidence.workedAfter
     ? { kind: 'continue', sessionId, promptUuid: evidence.promptUuid }
-    : { kind: 'resend', sessionId, uuid: evidence.promptUuid };
+    : {
+        kind: 'resend',
+        sessionId,
+        uuid: evidence.promptUuid,
+        enqueueDelivery: !deliveryActive,
+      };
 }
 
 function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
@@ -44,7 +48,7 @@ async function applyRecoveryPlan(
   plan: RestartRecoveryPlan,
   deps: RestartRecoveryDeps
 ): Promise<RestartRecoveryPlan> {
-  if (plan.kind === 'resend') deps.resend(plan.sessionId, plan.uuid);
+  if (plan.kind === 'resend') deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery);
   if (plan.kind === 'continue') await deps.sendNote(plan.sessionId, plan.promptUuid);
   return plan;
 }
