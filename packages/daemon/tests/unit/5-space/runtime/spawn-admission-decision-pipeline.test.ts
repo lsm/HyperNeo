@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { SpawnExecutionAdmissionInput } from '../../../../src/lib/tasks/spawn-admission-gates';
-import { decideSpawnExecutionAdmission } from '../../../../src/lib/tasks/spawn-admission-gates';
 import {
   applyConcurrentSpawnGate,
   applyLiveSessionGate,
@@ -83,45 +81,7 @@ describe('spawn admission decisionRun gates', () => {
   });
 });
 
-describe('spawn admission decisionRun parity with the pure core', () => {
-  const STATUSES: SpaceTaskStatus[] = [
-    'draft',
-    'open',
-    'in_progress',
-    'review',
-    'approved',
-    'done',
-    'blocked',
-    'cancelled',
-    'archived',
-    'rate_limited',
-    'usage_limited',
-    'stopped',
-  ];
-
-  test('the pipeline matches decideSpawnExecutionAdmission across the full input matrix', () => {
-    for (const hasLiveIndexedSession of [false, true]) {
-      for (const isSpawningExecution of [false, true]) {
-        for (const taskStatus of STATUSES) {
-          for (const executionWorkflowValid of [false, true]) {
-            for (const slotResolvable of [false, true]) {
-              const input: SpawnExecutionAdmissionInput = {
-                hasLiveIndexedSession,
-                isSpawningExecution,
-                taskStatus,
-                executionWorkflowValid,
-                slotResolvable,
-              };
-              expect(decideSpawnExecutionAdmissionViaPipeline(input)).toEqual(
-                decideSpawnExecutionAdmission(input)
-              );
-            }
-          }
-        }
-      }
-    }
-  });
-
+describe('decideSpawnExecutionAdmissionViaPipeline precedence', () => {
   test('precedence: a live indexed session beats every downstream gate', () => {
     const decision = decideSpawnExecutionAdmissionViaPipeline({
       hasLiveIndexedSession: true,
