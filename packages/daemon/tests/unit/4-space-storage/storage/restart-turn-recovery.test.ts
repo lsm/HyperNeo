@@ -53,11 +53,16 @@ describe('recoverRestartCutTurns', () => {
       },
       sendNote: async (id, uuid) => {
         calls.push(`note ${id} ${uuid}`);
+        return id !== 'busy';
       },
     };
     const plans = await recoverRestartCutTurns(['fresh', 'busy', 'empty'], deps);
     expect(calls).toEqual(['resend fresh p1 true', 'note busy p2']);
-    expect(plans.map((plan) => plan.kind)).toEqual(['resend', 'continue', 'skip']);
+    expect(plans.map((plan) => [plan.kind, plan.resumed])).toEqual([
+      ['resend', true],
+      ['continue', false],
+      ['skip', false],
+    ]);
   });
 });
 

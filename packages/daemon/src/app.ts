@@ -855,7 +855,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return true;
       },
       sendNote: async (sessionId, promptUuid) => {
-        await handoffPromptToMailbox({
+        const outcome = await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           origin: 'recovery',
           messageUuid: `restart-recovery:${promptUuid}`,
@@ -868,10 +868,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           },
           jobQueue: db.getJobQueueRepo(),
         });
+        if (outcome.kind !== 'rejected') return true;
+        logError(
+          `[Daemon] Restart recovery note for session ${sessionId} was rejected: ${outcome.reason}`
+        );
+        return false;
       },
     })
-      .then((plans) => {
-        const acted = plans.filter((plan) => plan.kind !== 'skip').length;
+      .then((results) => {
+        const acted = results.filter((result) => result.resumed).length;
         if (acted > 0) logInfo(`[Daemon] Resumed ${acted} session turn(s) cut off by the restart`);
       })
       .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
