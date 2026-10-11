@@ -17,7 +17,7 @@ import {
   NEO_DEFAULT_PACKS,
   neoPackEvidenceOrNone,
   neoPackBriefs,
-  neoPackAskReportEvidence,
+  neoPackAskCardEvidence,
   neoPackChecks,
   neoPackFragment,
   neoPacks,
@@ -485,27 +485,42 @@ describe('cachedNeoCardPrRead', () => {
   });
 });
 
-describe('neoPackAskReportEvidence', () => {
+describe('neoPackAskCardEvidence', () => {
+  const pr = 'https://github.com/lsm/HyperNeo/pull/42';
   const works = [
-    { report: 'Confirmation: id=<msg-1>; from=orders@amazon.com', createdAt: 0 },
+    {
+      id: 'w1',
+      status: 'reported',
+      report: 'Confirmation: id=<msg-1>; from=orders@amazon.com',
+      createdAt: 0,
+    },
   ] as NeoWork[];
   const packs = [
     createCodingPack({
-      prUrls: async () => [],
-      runningPrUrls: async () => [],
       readPrs: async () => [],
-      workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
+      prCandidates: async () => [],
+      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
+      runningPrUrls: async () => [],
+      readRefStates: async () => [],
+      workPrs: {
+        get: () => null,
+        list: () =>
+          [{ workId: 'w1', prs: [{ url: pr, state: 'MERGED' }] }] as unknown as NeoWorkPrRow[],
+        recordFailedRead: () => {},
+      },
       record: () => null,
     }),
     createLifeAdminPack(),
   ];
+  const keys = (pack: string | null) =>
+    neoPackAskCardEvidence(packs, { pack, workIds: ['w1'] } as NeoAsk, works).map(
+      (item) => item.key
+    );
 
-  test('a packed ask reads only its own pack report evidence', () => {
-    expect(neoPackAskReportEvidence(packs, { pack: 'coding' } as NeoAsk, works)).toEqual([]);
-    expect(neoPackAskReportEvidence(packs, { pack: 'life-admin' } as NeoAsk, works)).toEqual([
-      { key: 'confirmation:<msg-1>', state: 'done', summary: 'orders@amazon.com', blockers: [] },
-    ]);
-    expect(neoPackAskReportEvidence(packs, { pack: null } as NeoAsk, works)).toHaveLength(1);
+  test('a packed ask reads only its own pack card evidence', () => {
+    expect(keys('coding')).toEqual([pr]);
+    expect(keys('life-admin')).toEqual(['confirmation:<msg-1>']);
+    expect(keys(null)).toEqual([pr, 'confirmation:<msg-1>']);
   });
 });
 

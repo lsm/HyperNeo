@@ -1,33 +1,35 @@
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import {
   extractNeoAskRefs,
+  type NeoRefStateReader,
   neoAskCardRefs,
   neoAskRefNews,
-  type NeoRefStateReader,
 } from './ask-prs.ts';
-import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
-import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
-  planNeoCardPrOwnership,
-  planNeoPrCedes,
-  scoreNeoCardPrs,
   type NeoCardPrCandidate,
   type NeoCardPrOwned,
   type NeoPrClaimRow,
+  planNeoCardPrOwnership,
+  planNeoPrCedes,
+  scoreNeoCardPrs,
 } from './card-pr-claims.ts';
-import superpipe, { type PipelineAPI } from 'superpipe';
-import { githubUrlKey } from '../../../github/parse-pr-url.ts';
+import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
+import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import {
+  extractNeoWorkPrUrls,
   mergeNeoWorkPrReads,
+  type NeoWorkPrReader,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   shouldReadNeoWorkPrs,
-  type NeoWorkPrReader,
 } from './work-prs.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
@@ -228,6 +230,12 @@ export function createCodingPack(
         ? { evidence: neoWorkPrEvidence(row.prs), read: { ok, okAt: row.readOkAt } }
         : null;
     },
+    askCardEvidence: (ask: NeoAsk, works: readonly NeoWork[]) =>
+      neoAskPrEvidence(
+        works,
+        deps.workPrs.list(ask.workIds),
+        deps.claims.forUrls(works.flatMap((work) => extractNeoWorkPrUrls(work.report)))
+      ),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(
