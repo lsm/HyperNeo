@@ -611,7 +611,8 @@ export function createNeoOperations(service: NeoService) {
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
     const scope = binding?.kind === 'concern' ? binding.concernId : requested;
-    const detailed = caller.source === 'rpc' || binding?.kind === 'concern' || !!focus;
+    const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
+    const cardDetail = detailed || !!focus;
     const concerns = service.repo
       .listConcerns()
       .filter((item) => (focus ? item.id === focus.concernId : !scope || item.id === scope));
@@ -692,8 +693,8 @@ export function createNeoOperations(service: NeoService) {
           ? item
           : {
               ...item,
-              instruction: detailed ? item.instruction.slice(0, 1000) : '',
-              report: detailed ? (item.report?.slice(0, 3000) ?? null) : null,
+              instruction: cardDetail ? item.instruction.slice(0, 1000) : '',
+              report: cardDetail ? (item.report?.slice(0, 3000) ?? null) : null,
             }
       ),
     };

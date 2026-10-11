@@ -156,6 +156,17 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test("an ask-scoped read shows the cards' reports but not the concern's private context", async () => {
+    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: 'S', context: 'Private' }, 0);
+    const askId = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'scoped', concernId: 'c1' })
+    ).value!.ask!.id;
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { concerns: { id: string; context: string }[] };
+    };
+    expect(scoped.value?.concerns).toEqual([expect.objectContaining({ id: 'c1', context: '' })]);
+  });
+
   test("a context holder cannot read another concern's ask, whatever concern it names", async () => {
     const askId = await openAsk();
     service.repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
