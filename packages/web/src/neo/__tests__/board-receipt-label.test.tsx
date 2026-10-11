@@ -73,14 +73,27 @@ describe('neoBoardReceiptLabel', () => {
     expect(receipts).toEqual(before);
   });
 
-  it.each([{ id: 'ordinary-check' }, { requestKey: 'different-check' }, { concernId: 'family' }])(
-    'does not infer a work relationship from prompt text or partial identity: %j',
-    (patch) => {
+  it.each(['neo-work:work-A:review:retry:2', 'neo-work:work-A:review:continued:1'])(
+    'labels a retried or continued review by its work: %s',
+    (id) => {
       const receipts = board().receipts;
       const review = receipts.find((item) => item.kind === 'consultation')!;
-      expect(neoBoardReceiptLabel({ ...review, ...patch }, receipts)).toBe('Context check');
+      expect(neoBoardReceiptLabel({ ...review, id, requestKey: id }, receipts)).toBe(
+        'Context review · Review the draft'
+      );
     }
   );
+
+  it.each([
+    { id: 'ordinary-check' },
+    { requestKey: 'different-check' },
+    { concernId: 'family' },
+    { id: 'neo-work:work-A:review:extra', requestKey: 'neo-work:work-A:review:extra' },
+  ])('does not infer a work relationship from prompt text or partial identity: %j', (patch) => {
+    const receipts = board().receipts;
+    const review = receipts.find((item) => item.kind === 'consultation')!;
+    expect(neoBoardReceiptLabel({ ...review, ...patch }, receipts)).toBe('Context check');
+  });
 
   it('missing work does not fabricate a review or completion claim', () => {
     const review = board().receipts.find((item) => item.kind === 'consultation')!;
