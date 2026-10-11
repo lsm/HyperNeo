@@ -68,8 +68,8 @@ export function neoWorkReturnMessageId(workId: string, retries: number, continue
   return continued ? `${base}:continued:${continued}` : base;
 }
 
-export function neoWorkReviewId(workId: string, retries: number): string {
-  return `neo-work:${workId}:review${retries ? `:retry:${retries}` : ''}`;
+export function neoWorkReviewId(workId: string, retries: number, continued = 0): string {
+  return `neo-work:${workId}:review${retries ? `:retry:${retries}` : ''}${continued ? `:continued:${continued}` : ''}`;
 }
 
 function checkedWorkId(messageId: string): string {
@@ -124,7 +124,7 @@ export function classifyNeoAskInput(input: NeoAskOrigin, prompts: readonly SDKMe
 }
 
 function reviewWorkId(id: string): string | null {
-  return /^neo-work:(.+):review(?::retry:\d+)?$/.exec(id)?.[1] ?? null;
+  return /^neo-work:(.+):review(?::retry:\d+)?(?::continued:\d+)?$/.exec(id)?.[1] ?? null;
 }
 
 export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads): NeoAskEvidence {
