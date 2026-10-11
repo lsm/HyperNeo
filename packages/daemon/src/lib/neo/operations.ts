@@ -41,7 +41,7 @@ import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
-import { createNeoRouter } from './router.ts';
+import { createNeoRouter, reopenNeoHolder } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
 import { createNeoConversationAskReadOperation } from './conversation-ask-read-operation.ts';
@@ -1381,7 +1381,8 @@ export function createNeoOperations(service: NeoService) {
           ? neoForwardedText(service.asks.find(root.slice(4), ask.messageId), ask)
           : null;
       },
-      open: (concernId) => service.open(concernId),
+      open: (concernId) =>
+        reopenNeoHolder(service.repo, service.db, (id) => service.open(id), concernId),
       record: (ask, forward) => service.askForwards.record(ask, forward),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),

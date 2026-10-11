@@ -15,6 +15,7 @@ import {
   renderNeoRouteContext,
   runnableNeoHolders,
   scoreNeoHolders,
+  reopenNeoHolder,
   wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -380,6 +381,18 @@ describe('neo.message.send with a router', () => {
     expect([delivered(holder.sessionId, ask(5)), delivered(root.sessionId, ask(5))]).toEqual([
       1, 0,
     ]);
+  });
+
+  test('reopens an archived holder on a fresh session, and a live one as it is', async () => {
+    const opened: string[] = [];
+    const open = async (concernId: string) => {
+      opened.push(concernId);
+      return repo.getBindingForConcern(concernId)?.sessionId ?? 'neo:fresh';
+    };
+    expect(await reopenNeoHolder(repo, db, open, 'drivers')).toBe(holder.sessionId);
+    new SessionRepository(writer).updateSession(holder.sessionId, { status: 'archived' });
+    expect(await reopenNeoHolder(repo, db, open, 'drivers')).toBe('neo:fresh');
+    expect(opened).toEqual(['drivers', 'drivers']);
   });
 
   test('retires the binding of an archived holder so the next open makes a fresh session', () => {

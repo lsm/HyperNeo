@@ -346,6 +346,18 @@ export interface NeoHolderWake {
   wake?(concernId: string): Promise<string | null>;
 }
 
+export function reopenNeoHolder(
+  repo: Pick<NeoRepository, 'getBindingForConcern' | 'retireArchivedBinding'>,
+  db: Pick<Database, 'getSession'>,
+  openHolder: (concernId: string) => Promise<string>,
+  concernId: string
+): Promise<string> {
+  const binding = repo.getBindingForConcern(concernId);
+  if (binding && db.getSession(binding.sessionId)?.status === 'archived')
+    repo.retireArchivedBinding(concernId, binding.sessionId);
+  return openHolder(concernId);
+}
+
 export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): Promise<NeoRouted> {
   const choice = routed.choice;
   if (!choice || !holders.asleep(choice.sessionId)) return routed;
@@ -441,11 +453,8 @@ export function createNeoRouter(
     },
     wake: openHolder
       ? async (concernId) => {
-          const binding = repo.getBindingForConcern(concernId);
-          if (binding && db.getSession(binding.sessionId)?.status === 'archived')
-            repo.retireArchivedBinding(concernId, binding.sessionId);
           try {
-            return await openHolder(concernId);
+            return await reopenNeoHolder(repo, db, openHolder, concernId);
           } catch {
             return null;
           }
