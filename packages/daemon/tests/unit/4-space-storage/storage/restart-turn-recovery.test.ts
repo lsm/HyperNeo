@@ -104,13 +104,17 @@ describe('restart recovery reads', () => {
     runMigrations(db, () => {});
     sdk = new SDKMessageRepository(db);
     sessions = new SessionRepository(db);
-    for (const sessionId of ['asked', 'working', 'idle', 'space-worker'])
+    for (const sessionId of ['asked', 'working', 'idle', 'space-worker', 'cooling'])
       sessions.createSession(
         {
           ...createTestSession(sessionId),
           ...(sessionId === 'space-worker' ? { context: { spaceId: 'space-1' } } : {}),
           processingState: JSON.stringify(
-            sessionId === 'idle' ? { status: 'idle' } : { status: 'processing', messageId: 'x' }
+            sessionId === 'idle'
+              ? { status: 'idle' }
+              : sessionId === 'cooling'
+                ? { status: 'rate_limit_cooldown', messageId: 'x', retryAt: 1 }
+                : { status: 'processing', messageId: 'x' }
           ),
         },
         { enforceWorkspaceOwnership: false }
@@ -161,7 +165,7 @@ describe('restart recovery reads', () => {
       workedAfter: true,
     });
     expect(sdk.readRestartRecoveryEvidence('idle')).toBeNull();
-    expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'working']);
+    expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'cooling', 'working']);
   });
 
   test('the cut-off prompt reopens for delivery through the shared retry transition', () => {
@@ -175,6 +179,6 @@ describe('restart recovery reads', () => {
 
   test('archived sessions are not resumed', () => {
     sessions.updateSession('asked', { status: 'archived' });
-    expect(sessions.listProcessingSessionIds()).toEqual(['working']);
+    expect(sessions.listProcessingSessionIds().sort()).toEqual(['cooling', 'working']);
   });
 });

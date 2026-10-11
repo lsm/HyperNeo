@@ -137,7 +137,7 @@ export class SessionRepository {
           `SELECT id FROM sessions
             WHERE status = 'active'
               AND json_valid(processing_state)
-              AND json_extract(processing_state, '$.status') = 'processing'
+              AND json_extract(processing_state, '$.status') IN ('processing', 'rate_limit_cooldown')
               AND NOT (json_valid(session_context)
                 AND json_extract(session_context, '$.spaceId') IS NOT NULL)`
         )
@@ -212,7 +212,7 @@ export class SessionRepository {
            'messageId', json_extract(processing_state, '$.messageId')
          )
          WHERE json_valid(processing_state)
-           AND json_extract(processing_state, '$.status') = 'processing'`
+           AND json_extract(processing_state, '$.status') IN ('processing', 'rate_limit_cooldown')`
       )
       .run().changes;
   }
