@@ -140,6 +140,7 @@ interface GitHubEventExtensionOptions {
   credentialStore?: CredentialStore;
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
+  sessionRepoReferenced?: (owner: string, repo: string) => boolean;
 }
 
 interface GitHubTokenStatus {
@@ -1025,6 +1026,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let count = 0;
     for (const repo of this.repo.listPollingRepos()) {
       if (Date.now() < this.rateLimitedUntil) break;
+      if (this.reapUnreferencedSessionRepo(repo)) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
       count += await this.pollWatchedRepo(repo, fetchImpl);
@@ -1065,6 +1067,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!this.context) return false;
     const global = await this.context.config.getGlobalConfig(this.sourceId);
     return global.globallyEnabled && global.capabilities.webhooks !== false;
+  }
+
+  private reapUnreferencedSessionRepo(watched: GitHubWatchedRepo): boolean {
+    const referenced = this.options.sessionRepoReferenced;
+    if (watched.spaceId !== SESSION_EVENT_SCOPE || !referenced) return false;
+    if (referenced(watched.owner, watched.repo)) return false;
+    this.repo.removeWatchedRepo(SESSION_EVENT_SCOPE, watched.owner, watched.repo);
+    return true;
   }
 
   async watchSessionRepo(owner: string, repo: string): Promise<void> {

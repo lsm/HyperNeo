@@ -58,6 +58,7 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -806,6 +807,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
         autoReconcileWebhooks: true,
+        sessionRepoReferenced: (owner, repo) =>
+          new SessionEventSubscriptionRepository(db.getDatabase()).referencesRepo(owner, repo),
       })
     );
 

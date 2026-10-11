@@ -327,6 +327,10 @@ describe('node external-event subscription operations', () => {
     const unparseable = schema.safeParse({ prUrl: 'not-a-url' });
     expect(unparseable.success).toBe(false);
     expect(unparseable.error?.issues[0]?.message).toBe('Could not parse GitHub PR URL: not-a-url');
+    const foreign = schema.safeParse({ prUrl: 'https://gitea.example.com/acme/widgets/pull/7' });
+    expect(foreign.error?.issues[0]?.message).toBe(
+      'Only github.com pull requests can be followed: https://gitea.example.com/acme/widgets/pull/7'
+    );
   });
 
   test('reports node_unresolved for a space agent with no node execution', async () => {

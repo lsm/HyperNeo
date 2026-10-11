@@ -112,6 +112,13 @@ function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: stri
     ctx.addIssue({ code: 'custom', message: `Could not parse GitHub PR URL: ${prUrl}` });
     return z.NEVER;
   }
+  if (parsed.host.toLowerCase() !== 'github.com') {
+    ctx.addIssue({
+      code: 'custom',
+      message: `Only github.com pull requests can be followed: ${prUrl}`,
+    });
+    return z.NEVER;
+  }
   return { ...rest, topicPattern: buildPrEventTopicPattern(parsed) };
 }
 
