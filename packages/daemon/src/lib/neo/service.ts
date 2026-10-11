@@ -205,6 +205,7 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
+import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -1204,6 +1205,11 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    for (const ask of this.askRecords.listLive()) {
+      await this.noteAskStall(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask stall note pending', error)
+      );
+    }
     if (this.watching || this.disposed) return;
     this.watching = this.watchSessions(Date.now())
       .catch((error) => this.log.warn('Session watch pending', error))
@@ -1427,6 +1433,50 @@ export class NeoService {
     this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);
     this.announceSessionNoticeGroup(group);
   }
+
+  private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk) => ({
+        cards: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        session: !!this.db.getSession(ask.originSessionId),
+        newer:
+          this.workSupersessions
+            .list(ask.workIds)
+            .flatMap((row) => this.askRecords.forWork(row.supersededBy) ?? [])
+            .find((other) => other.id !== ask.id)?.id ?? null,
+      }),
+      'ask',
+      'read'
+    )
+    .pipe(requireNeoAskStalled, ['ask', 'read', 'now'], 'result:stall')
+    .pipe(
+      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
+      ['ask', 'stall'],
+      'note'
+    )
+    .pipe(
+      (ask: NeoAsk, note: { id: string }) =>
+        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
+      ['ask', 'note'],
+      'result:stall'
+    )
+    .pipe(
+      async (
+        ask: NeoAsk,
+        read: { cards: NeoWork[]; newer: string | null },
+        note: { id: string }
+      ) => {
+        await this.deliver(
+          ask.originSessionId,
+          note.id,
+          neoAskStalledNote(ask, read.cards, read.newer),
+          ask.originSessionId
+        );
+      },
+      ['ask', 'read', 'note']
+    )
+    .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])

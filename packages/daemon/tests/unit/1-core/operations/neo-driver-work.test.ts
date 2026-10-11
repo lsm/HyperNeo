@@ -1986,6 +1986,36 @@ describe('Neo work with a drivers target', () => {
     });
   });
 
+  test('tells Neo once when no card under an open ask is running any more', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } });
+    db.createSession(createTestSession('neo:root'));
+    fileUnderAsk(service);
+    service.repo.transitionWork('work-1', service.repo.getWork('work-1')!, { status: 'cancelled' });
+    const notes: string[] = [];
+    const delivered = new Set<string>();
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        delivered.add(messageId);
+        if (content.includes('No work is running for this ask')) notes.push(messageId);
+      },
+      hasDelivery: (_session: string, messageId: string) => delivered.has(messageId),
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.refreshDriverWork();
+      expect(notes).toEqual([]);
+      now += 2 * 60 * 60_000;
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('tells the proposing session once each time started work comes to need the user', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const at = (status: string, lastActivityAt: number) => ({
