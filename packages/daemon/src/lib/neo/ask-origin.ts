@@ -44,6 +44,28 @@ export function neoAskEvidenceAskId(messageId: string): string | null {
   return /^neo-ask-evidence:(.+):[0-9a-z]+$/.exec(messageId)?.[1] ?? null;
 }
 
+export function neoWorkParent(
+  work: Pick<NeoWork, 'originSessionId' | 'originMessageId'>
+): NeoAskOrigin | null {
+  return work.originMessageId
+    ? { sessionId: work.originSessionId, messageId: work.originMessageId }
+    : null;
+}
+
+export function neoAskParent(ask: NeoAskOriginAsk): NeoAskOrigin | null {
+  return ask.originMessageId
+    ? { sessionId: ask.originSessionId, messageId: ask.originMessageId }
+    : null;
+}
+
+export function neoConsultationParent(
+  item: Pick<NeoConsultation, 'originSessionId' | 'originMessageId'>
+): NeoAskOrigin | null {
+  return item.originMessageId
+    ? { sessionId: item.originSessionId, messageId: item.originMessageId }
+    : null;
+}
+
 export function neoNudgeMessageId(messageId: string): string {
   return `${NUDGE_PREFIX}${messageId}`;
 }

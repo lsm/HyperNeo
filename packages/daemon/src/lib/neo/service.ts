@@ -52,6 +52,10 @@ import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
   neoAskEvidenceMessageId,
+  neoAskParent,
+  neoConsultationParent,
+  neoWorkParent,
+  type NeoAskOrigin,
   neoNeedsYouMessageId,
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
@@ -316,6 +320,7 @@ export class NeoService {
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
+  private readonly inputOrigins: NeoInputOriginRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly announceSessionNotice: (notice: NeoSessionNotice) => void;
@@ -529,6 +534,7 @@ export class NeoService {
       ),
     });
     const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
+    this.inputOrigins = inputOrigins;
     this.resolveAskOrigin = createNeoAskOriginResolver({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
@@ -624,9 +630,10 @@ export class NeoService {
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
       recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
       nudge: (id, nudgeId) =>
-        void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id).catch((error) =>
-          this.log.warn('Publish nudge failed', error)
-        ),
+        void this.deliver(id, nudgeId, NEO_PUBLISH_NUDGE, id, {
+          sessionId: id,
+          messageId: nudgedMessageId(nudgeId) ?? nudgeId,
+        }).catch((error) => this.log.warn('Publish nudge failed', error)),
       append: (input) => this.appendPublication(input),
       notify: notifyPublication,
       newId: () => crypto.randomUUID(),
@@ -1505,7 +1512,8 @@ export class NeoService {
           ask.originSessionId,
           note.id,
           neoAskStalledNote(ask, read.cards, read.newer),
-          ask.originSessionId
+          ask.originSessionId,
+          neoAskParent(ask)
         );
       },
       ['ask', 'read', 'note']
@@ -1555,7 +1563,8 @@ export class NeoService {
           check.originSessionId,
           neoAskEvidenceMessageId(check.id, note.signature),
           neoAskEvidenceNote(check, note.evidence),
-          check.originSessionId
+          check.originSessionId,
+          neoAskParent(check)
         );
         this.askChecks.markTold(check.id, note.signature, Date.now());
       },
@@ -1801,7 +1810,8 @@ export class NeoService {
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
       driverStallNote(work, this.workDoneGoal(work.id), live.lastReply, budget),
-      work.originSessionId
+      work.originSessionId,
+      neoWorkParent(work)
     );
   }
 
@@ -1820,7 +1830,8 @@ export class NeoService {
         reminder.abandoned,
         this.continueBudget(work, now)
       ),
-      work.originSessionId
+      work.originSessionId,
+      neoWorkParent(work)
     );
   }
 
@@ -1857,7 +1868,8 @@ export class NeoService {
             work.originSessionId,
             neoNeedsYouMessageId(work.id, plan.notify),
             driverNeedsYouNote(work, ref, card.state?.lastReply),
-            work.originSessionId
+            work.originSessionId,
+            neoWorkParent(work)
           );
         if (plan.record !== undefined) this.driverTargets.recordNeedsYouSince(work.id, plan.record);
         if (!plan.resume) return;
@@ -1911,7 +1923,13 @@ export class NeoService {
       } else {
         await this.open(item.concernId);
         const content = neoConsultationRequestContent(item);
-        await this.deliver(item.sessionId, requestId, content, item.originSessionId);
+        await this.deliver(
+          item.sessionId,
+          requestId,
+          content,
+          item.originSessionId,
+          neoConsultationParent(item)
+        );
         return;
       }
     }
@@ -1934,7 +1952,13 @@ export class NeoService {
     if (route === 'legacy') {
       const content = neoConsultationReplyContent(item);
       if (content === null) return;
-      await this.deliver(item.originSessionId, `neo-consult:${id}:reply`, content, item.sessionId);
+      await this.deliver(
+        item.originSessionId,
+        `neo-consult:${id}:reply`,
+        content,
+        item.sessionId,
+        neoConsultationParent(item)
+      );
     }
     this.consultations.returned(id);
     await this.dispatchConsultationWaiter(item.concernId);
@@ -2017,7 +2041,8 @@ export class NeoService {
           target,
           neoWorkReturnMessageId(work.id, retries, this.workContinues.get(work.id)?.count ?? 0),
           content,
-          work.sessionId ?? work.originSessionId
+          work.sessionId ?? work.originSessionId,
+          neoWorkParent(work)
         );
     }
   }
@@ -2188,7 +2213,13 @@ export class NeoService {
     )
     .pipe(
       async (work: NeoWork, note: { id: string; content: string }) => {
-        await this.deliver(work.originSessionId, note.id, note.content, work.originSessionId);
+        await this.deliver(
+          work.originSessionId,
+          note.id,
+          note.content,
+          work.originSessionId,
+          neoWorkParent(work)
+        );
         return { at: Date.now() };
       },
       ['work', 'note'],
@@ -2241,16 +2272,22 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: string,
-    originSessionId: string
+    originSessionId: string,
+    parent: NeoAskOrigin | null = null
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
-    const delivery = this.enqueueDelivery(sessionId, messageId, content, originSessionId).finally(
-      () => this.deliveries.delete(key)
-    );
+    const delivery = this.enqueueDelivery(sessionId, messageId, content, originSessionId)
+      .then(() => this.stampDelivery({ sessionId, messageId }, parent))
+      .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
+  }
+
+  private stampDelivery(input: NeoAskOrigin, parent: NeoAskOrigin | null): void {
+    const origin = parent ? this.resolveAskOrigin(parent) : null;
+    if (origin) this.inputOrigins.record(input, origin, Date.now());
   }
 
   private async enqueueDelivery(

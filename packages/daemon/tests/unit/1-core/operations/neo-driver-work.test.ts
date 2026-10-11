@@ -2243,6 +2243,41 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test("stamps a delivered done-check note with its card's ask origin", async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Shipped.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- shipped');
+    fileUnderAsk(service);
+    const asked: unknown[] = [];
+    const human = { sessionId: 'neo:root', messageId: 'human-1' };
+    Object.assign(service, {
+      resolveAskOrigin: (parent: unknown) => {
+        asked.push(parent);
+        return human;
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      const work = service.repo.getWork('work-1')!;
+      expect(asked).toContainEqual({
+        sessionId: work.originSessionId,
+        messageId: work.originMessageId,
+      });
+      const stamps = db
+        .getDatabase()
+        .prepare('SELECT message_id AS id, origin_message_id AS origin FROM neo_input_origins')
+        .all() as { id: string; origin: string }[];
+      expect(stamps).toContainEqual({ id: 'work-1:done-check:0', origin: 'human-1' });
+    } finally {
+      db.close();
+    }
+  });
+
   test('tells the proposing session once each time started work comes to need the user', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const at = (status: string, lastActivityAt: number) => ({
