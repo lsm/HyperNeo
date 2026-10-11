@@ -60,7 +60,8 @@ export function assertNoPendingMailboxContentConflict(
 
 export function enqueueMailboxEntry(
   jobQueue: JobQueueRepository,
-  entry: MailboxEntry
+  entry: MailboxEntry,
+  runAt?: number
 ): MailboxEnqueueOutcome {
   let payload: Record<string, unknown>;
   try {
@@ -83,6 +84,7 @@ export function enqueueMailboxEntry(
     maxRetries: Math.max(0, entry.policy.maxAttempts - 1),
     matchPayload: { id: entry.id },
     activeStatuses: ['pending', 'processing'],
+    ...(runAt !== undefined ? { runAt } : {}),
   });
   return { kind: 'enqueued', id: entry.id };
 }

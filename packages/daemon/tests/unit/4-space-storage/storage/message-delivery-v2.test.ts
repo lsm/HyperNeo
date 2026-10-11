@@ -90,6 +90,12 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(jobs[0].maxRetries).toBeGreaterThan(0);
     });
 
+    it('holds a delivery with runAt until that time', () => {
+      deliverMessage(repo, SESSION, 'msg-A', { origin: 'recovery', runAt: Date.now() + 60_000 });
+      expect(jobsFor(repo, SESSION)).toHaveLength(1);
+      expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2)).toEqual([]);
+    });
+
     it('a second message enqueues alongside the first — FIFO orders them, no arbiter', () => {
       deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
       deliverMessage(repo, SESSION, 'msg-B', { origin: 'chat' });

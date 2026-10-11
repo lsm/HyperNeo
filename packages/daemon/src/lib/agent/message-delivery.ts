@@ -82,6 +82,7 @@ export function isRetryableErrorResultSubtype(subtype: string | null): boolean {
 export interface DeliverMessageOptions {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
+  runAt?: number;
 }
 
 export function deliverMessage(
@@ -99,6 +100,7 @@ export function deliverMessage(
       parentToolUseId: options.parentToolUseId ?? null,
     },
     maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+    ...(options.runAt !== undefined ? { runAt: options.runAt } : {}),
   });
 }
 

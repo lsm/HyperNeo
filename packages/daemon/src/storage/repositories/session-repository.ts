@@ -130,19 +130,27 @@ export class SessionRepository {
     }
   }
 
-  listProcessingSessionIds(): string[] {
+  listRestartCutTurns(): Array<{ sessionId: string; resumeAt: number }> {
     return (
       this.db
         .prepare(
-          `SELECT id FROM sessions
+          `SELECT id,
+                  CASE json_extract(processing_state, '$.status')
+                    WHEN 'processing' THEN 0
+                    ELSE json_extract(processing_state, '$.retryAt')
+                  END AS resume_at
+             FROM sessions
             WHERE status = 'active'
               AND json_valid(processing_state)
-              AND json_extract(processing_state, '$.status') = 'processing'
               AND NOT (json_valid(session_context)
-                AND json_extract(session_context, '$.spaceId') IS NOT NULL)`
+                AND json_extract(session_context, '$.spaceId') IS NOT NULL)
+              AND (json_extract(processing_state, '$.status') = 'processing'
+                OR (json_extract(processing_state, '$.status') = 'rate_limit_cooldown'
+                  AND json_type(processing_state, '$.retryAt') IN ('integer', 'real')
+                  AND COALESCE(json_extract(processing_state, '$.manualRetry'), 0) = 0))`
         )
-        .all() as Array<{ id: string }>
-    ).map((row) => row.id);
+        .all() as Array<{ id: string; resume_at: number }>
+    ).map((row) => ({ sessionId: row.id, resumeAt: row.resume_at }));
   }
 
   getSession(id: string): Session | null {
@@ -206,19 +214,11 @@ export class SessionRepository {
     return this.db
       .prepare(
         `UPDATE sessions
-         SET processing_state = CASE json_extract(processing_state, '$.status')
-           WHEN 'processing' THEN json_object(
-             'status', 'interrupted',
-             'reason', 'restart',
-             'messageId', json_extract(processing_state, '$.messageId')
-           )
-           ELSE json_object(
-             'status', 'interrupted',
-             'reason', 'restart',
-             'messageId', json_extract(processing_state, '$.messageId'),
-             'resumeAt', json_extract(processing_state, '$.retryAt')
-           )
-         END
+         SET processing_state = json_object(
+           'status', 'interrupted',
+           'reason', 'restart',
+           'messageId', json_extract(processing_state, '$.messageId')
+         )
          WHERE json_valid(processing_state)
            AND (json_extract(processing_state, '$.status') = 'processing'
              OR (json_extract(processing_state, '$.status') = 'rate_limit_cooldown'
@@ -228,37 +228,6 @@ export class SessionRepository {
                  AND json_extract(session_context, '$.spaceId') IS NOT NULL)))`
       )
       .run().changes;
-  }
-
-  listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
-    return (
-      this.db
-        .prepare(
-          `SELECT id, json_extract(processing_state, '$.resumeAt') AS resume_at FROM sessions
-            WHERE status = 'active'
-              AND json_valid(processing_state)
-              AND json_extract(processing_state, '$.status') = 'interrupted'
-              AND json_extract(processing_state, '$.reason') = 'restart'
-              AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
-        )
-        .all() as Array<{ id: string; resume_at: number }>
-    ).map((row) => ({ sessionId: row.id, resumeAt: row.resume_at }));
-  }
-
-  takeRestartCooldownResume(sessionId: string): boolean {
-    return (
-      this.db
-        .prepare(
-          `UPDATE sessions
-           SET processing_state = json_remove(processing_state, '$.resumeAt')
-           WHERE id = ?
-             AND json_valid(processing_state)
-             AND json_extract(processing_state, '$.status') = 'interrupted'
-             AND json_extract(processing_state, '$.reason') = 'restart'
-             AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
-        )
-        .run(sessionId).changes > 0
-    );
   }
 
   clearAcpSessionIds(): void {

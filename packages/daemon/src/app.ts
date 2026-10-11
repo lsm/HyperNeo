@@ -59,7 +59,6 @@ import {
 import { deliverMessage } from './lib/agent/message-delivery.ts';
 import {
   RESTART_RECOVERY_NOTE,
-  type RestartRecoveryDeps,
   recoverRestartCutTurns,
 } from './lib/agent/restart-turn-recovery.ts';
 import { renderAddress } from './lib/mailbox/address.ts';
@@ -442,7 +441,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
-    const cutOffSessionIds = db.listProcessingSessionIds();
+    const cutOffTurns = db.listRestartCutTurns();
     const interruptedTurns = db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
@@ -828,11 +827,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
-    const restartRecoveryDeps: RestartRecoveryDeps = {
+    void recoverRestartCutTurns(cutOffTurns, {
       readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
-      resend: (sessionId, uuid, enqueueDelivery) => {
+      resend: (sessionId, uuid, enqueueDelivery, runAt) => {
         const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
         if (!reopenedId) return false;
         void internalEventBus
@@ -843,10 +842,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           })
           .catch(() => {});
         if (enqueueDelivery)
-          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery', runAt });
         return true;
       },
-      sendNote: async (sessionId, promptUuid) => {
+      sendNote: async (sessionId, promptUuid, runAt) => {
         const outcome = await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           origin: 'recovery',
@@ -859,6 +858,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             inputKind: 'system',
           },
           jobQueue: db.getJobQueueRepo(),
+          runAt,
         });
         if (outcome.kind !== 'rejected') return true;
         logError(
@@ -866,26 +866,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         );
         return false;
       },
-    };
-    void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
+    })
       .then((results) => {
         const acted = results.filter((result) => result.resumed).length;
         if (acted > 0) logInfo(`[Daemon] Resumed ${acted} session turn(s) cut off by the restart`);
       })
       .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
-    const cooldownResumeTimers = db.listRestartCooldownResumes().map(({ sessionId, resumeAt }) => {
-      const timer = setTimeout(
-        () => {
-          if (!db.takeRestartCooldownResume(sessionId)) return;
-          void recoverRestartCutTurns([sessionId], restartRecoveryDeps).catch((error) =>
-            logError(`[Daemon] Cooldown resume for session ${sessionId} failed:`, error)
-          );
-        },
-        Math.max(0, resumeAt - Date.now())
-      );
-      timer.unref?.();
-      return timer;
-    });
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
       github: ['space_github_watched_repos'],
@@ -1419,7 +1405,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
       isCleanedUp = true;
       startupLogCaptureCleanup = null;
-      for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
       removeRuntimeDescriptorFile();
       abortAgentMemoryEmbeddingModelPrefetch();

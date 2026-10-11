@@ -70,9 +70,10 @@ export function createEntryStage(
 
 export function enqueueStage(
   jobQueue: JobQueueRepository,
-  entry: MailboxEntry
+  entry: MailboxEntry,
+  runAt?: number
 ): MailboxHandoffOutcome {
-  return enqueueMailboxEntry(jobQueue, entry);
+  return enqueueMailboxEntry(jobQueue, entry, runAt);
 }
 
 export function crashHandler(error: unknown): MailboxHandoffOutcome {
@@ -87,7 +88,7 @@ const runMailboxHandoff = (
     rejected,
   })('mailbox-handoff') as PipelineAPI
 )
-  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'messageUuid', 'jobQueue'])
+  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'messageUuid', 'jobQueue', 'runAt'])
   .pipe(parseAddressStage, 'to', ['address', 'outcome'])
   .pipe('!rejected', 'outcome')
   .pipe(projectMessageStage, 'message', ['projectedMessage', 'outcome'])
@@ -98,7 +99,7 @@ const runMailboxHandoff = (
     ['entry', 'outcome']
   )
   .pipe('!rejected', 'outcome')
-  .pipe(enqueueStage, ['jobQueue', 'entry'], 'outcome')
+  .pipe(enqueueStage, ['jobQueue', 'entry', 'runAt'], 'outcome')
   .error(crashHandler, ['error'])
   .endAsync('outcome') as (...args: unknown[]) => Promise<MailboxHandoffOutcome>;
 
@@ -110,6 +111,7 @@ export interface MailboxHandoffArgs {
   deliveryMode?: MailboxDeliveryMode;
   messageUuid?: string;
   jobQueue: JobQueueRepository;
+  runAt?: number;
 }
 
 export function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<MailboxHandoffOutcome> {
@@ -120,6 +122,7 @@ export function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<Mailbo
     args.policy,
     args.deliveryMode,
     args.messageUuid,
-    args.jobQueue
+    args.jobQueue,
+    args.runAt
   ).catch(crashHandler);
 }

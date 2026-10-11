@@ -32,7 +32,25 @@ describe('planRestartRecovery', () => {
       { kind: 'continue', sessionId: 's', promptUuid: 'p' },
     ],
   ] as const)('%s', (_label, evidence, deliveryActive, expected) => {
-    expect(planRestartRecovery('s', { evidence, deliveryActive })).toEqual(expected);
+    expect(
+      planRestartRecovery({ sessionId: 's', resumeAt: 0 }, { evidence, deliveryActive })
+    ).toEqual(expected);
+  });
+
+  test('a cut-off cooldown resumes at its retry time', () => {
+    const turn = { sessionId: 's', resumeAt: 5000 };
+    expect(
+      planRestartRecovery(turn, {
+        evidence: { promptUuid: 'p', workedAfter: false },
+        deliveryActive: false,
+      })
+    ).toEqual({ kind: 'resend', sessionId: 's', uuid: 'p', enqueueDelivery: true, runAt: 5000 });
+    expect(
+      planRestartRecovery(turn, {
+        evidence: { promptUuid: 'p', workedAfter: true },
+        deliveryActive: false,
+      })
+    ).toEqual({ kind: 'continue', sessionId: 's', promptUuid: 'p', runAt: 5000 });
   });
 });
 
@@ -47,17 +65,24 @@ describe('recoverRestartCutTurns', () => {
             ? { promptUuid: 'p2', workedAfter: true }
             : null,
       hasActiveDelivery: () => false,
-      resend: (id, uuid, enqueueDelivery) => {
-        calls.push(`resend ${id} ${uuid} ${enqueueDelivery}`);
+      resend: (id, uuid, enqueueDelivery, runAt) => {
+        calls.push(`resend ${id} ${uuid} ${enqueueDelivery} ${runAt}`);
         return true;
       },
-      sendNote: async (id, uuid) => {
-        calls.push(`note ${id} ${uuid}`);
+      sendNote: async (id, uuid, runAt) => {
+        calls.push(`note ${id} ${uuid} ${runAt}`);
         return id !== 'busy';
       },
     };
-    const plans = await recoverRestartCutTurns(['fresh', 'busy', 'empty'], deps);
-    expect(calls).toEqual(['resend fresh p1 true', 'note busy p2']);
+    const plans = await recoverRestartCutTurns(
+      [
+        { sessionId: 'fresh', resumeAt: 0 },
+        { sessionId: 'busy', resumeAt: 9000 },
+        { sessionId: 'empty', resumeAt: 0 },
+      ],
+      deps
+    );
+    expect(calls).toEqual(['resend fresh p1 true undefined', 'note busy p2 9000']);
     expect(plans.map((plan) => [plan.kind, plan.resumed])).toEqual([
       ['resend', true],
       ['continue', false],
@@ -165,7 +190,13 @@ describe('restart recovery reads', () => {
       workedAfter: true,
     });
     expect(sdk.readRestartRecoveryEvidence('idle')).toBeNull();
-    expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'working']);
+    expect(
+      sessions.listRestartCutTurns().sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+    ).toEqual([
+      { sessionId: 'asked', resumeAt: 0 },
+      { sessionId: 'cooling', resumeAt: 1 },
+      { sessionId: 'working', resumeAt: 0 },
+    ]);
   });
 
   test('the cut-off prompt reopens for delivery through the shared retry transition', () => {
@@ -177,21 +208,23 @@ describe('restart recovery reads', () => {
     expect(sdk.getDeliveryContent('asked', 'u1')?.sendStatus).toBe('enqueued');
   });
 
-  test('a cooldown cut off by the restart resumes once, at its retry time', () => {
+  test('a cooldown cut off by the restart is marked interrupted and not listed again', () => {
     expect(sessions.markRestartInterruptedTurns()).toBe(4);
-    expect(sessions.listRestartCooldownResumes()).toEqual([{ sessionId: 'cooling', resumeAt: 1 }]);
-    expect(sessions.takeRestartCooldownResume('cooling')).toBe(true);
-    expect(sessions.takeRestartCooldownResume('cooling')).toBe(false);
-    expect(sessions.listRestartCooldownResumes()).toEqual([]);
     expect(JSON.parse(sessions.getSession('cooling')?.processingState ?? '{}')).toEqual({
       status: 'interrupted',
       reason: 'restart',
       messageId: 'x',
     });
+    expect(sessions.listRestartCutTurns()).toEqual([]);
   });
 
   test('archived sessions are not resumed', () => {
     sessions.updateSession('asked', { status: 'archived' });
-    expect(sessions.listProcessingSessionIds()).toEqual(['working']);
+    expect(
+      sessions
+        .listRestartCutTurns()
+        .map((turn) => turn.sessionId)
+        .sort()
+    ).toEqual(['cooling', 'working']);
   });
 });

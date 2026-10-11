@@ -11,36 +11,44 @@ export interface RestartRecoveryEvidence {
 export interface RestartRecoveryDeps {
   readEvidence(sessionId: string): RestartRecoveryEvidence | null;
   hasActiveDelivery(sessionId: string, uuid: string): boolean;
-  resend(sessionId: string, uuid: string, enqueueDelivery: boolean): boolean;
-  sendNote(sessionId: string, promptUuid: string): Promise<boolean>;
+  resend(sessionId: string, uuid: string, enqueueDelivery: boolean, runAt?: number): boolean;
+  sendNote(sessionId: string, promptUuid: string, runAt?: number): Promise<boolean>;
+}
+
+export interface RestartCutTurn {
+  sessionId: string;
+  resumeAt: number;
 }
 
 export type RestartRecoveryPlan =
-  | { kind: 'resend'; sessionId: string; uuid: string; enqueueDelivery: boolean }
-  | { kind: 'continue'; sessionId: string; promptUuid: string }
+  | { kind: 'resend'; sessionId: string; uuid: string; enqueueDelivery: boolean; runAt?: number }
+  | { kind: 'continue'; sessionId: string; promptUuid: string; runAt?: number }
   | { kind: 'skip'; sessionId: string; reason: 'no_prompt' };
 
 export function planRestartRecovery(
-  sessionId: string,
+  turn: RestartCutTurn,
   found: { evidence: RestartRecoveryEvidence | null; deliveryActive: boolean }
 ): RestartRecoveryPlan {
+  const { sessionId } = turn;
   const { evidence, deliveryActive } = found;
   if (!evidence) return { kind: 'skip', sessionId, reason: 'no_prompt' };
+  const runAt = turn.resumeAt > 0 ? { runAt: turn.resumeAt } : {};
   return evidence.workedAfter
-    ? { kind: 'continue', sessionId, promptUuid: evidence.promptUuid }
+    ? { kind: 'continue', sessionId, promptUuid: evidence.promptUuid, ...runAt }
     : {
         kind: 'resend',
         sessionId,
         uuid: evidence.promptUuid,
         enqueueDelivery: !deliveryActive,
+        ...runAt,
       };
 }
 
-function readRecoveryEvidence(sessionId: string, deps: RestartRecoveryDeps) {
-  const evidence = deps.readEvidence(sessionId);
+function readRecoveryEvidence(turn: RestartCutTurn, deps: RestartRecoveryDeps) {
+  const evidence = deps.readEvidence(turn.sessionId);
   return {
     evidence,
-    deliveryActive: evidence ? deps.hasActiveDelivery(sessionId, evidence.promptUuid) : false,
+    deliveryActive: evidence ? deps.hasActiveDelivery(turn.sessionId, evidence.promptUuid) : false,
   };
 }
 
@@ -51,27 +59,30 @@ async function applyRecoveryPlan(
   deps: RestartRecoveryDeps
 ): Promise<RestartRecoveryResult> {
   if (plan.kind === 'resend')
-    return { ...plan, resumed: deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery) };
+    return {
+      ...plan,
+      resumed: deps.resend(plan.sessionId, plan.uuid, plan.enqueueDelivery, plan.runAt),
+    };
   if (plan.kind === 'continue')
-    return { ...plan, resumed: await deps.sendNote(plan.sessionId, plan.promptUuid) };
+    return { ...plan, resumed: await deps.sendNote(plan.sessionId, plan.promptUuid, plan.runAt) };
   return { ...plan, resumed: false };
 }
 
 const recoverCutTurn = (superpipe({})('recover-restart-cut-turn') as PipelineAPI)
-  .input(['sessionId', 'deps'])
-  .pipe(readRecoveryEvidence, ['sessionId', 'deps'], 'found')
-  .pipe(planRestartRecovery, ['sessionId', 'found'], 'plan')
+  .input(['turn', 'deps'])
+  .pipe(readRecoveryEvidence, ['turn', 'deps'], 'found')
+  .pipe(planRestartRecovery, ['turn', 'found'], 'plan')
   .pipe(applyRecoveryPlan, ['plan', 'deps'], 'result')
   .endAsync('result') as (
-  sessionId: string,
+  turn: RestartCutTurn,
   deps: RestartRecoveryDeps
 ) => Promise<RestartRecoveryResult>;
 
 export async function recoverRestartCutTurns(
-  sessionIds: readonly string[],
+  turns: readonly RestartCutTurn[],
   deps: RestartRecoveryDeps
 ): Promise<RestartRecoveryResult[]> {
   const results: RestartRecoveryResult[] = [];
-  for (const sessionId of sessionIds) results.push(await recoverCutTurn(sessionId, deps));
+  for (const turn of turns) results.push(await recoverCutTurn(turn, deps));
   return results;
 }

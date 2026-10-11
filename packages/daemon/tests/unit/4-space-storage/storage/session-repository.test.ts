@@ -782,7 +782,6 @@ describe('SessionRepository', () => {
         status: 'interrupted',
         reason: 'restart',
         messageId: 'm3',
-        resumeAt: 1,
       });
       for (const id of ['idle', 'queued', 'asking', 'paused'])
         expect(JSON.parse(repository.getSession(id)?.processingState ?? '{}')).toEqual(
