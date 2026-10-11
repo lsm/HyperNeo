@@ -205,6 +205,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
@@ -488,6 +489,7 @@ export class NeoService {
       db,
       rootSessionId: () => this.repo.getBindingForConcern(null)?.sessionId,
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
+      seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
       log: this.log,
       registry: () => this.sessions.getOperationRegistry(),
