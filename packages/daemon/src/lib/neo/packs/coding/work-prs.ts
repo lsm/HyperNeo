@@ -14,6 +14,7 @@ export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
+  createdAt: z.string().optional(),
   mergeStateStatus: z.string().optional(),
   baseRefName: z.string().optional(),
   state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
@@ -59,7 +60,7 @@ function checkResult(check: GhCheck): NeoWorkPr['checks'] {
 export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
   const parsed = GhPrSchema.safeParse(raw);
   if (!parsed.success) return null;
-  const { url, state, headRefOid, reviews, statusCheckRollup } = parsed.data;
+  const { url, state, headRefOid, reviews, statusCheckRollup, createdAt } = parsed.data;
   const results = statusCheckRollup.map(checkResult);
   const checks = results.includes('pending')
     ? 'pending'
@@ -74,7 +75,14 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     .filter((item) => item === 'APPROVED' || item === 'CHANGES_REQUESTED')
     .at(-1);
   const review = verdict === 'APPROVED' ? 'approved' : verdict ? 'changes_requested' : 'none';
-  return { url, state, checks, review };
+  const created = Date.parse(createdAt ?? '');
+  return {
+    url,
+    state,
+    checks,
+    review,
+    ...(Number.isFinite(created) ? { createdAt: created } : {}),
+  };
 }
 
 export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
@@ -100,9 +108,22 @@ export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   }));
 }
 
+type NeoPrClaimHold = { workId: string; urlKey: string; claim: string };
+
+export function neoCardDisownsPr(
+  claims: readonly NeoPrClaimHold[],
+  workId: string,
+  url: string
+): boolean {
+  const held = claims.filter((claim) => claim.urlKey === url.toLowerCase());
+  const mine = held.find((claim) => claim.workId === workId);
+  return mine ? mine.claim === 'rejected' : held.some((claim) => claim.claim !== 'rejected');
+}
+
 export function neoAskPrEvidence(
   works: readonly Pick<NeoWork, 'id' | 'status' | 'report'>[],
-  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[]
+  rows: readonly { workId: string; prs: readonly NeoWorkPr[] }[],
+  claims: readonly NeoPrClaimHold[] = []
 ): NeoEvidence[] {
   const live = works.filter((work) => work.status !== 'cancelled');
   const tracked = new Set(rows.map((row) => row.workId));
@@ -112,7 +133,11 @@ export function neoAskPrEvidence(
       .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
   );
   const unread = new Set(
-    live.flatMap((work) => extractNeoWorkPrUrls(work.report).filter((url) => !prs.has(url)))
+    live.flatMap((work) =>
+      extractNeoWorkPrUrls(work.report).filter(
+        (url) => !prs.has(url) && !neoCardDisownsPr(claims, work.id, url)
+      )
+    )
   );
   const untracked = live.filter((work) => !tracked.has(work.id));
   const pending = (key: string, summary: string): NeoEvidence => ({
@@ -143,7 +168,8 @@ export function shouldReadNeoWorkPrs(
   now: number
 ): boolean {
   if (!urls.length) return false;
-  if (!stored || urls.some((url) => !stored.prs.some((pr) => pr.url === url))) return true;
+  const same = (url: string) => (pr: { url: string }) => pr.url.toLowerCase() === url.toLowerCase();
+  if (!stored || urls.some((url) => !stored.prs.some(same(url)))) return true;
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
 }
 
@@ -347,7 +373,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName',
+          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt',
         ],
         spawnImpl,
         'graphql'
