@@ -8,6 +8,7 @@ export const NEO_SESSION_RUN_MS = 3 * 60_000;
 export const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
 export const NEO_SESSION_WATCH_LIMIT = 30;
+export const NEO_SESSION_GROUP_NOTICES_MAX = 30;
 export const NeoSessionNoticeSchema = z.object({
   key: z.string(),
   ref: WorkRefSchema,
@@ -20,7 +21,7 @@ export const NeoSessionNoticeGroupSchema = z.object({
   id: z.string(),
   at: z.number(),
   line: z.string(),
-  notices: z.array(NeoSessionNoticeSchema).max(NEO_SESSION_WATCH_LIMIT),
+  notices: z.array(NeoSessionNoticeSchema).max(NEO_SESSION_GROUP_NOTICES_MAX),
 });
 export const NEO_SESSION_GROUP_MS = 60_000;
 export const NEO_SESSION_GROUPS_MAX = 10;
@@ -183,13 +184,17 @@ export function planNeoSessionNoticeGroup(
   open: readonly NeoSessionNotice[],
   added: readonly NeoSessionNotice[],
   now: number
-): { open: NeoSessionNotice[]; closed: NeoSessionNoticeGroup | null } {
-  const first = open[0];
+): { open: NeoSessionNotice[]; closed: NeoSessionNoticeGroup[] } {
   const last = open.at(-1);
-  const full = open.length + added.length > NEO_SESSION_WATCH_LIMIT;
-  if (!first || !last || (now - last.at < NEO_SESSION_GROUP_MS && !full))
-    return { open: [...open, ...added].slice(-NEO_SESSION_WATCH_LIMIT), closed: null };
-  return { open: added.slice(-NEO_SESSION_WATCH_LIMIT), closed: neoSessionNoticeGroup(open) };
+  const quiet = !!last && now - last.at >= NEO_SESSION_GROUP_MS;
+  const pending = quiet ? [...added] : [...open, ...added];
+  const full: NeoSessionNotice[][] = quiet ? [[...open]] : [];
+  while (pending.length > NEO_SESSION_GROUP_NOTICES_MAX)
+    full.push(pending.splice(0, NEO_SESSION_GROUP_NOTICES_MAX));
+  return {
+    open: pending,
+    closed: full.flatMap((notices) => neoSessionNoticeGroup(notices) ?? []),
+  };
 }
 
 export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessionNoticeGroup[] {

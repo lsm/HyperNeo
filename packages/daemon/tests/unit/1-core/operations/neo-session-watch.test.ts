@@ -12,7 +12,7 @@ import {
   NEO_SESSION_GROUPS_MAX,
   NEO_SESSION_NOTICES_MAX,
   NEO_SESSION_RUN_MS,
-  NEO_SESSION_WATCH_LIMIT,
+  NEO_SESSION_GROUP_NOTICES_MAX,
   neoSessionKey,
   neoSessionNoticeLine,
   planNeoSessionNotice,
@@ -201,7 +201,7 @@ describe('planNeoSessionNoticeGroup', () => {
     const second = notice(now + NEO_SESSION_GROUP_MS - 1, { kind: 'failed' });
     expect(planNeoSessionNoticeGroup([first], [second], second.at)).toEqual({
       open: [first, second],
-      closed: null,
+      closed: [],
     });
   });
 
@@ -210,30 +210,39 @@ describe('planNeoSessionNoticeGroup', () => {
     const later = notice(now + NEO_SESSION_GROUP_MS, { kind: 'failed' });
     expect(planNeoSessionNoticeGroup([first], [later], later.at)).toEqual({
       open: [later],
-      closed: {
-        id: `neo-session-notices:${now}:${session.key}`,
-        at: now,
-        line: 'Codex · Quiet-model research finished · Open',
-        notices: [first],
-      },
+      closed: [
+        {
+          id: `neo-session-notices:${now}:${session.key}`,
+          at: now,
+          line: 'Codex · Quiet-model research finished · Open',
+          notices: [first],
+        },
+      ],
     });
   });
 
   test('a group that would pass the notice cap closes early and the new notices start the next', () => {
-    const open = Array.from({ length: NEO_SESSION_WATCH_LIMIT }, (_, index) => notice(now + index));
+    const open = Array.from({ length: NEO_SESSION_GROUP_NOTICES_MAX }, (_, index) =>
+      notice(now + index)
+    );
     const added = [notice(now + 30, { kind: 'failed' })];
     const grouped = planNeoSessionNoticeGroup(open, added, now + 30);
     expect(grouped.open).toEqual(added);
-    expect(grouped.closed?.notices).toEqual(open);
+    expect(grouped.closed.map((group) => group.notices)).toEqual([open]);
   });
 
-  test('a whole watch listing of notices fits in one group', () => {
-    const added = Array.from({ length: NEO_SESSION_WATCH_LIMIT }, (_, index) => notice(index));
-    expect(planNeoSessionNoticeGroup([], added, now).open).toEqual(added);
+  test('a burst larger than one group splits into full groups and keeps every notice', () => {
+    const added = Array.from({ length: 65 }, (_, index) =>
+      notice(now, { key: `codex-desktop::t${index}` })
+    );
+    const grouped = planNeoSessionNoticeGroup([], added, now);
+    expect(grouped.closed.map((group) => group.notices.length)).toEqual([30, 30]);
+    expect(new Set(grouped.closed.map((group) => group.id)).size).toBe(2);
+    expect([...grouped.closed.flatMap((group) => group.notices), ...grouped.open]).toEqual(added);
   });
 
   test('nothing open and nothing new leaves nothing to close', () => {
-    expect(planNeoSessionNoticeGroup([], [], now)).toEqual({ open: [], closed: null });
+    expect(planNeoSessionNoticeGroup([], [], now)).toEqual({ open: [], closed: [] });
   });
 });
 

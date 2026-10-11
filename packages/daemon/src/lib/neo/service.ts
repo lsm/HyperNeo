@@ -1311,8 +1311,8 @@ export class NeoService {
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.announceSessionNotice(notice);
-        if (grouped.closed) this.postSessionNoticeGroup(root, grouped.closed);
-        if (added.notices.length || grouped.closed) this.notifyChanged();
+        for (const group of grouped.closed) this.postSessionNoticeGroup(root, group);
+        if (added.notices.length || grouped.closed.length) this.notifyChanged();
       },
       ['root', 'added', 'grouped']
     )
