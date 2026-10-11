@@ -124,13 +124,29 @@ describe('NeoConcernBoardView', () => {
     render(
       <NeoConcernBoardView
         board={board}
-        drivers={[
+        cards={[
           {
             workId: 'work-a',
+            phase: 'running',
+            group: 'running',
+            tone: 'accent',
+            label: 'Running in Claude Code Desktop on laptop',
+            hidden: false,
+            primary: { kind: 'none', label: null, link: null },
+            actions: ['done', 'close'],
             adapter: 'claude-desktop',
-            daemon: 'laptop',
-            status: 'running',
-            link: null,
+            open: { link: null, remoteLink: null, sessionId: null, daemon: 'laptop' },
+            pr: null,
+            goal: null,
+            doneWhen: null,
+            continued: 0,
+            continuedMessage: null,
+            pooled: false,
+            superseded: false,
+            uncheckedSince: null,
+            unconfirmed: false,
+            abandoned: false,
+            retryable: false,
           },
         ]}
       />
