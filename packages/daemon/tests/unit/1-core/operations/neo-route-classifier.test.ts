@@ -12,7 +12,12 @@ import {
   NEO_INBOX_ID,
   type NeoHolder,
   type NeoRouterDeps,
+  neoNewTopic,
+  openNeoNewTopic,
 } from '../../../../src/lib/neo/router.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { createTables } from '../../../../src/storage/schema/index.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import type { NeoRoute } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 
 const drivers: NeoHolder = {
@@ -255,6 +260,117 @@ describe('chooseNeoRoute with a classifier', () => {
       { choice: null, fallback: 'classifier-timeout' },
       { choice: null, fallback: 'classifier-failed' },
     ]);
+  });
+});
+
+describe('chooseNeoRoute with a new subject', () => {
+  const base = (newTopic?: NeoRouterDeps['newTopic']): NeoRouterDeps => ({
+    holders: () => [drivers, youtube],
+    recentTurns: () => [turn({})],
+    topicTurns: () => [turn({})],
+    recentAsks: () => [],
+    embed: async () => null,
+    classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
+    newTopic,
+  });
+
+  test('opens a topic for a new subject and routes the message to its holder', async () => {
+    const asked: string[] = [];
+    const route = await chooseNeoRoute(
+      'Plan the garden for spring',
+      base(async (text) => {
+        asked.push(text);
+        return { concernId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
+      })
+    );
+    expect(asked).toEqual(['Plan the garden for spring']);
+    expect(route).toEqual({
+      choice: {
+        concernId: 't1',
+        sessionId: 'neo:t1',
+        signal: 'classifier:new_subject',
+        confidence: 0.8,
+      },
+    });
+  });
+
+  test('stays with main Neo when no topic can be opened', async () => {
+    expect(
+      await chooseNeoRoute(
+        'Plan the garden',
+        base(async () => null)
+      )
+    ).toEqual({
+      choice: null,
+      fallback: 'classifier:new_subject',
+    });
+    expect(await chooseNeoRoute('Plan the garden', base())).toEqual({
+      choice: null,
+      fallback: 'classifier:new_subject',
+    });
+  });
+
+  const topicDb = () => {
+    const db = new Sqlite(':memory:');
+    createTables(db);
+    return { db, repo: new NeoRepository(db) };
+  };
+
+  test('saves the topic once and reopens the same holder on a retry', async () => {
+    const { db, repo } = topicDb();
+    const opened: string[] = [];
+    const open = async (id: string) => {
+      opened.push(id);
+      return `neo:${id}`;
+    };
+    const topic = neoNewTopic('Plan the garden', 'request-1');
+    const holder = {
+      concernId: 'request-1',
+      sessionId: 'neo:request-1',
+      title: 'Plan the garden',
+      summary: 'Plan the garden',
+    };
+    expect(await openNeoNewTopic(repo, open, topic)).toEqual(holder);
+    expect(await openNeoNewTopic(repo, open, { ...topic, title: 'Other' })).toEqual(holder);
+    expect(repo.listConcerns().map((concern) => concern.id)).toEqual(['request-1']);
+    expect(opened).toEqual(['request-1', 'request-1']);
+    db.close();
+  });
+
+  test('drops a topic whose holder cannot be opened, so the message stays with main Neo', async () => {
+    const { db, repo } = topicDb();
+    expect(
+      await openNeoNewTopic(
+        repo,
+        async () => {
+          throw new Error('provider unavailable');
+        },
+        neoNewTopic('Plan the garden', 't2')
+      )
+    ).toBeNull();
+    expect(
+      await openNeoNewTopic(
+        repo,
+        async (id) => {
+          repo.reserveBinding({ sessionId: `neo:${id}`, concernId: id, kind: 'concern' });
+          throw new Error('session could not be created');
+        },
+        neoNewTopic('Plan the pond', 't3')
+      )
+    ).toBeNull();
+    expect([repo.getConcern('t2'), repo.getConcern('t3'), repo.getBindingForConcern('t3')]).toEqual(
+      [null, null, null]
+    );
+    db.close();
+  });
+
+  test('names the topic after the first line of the message', () => {
+    expect(neoNewTopic('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
+      id: 'id-1',
+      title: 'Plan the garden',
+      summary: 'Plan the garden with tomatoes',
+    });
+    expect(neoNewTopic('x'.repeat(80), 'id-2').title).toBe(`${'x'.repeat(59)}…`);
   });
 });
 
