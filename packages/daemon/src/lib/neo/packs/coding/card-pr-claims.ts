@@ -187,7 +187,8 @@ export function keepNeoCardPrReads(
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
     if (candidate.claimed || candidate.claim !== 'mentioned') sorted.kept.push(candidate);
     else if (!pr) sorted.pending.push(candidate);
-    else if (pr.createdAt != null && pr.createdAt < card.createdAt) sorted.rejected.push(candidate);
+    else if (pr.state !== 'OPEN' && pr.createdAt != null && pr.createdAt < card.createdAt)
+      sorted.rejected.push(candidate);
     else sorted.kept.push(candidate);
   }
   return sorted;

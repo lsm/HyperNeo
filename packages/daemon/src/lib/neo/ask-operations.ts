@@ -57,7 +57,7 @@ export const NeoAskSchema = z.object({
       z.object({
         id: z.string(),
         text: z.string(),
-        state: z.enum(['pending', 'met', 'needs_you']),
+        state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
         check: z.enum([CODING_CHECK_PR_MERGED, LIFE_ADMIN_CHECK_CONFIRMED]).nullable(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
@@ -103,7 +103,7 @@ const Settle = z.object({
 const Tick = z.object({
   askId: z.string().min(1),
   itemId: z.string().min(1),
-  state: z.enum(['pending', 'met', 'needs_you']),
+  state: z.enum(['pending', 'met', 'needs_you', 'reported']),
   evidence: z.string().trim().min(1).max(2000).optional(),
 });
 
@@ -343,12 +343,25 @@ export function planNeoAskDecision(
   return { add, waitingItem: add.id };
 }
 
+const NEO_AGENT_WORD =
+  /\b(agent|session|worker)(['’]s)? (report|says|said|claims?|reports|reported)\b|\breported by\b|\baccording to the (agent|session|worker)\b|\bnot (independently )?(readable|verifiable|verified|checkable)\b|\b(can(no|')t|unable to) (verify|check|read)\b/i;
+
+export const isNeoAgentWord = (evidence: string | undefined) =>
+  !!evidence && NEO_AGENT_WORD.test(evidence);
+
 function requireNeoAskTick(
   input: z.infer<typeof Tick>,
-  ask: NeoAsk
+  ask: NeoAsk,
+  caller: OperationCaller
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  if (caller.source === 'mcp' && input.state === 'met' && isNeoAgentWord(input.evidence))
+    return {
+      reason: fail(
+        "unverified: this evidence is only a working agent's word. Tick the item reported; it counts as met once you read it yourself or the human confirms it."
+      ),
+    };
   return input.state !== 'pending' && !input.evidence
     ? {
         reason: fail(
@@ -435,11 +448,19 @@ export function planNeoAskTickStatus(
   | { status: 'unchanged' } {
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
-  const asked = items.find((item) => item.state === 'needs_you');
+  const asked =
+    items.find((item) => item.state === 'needs_you') ??
+    (items.some((item) => item.state === 'pending')
+      ? undefined
+      : items.find((item) => item.state === 'reported'));
   if (asked)
     return ask.status === 'waiting' && ask.waitingItem === asked.id
       ? { status: 'unchanged' }
-      : { status: 'waiting', outcome: asked.text, item: asked.id };
+      : {
+          status: 'waiting',
+          outcome: asked.state === 'reported' ? `Confirm: ${asked.text}` : asked.text,
+          item: asked.id,
+        };
   return ask.status === 'waiting' && ask.waitingItem ? { status: 'open' } : { status: 'unchanged' };
 }
 
@@ -662,7 +683,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['input', 'caller'],
       'result:admission'
     )
-    .pipe(requireNeoAskTick, ['input', 'admission'], 'result:admission')
+    .pipe(requireNeoAskTick, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
       (
         input: z.infer<typeof Tick>,
@@ -764,7 +785,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it (never for a part the human dropped: remove that item with neo.ask.edit), needs_you with what the human must decide, or back to pending. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide, or back to pending. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

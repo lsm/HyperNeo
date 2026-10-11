@@ -3,6 +3,7 @@ import type { NeoAskSessionView } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
+import type { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import type { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
@@ -39,6 +40,7 @@ export type NeoSessionWatcherDeps = {
   announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   announceSessionNotice: (notice: NeoSessionNotice) => void;
   log: Logger;
+  seen: Pick<NeoSessionSeenRepository, 'list' | 'replace'>;
   registry: () => OperationRegistry;
   followedCardRefs: (now: number) => WorkRef[];
   mutedSessions: () => readonly string[] | undefined;
@@ -52,12 +54,16 @@ export class NeoSessionWatcher {
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   openSessionNotices: NeoSessionNotice[] = [];
   askSessions = new Map<string, NeoAskSessionView[]>();
-  private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
+  private readonly sessionsSeen: Map<string, NeoSessionSeen>;
+  private savedSeen: string;
   private sessionPrs = new Map<string, string[]>();
   private sessionPrsCheckedAt = new Map<string, number>();
   private heldSessionNotices = new Map<string, NeoSessionNotice>();
 
-  constructor(private readonly deps: NeoSessionWatcherDeps) {}
+  constructor(private readonly deps: NeoSessionWatcherDeps) {
+    this.sessionsSeen = new Map(deps.seen.list());
+    this.savedSeen = JSON.stringify([...this.sessionsSeen]);
+  }
 
   readonly watchSessions = (superpipe({})('neo-session-watch') as PipelineAPI)
     .input(['now'])
@@ -253,6 +259,7 @@ export class NeoSessionWatcher {
         for (const key of read.found.keys()) this.sessionPrsCheckedAt.set(key, now);
         for (const key of [...this.sessionPrsCheckedAt.keys()])
           if (!this.sessionsSeen.has(key)) this.sessionPrsCheckedAt.delete(key);
+        this.saveSeen();
       },
       ['listed', 'plan', 'notices', 'read', 'now']
     )
@@ -281,6 +288,14 @@ export class NeoSessionWatcher {
       ['root', 'listed', 'linked', 'added', 'grouped']
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
+
+  private saveSeen(): void {
+    const entries = [...this.sessionsSeen];
+    const signature = JSON.stringify(entries);
+    if (signature === this.savedSeen) return;
+    this.deps.seen.replace(entries);
+    this.savedSeen = signature;
+  }
 
   flushSessionNoticeGroup(): void {
     const group = neoSessionNoticeGroup(this.openSessionNotices);
