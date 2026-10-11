@@ -343,6 +343,23 @@ describe('driverWorkCaller', () => {
   });
 });
 
+describe('readDriverNeedsYou', () => {
+  test('parses one status reply once, however many readers read it', () => {
+    let statusReads = 0;
+    const status = {
+      get status() {
+        statusReads += 1;
+        return 'needs_you';
+      },
+      lastActivityAt: 7,
+    };
+    const outcome = { kind: 'completed' as const, value: { ok: true, value: status } };
+    expect(readDriverNeedsYou(outcome)).toEqual({ needsYou: true, since: 7, lastReply: undefined });
+    expect(readDriverNeedsYou(outcome)?.needsYou).toBe(true);
+    expect(statusReads).toBe(1);
+  });
+});
+
 describe('readDriverOutcome', () => {
   test('keeps the started ref, or the sent-to ref, and explains every failure', () => {
     const started = { ref: { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' }, title: 'x' };
