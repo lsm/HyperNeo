@@ -51,12 +51,11 @@ import {
   routeExternalEventPublisher,
   SessionExternalEventStore,
 } from './lib/external-events/index.ts';
+import { mailSessionEvent } from './lib/external-events/session-event-delivery.ts';
 import {
-  deliverSessionExternalEvent,
-  mailSessionEvent,
-  type SessionEventDeliveryDeps,
-} from './lib/external-events/session-event-delivery.ts';
-import { endClosedPrSubscriptions } from './lib/external-events/session-subscription-close.ts';
+  routeSessionExternalEvent,
+  type SessionEventRouteDeps,
+} from './lib/external-events/session-event-routing.ts';
 import { deliverMessage } from './lib/agent/message-delivery.ts';
 import {
   RESTART_RECOVERY_NOTE,
@@ -806,7 +805,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    const sessionEventDeliveryDeps: SessionEventDeliveryDeps = {
+    const sessionEventRouteDeps: SessionEventRouteDeps = {
       readEvent: (eventId) => sessionExternalEventStore.getById(eventId),
       listSubscriptions: () => sessionEventSubscriptions.listAll(),
       isSessionBusy: (sessionId) =>
@@ -819,20 +818,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`
           );
       },
+      removeSubscription: (sessionId, topic) => sessionEventSubscriptions.delete(sessionId, topic),
     };
     internalEventBus.subscribe(
       'externalEvent.published',
       async (event) => {
-        await deliverSessionExternalEvent(sessionEventDeliveryDeps, event);
-        await endClosedPrSubscriptions(
-          {
-            readEvent: sessionEventDeliveryDeps.readEvent,
-            listSubscriptions: sessionEventDeliveryDeps.listSubscriptions,
-            removeSubscription: (sessionId, topic) =>
-              sessionEventSubscriptions.delete(sessionId, topic),
-          },
-          event
-        );
+        await routeSessionExternalEvent(sessionEventRouteDeps, event);
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );

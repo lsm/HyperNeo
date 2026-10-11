@@ -1,13 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import {
-  deliverSessionExternalEvent,
   mailSessionEvent,
   planSessionEventDeliveries,
   requireSessionFeedbackEvent,
   SESSION_EVENT_ORIGIN,
   type SessionEventDelivery,
-  type SessionEventDeliveryDeps,
   sessionEventHeadline,
   topicMatchesPattern,
 } from '../../../../src/lib/external-events/session-event-delivery';
@@ -195,49 +193,6 @@ describe('planSessionEventDeliveries', () => {
       () => false
     );
     expect(first).toEqual(again);
-  });
-});
-
-describe('deliverSessionExternalEvent', () => {
-  function deps(stored: ExternalEvent | null, subscriptions: SessionEventSubscription[]) {
-    const delivered: SessionEventDelivery[] = [];
-    const reads: string[] = [];
-    const value: SessionEventDeliveryDeps = {
-      readEvent: (eventId) => {
-        reads.push(eventId);
-        return stored ? { event: stored, state: 'published', createdAt: 1, updatedAt: 1 } : null;
-      },
-      listSubscriptions: () => subscriptions,
-      isSessionBusy: () => false,
-      deliver: async (delivery) => {
-        delivered.push(delivery);
-      },
-    };
-    return { value, delivered, reads };
-  }
-
-  test('delivers a stored session event to the sessions that follow its pull request', async () => {
-    const { value, delivered } = deps(event(), [subscription('s1'), subscription('s2')]);
-    const result = await deliverSessionExternalEvent(value, published(event()));
-    expect(delivered.map((delivery) => delivery.sessionId)).toEqual(['s1', 's2']);
-    expect(result).toEqual(delivered);
-  });
-
-  test('ignores Space events without reading the session store', async () => {
-    const { value, delivered, reads } = deps(event(), [subscription('s1')]);
-    const result = await deliverSessionExternalEvent(
-      value,
-      published(event({ spaceId: 'space-1' }))
-    );
-    expect(result).toBe('not_session_scope');
-    expect(reads).toEqual([]);
-    expect(delivered).toEqual([]);
-  });
-
-  test('stops when the event is not stored', async () => {
-    const { value, delivered } = deps(null, [subscription('s1')]);
-    expect(await deliverSessionExternalEvent(value, published(event()))).toBe('event_missing');
-    expect(delivered).toEqual([]);
   });
 });
 
