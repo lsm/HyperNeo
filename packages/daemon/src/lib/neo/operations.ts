@@ -698,7 +698,7 @@ export function createNeoOperations(service: NeoService) {
       asks,
       workPrs,
       cards,
-      askViews: projectNeoAskViews(asks, cards, workPrs),
+      askViews: projectNeoAskViews(asks, cards, workPrs, service.askSessions),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,

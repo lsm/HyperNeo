@@ -284,7 +284,47 @@ describe('projectNeoAskViews', () => {
       workIds: ['new', 'done'],
       doneWorkIds: ['done'],
       summary: null,
+      sessions: [],
     });
+  });
+
+  test('a linked session that needs the human puts a running ask in attention, and a settled ask drops its sessions', () => {
+    const linked = {
+      key: 'codex-desktop::t1',
+      title: 'Ship the fix',
+      adapter: 'codex-desktop',
+      status: 'needs_you' as const,
+      kind: 'needs_you' as const,
+      open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
+    };
+    const input = parts({
+      work: [work('w', 'queued')],
+      asks: [ask({ workIds: ['w'] }), ask({ id: 'a2', status: 'achieved', workIds: [] })],
+    });
+    const views = projectNeoAskViews(
+      input.asks,
+      projectNeoCardViews(input),
+      input.prs,
+      new Map([
+        ['a1', [linked]],
+        ['a2', [linked]],
+      ])
+    );
+    expect(views[0]).toMatchObject({
+      group: 'attention',
+      label: 'Needs you',
+      needsYou: true,
+      sessions: [linked],
+    });
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+    expect(views[1]).toMatchObject({ group: 'outcomes', needsYou: false, sessions: [] });
+    const quiet = projectNeoAskViews(
+      input.asks,
+      projectNeoCardViews(input),
+      input.prs,
+      new Map([['a1', [{ ...linked, status: 'running' as const, kind: null }]]])
+    );
+    expect(quiet[0]).toMatchObject({ group: 'running', needsYou: false });
   });
 
   test('done items count instead of cards when the ask has them', () => {

@@ -1,4 +1,5 @@
 import type {
+  NeoAskSessionView,
   NeoAskView,
   NeoCardOpenTarget,
   NeoCardPrimary,
@@ -10,6 +11,13 @@ import { z } from 'zod';
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
 const CardGroup = z.enum(['attention', 'running', 'outcomes']);
+
+const OpenTarget = z.object({
+  link: z.string().nullable(),
+  remoteLink: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  daemon: z.string().nullable(),
+} satisfies ZodShape<NeoCardOpenTarget>);
 
 export const NeoCardViewSchema = z.object({
   workId: z.string(),
@@ -39,12 +47,7 @@ export const NeoCardViewSchema = z.object({
   } satisfies ZodShape<NeoCardPrimary>),
   actions: z.array(z.enum(['start', 'cancel', 'retry', 'close', 'done'])),
   adapter: z.string().nullable(),
-  open: z.object({
-    link: z.string().nullable(),
-    remoteLink: z.string().nullable(),
-    sessionId: z.string().nullable(),
-    daemon: z.string().nullable(),
-  } satisfies ZodShape<NeoCardOpenTarget>),
+  open: OpenTarget,
   pr: z
     .object({
       number: z.string(),
@@ -78,4 +81,16 @@ export const NeoAskViewSchema = z.object({
   workIds: z.array(z.string()),
   doneWorkIds: z.array(z.string()),
   summary: z.string().nullable(),
+  sessions: z
+    .array(
+      z.object({
+        key: z.string(),
+        title: z.string(),
+        adapter: z.string(),
+        status: z.enum(['queued', 'running', 'needs_you', 'done', 'failed', 'stopped']),
+        kind: z.enum(['needs_you', 'failed']).nullable(),
+        open: OpenTarget,
+      } satisfies ZodShape<NeoAskSessionView>)
+    )
+    .optional(),
 } satisfies ZodShape<NeoAskView>);

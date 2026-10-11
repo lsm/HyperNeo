@@ -8,6 +8,7 @@ import { skipSpaceQuery } from './hyperneo-adapter.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
+import { codexOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import type {
   FindQuery,
@@ -104,6 +105,7 @@ export interface CodexTurnState {
   replyAt?: number;
   inputs?: WorkInput[];
   exchange?: WorkExchange;
+  openedPrs?: string[];
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -489,10 +491,12 @@ export async function readCodexTurn(
 ): Promise<CodexTurnState> {
   try {
     const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
+    const openedPrs = codexOpenedPrs(lines);
     return {
       ...codexTurnState(lines),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
+      ...(openedPrs.length ? { openedPrs } : {}),
     };
   } catch {
     return { marker: null, reply: null };
@@ -520,6 +524,7 @@ export function describeCodexThread(
       ...(state.reply && state.replyAt !== undefined ? { lastReplyAt: state.replyAt } : {}),
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
+      ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
     },
   };
 }

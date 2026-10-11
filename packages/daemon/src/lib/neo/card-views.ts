@@ -64,7 +64,9 @@ const workLabels: Record<NeoWork['status'], string> = {
   cancelled: 'Stopped',
 };
 
-export function neoCardSessionLink(driver: NeoWorkDriverReceipt | undefined): string | null {
+export function neoCardSessionLink(
+  driver: Pick<NeoWorkDriverReceipt, 'link' | 'daemon'> | undefined
+): string | null {
   const link = driver?.link;
   if (!link || [...link].some((char) => char <= ' ' || char === '\\')) return null;
   if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
@@ -155,6 +157,20 @@ export function neoCardOpenTarget(
     remoteLink: driver?.remoteLink ?? null,
     sessionId: work.sessionId ?? local ?? null,
     daemon: driver?.daemon ?? null,
+  };
+}
+
+export function neoSessionOpenTarget(session: {
+  ref: { adapter: string; daemon?: string; id: string };
+  link?: string;
+  remoteLink?: string;
+}): NeoCardOpenTarget {
+  const daemon = session.ref.daemon ?? null;
+  return {
+    link: neoCardSessionLink({ link: session.link ?? null, daemon }),
+    remoteLink: session.remoteLink ?? null,
+    sessionId: session.ref.adapter === 'hyperneo' && !daemon ? session.ref.id : null,
+    daemon,
   };
 }
 

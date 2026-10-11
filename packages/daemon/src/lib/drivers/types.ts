@@ -87,6 +87,7 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   recentInputs: z.array(WorkInputSchema).optional(),
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),
+  openedPrs: z.array(z.string()).optional(),
 });
 
 export type WorkStatus = z.infer<typeof WorkStatusSchema>;

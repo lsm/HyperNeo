@@ -195,6 +195,15 @@ export interface NeoCardView {
   retryable: boolean;
 }
 
+export interface NeoAskSessionView {
+  key: string;
+  title: string;
+  adapter: string;
+  status: NonNullable<NeoWorkDriverReceipt['status']>;
+  kind: 'needs_you' | 'failed' | null;
+  open: NeoCardOpenTarget;
+}
+
 export interface NeoAskView {
   askId: string;
   group: NeoCardGroup;
@@ -206,6 +215,7 @@ export interface NeoAskView {
   workIds: string[];
   doneWorkIds: string[];
   summary: string | null;
+  sessions?: NeoAskSessionView[];
 }
 
 export interface NeoReceiptAskOrigin {
