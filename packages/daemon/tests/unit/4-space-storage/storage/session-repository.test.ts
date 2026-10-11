@@ -738,6 +738,14 @@ describe('SessionRepository', () => {
     it('marks turns still processing or cooling down at startup as interrupted', () => {
       const states = {
         busy: { status: 'processing', messageId: 'm1', phase: 'thinking' },
+        paused: {
+          status: 'rate_limit_cooldown',
+          messageId: 'm5',
+          retryCount: 5,
+          maxRetries: 5,
+          retryAt: 1,
+          manualRetry: true,
+        },
         cooling: {
           status: 'rate_limit_cooldown',
           messageId: 'm3',
@@ -774,8 +782,9 @@ describe('SessionRepository', () => {
         status: 'interrupted',
         reason: 'restart',
         messageId: 'm3',
+        resumeAt: 1,
       });
-      for (const id of ['idle', 'queued', 'asking'])
+      for (const id of ['idle', 'queued', 'asking', 'paused'])
         expect(JSON.parse(repository.getSession(id)?.processingState ?? '{}')).toEqual(
           states[id as keyof typeof states]
         );

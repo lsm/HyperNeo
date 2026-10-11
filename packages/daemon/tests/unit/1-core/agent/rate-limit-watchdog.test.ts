@@ -339,8 +339,9 @@ describe('RateLimitWatchdog', () => {
       const cooldownCalls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
         .calls;
       expect(cooldownCalls).toHaveLength(1);
-      const [cooldownState] = cooldownCalls[0] as [{ retryAt: number }];
+      const [cooldownState] = cooldownCalls[0] as [{ retryAt: number; manualRetry?: boolean }];
       expect(cooldownState.retryAt).toBeLessThanOrEqual(Date.now());
+      expect(cooldownState.manualRetry).toBe(true);
       expect(notifyPause).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'usage_limit', reason: 'billing-terminal' })
       );
@@ -1701,7 +1702,12 @@ describe('RateLimitWatchdog', () => {
 
       expect(retryCallback).toHaveBeenCalledTimes(4);
       expect(notifyResume).not.toHaveBeenCalled();
-      expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(4);
+      expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(5);
+      const cooldownCalls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+        .calls;
+      expect(cooldownCalls.at(-1)?.[0]).toMatchObject({
+        manualRetry: true,
+      });
       expect(watchdog.isPending()).toBe(false);
       expect(watchdog.getState().status).toBe('idle');
     });

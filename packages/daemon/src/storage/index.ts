@@ -237,6 +237,14 @@ export class Database {
     return this.sessionRepo.markRestartInterruptedTurns();
   }
 
+  listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
+    return this.sessionRepo.listRestartCooldownResumes();
+  }
+
+  takeRestartCooldownResume(sessionId: string): boolean {
+    return this.sessionRepo.takeRestartCooldownResume(sessionId);
+  }
+
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     return this.sessionRepo.listAcpSessionIds();
   }

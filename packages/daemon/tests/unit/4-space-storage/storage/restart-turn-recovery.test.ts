@@ -165,7 +165,7 @@ describe('restart recovery reads', () => {
       workedAfter: true,
     });
     expect(sdk.readRestartRecoveryEvidence('idle')).toBeNull();
-    expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'cooling', 'working']);
+    expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'working']);
   });
 
   test('the cut-off prompt reopens for delivery through the shared retry transition', () => {
@@ -177,8 +177,21 @@ describe('restart recovery reads', () => {
     expect(sdk.getDeliveryContent('asked', 'u1')?.sendStatus).toBe('enqueued');
   });
 
+  test('a cooldown cut off by the restart resumes once, at its retry time', () => {
+    expect(sessions.markRestartInterruptedTurns()).toBe(4);
+    expect(sessions.listRestartCooldownResumes()).toEqual([{ sessionId: 'cooling', resumeAt: 1 }]);
+    expect(sessions.takeRestartCooldownResume('cooling')).toBe(true);
+    expect(sessions.takeRestartCooldownResume('cooling')).toBe(false);
+    expect(sessions.listRestartCooldownResumes()).toEqual([]);
+    expect(JSON.parse(sessions.getSession('cooling')?.processingState ?? '{}')).toEqual({
+      status: 'interrupted',
+      reason: 'restart',
+      messageId: 'x',
+    });
+  });
+
   test('archived sessions are not resumed', () => {
     sessions.updateSession('asked', { status: 'archived' });
-    expect(sessions.listProcessingSessionIds().sort()).toEqual(['cooling', 'working']);
+    expect(sessions.listProcessingSessionIds()).toEqual(['working']);
   });
 });
