@@ -19,6 +19,11 @@ import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
 import { requireNeoAskPack } from './packs/index.ts';
 import { CODING_CHECK_PR_MERGED } from './packs/coding/pack.ts';
+import {
+  CODING_CHECK_ISSUE_CLOSED,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+} from './packs/coding/issue-checks.ts';
 import { LIFE_ADMIN_CHECK_CONFIRMED } from './packs/life-admin/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
@@ -32,6 +37,13 @@ type NeoAdmit = (
 type AskReceipt = { ok: true; ask: NeoAsk };
 type AskOpened = AskReceipt & { packBriefing?: string };
 
+const NEO_ASK_CHECK_KINDS = [
+  CODING_CHECK_PR_MERGED,
+  CODING_CHECK_ISSUE_FILED,
+  CODING_CHECK_ISSUE_SUB_ISSUE,
+  CODING_CHECK_ISSUE_CLOSED,
+  LIFE_ADMIN_CHECK_CONFIRMED,
+] as const;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const NeoAskSchema = z.object({
   id: z.string(),
@@ -61,7 +73,7 @@ export const NeoAskSchema = z.object({
         text: z.string(),
         state: z.enum(['pending', 'met', 'needs_you', 'reported']),
         evidence: z.string().nullable(),
-        check: z.enum([CODING_CHECK_PR_MERGED, LIFE_ADMIN_CHECK_CONFIRMED]).nullable(),
+        check: z.enum(NEO_ASK_CHECK_KINDS).nullable(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -81,7 +93,7 @@ const AskResult = z.union([
 ]);
 const Item = z.object({
   text: z.string().trim().min(1).max(300),
-  check: z.enum([CODING_CHECK_PR_MERGED, LIFE_ADMIN_CHECK_CONFIRMED]).nullable().default(null),
+  check: z.enum(NEO_ASK_CHECK_KINDS).nullable().default(null),
 });
 const Open = z
   .object({

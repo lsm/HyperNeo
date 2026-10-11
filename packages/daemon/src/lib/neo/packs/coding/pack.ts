@@ -9,6 +9,7 @@ import {
   neoAskRefNews,
   type NeoRefStateReader,
 } from './ask-prs.ts';
+import { readNeoIssueTicks } from './issue-checks.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
@@ -237,6 +238,8 @@ export function createCodingPack(
         deps.workPrs.list(ask.workIds),
         deps.claims.forUrls(works.flatMap((work) => extractNeoWorkPrUrls(work.report)))
       ),
+    readAskTicks: (ask: NeoAsk, works: readonly NeoWork[]) =>
+      readNeoIssueTicks(ask, works, deps.readRefStates, Date.now()),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(

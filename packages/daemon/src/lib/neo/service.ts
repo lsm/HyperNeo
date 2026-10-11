@@ -165,6 +165,7 @@ import {
   neoPacks,
   planNeoPackTicks,
   readNeoAskPackEvidence,
+  readNeoAskPackTicks,
   readNeoPackEvidence,
   requireNeoEvidenceRefresh,
   requireNeoPackTickable,
@@ -1305,6 +1306,9 @@ export class NeoService {
       } catch (error) {
         this.log.warn('Neo ask ticks pending', error);
       }
+      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) =>
+        this.log.warn('Neo ask read ticks pending', error)
+      );
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
       );
@@ -2030,6 +2034,44 @@ export class NeoService {
     return (await Promise.all(running.map((id) => this.branchPrUrls(id)))).flat();
   }
 
+  private writeAskTicks(ask: NeoAsk, ticks: readonly { id: string; evidence: string }[]): NeoAsk {
+    for (const tick of ticks)
+      this.askRecords.tickItem(
+        ask.id,
+        { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
+        Date.now()
+      );
+    const ticked = ticks.length ? this.askRecords.get(ask.id) : null;
+    return ticked
+      ? (writeNeoAskTickStatus(this.askRecords, ticked, planNeoAskTickStatus(ticked)) ?? ticked)
+      : ask;
+  }
+
+  private readonly runAskReadTicks = (superpipe({})('neo-ask-read-ticks') as PipelineAPI)
+    .input(['ask'])
+    .pipe((ask: NeoAsk) => ({ ask }), 'ask', 'read')
+    .pipe(requireNeoPackTickable, 'read', 'result:ticks')
+    .pipe(
+      async (ask: NeoAsk) => ({
+        ticks: await readNeoAskPackTicks(
+          this.packs(),
+          ask,
+          ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+          (id, error) => this.log.warn(`Neo pack ${id} ask ticks pending`, error)
+        ),
+      }),
+      'ticks',
+      'plan'
+    )
+    .pipe(
+      (ask: NeoAsk, plan: { ticks: { id: string; evidence: string }[] }) => ({
+        value: this.writeAskTicks(this.askRecords.get(ask.id) ?? ask, plan.ticks),
+      }),
+      ['ticks', 'plan'],
+      'result:ticks'
+    )
+    .endAsync('ticks') as (ask: NeoAsk) => Promise<NeoAsk | null>;
+
   private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)
     .input(['askId'])
     .pipe((askId: string) => ({ ask: this.askRecords.get(askId) }), 'askId', 'read')
@@ -2051,37 +2093,10 @@ export class NeoService {
       'plan'
     )
     .pipe(
-      (ask: NeoAsk, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => {
-        for (const tick of plan.ticks)
-          this.askRecords.tickItem(
-            ask.id,
-            { id: tick.id, state: 'met', evidence: tick.evidence, metBy: 'daemon' },
-            Date.now()
-          );
-        return { ask: plan.ticks.length ? this.askRecords.get(ask.id) : null };
-      },
+      (ask: NeoAsk, plan: { ticks: ReturnType<typeof planNeoPackTicks> }) => ({
+        value: this.writeAskTicks(ask, plan.ticks),
+      }),
       ['ticks', 'plan'],
-      'ticked'
-    )
-    .pipe(
-      (ticked: { ask: NeoAsk | null }) => ({
-        plan: ticked.ask ? planNeoAskTickStatus(ticked.ask) : null,
-      }),
-      'ticked',
-      'status'
-    )
-    .pipe(
-      (
-        ask: NeoAsk,
-        ticked: { ask: NeoAsk | null },
-        status: { plan: ReturnType<typeof planNeoAskTickStatus> | null }
-      ) => ({
-        value:
-          ticked.ask && status.plan
-            ? (writeNeoAskTickStatus(this.askRecords, ticked.ask, status.plan) ?? ticked.ask)
-            : ask,
-      }),
-      ['ticks', 'ticked', 'status'],
       'result:ticks'
     )
     .end('ticks') as (askId: string) => NeoAsk | null;
