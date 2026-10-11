@@ -21,6 +21,8 @@ export interface NeoAskOriginReads {
   getWork(id: string): NeoWork | null;
   getAsk(id: string): NeoAskOriginAsk | null;
   getRootBinding(): NeoBinding | null;
+  getStamp?(sessionId: string, messageId: string): NeoAskOrigin | null;
+  stamp?(input: NeoAskOrigin, origin: NeoAskOrigin): void;
 }
 export interface NeoAskEvidence {
   envelope: 'request' | 'reply' | null;
@@ -248,6 +250,8 @@ export function createNeoAskOriginResolver(reads: NeoAskOriginReads) {
     .pipe(selectNeoAskParent, ['step', 'evidence'], 'step')
     .end('step') as (input: Input) => Hop;
   return (input: Input): NeoAskOrigin | null => {
+    const stamped = input.messageId ? reads.getStamp?.(input.sessionId, input.messageId) : null;
+    if (stamped) return stamped;
     let cursor = input;
     const visited = new Set<string>();
     for (let depth = 0; depth < 8; depth++) {
@@ -255,7 +259,11 @@ export function createNeoAskOriginResolver(reads: NeoAskOriginReads) {
       if (visited.has(key)) return null;
       visited.add(key);
       const step = hop(cursor);
-      if (step.kind === 'human') return step.origin;
+      if (step.kind === 'human') {
+        if (depth > 0 && input.messageId)
+          reads.stamp?.({ sessionId: input.sessionId, messageId: input.messageId }, step.origin);
+        return step.origin;
+      }
       if (step.kind === 'unknown') return null;
       cursor = step.origin;
     }
