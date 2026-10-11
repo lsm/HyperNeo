@@ -117,7 +117,8 @@ interface NeoPack {
 - `readAskEvidence`: what changed since a live ask opened in the things it names
   itself, outside its cards (for coding, a pull request or issue named by URL,
   `owner/repo#N`, or a bare `#N` when the ask points at one repo, that merged
-  or closed). Core runs it on the same pack choice
+  or closed, plus the PRs on the branch of each card still running, which have
+  no PR read of their own until the card reports). Core runs it on the same pack choice
   as `readEvidence`, at most every 15 minutes per ask, and tells the ask's Neo
   session once per change (`neo_ask_checks`); Neo judges and settles (#6286).
 - `checks`: pure gates, one per item kind.

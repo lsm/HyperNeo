@@ -8,7 +8,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-session-policy.ts';
 import { StaleTaskGuardError, type SpaceTaskManager } from './task-manager.ts';
 import { taskRejectionKind } from './transitions.ts';
-import { resolveMetadataSessionSpace } from './metadata.ts';
+import { isActiveSessionInSpace } from './metadata.ts';
 import {
   resolveCancellationRoute,
   supersedeReservedAttempt,
@@ -88,10 +88,7 @@ export function requireCancellerInSpace(
 ): { value: SpaceTask } | { reason: Ack } {
   if (caller.source !== 'mcp') return { value: task };
   const session = evidence.callerSession;
-  return session?.status !== 'active' ||
-    resolveMetadataSessionSpace(session, policy) !== task.spaceId
-    ? reject(denial)
-    : { value: task };
+  return isActiveSessionInSpace(session, task.spaceId, policy) ? { value: task } : reject(denial);
 }
 
 function mapCancellationFailure(error: unknown): Ack {
@@ -246,10 +243,9 @@ export function requireDirectCanceller(
     session.context.spaceId === task.spaceId &&
     found.frozenStatus === 'cancelled';
   if (repeatOwnRequest) return { value: found.target };
-  return session?.status !== 'active' ||
-    resolveMetadataSessionSpace(session, policy) !== task.spaceId
-    ? reject('direct_cancellation_denied')
-    : { value: found.target };
+  return isActiveSessionInSpace(session, task.spaceId, policy)
+    ? { value: found.target }
+    : reject('direct_cancellation_denied');
 }
 
 const runDirectCancellation = (superpipe({})('cancel-direct-space-task') as PipelineAPI)

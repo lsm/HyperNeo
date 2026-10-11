@@ -158,6 +158,41 @@ describe('Neo existing trusted human work input', () => {
     }
   );
 
+  test('lets Neo start the work items of an ask the user approved, on later turns', async () => {
+    storeInput();
+    const work = await propose(caller());
+    const opened = service.askRecords.open({
+      id: 'fictional-ask',
+      requestKey: 'fictional-ask',
+      concernId: null,
+      originSessionId: root,
+      originMessageId: ask,
+      title: 'Fictional',
+      ask: 'Do the bounded fictional work.',
+      doneWhen: '- done',
+      doneSource: 'human',
+    })!;
+    service.askRecords.link(opened.id, work.id);
+    const later = caller(root, '00000000-0000-4000-8000-000000000009');
+    expect(later.neoTurn?.human).toBe(false);
+    const refused = { value: { ok: false, reason: 'This action needs the user.' } };
+    expect(await invoke('neo.work.start', { id: work.id }, later)).toMatchObject(refused);
+    expect(await invoke('neo.ask.approve', { askId: opened.id }, later)).toMatchObject(refused);
+
+    expect(await invoke('neo.ask.approve', { askId: opened.id })).toMatchObject({
+      value: { ok: true, ask: { id: opened.id, approvedAt: expect.any(Number) } },
+    });
+    const other = caller(holder, '00000000-0000-4000-8000-000000000010');
+    expect(await invoke('neo.work.start', { id: work.id }, other)).toMatchObject({
+      value: { ok: false },
+    });
+    const next = caller(root, '00000000-0000-4000-8000-000000000011');
+    expect(await invoke('neo.work.start', { id: work.id }, next)).toMatchObject({
+      value: { ok: true, work: { status: 'queued', sessionId: target } },
+    });
+    expect(jobs(work.id)).toHaveLength(1);
+  });
+
   test.each(['system', 'internal_compaction', 'missing'])(
     'refuses %s input even with a claimed human flag',
     async (kind) => {

@@ -40,7 +40,10 @@ export function assertTaskTransitionSnapshot(
 }
 
 export class StaleTaskGuardError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly guardReason?: string
+  ) {
     super(message);
     this.name = 'StaleTaskGuardError';
   }
@@ -263,7 +266,10 @@ export class SpaceTaskManager {
           }
           const rejectionReason = options.guardWrite(current);
           if (rejectionReason !== undefined) {
-            throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+            throw new StaleTaskGuardError(
+              `Task ${taskId} rejected: ${rejectionReason}`,
+              rejectionReason
+            );
           }
         }
         const result = this.taskRepo.updateTask(
@@ -353,7 +359,11 @@ export class SpaceTaskManager {
         if (settled.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(settled);
         }
-      } catch {}
+      } catch (err) {
+        log.warn(
+          `Settling dependents of task "${taskId}" threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
 
     if (newStatus === 'archived' && updated.workflowRunId) {
@@ -565,7 +575,10 @@ export class SpaceTaskManager {
           throw new TaskRejection('task_not_found', `Task not found: ${taskId}`);
         const rejectionReason = guardWrite(current);
         if (rejectionReason)
-          throw new StaleTaskGuardError(`Task ${taskId} rejected: ${rejectionReason}`);
+          throw new StaleTaskGuardError(
+            `Task ${taskId} rejected: ${rejectionReason}`,
+            rejectionReason
+          );
         return quietRepo.updateTask(taskId, repoParams);
       }, 'immediate')();
       this.reactiveDb?.notifyChange('space_tasks');
@@ -606,7 +619,11 @@ export class SpaceTaskManager {
 
   async retryTask(
     taskId: string,
-    options?: { description?: string; expectedStatus?: SpaceTaskStatus }
+    options?: {
+      description?: string;
+      expectedStatus?: SpaceTaskStatus;
+      guardWrite?: (current: SpaceTask) => string | undefined;
+    }
   ): Promise<SpaceTask> {
     const task = await this.getTask(taskId);
     if (!task) {
@@ -621,6 +638,7 @@ export class SpaceTaskManager {
 
     const retried = await this.setTaskStatus(taskId, retryTargetStatus(task.status), {
       expectedStatus: options?.expectedStatus,
+      guardWrite: options?.guardWrite,
     });
 
     if (options?.description !== undefined) {
@@ -669,10 +687,6 @@ export class SpaceTaskManager {
     return this.doBlockCascade(taskId, []);
   }
 
-  async cancelDependentTasks(taskId: string): Promise<SpaceTask[]> {
-    return this.doCancelDependentsCascade(taskId, []);
-  }
-
   private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
     const dependents = [
       ...(await this.listTasksByStatus('in_progress')),
@@ -688,35 +702,6 @@ export class SpaceTaskManager {
         });
         acc.push(blocked);
         await this.doBlockCascade(t.id, acc);
-      }
-    }
-    return acc;
-  }
-
-  private async doCancelDependentsCascade(
-    taskId: string,
-    acc: SpaceTask[],
-    visited: Set<string> = new Set()
-  ): Promise<SpaceTask[]> {
-    const allTasks = await this.listTasks(false);
-    for (const t of allTasks) {
-      if (visited.has(t.id)) continue;
-      if (!t.dependsOn?.includes(taskId)) continue;
-      visited.add(t.id);
-
-      let propagate = false;
-      if (t.status === 'open' || t.status === 'in_progress' || isRateOrUsageLimited(t.status)) {
-        const cancelled = await this.setTaskStatus(t.id, 'cancelled', {
-          result: `Dependency task ${taskId} was cancelled`,
-        });
-        acc.push(cancelled);
-        propagate = true;
-      } else if (t.status === 'cancelled') {
-        propagate = true;
-      }
-
-      if (propagate) {
-        await this.doCancelDependentsCascade(t.id, acc, visited);
       }
     }
     return acc;

@@ -297,6 +297,42 @@ export function decideCardLiveStatus(
   return session.status === 'needs_you' ? 'needs_you' : 'done';
 }
 
+export const NEO_CARD_CONFIRM_MS = 24 * 60 * 60_000;
+
+export function isNeoCardUnconfirmed(
+  work: Pick<NeoWork, 'createdAt'>,
+  sent: Pick<DriverSent, 'inputBefore'> | null,
+  now: number
+): boolean {
+  return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
+}
+
+export function isNeoReceiptUnconfirmed(
+  card: {
+    ref: boolean;
+    workStatus: string | null;
+    workCreatedAt: number | null;
+    startedAt: number | null;
+    inputBefore: number | null;
+    status: WorkStatus | null;
+  },
+  now: number
+): boolean {
+  return (
+    card.ref &&
+    card.workStatus === 'queued' &&
+    card.workCreatedAt !== null &&
+    card.startedAt === null &&
+    card.status !== null &&
+    card.status !== 'queued' &&
+    isNeoCardUnconfirmed(
+      { createdAt: card.workCreatedAt },
+      card.inputBefore === null ? null : { inputBefore: card.inputBefore },
+      now
+    )
+  );
+}
+
 export function readDriverSendBaseline(
   outcome: OperationOutcome,
   sentAt: number,

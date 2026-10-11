@@ -431,6 +431,32 @@ describe('NeoAskCard', () => {
     ).toBe(true);
   });
 
+  it('approves an ask with proposed steps once, and marks it approved after', () => {
+    const proposed = [...scenes.attention, ...scenes.running].filter(
+      (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
+    );
+    expect(proposed.length).toBeGreaterThan(0);
+    const approve = vi.fn();
+    const view = describeNeoAsk(ask('b', 'open', ['b1']), proposed);
+    const card = render(<NeoAskCard view={view} onApprove={approve} />);
+    fireEvent.click(card.getByRole('button', { name: 'Approve all steps' }));
+    expect(approve).toHaveBeenCalledOnce();
+    expect(card.queryByText('Approved')).toBeNull();
+    cleanup();
+    const approved = describeNeoAsk({ ...ask('b', 'open', ['b1']), approvedAt: 5 }, proposed);
+    const after = render(<NeoAskCard view={approved} onApprove={approve} />);
+    expect(after.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
+    expect(after.getByText('Approved')).toBeTruthy();
+    cleanup();
+    const nothing = render(
+      <NeoAskCard
+        view={describeNeoAsk(ask('a', 'open', ['a2']), scenes.running.slice(0, 1))}
+        onApprove={approve}
+      />
+    );
+    expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
+  });
+
   it('shows the done-when text for an ask opened before checklists', () => {
     const card = render(<NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));

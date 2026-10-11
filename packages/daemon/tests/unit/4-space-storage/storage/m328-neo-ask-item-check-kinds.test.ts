@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items';
-import { runMigration326 } from '../../../../src/storage/schema/m326-neo-ask-item-check-kinds';
+import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const legacy = (db: Database) => {
@@ -31,11 +31,11 @@ const kinds = (db: Database) =>
     check: string | null;
   }[];
 
-describe('runMigration326', () => {
+describe('runMigration328', () => {
   test('renames the check kind on existing rows and keeps the items', () => {
     const db = new Database(':memory:');
     legacy(db);
-    runMigration326(db);
+    runMigration328(db);
     expect(kinds(db)).toEqual([
       { id: 'i1', check: 'coding.pr_merged' },
       { id: 'i2', check: null },
@@ -48,8 +48,8 @@ describe('runMigration326', () => {
   test('runs once, rebuilds a fresh m318 database, and skips databases without items', () => {
     const db = new Database(':memory:');
     legacy(db);
-    runMigration326(db);
-    runMigration326(db);
+    runMigration328(db);
+    runMigration328(db);
     expect(kinds(db)).toEqual([
       { id: 'i1', check: 'coding.pr_merged' },
       { id: 'i2', check: null },
@@ -58,12 +58,12 @@ describe('runMigration326', () => {
     fresh.exec('CREATE TABLE neo_work (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)');
     runMigration313(fresh);
     runMigration318(fresh);
-    runMigration326(fresh);
+    runMigration328(fresh);
     expect(
       fresh.prepare("SELECT sql FROM sqlite_master WHERE name = 'neo_ask_items'").get()
     ).toMatchObject({ sql: expect.stringContaining("'coding.pr_merged'") });
     const bare = new Database(':memory:');
-    runMigration326(bare);
+    runMigration328(bare);
     expect(bare.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_ask_items'").get()).toBe(
       null
     );

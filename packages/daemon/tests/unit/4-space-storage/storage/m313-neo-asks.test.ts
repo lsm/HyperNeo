@@ -3,7 +3,7 @@ import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-r
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence';
 import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items';
-import { runMigration326 } from '../../../../src/storage/schema/m326-neo-ask-item-check-kinds';
+import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -61,7 +61,7 @@ describe('NeoAskRepository', () => {
     expect(asks.list('other')).toEqual([]);
   });
 
-  test('settles only from the expected status, and new work reopens a blocked ask', () => {
+  test('settles only from the expected status, and new work reopens a blocked ask without its old summary', () => {
     const db = withWork();
     runMigration313(db);
     runMigration316(db);
@@ -78,14 +78,19 @@ describe('NeoAskRepository', () => {
     expect(asks.settle(opened, 'achieved', 'stale', 'stale')).toBe(null);
 
     asks.link('a1', 'w1');
-    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null, workIds: ['w1'] });
+    expect(asks.get('a1')).toMatchObject({
+      status: 'open',
+      outcome: null,
+      settledAt: null,
+      workIds: ['w1'],
+    });
 
     const waiting = asks.settle(asks.get('a1')!, 'waiting', 'Start it?', 'Offered.')!;
     expect(waiting).toMatchObject({ status: 'waiting', outcome: 'Start it?' });
     asks.reopenForWork('w2');
     expect(asks.get('a1')?.status).toBe('waiting');
     asks.reopenForWork('w1');
-    expect(asks.get('a1')).toMatchObject({ status: 'open', settledAt: null });
+    expect(asks.get('a1')).toMatchObject({ status: 'open', outcome: null, settledAt: null });
   });
 
   test('keeps checklist items with the ask that created them, once', () => {
@@ -94,7 +99,7 @@ describe('NeoAskRepository', () => {
     runMigration316(db);
     runMigration318(db);
     runMigration318(db);
-    runMigration326(db);
+    runMigration328(db);
     const asks = new NeoAskRepository(db);
     const items = [
       { text: 'Merged', check: 'coding.pr_merged' as const },

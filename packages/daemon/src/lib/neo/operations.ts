@@ -17,6 +17,7 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_STANDING_RULE_MAX_CHARS,
   NEO_STANDING_RULES_MAX,
@@ -48,6 +49,7 @@ import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import {
   admitNeoWorkOrigin,
   hasNeoHumanWorkInput,
+  isNeoAskStartApproved,
   requireNeoHumanWorkOrigin,
   requireLiveNeoWorkOrigin,
   type NeoWorkOrigin,
@@ -178,6 +180,7 @@ const Snapshot = z.union([
           link: z.string().nullable(),
           remoteLink: z.string().optional(),
           uncheckedSince: z.number().optional(),
+          unconfirmed: z.literal(true).optional(),
         })
       )
       .max(100)
@@ -322,6 +325,11 @@ const WorkReportResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
+type NeoWorkRetryFound = {
+  work: NeoWork | null;
+  target: ReturnType<NeoService['driverTargets']['get']>;
+};
+type NeoWorkStartFound = { work: NeoWork | null; ask: NeoAsk | null };
 
 export function presentNeoConsultationReply(
   receipt: { ok: true; consultation: NeoConsultation } | { ok: true; waiter: NeoConsultationWaiter }
@@ -461,7 +469,8 @@ export function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
   name: string,
-  concernId?: string | null
+  concernId?: string | null,
+  askApproved = false
 ): { value: OperationCaller } | { reason: Rejection } {
   if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
@@ -483,18 +492,18 @@ export function admitNeoCaller(
         reason: 'Consult this concern’s holder to save corrections; Neo only has its summary.',
       },
     };
-  if (name === 'neo.work.start') {
+  if (name === 'neo.work.start' || name === 'neo.ask.approve') {
     const turn = caller.neoTurn;
-    if (
-      !turn?.human ||
-      turn.consultationId ||
-      !turn.isLive() ||
-      service.db.getSession(caller.sessionId!)?.status !== 'active' ||
-      !hasNeoHumanWorkInput(
+    const active = service.db.getSession(caller.sessionId!)?.status === 'active';
+    const human =
+      !!turn?.human &&
+      !turn.consultationId &&
+      turn.isLive() &&
+      hasNeoHumanWorkInput(
         caller,
         service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId!, turn.messageId)
-      )
-    )
+      );
+    if (!active || !(human || (askApproved && name === 'neo.work.start')))
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
   if (['neo.open', 'neo.concern.cancel', 'neo.work.close'].includes(name))
@@ -1023,20 +1032,64 @@ export function createNeoOperations(service: NeoService) {
     | z.infer<typeof WorkResult>
     | Extract<ReturnType<typeof presentNeoWorkTarget>, { accepted: false }>
   >;
-  const start = path(
-    'neo.work.start',
-    (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }, caller) => {
-      const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'Work not found.' };
-      const target = service.resolveWorkTarget(id);
-      if (!target.accepted) return { ok: false as const, reason: target.reason };
-      const origin = requireNeoHumanWorkOrigin(work, caller);
-      if ('reason' in origin) return origin.reason;
-      await service.start(id);
-      return { ok: true as const, work: service.repo.getWork(id)! };
-    }
-  );
+  const start = (superpipe({})('neo.work.start') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof WorkId>) => {
+        const work = service.repo.getWork(input.id);
+        return { work, ask: work ? service.askRecords.forWork(work.id) : null };
+      },
+      'input',
+      'found'
+    )
+    .pipe(
+      (found: NeoWorkStartFound, caller: OperationCaller) => ({
+        approved: !!found.work && isNeoAskStartApproved(found.work, found.ask, caller),
+      }),
+      ['found', 'caller'],
+      'authority'
+    )
+    .pipe(
+      (caller: OperationCaller, found: NeoWorkStartFound, authority: { approved: boolean }) =>
+        admitNeoCaller(service, caller, 'neo.work.start', undefined, authority.approved),
+      ['caller', 'found', 'authority'],
+      'result:start'
+    )
+    .pipe(
+      (found: NeoWorkStartFound) =>
+        found.work ? { value: found.work } : { reason: { ok: false, reason: 'Work not found.' } },
+      'found',
+      'result:start'
+    )
+    .pipe(
+      (work: NeoWork) => {
+        const target = service.resolveWorkTarget(work.id);
+        return target.accepted ? { value: work } : { reason: { ok: false, reason: target.reason } };
+      },
+      'start',
+      'result:start'
+    )
+    .pipe(
+      (work: NeoWork, caller: OperationCaller, authority: { approved: boolean }) => {
+        if (authority.approved) return { value: work };
+        const origin = requireNeoHumanWorkOrigin(work, caller);
+        return 'reason' in origin ? origin : { value: work };
+      },
+      ['start', 'caller', 'authority'],
+      'result:start'
+    )
+    .pipe(
+      async (work: NeoWork) => {
+        await service.start(work.id);
+        return { value: { ok: true as const, work: service.repo.getWork(work.id)! } };
+      },
+      'start',
+      'result:start'
+    )
+    .endAsync('start') as (
+    input: z.infer<typeof WorkId>,
+    caller: OperationCaller
+  ) => Promise<z.infer<typeof WorkResult> | Rejection>;
   const continueWork = path(
     'neo.work.continue',
     (_input: z.infer<typeof Continue>) => undefined,
@@ -1048,20 +1101,48 @@ export function createNeoOperations(service: NeoService) {
       return service.continueWork(id, message);
     }
   );
-  const retry = path(
-    'neo.work.retry',
-    (_input: z.infer<typeof WorkId>) => undefined,
-    async ({ id }, caller) => {
-      const work = service.repo.getWork(id);
-      if (!work) return { ok: false as const, reason: 'work_not_found' };
-      const admission = requireNeoWorkContinuation(work, caller);
-      if ('reason' in admission) return admission.reason;
-      const target = service.driverTargets.get(id);
-      const folder = requireNeoStartFolder(target, readNeoStartFolder(target, existsSync), work);
-      if ('reason' in folder) return folder.reason;
-      return service.retryWork(id);
-    }
-  );
+  const retry = (superpipe({})('neo.work.retry') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.work.retry', undefined),
+      'caller',
+      'result:retry'
+    )
+    .pipe(
+      (input: z.infer<typeof WorkId>) => ({
+        work: service.repo.getWork(input.id),
+        target: service.driverTargets.get(input.id),
+      }),
+      'input',
+      'found'
+    )
+    .pipe(
+      (found: NeoWorkRetryFound) =>
+        found.work ? { value: found.work } : { reason: { ok: false, reason: 'work_not_found' } },
+      'found',
+      'result:retry'
+    )
+    .pipe(requireNeoWorkContinuation, ['retry', 'caller'], 'result:retry')
+    .pipe(
+      (found: NeoWorkRetryFound) => readNeoStartFolder(found.target, existsSync),
+      'found',
+      'folder'
+    )
+    .pipe(
+      (found: NeoWorkRetryFound, folder: { exists: boolean | null }, work: NeoWork) =>
+        requireNeoStartFolder(found.target, folder, work),
+      ['found', 'folder', 'retry'],
+      'result:retry'
+    )
+    .pipe(
+      async (work: NeoWork) => ({ value: await service.retryWork(work.id) }),
+      'retry',
+      'result:retry'
+    )
+    .endAsync('retry') as (
+    input: z.infer<typeof WorkId>,
+    caller: OperationCaller
+  ) => Promise<Awaited<ReturnType<NeoService['retryWork']>> | Rejection>;
   const close = path(
     'neo.work.close',
     (_input: z.infer<typeof Close>) => undefined,
@@ -1207,7 +1288,8 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.work.start',
-      description: 'Start a user-approved delegation through the existing session runtime.',
+      description:
+        'Start a user-approved delegation through the existing session runtime: in the turn where the human asked for it, or any proposed work item under an ask the human approved (neo.ask.approve).',
       inputSchema: WorkId,
       resultSchema: WorkResult,
       policy: { safetyClass: 'human_only' },

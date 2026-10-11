@@ -1,4 +1,8 @@
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { isLocalUser } from '../operations/caller.ts';
 import type { OperationCaller } from '../operations/registry.ts';
+import { isNeoAskLive } from './done-check.ts';
 
 export type NeoWorkOrigin = { originSessionId: string; originMessageId: string | null };
 type Admission = { value: NeoWorkOrigin } | { reason: { ok: false; reason: string } };
@@ -19,7 +23,7 @@ export function requireNeoHumanWorkOrigin(
   origin: NeoWorkOrigin,
   caller: OperationCaller
 ): Admission {
-  if (caller.source === 'rpc' && caller.principal === 'local') return { value: origin };
+  if (isLocalUser(caller)) return { value: origin };
   return caller.neoTurn?.human && !caller.neoTurn.consultationId
     ? requireLiveNeoWorkOrigin(origin, caller)
     : { reason: { ok: false, reason: 'This action needs the user.' } };
@@ -51,5 +55,21 @@ export function admitNeoWorkOrigin(
       originMessageId: caller.source === 'mcp' ? (caller.neoTurn?.messageId ?? null) : null,
     },
     caller
+  );
+}
+
+export function isNeoAskStartApproved(
+  work: Pick<NeoWork, 'id' | 'status'>,
+  ask: Pick<NeoAsk, 'originSessionId' | 'approvedAt' | 'status' | 'workIds'> | null,
+  caller: OperationCaller
+): boolean {
+  return (
+    caller.source === 'mcp' &&
+    !!ask?.approvedAt &&
+    isNeoAskLive(ask) &&
+    caller.sessionId === ask.originSessionId &&
+    ask.workIds.includes(work.id) &&
+    work.status === 'proposed' &&
+    !!caller.neoTurn?.isLive()
   );
 }

@@ -3,7 +3,7 @@ import type { Database } from '../sqlite-compat.ts';
 const COLUMNS = `ask_id, id, position, text, state, evidence, check_kind, met_by, removed,
   added_at, updated_at`;
 
-export function runMigration326(db: Database): void {
+export function runMigration328(db: Database): void {
   const table = db
     .prepare("SELECT sql FROM sqlite_master WHERE name = 'neo_ask_items' AND type = 'table'")
     .get() as { sql: string } | null;

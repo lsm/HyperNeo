@@ -277,16 +277,31 @@ export function createDirectStartJobHandler(
 type DeadStartReservation = { attemptId: string; sessionId: string; taskId: string };
 export type DeadStartOutcome = 'not_reserved' | 'retired' | 'revived';
 
-export function requireDeadStartReservation(
-  db: Database,
-  job: Job
-): { value: DeadStartReservation } | { reason: DeadStartOutcome } {
+type DeadStartEvidence = {
+  attemptId: string;
+  attempt: DirectTaskAttempt | null;
+  requestJobId: string | null;
+} | null;
+
+function readDeadStartEvidence(db: Database, job: Job): { evidence: DeadStartEvidence } {
   const attemptId = job.payload.attemptId;
-  if (job.queue !== DIRECT_TASK_START || typeof attemptId !== 'string')
+  if (job.queue !== DIRECT_TASK_START || typeof attemptId !== 'string') return { evidence: null };
+  return {
+    evidence: {
+      attemptId,
+      attempt: new DirectTaskExecutionRepository(db).get(attemptId),
+      requestJobId: readDirectStartRequest(db, attemptId)?.jobId ?? null,
+    },
+  };
+}
+
+export function requireDeadStartReservation(
+  job: Job,
+  { evidence }: { evidence: DeadStartEvidence }
+): { value: DeadStartReservation } | { reason: DeadStartOutcome } {
+  if (evidence?.attempt?.phase !== 'reserved' || evidence.requestJobId !== job.id)
     return { reason: 'not_reserved' };
-  const attempt = new DirectTaskExecutionRepository(db).get(attemptId);
-  if (attempt?.phase !== 'reserved' || readDirectStartRequest(db, attemptId)?.jobId !== job.id)
-    return { reason: 'not_reserved' };
+  const { attemptId, attempt } = evidence;
   return { value: { attemptId, sessionId: attempt.sessionId, taskId: attempt.taskId } };
 }
 
@@ -332,7 +347,8 @@ export function createDirectStartDeadHandler(
     superpipe({ db, jobs, stop, onTaskAttemptChanged })('retire-dead-direct-start') as PipelineAPI
   )
     .input('job')
-    .pipe(requireDeadStartReservation, ['db', 'job'], 'result:outcome')
+    .pipe(readDeadStartEvidence, ['db', 'job'], 'deadStart')
+    .pipe(requireDeadStartReservation, ['job', 'deadStart'], 'result:outcome')
     .pipe((reservation: DeadStartReservation) => reservation, 'outcome', 'reservation')
     .pipe(stopDeadReservation, ['stop', 'reservation'], 'stopped')
     .pipe(

@@ -3,6 +3,7 @@ import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drive
 import {
   NeoDriverTargetSchema,
   type DriverSent,
+  isNeoReceiptUnconfirmed,
   type NeoDriverTarget,
 } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -175,12 +176,14 @@ export class NeoWorkDriverTargetRepository {
     return result.changes > 0;
   }
 
-  receipts(workIds: readonly string[]): NeoWorkDriverReceipt[] {
+  receipts(workIds: readonly string[], now = Date.now()): NeoWorkDriverReceipt[] {
     if (!this.hasTable() || workIds.length === 0) return [];
     const rows = this.db
       .prepare(
         `SELECT work_id AS workId, target, ref, live_status AS status, link,
-                remote_link AS remoteLink
+                remote_link AS remoteLink, started_at AS startedAt, input_before AS inputBefore,
+                (SELECT status FROM neo_work WHERE id = work_id) AS workStatus,
+                (SELECT created_at FROM neo_work WHERE id = work_id) AS workCreatedAt
            FROM neo_work_driver_targets WHERE work_id IN (SELECT value FROM json_each(?))`
       )
       .all(JSON.stringify(workIds)) as Array<{
@@ -190,6 +193,10 @@ export class NeoWorkDriverTargetRepository {
       status: string | null;
       link: string | null;
       remoteLink: string | null;
+      startedAt: number | null;
+      inputBefore: number | null;
+      workStatus: string | null;
+      workCreatedAt: number | null;
     }>;
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
@@ -212,6 +219,12 @@ export class NeoWorkDriverTargetRepository {
           status: status.success ? status.data : null,
           link: row.link,
           ...(row.remoteLink ? { remoteLink: row.remoteLink } : {}),
+          ...(isNeoReceiptUnconfirmed(
+            { ...row, ref: !!ref, status: status.success ? status.data : null },
+            now
+          )
+            ? { unconfirmed: true as const }
+            : {}),
         },
       ];
     });

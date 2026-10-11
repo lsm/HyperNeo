@@ -73,16 +73,18 @@ export function requireDirectStopTarget(
   return attempt.phase === 'stopped' ? { reason: { stopped: true, attempt } } : { value: attempt };
 }
 
-function claimStop(
+function readStopTarget(
   attempts: DirectAttemptStopDependencies['attempts'],
   input: DirectAttemptStopInput
-) {
-  const target = requireDirectStopTarget(attempts.get(input.attemptId), input);
-  if ('reason' in target) return target;
-  return requireDirectStopTarget(
-    attempts.requestStop(input.attemptId, input.sessionId, input.outcome),
-    input
-  );
+): DirectTaskAttempt | null {
+  return attempts.get(input.attemptId);
+}
+
+function requestDirectStop(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  input: DirectAttemptStopInput
+): DirectTaskAttempt | null {
+  return attempts.requestStop(input.attemptId, input.sessionId, input.outcome);
 }
 
 export function directSessionIsDown(session: AgentSession): boolean {
@@ -260,18 +262,34 @@ export function requireStopSessionOrProof(
   return !session && needsLiveProof ? unverified : { value: current };
 }
 
-function beginStopProof(
-  attempts: DirectAttemptStopDependencies['attempts'],
+type StopProofPlan = { token: string; record: boolean };
+
+function pickStopProof(
   current: DirectTaskAttempt,
   session: AgentSession | null,
   state: StopVerificationState
+): StopProofPlan {
+  return !session && current.phase !== 'reserved'
+    ? { token: state.recorded?.token ?? randomUUID(), record: false }
+    : { token: randomUUID(), record: true };
+}
+
+function recordStopProof(
+  attempts: DirectAttemptStopDependencies['attempts'],
+  current: DirectTaskAttempt,
+  proof: StopProofPlan
+): 'recorded' | 'lost' {
+  return !proof.record ||
+    attempts.beginStopVerification(current.id, current.sessionId, current.generation, proof.token)
+    ? 'recorded'
+    : 'lost';
+}
+
+export function requireStopProofRecorded(
+  proof: StopProofPlan,
+  recorded: 'recorded' | 'lost'
 ): { value: string } | { reason: DirectAttemptStopResult } {
-  if (!session && current.phase !== 'reserved')
-    return { value: state.recorded?.token ?? randomUUID() };
-  const token = randomUUID();
-  return attempts.beginStopVerification(current.id, current.sessionId, current.generation, token)
-    ? { value: token }
-    : unavailable;
+  return recorded === 'recorded' ? { value: proof.token } : unavailable;
 }
 
 function readStopIdentityEvidence(
@@ -340,7 +358,9 @@ const runStopVerification = (superpipe({})('verify-direct-attempt-stop') as Pipe
   .pipe((current: DirectTaskAttempt) => current, 'verification', 'current')
   .pipe(loadStopSession, ['sessionManager', 'current', 'state'], ['session', 'needsLiveProof'])
   .pipe(requireStopSessionOrProof, ['session', 'needsLiveProof', 'current'], 'result:verification')
-  .pipe(beginStopProof, ['attempts', 'current', 'session', 'state'], 'result:verification')
+  .pipe(pickStopProof, ['current', 'session', 'state'], 'proofPlan')
+  .pipe(recordStopProof, ['attempts', 'current', 'proofPlan'], 'proofRecorded')
+  .pipe(requireStopProofRecorded, ['proofPlan', 'proofRecorded'], 'result:verification')
   .pipe((token: string) => token, 'verification', 'token')
   .pipe(readStopIdentityEvidence, ['attempts', 'tasks', 'current', 'session'], 'evidence')
   .pipe(requireStopWorkerIdentity, ['evidence', 'current'], 'result:verification')
@@ -404,7 +424,10 @@ function finishVerifiedDirectStop(
 export function createDirectAttemptStopper(dependencies: DirectAttemptStopDependencies) {
   return (superpipe({ ...dependencies })('stop-direct-task-attempt') as PipelineAPI)
     .input('input')
-    .pipe(claimStop, ['attempts', 'input'], 'result:outcome')
+    .pipe(readStopTarget, ['attempts', 'input'], 'stored')
+    .pipe(requireDirectStopTarget, ['stored', 'input'], 'result:outcome')
+    .pipe(requestDirectStop, ['attempts', 'input'], 'requested')
+    .pipe(requireDirectStopTarget, ['requested', 'input'], 'result:outcome')
     .pipe((attempt: DirectTaskAttempt) => attempt, 'outcome', 'attempt')
     .pipe(
       verifyDirectAttemptStop,

@@ -25,6 +25,8 @@ import {
   NEO_WORK_UNANCHORED_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
   decideCardLiveStatus,
+  isNeoReceiptUnconfirmed,
+  NEO_CARD_CONFIRM_MS,
   readDriverSettlement,
   readNeoStartFolder,
   requireNeoStartFolder,
@@ -57,6 +59,28 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
+
+describe('isNeoReceiptUnconfirmed', () => {
+  const card: Parameters<typeof isNeoReceiptUnconfirmed>[0] = {
+    ref: true,
+    workStatus: 'queued',
+    workCreatedAt: 100,
+    startedAt: null,
+    inputBefore: null,
+    status: 'running',
+  };
+  test.each<[string, Partial<typeof card>, number, boolean]>([
+    ['a card showing its session a day after it was sent', {}, 100 + NEO_CARD_CONFIRM_MS, true],
+    ['the same card earlier', {}, 100 + NEO_CARD_CONFIRM_MS - 1, false],
+    ['a session that failed before the card was confirmed', { status: 'failed' }, 200, false],
+    ['a card still queued', { status: 'queued' }, 100 + NEO_CARD_CONFIRM_MS, false],
+    ['a card that started', { startedAt: 150 }, 100 + NEO_CARD_CONFIRM_MS, false],
+    ['a card that reported', { workStatus: 'reported' }, 100 + NEO_CARD_CONFIRM_MS, false],
+    ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
+  ])('%s', (_label, overrides, now, unconfirmed) => {
+    expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
+  });
+});
 
 describe('requireNeoExecutionChoice', () => {
   const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
@@ -814,6 +838,47 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('marks a card unconfirmed when it shows its session without its message seen landing', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: { status: 'running', lastActivityAt: Date.now(), recentInputs: [] },
+      }),
+      sendTarget
+    );
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0]).toMatchObject({ status: 'queued' });
+      expect(service.driverTargets.receipts(['work-1'])[0].unconfirmed).toBeUndefined();
+
+      now += NEO_CARD_CONFIRM_MS;
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0]).toMatchObject({
+        status: 'running',
+        unconfirmed: true,
+      });
+      const snapshot = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.snapshot',
+        {},
+        { source: 'rpc', principal: 'local' }
+      );
+      expect(snapshot).toMatchObject({
+        value: { workDrivers: [expect.objectContaining({ workId: 'work-1', unconfirmed: true })] },
+      });
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test("keeps reading a reported card's session after its ask settles, until the session finishes", async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     let reply: unknown = {
@@ -994,6 +1059,41 @@ describe('Neo work with a drivers target', () => {
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
       expect(notes).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("tracks the pull request a card's session opened on its branch without naming it", async () => {
+    const ref = { adapter: 'hyperneo', id: 'card-session' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6301';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Fixed it.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Fix the font', '- merged to dev');
+    fileUnderAsk(service);
+    const worktree = {
+      isWorktree: true as const,
+      worktreePath: '/repo/.worktrees/font',
+      mainRepoPath: '/repo',
+      branch: 'neo/font',
+    };
+    const branches: string[] = [];
+    service.readBranchPrs = async (branch) => {
+      branches.push(branch.branch);
+      return [url];
+    };
+    service.readPrs = async (urls) =>
+      urls.map((item) => ({ url: item, state: 'OPEN', checks: 'pending', review: 'none' }));
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      db.createSession({ ...createTestSession('card-session'), worktree });
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(branches).toContain('neo/font');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
     } finally {
       db.close();
     }

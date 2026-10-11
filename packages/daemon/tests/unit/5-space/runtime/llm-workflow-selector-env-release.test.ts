@@ -27,6 +27,7 @@ const stubProviderService = {
     baseUrl: 'https://relay.example',
     apiVersion: 'v1',
   }),
+  getEnvVarsForModel: async () => ({ ANTHROPIC_MODEL: 'glm-4.6' }),
   getIsolatedEnvForModel: async () => {
     events.push('env');
     return { ...process.env, ANTHROPIC_BASE_URL: 'https://relay.example' };

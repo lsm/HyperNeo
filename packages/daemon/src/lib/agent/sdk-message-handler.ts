@@ -41,7 +41,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, resolveSessionContextModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
-import { neoCoordinatorBinding, neoCoordinatorRuntimePath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../neo/session-policy.ts';
 import { isTurnEndAckEligible, selectPersistedAckRow } from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { contextBudgetThreshold } from './context-budget-decision.ts';
@@ -1307,9 +1307,7 @@ export class SDKMessageHandler {
     ) {
       session.sdkSessionId = message.session_id;
 
-      const sdkOriginPath = neoCoordinatorBinding(db, session.id)
-        ? neoCoordinatorRuntimePath(session.id)
-        : (session.worktree?.worktreePath ?? session.workspacePath ?? undefined);
+      const sdkOriginPath = sessionSdkPath(db, session) ?? undefined;
       session.sdkOriginPath = sdkOriginPath;
 
       db.updateSession(session.id, {

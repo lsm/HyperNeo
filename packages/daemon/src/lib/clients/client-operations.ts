@@ -4,7 +4,7 @@ import type {
   ClientRegistration,
   ClientRegistrationRepository,
 } from '../../storage/repositories/client-registration-repository.ts';
-import { LOCAL_RPC_PRINCIPAL } from '../operations/caller.ts';
+import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -40,12 +40,6 @@ const Listed = z.union([
     ),
   }),
 ]);
-
-export function requireLocalUser(caller: OperationCaller): Gate<OperationCaller> {
-  return caller.source === 'rpc' && caller.principal === LOCAL_RPC_PRINCIPAL
-    ? { value: caller }
-    : { reason: { ok: false, reason: 'This action needs the user.' } };
-}
 
 export function requireClientData(
   input: z.infer<typeof Register>,

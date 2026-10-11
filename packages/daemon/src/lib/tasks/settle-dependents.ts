@@ -1,9 +1,12 @@
 import { isRateOrUsageLimited, type SpaceTask, type SpaceTaskStatus } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { DirectTaskAttempt } from '../../storage/repositories/direct-task-execution-repository.ts';
+import { Logger } from '../logger.ts';
 import type { DirectOutcomeAcknowledgement } from './direct-outcome-jobs.ts';
 import type { DirectFinalizationInput } from './finalize-direct-attempt.ts';
 import { StaleTaskGuardError, type SpaceTaskManager } from './task-manager.ts';
+
+const log = new Logger('settle-task-dependents');
 
 export interface DependentEvidence {
   task: SpaceTask;
@@ -61,7 +64,7 @@ export interface DependentSettlementDeps {
     params: { status: 'blocked'; blockReason: 'dependency_failed'; result: string },
     expected: { expectedStatus: SpaceTaskStatus }
   ) => Promise<SpaceTask | null>;
-  requestDirectOutcome?: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
+  requestDirectOutcome: (input: DirectFinalizationInput) => DirectOutcomeAcknowledgement;
 }
 
 async function readDependents(
@@ -113,19 +116,24 @@ async function applySettlement(
           : null;
       case 'stop_direct': {
         const { attempt } = settlement;
-        deps.requestDirectOutcome?.({
+        const ack = deps.requestDirectOutcome({
           attemptId: attempt.id,
           sessionId: attempt.sessionId,
           generation: attempt.generation,
           status: 'blocked',
           options: { blockReason: 'dependency_failed', result },
         });
+        if (!ack.accepted)
+          log.warn(`Could not stop direct dependent "${task.id}" of "${ended.id}": ${ack.reason}`);
         return null;
       }
     }
   } catch (error) {
     if (error instanceof StaleTaskGuardError) return null;
-    throw error;
+    log.warn(
+      `Could not settle dependent "${task.id}" of "${ended.id}": ${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
   }
 }
 

@@ -15,6 +15,7 @@ export interface NeoWorkDriverReceipt {
   link: string | null;
   remoteLink?: string;
   uncheckedSince?: number;
+  unconfirmed?: true;
 }
 
 export interface NeoWorkGoal {
@@ -57,6 +58,7 @@ export interface NeoAsk {
   doneWhen: string;
   doneSource: string;
   pack?: string | null;
+  approvedAt?: number | null;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;

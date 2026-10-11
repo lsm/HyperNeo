@@ -68,8 +68,9 @@ const clip = (value: string, max: number) =>
   value.length > max ? `${value.slice(0, max - 1)}…` : value;
 
 function withSavedLines(text: string, saved: readonly string[], limit: number): string {
-  if (text.includes('Saved:')) return text;
-  const lines = clip(saved.map((rule) => `Saved: ${rule}`).join('\n'), Math.floor(limit / 2));
+  const missing = saved.filter((rule) => !text.includes(`Saved: ${rule}`));
+  if (!missing.length) return text;
+  const lines = clip(missing.map((rule) => `Saved: ${rule}`).join('\n'), Math.floor(limit / 2));
   return `${clip(text, limit - lines.length - 2)}\n\n${lines}`;
 }
 

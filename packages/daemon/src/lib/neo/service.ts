@@ -114,6 +114,12 @@ import {
   neoEvidenceSignature,
   planNeoDoneCheck,
 } from './evidence.ts';
+import {
+  neoCardPrUrls,
+  neoWorkBranch,
+  readGithubBranchPrs,
+  type NeoBranchPrReader,
+} from './packs/coding/branch-prs.ts';
 import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import {
@@ -130,6 +136,7 @@ import {
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
+  mergeNeoWorkPrReads,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
@@ -247,6 +254,7 @@ export class NeoService {
   private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
+  readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
   readRefStates: NeoRefStateReader = readGithubRefStates;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -348,11 +356,19 @@ export class NeoService {
     .pipe(requireNeoDoneCheckUntold, ['unread', 'check'], 'result:check')
     .pipe(
       async (work: NeoWork, card: NeoDoneCheckCard) => {
-        const urls = extractNeoWorkPrUrls(work.report, card.stored?.prs);
+        const urls = await this.cardPrUrls(work, card.stored);
         const prs = shouldReadNeoWorkPrs(card.stored, urls, Date.now())
           ? await this.readPrs(urls)
           : null;
-        return { row: prs ? this.recordWorkPrs(work.id, prs, card.stored) : card.stored };
+        return {
+          row: prs
+            ? this.recordWorkPrs(
+                work.id,
+                mergeNeoWorkPrReads(urls, prs, card.stored?.prs),
+                card.stored
+              )
+            : card.stored,
+        };
       },
       ['work', 'card'],
       'found'
@@ -420,6 +436,8 @@ export class NeoService {
     this.builtinPacks = [
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
+        prUrls: (work, stored) => this.cardPrUrls(work, stored),
+        runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         readRefStates: (refs) => this.readRefStates(refs),
         workPrs: this.workPrs,
         record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
@@ -1586,6 +1604,27 @@ export class NeoService {
           work.sessionId ?? work.originSessionId
         );
     }
+  }
+
+  private async cardPrUrls(
+    work: NeoWork,
+    stored: { prs: readonly NeoWorkPr[] } | null
+  ): Promise<string[]> {
+    return neoCardPrUrls(
+      extractNeoWorkPrUrls(work.report, stored?.prs),
+      await this.branchPrUrls(work.id)
+    );
+  }
+
+  private async branchPrUrls(workId: string): Promise<string[]> {
+    const ref = this.driverTargets.readRef(workId);
+    const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
+    return branch ? this.readBranchPrs(branch) : [];
+  }
+
+  private async runningPrUrls(workIds: readonly string[]): Promise<string[]> {
+    const running = workIds.filter((id) => this.repo.getWork(id)?.status === 'queued');
+    return (await Promise.all(running.map((id) => this.branchPrUrls(id)))).flat();
   }
 
   private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)

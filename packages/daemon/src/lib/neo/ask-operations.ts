@@ -36,6 +36,7 @@ export const NeoAskSchema = z.object({
   doneWhen: z.string(),
   doneSource: z.string(),
   pack: z.string().nullable().optional(),
+  approvedAt: z.number().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
@@ -93,6 +94,7 @@ const Tick = z.object({
   evidence: z.string().trim().min(1).max(2000).optional(),
 });
 
+const Approve = z.object({ askId: z.string().min(1) });
 const Edit = z
   .object({
     askId: z.string().min(1),
@@ -306,6 +308,21 @@ export function requireNeoAskEdit(
   if (left < 1) return { reason: fail('checklist_empty: keep at least one item.') };
   return left > 12
     ? { reason: fail('checklist_full: an ask holds at most 12 items.') }
+    : { value: ask };
+}
+
+export function requireNeoAskApprove(
+  current: { ask: NeoAsk | null },
+  caller: OperationCaller
+): Gate<NeoAsk> {
+  const { ask } = current;
+  if (!ask) return { reason: fail('ask_not_found') };
+  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
+    return {
+      reason: fail('Only the Neo session that opened this ask or the user can approve it.'),
+    };
+  return isFinal(ask)
+    ? { reason: fail(`ask_settled: this ask is already ${ask.status}.`) }
     : { value: ask };
 }
 
@@ -545,6 +562,30 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     input: z.infer<typeof Tick>,
     caller: OperationCaller
   ) => AskReceipt | Rejection;
+  const approve = (superpipe({})('neo.ask.approve') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Approve>) => ({ ask: service.askRecords.get(input.askId) }),
+      'input',
+      'current'
+    )
+    .pipe(
+      (caller: OperationCaller, current: { ask: NeoAsk | null }) =>
+        admit(caller, 'neo.ask.approve', current.ask?.concernId),
+      ['caller', 'current'],
+      'result:admission'
+    )
+    .pipe(requireNeoAskApprove, ['current', 'caller'], 'result:admission')
+    .pipe(
+      (ask: NeoAsk) => ({ ask: service.askRecords.approve(ask.id, Date.now()) }),
+      'admission',
+      'approved'
+    )
+    .pipe(requireNeoAskWritten, 'approved', 'result:admission')
+    .end('admission') as (
+    input: z.infer<typeof Approve>,
+    caller: OperationCaller
+  ) => AskReceipt | Rejection;
   const edit = (superpipe({})('neo.ask.edit') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -608,6 +649,15 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => tick(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.ask.approve',
+      description:
+        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. An approval never covers deploying to production, deleting data or other destructive steps.",
+      inputSchema: Approve,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'human_only' },
+      execute: async (input, caller) => approve(input, caller),
     }),
     defineOperation({
       name: 'neo.ask.edit',
