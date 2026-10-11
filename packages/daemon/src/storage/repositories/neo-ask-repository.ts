@@ -224,23 +224,33 @@ export class NeoAskRepository {
     status: Exclude<NeoAskStatus, 'open'>,
     outcome: string,
     evidence: string,
-    waitingItem: string | null = null
+    waitingItem: string | null = null,
+    decision: { id: string; position: number; text: string } | null = null
   ): NeoAsk | null {
     const now = Date.now();
-    const row = this.db
-      .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
-        settled_at = ?, waiting_item = ? WHERE id = ? AND status = ?
-        RETURNING ${askColumns}`)
-      .get(
-        status,
-        outcome,
-        evidence,
-        now,
-        now,
-        waitingItem,
-        expected.id,
-        expected.status
-      ) as NeoAskRow | null;
+    const row = this.db.transaction(() => {
+      const settled = this.db
+        .prepare(`UPDATE neo_asks SET status = ?, outcome = ?, evidence = ?, updated_at = ?,
+          settled_at = ?, waiting_item = ? WHERE id = ? AND status = ?
+          RETURNING ${askColumns}`)
+        .get(
+          status,
+          outcome,
+          evidence,
+          now,
+          now,
+          waitingItem,
+          expected.id,
+          expected.status
+        ) as NeoAskRow | null;
+      if (settled && decision)
+        this.db
+          .prepare(`INSERT INTO neo_ask_items
+            (ask_id, id, position, text, state, evidence, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, ?, ?)`)
+          .run(expected.id, decision.id, decision.position, decision.text, evidence, now, now);
+      return settled;
+    })();
     if (!row) return null;
     this.notify();
     return this.withWork([row])[0];

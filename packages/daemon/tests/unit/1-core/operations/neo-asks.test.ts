@@ -494,6 +494,26 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
   });
 
+  test('a decision item is written only by the settle that wins the status check', async () => {
+    const askId = await openAsk();
+    const decision = { id: 'i3', position: 2, text: 'Pick the release date.' };
+    const stale = { id: askId, status: 'waiting' as const };
+    expect(
+      service.askRecords.settle(stale, 'waiting', 'Pick it.', 'Two dates fit.', 'i3', decision)
+    ).toBeNull();
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+    expect(
+      service.askRecords.settle(
+        { id: askId, status: 'open' },
+        'waiting',
+        'Pick it.',
+        'Two dates fit.',
+        'i3',
+        decision
+      )?.doneItems?.[2]
+    ).toMatchObject({ id: 'i3', state: 'needs_you', evidence: 'Two dates fit.' });
+  });
+
   test('a decision on a full checklist is refused until Neo makes room for it', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.edit', {

@@ -615,22 +615,14 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         decision: ReturnType<typeof planNeoAskDecision>
       ) => {
         if (isNeoAskReplay(ask, input)) return { ask };
-        const at = Date.now();
-        if (decision.add) {
-          service.askRecords.editItems(ask.id, { add: [decision.add], remove: [] }, at);
-          service.askRecords.tickItem(
-            ask.id,
-            { id: decision.add.id, state: 'needs_you', evidence: input.evidence, metBy: null },
-            at
-          );
-        }
         return {
           ask: service.askRecords.settle(
             ask,
             input.outcome,
             neoAskSummary(input),
             input.evidence,
-            decision.waitingItem
+            decision.waitingItem,
+            decision.add
           ),
         };
       },
