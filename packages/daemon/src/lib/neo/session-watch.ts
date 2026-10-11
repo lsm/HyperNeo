@@ -16,6 +16,7 @@ export const NeoSessionNoticeSchema = z.object({
   kind: z.enum(['needs_you', 'failed', 'finished']),
   at: z.number(),
   link: z.string().optional(),
+  remoteLink: z.string().optional(),
 });
 export const NeoSessionNoticeGroupSchema = z.object({
   id: z.string(),
@@ -49,6 +50,7 @@ export interface NeoListedSession {
   status: WorkStatus;
   lastActivityAt: number;
   link?: string;
+  remoteLink?: string;
 }
 
 export interface NeoSessionSeen {
@@ -89,6 +91,7 @@ export function listNeoWatchedSessions(
       status: work.status,
       lastActivityAt: work.lastActivityAt,
       ...(work.link ? { link: work.link } : {}),
+      ...(work.remoteLink ? { remoteLink: work.remoteLink } : {}),
     }))
     .filter((session) => !skip.has(session.key));
 }
@@ -152,6 +155,7 @@ export function planNeoSessionNotice(
           kind,
           at: now,
           ...(session.link ? { link: session.link } : {}),
+          ...(session.remoteLink ? { remoteLink: session.remoteLink } : {}),
         }
       : null,
   };

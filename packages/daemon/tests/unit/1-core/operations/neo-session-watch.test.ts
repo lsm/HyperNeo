@@ -86,6 +86,25 @@ describe('listNeoWatchedSessions', () => {
     ).toEqual([session.key]);
   });
 
+  test("carries a Claude Code session's claude.ai page onto its notice", () => {
+    const claude = { adapter: 'claude-desktop', id: 'c1' };
+    const remoteLink = 'https://claude.ai/code/session_abc';
+    const [listed] = listNeoWatchedSessions(
+      places([work({ ref: claude, link: 'claude://claude.ai/epitaxy/c1', remoteLink })]),
+      [],
+      now
+    );
+    expect(listed?.remoteLink).toBe(remoteLink);
+    const running: NeoSessionSeen = {
+      listed: 'x',
+      status: 'running',
+      runningSince: now - NEO_SESSION_RUN_MS,
+    };
+    expect(
+      planNeoSessionNotice(listed!, running, { status: 'done', lastInputAt: null }, now).notice
+    ).toMatchObject({ link: 'claude://claude.ai/epitaxy/c1', remoteLink });
+  });
+
   test('skips sessions the human muted', () => {
     expect(listNeoWatchedSessions(places([work()]), [], now, [session.key])).toEqual([]);
   });
