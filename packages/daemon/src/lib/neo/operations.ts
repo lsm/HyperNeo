@@ -78,7 +78,6 @@ import {
   NeoSessionNoticeGroupSchema,
   NeoSessionNoticeSchema,
   latestNeoSessionNoticeGroups,
-  neoSessionKey,
   planNeoSessionMutes,
   type NeoSessionNotice,
 } from './session-watch.ts';
@@ -88,6 +87,7 @@ import {
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
+  takeNeoTrackedAdoption,
 } from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
@@ -1105,6 +1105,16 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+        const tracked = service.trackedSessions;
+        const taken = takeNeoTrackedAdoption(input.work, tracked, Date.now(), caller);
+        if ('value' in taken && input.work?.verb === 'adopt') service.trackedSessions = tracked;
+        return taken;
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (
         input: z.infer<typeof Propose>,
         origin: NeoWorkOrigin,
@@ -1181,9 +1191,6 @@ export function createNeoOperations(service: NeoService) {
         receipt: { work: NeoWork }
       ) => {
         if (input.work?.verb !== 'adopt') return;
-        const tracked = service.trackedSessions;
-        tracked.delete(neoSessionKey(input.work.ref));
-        service.trackedSessions = tracked;
         const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
         if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
           service.askRecords.approve(owned.id, Date.now());

@@ -48,6 +48,17 @@ export function keepNeoTrackedSessions(
   return kept;
 }
 
+export function takeNeoTrackedAdoption<T>(
+  target: NeoDriverTarget | undefined,
+  tracked: Map<string, number>,
+  now: number,
+  value: T
+): { value: T } | { reason: Rejection } {
+  const checked = requireNeoTrackedAdoption(target, tracked, [], now, value);
+  if ('value' in checked && target?.verb === 'adopt') tracked.delete(neoSessionKey(target.ref));
+  return checked;
+}
+
 export function requireNeoTrackedAdoption<T>(
   target: NeoDriverTarget | undefined,
   tracked: ReadonlyMap<string, number>,

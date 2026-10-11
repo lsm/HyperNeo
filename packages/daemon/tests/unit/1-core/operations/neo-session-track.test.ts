@@ -12,6 +12,7 @@ import {
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
+  takeNeoTrackedAdoption,
 } from '../../../../src/lib/neo/session-track.ts';
 import { neoSessionKey, type NeoSessionNotice } from '../../../../src/lib/neo/session-watch.ts';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
@@ -43,6 +44,18 @@ describe('isNeoAdoptOnlyAsk', () => {
     expect(isNeoAdoptOnlyAsk({ workIds: ['w1'] }, 'w1')).toBe(true);
     expect(isNeoAdoptOnlyAsk({ workIds: ['w1', 'w2'] }, 'w1')).toBe(false);
     expect(isNeoAdoptOnlyAsk({ workIds: ['w2'] }, 'w1')).toBe(false);
+  });
+});
+
+describe('takeNeoTrackedAdoption', () => {
+  test('uses the tap up, so a second adopt of the same session is refused', () => {
+    const tracked = new Map([[key, 1_000]]);
+    const adopt = { verb: 'adopt' as const, ref };
+    expect(takeNeoTrackedAdoption(adopt, tracked, 2_000, 'ok')).toEqual({ value: 'ok' });
+    expect(tracked.has(key)).toBe(false);
+    expect(takeNeoTrackedAdoption(adopt, tracked, 2_000, 'ok')).toMatchObject({
+      reason: { ok: false },
+    });
   });
 });
 
