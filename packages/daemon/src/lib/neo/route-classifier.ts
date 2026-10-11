@@ -22,10 +22,10 @@ const ANSWER_TOKENS = 512;
 const ANTHROPIC_VERSION = '2023-06-01';
 let leanCwd: string | undefined;
 
-export type NeoRouteModel = { provider: string; model: string };
+type NeoRouteModel = { provider: string; model: string };
 type RouteThinking = { type: 'enabled'; budgetTokens: number } | { type: 'disabled' } | undefined;
 
-export interface NeoRouteHttpCall {
+interface NeoRouteHttpCall {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;

@@ -7,7 +7,7 @@ type NeoWaitingAsk = NeoAsk & { remindedAt: number | null };
 export type NeoReminderListing = { updatedAt: number; turns: readonly string[] };
 type NeoReminderListings = ReadonlyMap<string, NeoReminderListing>;
 
-export const NEO_REMINDER_LISTINGS = 2;
+const NEO_REMINDER_LISTINGS = 2;
 const NEO_REMINDER_ASKS = 200;
 
 export function neoReminderTurn(turn: { sessionId: string; messageId: string }): string {

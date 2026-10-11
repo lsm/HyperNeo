@@ -5,7 +5,7 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 export const NEO_ASK_STALL_QUIET_MS = 60 * 60_000;
 
 type NeoAskStallCard = Pick<NeoWork, 'id' | 'title' | 'status' | 'updatedAt'>;
-export type NeoAskStallSkip = 'not_open' | 'no_session' | 'no_cards' | 'running' | 'recent';
+type NeoAskStallSkip = 'not_open' | 'no_session' | 'no_cards' | 'running' | 'recent';
 
 export function requireNeoAskStalled(
   ask: Pick<NeoAsk, 'status' | 'updatedAt'>,

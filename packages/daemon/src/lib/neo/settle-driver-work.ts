@@ -24,7 +24,7 @@ export interface NeoDriverSettleEvidence {
   now: number;
 }
 
-export interface NeoDriverSettlePlan {
+interface NeoDriverSettlePlan {
   landed: number | null;
   live: DriverLive | null;
   cardStatus: WorkStatus | null;

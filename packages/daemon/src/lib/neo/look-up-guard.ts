@@ -108,18 +108,18 @@ const CONTENT_TYPES = [
 const ALWAYS_ALLOWED = new Set(['WebSearch', 'WebFetch', 'AskUserQuestion']);
 const LOOKUP_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 
-export interface LookUpScope {
+interface LookUpScope {
   home: string;
   dataDir: string;
   cwd: string;
 }
 
-export interface LookUpPathFacts {
+interface LookUpPathFacts {
   realPath(path: string): string;
   exists(path: string): boolean;
 }
 
-export function readLookUpPathFacts(): LookUpPathFacts {
+function readLookUpPathFacts(): LookUpPathFacts {
   const real = new Map<string, string>();
   const present = new Map<string, boolean>();
   return {

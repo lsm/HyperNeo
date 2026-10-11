@@ -24,7 +24,7 @@ export type NeoDirectReplyRuntime = {
   newId: () => string;
 };
 type Skip = { skipped: true; nudgeId?: string; recheck?: true };
-export type NeoTurnSettlement = { settled: boolean; interrupted: boolean };
+type NeoTurnSettlement = { settled: boolean; interrupted: boolean };
 type Gate<T> = { value: T } | { reason: Skip };
 type Scope = { sessionId: string; conversationId: string };
 type Turn = Scope & {

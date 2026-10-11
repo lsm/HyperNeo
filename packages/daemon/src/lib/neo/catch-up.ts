@@ -20,7 +20,7 @@ const VIEW_CHARS = 3_000;
 
 function where(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
   if (route.concernId) return titles.get(route.concernId) ?? route.concernId;
-  return route.destination === 'new' ? 'a new topic' : 'a holder';
+  return 'a holder';
 }
 
 function routeLine(route: NeoRoute, titles: ReadonlyMap<string, string>): string {
@@ -61,17 +61,17 @@ export function renderNeoCatchUp(
   return [header, ...(older.length > 0 ? [summarize(older, titles)] : []), ...shown].join('\n');
 }
 
-export function loadNeoCatchUpRoutes(db: BunDatabase): NeoRoute[] {
+function loadNeoCatchUpRoutes(db: BunDatabase): NeoRoute[] {
   return new NeoRoutingLogRepository(db).undigested(READ_ROUTES);
 }
 
-export function requireMissedRoutes(
+function requireMissedRoutes(
   routes: readonly NeoRoute[]
 ): { value: NeoRoute[] } | { reason: string } {
   return routes.length > 0 ? { value: [...routes] } : { reason: '' };
 }
 
-export function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
+function loadNeoConcernTitles(db: BunDatabase): Map<string, string> {
   return new Map(
     new NeoRepository(db).listConcernTitles().map((concern) => [concern.id, concern.title.trim()])
   );
@@ -85,7 +85,7 @@ export const readNeoCatchUp = (superpipe({})('neo-catch-up') as PipelineAPI)
   .pipe(renderNeoCatchUp, ['catchUp', 'titles'], 'catchUp')
   .end('catchUp') as (db: BunDatabase) => string;
 
-export function renderNeoHolderView(
+function renderNeoHolderView(
   routes: readonly NeoRoute[],
   titles: ReadonlyMap<string, string>
 ): string {
@@ -100,7 +100,7 @@ export function renderNeoHolderView(
   return lines.join('\n');
 }
 
-export function loadNeoRecentTurns(db: BunDatabase): NeoRoute[] {
+function loadNeoRecentTurns(db: BunDatabase): NeoRoute[] {
   return new NeoRoutingLogRepository(db).recent(VIEW_TURNS);
 }
 

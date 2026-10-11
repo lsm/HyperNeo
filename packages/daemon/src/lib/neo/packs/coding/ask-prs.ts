@@ -58,7 +58,7 @@ const NEO_REF_MISSING_MS = 60 * 60_000;
 
 const refKey = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
 
-export function neoRefFromUrl(url: string): NeoRef | null {
+function neoRefFromUrl(url: string): NeoRef | null {
   const [, owner, repo, number] = REF_PATH.exec(url) ?? [null];
   return owner && repo && number ? { owner, repo, number: Number(number) } : null;
 }

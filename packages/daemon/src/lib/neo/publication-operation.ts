@@ -34,7 +34,7 @@ type LinkEvidence = {
   origin: NeoAskOrigin | null;
 };
 
-export interface NeoPublicationRuntime {
+interface NeoPublicationRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasConcern(id: string): boolean;
@@ -95,7 +95,7 @@ export function requirePublicationAsk(
     : { reason: { accepted: false, reason: 'unknown_ask_origin' } };
 }
 
-export function publicationLinkProblem(
+function publicationLinkProblem(
   proof: Proof,
   { link, exists, concernId, origin }: LinkEvidence
 ): string | null {

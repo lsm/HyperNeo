@@ -142,7 +142,7 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
 
-export const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
+const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 export function readContinueBudget(
   continued: Pick<NeoWorkContinue, 'count'> | null,
@@ -464,7 +464,7 @@ export function readDriverNeedsYou(
 
 export { NEO_WORK_SUMMARY_NOTE };
 
-export const NEO_DRIVER_NO_REPLY = 'It finished without a written reply.';
+const NEO_DRIVER_NO_REPLY = 'It finished without a written reply.';
 
 export interface NeoAskCard {
   id: string;
@@ -495,7 +495,7 @@ export function projectNeoAskCards(
     });
 }
 
-export function neoAskChecklist(ask: NeoAsk): { id: string; text: string; state: string }[] {
+function neoAskChecklist(ask: NeoAsk): { id: string; text: string; state: string }[] {
   return (ask.doneItems ?? [])
     .filter((item) => !item.removed)
     .map(({ id, text, state }) => ({ id, text, state }));
@@ -668,7 +668,7 @@ export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
 export const NEO_WORK_UNANCHORED_NOTE =
   "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the work item. Check it against the work item before telling the human.";
 
-export function readUnanchoredSettlement(
+function readUnanchoredSettlement(
   work: Pick<NeoWork, 'updatedAt'>,
   value: { status: string; lastActivityAt: number; lastReplyAt?: number; lastReply?: string },
   now: number
