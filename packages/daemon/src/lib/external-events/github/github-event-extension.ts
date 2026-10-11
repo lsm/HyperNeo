@@ -2512,7 +2512,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       let pullsBacklogClearedByCutoff = false;
       if (
         endpoint.key === 'pulls' &&
-        (seedCommentEndpointWatermark || (!pullsNeedsSeed && savedEndpointWatermark > 0))
+        (seedCommentEndpointWatermark ||
+          ((!pullsNeedsSeed || watched.spaceId === SESSION_EVENT_SCOPE) &&
+            savedEndpointWatermark > 0))
       ) {
         const cutoffIndex = rows.findIndex((row) => {
           const updatedAt = pullRequestUpdatedAt(row);

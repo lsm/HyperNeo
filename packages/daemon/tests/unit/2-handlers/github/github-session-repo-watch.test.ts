@@ -168,6 +168,48 @@ describe('the first poll of a session watch', () => {
     expect(topics).toContain('github/acme/widgets/pull_request/7.review_submitted');
     expect(topics.filter((topic) => /pull_request\/1\d\d\./.test(topic))).toEqual([]);
   });
+
+  test('a window with no open PR does not fall back to walking the backlog next cycle', async () => {
+    const db = freshDb();
+    const topics: string[] = [];
+    const pullsPages: string[] = [];
+    const github = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
+    extension = github;
+    const config = new ExternalEventExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    await github.start({
+      publisher: {
+        publish: async (event) => {
+          topics.push(event.topic);
+          return { outcome: 'published', eventId: event.id };
+        },
+      },
+      config,
+      onSourceConfigChanged() {},
+    });
+    await github.watchSessionRepo('acme', 'widgets');
+    const DAY = 24 * 60 * 60 * 1000;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/pulls')) {
+        pullsPages.push(parsed.searchParams.get('page') ?? '');
+        return ok(Array.from({ length: 100 }, (_, index) => pr(100 + index, 10 * DAY, 'closed')));
+      }
+      if (parsed.pathname.endsWith('/check-runs')) return ok({ check_runs: [] });
+      return ok([]);
+    }) as unknown as typeof fetch;
+    for (let cycle = 0; cycle < 2; cycle++)
+      await github.pollWatchedRepo(
+        github.repo.listPollingRepos(SESSION_EVENT_SCOPE)[0] ?? fail(),
+        fetchImpl
+      );
+    expect(pullsPages).toEqual(['1', '1']);
+    expect(topics).toEqual([]);
+  });
 });
 
 function fail(): never {
