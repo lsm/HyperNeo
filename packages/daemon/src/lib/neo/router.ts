@@ -294,6 +294,20 @@ export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRo
 
 export type NeoRouter = (text: string) => Promise<NeoRouted>;
 
+export interface NeoHolderWake {
+  asleep(sessionId: string): boolean;
+  wake?(concernId: string): Promise<string | null>;
+}
+
+export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): Promise<NeoRouted> {
+  const choice = routed.choice;
+  if (!choice || !holders.asleep(choice.sessionId)) return routed;
+  const sessionId = holders.wake ? await holders.wake(choice.concernId) : null;
+  return sessionId
+    ? { ...routed, choice: { ...choice, sessionId } }
+    : { choice: null, fallback: 'holder-unavailable' };
+}
+
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
@@ -305,14 +319,14 @@ export function createNeoRouter(
       const holders: NeoHolder[] = repo.listConcerns().flatMap((concern) => {
         const binding = repo.getBindingForConcern(concern.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
-        return binding && session && session.status !== 'archived'
+        return binding?.kind === 'concern'
           ? [
               {
                 concernId: concern.id,
                 sessionId: binding.sessionId,
                 title: concern.title,
                 summary: concern.summary,
-                provider: session.config.provider,
+                ...(session?.config.provider ? { provider: session.config.provider } : {}),
               },
             ]
           : [];
@@ -369,5 +383,23 @@ export function createNeoRouter(
         .catch(() => false);
     },
   };
-  return (text) => chooseNeoRoute(text, deps);
+  const holders: NeoHolderWake = {
+    asleep: (sessionId) => {
+      const session = db.getSession(sessionId);
+      return !session || session.status === 'archived';
+    },
+    wake: openHolder
+      ? async (concernId) => {
+          const binding = repo.getBindingForConcern(concernId);
+          if (binding && db.getSession(binding.sessionId)?.status === 'archived')
+            repo.retireArchivedBinding(concernId, binding.sessionId);
+          try {
+            return await openHolder(concernId);
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
+  };
+  return async (text) => wakeNeoRoute(await chooseNeoRoute(text, deps), holders);
 }
