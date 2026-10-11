@@ -22,6 +22,7 @@ import {
   type NeoPrClaimRow,
 } from './card-pr-claims.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import {
   mergeNeoWorkPrReads,
   neoWorkPrEvidence,
@@ -108,8 +109,8 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
   )
   .pipe(
     (deps: NeoCardPrDeps, work: NeoWork, stored: NeoWorkPrRow | null, plan: NeoCardPrPlan) => {
-      const keep = new Set(ownedUrls(plan).map((url) => url.toLowerCase()));
-      const kept = stored?.prs.filter((pr) => keep.has(pr.url.toLowerCase())) ?? [];
+      const keep = new Set(ownedUrls(plan).map(githubUrlKey));
+      const kept = stored?.prs.filter((pr) => keep.has(githubUrlKey(pr.url))) ?? [];
       if (!stored || kept.length === stored.prs.length) return { row: stored };
       deps.claims.replace(
         work.id,
@@ -196,7 +197,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     (deps: NeoCardPrDeps, ceded: { rows: NeoPrClaimRow[] }) => {
       for (const lost of ceded.rows) {
         const row = deps.workPrs.get(lost.workId);
-        const prs = row?.prs.filter((pr) => pr.url.toLowerCase() !== lost.urlKey);
+        const prs = row?.prs.filter((pr) => githubUrlKey(pr.url) !== lost.urlKey);
         if (row && prs && prs.length !== row.prs.length) deps.record(lost.workId, prs, row, false);
         deps.claims.drop(lost.workId, lost.urlKey, lost.claim);
       }
