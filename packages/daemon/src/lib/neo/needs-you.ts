@@ -23,7 +23,10 @@ export function planNeoAskResume(
   const items = (ask.doneItems ?? [])
     .filter((item) => !item.removed && item.state === 'needs_you')
     .map((item) => item.id);
-  const reopen = ask.status === 'waiting' || ask.status === 'blocked';
+  const confirming = (ask.doneItems ?? []).some(
+    (item) => item.id === ask.waitingItem && !item.removed && item.state === 'reported'
+  );
+  const reopen = (ask.status === 'waiting' || ask.status === 'blocked') && !confirming;
   return items.length || reopen ? { ask, items, reopen } : null;
 }
 

@@ -65,7 +65,7 @@ export function neoAskApprovalSpent(
 export interface NeoAskItem {
   id: string;
   text: string;
-  state: 'pending' | 'met' | 'needs_you';
+  state: 'pending' | 'met' | 'needs_you' | 'reported';
   evidence: string | null;
   check: 'coding.pr_merged' | 'life-admin.confirmed' | null;
   metBy: 'neo' | 'daemon' | 'human' | null;

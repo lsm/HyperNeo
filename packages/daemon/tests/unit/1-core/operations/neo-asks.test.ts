@@ -442,6 +442,74 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: false } });
   });
 
+  test("an item Neo only has an agent's word for is reported, never met", async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'Agent report (iMac state not independently readable by the daemon)',
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('unverified') } });
+    await invoke('neo.ask.tick', {
+      askId,
+      itemId: 'i2',
+      state: 'met',
+      evidence: 'CI run 42 green.',
+    });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'reported',
+        evidence: 'The fullstack session says the iMac is updated.',
+      })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: { status: 'waiting', waitingItem: 'i1', outcome: 'Confirm: merged to dev' },
+      },
+    });
+    expect(
+      await invoke('neo.ask.settle', {
+        id: askId,
+        outcome: 'achieved',
+        summary: 'Done.',
+        evidence: 'Agent says so.',
+      })
+    ).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('i1 "merged to dev" is reported') },
+    });
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i1', state: 'met', evidence: 'The human confirmed it.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true, ask: { status: 'open' } } });
+  });
+
+  test('a reported item waits on the human only once nothing else is pending', () => {
+    const item = (id: string, state: 'pending' | 'met' | 'reported') => ({
+      id,
+      text: id,
+      state,
+      evidence: null,
+      check: null,
+      metBy: null,
+      removed: false,
+      addedAt: null,
+    });
+    const ask = { status: 'open', waitingItem: null } as unknown as NeoAsk;
+    expect(
+      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'pending')] })
+    ).toEqual({ status: 'unchanged' });
+    expect(
+      planNeoAskTickStatus({ ...ask, doneItems: [item('i1', 'reported'), item('i2', 'met')] })
+    ).toEqual({ status: 'waiting', outcome: 'Confirm: i1', item: 'i1' });
+  });
+
   test('a decision carries its options, and the human answers it back to Neo', async () => {
     const askId = await openAsk();
     expect(
