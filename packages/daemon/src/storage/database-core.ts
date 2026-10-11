@@ -357,25 +357,6 @@ export class DatabaseCore {
 
   private tryStreamCopy(tempDb: string): boolean {
     const backupDir = dirname(tempDb);
-    const dbBytes = statSync(this.dbPath).size;
-    try {
-      const oldestFirst = this.backupsBeyondRetention(
-        backupDir,
-        MIGRATION_BACKUP_RETENTION - 1
-      ).reverse();
-      while (!hasRoomForBackupCopy(freeBytesAt(backupDir), dbBytes) && oldestFirst.length > 0) {
-        try {
-          unlinkSync(oldestFirst.shift() as string);
-        } catch {}
-      }
-      if (!hasRoomForBackupCopy(freeBytesAt(backupDir), dbBytes)) {
-        this.logger.warn('Not enough free space for a migration backup copy; falling back');
-        return false;
-      }
-    } catch (err) {
-      this.logger.error('Failed to make room for migration backup:', err);
-      return false;
-    }
     let checkpointed = false;
     try {
       const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
@@ -385,6 +366,28 @@ export class DatabaseCore {
       checkpointed = result?.busy === 0 && (result?.checkpointed ?? 0) >= (result?.log ?? 0);
     } catch {
       checkpointed = false;
+    }
+    const walPath = `${this.dbPath}-wal`;
+    const copyBytes =
+      statSync(this.dbPath).size +
+      (!checkpointed && existsSync(walPath) ? statSync(walPath).size : 0);
+    try {
+      const oldestFirst = this.backupsBeyondRetention(
+        backupDir,
+        MIGRATION_BACKUP_RETENTION - 1
+      ).reverse();
+      while (!hasRoomForBackupCopy(freeBytesAt(backupDir), copyBytes) && oldestFirst.length > 0) {
+        try {
+          unlinkSync(oldestFirst.shift() as string);
+        } catch {}
+      }
+      if (!hasRoomForBackupCopy(freeBytesAt(backupDir), copyBytes)) {
+        this.logger.warn('Not enough free space for a migration backup copy; falling back');
+        return false;
+      }
+    } catch (err) {
+      this.logger.error('Failed to make room for migration backup:', err);
+      return false;
     }
     try {
       streamCopyFile(this.dbPath, tempDb);
