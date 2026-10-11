@@ -306,6 +306,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastRateLimitFingerprint?: string;
   private lastTokenStatus: GitHubTokenStatus | null = null;
   private lastTokenStatusGeneration = -1;
+  private knownLogin: { login: string; generation: number; fingerprint: string } | null = null;
   private lastTokenStatusAt = 0;
   private tokenValidationSequence = 0;
   private credentialGeneration = 0;
@@ -707,7 +708,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             context.config.getSpaceConfig(spaceId, this.sourceId),
           publishEvent: async (spaceId: string, event) => {
             if (tokenLoginSnapshot === undefined) {
-              tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
+              tokenLoginSnapshot = this.knownTokenLogin();
             }
             const ok = await this.publishEvent(spaceId, event, context, tokenLoginSnapshot);
             if (!ok) dropped++;
@@ -836,7 +837,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
-    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
+    const tokenLoginSnapshot = this.knownTokenLogin();
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized =
@@ -913,7 +914,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
-    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
+    const tokenLoginSnapshot = this.knownTokenLogin();
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized = normalizeGitHubStatus({
@@ -1377,6 +1378,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
+  private knownTokenLogin(): string {
+    const cached = this.cachedTokenStatus()?.login;
+    if (cached) return cached;
+    const known = this.knownLogin;
+    return known &&
+      known.generation === this.credentialGeneration &&
+      known.fingerprint === credentialFingerprint(this.lastResolvedToken)
+      ? known.login
+      : '';
+  }
+
   private cachedTokenStatus(): GitHubTokenStatus | null {
     if (
       this.lastTokenStatus !== null &&
@@ -1434,6 +1446,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     if (this.tokenValidationSequence !== sequenceBefore) return token;
     const isPermissionError = token.error === 'HTTP 403';
+    if (token.login && token.validatedFingerprint)
+      this.knownLogin = {
+        login: token.login,
+        generation: generationBefore,
+        fingerprint: token.validatedFingerprint,
+      };
     if (!token.error || token.authRejected || isPermissionError) {
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
@@ -1825,7 +1843,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       false;
     const tokenStatus = this.cachedTokenStatus();
     if (filterCurrentUser && !tokenStatus) this.triggerSelfEchoLoginRefresh();
-    const tokenLogin = tokenLoginSnapshot ?? tokenStatus?.login ?? '';
+    const tokenLogin = tokenLoginSnapshot ?? this.knownTokenLogin();
     if (
       decideSelfEchoFilter({
         initiatorLogin: event.initiatorLogin ?? event.actor,
