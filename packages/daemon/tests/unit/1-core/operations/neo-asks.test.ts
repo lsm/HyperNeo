@@ -18,6 +18,8 @@ import {
   requireNeoAskSettlement,
   requireNeoAskSummary,
   requireNeoAskWritten,
+  requireNeoAskLive,
+  requireNeoAskOwner,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
@@ -612,6 +614,32 @@ describe('requireNeoWorkAsk', () => {
   });
 });
 
+describe('requireNeoAskOwner', () => {
+  test('lets the opening Neo session and the user act, and refuses other sessions', () => {
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    expect(requireNeoAskOwner(ask, neo, 'tick')).toEqual({ value: ask });
+    expect(requireNeoAskOwner(ask, user, 'tick')).toEqual({ value: ask });
+    expect(requireNeoAskOwner(ask, { ...neo, sessionId: 'holder' }, 'tick')).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that opened this ask or the user can tick it.',
+      },
+    });
+    expect(requireNeoAskOwner(null, neo, 'tick')).toEqual({
+      reason: { ok: false, reason: 'ask_not_found' },
+    });
+  });
+});
+
+describe('requireNeoAskLive', () => {
+  test('refuses a settled ask with its status', () => {
+    expect(requireNeoAskLive({ ...ask, status: 'waiting' })).toMatchObject({ value: {} });
+    expect(requireNeoAskLive({ ...ask, status: 'abandoned' }, '; open a new ask')).toEqual({
+      reason: { ok: false, reason: 'ask_settled: this ask is already abandoned; open a new ask.' },
+    });
+  });
+});
+
 describe('requireNeoWorkAskLink', () => {
   test('passes work with no ask or linked to its ask, refuses work owned by another', () => {
     expect(requireNeoWorkAskLink({}, { owner: null }, 'r')).toEqual({ value: 'r' });
@@ -808,17 +836,32 @@ describe('planNeoAskTickStatus', () => {
     [
       'an item that needs the human',
       { doneItems: [item('i1', 'needs_you')] },
-      { status: 'waiting', outcome: 'Item i1' },
+      { status: 'waiting', outcome: 'Item i1', item: 'i1' },
     ],
     [
       'the same question already asked',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you')] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'needs_you')],
+      },
       { status: 'unchanged' },
     ],
     [
       'the last question answered',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'met')] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'met')],
+      },
       { status: 'open' },
+    ],
+    [
+      'a deliberate wait whose summary happens to match an item',
+      { status: 'waiting', outcome: 'Item i1', waitingItem: null, doneItems: [item('i1', 'met')] },
+      { status: 'unchanged' },
     ],
     [
       'an offer that waits for another reason',
@@ -832,7 +875,12 @@ describe('planNeoAskTickStatus', () => {
     ],
     [
       'a question whose item was removed',
-      { status: 'waiting', outcome: 'Item i1', doneItems: [item('i1', 'needs_you', true)] },
+      {
+        status: 'waiting',
+        outcome: 'Item i1',
+        waitingItem: 'i1',
+        doneItems: [item('i1', 'needs_you', true)],
+      },
       { status: 'open' },
     ],
     [

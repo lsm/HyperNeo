@@ -37,6 +37,10 @@ export const NeoAskSchema = z.object({
   doneSource: z.string(),
   pack: z.string().nullable().optional(),
   approvedAt: z.number().nullable().optional(),
+  approvedContinues: z.number().optional(),
+  approvedUntil: z.number().optional(),
+  approvedContinueLimit: z.number().optional(),
+  waitingItem: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
@@ -107,24 +111,40 @@ const fail = (reason: string): Rejection => ({ ok: false, reason });
 const isFinal = isNeoAskSettled;
 const ACTIVE_ASK_LIMIT = 50;
 
+export function requireNeoAskOwner(
+  ask: NeoAsk | null,
+  caller: OperationCaller,
+  action: string,
+  hint = ''
+): Gate<NeoAsk> {
+  if (!ask) return { reason: fail('ask_not_found') };
+  return caller.source === 'mcp' && caller.sessionId !== ask.originSessionId
+    ? {
+        reason: fail(
+          `Only the Neo session that opened this ask or the user can ${action} it${hint}.`
+        ),
+      }
+    : { value: ask };
+}
+
+export function requireNeoAskLive(ask: NeoAsk, hint = ''): Gate<NeoAsk> {
+  return isFinal(ask)
+    ? { reason: fail(`ask_settled: this ask is already ${ask.status}${hint}.`) }
+    : { value: ask };
+}
+
 export function requireNeoWorkAsk(
   ask: NeoAsk | null,
   input: { askId?: string; concernId: string | null },
   caller: OperationCaller
 ): Gate<OperationCaller> {
   if (!input.askId) return { value: caller };
-  if (!ask) return { reason: fail('ask_not_found') };
-  if (ask.concernId !== input.concernId)
+  if (ask && ask.concernId !== input.concernId)
     return { reason: fail('This ask belongs to another concern; propose under its concernId.') };
-  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-    return {
-      reason: fail(
-        'Only the Neo session that opened this ask files work under it; open your own ask.'
-      ),
-    };
-  return isFinal(ask)
-    ? { reason: fail(`ask_settled: this ask is already ${ask.status}; open a new ask.`) }
-    : { value: caller };
+  const owned = requireNeoAskOwner(ask, caller, 'file work under', '; open your own ask');
+  if ('reason' in owned) return owned;
+  const live = requireNeoAskLive(owned.value, '; open a new ask');
+  return 'reason' in live ? live : { value: caller };
 }
 
 export function requireNeoWorkAskLink<T>(
@@ -243,15 +263,9 @@ export function requireNeoAskSettlement(
   current: { ask: NeoAsk | null },
   caller: OperationCaller
 ): Gate<NeoAsk> {
-  const { ask } = current;
-  if (!ask) return { reason: fail('ask_not_found') };
-  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-    return {
-      reason: fail('Only the Neo session that opened this ask or the user can settle it.'),
-    };
-  return isFinal(ask) && !isNeoAskReplay(ask, input)
-    ? { reason: fail(`ask_settled: this ask is already ${ask.status}.`) }
-    : { value: ask };
+  const owned = requireNeoAskOwner(current.ask, caller, 'settle');
+  if ('reason' in owned) return owned;
+  return isNeoAskReplay(owned.value, input) ? owned : requireNeoAskLive(owned.value);
 }
 
 export function requireNeoAskChecklistMet(
@@ -274,11 +288,10 @@ export function requireNeoAskTick(
   current: { ask: NeoAsk | null },
   caller: OperationCaller
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
-  const { ask } = current;
-  if (!ask) return { reason: fail('ask_not_found') };
-  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-    return { reason: fail('Only the Neo session that opened this ask or the user can tick it.') };
-  if (isFinal(ask)) return { reason: fail(`ask_settled: this ask is already ${ask.status}.`) };
+  const owned = requireNeoAskOwner(current.ask, caller, 'tick');
+  const live = 'reason' in owned ? owned : requireNeoAskLive(owned.value);
+  if ('reason' in live) return live;
+  const ask = live.value;
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
   return input.state !== 'pending' && !input.evidence
@@ -295,11 +308,10 @@ export function requireNeoAskEdit(
   current: { ask: NeoAsk | null },
   caller: OperationCaller
 ): Gate<NeoAsk> {
-  const { ask } = current;
-  if (!ask) return { reason: fail('ask_not_found') };
-  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-    return { reason: fail('Only the Neo session that opened this ask or the user can edit it.') };
-  if (isFinal(ask)) return { reason: fail(`ask_settled: this ask is already ${ask.status}.`) };
+  const owned = requireNeoAskOwner(current.ask, caller, 'edit');
+  const live = 'reason' in owned ? owned : requireNeoAskLive(owned.value);
+  if ('reason' in live) return live;
+  const ask = live.value;
   const active = (ask.doneItems ?? []).filter((item) => !item.removed);
   const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
   if (missing.length)
@@ -315,15 +327,8 @@ export function requireNeoAskApprove(
   current: { ask: NeoAsk | null },
   caller: OperationCaller
 ): Gate<NeoAsk> {
-  const { ask } = current;
-  if (!ask) return { reason: fail('ask_not_found') };
-  if (caller.source === 'mcp' && caller.sessionId !== ask.originSessionId)
-    return {
-      reason: fail('Only the Neo session that opened this ask or the user can approve it.'),
-    };
-  return isFinal(ask)
-    ? { reason: fail(`ask_settled: this ask is already ${ask.status}.`) }
-    : { value: ask };
+  const owned = requireNeoAskOwner(current.ask, caller, 'approve');
+  return 'reason' in owned ? owned : requireNeoAskLive(owned.value);
 }
 
 export function planNeoAskEdit(
@@ -344,17 +349,18 @@ export function planNeoAskEdit(
 
 export function planNeoAskTickStatus(
   ask: NeoAsk
-): { status: 'waiting'; outcome: string } | { status: 'open' } | { status: 'unchanged' } {
+):
+  | { status: 'waiting'; outcome: string; item: string }
+  | { status: 'open' }
+  | { status: 'unchanged' } {
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const asked = items.find((item) => item.state === 'needs_you');
   if (asked)
-    return ask.status === 'waiting' && ask.outcome === asked.text
+    return ask.status === 'waiting' && ask.waitingItem === asked.id
       ? { status: 'unchanged' }
-      : { status: 'waiting', outcome: asked.text };
-  return ask.status === 'waiting' && (ask.doneItems ?? []).some((item) => item.text === ask.outcome)
-    ? { status: 'open' }
-    : { status: 'unchanged' };
+      : { status: 'waiting', outcome: asked.text, item: asked.id };
+  return ask.status === 'waiting' && ask.waitingItem ? { status: 'open' } : { status: 'unchanged' };
 }
 
 export function writeNeoAskTickStatus(
@@ -363,7 +369,7 @@ export function writeNeoAskTickStatus(
   plan: ReturnType<typeof planNeoAskTickStatus>
 ): NeoAsk | null {
   return plan.status === 'waiting'
-    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome)
+    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome, plan.item)
     : plan.status === 'open'
       ? records.reopen(ask)
       : ask;
@@ -653,7 +659,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.approve',
       description:
-        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. An approval never covers deploying to production, deleting data or other destructive steps.",
+        "Approve an open ask so Neo starts the work items under it without a Start click on each (neo.work.start). Only the user approves: from the ask's Approve button, or Neo in the turn where the human said to go ahead with it. Their continues come from the ask's shared budget; approving again refills it. An approval never covers deploying to production, deleting data or other destructive steps.",
       inputSchema: Approve,
       resultSchema: AskResult,
       policy: { safetyClass: 'human_only' },

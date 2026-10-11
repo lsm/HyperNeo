@@ -8,7 +8,7 @@ import { readDriverFollowUp, readDriverLive } from './driver-work.ts';
 type Gate<T> = { value: T } | { reason: null };
 
 const NEO_WORK_FOLLOW_READ_MS = 2 * 60_000;
-const NEO_WORK_FOLLOW_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+export const NEO_WORK_FOLLOW_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const NEO_WORK_REPORT_MAX = 12_000;
 
 const NEO_WORK_LIVE_FINAL: readonly WorkStatus[] = ['done', 'failed', 'stopped'];

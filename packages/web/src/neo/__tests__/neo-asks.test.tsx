@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskCard } from '../NeoAskCard.tsx';
 import {
+  neoAskApproval,
   describeNeoAsk,
   groupNeoAsks,
   NEO_ASK_NEEDS_YOU_LABEL,
@@ -455,6 +456,32 @@ describe('NeoAskCard', () => {
       />
     );
     expect(nothing.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
+  });
+
+  it('reads an approval’s budget from the ask and offers to refill it once it runs out', () => {
+    expect(neoAskApproval(ask('a', 'open', []), 10)).toBeNull();
+    const approved = { ...ask('a', 'open', []), approvedAt: 5 };
+    expect(neoAskApproval(approved, 10)).toEqual({ line: '0 continues used', spent: false });
+    const budget = {
+      ...approved,
+      approvedContinues: 3,
+      approvedContinueLimit: 20,
+      approvedUntil: 100,
+    };
+    expect(neoAskApproval(budget, 10)).toEqual({ line: '3 of 20 continues used', spent: false });
+    expect(neoAskApproval({ ...budget, approvedContinues: 20 }, 10)?.spent).toBe(true);
+    expect(neoAskApproval(budget, 101)).toEqual({
+      line: '3 of 20 continues used · approval ran out',
+      spent: true,
+    });
+    const approve = vi.fn();
+    const spent = describeNeoAsk({ ...budget, approvedContinues: 20 }, []);
+    const card = render(<NeoAskCard view={spent} onApprove={approve} />);
+    expect(card.queryByText('20 of 20 continues used · approval ran out')).toBeNull();
+    fireEvent.click(card.getByRole('button', { name: 'Details' }));
+    expect(card.getByText('20 of 20 continues used · approval ran out')).toBeTruthy();
+    fireEvent.click(card.getByRole('button', { name: 'Approve again' }));
+    expect(approve).toHaveBeenCalledOnce();
   });
 
   it('shows the done-when text for an ask opened before checklists', () => {

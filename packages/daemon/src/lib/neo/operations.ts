@@ -70,7 +70,7 @@ import {
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
+import { type WorkRef, WorkRefSchema, WorkStatusSchema } from '../drivers/types.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -170,6 +170,19 @@ const Snapshot = z.union([
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
       .optional(),
+    sessionNotices: z
+      .array(
+        z.object({
+          key: z.string(),
+          ref: WorkRefSchema,
+          title: z.string(),
+          kind: z.enum(['needs_you', 'failed', 'finished']),
+          at: z.number(),
+          link: z.string().optional(),
+        })
+      )
+      .max(20)
+      .optional(),
     workDrivers: z
       .array(
         z.object({
@@ -180,6 +193,7 @@ const Snapshot = z.union([
           link: z.string().nullable(),
           remoteLink: z.string().optional(),
           uncheckedSince: z.number().optional(),
+          retryable: z.literal(true).optional(),
           unconfirmed: z.literal(true).optional(),
         })
       )
@@ -574,8 +588,13 @@ export function createNeoOperations(service: NeoService) {
         .receipts(visibleWork.map((item) => item.id))
         .map((receipt) => {
           const since = service.uncheckedSince(receipt.workId);
-          return since === null ? receipt : { ...receipt, uncheckedSince: since };
+          return {
+            ...receipt,
+            ...(since === null ? {} : { uncheckedSince: since }),
+            ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
+          };
         }),
+      ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),
@@ -1298,7 +1317,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.continue',
       description:
-        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed up to 5 continues or until 12 hours after the work started; past that it rejects with continue_budget_spent and you must ask the human. Only the Neo session that proposed the work or the user can continue it.',
+        'Send the next instruction to started work whose session stopped before its doneWhen was met, in the same session with its context. The goal and checklist are attached again. Reported work reopens as queued. Allowed up to 5 continues or until 12 hours after the work started; work under an approved ask shares 20 continues across that ask for 48 hours after approval instead. Past that it rejects with continue_budget_spent and you must ask the human (to approve the ask again, for approved work). Only the Neo session that proposed the work or the user can continue it.',
       inputSchema: Continue,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

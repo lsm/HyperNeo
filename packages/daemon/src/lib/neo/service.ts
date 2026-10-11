@@ -11,6 +11,7 @@ import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/type
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
+  NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
   type NeoAsk,
   type NeoWorkGoal,
@@ -38,7 +39,7 @@ import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { NeoWorkResourceRepository } from '../../storage/repositories/neo-work-resource-repository.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -81,9 +82,13 @@ import {
   NEO_WORK_SUMMARY_NOTE,
   driverStallNote,
   NEO_WORK_STALL_MS,
+  NEO_DRIVER_START_INTERRUPTED,
   readDriverActivity,
+  readDriverLastInputAt,
+  readDriverLive,
+  requireNeoWorkRetryable,
   withWorkGoal,
-  readContinueBudget,
+  readNeoWorkContinueBudget,
 } from './driver-work.ts';
 import {
   admitNeoWorkContinue,
@@ -164,6 +169,15 @@ import {
   type NeoReminderListing,
 } from './waiting-reminders.ts';
 import {
+  keepNeoSessionNotices,
+  listNeoWatchedSessions,
+  planNeoSessionNotice,
+  planNeoSessionWatch,
+  type NeoListedSession,
+  type NeoSessionNotice,
+  type NeoSessionSeen,
+} from './session-watch.ts';
+import {
   neoAskEvidenceMessageId,
   neoAskEvidenceNote,
   planNeoAskEvidenceNote,
@@ -176,6 +190,7 @@ import {
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
 import {
+  NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
   planNeoWorkFollowLive,
   requireNeoWorkFollow,
@@ -203,7 +218,6 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
-const DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
@@ -250,6 +264,8 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
+  sessionNotices: NeoSessionNotice[] = [];
   filePacks: readonly NeoPack[] = [];
   private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
@@ -262,6 +278,7 @@ export class NeoService {
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
+  private readonly announceSessionNotice: (notice: NeoSessionNotice) => void;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -419,6 +436,7 @@ export class NeoService {
     events: InternalEventBus<DaemonInternalEventMap>,
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
+    this.announceSessionNotice = (notice) => hub.event('neo.session.notice', notice);
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
     };
@@ -925,6 +943,7 @@ export class NeoService {
     readWork: (id) => this.repo.getWork(id),
     readRef: (id) => this.driverTargets.readRef(id),
     readContinuedCount: (id) => this.workContinues.get(id)?.count ?? null,
+    readAsk: (id) => this.askRecords.forWork(id),
     isContinuing: (id) => this.continuing.has(id),
     withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
     readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
@@ -941,6 +960,9 @@ export class NeoService {
     },
     recordContinue: (id, message, now) =>
       this.workContinues.record(id, message, now)?.count ?? null,
+    reserveAskContinue: (ask) =>
+      this.askRecords.reserveApprovedContinue(ask.id, NEO_ASK_CONTINUE_LIMIT),
+    refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
     reopen: (id, current, report) =>
       this.repo.transitionWork(id, current, { status: 'queued', report }),
     reopenAsk: (id) => this.askRecords.reopenForWork(id),
@@ -986,7 +1008,7 @@ export class NeoService {
       if (this.driverTargets.readRef(work.id)) return;
       const interrupted = this.repo.transitionWork(work.id, work, {
         status: 'failed',
-        report: `${DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
+        report: `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
       });
       if (interrupted) await this.returnReport(interrupted);
       return;
@@ -1036,6 +1058,15 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
+  private retryCard(workId: string): { target: boolean; ref: boolean } {
+    return { target: !!this.driverTargets.get(workId), ref: !!this.driverTargets.readRef(workId) };
+  }
+
+  isRetryable(workId: string): boolean {
+    const work = this.repo.getWork(workId);
+    return !!work && 'value' in requireNeoWorkRetryable(work, this.retryCard(workId));
+  }
+
   private neverStarted(work: NeoWork): boolean {
     return (
       work.status === 'failed' &&
@@ -1049,18 +1080,8 @@ export class NeoService {
   ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
     const work = this.repo.getWork(id);
     if (!work) return { ok: false, reason: 'work_not_found' };
-    if (work.report?.startsWith(DRIVER_START_INTERRUPTED))
-      return {
-        ok: false,
-        reason:
-          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
-      };
-    if (!this.neverStarted(work))
-      return {
-        ok: false,
-        reason:
-          'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
-      };
+    const retryable = requireNeoWorkRetryable(work, this.retryCard(work.id));
+    if ('reason' in retryable) return { ok: false, reason: retryable.reason };
     const proposed = this.repo.transitionWork(id, work, { status: 'proposed', report: null });
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
     await this.workPending.get(id)?.catch(() => undefined);
@@ -1141,7 +1162,133 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
+    await this.watchSessions(Date.now()).catch((error) =>
+      this.log.warn('Session watch pending', error)
+    );
   }
+
+  private followedCardRefs(now: number): WorkRef[] {
+    return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
+      const work = this.repo.getWork(card.workId);
+      if (!work) return [];
+      if (work.status !== 'reported') return [card.ref];
+      const following = requireNeoWorkFollow(
+        work,
+        {
+          ref: card.ref,
+          goal: !!this.workDoneGoal(work.id)?.doneWhen,
+          ask: this.askRecords.forWork(work.id),
+          readAt: null,
+          superseded: this.driverTargets.readSupersededAt(work.id) !== null,
+          live: this.driverTargets.readLiveStatus(work.id),
+        },
+        now
+      );
+      return 'value' in following ? [card.ref] : [];
+    });
+  }
+
+  private readonly watchSessions = (superpipe({})('neo-session-watch') as PipelineAPI)
+    .input(['now'])
+    .pipe(
+      () => {
+        const root = this.repo.getBindingForConcern(null)?.sessionId;
+        return root ? { value: root } : { reason: null };
+      },
+      'now',
+      'result:root'
+    )
+    .pipe(
+      async (root: string, now: number) => {
+        const outcome = await invokeOperation(
+          this.sessions.getOperationRegistry(),
+          'work.find',
+          { localOnly: true, limit: 30 },
+          { source: 'internal', sessionId: root, role: 'neo' }
+        );
+        const value =
+          outcome.kind === 'completed'
+            ? (outcome.value as {
+                places?: PlaceGroup[];
+                unreachable?: unknown[];
+                more?: boolean;
+              } | null)
+            : null;
+        return {
+          sessions: listNeoWatchedSessions(value?.places ?? [], this.followedCardRefs(now), now),
+          complete: !!value?.places && !value.unreachable?.length && !value.more,
+        };
+      },
+      ['root', 'now'],
+      'listed'
+    )
+    .pipe(
+      (listed: { sessions: NeoListedSession[]; complete: boolean }, now: number) =>
+        planNeoSessionWatch(listed.sessions, this.sessionsSeen, now),
+      ['listed', 'now'],
+      'plan'
+    )
+    .pipe(
+      async (root: string, plan: ReturnType<typeof planNeoSessionWatch>) => ({
+        details: await Promise.all(
+          plan.reads.map(async (session) => {
+            const outcome = await invokeOperation(
+              this.sessions.getOperationRegistry(),
+              'work.status',
+              { ref: session.ref },
+              { source: 'internal', sessionId: root, role: 'neo' }
+            );
+            const live = readDriverLive(outcome);
+            return live
+              ? { status: live.status, lastInputAt: readDriverLastInputAt(outcome) }
+              : null;
+          })
+        ),
+      }),
+      ['root', 'plan'],
+      'read'
+    )
+    .pipe(
+      (
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        read: { details: ({ status: WorkStatus; lastInputAt: number | null } | null)[] },
+        now: number
+      ) => ({
+        planned: plan.reads.map((session, index) =>
+          planNeoSessionNotice(
+            session,
+            this.sessionsSeen.get(session.key)!,
+            read.details[index],
+            now
+          )
+        ),
+      }),
+      ['plan', 'read', 'now'],
+      'notices'
+    )
+    .pipe(
+      (
+        listed: { sessions: NeoListedSession[]; complete: boolean },
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }
+      ) => {
+        const keep = new Set(listed.sessions.map((session) => session.key));
+        if (listed.complete)
+          for (const key of [...this.sessionsSeen.keys()])
+            if (!keep.has(key)) this.sessionsSeen.delete(key);
+        for (const [key, seen] of plan.baseline) this.sessionsSeen.set(key, seen);
+        plan.reads.forEach((session, index) =>
+          this.sessionsSeen.set(session.key, notices.planned[index].seen)
+        );
+        const added = notices.planned.flatMap((item) => (item.notice ? [item.notice] : []));
+        if (!added.length) return;
+        this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added);
+        for (const notice of added) this.announceSessionNotice(notice);
+        this.notifyChanged();
+      },
+      ['listed', 'plan', 'notices']
+    )
+    .endAsync('root') as (now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
@@ -1368,7 +1515,12 @@ export class NeoService {
   }
 
   private continueBudget(work: NeoWork, now: number): string | null {
-    return readContinueBudget(this.workContinues.get(work.id), work.createdAt, now);
+    return readNeoWorkContinueBudget(
+      this.workContinues.get(work.id),
+      work.createdAt,
+      this.askRecords.forWork(work.id),
+      now
+    );
   }
 
   private async noteDriverStall(work: NeoWork, outcome: OperationOutcome): Promise<void> {
@@ -1580,7 +1732,7 @@ export class NeoService {
     const targets = new Set([rootId, work.originSessionId]);
     const retries = this.driverTargets.readRetries(work.id);
     const retryNote =
-      this.neverStarted(work) && !work.report?.startsWith(DRIVER_START_INTERRUPTED)
+      this.neverStarted(work) && !work.report?.startsWith(NEO_DRIVER_START_INTERRUPTED)
         ? ` ${fillPrompt(NEO_WORK_RETURNED_RETRY, {
             retried: retries
               ? fillPrompt(NEO_WORK_RETURNED_RETRIED, {

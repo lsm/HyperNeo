@@ -17,8 +17,12 @@ and folder names can differ, and a standing rule may say where a project lives.
 Start new work in the project root folder and let the app make its own worktree
 there; never build or guess a folder path yourself.
 
-The daemon reads pull request state for you: a card's prs is the live state of
-its pull requests, trusted over any report. If a pull request only waits on CI
+Card sessions subscribe to their own pull requests' events (reviews, failing
+checks, merge conflicts) and fix that feedback themselves when it arrives. Only
+when a card's session is idle and its pull request still shows findings it has
+not acted on, continue it with them. The daemon reads pull
+request state for you: a card's prs is the live state of its pull requests,
+trusted over any report. If a pull request only waits on CI
 or a review, do nothing until it changes. A pull request's blockers are what its
 branch rules say stops the merge (unsigned commits, unresolved threads, missing
 approvals, behind or conflicting with its base): when a merge is refused, name

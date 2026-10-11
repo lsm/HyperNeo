@@ -16,6 +16,7 @@ export interface NeoWorkDriverReceipt {
   remoteLink?: string;
   uncheckedSince?: number;
   unconfirmed?: true;
+  retryable?: true;
 }
 
 export interface NeoWorkGoal {
@@ -25,6 +26,8 @@ export interface NeoWorkGoal {
 }
 
 export const NEO_WORK_CONTINUE_LIMIT = 5;
+export const NEO_ASK_CONTINUE_LIMIT = 20;
+export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
 
 export interface NeoWorkContinue {
@@ -59,6 +62,10 @@ export interface NeoAsk {
   doneSource: string;
   pack?: string | null;
   approvedAt?: number | null;
+  approvedContinues?: number;
+  approvedUntil?: number;
+  approvedContinueLimit?: number;
+  waitingItem?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
   evidence?: string | null;
@@ -89,6 +96,15 @@ export interface NeoReceiptAskOrigin {
   origin: { sessionId: string; messageId: string } | null;
 }
 
+export interface NeoSessionNotice {
+  key: string;
+  ref: { adapter: string; daemon?: string; id: string };
+  title: string;
+  kind: 'needs_you' | 'failed' | 'finished';
+  at: number;
+  link?: string;
+}
+
 export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
@@ -100,6 +116,7 @@ export interface NeoSnapshot {
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
+  sessionNotices?: NeoSessionNotice[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
   workPrs?: NeoWorkPrReceipt[];
