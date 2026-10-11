@@ -1,16 +1,32 @@
 import type { Database } from '../sqlite-compat.ts';
 
+const COLUMNS = 'work_id, prs_json, open, revision, read_at, read_ok_at';
+
 export function runMigration335(db: Database): void {
-  if (
-    !db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_prs' AND type = 'table'").get()
-  )
-    return;
-  const columns = new Set(
-    (db.prepare('PRAGMA table_info(neo_work_prs)').all() as Array<{ name: string }>).map(
-      (column) => column.name
-    )
-  );
-  for (const column of ['delivered', 'delivered_at', 'reminded']) {
-    if (columns.has(column)) db.exec(`ALTER TABLE neo_work_prs DROP COLUMN ${column}`);
+  const table = db
+    .prepare("SELECT sql FROM sqlite_master WHERE name = 'neo_work_prs' AND type = 'table'")
+    .get() as { sql: string } | null;
+  if (!table || !table.sql.includes('delivered')) return;
+  db.exec('PRAGMA legacy_alter_table = ON');
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE neo_work_prs RENAME TO neo_work_prs_drop_delivered_old');
+    db.exec(`CREATE TABLE neo_work_prs (
+      work_id TEXT PRIMARY KEY REFERENCES neo_work(id) ON DELETE CASCADE,
+      prs_json TEXT NOT NULL,
+      open INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
+      read_at INTEGER NOT NULL,
+      read_ok_at INTEGER NOT NULL
+    )`);
+    db.exec(`INSERT INTO neo_work_prs (${COLUMNS})
+      SELECT ${COLUMNS} FROM neo_work_prs_drop_delivered_old`);
+    db.exec('DROP TABLE neo_work_prs_drop_delivered_old');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec('PRAGMA legacy_alter_table = OFF');
   }
 }

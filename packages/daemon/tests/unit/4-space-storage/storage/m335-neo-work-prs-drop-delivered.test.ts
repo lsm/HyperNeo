@@ -46,7 +46,7 @@ describe('runMigration335', () => {
     expect(new NeoWorkPrRepository(db).get('w1')).toMatchObject({ revision: 3, readOkAt: 30 });
   });
 
-  test('leaves a table that never had the columns, and skips databases without Neo work', () => {
+  test('keeps the surviving columns, and skips databases without Neo work', () => {
     const db = withWork();
     runMigration314(db);
     runMigration335(db);
