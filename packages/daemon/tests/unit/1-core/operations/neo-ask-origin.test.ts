@@ -134,6 +134,43 @@ function fixtures() {
   };
 }
 
+describe('stamped ask origins', () => {
+  function stamping() {
+    const f = fixtures();
+    const stamps = new Map<string, NeoAskOrigin>();
+    f.reads.getStamp = (sessionId, messageId) =>
+      stamps.get(f.key({ sessionId, messageId })) ?? null;
+    f.reads.stamp = (input, origin) => stamps.set(f.key(input), origin);
+    return { ...f, stamps, resolve: createNeoAskOriginResolver(f.reads) };
+  }
+
+  test('a turn keeps its ask after root continues the card mid-turn', () => {
+    const f = stamping();
+    const note = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
+    f.put(ask);
+    f.put(note, 'system');
+    expect(f.resolve(note)).toEqual(ask);
+    f.works.set(work.id, { ...work, status: 'queued' });
+    expect(f.resolve(note)).toEqual(ask);
+    const unstamped = createNeoAskOriginResolver({
+      ...f.reads,
+      getStamp: undefined,
+      stamp: undefined,
+    });
+    expect(unstamped(note)).toBeNull();
+  });
+
+  test('stamps only an origin it walked to, never a human input or an unknown one', () => {
+    const f = stamping();
+    f.put(ask);
+    expect(f.resolve(ask)).toEqual(ask);
+    const orphan = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId('missing', 0) };
+    f.put(orphan, 'system');
+    expect(f.resolve(orphan)).toBeNull();
+    expect([...f.stamps.keys()]).toEqual([]);
+  });
+});
+
 describe('neoWorkReturnMessageId', () => {
   test('a continued card returns under a new id so its next report is not swallowed', () => {
     expect(neoWorkReturnMessageId('w1', 0)).toBe('w1');

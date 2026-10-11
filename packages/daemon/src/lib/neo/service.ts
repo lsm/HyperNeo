@@ -24,6 +24,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -527,6 +528,7 @@ export class NeoService {
         hub.event('neo.changed', {})
       ),
     });
+    const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
     this.resolveAskOrigin = createNeoAskOriginResolver({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
@@ -535,6 +537,8 @@ export class NeoService {
       getWork: (id) => this.repo.getWork(id),
       getAsk: (id) => this.askRecords.get(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
+      getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
+      stamp: (input, origin) => inputOrigins.record(input, origin, Date.now()),
     });
     const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
     const notifyPublication = () => {
