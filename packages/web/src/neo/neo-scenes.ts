@@ -114,9 +114,10 @@ export function describeNeoDriverScenes(
     if (scene.receipt.kind !== 'work' || scene.receipt.status !== 'queued' || !driver) return scene;
     return {
       ...scene,
-      group: driver.abandoned
-        ? 'attention'
-        : (driver.status && driverSceneGroups[driver.status]) || scene.group,
+      group:
+        driver.abandoned && driver.status !== 'failed' && driver.status !== 'stopped'
+          ? 'attention'
+          : (driver.status && driverSceneGroups[driver.status]) || scene.group,
       label: neoWorkDriverLabel(driver),
     };
   });
