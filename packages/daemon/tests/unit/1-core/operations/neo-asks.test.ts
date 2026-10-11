@@ -156,6 +156,25 @@ describe('neo.ask operations', () => {
     });
   });
 
+  test("a context holder cannot read another concern's ask, whatever concern it names", async () => {
+    const askId = await openAsk();
+    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
+    db.createSession(createTestSession('holder'));
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'c1' });
+    const holder: OperationCaller = { source: 'mcp', sessionId: 'holder', role: 'neo' };
+    for (const input of [{ askId }, { concernId: 'c1', askId }])
+      expect(await invoke('neo.snapshot', input, holder)).toMatchObject({
+        value: { ok: false, reason: 'This context holder cannot access another concern.' },
+      });
+  });
+
+  test('an ask-scoped read lists every card under the ask', async () => {
+    const askId = await openAsk();
+    for (let index = 0; index < 12; index++) await propose(`card-${index}`, askId);
+    const scoped = (await invoke('neo.snapshot', { askId })) as { value?: { work: unknown[] } };
+    expect(scoped.value?.work).toHaveLength(12);
+  });
+
   test('stores the done list as checklist items and shows them in the snapshot', async () => {
     const opened = await invoke('neo.ask.open', {
       ...opening,

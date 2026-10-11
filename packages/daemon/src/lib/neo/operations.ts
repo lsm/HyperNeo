@@ -573,9 +573,9 @@ export function createNeoOperations(service: NeoService) {
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
       : service.repo.listWork(scope === undefined ? undefined : scope);
-    const recentWork = work.slice(0, caller.source === 'rpc' ? 50 : 10);
+    const recentWork = focus ? work : work.slice(0, caller.source === 'rpc' ? 50 : 10);
     const olderActiveWork =
-      caller.source === 'rpc'
+      caller.source === 'rpc' && !focus
         ? work
             .slice(50)
             .filter((item) => item.status === 'proposed' || item.status === 'queued')
@@ -726,8 +726,7 @@ export function createNeoOperations(service: NeoService) {
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) =>
-      input.concernId ??
-      (input.askId ? (service.askRecords.get(input.askId)?.concernId ?? undefined) : undefined),
+      input.askId ? (service.askRecords.get(input.askId)?.concernId ?? null) : input.concernId,
     (input, caller) => snapshot(caller, input.concernId, input.askId)
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
