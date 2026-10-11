@@ -1,7 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { neoDoneCheckMessageId, neoWorkReturnMessageId } from './ask-origin.ts';
-import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
+import type { NeoEvidence } from './evidence.ts';
 
 export type NeoDoneCheckSkip = 'settled' | 'not_checked' | 'told' | 'waiting';
 type Gate<T> = { value: T } | { reason: NeoDoneCheckSkip };
@@ -64,8 +64,10 @@ export function requireNeoDoneCheckUntold<T>(read: { told: boolean }, value: T):
 }
 
 export function requireNeoDoneCheckDue<T>(
-  found: { row: { prs: readonly NeoWorkPr[] } | null },
+  found: { read: { evidence: readonly NeoEvidence[] } | null },
   value: T
 ): Gate<T> {
-  return found.row && isNeoWorkPrWaiting(found.row.prs) ? { reason: 'waiting' } : { value };
+  return found.read?.evidence.some((item) => item.state === 'waiting')
+    ? { reason: 'waiting' }
+    : { value };
 }

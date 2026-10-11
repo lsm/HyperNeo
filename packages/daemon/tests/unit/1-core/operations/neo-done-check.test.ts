@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   neoDoneCheckToldIds,
   requireNeoDoneCheck,
@@ -8,15 +7,10 @@ import {
   neoWorkReturnToldIds,
   requireNeoWorkReturnUntold,
 } from '../../../../src/lib/neo/done-check.ts';
+import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 
 const goal = { workId: 'w1', goal: 'Fix it', doneWhen: '- merged' };
 const card = { goal, driver: true, session: true, ask: { status: 'open' as const } };
-const pr: NeoWorkPr = {
-  url: 'https://github.com/lsm/HyperNeo/pull/1',
-  state: 'OPEN',
-  checks: 'pending',
-  review: 'none',
-};
 
 describe('requireNeoDoneCheck', () => {
   test.each<
@@ -121,17 +115,19 @@ describe('requireNeoDoneCheckUntold', () => {
 });
 
 describe('requireNeoDoneCheckDue', () => {
+  const evidence = (state: NeoEvidence['state']): NeoEvidence => ({
+    key: 'k',
+    state,
+    summary: state,
+    blockers: [],
+  });
   test.each<
-    [string, { prs: NeoWorkPr[] } | null, ReturnType<typeof requireNeoDoneCheckDue<string>>]
+    [string, { evidence: NeoEvidence[] } | null, ReturnType<typeof requireNeoDoneCheckDue<string>>]
   >([
-    ['no pull requests', null, { value: 'goal' }],
-    ['a pull request still running CI', { prs: [pr] }, { reason: 'waiting' }],
-    [
-      'a pull request with green checks',
-      { prs: [{ ...pr, checks: 'passing' }] },
-      { value: 'goal' },
-    ],
-  ])('%s', (_label, row, gate) => {
-    expect(requireNeoDoneCheckDue({ row }, 'goal')).toEqual(gate);
+    ['no evidence read', null, { value: 'goal' }],
+    ['evidence still waiting', { evidence: [evidence('waiting')] }, { reason: 'waiting' }],
+    ['evidence ready', { evidence: [evidence('ready')] }, { value: 'goal' }],
+  ])('%s', (_label, read, gate) => {
+    expect(requireNeoDoneCheckDue({ read }, 'goal')).toEqual(gate);
   });
 });
