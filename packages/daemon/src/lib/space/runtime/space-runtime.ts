@@ -3442,13 +3442,7 @@ export class SpaceRuntime {
       }
       const taskManager = this.getOrCreateTaskManager(spaceId);
       if (Object.hasOwn(params, 'workspacePath')) {
-        await taskManager.updateTask(
-          taskId,
-          { workspacePath: params.workspacePath },
-          {
-            onCascadedTasks: async () => {},
-          }
-        );
+        await taskManager.updateTask(taskId, { workspacePath: params.workspacePath });
         delete (params as Record<string, unknown>).workspacePath;
       }
       const projectedStatus = prepareSpaceTaskStatusUpdate(
