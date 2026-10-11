@@ -334,6 +334,26 @@ describe('chooseNeoRoute with a new subject', () => {
     db.close();
   });
 
+  test('drops a topic whose holder cannot be opened, so the message stays with main Neo', async () => {
+    const db = new Sqlite(':memory:');
+    createNeoTables(db);
+    runMigration283(db);
+    const repo = new NeoRepository(db);
+    const failed = await openNeoNewTopic(
+      repo,
+      async () => {
+        throw new Error('session could not be created');
+      },
+      neoNewTopic('Plan the garden', 't2')
+    );
+    expect(failed).toBeNull();
+    expect(repo.getConcern('t2')).toBeNull();
+    repo.saveConcern({ id: 'bound', title: 'Bound', summary: '', context: '' }, 0);
+    repo.reserveBinding({ sessionId: 'neo:bound', concernId: 'bound', kind: 'concern' });
+    expect(repo.discardUnboundConcern('bound')).toBe(false);
+    db.close();
+  });
+
   test('names the topic after the first line of the message', () => {
     expect(neoNewTopic('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
       id: 'id-1',

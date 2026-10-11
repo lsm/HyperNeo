@@ -49,13 +49,18 @@ export function neoNewTopic(
 }
 
 export async function openNeoNewTopic(
-  repo: Pick<NeoRepository, 'saveConcern'>,
+  repo: Pick<NeoRepository, 'saveConcern' | 'discardUnboundConcern'>,
   openHolder: (concernId: string) => Promise<string>,
   topic: { id: string; title: string; summary: string }
 ): Promise<NeoHolder | null> {
   if (!repo.saveConcern({ ...topic, context: '' }, 0)) return null;
-  const sessionId = await openHolder(topic.id);
-  return { concernId: topic.id, sessionId, title: topic.title, summary: topic.summary };
+  try {
+    const sessionId = await openHolder(topic.id);
+    return { concernId: topic.id, sessionId, title: topic.title, summary: topic.summary };
+  } catch {
+    repo.discardUnboundConcern(topic.id);
+    return null;
+  }
 }
 
 export interface NeoHolder {

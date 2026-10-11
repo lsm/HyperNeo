@@ -71,6 +71,15 @@ export class NeoRepository {
     return row as NeoConcern | null;
   }
 
+  discardUnboundConcern(id: string): boolean {
+    const result = this.db
+      .prepare(`DELETE FROM neo_concerns WHERE id = ?
+        AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)`)
+      .run(id, id);
+    if (result.changes > 0) this.notify();
+    return result.changes > 0;
+  }
+
   reserveBinding(binding: NeoBinding): boolean {
     const result = this.db
       .prepare(`INSERT INTO neo_session_bindings (session_id, concern_id, kind)
