@@ -52,7 +52,7 @@ describe('runMigration335', () => {
     runMigration335(db);
     expect(columnsOf(db)).toContain('read_at');
     const bare = new Database(':memory:');
-    runMigration333(bare);
+    runMigration335(bare);
     expect(bare.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_work_prs'").get()).toBe(
       null
     );

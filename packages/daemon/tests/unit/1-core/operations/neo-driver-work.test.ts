@@ -1137,6 +1137,55 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('a life-admin confirmation ticks the ask item that names it', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply:
+          'Reordered the water filters.\nConfirmation: id=<msg-1>; from=orders@amazon.com; subject=Your order is confirmed',
+      },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    service.askRecords.open(
+      {
+        id: 'ask-work-1',
+        requestKey: 'neo:root:work-1',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Reorder the water filters',
+        ask: 'Reorder the water filters',
+        doneWhen: '- an order confirmation from Amazon',
+        doneSource: 'human',
+        pack: 'life-admin',
+      },
+      [{ text: 'Order confirmation from Amazon arrives', check: 'life-admin.confirmed' }]
+    );
+    service.askRecords.link('ask-work-1', 'work-1');
+    service.workGoals.record('work-1', 'Reorder the water filters', '- an order confirmation');
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      const ask = service.askRecords.get('ask-work-1');
+      expect(ask?.doneItems).toEqual([
+        expect.objectContaining({
+          text: 'Order confirmation from Amazon arrives',
+          state: 'met',
+          metBy: 'daemon',
+          evidence: expect.stringContaining('orders@amazon.com'),
+        }),
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a life-admin ask with a pull request row still reads the row', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/7';
