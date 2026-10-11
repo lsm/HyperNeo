@@ -97,7 +97,7 @@ const Open = z
   .refine((input) => input.doneWhen || input.doneItems, 'Pass doneItems, or doneWhen.');
 type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen: string };
 const Cite = z.union([
-  z.object({ said: z.string().trim().min(1).max(500) }),
+  z.object({ said: z.string().trim().min(8, 'Quote at least a few of their words.').max(500) }),
   z.object({ rule: z.string().trim().min(1).max(2000) }),
   z.object({ card: z.string().trim().min(1).max(160) }),
 ]);

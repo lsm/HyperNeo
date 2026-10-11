@@ -912,6 +912,12 @@ describe('neo.ask operations', () => {
     expect(
       await invoke('neo.ask.tick', { ...needsYou, cite: { said: 'I will pick the date' } }, later)
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('cite_not_found') } });
+    expect(await invoke('neo.ask.tick', { ...needsYou, cite: { said: 'e' } }, later)).toMatchObject(
+      {
+        kind: 'failed',
+        message: expect.stringContaining('Quote at least a few of their words'),
+      }
+    );
     expect(service.askRecords.get(askId)?.status).toBe('open');
     expect(
       await invoke(
