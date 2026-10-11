@@ -11,6 +11,7 @@ import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import {
   NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
@@ -649,7 +650,7 @@ export class NeoService {
     const directReplies: NeoDirectReplyRuntime = {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
-      recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
+      recentAsks: (conversationId, id) => this.recentAsksFor(conversationId, id),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
       startedWork: (id, messageId) =>
         neoAskStartedWork(db, id, messageId) || this.forwardedAway(id, messageId),
@@ -2141,6 +2142,18 @@ export class NeoService {
 
   private toldDoneCheck(work: NeoWork, ids: readonly string[]): boolean {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
+  }
+
+  recentAsksFor(conversationId: string, sessionId: string): NeoConversationAsk[] {
+    const forwarded = this.askForwards.listTo(sessionId, 5).flatMap((forward) => {
+      const ask = this.asks.find(conversationId, forward.ask.messageId);
+      return ask && ask.askOrigin.sessionId === forward.ask.sessionId
+        ? [{ ...ask, requestId: neoForwardMessageId(forward.ask, forward.hop) }]
+        : [];
+    });
+    return [...this.asks.recentFrom(conversationId, sessionId, 5), ...forwarded].sort(
+      (a, b) => a.sequence - b.sequence
+    );
   }
 
   forwardedAway(sessionId: string, messageId: string): boolean {

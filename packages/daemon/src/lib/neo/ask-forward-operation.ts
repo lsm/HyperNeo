@@ -115,18 +115,23 @@ export function requireForwardedAsk(ask: NeoAskOrigin | null): Gate<NeoAskOrigin
 
 export function planNeoAskForward(
   input: Input,
-  holder: Pick<Holder, 'sessionId' | 'concernId'>,
+  holder: Pick<Holder, 'sessionId' | 'concernId' | 'input'>,
   ask: NeoAskOrigin,
   forwards: readonly Pick<NeoAskForward, 'toSessionId'>[]
 ): Gate<Plan> {
   if (forwards.length === 0) {
-    if (ask.sessionId !== holder.sessionId) return refuse('not_your_ask');
+    if (ask.sessionId !== holder.sessionId || holder.input.messageId !== ask.messageId)
+      return refuse('not_your_ask');
     return input.to === holder.concernId
       ? refuse('same_topic')
       : { value: { hop: 0, to: input.to } };
   }
   if (forwards.length === 1) {
-    if (forwards[0].toSessionId !== holder.sessionId) return refuse('not_your_ask');
+    if (
+      forwards[0].toSessionId !== holder.sessionId ||
+      holder.input.messageId !== neoForwardMessageId(ask, 0)
+    )
+      return refuse('not_your_ask');
     return input.to === NEO_FORWARD_MAIN
       ? { value: { hop: 1, to: NEO_FORWARD_MAIN } }
       : refuse('main_only');

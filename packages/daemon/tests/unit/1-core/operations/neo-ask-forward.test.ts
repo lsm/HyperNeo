@@ -72,8 +72,12 @@ describe('requireForwardingHolder', () => {
 });
 
 describe('planNeoAskForward', () => {
-  const holder = { sessionId: garden.sessionId, concernId: 'garden' };
-  const second = { sessionId: pond.sessionId, concernId: 'pond' };
+  const holder = { sessionId: garden.sessionId, concernId: 'garden', input: ask };
+  const second = {
+    sessionId: pond.sessionId,
+    concernId: 'pond',
+    input: { sessionId: pond.sessionId, messageId: 'neo-forward:ask-1:0' },
+  };
 
   test('the routed holder forwards once, to another topic or main, never to itself', () => {
     expect(planNeoAskForward({ to: 'pond' }, holder, ask, [])).toEqual({
@@ -88,6 +92,20 @@ describe('planNeoAskForward', () => {
     expect(planNeoAskForward({ to: 'garden' }, second, ask, [])).toEqual({
       reason: { ok: false, reason: 'not_your_ask' },
     });
+  });
+
+  test('only the turn that carries the message itself can forward it, not a consultation or nudge', () => {
+    const consulted = {
+      ...holder,
+      input: { sessionId: garden.sessionId, messageId: 'neo-consult:c1:request' },
+    };
+    expect(planNeoAskForward({ to: 'pond' }, consulted, ask, [])).toEqual({
+      reason: { ok: false, reason: 'not_your_ask' },
+    });
+    const nudged = { ...second, input: { ...second.input, messageId: 'neo-nudge:x' } };
+    expect(
+      planNeoAskForward({ to: 'main' }, nudged, ask, [{ toSessionId: pond.sessionId }])
+    ).toEqual({ reason: { ok: false, reason: 'not_your_ask' } });
   });
 
   test('the holder that received it may only send it on to main, and nothing goes further', () => {
@@ -249,6 +267,47 @@ describe('neo.ask.forward', () => {
       value: { ok: false, reason: 'unknown_topic' },
     });
     expect(delivered).toEqual([]);
+  });
+});
+
+describe('NeoService.recentAsksFor', () => {
+  test('lists an ask forwarded to a holder under the forwarded note, so its reply fallback covers it', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as never,
+      { event: () => {} } as never,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    const conversationId = '10000000-0000-4000-8000-000000000001';
+    const requestId = '20000000-0000-4000-8000-000000000001';
+    try {
+      expect(
+        service.asks.append({
+          conversationId,
+          requestId,
+          askOrigin: { sessionId: garden.sessionId, messageId: requestId },
+          content: 'Fix the pond pump',
+        }).accepted
+      ).toBe(true);
+      const origin = { sessionId: garden.sessionId, messageId: requestId };
+      service.askForwards.record(origin, {
+        hop: 0,
+        fromSessionId: garden.sessionId,
+        toSessionId: pond.sessionId,
+        toConcernId: 'pond',
+        forwardedAt: 1,
+      });
+      expect(
+        service.recentAsksFor(conversationId, pond.sessionId).map((item) => item.requestId)
+      ).toEqual([`neo-forward:${requestId}:0`]);
+      expect(
+        service.recentAsksFor(conversationId, garden.sessionId).map((item) => item.requestId)
+      ).toEqual([requestId]);
+    } finally {
+      service.dispose();
+      db.close();
+    }
   });
 });
 

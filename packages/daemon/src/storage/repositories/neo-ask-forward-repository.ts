@@ -22,6 +22,18 @@ export class NeoAskForwardRepository {
       .all(ask.sessionId, ask.messageId) as NeoAskForward[];
   }
 
+  listTo(sessionId: string, limit: number): (NeoAskForward & { ask: NeoAskOrigin })[] {
+    return (
+      this.db
+        .prepare(`SELECT ${columns}, ask_session_id AS askSessionId, ask_message_id AS askMessageId
+          FROM neo_ask_forwards WHERE to_session_id = ? ORDER BY forwarded_at DESC LIMIT ?`)
+        .all(sessionId, limit) as (NeoAskForward & { askSessionId: string; askMessageId: string })[]
+    ).map(({ askSessionId, askMessageId, ...forward }) => ({
+      ...forward,
+      ask: { sessionId: askSessionId, messageId: askMessageId },
+    }));
+  }
+
   remove(ask: NeoAskOrigin, hop: number): void {
     this.db
       .prepare(
