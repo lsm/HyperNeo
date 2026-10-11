@@ -151,6 +151,12 @@ describe('planNeoHeldSessionNotices', () => {
     expect(settled.held.size).toBe(0);
   });
 
+  test('a held notice for a session muted or gone from the listing is dropped, never posted', () => {
+    const held = new Map([['a', notice('a', 'needs_you')]]);
+    const gone = planNeoHeldSessionNotices(held, [], new Set(), () => undefined);
+    expect([gone.notices, gone.held.size]).toEqual([[], 0]);
+  });
+
   test('drops a held notice once the session no longer needs the human or is gone', () => {
     const held = new Map([['a', notice('a', 'needs_you')]]);
     expect(planNeoHeldSessionNotices(held, [], new Set(['a']), () => 'running').held.size).toBe(0);
@@ -393,6 +399,17 @@ describe('NeoService session ask links', () => {
       ['neo.session.notice', expect.objectContaining({ key, kind: 'needs_you' })],
     ]);
     expect((await askViews())[0]).toMatchObject({ group: 'running', sessions: [] });
+  });
+
+  test('muting a linked session that needs the human never posts its held notice', async () => {
+    openAsk(`Land ${pr(12)}`);
+    const now = Date.now();
+    await watch('running', now - 3_000, [pr(12)]);
+    await watch('needs_you', now - 2_000, [pr(12)]);
+    expect(notices()).toEqual([]);
+    await invoke('neo.session.mute', { key, muted: true });
+    await watch('needs_you', now - 1_000, [pr(12)]);
+    expect(notices()).toEqual([]);
   });
 
   test('a muted session neither shows on the ask nor sends a notice', async () => {

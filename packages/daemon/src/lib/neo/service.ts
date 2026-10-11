@@ -1459,22 +1459,26 @@ export class NeoService {
     )
     .pipe(
       (
+        listed: { sessions: NeoListedSession[] },
+        plan: ReturnType<typeof planNeoSessionWatch>,
         notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
         linked: { links: NeoSessionAskLink[] }
       ) => {
-        const planned = new Map(
-          notices.planned.flatMap((item) => (item.notice ? [[item.notice.key, item] as const] : []))
+        const shown = new Set(listed.sessions.map((session) => session.key));
+        const read = new Map(
+          plan.reads.map((session, index) => [session.key, notices.planned[index]?.seen.status])
         );
         const next = planNeoHeldSessionNotices(
           this.heldSessionNotices,
-          [...planned.values()].flatMap((item) => (item.notice ? [item.notice] : [])),
+          notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
           new Set(linked.links.map((link) => link.key)),
-          (key) => planned.get(key)?.seen.status ?? this.sessionsSeen.get(key)?.status
+          (key) =>
+            shown.has(key) ? (read.get(key) ?? this.sessionsSeen.get(key)?.status) : undefined
         );
         this.heldSessionNotices = next.held;
         return { notices: next.notices };
       },
-      ['notices', 'linked'],
+      ['listed', 'plan', 'notices', 'linked'],
       'added'
     )
     .pipe(
