@@ -16,7 +16,8 @@ export type NeoRefState = {
 };
 export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState[]>;
 
-const REF_URL = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/(\d+)/g;
+const REF_PATH = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/(\d+)/;
+const REF_URL = new RegExp(`https://${REF_PATH.source}`, 'g');
 const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
@@ -54,9 +55,7 @@ const NEO_REF_MISSING_MS = 60 * 60_000;
 const refKey = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
 
 export function neoRefFromUrl(url: string): NeoRef | null {
-  const [, owner, repo, number] = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/(\d+)/.exec(
-    url
-  ) ?? [null];
+  const [, owner, repo, number] = REF_PATH.exec(url) ?? [null];
   return owner && repo && number ? { owner, repo, number: Number(number) } : null;
 }
 
