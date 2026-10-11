@@ -257,7 +257,7 @@ jobs:
         run: bun run scripts/generate-embedded-assets.ts
 
       - name: Compile binary
-        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }}
+        run: bun build --compile --target=${{ matrix.target }} --define 'process.env.HYPERNEO_BUILD_COMMIT="${{ github.sha }}"' --outfile=dist/bin/${{ matrix.binary }} ${{ matrix.entry }}
 
       - name: Smoke test
         if: matrix.smoke

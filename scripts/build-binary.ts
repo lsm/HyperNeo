@@ -49,11 +49,23 @@ run('bun run scripts/generate-embedded-assets.ts');
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
-const buildCommit = (
-  process.env.GITHUB_SHA || execSync('git rev-parse HEAD', { encoding: 'utf8' })
-).trim();
-const defineBuildCommit = `--define 'process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"'`;
-console.log(`Build commit: ${buildCommit}`);
+function readBuildCommit(): string {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.trim();
+  try {
+    return execSync('git rev-parse HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const buildCommit = readBuildCommit();
+const defineBuildCommit = /^[0-9a-f]{40}$/.test(buildCommit)
+  ? `--define 'process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"'`
+  : '';
+console.log(`Build commit: ${buildCommit || 'unknown'}`);
 
 for (const target of targets) {
   const outputPath = outputFileForTarget(target);
