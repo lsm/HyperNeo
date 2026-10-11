@@ -360,6 +360,21 @@ describe.skipIf(!isBun)('openai-chat-bridge: a silent upstream', () => {
     expect(upstreamSignal?.aborted).toBe(true);
   });
 
+  it('returns a retryable overloaded error when an upstream error body stalls', async () => {
+    server = await makeSilentServer(
+      async () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    );
+
+    const res = await postMessages(server.port);
+
+    expect(res.status).toBe(529);
+    expect(res.headers.get('x-should-retry')).toBe('true');
+  });
+
   it('ends a stream that goes silent with an overloaded error event', async () => {
     let cancelled = false;
     server = await makeSilentServer(

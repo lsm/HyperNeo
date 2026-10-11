@@ -805,6 +805,20 @@ export async function createOpenAIChatBridgeServer(
       } else {
         req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
       }
+      const silentUpstream = (error: UpstreamSilenceError): Response => {
+        upstreamAbort.abort();
+        logger.warn(`openai-chat-bridge: ${error.message}; returning a retryable error`);
+        return sendRetryableUpstreamError({
+          type: 'overloaded_error',
+          status: 529,
+          message: error.message,
+        });
+      };
+      const readUpstreamText = (response: Response): Promise<string | UpstreamSilenceError> =>
+        within(response.text(), upstreamSilenceMs).catch((error: unknown) => {
+          if (error instanceof UpstreamSilenceError) return error;
+          throw error;
+        });
       let upstreamResponse: Response;
       try {
         upstreamResponse = await within(
@@ -822,15 +836,7 @@ export async function createOpenAIChatBridgeServer(
           upstreamSilenceMs
         );
       } catch (error) {
-        if (error instanceof UpstreamSilenceError) {
-          upstreamAbort.abort();
-          logger.warn(`openai-chat-bridge: ${error.message}; returning a retryable error`);
-          return sendRetryableUpstreamError({
-            type: 'overloaded_error',
-            status: 529,
-            message: error.message,
-          });
-        }
+        if (error instanceof UpstreamSilenceError) return silentUpstream(error);
         return sendJsonError(
           502,
           'api_error',
@@ -839,7 +845,8 @@ export async function createOpenAIChatBridgeServer(
       }
 
       if (!upstreamResponse.ok) {
-        const text = await upstreamResponse.text();
+        const text = await readUpstreamText(upstreamResponse);
+        if (text instanceof UpstreamSilenceError) return silentUpstream(text);
         const normalized = normalizeOpenAiUpstreamError(text, upstreamResponse.status);
         if (normalized) {
           logger.warn(
@@ -857,7 +864,8 @@ export async function createOpenAIChatBridgeServer(
 
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
       if (isJsonContentType(upstreamContentType)) {
-        const bodyText = await upstreamResponse.text();
+        const bodyText = await readUpstreamText(upstreamResponse);
+        if (bodyText instanceof UpstreamSilenceError) return silentUpstream(bodyText);
         const normalized = normalizeOpenAiUpstreamError(bodyText, upstreamResponse.status);
         if (normalized) {
           logger.warn(
