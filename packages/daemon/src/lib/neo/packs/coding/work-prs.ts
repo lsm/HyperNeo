@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import type { NeoEvidence, planNeoDoneCheck } from '../../evidence.ts';
 
@@ -204,8 +205,11 @@ type BranchRule = {
 };
 type PrDetail = { commits: { oid: string; signed: boolean }[]; unresolved: number };
 
-const PR_PARTS = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/;
 const RULES_MS = 10 * 60_000;
+const githubPr = (url: string) => {
+  const pr = parsePrUrl(url);
+  return pr?.host === 'github.com' ? pr : null;
+};
 const rulesCache = new Map<string, { at: number; rules: BranchRule[] }>();
 const RulesSchema = z.array(
   z.object({
@@ -312,8 +316,8 @@ async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
 }
 
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {
-  const [, owner, name, number] = PR_PARTS.exec(url) ?? [];
-  if (!number) return null;
+  const pr = githubPr(url);
+  if (!pr) return null;
   const outcome = await gh(
     [
       'gh',
@@ -322,11 +326,11 @@ async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail |
       '-f',
       `query=${DETAIL_QUERY}`,
       '-f',
-      `o=${owner}`,
+      `o=${pr.owner}`,
       '-f',
-      `n=${name}`,
+      `n=${pr.repo}`,
       '-F',
-      `p=${number}`,
+      `p=${pr.number}`,
     ],
     spawnImpl,
     'graphql'
@@ -385,9 +389,9 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
   .pipe(
     async (url: string, spawnImpl: SpawnFn, found: { pr: NeoWorkPr; base?: string }) => {
       if (!wantsNeoWorkPrBlockers(found.pr, found.base)) return { rules: [], detail: null };
-      const [, owner, name] = PR_PARTS.exec(url) ?? [];
+      const pr = githubPr(url);
       return {
-        rules: owner ? await readBranchRules(`${owner}/${name}`, found.base!, spawnImpl) : [],
+        rules: pr ? await readBranchRules(`${pr.owner}/${pr.repo}`, found.base!, spawnImpl) : [],
         detail: await readPrDetail(url, spawnImpl),
       };
     },
