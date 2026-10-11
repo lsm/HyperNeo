@@ -485,17 +485,22 @@ describe('NeoService direct reply fallback wiring', () => {
   });
 
   test.each([
-    ['rechecks a stalled turn the restart found idle', 'idle', true],
-    ['leaves a turn the restart cut to its own resume', 'interrupted', false],
+    ['publishes a finished reply the restart left unpublished', 'idle', 1],
+    ['leaves a turn the restart cut to its own resume', 'interrupted', 0],
   ])('%s', async (_name, status, expected) => {
-    stallNewestAsk();
     db.updateSession(root, { processingState: JSON.stringify({ status }) });
+    await service.recover();
+    expect(published()).toHaveLength(expected);
+  });
+
+  test('never nudges an unfinished turn after a restart, since a human stop also saves idle', async () => {
+    stallNewestAsk();
+    db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
     vi.useFakeTimers();
     try {
       await service.recover();
-      expect(nudgeQueued()).toBe(false);
       await vi.advanceTimersByTimeAsync(21_000);
-      await vi.waitFor(() => expect(nudgeQueued()).toBe(expected));
+      expect(nudgeQueued()).toBe(false);
     } finally {
       vi.useRealTimers();
     }

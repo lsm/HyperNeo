@@ -905,7 +905,7 @@ export class NeoService {
       try {
         publishNeoDirectReplyFallback(sessionId, this.directReplies, {
           settled: false,
-          interrupted: false,
+          interrupted: true,
         });
       } catch (error) {
         this.log.warn('Direct reply recovery pending', error);
