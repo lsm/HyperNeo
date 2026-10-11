@@ -52,6 +52,35 @@ describe('planNeoAskResume', () => {
         reopen: false,
       },
     ],
+    [
+      'a decision re-settled with new evidence still stays',
+      {
+        ...ask,
+        waitingItem: 'i4',
+        evidence: 'Still nobody owns #6545.',
+        doneItems: [{ ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' }],
+      },
+      null,
+    ],
+    [
+      'a question a tick put the ask waiting on is reset',
+      {
+        ...ask,
+        waitingItem: 'i1',
+        evidence: 'Item i1',
+        doneItems: [{ ...item('i1', 'needs_you'), evidence: 'Item i1' }],
+      },
+      {
+        ask: {
+          ...ask,
+          waitingItem: 'i1',
+          evidence: 'Item i1',
+          doneItems: [{ ...item('i1', 'needs_you'), evidence: 'Item i1' }],
+        },
+        items: ['i1'],
+        reopen: true,
+      },
+    ],
     ['an open ask with nothing to undo', { ...ask, status: 'open', doneItems: [] }, null],
     ['a settled ask', { ...ask, status: 'achieved' }, null],
     ['a card with no ask', null, null],
