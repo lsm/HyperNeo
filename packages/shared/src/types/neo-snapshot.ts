@@ -130,6 +130,61 @@ export interface NeoWorkPrReceipt {
   waiting: boolean;
 }
 
+export type NeoCardPhase =
+  | 'proposed'
+  | 'handed'
+  | 'running'
+  | 'needs_you'
+  | 'checking'
+  | 'abandoned'
+  | 'stopped'
+  | 'pr_open'
+  | 'pr_setback'
+  | 'merged'
+  | 'reported'
+  | 'failed'
+  | 'cancelled';
+
+export type NeoCardGroup = 'attention' | 'running' | 'outcomes';
+export type NeoCardTone = 'accent' | 'warning' | 'success';
+export type NeoCardAction = 'start' | 'cancel' | 'retry' | 'close' | 'done';
+
+export interface NeoCardPrimary {
+  kind: 'start' | 'retry' | 'close' | 'answer' | 'open' | 'none';
+  label: string | null;
+  link: string | null;
+}
+
+export interface NeoCardPrSummary {
+  number: string;
+  label: string;
+  count: number;
+  inProgress: boolean;
+  setback: boolean;
+}
+
+export interface NeoCardView {
+  workId: string;
+  phase: NeoCardPhase;
+  group: NeoCardGroup;
+  tone: NeoCardTone;
+  label: string;
+  hidden: boolean;
+  primary: NeoCardPrimary;
+  actions: NeoCardAction[];
+  adapter: string | null;
+  pr: NeoCardPrSummary | null;
+  goal: string | null;
+  doneWhen: string | null;
+  continued: number;
+  pooled: boolean;
+  superseded: boolean;
+  uncheckedSince: number | null;
+  unconfirmed: boolean;
+  abandoned: boolean;
+  retryable: boolean;
+}
+
 export interface NeoReceiptAskOrigin {
   kind: 'work' | 'consultation';
   id: string;
@@ -177,6 +232,7 @@ export interface NeoSnapshot {
   workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];
+  cards?: NeoCardView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
 }
