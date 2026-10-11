@@ -9,6 +9,7 @@ import { runMigration326 } from '../../../../src/storage/schema/m326-neo-ask-app
 import { runMigration327 } from '../../../../src/storage/schema/m327-neo-ask-approved-continues';
 import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds';
 import { runMigration330 } from '../../../../src/storage/schema/m330-neo-ask-waiting-item';
+import { runMigration342 } from '../../../../src/storage/schema/m342-neo-ask-item-options';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -30,6 +31,7 @@ function withAsks() {
     runMigration327,
     runMigration328,
     runMigration330,
+    runMigration342,
   ])
     migrate(db);
   return db;
