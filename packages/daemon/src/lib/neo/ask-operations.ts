@@ -63,6 +63,7 @@ export const NeoAskSchema = z.object({
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
+        decision: z.literal(true).optional(),
       })
     )
     .optional(),
@@ -623,7 +624,8 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             neoAskSummary(input),
             input.evidence,
             decision.waitingItem,
-            decision.add
+            decision.add,
+            true
           ),
         };
       },

@@ -419,6 +419,7 @@ describe('neo.ask operations', () => {
         evidence: 'Is red CI on main acceptable?',
       })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', outcome: 'CI green' } } });
+    expect(service.askRecords.get(askId)?.doneItems?.[1]?.decision).toBeUndefined();
     expect(
       await invoke(
         'neo.ask.tick',
@@ -467,6 +468,7 @@ describe('neo.ask operations', () => {
               text: 'Decide whether to assign #6545.',
               state: 'needs_you',
               evidence: 'Nobody owns #6545 yet.',
+              decision: true,
             }),
           ],
         },

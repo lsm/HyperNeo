@@ -8,8 +8,7 @@ export function planNeoAskResume(
   siblingsWaiting: boolean
 ): NeoAskResume | null {
   if (!ask || isNeoAskSettled(ask) || siblingsWaiting) return null;
-  const decided = (item: NeoAskItem) =>
-    item.id === ask.waitingItem && ask.evidence != null && ask.evidence !== item.text;
+  const decided = (item: NeoAskItem) => item.decision === true;
   const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
   const items = open.filter((item) => !decided(item)).map((item) => item.id);
   const reopen = (ask.status === 'waiting' || ask.status === 'blocked') && !open.some(decided);

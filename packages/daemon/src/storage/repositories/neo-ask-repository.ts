@@ -28,10 +28,14 @@ export type NeoAskInput = Omit<
   | 'settledAt'
 >;
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
-type NeoAskItemRow = Omit<NeoAskItem, 'removed'> & { askId: string; removed: number };
+type NeoAskItemRow = Omit<NeoAskItem, 'removed' | 'decision'> & {
+  askId: string;
+  removed: number;
+  decision: number;
+};
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt`;
+  met_by AS metBy, removed, added_at AS addedAt, decision`;
 
 export class NeoAskRepository {
   constructor(
@@ -225,7 +229,8 @@ export class NeoAskRepository {
     outcome: string,
     evidence: string,
     waitingItem: string | null = null,
-    decision: { id: string; position: number; text: string } | null = null
+    decision: { id: string; position: number; text: string } | null = null,
+    decided = false
   ): NeoAsk | null {
     const now = Date.now();
     const row = this.db.transaction(() => {
@@ -246,9 +251,14 @@ export class NeoAskRepository {
       if (settled && decision)
         this.db
           .prepare(`INSERT INTO neo_ask_items
-            (ask_id, id, position, text, state, evidence, added_at, updated_at)
-            VALUES (?, ?, ?, ?, 'needs_you', ?, ?, ?)`)
+            (ask_id, id, position, text, state, evidence, decision, added_at, updated_at)
+            VALUES (?, ?, ?, ?, 'needs_you', ?, 1, ?, ?)`)
           .run(expected.id, decision.id, decision.position, decision.text, evidence, now, now);
+      else if (settled && decided && waitingItem)
+        this.db
+          .prepare(`UPDATE neo_ask_items SET decision = 1, updated_at = ?
+            WHERE ask_id = ? AND id = ? AND state = 'needs_you'`)
+          .run(now, expected.id, waitingItem);
       return settled;
     })();
     if (!row) return null;
@@ -294,7 +304,11 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, ...item }) => ({ ...item, removed: removed === 1 })),
+        .map(({ askId: _askId, removed, decision, ...item }) => ({
+          ...item,
+          removed: removed === 1,
+          ...(decision === 1 ? { decision: true as const } : {}),
+        })),
     }));
   }
 }

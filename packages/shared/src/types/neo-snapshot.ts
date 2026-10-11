@@ -71,6 +71,7 @@ export interface NeoAskItem {
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
   addedAt: number | null;
+  decision?: true;
 }
 
 export interface NeoAsk {

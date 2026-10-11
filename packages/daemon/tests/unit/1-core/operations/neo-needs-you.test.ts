@@ -28,54 +28,33 @@ describe('planNeoAskResume', () => {
       { ask: { ...ask, status: 'blocked', doneItems: [] }, items: [], reopen: true },
     ],
     [
-      'a decision the ask was settled waiting on stays',
+      'a decision the ask was settled waiting on stays, whatever its evidence says',
       {
         ...ask,
         waitingItem: 'i4',
-        evidence: 'Nobody owns #6545.',
-        doneItems: [
-          item('i1', 'needs_you'),
-          { ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' },
-        ],
+        evidence: 'Item i4',
+        doneItems: [item('i1', 'needs_you'), { ...item('i4', 'needs_you'), decision: true }],
       },
       {
         ask: {
           ...ask,
           waitingItem: 'i4',
-          evidence: 'Nobody owns #6545.',
-          doneItems: [
-            item('i1', 'needs_you'),
-            { ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' },
-          ],
+          evidence: 'Item i4',
+          doneItems: [item('i1', 'needs_you'), { ...item('i4', 'needs_you'), decision: true }],
         },
         items: ['i1'],
         reopen: false,
       },
     ],
     [
-      'a decision re-settled with new evidence still stays',
-      {
-        ...ask,
-        waitingItem: 'i4',
-        evidence: 'Still nobody owns #6545.',
-        doneItems: [{ ...item('i4', 'needs_you'), evidence: 'Nobody owns #6545.' }],
-      },
-      null,
-    ],
-    [
       'a question a tick put the ask waiting on is reset',
-      {
-        ...ask,
-        waitingItem: 'i1',
-        evidence: 'Item i1',
-        doneItems: [{ ...item('i1', 'needs_you'), evidence: 'Item i1' }],
-      },
+      { ...ask, waitingItem: 'i1', evidence: 'Other words', doneItems: [item('i1', 'needs_you')] },
       {
         ask: {
           ...ask,
           waitingItem: 'i1',
-          evidence: 'Item i1',
-          doneItems: [{ ...item('i1', 'needs_you'), evidence: 'Item i1' }],
+          evidence: 'Other words',
+          doneItems: [item('i1', 'needs_you')],
         },
         items: ['i1'],
         reopen: true,
