@@ -797,7 +797,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ANTHROPIC_DEFAULT_OPUS_MODEL: this.getModelForTier('opus') ?? sdkModelId,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: sdkModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: this.getModelForTier('haiku') ?? sdkModelId,
       },
