@@ -1,3 +1,4 @@
+import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
@@ -57,10 +58,16 @@ const work = (id: string, status: NeoWork['status'], extra: Partial<NeoWork> = {
   ...extra,
 });
 
-const show = (item: NeoWork, onOpen?: (id: string) => void, onAction = vi.fn()) => {
+const show = (
+  item: NeoWork,
+  onOpen?: (id: string) => void,
+  onAction = vi.fn(),
+  driver?: NeoWorkDriverReceipt
+) => {
   const result = render(
     <NeoWorkCard
       work={item}
+      driver={driver}
       busy={false}
       disabled={false}
       onAction={onAction}
@@ -155,11 +162,27 @@ describe('NeoWorkCard detail opening', () => {
       sessionId: null,
       report: 'Could not start the execution: logged out',
     });
-    const { card } = show(failed, vi.fn(), action);
+    const retryable = {
+      workId: 'f',
+      adapter: 'hyperneo',
+      daemon: null,
+      status: null,
+      link: null,
+      retryable: true as const,
+    };
+    const { card } = show(failed, vi.fn(), action, retryable);
     fireEvent.click(within(card).getByRole('button', { name: 'Retry' }));
     expect(action).toHaveBeenCalledExactlyOnceWith('f', 'retry');
     cleanup();
-    render(<NeoWorkCard work={failed} busy={true} disabled={false} onAction={action} />);
+    render(
+      <NeoWorkCard
+        work={failed}
+        driver={retryable}
+        busy={true}
+        disabled={false}
+        onAction={action}
+      />
+    );
     expect((screen.getByRole('button', { name: 'Retrying…' }) as HTMLButtonElement).disabled).toBe(
       true
     );

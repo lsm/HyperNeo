@@ -12,8 +12,6 @@ export type NeoWorkPrimary =
   | { readonly kind: 'chat'; readonly label: string }
   | { readonly kind: 'none' };
 
-const startFailure = 'Could not start the execution';
-
 export function neoWorkOpenLabel(driver: NeoWorkDriverReceipt | undefined): string {
   const app = driver ? neoWorkDriverApp(driver) : 'HyperNeo';
   return app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`;
@@ -25,8 +23,7 @@ export function neoWorkPrimaryAction(
   { waiting = false, chat = false }: { waiting?: boolean; chat?: boolean } = {}
 ): NeoWorkPrimary {
   if (work.status === 'proposed') return { kind: 'start', label: 'Start work' };
-  if (work.status === 'failed' && !work.sessionId && work.report?.startsWith(startFailure))
-    return { kind: 'retry', label: 'Retry' };
+  if (driver?.retryable) return { kind: 'retry', label: 'Retry' };
   if (work.status === 'queued' && waiting && work.sessionId && chat)
     return { kind: 'answer', label: 'Answer in chat', link: null };
   const link = work.sessionId ? null : neoWorkDriverLink(driver);
@@ -50,15 +47,13 @@ export function neoWorkPresentation(
 export function neoWorkMeta(
   work: NeoWork,
   prs: NeoWorkPrReceipt | undefined,
+  driver?: NeoWorkDriverReceipt,
   now = Date.now()
 ): string | null {
   const pr = neoWorkPrNumber(prs);
   if (pr) return `PR ${pr}`;
   if (work.status === 'proposed') return null;
   const when = getRelativeTime(work.createdAt, now);
-  const neverStarted =
-    !work.sessionId &&
-    (work.status === 'cancelled' ||
-      (work.status === 'failed' && !!work.report?.startsWith(startFailure)));
+  const neverStarted = !work.sessionId && (work.status === 'cancelled' || !!driver?.retryable);
   return neverStarted ? when : `Started ${when}`;
 }
