@@ -41,14 +41,20 @@ describe('NeoWorkDriverTargetRepository.readCard', () => {
 
   test('an unstarted card reads empty columns, an unparseable target reads null, and a missing card is null', () => {
     const db = driverTargets();
-    db.exec(
-      `INSERT INTO neo_work_driver_targets(work_id, target) VALUES ('fresh', '{"verb":"start","adapter":"hyperneo","place":{}}')`
+    const start = {
+      verb: 'start',
+      adapter: 'hyperneo',
+      place: { machine: 'laptop', name: 'neokai' },
+    } as const;
+    db.prepare("INSERT INTO neo_work_driver_targets(work_id, target) VALUES ('fresh', ?)").run(
+      JSON.stringify(start)
     );
     db.exec(
       `INSERT INTO neo_work_driver_targets(work_id, target) VALUES ('broken', '{"verb":"nope"}')`
     );
     const repo = new NeoWorkDriverTargetRepository(db);
-    expect(repo.readCard('fresh')).toMatchObject({
+    expect(repo.readCard('fresh')).toEqual({
+      target: start,
       ref: null,
       followAnchor: null,
       liveStatus: null,
