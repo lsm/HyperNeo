@@ -7,6 +7,7 @@ import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
   isNeoAdoptOnlyAsk,
+  isNeoTrackedFollowUp,
   keepNeoTrackedSessions,
   NEO_SESSION_TRACK_MS,
   requireNeoTrackRoot,
@@ -44,6 +45,30 @@ describe('isNeoAdoptOnlyAsk', () => {
     expect(isNeoAdoptOnlyAsk({ workIds: ['w1'] }, 'w1')).toBe(true);
     expect(isNeoAdoptOnlyAsk({ workIds: ['w1', 'w2'] }, 'w1')).toBe(false);
     expect(isNeoAdoptOnlyAsk({ workIds: ['w2'] }, 'w1')).toBe(false);
+  });
+});
+
+describe('isNeoTrackedFollowUp', () => {
+  const open = { workIds: ['w1', 'w2'], approvedAt: null, status: 'open' as const };
+  const adopted = new Map([
+    ['w1', { verb: 'adopt' as const, ref }],
+    ['w2', null],
+  ]);
+  const other = { adapter: 'codex-desktop', id: 't2' };
+
+  test('approves an ask that holds an adopted card, or whose new card continues a tracked session', () => {
+    expect(isNeoTrackedFollowUp(open, adopted, undefined, [])).toBe(true);
+    expect(isNeoTrackedFollowUp(open, new Map(), { verb: 'send', ref }, [ref])).toBe(true);
+  });
+
+  test('leaves other asks, approved ones and settled ones alone', () => {
+    expect(isNeoTrackedFollowUp(open, new Map(), { verb: 'send', ref: other }, [ref])).toBe(false);
+    expect(isNeoTrackedFollowUp(open, new Map(), undefined, [ref])).toBe(false);
+    expect(isNeoTrackedFollowUp({ ...open, approvedAt: 5 }, adopted, undefined, [])).toBe(false);
+    expect(isNeoTrackedFollowUp({ ...open, status: 'achieved' }, adopted, undefined, [])).toBe(
+      false
+    );
+    expect(isNeoTrackedFollowUp(null, adopted, undefined, [ref])).toBe(false);
   });
 });
 
@@ -212,6 +237,53 @@ describe('neo.session.track', () => {
     });
     expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
     expect(sent).not.toHaveBeenCalled();
+  });
+
+  test('a follow-up card on a tracked session is approved, so Neo starts it without a Start click', async () => {
+    const neo = {
+      source: 'mcp' as const,
+      sessionId: 'neo:root',
+      role: 'neo' as const,
+      neoTurn: { messageId: 'turn-2', human: true, isLive: () => true },
+    };
+    const registry = createOperationRegistry(createNeoOperations(service));
+    service.trackedSessions = new Map([[key, Date.now()]]);
+    const adopted = await invokeOperation(
+      registry,
+      'neo.work.propose',
+      {
+        requestKey: 'track',
+        title: 'Quiet-model research',
+        instruction: 'Follow the research session.',
+        goal: 'Finish the quiet-model research',
+        doneWhen: '- the research is written up',
+        work: { verb: 'adopt', ref },
+      },
+      neo
+    );
+    expect(adopted).toMatchObject({ value: { ok: true } });
+    expect(service.driverTargets.adoptedRefs()).toEqual([ref]);
+    const propose = async (requestKey: string, target: { adapter: string; id: string }) => {
+      const proposed = await invokeOperation(
+        registry,
+        'neo.work.propose',
+        {
+          requestKey,
+          title: 'Finish the write-up',
+          instruction: 'Write up the findings.',
+          goal: 'A finished write-up',
+          doneWhen: '- the write-up is in the thread',
+          work: { verb: 'send', ref: target },
+        },
+        neo
+      );
+      const card = (proposed as { value: { work: { id: string } } }).value.work;
+      return service.askRecords.forWork(card.id);
+    };
+    expect((await propose('follow-up', ref))?.approvedAt).not.toBeNull();
+    expect(
+      (await propose('elsewhere', { adapter: 'codex-desktop', id: 't9' }))?.approvedAt ?? null
+    ).toBeNull();
   });
 
   test('a tap starts the card but never approves an existing ask Neo names', async () => {

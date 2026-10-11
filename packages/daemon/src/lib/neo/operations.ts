@@ -85,6 +85,7 @@ import {
 import {
   findNeoSessionNotice,
   isNeoAdoptOnlyAsk,
+  isNeoTrackedFollowUp,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -1190,7 +1191,18 @@ export function createNeoOperations(service: NeoService) {
         ask: { askId?: string },
         receipt: { work: NeoWork }
       ) => {
-        if (input.work?.verb !== 'adopt') return;
+        if (input.work?.verb !== 'adopt') {
+          const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
+          const targets = new Map(
+            (owned?.workIds ?? []).map((id) => [id, service.driverTargets.get(id)] as const)
+          );
+          if (
+            owned &&
+            isNeoTrackedFollowUp(owned, targets, input.work, service.driverTargets.adoptedRefs())
+          )
+            service.askRecords.approve(owned.id, Date.now());
+          return;
+        }
         const tracked = service.trackedSessions;
         tracked.delete(neoSessionKey(input.work.ref));
         service.trackedSessions = tracked;

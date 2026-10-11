@@ -83,6 +83,19 @@ export class NeoWorkDriverTargetRepository {
     };
   }
 
+  adoptedRefs(): WorkRef[] {
+    const rows = this.db
+      .prepare(`SELECT t.target FROM neo_work_driver_targets t
+        JOIN neo_work w ON w.id = t.work_id
+        WHERE json_extract(t.target, '$.verb') = 'adopt'
+          AND w.status IN ('proposed', 'queued', 'reported')`)
+      .all() as { target: string }[];
+    return rows.flatMap((row) => {
+      const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
+      return target.success && target.data.verb === 'adopt' ? [target.data.ref] : [];
+    });
+  }
+
   cardRefs(reportedSince: number): { workId: string; ref: WorkRef }[] {
     const rows = this.db
       .prepare(`SELECT t.work_id AS workId, t.ref FROM neo_work_driver_targets t
