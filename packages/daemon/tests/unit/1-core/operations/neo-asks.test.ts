@@ -26,6 +26,7 @@ import {
   requireNeoAskWritten,
   requireNeoAskLive,
   requireNeoAskOwner,
+  requireNeoOwnedLiveAsk,
   requireNeoWorkAsk,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
@@ -1162,5 +1163,14 @@ describe('neoPrompt place resolution', () => {
       expect(prompt).toContain('Never build or guess a folder path yourself.');
       expect(prompt).toContain('using an adapter that can start work');
     }
+  });
+});
+
+describe('requireNeoOwnedLiveAsk', () => {
+  test('passes the ask through and turns a refusal into the gate reason', () => {
+    const ask = { id: 'a1', status: 'open' } as NeoAsk;
+    const refused = { ok: false as const, reason: 'Ask not found.' };
+    expect(requireNeoOwnedLiveAsk(ask)).toEqual({ value: ask });
+    expect(requireNeoOwnedLiveAsk(refused)).toEqual({ reason: refused });
   });
 });

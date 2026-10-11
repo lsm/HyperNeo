@@ -137,6 +137,21 @@ export class NeoWorkDriverTargetRepository {
     return !!row?.interrupted;
   }
 
+  readCardCheck(workId: string): { checkedAt: number; unchecked: boolean } | null {
+    const row = this.db
+      .prepare(
+        'SELECT checked_at AS checkedAt, unchecked FROM neo_work_driver_targets WHERE work_id = ?'
+      )
+      .get(workId) as { checkedAt: number | null; unchecked: number } | null | undefined;
+    return row?.checkedAt == null ? null : { checkedAt: row.checkedAt, unchecked: !!row.unchecked };
+  }
+
+  recordCardCheck(workId: string, check: { checkedAt: number; unchecked: boolean }): void {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET checked_at = ?, unchecked = ? WHERE work_id = ?')
+      .run(check.checkedAt, check.unchecked ? 1 : 0, workId);
+  }
+
   recordStartInterrupted(workId: string): void {
     this.db
       .prepare('UPDATE neo_work_driver_targets SET start_interrupted = 1 WHERE work_id = ?')
