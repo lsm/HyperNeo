@@ -1,3 +1,4 @@
+import { neoConsultationParent, neoReviewWorkId } from '../../../../src/lib/neo/ask-origin.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
@@ -103,9 +104,22 @@ describe('NeoService direct consultation return', () => {
       sessionId: holder,
       question: 'Compare the sources.',
     })!;
+  const stampRequest = (id: string) => {
+    const item = service.consultations.get(id)!;
+    const reviewed = neoReviewWorkId(id);
+    const parent = neoConsultationParent(item, reviewed ? service.repo.getWork(reviewed) : null);
+    const origin = parent ? service.resolveAskOrigin(parent) : null;
+    if (origin)
+      service.inputOrigins.record(
+        { sessionId: holder, messageId: `neo-consult:${id}:request` },
+        origin,
+        0
+      );
+  };
   const publish = async (id = 'check') => {
     const messageId = `neo-consult:${id}:request`;
     prompt(holder, messageId, 'system');
+    stampRequest(id);
     const turn = new NeoHolderTurn(db, holder, { isLive: () => true }, () => {});
     turns.push(turn);
     expect(turn.bind(messageId)).toBe(true);

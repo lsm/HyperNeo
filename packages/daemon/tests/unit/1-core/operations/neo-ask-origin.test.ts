@@ -15,11 +15,8 @@ import {
   neoNudgeMessageId,
   neoConsultationParent,
   neoReviewWorkId,
-  readNeoAskEvidence,
   requireNeoAskCoordinator,
   requireNeoAskReference,
-  selectNeoAskParent,
-  type NeoAskEvidence,
   type NeoAskOrigin,
   type NeoAskOriginReads,
 } from '../../../../src/lib/neo/ask-origin.ts';
@@ -70,6 +67,7 @@ import { runMigration311 } from '../../../../src/storage/schema/m311-neo-work-dr
 import { runMigration321 } from '../../../../src/storage/schema/m321-neo-work-driver-follow-anchor.ts';
 import { runMigration334 } from '../../../../src/storage/schema/m334-neo-driver-start-interrupted.ts';
 import { runMigration338 } from '../../../../src/storage/schema/m338-neo-driver-checked-at.ts';
+import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
@@ -123,16 +121,6 @@ const prompt = (input: NeoAskOrigin, inputKind: string | undefined = 'human'): S
     inputKind,
     message: { role: 'user', content: [{ type: 'text', text: 'Context only' }] },
   }) as SDKUserMessage;
-const evidence = (patch: Partial<NeoAskEvidence> = {}): NeoAskEvidence => ({
-  envelope: 'request',
-  consultation,
-  work: null,
-  ask: null,
-  root,
-  holder,
-  workOrigin: root,
-  ...patch,
-});
 function fixtures() {
   const bindings = new Map([root, holder].map((item) => [item.sessionId, item]));
   const prompts = new Map<string, SDKMessage[]>();
@@ -142,6 +130,7 @@ function fixtures() {
     string,
     { id: string; originSessionId: string; originMessageId: string | null }
   >();
+  const stamps = new Map<string, NeoAskOrigin>();
   const key = (input: NeoAskOrigin) => JSON.stringify([input.sessionId, input.messageId]);
   const put = (input: NeoAskOrigin, kind = 'human') =>
     prompts.set(key(input), [prompt(input, kind)]);
@@ -150,13 +139,13 @@ function fixtures() {
     getPrompts: mock(
       (sessionId: string, messageId: string) => prompts.get(key({ sessionId, messageId })) ?? []
     ),
-    getConsultation: mock((id: string) => consultations.get(id) ?? null),
-    getWork: mock((id: string) => works.get(id) ?? null),
-    getAsk: mock((id: string) => asks.get(id) ?? null),
-    getRootBinding: mock(() => root),
+    getStamp: mock(
+      (sessionId: string, messageId: string) => stamps.get(key({ sessionId, messageId })) ?? null
+    ),
   };
   return {
     asks,
+    stamps,
     bindings,
     prompts,
     consultations,
@@ -169,39 +158,24 @@ function fixtures() {
 }
 
 describe('stamped ask origins', () => {
-  function stamping() {
+  test('a note resolves to its delivery stamp in one read, whatever its card does next', () => {
     const f = fixtures();
-    const stamps = new Map<string, NeoAskOrigin>();
-    f.reads.getStamp = (sessionId, messageId) =>
-      stamps.get(f.key({ sessionId, messageId })) ?? null;
-    f.reads.stamp = (input, origin) => stamps.set(f.key(input), origin);
-    return { ...f, stamps, resolve: createNeoAskOriginResolver(f.reads) };
-  }
-
-  test('a turn keeps its ask after root continues the card mid-turn', () => {
-    const f = stamping();
     const note = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
-    f.put(ask);
     f.put(note, 'system');
+    f.stamps.set(f.key(note), ask);
     expect(f.resolve(note)).toEqual(ask);
     f.works.set(work.id, { ...work, status: 'queued' });
     expect(f.resolve(note)).toEqual(ask);
-    const unstamped = createNeoAskOriginResolver({
-      ...f.reads,
-      getStamp: undefined,
-      stamp: undefined,
-    });
-    expect(unstamped(note)).toBeNull();
+    expect(f.reads.getPrompts).not.toHaveBeenCalled();
   });
 
-  test('stamps only an origin it walked to, never a human input or an unknown one', () => {
-    const f = stamping();
+  test('an unstamped system note has no ask, and a human input is its own', () => {
+    const f = fixtures();
+    const note = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
+    f.put(note, 'system');
     f.put(ask);
+    expect(f.resolve(note)).toBeNull();
     expect(f.resolve(ask)).toEqual(ask);
-    const orphan = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId('missing', 0) };
-    f.put(orphan, 'system');
-    expect(f.resolve(orphan)).toBeNull();
-    expect([...f.stamps.keys()]).toEqual([]);
   });
 });
 
@@ -284,331 +258,20 @@ describe('recorded ask lineage gates', () => {
       value: request(),
     });
   });
-  test('reads exact opaque envelope and review IDs, not their text', () => {
-    const f = fixtures();
-    const review = { ...consultation, id: `neo-work:${work.id}:review` };
-    f.consultations.set(review.id, review);
-    expect(readNeoAskEvidence(request(review), f.reads)).toEqual(
-      evidence({ consultation: review, work })
-    );
-    expect(f.reads.getConsultation).toHaveBeenCalledWith(review.id);
-    expect(f.reads.getWork).toHaveBeenCalledWith(work.id);
-    expect(readNeoAskEvidence(request(), f.reads).work).toBeNull();
-  });
-  test('reads the work behind a retried review id', () => {
-    const f = fixtures();
-    const review = { ...consultation, id: neoWorkReviewId(work.id, 2) };
-    f.consultations.set(review.id, review);
-    expect(readNeoAskEvidence(request(review), f.reads)).toEqual(
-      evidence({ consultation: review, work })
-    );
-  });
-
-  test('reads the work behind a continued review id, one id per continue', () => {
-    expect(neoWorkReviewId('w1', 0)).toBe('neo-work:w1:review');
-    expect(neoWorkReviewId('w1', 0, 1)).toBe('neo-work:w1:review:continued:1');
-    expect(neoWorkReviewId('w1', 2, 3)).toBe('neo-work:w1:review:retry:2:continued:3');
-    const f = fixtures();
-    const review = { ...consultation, id: neoWorkReviewId(work.id, 1, 2) };
-    f.consultations.set(review.id, review);
-    expect(readNeoAskEvidence(request(review), f.reads)).toEqual(
-      evidence({ consultation: review, work })
-    );
-  });
-  test.each([
-    { consultation: null },
-    { root: null },
-    { root: { ...root, kind: 'worker' as const } },
-    { consultation: { ...consultation, id: 'other' } },
-    { holder: null },
-    { holder: { ...holder, sessionId: 'other' } },
-    { holder: { ...holder, concernId: 'b' } },
-    { holder: { ...holder, kind: 'worker' as const } },
-    { consultation: { ...consultation, originSessionId: 'other' } },
-    { consultation: { ...consultation, originMessageId: null } },
-  ] satisfies Partial<NeoAskEvidence>[])('rejects invalid consultation evidence: %j', (patch) => {
-    expect(selectNeoAskParent(request(), evidence(patch))).toEqual({ kind: 'unknown' });
-  });
-  test('request history remains readable after settlement; pending reply cannot resolve', () => {
-    expect(selectNeoAskParent(request(), evidence())).toEqual({ kind: 'parent', origin: ask });
-    expect(selectNeoAskParent(reply(), evidence({ envelope: 'reply' }))).toEqual({
-      kind: 'unknown',
-    });
-    for (const status of ['reported', 'failed'] as const) {
-      const settled = { ...consultation, status };
-      expect(selectNeoAskParent(request(), evidence({ consultation: settled }))).toEqual({
-        kind: 'parent',
-        origin: ask,
-      });
-      expect(
-        selectNeoAskParent(reply(), evidence({ consultation: settled, envelope: 'reply' }))
-      ).toEqual({ kind: 'parent', origin: ask });
-    }
-    expect(selectNeoAskParent({ ...request(), sessionId: root.sessionId }, evidence())).toEqual({
-      kind: 'unknown',
-    });
-    expect(
-      selectNeoAskParent(
-        { ...reply(), sessionId: holder.sessionId },
-        evidence({ envelope: 'reply', consultation: { ...consultation, status: 'reported' } })
-      )
-    ).toEqual({ kind: 'unknown' });
-  });
-  test.each(['proposed', 'queued', 'cancelled'] as const)('does not resolve %s work', (status) => {
-    expect(
-      selectNeoAskParent(
-        { ...ask, messageId: work.id },
-        evidence({ envelope: null, work: { ...work, status } })
-      )
-    ).toEqual({ kind: 'unknown' });
-  });
-  test.each([
-    { work: null },
-    { work: { ...work, id: 'other' } },
-    { work: { ...work, originMessageId: null } },
-    { workOrigin: null },
-    { workOrigin: { ...root, sessionId: 'other' } },
-    { workOrigin: { ...root, kind: 'worker' as const } },
-    { work: { ...work, originSessionId: holder.sessionId, concernId: 'b' }, workOrigin: holder },
-  ] satisfies Partial<NeoAskEvidence>[])(
-    'rejects missing or mismatched work provenance: %j',
-    (patch) => {
-      expect(
-        selectNeoAskParent(
-          { ...ask, messageId: work.id },
-          evidence({ envelope: null, work, ...patch })
-        )
-      ).toEqual({ kind: 'unknown' });
-    }
-  );
-  test('terminal work links only recorded root/origin targets', () => {
-    const direct = { ...work, originSessionId: holder.sessionId };
-    const state = evidence({ envelope: null, work: direct, workOrigin: holder });
-    for (const sessionId of [root.sessionId, holder.sessionId])
-      expect(selectNeoAskParent({ sessionId, messageId: work.id }, state)).toEqual({
-        kind: 'parent',
-        origin: { ...ask, sessionId: holder.sessionId },
-      });
-    expect(selectNeoAskParent({ sessionId: 'unrelated', messageId: work.id }, state)).toEqual({
-      kind: 'unknown',
-    });
-  });
-  test('internal review requires producer key, null origin, terminal work and same concern', () => {
-    const id = `neo-work:${work.id}:review`;
-    const review = { ...consultation, id, requestKey: id, originMessageId: null };
-    const state = evidence({ consultation: review, work });
-    expect(selectNeoAskParent(request(review), Object.freeze(state))).toEqual({
-      kind: 'parent',
-      origin: ask,
-    });
-    for (const patch of [
-      { work: null },
-      { work: { ...work, id: 'other' } },
-      { work: { ...work, status: 'queued' as const } },
-      { work: { ...work, concernId: 'b' } },
-      { work: { ...work, originMessageId: null } },
-      { consultation: { ...review, requestKey: 'ordinary' } },
-      { consultation: { ...review, originMessageId: ask.messageId } },
-    ])
-      expect(selectNeoAskParent(request(review), { ...state, ...patch })).toEqual({
-        kind: 'unknown',
-      });
-  });
 });
 
-describe('synchronous bounded ask resolver', () => {
+describe('synchronous ask resolver', () => {
   test('gate precedence avoids deeper reads; human prefix resemblance does not create a receipt link', () => {
     const f = fixtures();
     expect(f.resolve({ ...ask, messageId: null })).toBeNull();
+    expect(f.reads.getStamp).not.toHaveBeenCalled();
     expect(f.reads.getBinding).not.toHaveBeenCalled();
     expect(f.resolve({ ...ask, sessionId: 'ordinary' })).toBeNull();
     expect(f.reads.getPrompts).not.toHaveBeenCalled();
     expect(f.resolve(ask)).toBeNull();
-    expect(f.reads.getConsultation).not.toHaveBeenCalled();
     const human = { ...ask, messageId: request().messageId };
     f.put(human);
     expect(f.resolve(human)).toEqual(human);
-    expect(f.reads.getRootBinding).not.toHaveBeenCalled();
-    expect(f.reads.getWork).not.toHaveBeenCalled();
-  });
-  test('consultation and holder work resolve the old ask rather than a newer unrelated human input', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.put({ ...ask, messageId: 'newer' });
-    f.put(request(), 'system');
-    f.put({ ...ask, messageId: work.id }, 'system');
-    f.works.set(work.id, {
-      ...work,
-      originSessionId: holder.sessionId,
-      originMessageId: request().messageId,
-    });
-    expect(f.resolve(request())).toEqual(ask);
-    expect(f.resolve({ ...ask, messageId: work.id })).toEqual(ask);
-    expect(f.resolve({ ...request(), sessionId: root.sessionId })).toBeNull();
-  });
-  test('human input in a different concern remains independently attributable', () => {
-    const f = fixtures();
-    const other = { ...holder, sessionId: 'holder:b', concernId: 'b' };
-    f.bindings.set(other.sessionId, other);
-    const human = { sessionId: other.sessionId, messageId: ask.messageId };
-    f.put(human);
-    expect(f.resolve(human)).toEqual(human);
-    expect(f.resolve(ask)).toBeNull();
-  });
-  test('tuple identities cannot collide at colon boundaries', () => {
-    const f = fixtures();
-    const actualRoot = { ...root, sessionId: 'a:b' };
-    const actualHolder = { ...holder, sessionId: 'a' };
-    f.bindings.set(actualRoot.sessionId, actualRoot);
-    f.bindings.set(actualHolder.sessionId, actualHolder);
-    f.reads.getRootBinding = () => actualRoot;
-    const human = { sessionId: actualHolder.sessionId, messageId: 'b:c' };
-    const returned = { sessionId: actualRoot.sessionId, messageId: 'c' };
-    f.put(human);
-    f.put(returned, 'system');
-    f.works.set('c', {
-      ...work,
-      id: 'c',
-      originSessionId: human.sessionId,
-      originMessageId: human.messageId,
-    });
-    expect(createNeoAskOriginResolver(f.reads)(returned)).toEqual(human);
-  });
-  test('a publish nudge answers the human message it nudges, never a forged one', () => {
-    const f = fixtures();
-    const nudge = { sessionId: ask.sessionId, messageId: neoNudgeMessageId(ask.messageId) };
-    f.put(ask);
-    f.put(nudge, 'system');
-    expect(f.resolve(nudge)).toEqual(ask);
-    const humanNudge = { sessionId: ask.sessionId, messageId: neoNudgeMessageId('human:2') };
-    f.put(humanNudge);
-    expect(f.resolve(humanNudge)).toEqual(humanNudge);
-    const orphan = { sessionId: ask.sessionId, messageId: neoNudgeMessageId('missing') };
-    f.put(orphan, 'system');
-    expect(f.resolve(orphan)).toBeNull();
-  });
-  test('a done-check note answers the ask that started its work, never a forged one', () => {
-    const f = fixtures();
-    f.put(ask);
-    const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 2) };
-    f.put(check, 'system');
-    expect(f.resolve(check)).toEqual(ask);
-    const withPrs = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 2, 3) };
-    f.put(withPrs, 'system');
-    expect(withPrs.messageId).toBe(`${work.id}:done-check:2:pr:3`);
-    expect(f.resolve(withPrs)).toEqual(ask);
-    const followed = {
-      sessionId: root.sessionId,
-      messageId: neoDoneCheckMessageId(work.id, 2, 3, 1700),
-    };
-    f.put(followed, 'system');
-    expect(followed.messageId).toBe(`${work.id}:done-check:2:pr:3:at:1700`);
-    expect(f.resolve(followed)).toEqual(ask);
-    const orphan = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId('missing', 0) };
-    f.put(orphan, 'system');
-    expect(f.resolve(orphan)).toBeNull();
-    const elsewhere = { sessionId: 'unrelated', messageId: neoDoneCheckMessageId(work.id, 0) };
-    f.put(elsewhere, 'system');
-    expect(f.resolve(elsewhere)).toBeNull();
-  });
-  test('a retried failure note answers the ask that started its work', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.works.set(work.id, { ...work, status: 'failed' });
-    const returned = { sessionId: root.sessionId, messageId: neoWorkReturnMessageId(work.id, 1) };
-    f.put(returned, 'system');
-    expect(f.resolve(returned)).toEqual(ask);
-  });
-  test('a stall note on running work answers the ask that started it', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.works.set(work.id, { ...work, status: 'queued' });
-    const stall = { sessionId: root.sessionId, messageId: neoStallMessageId(work.id, 5) };
-    f.put(stall, 'system');
-    expect(f.resolve(stall)).toEqual(ask);
-    const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
-    f.put(check, 'system');
-    expect(f.resolve(check)).toBeNull();
-  });
-  test('a needs-you note on running work answers the ask that started it', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.works.set(work.id, { ...work, status: 'queued' });
-    const note = { sessionId: root.sessionId, messageId: neoNeedsYouMessageId(work.id, 7) };
-    f.put(note, 'system');
-    expect(f.resolve(note)).toEqual(ask);
-  });
-  test('reads the ask back out of the ask evidence note id it builds', () => {
-    expect(neoAskEvidenceAskId(neoAskEvidenceMessageId('a:1', 'sig'))).toBe('a:1');
-    expect(neoAskEvidenceAskId('w1:done-check:2')).toBeNull();
-  });
-  test('an ask evidence note answers the ask it reports on', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.asks.set('a1', { id: 'a1', originSessionId: root.sessionId, originMessageId: ask.messageId });
-    const note = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a1', 'sig') };
-    f.put(note, 'system');
-    expect(f.resolve(note)).toEqual(ask);
-    expect(f.reads.getWork).not.toHaveBeenCalled();
-  });
-  test('an ask evidence note resolves to nothing for an unknown ask or another session', () => {
-    const f = fixtures();
-    f.put(ask);
-    f.asks.set('a1', {
-      id: 'a1',
-      originSessionId: holder.sessionId,
-      originMessageId: ask.messageId,
-    });
-    const unknownAsk = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a2', 's') };
-    const elsewhere = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a1', 's') };
-    f.put(unknownAsk, 'system');
-    f.put(elsewhere, 'system');
-    expect(f.resolve(unknownAsk)).toBeNull();
-    expect(f.resolve(elsewhere)).toBeNull();
-  });
-  test('cycles stop before rereading and limits do not leak across calls', () => {
-    const f = fixtures();
-    const a = {
-      ...consultation,
-      id: 'a',
-      status: 'reported' as const,
-      originMessageId: 'neo-consult:b:reply',
-    };
-    const b = { ...a, id: 'b', originMessageId: 'neo-consult:a:reply' };
-    f.consultations.set(a.id, a);
-    f.consultations.set(b.id, b);
-    f.put(reply(a), 'system');
-    f.put(reply(b), 'system');
-    expect(f.resolve(reply(a))).toBeNull();
-    expect(f.reads.getPrompts).toHaveBeenCalledTimes(2);
-    f.put(ask);
-    f.consultations.set(b.id, { ...b, originMessageId: ask.messageId });
-    expect(f.resolve(reply(a))).toEqual(ask);
-  });
-  test('at most eight synchronous input reads, with no microtask hop or provider work', async () => {
-    const f = fixtures();
-    for (let index = 0; index < 9; index++) {
-      const item = {
-        ...consultation,
-        id: String(index),
-        status: 'reported' as const,
-        originMessageId: `neo-consult:${index + 1}:reply`,
-      };
-      f.consultations.set(item.id, item);
-      f.put(reply(item), 'system');
-    }
-    let microtask = false;
-    queueMicrotask(() => {
-      microtask = true;
-    });
-    expect(f.resolve(reply({ ...consultation, id: '0' }))).toBeNull();
-    expect(microtask).toBe(false);
-    expect(f.reads.getPrompts).toHaveBeenCalledTimes(8);
-    const eighth = reply({ ...consultation, id: '7' });
-    f.put(eighth);
-    expect(f.resolve(reply({ ...consultation, id: '0' }))).toEqual(eighth);
-    await Promise.resolve();
-    expect(microtask).toBe(true);
   });
   test('infrastructure errors are not converted into a guessed or unknown human ask', () => {
     const f = fixtures();
@@ -666,6 +329,7 @@ describe('real SQLite ask lineage facade', () => {
     runMigration321(mailbox.db);
     runMigration334(mailbox.db);
     runMigration338(mailbox.db);
+    runMigration339(mailbox.db);
     runMigration340(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
@@ -702,10 +366,12 @@ describe('real SQLite ask lineage facade', () => {
     expect(receipt).toMatchObject({ kind: 'completed', value: { ok: true, messageId: requestId } });
     return { sessionId, messageId: requestId };
   }
-  function storeSystem(input: NeoAskOrigin) {
+  function storeSystem(input: NeoAskOrigin, parent: NeoAskOrigin | null = null) {
     expect(
       mailbox.sdkMessageRepo.saveSDKMessage(input.sessionId, prompt(input, 'system'), 'system')
     ).toBe(true);
+    const origin = parent ? service.resolveAskOrigin(parent) : null;
+    if (origin) service.inputOrigins.record(input, origin, 0);
   }
   function reserve(item: NeoConsultation) {
     expect(service.consultations.reserve(item)?.id).toBe(item.id);
@@ -767,7 +433,7 @@ describe('real SQLite ask lineage facade', () => {
     await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
     const item = { ...consultation, originMessageId: a.messageId };
     reserve(item);
-    storeSystem(request(item));
+    storeSystem(request(item), a);
     service.consultations.finish(item.id, 'reported', 'Context checked');
     const proposed = service.repo.proposeWork({
       ...work,
@@ -786,7 +452,7 @@ describe('real SQLite ask lineage facade', () => {
       id,
       origin: null,
     });
-    storeSystem(request(review));
+    storeSystem(request(review), request(item));
     const before = unchangedState();
     expect((await snapshot()).askOrigins).toEqual(
       expect.arrayContaining([
@@ -915,11 +581,10 @@ describe('real SQLite ask lineage facade', () => {
     await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
     const item = { ...consultation, originMessageId: human.messageId };
     reserve(item);
-    storeSystem(request(item));
-    storeSystem(reply(item));
+    storeSystem(request(item), human);
     expect(service.resolveAskOrigin(request(item))).toEqual(human);
-    expect(service.resolveAskOrigin(reply(item))).toBeNull();
     service.consultations.finish(item.id, 'failed', 'Human stopped waiting');
+    storeSystem(reply(item), human);
     const before = unchangedState();
     expect(service.resolveAskOrigin(request(item))).toEqual(human);
     expect(service.resolveAskOrigin(reply(item))).toEqual(human);
@@ -929,7 +594,7 @@ describe('real SQLite ask lineage facade', () => {
     const human = await intake();
     const item = { ...consultation, originMessageId: human.messageId };
     reserve(item);
-    storeSystem(request(item));
+    storeSystem(request(item), human);
     service.consultations.finish(item.id, 'reported', 'Context checked');
     const proposed = service.repo.proposeWork({
       ...work,
@@ -944,10 +609,10 @@ describe('real SQLite ask lineage facade', () => {
     const id = `neo-work:${proposed.id}:review`;
     const review = { ...item, id, requestKey: id, originMessageId: null };
     reserve(review);
-    storeSystem(request(review));
+    storeSystem(request(review), request(item));
     expect(service.resolveAskOrigin(request(review))).toEqual(human);
     service.consultations.finish(id, 'reported', 'Review interpretation');
-    storeSystem(reply(review));
+    storeSystem(reply(review), request(item));
     const before = unchangedState();
     expect(service.resolveAskOrigin(reply(review))).toEqual(human);
     expect(unchangedState()).toEqual(before);
@@ -969,7 +634,7 @@ describe('real SQLite ask lineage facade', () => {
         report: 'Could not start',
       });
       const returned = { sessionId: root.sessionId, messageId: work.id };
-      storeSystem(returned);
+      storeSystem(returned, human);
       expect(service.resolveAskOrigin(returned)).toEqual(human);
       const legacy = service.repo.proposeWork({
         ...work,

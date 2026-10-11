@@ -287,6 +287,11 @@ describe('Neo reply after a rule save', () => {
       inputKind: 'system',
       message: { role: 'user', content: 'Publish your answer.' },
     } as unknown as SDKUserMessage);
+    service.inputOrigins.record(
+      { sessionId: root, messageId: 'neo-nudge:ask-1' },
+      { sessionId: root, messageId: 'ask-1' },
+      0
+    );
     const { conversationId: _c, askOrigin: _a, producerInput: _p, ...draft } = reply;
     expect(
       await invoke('neo.publication.publish', draft, {

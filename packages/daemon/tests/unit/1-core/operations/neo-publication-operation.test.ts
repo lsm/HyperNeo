@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createNeoAskOriginResolver } from '../../../../src/lib/neo/ask-origin.ts';
+import {
+  createNeoAskOriginResolver,
+  type NeoAskOrigin,
+} from '../../../../src/lib/neo/ask-origin.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
   admitPublicationDraft,
@@ -65,13 +68,14 @@ describe('runtime-bound publication operation', () => {
       } as SDKUserMessage)
     ).toBe(true);
   }
+  const stamps = new Map<string, NeoAskOrigin>();
   function consultation(
     id = 'consult:1',
     messageId = ask.messageId,
     concernId = 'a',
     sessionId = holder.sessionId
   ) {
-    return consultations.reserve({
+    const item = consultations.reserve({
       id,
       requestKey: id,
       concernId,
@@ -80,6 +84,11 @@ describe('runtime-bound publication operation', () => {
       sessionId,
       question: 'Compare fictional sources',
     })!;
+    stamps.set(`${sessionId}\0neo-consult:${id}:request`, {
+      sessionId: root.sessionId,
+      messageId,
+    });
+    return item;
   }
   function work(id = 'work:1', messageId = ask.messageId, concernId = 'a') {
     return repo.proposeWork({
@@ -101,6 +110,7 @@ describe('runtime-bound publication operation', () => {
     );
   }
   beforeEach(() => {
+    stamps.clear();
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration279(mailbox.db);
@@ -126,8 +136,7 @@ describe('runtime-bound publication operation', () => {
       getRootBinding: () => repo.getBindingForConcern(null),
       getPrompts: (sessionId, messageId) =>
         mailbox.sdkMessageRepo.getStoredPromptsByUuid(sessionId, messageId),
-      getConsultation: (id) => consultations.get(id),
-      getWork: (id) => repo.getWork(id),
+      getStamp: (sessionId, messageId) => stamps.get(`${sessionId}\0${messageId}`) ?? null,
     });
     notify = vi.fn();
     runtime = {
@@ -188,6 +197,7 @@ describe('runtime-bound publication operation', () => {
     const item = work();
     repo.transitionWork(item.id, item, { status: 'reported', report: 'Reported context only' });
     prompt(root.sessionId, item.id, 'system');
+    stamps.set(`${root.sessionId}\0${item.id}`, ask);
     expect(await invoke(draft, caller(root.sessionId, item.id))).toMatchObject({
       value: {
         accepted: true,

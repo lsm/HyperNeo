@@ -104,6 +104,7 @@ describe('runtime consultation publication commit', () => {
     });
     prompt(root, ask.messageId, 'human');
     prompt(holder, request, 'system');
+    service.inputOrigins.record({ sessionId: holder, messageId: request }, ask, 0);
     event.mockClear();
   });
   afterEach(() => {
