@@ -21,12 +21,14 @@ import {
   planNeoCardAsk,
   isNeoCardAsk,
   requireNeoAskReceipt,
-  requireNeoAskSettlement,
+  requireNeoAskSettleable,
   requireNeoAskSummary,
   requireNeoAskWritten,
   requireNeoAskLive,
   requireNeoAskOwner,
   requireNeoWorkAsk,
+  requireNeoWorkAskLive,
+  requireNeoWorkAskOwner,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
 import {
@@ -589,34 +591,46 @@ describe('requireNeoAskConcern', () => {
 
 describe('requireNeoWorkAsk', () => {
   const input = { askId: 'a1', concernId: null };
-
-  test.each([
-    ['a missing ask', null, 'ask_not_found'],
-    [
-      'another concern',
-      { ...ask, concernId: 'c1' },
-      'This ask belongs to another concern; propose under its concernId.',
-    ],
-    [
-      'an achieved ask',
-      { ...ask, status: 'achieved' as const },
-      'ask_settled: this ask is already achieved; open a new ask.',
-    ],
-  ])('refuses work under %s', (_case, current, reason) => {
-    expect(requireNeoWorkAsk(current, input, neo)).toEqual({ reason: { ok: false, reason } });
+  test('refuses work filed under an ask from another concern', () => {
+    expect(requireNeoWorkAsk({ ...ask, concernId: 'c1' }, input, neo)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'This ask belongs to another concern; propose under its concernId.',
+      },
+    });
   });
 
-  test('refuses another Neo session filing work under the ask, but not the user', () => {
-    expect(requireNeoWorkAsk(ask, input, { ...neo, sessionId: 'holder' })).toMatchObject({
+  test('passes work with no ask, a missing ask, or an ask in its concern', () => {
+    expect(requireNeoWorkAsk(null, { concernId: null }, neo)).toEqual({ value: neo });
+    expect(requireNeoWorkAsk(null, input, neo)).toEqual({ value: neo });
+    expect(requireNeoWorkAsk(ask, input, neo)).toEqual({ value: neo });
+  });
+});
+
+describe('requireNeoWorkAskOwner', () => {
+  const input = { askId: 'a1', concernId: null };
+  test('refuses a missing ask or another Neo session, and passes the user', () => {
+    expect(requireNeoWorkAskOwner(null, input, neo)).toEqual({
+      reason: { ok: false, reason: 'ask_not_found' },
+    });
+    expect(requireNeoWorkAskOwner(ask, input, { ...neo, sessionId: 'holder' })).toMatchObject({
       reason: { ok: false, reason: expect.stringContaining('open your own ask') },
     });
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
-    expect(requireNeoWorkAsk(ask, input, user)).toEqual({ value: user });
+    expect(requireNeoWorkAskOwner(ask, input, user)).toEqual({ value: user });
+    expect(requireNeoWorkAskOwner(null, { concernId: null }, neo)).toEqual({ value: neo });
   });
+});
 
-  test('passes work with no ask or under an active one', () => {
-    expect(requireNeoWorkAsk(null, { concernId: null }, neo)).toEqual({ value: neo });
-    expect(requireNeoWorkAsk({ ...ask, status: 'blocked' }, input, neo)).toEqual({ value: neo });
+describe('requireNeoWorkAskLive', () => {
+  const input = { askId: 'a1', concernId: null };
+  test('refuses work under a settled ask and passes an active one', () => {
+    expect(requireNeoWorkAskLive({ ...ask, status: 'achieved' }, input, neo)).toEqual({
+      reason: { ok: false, reason: 'ask_settled: this ask is already achieved; open a new ask.' },
+    });
+    expect(requireNeoWorkAskLive({ ...ask, status: 'blocked' }, input, neo)).toEqual({
+      value: neo,
+    });
   });
 });
 
@@ -705,33 +719,19 @@ describe('neoAskApprovalSpent', () => {
   });
 });
 
-describe('requireNeoAskSettlement', () => {
+describe('requireNeoAskSettleable', () => {
   const settle = { id: 'a1', outcome: 'achieved' as const, evidence: 'PR merged.' };
   const done = { ...ask, status: 'achieved' as const, outcome: 'PR merged.' };
 
-  test.each([
-    ['a missing ask', null, neo, 'ask_not_found'],
-    [
-      'another Neo session',
-      ask,
-      { ...neo, sessionId: 'other' },
-      'Only the Neo session that opened this ask or the user can settle it.',
-    ],
-    [
-      'a different outcome on a final ask',
-      { ...done, outcome: 'Other.' },
-      neo,
-      'ask_settled: this ask is already achieved.',
-    ],
-  ])('refuses %s', (_case, current, caller, reason) => {
-    expect(requireNeoAskSettlement(settle, { ask: current }, caller)).toEqual({
-      reason: { ok: false, reason },
+  test('refuses a different outcome on a final ask', () => {
+    expect(requireNeoAskSettleable(settle, { ...done, outcome: 'Other.' })).toEqual({
+      reason: { ok: false, reason: 'ask_settled: this ask is already achieved.' },
     });
   });
 
   test('admits an open ask and an identical replay', () => {
-    expect(requireNeoAskSettlement(settle, { ask }, neo)).toEqual({ value: ask });
-    expect(requireNeoAskSettlement(settle, { ask: done }, neo)).toEqual({ value: done });
+    expect(requireNeoAskSettleable(settle, ask)).toEqual({ value: ask });
+    expect(requireNeoAskSettleable(settle, done)).toEqual({ value: done });
     expect(isNeoAskReplay(done, settle)).toBe(true);
   });
 });
@@ -817,26 +817,16 @@ describe('requireNeoAskEdit', () => {
   } as unknown as NeoAsk;
   const items = (count: number) =>
     Array.from({ length: count }, (_, i) => ({ text: `t${i}`, check: null }));
-  test.each<
-    [
-      string,
-      Partial<NeoAsk> | null,
-      { add?: ReturnType<typeof items>; remove?: string[] },
-      string | null,
-    ]
-  >([
-    ['an edit by the owner', {}, { add: items(1) }, null],
-    ['a missing ask', null, { add: items(1) }, 'ask_not_found'],
-    ['a settled ask', { status: 'achieved' }, { add: items(1) }, 'ask_settled'],
-    ['an item already removed', {}, { remove: ['i2'] }, 'item_not_found'],
-    ['removing the last item', {}, { remove: ['i1'] }, 'checklist_empty'],
-    ['more than twelve items', {}, { add: items(12) }, 'checklist_full'],
-  ])('%s', (_label, overrides, change, reason) => {
-    const target = overrides ? { ...owned, ...overrides } : null;
+  test.each<[string, { add?: ReturnType<typeof items>; remove?: string[] }, string | null]>([
+    ['an edit by the owner', { add: items(1) }, null],
+    ['an item already removed', { remove: ['i2'] }, 'item_not_found'],
+    ['removing the last item', { remove: ['i1'] }, 'checklist_empty'],
+    ['more than twelve items', { add: items(12) }, 'checklist_full'],
+  ])('%s', (_label, change, reason) => {
+    const target = owned;
     const gate = requireNeoAskEdit(
       { askId: 'a1', add: change.add ?? [], remove: change.remove ?? [] },
-      { ask: target },
-      neo
+      target
     );
     const expected: unknown = reason
       ? { reason: { ok: false, reason: expect.stringContaining(reason) } }
