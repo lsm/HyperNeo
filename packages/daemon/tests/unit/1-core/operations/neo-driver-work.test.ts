@@ -1,4 +1,5 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
@@ -268,6 +269,14 @@ describe('withWorkGoal', () => {
       doneWhen: 'd'.repeat(2000),
     });
     expect(longest.length).toBeLessThanOrEqual(20000);
+    const merging = withWorkGoal('i'.repeat(16000), {
+      workId: 'w1',
+      goal: 'g'.repeat(1000),
+      doneWhen: `merged ${'d'.repeat(1993)}`,
+    });
+    expect(merging.length).toBeLessThanOrEqual(20000);
+    expect(merging).toContain('mergeStateStatus,mergeable');
+    expect(merging.endsWith(NEO_WORK_GOAL_REMAINING)).toBe(true);
     expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
       'Build it.'
     );

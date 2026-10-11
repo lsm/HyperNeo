@@ -50,7 +50,7 @@ import {
   type WorkStatus,
 } from '../drivers/types.ts';
 import type { NeoPackFragment } from './packs/types.ts';
-import { WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
+import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 
@@ -183,8 +183,7 @@ export function readNeoWorkContinueBudget(
 
 export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): string {
   if (!goal?.goal && !goal?.doneWhen) return instruction;
-  return [
-    instruction,
+  const tail = [
     '',
     NEO_WORK_GOAL,
     ...(goal.goal ? [fillPrompt(NEO_WORK_GOAL_ASKED, { goal: goal.goal })] : []),
@@ -192,6 +191,7 @@ export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): str
     ...(/merg/i.test(goal.doneWhen ?? '') ? [NEO_WORK_GOAL_MERGE, NEO_WORK_GOAL_PR_EVENTS] : []),
     NEO_WORK_GOAL_REMAINING,
   ].join('\n');
+  return `${instruction.slice(0, Math.max(0, WORK_MESSAGE_MAX - tail.length - 1))}\n${tail}`;
 }
 
 export function driverWorkCall(
