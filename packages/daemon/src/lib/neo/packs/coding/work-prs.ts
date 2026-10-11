@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -86,7 +86,7 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
 }
 
 export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
-  prs.some((pr) => pr.state === 'OPEN' && pr.checks === 'pending');
+  prs.some((pr) => neoWorkPrVerdict(pr) === 'waiting');
 
 export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
   JSON.stringify(
@@ -102,18 +102,7 @@ export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
 export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   return prs.map((pr) => ({
     key: pr.url,
-    state:
-      pr.state === 'MERGED'
-        ? 'done'
-        : pr.state === 'CLOSED'
-          ? 'failed'
-          : pr.checks === 'pending'
-            ? 'waiting'
-            : pr.checks === 'failing' || pr.review === 'changes_requested'
-              ? 'failed'
-              : pr.review === 'approved'
-                ? 'ready'
-                : 'pending',
+    state: neoWorkPrVerdict(pr),
     summary: `${pr.state.toLowerCase()}, checks ${pr.checks}, review ${pr.review}`,
     blockers: pr.blockers ?? [],
   }));

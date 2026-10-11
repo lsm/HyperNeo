@@ -35,6 +35,7 @@ import {
   type NeoWorkCheckRow,
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
+import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
@@ -261,6 +262,7 @@ export class NeoService {
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
   readonly workContinues: NeoWorkContinueRepository;
+  readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly workPrClaims: NeoWorkPrClaimRepository;
@@ -442,6 +444,7 @@ export class NeoService {
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
+    this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
