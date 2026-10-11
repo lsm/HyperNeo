@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   isPooledNeoAsk,
   NEO_ASK_CONTINUE_LIMIT,
@@ -17,6 +18,7 @@ import {
   planNeoAskEdit,
   planNeoAskTickStatus,
   requireNeoAskDecisionRoom,
+  requireNeoHumanWaitCited,
   requireNeoAskEdit,
   planNeoAskWorkStops,
   planNeoCardAsk,
@@ -61,6 +63,8 @@ const neo: OperationCaller = {
   neoTurn: { messageId: 'ask-1', human: true, isLive: () => true },
 };
 const place = { machine: 'laptop', folder: tmpdir(), name: 'app' };
+const rule = 'Ask me before accepting red CI or a release date.';
+const cite = { rule };
 const opening = {
   requestKey: 'fix',
   title: 'Fix the login bug',
@@ -68,6 +72,35 @@ const opening = {
   doneWhen: '- merged to dev\n- CI green',
   doneSource: 'human',
 };
+
+describe('requireNeoHumanWaitCited', () => {
+  const sources = {
+    said: ['Ship it, but ask me before the release.'],
+    rules: ['Never deploy on Friday.'],
+  };
+  test('passes anything that does not wait on the human', () => {
+    expect(requireNeoHumanWaitCited(undefined, sources, false, 'v')).toEqual({ value: 'v' });
+  });
+  test('accepts the human words or a saved rule, ignoring case and spacing', () => {
+    expect(requireNeoHumanWaitCited({ said: 'ASK me  before' }, sources, true, 'v')).toEqual({
+      value: 'v',
+    });
+    expect(
+      requireNeoHumanWaitCited({ rule: ' never deploy on friday. ' }, sources, true, 'v')
+    ).toEqual({ value: 'v' });
+  });
+  test('refuses no citation, or one that is not there', () => {
+    expect(requireNeoHumanWaitCited(undefined, sources, true, 'v')).toMatchObject({
+      reason: { reason: expect.stringContaining('cite_required') },
+    });
+    expect(requireNeoHumanWaitCited({ rule: 'Never deploy.' }, sources, true, 'v')).toMatchObject({
+      reason: { reason: expect.stringContaining('cite_not_found') },
+    });
+    expect(
+      requireNeoHumanWaitCited({ said: 'skip the release' }, sources, true, 'v')
+    ).toMatchObject({ reason: { reason: expect.stringContaining('cite_not_found') } });
+  });
+});
 
 describe('neo.ask operations', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -83,6 +116,7 @@ describe('neo.ask operations', () => {
       new InternalEventBus<DaemonInternalEventMap>()
     );
     service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', concernId: null });
+    db.updateGlobalSettings({ neo: { standingRules: [rule] } });
   });
   afterEach(() => {
     service.dispose();
@@ -417,6 +451,7 @@ describe('neo.ask operations', () => {
         itemId: 'i2',
         state: 'needs_you',
         evidence: 'Is red CI on main acceptable?',
+        cite,
       })
     ).toMatchObject({ value: { ok: true, ask: { status: 'waiting', outcome: 'CI green' } } });
     expect(service.askRecords.get(askId)?.doneItems?.[1]?.decision).toBeUndefined();
@@ -453,6 +488,7 @@ describe('neo.ask operations', () => {
       outcome: 'waiting',
       summary: 'Decide whether to assign #6545.',
       evidence: 'Nobody owns #6545 yet.',
+      cite,
     };
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: {
@@ -541,6 +577,7 @@ describe('neo.ask operations', () => {
       outcome: 'waiting',
       summary: 'Pick the release date.',
       evidence: 'Two dates fit.',
+      cite,
     };
     expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('checklist_full') },
@@ -660,6 +697,7 @@ describe('neo.ask operations', () => {
         state: 'needs_you',
         evidence: 'Is red CI on main acceptable?',
         options: ['Accept it', 'Fix CI first'],
+        cite,
       })
     ).toMatchObject({
       value: {
@@ -832,6 +870,58 @@ describe('neo.ask operations', () => {
     expect(await propose('card-1', first)).toMatchObject({ value: { ok: true } });
   });
 
+  test('a wait on the human must cite their words or a saved rule', async () => {
+    db.getSDKMessageRepo().saveSDKMessage('root', {
+      type: 'user',
+      uuid: 'ask-1',
+      session_id: 'root',
+      parent_tool_use_id: null,
+      inputKind: 'human',
+      message: { role: 'user', content: 'Fix the login bug, and let me pick the reviewer.' },
+    } as unknown as SDKUserMessage);
+    const askId = await openAsk();
+    const later: OperationCaller = {
+      ...neo,
+      neoTurn: { ...neo.neoTurn!, messageId: 'note-1', human: false },
+    };
+    const needsYou = { askId, itemId: 'i2', state: 'needs_you', evidence: 'Who reviews it?' };
+    expect(
+      await invoke(
+        'neo.ask.settle',
+        { id: askId, outcome: 'waiting', summary: 'Pick a reviewer.', evidence: 'None set.' },
+        later
+      )
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('cite_required') } });
+    expect(await invoke('neo.ask.tick', needsYou, later)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('cite_required') },
+    });
+    expect(
+      await invoke('neo.ask.tick', { ...needsYou, cite: { rule: 'Always ask me.' } }, later)
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('cite_not_found') } });
+    expect(
+      await invoke('neo.ask.tick', { ...needsYou, cite: { said: 'I will pick the date' } }, later)
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('cite_not_found') } });
+    expect(service.askRecords.get(askId)?.status).toBe('open');
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { ...needsYou, cite: { said: 'let me  pick the REVIEWER' } },
+        later
+      )
+    ).toMatchObject({ value: { ok: true, ask: { status: 'waiting' } } });
+  });
+
+  test('the human marking their own wait needs no citation', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke(
+        'neo.ask.tick',
+        { askId, itemId: 'i2', state: 'needs_you', evidence: 'I will decide.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true } });
+  });
+
   test('edits the checklist in view: removed items stay listed, and dropping a question reopens the ask', async () => {
     const askId = await openAsk();
     await invoke('neo.ask.tick', {
@@ -839,6 +929,7 @@ describe('neo.ask operations', () => {
       itemId: 'i2',
       state: 'needs_you',
       evidence: 'Is red CI on main acceptable?',
+      cite,
     });
     expect(
       await invoke('neo.ask.edit', { askId, remove: ['i2'], add: [{ text: 'Release notes' }] })
