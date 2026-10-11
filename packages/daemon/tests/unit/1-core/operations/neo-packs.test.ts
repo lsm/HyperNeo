@@ -325,7 +325,7 @@ describe('readNeoCardPrs', () => {
               claim: 'mentioned' as const,
               claimedAt: 0,
               cardCreatedAt: 0,
-              score: null,
+              score: 1,
             },
           ],
           replace: () => {},
@@ -417,7 +417,7 @@ describe('neoCardPrsFresh', () => {
     readOkAt: 10,
   } as NeoWorkPrRow;
   const owned = (claimed: boolean) => ({
-    owned: [{ url, claim: 'mentioned' as const, claimedAt: 0, claimed, score: null }],
+    owned: [{ url, claim: 'mentioned' as const, claimedAt: 0, claimed, score: 1 }],
   });
 
   test.each([
@@ -425,6 +425,13 @@ describe('neoCardPrsFresh', () => {
     ['an owned PR not yet claimed', row, owned(false), 20, false],
     ['a read that has gone stale', row, owned(true), 10 * 60_000, false],
     ['a card with no stored read', null, owned(true), 20, false],
+    [
+      'a claimed mention not yet scored',
+      row,
+      { owned: [{ url, claim: 'mentioned' as const, claimedAt: 0, claimed: true, score: null }] },
+      20,
+      false,
+    ],
   ])('%s', (_name, stored, plan, now, fresh) => {
     expect(neoCardPrsFresh({ row: stored }, plan, now)).toBe(fresh);
   });

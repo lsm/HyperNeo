@@ -72,7 +72,7 @@ export function neoCardPrsFresh(
 ): boolean {
   return (
     !shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) &&
-    plan.owned.every((item) => item.claimed)
+    plan.owned.every((item) => item.claimed && (item.claim !== 'mentioned' || item.score != null))
   );
 }
 

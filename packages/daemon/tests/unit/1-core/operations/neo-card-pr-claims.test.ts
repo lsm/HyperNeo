@@ -635,4 +635,51 @@ describe('readNeoCardPrs', () => {
     expect(stored.get('startup')?.map((item) => item.url)).toEqual([pull(64)]);
     expect(stored.get('icons')?.map((item) => item.url)).toEqual([pull(65)]);
   });
+
+  test('a settled card with an unscored mention reads once and records its score', async () => {
+    const merged = { ...pr(64, 50), state: 'MERGED' as const, title: 'Desktop startup splash' };
+    const replaced: { claim: string; score?: number | null }[][] = [];
+    let reads = 0;
+    await readNeoCardPrs(
+      {
+        readPrs: async () => {
+          reads++;
+          return [merged];
+        },
+        prCandidates: async () => [{ url: pull(64), claim: 'mentioned' }],
+        claims: {
+          forUrls: () => [
+            claim({ workId: 'me', urlKey: pull(64).toLowerCase(), claimedAt: 5, score: null }),
+          ],
+          replace: (_id, claims) => replaced.push([...claims]),
+          drop: () => {},
+        },
+        workPrs: {
+          get: () => null,
+          list: () => [],
+          recordFailedRead: () => {},
+        },
+        record: (_id, prs) => ({ workId: 'me', prs: [...prs] }) as NeoWorkPrRow,
+      },
+      {
+        id: 'me',
+        createdAt: 10,
+        title: 'Desktop startup',
+        instruction: '',
+        report: null,
+      } as NeoWork,
+      {
+        workId: 'me',
+        prs: [{ ...pr(64), state: 'MERGED' }],
+        revision: 1,
+        readAt: 900,
+        readOkAt: 900,
+      },
+      1_000
+    );
+    expect(reads).toBe(1);
+    expect(replaced.map((claims) => claims.map((item) => [item.claim, item.score]))).toEqual([
+      [['mentioned', 2]],
+    ]);
+  });
 });
