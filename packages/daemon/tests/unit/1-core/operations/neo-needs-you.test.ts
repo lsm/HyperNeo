@@ -27,6 +27,11 @@ describe('planNeoAskResume', () => {
       { ...ask, status: 'blocked', doneItems: [] },
       { ask: { ...ask, status: 'blocked', doneItems: [] }, items: [], reopen: true },
     ],
+    [
+      'an ask waiting on the human to confirm a reported item',
+      { ...ask, waitingItem: 'i4', doneItems: [item('i2', 'met'), item('i4', 'reported')] },
+      null,
+    ],
     ['an open ask with nothing to undo', { ...ask, status: 'open', doneItems: [] }, null],
     ['a settled ask', { ...ask, status: 'achieved' }, null],
     ['a card with no ask', null, null],
