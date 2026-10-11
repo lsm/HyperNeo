@@ -24,10 +24,16 @@ export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
 }
 
 export function neoWorkDriverLink(driver: NeoWorkDriverReceipt | undefined): string | null {
-  const link = driver?.link;
+  return neoSessionLink(driver?.link, driver?.daemon);
+}
+
+export function neoSessionLink(
+  link: string | null | undefined,
+  daemon: string | null | undefined
+): string | null {
   if (!link || [...link].some((char) => char <= ' ' || char === '\\')) return null;
   if (/^(codex|claude|ghapp):\/\//.test(link)) return link;
-  return !driver.daemon && /^\/(?!\/)/.test(link) ? link : null;
+  return !daemon && /^\/(?!\/)/.test(link) ? link : null;
 }
 
 const shortApps: Record<string, string> = {
@@ -45,8 +51,10 @@ const logos: Record<string, string> = {
 };
 
 export function neoWorkDriverApp(driver: NeoWorkDriverReceipt): string {
-  return shortApps[driver.adapter] ?? driver.adapter;
+  return neoAppLabel(driver.adapter);
 }
+
+export const neoAppLabel = (adapter: string): string => shortApps[adapter] ?? adapter;
 
 export function neoWorkDriverLogo(driver: NeoWorkDriverReceipt | undefined): string | undefined {
   return driver ? logos[driver.adapter] : undefined;
