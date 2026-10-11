@@ -139,6 +139,21 @@ describe('neoWorkMeta', () => {
 });
 
 describe('neoWorkPresentation', () => {
+  it('keeps a card with no result for three days in detail so its Close stays reachable', () => {
+    const quiet = { ...driver('codex-desktop'), abandoned: true as const };
+    expect(neoWorkPrimaryAction(work('queued'), quiet)).toEqual({
+      kind: 'close',
+      label: 'Close',
+      link: 'codex://threads/t1',
+    });
+    expect(neoWorkPresentation(work('queued'), quiet, { compact: true, attention: false })).toBe(
+      'detail'
+    );
+    expect(neoWorkPrimaryAction(work('queued'), { ...quiet, status: 'failed' }).kind).not.toBe(
+      'close'
+    );
+  });
+
   it('keeps a retryable failure in detail so its Retry stays reachable in the compact list', () => {
     const failed = work('failed', { report: 'Could not start the execution: login expired' });
     const compact = { compact: true, attention: false };
