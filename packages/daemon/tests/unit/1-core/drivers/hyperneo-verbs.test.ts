@@ -165,6 +165,21 @@ describe('hyperneo adapter send and status', () => {
     });
   });
 
+  test('a turn a restart cut off reads queued, a user stop reads stopped', async () => {
+    db.exec(
+      `UPDATE sessions SET processing_state = '{"status":"interrupted","reason":"restart","messageId":"m1"}' WHERE id = 'busy'`
+    );
+    expect(await adapter().status?.(ref('busy'))).toMatchObject({
+      ok: true,
+      value: { status: 'queued' },
+    });
+    db.exec(`UPDATE sessions SET processing_state = '{"status":"interrupted"}' WHERE id = 'busy'`);
+    expect(await adapter().status?.(ref('busy'))).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
+    });
+  });
+
   test('status and send do not reach sessions that belong to a Space or do not exist', async () => {
     expect(await adapter().status?.(ref('space'))).toMatchObject({
       ok: false,

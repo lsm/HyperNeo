@@ -9,17 +9,17 @@ import {
   TERMINAL_SPACE_TASK_STATUSES,
 } from './message-search-admission.ts';
 import {
+  planSessionInputDraftWrite,
+  type SessionInputDraftSnapshot,
+  sessionInputDraftSnapshotFromRow,
+} from './session-input-draft-write.ts';
+import {
   buildSessionRuntimeSettingsWrite,
-  type RuntimeSettingsPatch,
   planRuntimeSettingsPatch,
+  type RuntimeSettingsPatch,
   type SessionRuntimeSettingsSnapshot,
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
-import {
-  planSessionInputDraftWrite,
-  sessionInputDraftSnapshotFromRow,
-  type SessionInputDraftSnapshot,
-} from './session-input-draft-write.ts';
 
 function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
@@ -193,6 +193,7 @@ export class SessionRepository {
         `UPDATE sessions
          SET processing_state = json_object(
            'status', 'interrupted',
+           'reason', 'restart',
            'messageId', json_extract(processing_state, '$.messageId')
          )
          WHERE json_valid(processing_state)

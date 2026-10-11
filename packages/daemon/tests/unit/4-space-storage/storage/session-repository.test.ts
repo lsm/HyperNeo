@@ -749,6 +749,7 @@ describe('SessionRepository', () => {
       expect(repository.markRestartInterruptedTurns()).toBe(1);
       expect(JSON.parse(repository.getSession('busy')?.processingState ?? '{}')).toEqual({
         status: 'interrupted',
+        reason: 'restart',
         messageId: 'm1',
       });
       for (const id of ['idle', 'queued', 'asking'])
