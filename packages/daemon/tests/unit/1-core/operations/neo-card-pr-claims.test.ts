@@ -85,6 +85,23 @@ describe('planNeoCardPrOwnership', () => {
     ).toEqual([{ url: pull(1), claim: 'branch', claimedAt: 300, claimed: false }]);
   });
 
+  test('a mention it rejected before stays rejected unless the brief or branch now claims it', () => {
+    const rows = [claim({ workId: 'me', claim: 'rejected', claimedAt: 40 })];
+    expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'mentioned' }], rows, 300)).toEqual(
+      []
+    );
+    expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'named' }], rows, 300)).toEqual([
+      { url: pull(1), claim: 'named', claimedAt: 300, claimed: false },
+    ]);
+  });
+
+  test('another card’s rejected mention is no claim at all', () => {
+    const rows = [claim({ claim: 'rejected', claimedAt: 1 })];
+    expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'mentioned' }], rows, 300)).toEqual(
+      [{ url: pull(1), claim: 'mentioned', claimedAt: 300, claimed: false }]
+    );
+  });
+
   test('keeps its own earlier claim, at its strongest, against a later mention', () => {
     const rows = [
       claim({ workId: 'me', claim: 'branch', claimedAt: 40 }),
@@ -106,20 +123,22 @@ describe('keepNeoCardPrReads', () => {
     ...overrides,
   });
   test('a new mention stays only if the PR was opened after the card started', () => {
-    expect(
-      keepNeoCardPrReads(
-        card,
-        [
-          owned(1),
-          owned(2),
-          owned(3),
-          owned(4),
-          owned(5, { claim: 'named' }),
-          owned(6, { claimed: true }),
-        ],
-        [pr(1, 50), pr(2, 150), pr(3), pr(5, 50), pr(6, 50)]
-      ).map((item) => item.url)
-    ).toEqual([pull(2), pull(3), pull(5), pull(6)]);
+    const sorted = keepNeoCardPrReads(
+      card,
+      [
+        owned(1),
+        owned(2),
+        owned(3),
+        owned(4),
+        owned(5, { claim: 'named' }),
+        owned(6, { claimed: true }),
+      ],
+      [pr(1, 50), pr(2, 150), pr(3), pr(5, 50), pr(6, 50)]
+    );
+    const urls = (items: { url: string }[]) => items.map((item) => item.url);
+    expect(urls(sorted.kept)).toEqual([pull(2), pull(3), pull(5), pull(6)]);
+    expect(urls(sorted.rejected)).toEqual([pull(1)]);
+    expect(urls(sorted.pending)).toEqual([pull(4)]);
   });
 });
 
@@ -144,6 +163,20 @@ describe('NeoWorkPrClaimRepository', () => {
         { url: pull(2), claim: 'mentioned', claimedAt: 2 },
       ]);
       repo.replace('b', [{ url: pull(2).toUpperCase(), claim: 'mentioned', claimedAt: 3 }]);
+      repo.replace('b', [
+        { url: pull(2), claim: 'mentioned', claimedAt: 3 },
+        { url: pull(3), claim: 'rejected', claimedAt: 4 },
+      ]);
+      repo.replace('b', [{ url: pull(2), claim: 'mentioned', claimedAt: 3 }]);
+      expect(repo.forUrls([pull(3)])).toEqual([
+        {
+          workId: 'b',
+          urlKey: pull(3).toLowerCase(),
+          claim: 'rejected',
+          claimedAt: 4,
+          cardCreatedAt: 20,
+        },
+      ]);
       repo.replace('a', [{ url: pull(1), claim: 'branch', claimedAt: 9 }]);
       expect(repo.forUrls([pull(1), pull(2)])).toEqual(
         expect.arrayContaining([
@@ -171,6 +204,45 @@ describe('NeoWorkPrClaimRepository', () => {
 });
 
 describe('readNeoCardPrs', () => {
+  test('rejects a mention of a PR older than the card once, then stops reading it', async () => {
+    const rows: NeoPrClaimRow[] = [];
+    let reads = 0;
+    const deps = {
+      readPrs: async () => {
+        reads++;
+        return [pr(7, 5)];
+      },
+      prCandidates: async () => [{ url: pull(7), claim: 'mentioned' as const }],
+      claims: {
+        forUrls: () => rows,
+        replace: (
+          _id: string,
+          claims: readonly { url: string; claim: NeoPrClaimRow['claim']; claimedAt: number }[]
+        ) => {
+          rows.splice(
+            0,
+            rows.length,
+            ...claims.map((item) =>
+              claim({
+                workId: 'me',
+                urlKey: item.url.toLowerCase(),
+                claim: item.claim,
+                claimedAt: item.claimedAt,
+              })
+            )
+          );
+        },
+      },
+      workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
+      record: () => null,
+    };
+    const card = { id: 'me', createdAt: 10, report: `See ${pull(7)}.` } as NeoWork;
+    await readNeoCardPrs(deps, card, null, 1_000);
+    expect(rows.map((row) => row.claim)).toEqual(['rejected']);
+    await readNeoCardPrs(deps, card, null, 2_000);
+    expect(reads).toBe(1);
+  });
+
   test('drops a stored PR another card owns without reading it again', async () => {
     const stored = {
       workId: 'me',

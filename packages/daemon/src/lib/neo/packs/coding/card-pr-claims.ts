@@ -6,10 +6,11 @@ import { extractNeoWorkPrUrls } from './work-prs.ts';
 export type NeoPrClaim = 'branch' | 'named' | 'mentioned';
 export type NeoCardPrCandidate = { url: string; claim: NeoPrClaim };
 export type NeoCardPrOwned = NeoCardPrCandidate & { claimedAt: number; claimed: boolean };
+export type NeoPrClaimState = NeoPrClaim | 'rejected';
 export interface NeoPrClaimRow {
   workId: string;
   urlKey: string;
-  claim: NeoPrClaim;
+  claim: NeoPrClaimState;
   claimedAt: number;
   cardCreatedAt: number;
 }
@@ -41,10 +42,11 @@ export function planNeoCardPrCandidates(input: {
   });
 }
 
-export function beatsNeoPrClaim(
-  rival: Pick<NeoPrClaimRow, 'claim' | 'claimedAt' | 'cardCreatedAt'>,
-  own: Pick<NeoPrClaimRow, 'claim' | 'claimedAt' | 'cardCreatedAt'>
-): boolean {
+type RankedClaim = Pick<NeoPrClaimRow, 'claimedAt' | 'cardCreatedAt'> & { claim: NeoPrClaim };
+const isRanked = (row: NeoPrClaimRow): row is NeoPrClaimRow & { claim: NeoPrClaim } =>
+  row.claim !== 'rejected';
+
+export function beatsNeoPrClaim(rival: RankedClaim, own: RankedClaim): boolean {
   if (RANK[rival.claim] !== RANK[own.claim]) return RANK[rival.claim] < RANK[own.claim];
   if (own.claim === 'mentioned' && rival.claimedAt !== own.claimedAt)
     return rival.claimedAt < own.claimedAt;
@@ -59,7 +61,9 @@ export function planNeoCardPrOwnership(
 ): NeoCardPrOwned[] {
   return candidates.flatMap((candidate) => {
     const same = claims.filter((row) => row.urlKey === key(candidate.url));
-    const prior = same.find((row) => row.workId === card.id);
+    const mine = same.find((row) => row.workId === card.id);
+    if (mine?.claim === 'rejected' && candidate.claim === 'mentioned') return [];
+    const prior = mine && isRanked(mine) ? mine : undefined;
     const claim =
       prior && RANK[prior.claim] < RANK[candidate.claim] ? prior.claim : candidate.claim;
     const own = {
@@ -67,7 +71,7 @@ export function planNeoCardPrOwnership(
       claimedAt: prior?.claimedAt ?? now,
       cardCreatedAt: card.createdAt,
     };
-    return same.some((row) => row.workId !== card.id && beatsNeoPrClaim(row, own))
+    return same.some((row) => row.workId !== card.id && isRanked(row) && beatsNeoPrClaim(row, own))
       ? []
       : [{ url: candidate.url, claim, claimedAt: own.claimedAt, claimed: !!prior }];
   });
@@ -77,10 +81,18 @@ export function keepNeoCardPrReads(
   card: Pick<NeoWork, 'createdAt'>,
   owned: readonly NeoCardPrOwned[],
   prs: readonly NeoWorkPr[]
-): NeoCardPrOwned[] {
-  return owned.filter((candidate) => {
-    if (candidate.claimed || candidate.claim !== 'mentioned') return true;
+): { kept: NeoCardPrOwned[]; pending: NeoCardPrOwned[]; rejected: NeoCardPrOwned[] } {
+  const sorted = { kept: [], pending: [], rejected: [] } as {
+    kept: NeoCardPrOwned[];
+    pending: NeoCardPrOwned[];
+    rejected: NeoCardPrOwned[];
+  };
+  for (const candidate of owned) {
     const pr = prs.find((item) => key(item.url) === key(candidate.url));
-    return !!pr && (pr.createdAt == null || pr.createdAt >= card.createdAt);
-  });
+    if (candidate.claimed || candidate.claim !== 'mentioned') sorted.kept.push(candidate);
+    else if (!pr) sorted.pending.push(candidate);
+    else if (pr.createdAt != null && pr.createdAt < card.createdAt) sorted.rejected.push(candidate);
+    else sorted.kept.push(candidate);
+  }
+  return sorted;
 }

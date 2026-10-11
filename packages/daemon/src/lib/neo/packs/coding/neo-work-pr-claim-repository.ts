@@ -1,5 +1,5 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { NeoPrClaim, NeoPrClaimRow } from './card-pr-claims.ts';
+import type { NeoPrClaimRow, NeoPrClaimState } from './card-pr-claims.ts';
 
 export class NeoWorkPrClaimRepository {
   constructor(private readonly db: Database) {}
@@ -24,7 +24,7 @@ export class NeoWorkPrClaimRepository {
 
   replace(
     workId: string,
-    claims: readonly { url: string; claim: NeoPrClaim; claimedAt: number }[]
+    claims: readonly { url: string; claim: NeoPrClaimState; claimedAt: number }[]
   ): void {
     if (!this.hasTable()) return;
     const keys = claims.map((claim) => claim.url.toLowerCase());
@@ -32,7 +32,8 @@ export class NeoWorkPrClaimRepository {
       this.db
         .prepare(
           `DELETE FROM neo_work_pr_claims
-            WHERE work_id = ? AND url_key NOT IN (SELECT value FROM json_each(?))`
+            WHERE work_id = ? AND claim <> 'rejected'
+              AND url_key NOT IN (SELECT value FROM json_each(?))`
         )
         .run(workId, JSON.stringify(keys));
       const upsert = this.db.prepare(

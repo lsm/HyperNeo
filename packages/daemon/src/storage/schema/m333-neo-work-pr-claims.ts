@@ -6,7 +6,7 @@ export function runMigration333(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_work_pr_claims (
     work_id TEXT NOT NULL REFERENCES neo_work(id) ON DELETE CASCADE,
     url_key TEXT NOT NULL,
-    claim TEXT NOT NULL CHECK (claim IN ('branch', 'named', 'mentioned')),
+    claim TEXT NOT NULL CHECK (claim IN ('branch', 'named', 'mentioned', 'rejected')),
     claimed_at INTEGER NOT NULL,
     PRIMARY KEY (work_id, url_key)
   )`);
