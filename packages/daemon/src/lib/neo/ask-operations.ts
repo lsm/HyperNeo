@@ -99,6 +99,7 @@ type Opening = Omit<z.infer<typeof Open>, 'doneItems' | 'doneWhen'> & { doneWhen
 const Cite = z.union([
   z.object({ said: z.string().trim().min(1).max(500) }),
   z.object({ rule: z.string().trim().min(1).max(2000) }),
+  z.object({ card: z.string().trim().min(1).max(160) }),
 ]);
 const Settle = z.object({
   id: z.string().min(1),
@@ -406,7 +407,11 @@ function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
-export type NeoHumanWaitSources = { said: readonly string[]; rules: readonly string[] };
+export type NeoHumanWaitSources = {
+  said: readonly string[];
+  rules: readonly string[];
+  asking: readonly string[];
+};
 const squashed = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
 
 export function requireNeoHumanWaitCited<T>(
@@ -419,9 +424,17 @@ export function requireNeoHumanWaitCited<T>(
   if (!cite)
     return {
       reason: fail(
-        'cite_required: waiting on the human needs a reason they gave. Pass cite {said: their exact words} or {rule: a saved standing rule}. Without one, decide yourself and keep the work moving.'
+        'cite_required: waiting on the human needs a reason. Pass cite {said: their exact words}, {rule: a saved standing rule}, or {card: the id of a card under this ask whose session is waiting on them}. Without one, decide yourself and keep the work moving.'
       ),
     };
+  if ('card' in cite)
+    return sources.asking.includes(cite.card)
+      ? { value }
+      : {
+          reason: fail(
+            `cite_not_found: card ${cite.card} is not under this ask, or its session is not waiting on the human.`
+          ),
+        };
   if ('rule' in cite)
     return sources.rules.some((rule) => squashed(rule) === squashed(cite.rule))
       ? { value }
@@ -618,6 +631,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
         : []),
     ],
     rules: neoStandingRules(service.db.getGlobalSettings?.().neo),
+    asking: ask.workIds.filter((id) => service.driverTargets.readNeedsYouSince(id) != null),
   });
   const readOwnedLiveAsk = (superpipe({})('neo-ask-owned-live') as PipelineAPI)
     .input(['askId', 'caller', 'name', 'verb'])
@@ -973,7 +987,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn} or {rule: a saved standing rule}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. needs_you also takes cite: {said: the human's exact words from this ask's opening message or this turn}, {rule: a saved standing rule}, or {card: a card under this ask whose session is waiting on the human}; without one the daemon refuses, so decide yourself instead. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

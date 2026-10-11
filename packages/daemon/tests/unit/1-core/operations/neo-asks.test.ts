@@ -77,7 +77,16 @@ describe('requireNeoHumanWaitCited', () => {
   const sources = {
     said: ['Ship it, but ask me before the release.'],
     rules: ['Never deploy on Friday.'],
+    asking: ['card-1'],
   };
+  test('accepts a card under the ask whose session waits on the human, and no other', () => {
+    expect(requireNeoHumanWaitCited({ card: 'card-1' }, sources, true, 'v')).toEqual({
+      value: 'v',
+    });
+    expect(requireNeoHumanWaitCited({ card: 'card-2' }, sources, true, 'v')).toMatchObject({
+      reason: { reason: expect.stringContaining('cite_not_found') },
+    });
+  });
   test('passes anything that does not wait on the human', () => {
     expect(requireNeoHumanWaitCited(undefined, sources, false, 'v')).toEqual({ value: 'v' });
   });
@@ -405,7 +414,9 @@ describe('neo.ask operations', () => {
       outcome: 'blocked',
       summary: 'Needs you: which API?',
       evidence: 'Two APIs fit.',
+      cite,
     });
+    expect(service.askRecords.get(askId)?.status).toBe('blocked');
 
     await propose('card-1', askId);
 
