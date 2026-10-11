@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-test('factory is inert and activation preserves repository timestamps and full task fields', () => {
+test('activateDirectAttemptAtomically preserves repository timestamps and full task fields', () => {
   const start = (input: Parameters<typeof activateDirectAttemptAtomically>[2]) =>
     activateDirectAttemptAtomically(db, undefined, input);
   expect(tasks.getTask(taskId)?.status).toBe('open');

@@ -54,7 +54,7 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-test('inert factory persists one validated entry with stable identity across connections and restart', () => {
+test('recordDirectKickoffAtomically persists one validated entry with stable identity across connections and restart', () => {
   const record = (input: Parameters<typeof recordDirectKickoffAtomically>[1]) =>
     recordDirectKickoffAtomically(db, input);
   expect(readDirectKickoffIntent(db, 'attempt')).toBeNull();
