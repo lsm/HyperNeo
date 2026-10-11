@@ -146,6 +146,7 @@ import {
   neoPackBriefs,
   neoPackAskReportEvidence,
   neoPackChecks,
+  neoPackEvidenceOrNone,
   neoPackFragment,
   neoPackReportEvidence,
   neoPacks,
@@ -255,7 +256,7 @@ type NeoWorkPrCard = {
   packEvidence: boolean;
   toldAt: number | null;
 };
-type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null };
+type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; readable: boolean };
 type NeoNeedsYouCard = {
   state: ReturnType<typeof readDriverNeedsYou>;
   noted: number | null;
@@ -1510,13 +1511,15 @@ export class NeoService {
       'result:refresh'
     )
     .pipe(
-      async (refresh: { work: NeoWork }, card: NeoWorkPrCard) => ({
-        read: await readNeoPackEvidence(
-          this.evidencePacks(card.ask, !!card.row),
-          refresh.work,
-          (id, error) => this.log.warn(`Neo pack ${id} evidence read failed`, error)
-        ),
-      }),
+      async (refresh: { work: NeoWork }, card: NeoWorkPrCard) => {
+        const packs = this.evidencePacks(card.ask, !!card.row);
+        return {
+          read: await readNeoPackEvidence(packs, refresh.work, (id, error) =>
+            this.log.warn(`Neo pack ${id} evidence read failed`, error)
+          ),
+          readable: packs.some((pack) => !!pack.readEvidence),
+        };
+      },
       ['refresh', 'card'],
       'refreshed'
     )
@@ -1526,20 +1529,27 @@ export class NeoService {
       'told'
     )
     .pipe(
+      (refreshed: NeoWorkPrRefreshed, now: number) => ({
+        read: neoPackEvidenceOrNone(refreshed.read, refreshed.readable, now),
+      }),
+      ['refreshed', 'now'],
+      'planned'
+    )
+    .pipe(
       (
         refresh: { work: NeoWork },
         card: NeoWorkPrCard,
-        refreshed: NeoWorkPrRefreshed,
+        planned: { read: NeoEvidenceRead | null },
         told: NeoWorkTold,
         now: number
       ) =>
-        refreshed.read && card.goal
-          ? planNeoDoneCheck(refreshed.read.evidence, told.row, refreshed.read.read, now, {
+        planned.read && card.goal
+          ? planNeoDoneCheck(planned.read.evidence, told.row, planned.read.read, now, {
               quietSince: refresh.work.updatedAt,
               remindable: !card.ask || card.ask.status === 'open',
             })
           : 'wait',
-      ['refresh', 'card', 'refreshed', 'told', 'now'],
+      ['refresh', 'card', 'planned', 'told', 'now'],
       'plan'
     )
     .pipe(
@@ -1556,7 +1566,8 @@ export class NeoService {
         refresh: { work: NeoWork; delivery: 'deliver' | 'remind' },
         card: NeoWorkPrCard,
         refreshed: NeoWorkPrRefreshed,
-        told: NeoWorkTold
+        told: NeoWorkTold,
+        planned: { read: NeoEvidenceRead | null }
       ) => {
         if (!card.goal) return;
         await this.deliverDoneCheck(
@@ -1569,20 +1580,16 @@ export class NeoService {
                 ready: true,
                 remind: true,
                 followedAt: told.row?.toldAt ?? refresh.work.updatedAt,
-                signature: refreshed.read
-                  ? neoEvidenceSignature(refreshed.read.evidence)
-                  : undefined,
+                signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
               }
             : {
-                stale: !refreshed.read?.read.ok,
+                stale: !refreshed.read?.read.ok && refreshed.readable,
                 ask: card.ask,
-                signature: refreshed.read
-                  ? neoEvidenceSignature(refreshed.read.evidence)
-                  : undefined,
+                signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
               }
         );
       },
-      ['refresh', 'card', 'refreshed', 'told']
+      ['refresh', 'card', 'refreshed', 'told', 'planned']
     )
     .endAsync('refresh') as (
     workId: string,
