@@ -97,6 +97,7 @@ describe('neo.session.track', () => {
   let listed: PlaceGroup['work'];
   let status: { status: WorkStatus; lastActivityAt: number };
   const sent = mock(() => ({ ok: true, value: { delivered: true } }));
+  const stopped = mock(() => ({ ok: true, value: { stopped: true } }));
 
   const work = (overrides: Partial<PlaceGroup['work'][number]> = {}) => ({
     ref,
@@ -114,6 +115,7 @@ describe('neo.session.track', () => {
     listed = [];
     status = { status: 'running', lastActivityAt: 0 };
     sent.mockClear();
+    stopped.mockClear();
     const operation = (name: string, execute: () => unknown) =>
       defineOperation({
         name,
@@ -139,6 +141,7 @@ describe('neo.session.track', () => {
       })),
       operation('work.status', () => ({ ok: true, value: status })),
       operation('work.send', sent),
+      operation('work.stop', stopped),
     ]);
     service = new NeoService(
       db,
@@ -208,6 +211,10 @@ describe('neo.session.track', () => {
       expect(await invoke({ key })).toMatchObject({
         value: { ok: false, reason: 'A Neo card already follows this session.' },
       });
+
+      await service.close(card.id, 'done');
+      expect(service.repo.getWork(card.id)?.status).toBe('reported');
+      expect(stopped).not.toHaveBeenCalled();
     } finally {
       time.mockRestore();
     }

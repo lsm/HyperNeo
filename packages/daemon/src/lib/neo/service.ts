@@ -1062,7 +1062,10 @@ export class NeoService {
       {
         repo: this.repo,
         readDriverRef: (workId: string) => this.driverTargets.readRef(workId),
-        stopDriver: (ref: WorkRef, work: NeoWork) => this.stopDriverWork(ref, work),
+        stopDriver: (ref: WorkRef, work: NeoWork) =>
+          this.driverTargets.get(work.id)?.verb === 'adopt'
+            ? Promise.resolve()
+            : this.stopDriverWork(ref, work),
       },
       id,
       outcome
