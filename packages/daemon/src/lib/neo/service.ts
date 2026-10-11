@@ -2031,8 +2031,10 @@ export class NeoService {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')
-      await readNeoCardPrs(this.cardPrDeps, work, this.workPrs.get(work.id), Date.now()).catch(
-        (error) => this.log.warn('Card pull request read pending', error)
+      await readNeoPackEvidence(
+        this.evidencePacks(this.askRecords.forWork(work.id), !!this.workPrs.get(work.id)),
+        work,
+        (id, error) => this.log.warn(`Neo pack ${id} evidence read failed`, error)
       );
     const rootId = await this.open(null);
     if (work.concernId) {
