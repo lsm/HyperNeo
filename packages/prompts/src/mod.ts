@@ -107,6 +107,9 @@ import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
 import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
 import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
 import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: 'text' };
+import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' with {
+  type: 'text',
+};
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
 import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
@@ -373,6 +376,7 @@ const registry: Record<string, string> = {
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
+  'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,
@@ -548,6 +552,7 @@ export const {
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,
+  NEO_WORK_GOAL_PR_EVENTS,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
   NEO_WORK_NEEDS_YOU,
