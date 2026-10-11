@@ -620,6 +620,85 @@ describe('neo.ask operations', () => {
     ).toEqual({ status: 'waiting', outcome: 'Confirm: i1', item: 'i1' });
   });
 
+  test('a decision carries its options, and the human answers it back to Neo', async () => {
+    const askId = await openAsk();
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i1',
+        state: 'met',
+        evidence: 'PR #12 merged.',
+        options: ['Yes', 'No'],
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('options_need') } });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i2',
+        state: 'needs_you',
+        evidence: 'Is red CI on main acceptable?',
+        options: ['Yes', 'Yes'],
+      })
+    ).toMatchObject({ kind: 'failed', message: expect.stringContaining('Options must differ') });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i2',
+        state: 'needs_you',
+        evidence: 'Is red CI on main acceptable?',
+        options: ['Accept it', 'Fix CI first'],
+      })
+    ).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          doneItems: [
+            expect.anything(),
+            expect.objectContaining({ id: 'i2', options: ['Accept it', 'Fix CI first'] }),
+          ],
+        },
+      },
+    });
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    const answer = { askId, itemId: 'i2', choice: 'Fix CI first' };
+    service.deliverAskAnswer = async () => {
+      throw new Error('mailbox rejected');
+    };
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      kind: 'failed',
+      message: 'mailbox rejected',
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[1]).toMatchObject({ state: 'needs_you' });
+    const delivered = mock(async (_ask: NeoAsk, _item: unknown, _choice: string) => {});
+    service.deliverAskAnswer = delivered;
+    expect(await invoke('neo.ask.answer', answer)).toMatchObject({ value: { ok: false } });
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'open',
+          doneItems: [
+            expect.anything(),
+            expect.objectContaining({
+              state: 'met',
+              metBy: 'human',
+              evidence: 'The human answered: Fix CI first',
+            }),
+          ],
+        },
+      },
+    });
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(delivered.mock.calls[0]?.slice(1)).toEqual([
+      expect.objectContaining({ id: 'i2', text: 'CI green' }),
+      'Fix CI first',
+    ]);
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('item_not_waiting') },
+    });
+  });
+
   test('the user can close an ask as done even with items still open', async () => {
     const askId = await openAsk();
     expect(

@@ -1,6 +1,7 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
+  NeoAskAnswer,
   NeoAskItem,
   NeoAskSessionView,
   NeoAskView as NeoAskSnapshotView,
@@ -20,6 +21,7 @@ export type NeoAskView = {
   readonly summary: string | null;
   readonly items: readonly NeoAskItem[];
   readonly sessions: readonly NeoAskSessionView[];
+  readonly answer: NeoAskAnswer | null;
 };
 
 export type NeoAskOpenTarget = {
@@ -71,6 +73,7 @@ export function describeNeoAskFromView(
     summary: published.summary,
     items: neoAskItems(ask),
     sessions: published.sessions ?? [],
+    answer: published.answer ?? null,
   };
 }
 

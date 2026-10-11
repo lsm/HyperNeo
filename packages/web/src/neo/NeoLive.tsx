@@ -625,6 +625,15 @@ export function NeoLive() {
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}
                     onDone={(itemId) => void neo.tickAskItem(ask.ask.id, itemId)}
+                    onAnswer={(itemId, choice) =>
+                      void neo.answerAskItem(ask.ask.id, itemId, choice)
+                    }
+                    onAnswerInChat={(question) => {
+                      writeDraft(
+                        [draft?.trim(), `Re "${question}": `].filter(Boolean).join('\n\n')
+                      );
+                      shell.current?.querySelector('textarea')?.focus();
+                    }}
                     onApprove={() => void neo.approveAsk(ask.ask.id)}
                     onOpen={(id) => openScene({ kind: 'work', id })}
                     onOpenSession={(sessionId, title) => setChat({ sessionId, title })}

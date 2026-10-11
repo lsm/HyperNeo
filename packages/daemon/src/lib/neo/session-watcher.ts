@@ -293,8 +293,12 @@ export class NeoSessionWatcher {
     const entries = [...this.sessionsSeen];
     const signature = JSON.stringify(entries);
     if (signature === this.savedSeen) return;
-    this.deps.seen.replace(entries);
-    this.savedSeen = signature;
+    try {
+      this.deps.seen.replace(entries);
+      this.savedSeen = signature;
+    } catch (error) {
+      this.deps.log.warn('Neo session watch state could not be saved', error);
+    }
   }
 
   flushSessionNoticeGroup(): void {

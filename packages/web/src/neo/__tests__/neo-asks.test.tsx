@@ -406,6 +406,31 @@ describe('NeoAskCard', () => {
     ).toBe(true);
   });
 
+  it('answers a decision with its options and offers Answer in chat as the main action', () => {
+    const answer = vi.fn();
+    const inChat = vi.fn();
+    const decision = item('i2', 'needs_you', {
+      text: 'Assign #6545?',
+      options: ['Assign it', 'Leave it'],
+    });
+    const view = describeAsk({ ...ask('w', 'waiting', []), doneItems: [decision] }, [], {
+      answer: {
+        itemId: 'i2',
+        question: 'Assign #6545?',
+        label: 'Answer in chat',
+        options: ['Assign it', 'Leave it'],
+      },
+    });
+    const card = render(
+      <NeoAskCard view={view} onAnswer={answer} onAnswerInChat={inChat} onDone={vi.fn()} />
+    );
+    fireEvent.click(card.getByRole('button', { name: 'Answer Assign #6545?: Leave it' }));
+    expect(answer).toHaveBeenCalledExactlyOnceWith('i2', 'Leave it');
+    expect(card.queryByRole('button', { name: 'Mark done: Assign #6545?' })).toBeNull();
+    fireEvent.click(card.getByRole('button', { name: 'Answer in chat' }));
+    expect(inChat).toHaveBeenCalledExactlyOnceWith('Assign #6545?');
+  });
+
   it('approves an ask with proposed steps once, and marks it approved after', () => {
     const proposed = [...scenes.attention, ...scenes.running].filter(
       (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'

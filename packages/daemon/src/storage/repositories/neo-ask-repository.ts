@@ -28,14 +28,15 @@ export type NeoAskInput = Omit<
   | 'settledAt'
 >;
 export type NeoAskItemInput = Pick<NeoAskItem, 'text' | 'check'>;
-type NeoAskItemRow = Omit<NeoAskItem, 'removed' | 'decision'> & {
+type NeoAskItemRow = Omit<NeoAskItem, 'removed' | 'options' | 'decision'> & {
   askId: string;
   removed: number;
+  options: string | null;
   decision: number;
 };
 
 const itemColumns = `ask_id AS askId, id, text, state, evidence, check_kind AS "check",
-  met_by AS metBy, removed, added_at AS addedAt, decision`;
+  met_by AS metBy, removed, added_at AS addedAt, options, decision`;
 
 export class NeoAskRepository {
   constructor(
@@ -122,14 +123,22 @@ export class NeoAskRepository {
 
   tickItem(
     askId: string,
-    item: Pick<NeoAskItem, 'id' | 'state' | 'evidence' | 'metBy'>,
+    item: Pick<NeoAskItem, 'id' | 'state' | 'evidence' | 'metBy' | 'options'>,
     at: number
   ): boolean {
     const changed = this.db.transaction(() => {
       const ticked = this.db
-        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, updated_at = ?
+        .prepare(`UPDATE neo_ask_items SET state = ?, evidence = ?, met_by = ?, options = ?, updated_at = ?
           WHERE ask_id = ? AND id = ? AND removed = 0`)
-        .run(item.state, item.evidence, item.metBy, at, askId, item.id).changes;
+        .run(
+          item.state,
+          item.evidence,
+          item.metBy,
+          item.options?.length ? JSON.stringify(item.options) : null,
+          at,
+          askId,
+          item.id
+        ).changes;
       if (ticked) this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(at, askId);
       return ticked > 0;
     })();
@@ -304,9 +313,10 @@ export class NeoAskRepository {
       workIds: links.filter((link) => link.askId === row.id).map((link) => link.workId),
       doneItems: items
         .filter((item) => item.askId === row.id)
-        .map(({ askId: _askId, removed, decision, ...item }) => ({
+        .map(({ askId: _askId, removed, options, decision, ...item }) => ({
           ...item,
           removed: removed === 1,
+          ...(options ? { options: JSON.parse(options) as string[] } : {}),
           ...(decision === 1 ? { decision: true as const } : {}),
         })),
     }));

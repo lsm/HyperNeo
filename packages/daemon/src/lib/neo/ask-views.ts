@@ -1,5 +1,6 @@
 import type {
   NeoAsk,
+  NeoAskAnswer,
   NeoAskSessionView,
   NeoAskStatus,
   NeoAskView,
@@ -62,6 +63,15 @@ export function neoAskViewSummary(
     : `${sentence.slice(0, NEO_ASK_SUMMARY_LIMIT - 1).trimEnd()}…`;
 }
 
+export function neoAskAnswer(ask: NeoAsk): NeoAskAnswer | null {
+  if (ask.status === 'achieved' || ask.status === 'abandoned') return null;
+  const items = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
+  const item = items.find((entry) => entry.id === ask.waitingItem) ?? items[0];
+  return item
+    ? { itemId: item.id, question: item.text, label: 'Answer in chat', options: item.options ?? [] }
+    : null;
+}
+
 export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView {
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
@@ -95,6 +105,7 @@ export function describeNeoAskView(ask: NeoAsk, index: AskViewIndex): NeoAskView
     doneWorkIds,
     summary: neoAskViewSummary(ask, live, index.merged),
     sessions,
+    answer: neoAskAnswer(ask),
   };
 }
 

@@ -1,6 +1,18 @@
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
+export function neoAskAnswerNote(
+  ask: Pick<NeoAsk, 'id' | 'title'>,
+  item: Pick<NeoAskItem, 'id' | 'text'>,
+  choice: string
+): string {
+  return [
+    `The human answered a decision on ask ${ask.id} ("${ask.title}"), item ${item.id}: "${item.text}".`,
+    `Their answer: ${choice}`,
+    'The daemon ticked that item met with their answer. Act on it now: continue or propose the work it calls for under this ask, or settle the ask if nothing is left. Tell the human only what they need to know.',
+  ].join('\n');
+}
+
 type NeoAskResume = { ask: NeoAsk; items: string[]; reopen: boolean };
 
 export function planNeoAskResume(

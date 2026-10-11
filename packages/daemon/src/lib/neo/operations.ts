@@ -523,7 +523,7 @@ function admitNeoCaller(
     if (!active || !(human || (askApproved && name === 'neo.work.start')))
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
-  if (['neo.open', 'neo.concern.cancel', 'neo.work.close'].includes(name))
+  if (['neo.open', 'neo.concern.cancel', 'neo.work.close', 'neo.ask.answer'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
