@@ -49,6 +49,15 @@ export class StaleTaskGuardError extends Error {
   }
 }
 
+export function staleTaskGuardRejection(
+  error: unknown
+): 'space_at_task_capacity' | 'invalid_transition' | null {
+  if (!(error instanceof StaleTaskGuardError)) return null;
+  return error.guardReason === 'space_at_task_capacity'
+    ? 'space_at_task_capacity'
+    : 'invalid_transition';
+}
+
 import {
   dependencyRejectionMessage,
   planNewTaskDependencies,
