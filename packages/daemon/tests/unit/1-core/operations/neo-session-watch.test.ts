@@ -399,6 +399,56 @@ describe('refreshDriverWork', () => {
     }
   });
 
+  const openFinishedGroup = async (advance: (ms: number) => void, at: () => number) => {
+    listed = [work({ lastActivityAt: at() - 1_000 })];
+    await service.refreshDriverWork();
+    advance(NEO_SESSION_RUN_MS);
+    listed = [work({ status: 'done', lastActivityAt: at() - 1_000 })];
+    status = { status: 'done', lastActivityAt: at() - 1_000 };
+    await service.refreshDriverWork();
+    advance(NEO_SESSION_GROUP_MS);
+  };
+
+  test('overlapping refreshes close a group only once', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      await openFinishedGroup(
+        (ms) => {
+          clock += ms;
+        },
+        () => clock
+      );
+      await Promise.all([service.refreshDriverWork(), service.refreshDriverWork()]);
+      expect(events.filter(([name]) => name === 'neo.session.notices')).toHaveLength(1);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
+        expect.objectContaining({ content: 'Codex · Quiet-model research finished · Open' }),
+      ]);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('a group whose row could not be saved is neither kept nor announced', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      await openFinishedGroup(
+        (ms) => {
+          clock += ms;
+        },
+        () => clock
+      );
+      const save = spyOn(db.getSDKMessageRepo(), 'saveSDKMessage').mockReturnValue(false);
+      await service.refreshDriverWork();
+      save.mockRestore();
+      expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
+      expect(service.sessionNoticeGroups).toEqual([]);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
   test('a group still open at shutdown is saved, and a restart reads it back', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);

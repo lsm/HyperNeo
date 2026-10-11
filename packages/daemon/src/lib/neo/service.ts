@@ -273,6 +273,7 @@ export class NeoService {
   sessionNotices: NeoSessionNotice[] = [];
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   private openSessionNotices: NeoSessionNotice[] = [];
+  private watching: Promise<unknown> | null = null;
   filePacks: readonly NeoPack[] = [];
   private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
@@ -1159,9 +1160,13 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
-    await this.watchSessions(Date.now()).catch((error) =>
-      this.log.warn('Session watch pending', error)
-    );
+    if (this.watching) return;
+    this.watching = this.watchSessions(Date.now())
+      .catch((error) => this.log.warn('Session watch pending', error))
+      .finally(() => {
+        this.watching = null;
+      });
+    await this.watching;
   }
 
   private followedCardRefs(now: number): WorkRef[] {
@@ -1336,14 +1341,20 @@ export class NeoService {
   }
 
   private postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): void {
-    this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);
-    this.db.getSDKMessageRepo().saveSDKMessage(root, {
+    if (this.sessionNoticeGroups.some((kept) => kept.id === group.id)) return;
+    const saved = this.db.getSDKMessageRepo().saveSDKMessage(root, {
       type: 'system',
       subtype: 'session_notices',
       uuid: group.id,
       session_id: root,
+      content: group.line,
       group,
     } as unknown as SDKMessage);
+    if (!saved) {
+      this.log.warn(`Neo session notice group ${group.id} could not be saved`);
+      return;
+    }
+    this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);
     this.announceSessionNoticeGroup(group);
   }
 
