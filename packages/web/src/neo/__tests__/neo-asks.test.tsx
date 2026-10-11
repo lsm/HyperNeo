@@ -474,23 +474,25 @@ describe('NeoAskCard', () => {
   });
 
   it('reads an approval’s budget from the ask and offers to refill it once it runs out', () => {
-    expect(neoAskApproval(ask('a', 'open', []), 10)).toBeNull();
+    expect(neoAskApproval(ask('a', 'open', []))).toBeNull();
     const approved = { ...ask('a', 'open', []), approvedAt: 5 };
-    expect(neoAskApproval(approved, 10)).toEqual({ line: '0 continues used', spent: false });
+    expect(neoAskApproval(approved)).toEqual({ line: '0 continues used', spent: false });
     const budget = {
       ...approved,
       approvedContinues: 3,
       approvedContinueLimit: 20,
       approvedUntil: 100,
     };
-    expect(neoAskApproval(budget, 10)).toEqual({ line: '3 of 20 continues used', spent: false });
-    expect(neoAskApproval({ ...budget, approvedContinues: 20 }, 10)?.spent).toBe(true);
-    expect(neoAskApproval(budget, 101)).toEqual({
+    expect(neoAskApproval(budget)).toEqual({ line: '3 of 20 continues used', spent: false });
+    expect(neoAskApproval({ ...budget, approvalSpent: 'expired' as const })).toEqual({
       line: '3 of 20 continues used · approval ran out',
       spent: true,
     });
     const approve = vi.fn();
-    const spent = describeNeoAsk({ ...budget, approvedContinues: 20 }, []);
+    const spent = describeNeoAsk(
+      { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const },
+      []
+    );
     const card = render(<NeoAskCard view={spent} onApprove={approve} />);
     expect(card.queryByText('20 of 20 continues used · approval ran out')).toBeNull();
     fireEvent.click(card.getByRole('button', { name: 'Details' }));

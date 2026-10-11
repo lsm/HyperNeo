@@ -71,7 +71,7 @@ export function NeoLive() {
   const prs = new Map((view?.workPrs ?? []).map((item) => [item.workId, item]));
   const continues = new Map((view?.workContinues ?? []).map((item) => [item.workId, item]));
   const pooled = new Set(
-    (view?.asks ?? []).filter((ask) => ask.approvedAt).flatMap((ask) => ask.workIds)
+    (view?.asks ?? []).filter((ask) => ask.pooled).flatMap((ask) => ask.workIds)
   );
   const topics = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
