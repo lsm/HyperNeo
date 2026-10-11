@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { buildPrEventTopicPattern, parsePrUrl } from '../github/parse-pr-url.ts';
+import { buildPrEventTopicPattern, parseGitHubTopic, parsePrUrl } from '../github/parse-pr-url.ts';
 import {
   defineOperation,
   type OperationCaller,
@@ -52,9 +52,9 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
 }
 
 export function githubRepoOfTopic(topic: string): { owner: string; repo: string } | null {
-  const [source, owner, repo] = topic.split('/');
-  if (source !== 'github' || !owner || !repo) return null;
-  return owner.includes('*') || repo.includes('*') ? null : { owner, repo };
+  const parsed = parseGitHubTopic(topic);
+  if (!parsed || parsed.owner.includes('*') || parsed.repo.includes('*')) return null;
+  return { owner: parsed.owner, repo: parsed.repo };
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);

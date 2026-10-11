@@ -1,5 +1,5 @@
 import type { SessionEventSubscription } from '../../storage/repositories/session-event-subscription-repository.ts';
-import { externalEventTopicSuffix } from './event-tiers.ts';
+import { parseGitHubTopic } from '../github/parse-pr-url.ts';
 import type { SessionEventSkip } from './session-event-delivery.ts';
 import type { ExternalEvent, ExternalEventRecord } from './types.ts';
 
@@ -18,22 +18,21 @@ export function requireClosedPrEvent(found: {
 }): Gate<ClosedPr> {
   const event: ExternalEvent | undefined = found.record?.event;
   if (!event) return { reason: 'event_missing' };
-  const [source, owner, repo, resource, entity] = event.topic.split('/');
-  const action = externalEventTopicSuffix(event.topic);
+  const topic = parseGitHubTopic(event.topic);
+  const action = topic?.action;
   const closed = action === 'closed' || (action === 'polled' && event.payload.state === 'closed');
-  if (source !== 'github' || resource !== 'pull_request' || !closed || !owner || !repo)
-    return { reason: 'pr_not_closed' };
-  return { value: { owner, repo, prNumber: entity.split('.')[0] } };
+  if (!topic || topic.resource !== 'pull_request' || !closed) return { reason: 'pr_not_closed' };
+  return { value: { owner: topic.owner, repo: topic.repo, prNumber: topic.entity } };
 }
 
 export function isPrSubscription(pattern: string, pr: ClosedPr): boolean {
-  const [source, owner, repo, resource, entity = ''] = pattern.split('/');
+  const topic = parseGitHubTopic(pattern);
   return (
-    source === 'github' &&
-    owner?.toLowerCase() === pr.owner.toLowerCase() &&
-    repo?.toLowerCase() === pr.repo.toLowerCase() &&
-    resource === 'pull_request' &&
-    entity.split('.')[0] === pr.prNumber
+    !!topic &&
+    topic.owner.toLowerCase() === pr.owner.toLowerCase() &&
+    topic.repo.toLowerCase() === pr.repo.toLowerCase() &&
+    topic.resource === 'pull_request' &&
+    topic.entity === pr.prNumber
   );
 }
 

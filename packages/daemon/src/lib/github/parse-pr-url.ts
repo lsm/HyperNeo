@@ -20,6 +20,27 @@ export function buildPrEventTopicPattern(parsed: ParsedPrUrl): string {
   return `github/${parsed.owner}/${parsed.repo}/pull_request/${parsed.number}.*`;
 }
 
+export interface GitHubTopic {
+  owner: string;
+  repo: string;
+  resource: string;
+  entity: string;
+  action: string;
+}
+
+export function parseGitHubTopic(topic: string): GitHubTopic | null {
+  const [source, owner, repo, resource = '', entityAction = ''] = topic.split('/');
+  if (source !== 'github' || !owner || !repo) return null;
+  const dot = entityAction.indexOf('.');
+  return {
+    owner,
+    repo,
+    resource,
+    entity: dot < 0 ? entityAction : entityAction.slice(0, dot),
+    action: dot < 0 ? '' : entityAction.slice(dot + 1),
+  };
+}
+
 export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['primaryLink']);
 
 export function resolveTopicFromInterest(

@@ -7,9 +7,9 @@ import {
   SESSION_EVENT_ORIGIN,
   type SessionEventDelivery,
   sessionEventHeadline,
-  topicMatchesPattern,
 } from '../../../../src/lib/external-events/session-event-delivery';
 import { SESSION_EVENT_SCOPE } from '../../../../src/lib/external-events/session-external-event-store';
+import { topicMatchesPattern } from '../../../../src/lib/external-events/topic-trie';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import {
