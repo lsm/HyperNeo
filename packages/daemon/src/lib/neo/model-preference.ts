@@ -68,7 +68,8 @@ export function effectiveNeoPreference(
   root: RuntimeConfig | null,
   defaultThinking?: string
 ): (NeoModelPreference & { saved: boolean }) | null {
-  if (saved) return { ...saved, saved: true };
+  if (saved)
+    return { ...saved, thinkingLevel: normalizeThinkingLevel(saved.thinkingLevel), saved: true };
   if (!root?.model || !root.provider) return null;
   return {
     model: root.model,

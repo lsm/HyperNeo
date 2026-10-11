@@ -152,6 +152,11 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
+export interface NeoWaitingOnHuman {
+  note: string;
+  asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
+}
+
 export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
@@ -172,6 +177,7 @@ export interface NeoSnapshot {
   workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];
+  waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
 }
 
