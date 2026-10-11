@@ -282,6 +282,14 @@ describe('withWorkGoal', () => {
     ).not.toContain('gh pr merge');
   });
 
+  test('tells a session whose done means merging to resolve the threads it addresses', () => {
+    const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
+    expect(withWorkGoal('Fix it.', merged)).toContain('resolveReviewThread');
+    expect(
+      withWorkGoal('Fix it.', { ...merged, doneWhen: '- runs in the simulator' })
+    ).not.toContain('resolveReviewThread');
+  });
+
   test("tells a session whose done means merging to subscribe to its pull request's events", () => {
     const merged = { workId: 'w1', goal: 'Fix it', doneWhen: '- squash-merged to dev' };
     expect(withWorkGoal('Fix it.', merged)).toContain('event.external.subscribe');
@@ -1203,6 +1211,32 @@ describe('Neo work with a drivers target', () => {
         pull(6403),
         pull(6440),
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('tracks the pull requests of a card with no done list once it reports', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/6403';
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    const notes: string[] = [];
+    service.readPrs = async () => [{ url, state: 'OPEN', checks: 'passing', review: 'approved' }];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([url]);
+      expect(notes.some((id) => id.includes('done-check'))).toBe(false);
     } finally {
       db.close();
     }

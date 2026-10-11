@@ -485,15 +485,14 @@ describe('readGithubPrs blockers', () => {
 
 describe('requireNeoWorkPrRefresh', () => {
   const row = { readAt: 0 };
-  type Card = { goal: boolean; row: { readAt: number } | null; session: boolean };
-  const card: Card = { goal: true, row, session: true };
+  type Card = { row: { readAt: number } | null; session: boolean };
+  const card: Card = { row, session: true };
   const reported = { status: 'reported', report: 'Merged.' };
   test.each<[string, typeof reported, Partial<Card>, number, boolean]>([
     ['a reported card read over two minutes ago', reported, {}, 3 * 60_000, true],
     ['one read a minute ago', reported, {}, 60_000, false],
     ['one still running', { ...reported, status: 'queued' }, {}, 3 * 60_000, false],
     ['one the user closed as done', { ...reported, report: 'closed' }, {}, 3 * 60_000, false],
-    ['one with no done list', reported, { goal: false }, 3 * 60_000, false],
     ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
     ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
   ])('%s', (_label, work, overrides, now, refreshes) => {
