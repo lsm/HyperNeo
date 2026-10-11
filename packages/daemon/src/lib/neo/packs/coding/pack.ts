@@ -13,6 +13,7 @@ import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import {
   keepNeoCardPrReads,
+  keepNeoUnbeatenPrs,
   planNeoCardPrOwnership,
   planNeoPrCedes,
   type NeoCardPrCandidate,
@@ -127,6 +128,13 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     ['deps', 'work', 'fetched', 'now']
   )
   .pipe(
+    (deps: NeoCardPrDeps, work: NeoWork, plan: NeoCardPrPlan) => ({
+      owned: keepNeoUnbeatenPrs(work, plan.owned, deps.claims.forUrls(ownedUrls(plan))),
+    }),
+    ['deps', 'work', 'read'],
+    'unbeaten'
+  )
+  .pipe(
     (
       deps: NeoCardPrDeps,
       work: NeoWork,
@@ -152,7 +160,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
         },
       };
     },
-    ['deps', 'work', 'current', 'read', 'fetched'],
+    ['deps', 'work', 'current', 'unbeaten', 'fetched'],
     'result:read'
   )
   .pipe(

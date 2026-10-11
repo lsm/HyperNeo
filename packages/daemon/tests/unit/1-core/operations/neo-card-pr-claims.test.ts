@@ -4,6 +4,7 @@ import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   beatsNeoPrClaim,
   keepNeoCardPrReads,
+  keepNeoUnbeatenPrs,
   planNeoCardPrCandidates,
   planNeoCardPrOwnership,
   planNeoPrCedes,
@@ -71,6 +72,21 @@ describe('beatsNeoPrClaim', () => {
     ['a mention never beats a named claim', { claimedAt: 1 }, { claim: 'named' }, false],
   ])('%s', (_label, rival, own, beats) => {
     expect(beatsNeoPrClaim({ ...mention, ...rival }, { ...mention, ...own })).toBe(beats);
+  });
+});
+
+describe('keepNeoUnbeatenPrs', () => {
+  const card = { id: 'me', createdAt: 20 };
+  const mention = { url: pull(2), claim: 'mentioned' as const, claimedAt: 100, claimed: false };
+  const key = pull(2).toLowerCase();
+  test.each<[string, NeoPrClaimRow[], number]>([
+    ['no rival', [], 1],
+    ['a rival branch claim beats a mention', [claim({ urlKey: key, claim: 'branch' })], 0],
+    ['a later rival mention does not', [claim({ urlKey: key, claimedAt: 200 })], 1],
+    ['a rival rejection does not', [claim({ urlKey: key, claim: 'rejected' })], 1],
+    ['my own row is not a rival', [claim({ workId: 'me', urlKey: key, claim: 'branch' })], 1],
+  ])('%s', (_label, claims, kept) => {
+    expect(keepNeoUnbeatenPrs(card, [mention], claims)).toHaveLength(kept);
   });
 });
 
@@ -433,5 +449,33 @@ describe('readNeoCardPrs', () => {
     );
     expect(dropped).toEqual([['other', pull(2).toLowerCase()]]);
     expect(recorded.at(-1)).toEqual(['other', [pr(1)], false]);
+  });
+
+  test('a read does not claim a PR a rival won while it was reading', async () => {
+    const rival = claim({ urlKey: pull(2).toLowerCase(), claim: 'branch' });
+    let lookups = 0;
+    const replaced: unknown[][] = [];
+    const recorded: NeoWorkPr[][] = [];
+    await readNeoCardPrs(
+      {
+        readPrs: async () => [pr(2, 50)],
+        prCandidates: async () => [{ url: pull(2), claim: 'mentioned' }],
+        claims: {
+          forUrls: () => (lookups++ === 0 ? [] : [rival]),
+          replace: (_id, claims) => replaced.push([...claims]),
+          drop: () => {},
+        },
+        workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
+        record: (_id, prs) => {
+          recorded.push([...prs]);
+          return null;
+        },
+      },
+      { id: 'me', createdAt: 20, report: null } as NeoWork,
+      null,
+      1_000
+    );
+    expect(replaced).toEqual([[]]);
+    expect(recorded).toEqual([[]]);
   });
 });

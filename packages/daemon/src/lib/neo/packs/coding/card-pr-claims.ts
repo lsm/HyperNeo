@@ -77,6 +77,26 @@ export function planNeoCardPrOwnership(
   });
 }
 
+export function keepNeoUnbeatenPrs(
+  card: Pick<NeoWork, 'id' | 'createdAt'>,
+  owned: readonly NeoCardPrOwned[],
+  claims: readonly NeoPrClaimRow[]
+): NeoCardPrOwned[] {
+  return owned.filter(
+    (item) =>
+      !claims
+        .filter((row) => row.workId !== card.id && row.urlKey === key(item.url))
+        .filter(isRanked)
+        .some((row) =>
+          beatsNeoPrClaim(row, {
+            claim: item.claim,
+            claimedAt: item.claimedAt,
+            cardCreatedAt: card.createdAt,
+          })
+        )
+  );
+}
+
 export function planNeoPrCedes(
   card: Pick<NeoWork, 'id'>,
   claims: readonly NeoPrClaimRow[]
