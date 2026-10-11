@@ -11,6 +11,13 @@ import {
 import { unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger.ts';
+import {
+  freeBytesAt,
+  hasRoomForBackupCopy,
+  shouldRotateStreamBackups,
+  shouldStreamCopyBackup,
+  streamCopyFile,
+} from './backup-copy.ts';
 import { awaitFileCloneSettle } from './clone-settle.ts';
 import { runMessageSearchMerge } from '../lib/message-search-merge.ts';
 import { DatabaseLock } from './database-lock.ts';
@@ -198,6 +205,10 @@ export class DatabaseCore {
     this.logger.info(
       `[Database] Migration backup created via ${strategy} in ${Date.now() - startedAt}ms: ${backupPath}`
     );
+    if (strategy === 'stream-copy') {
+      void this.rotateStreamBackupsInBackground(backupDir, backupPath);
+      return;
+    }
     if (strategy !== 'fs-copy') {
       this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
       return;
@@ -242,6 +253,13 @@ export class DatabaseCore {
   }
 
   private writeBackupTo(tempDb: string, freeRoom: () => void): string | null {
+    if (shouldStreamCopyBackup(process.platform, statSync(this.dbPath).size)) {
+      if (this.tryStreamCopy(tempDb)) return 'stream-copy';
+      if (!this.removePartialBackup(tempDb)) {
+        this.logger.error('Failed to create migration backup: partial artifacts remain');
+        return null;
+      }
+    }
     if (this.tryFastCopy(tempDb)) {
       if (this.copyWalSidecar(tempDb)) {
         return 'fs-copy';
@@ -333,6 +351,74 @@ export class DatabaseCore {
       try {
         unlinkSync(path);
       } catch {}
+    }
+    this.sweepOrphanBackupWals(backupDir);
+  }
+
+  private tryStreamCopy(tempDb: string): boolean {
+    const backupDir = dirname(tempDb);
+    let checkpointed = false;
+    try {
+      const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+        | { busy?: number; log?: number; checkpointed?: number }
+        | null
+        | undefined;
+      checkpointed = result?.busy === 0 && (result?.checkpointed ?? 0) >= (result?.log ?? 0);
+    } catch {
+      checkpointed = false;
+    }
+    const walPath = `${this.dbPath}-wal`;
+    const copyBytes =
+      statSync(this.dbPath).size +
+      (!checkpointed && existsSync(walPath) ? statSync(walPath).size : 0);
+    try {
+      const oldestFirst = this.backupsBeyondRetention(
+        backupDir,
+        MIGRATION_BACKUP_RETENTION - 1
+      ).reverse();
+      while (!hasRoomForBackupCopy(freeBytesAt(backupDir), copyBytes) && oldestFirst.length > 0) {
+        try {
+          unlinkSync(oldestFirst.shift() as string);
+        } catch {}
+      }
+      if (!hasRoomForBackupCopy(freeBytesAt(backupDir), copyBytes)) {
+        this.logger.warn('Not enough free space for a migration backup copy; falling back');
+        return false;
+      }
+    } catch (err) {
+      this.logger.error('Failed to make room for migration backup:', err);
+      return false;
+    }
+    try {
+      streamCopyFile(this.dbPath, tempDb);
+    } catch (err) {
+      this.logger.error('Failed to create migration backup:', err);
+      return false;
+    }
+    if (!checkpointed && !this.copyWalSidecar(tempDb)) {
+      this.logger.error('Failed to create migration backup: WAL sidecar copy failed');
+      return false;
+    }
+    return true;
+  }
+
+  private async rotateStreamBackupsInBackground(backupDir: string, pinned: string): Promise<void> {
+    try {
+      const dbBytes = statSync(this.dbPath).size;
+      const newestFirst = this.backupsBeyondRetention(backupDir, 0, pinned);
+      while (
+        shouldRotateStreamBackups({
+          backupCount: newestFirst.length,
+          freeBytes: freeBytesAt(backupDir),
+          dbBytes,
+        })
+      ) {
+        try {
+          await unlink(newestFirst.pop() as string);
+        } catch {}
+      }
+    } catch (err) {
+      this.logger.warn('Failed to rotate migration backups:', err);
     }
     this.sweepOrphanBackupWals(backupDir);
   }

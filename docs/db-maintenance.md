@@ -337,7 +337,13 @@ time a backup is written. On filesystems that clone (APFS, btrfs/XFS reflinks) t
 takes no space up front; elsewhere `fs-copy` is a full copy, so a fourth copy exists until the
 rotation runs.
 A full-copy backup (`vacuum-into`, `checkpoint-copy`) frees room before it is written
-(retaining the two newest known-good backups meanwhile). Releases before
+(retaining the two newest known-good backups meanwhile). A `stream-copy` backup deletes older
+backups up front only when the volume lacks room for the copy plus a reserve (the larger of
+1 GiB and 10% of the database), never touching the two newest; afterwards a background rotation
+keeps at most 3 and drops the oldest while free space stays under twice the database size,
+never the newest. Those up-front deletions run synchronously during startup, before the server
+binds, so on APFS each drifted clone can add about a minute to that start. If there is still no
+room it falls through to the strategies below. The copy keeps the database file's permissions. Releases before
 this layout stored backups flat in `backups/` — those are not auto-pruned; remove them
 manually after upgrading.
 
@@ -346,6 +352,7 @@ The copy strategy is picked per attempt, fastest first, and logged
 
 | Strategy          | When it runs                          | What it does                                                                                                         |
 | ----------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `stream-copy`     | macOS, database ≥ 1 GiB               | `PRAGMA wal_checkpoint(TRUNCATE)` then a chunked full copy with `fsync`. Used instead of `fs-copy` there because an APFS clone of a large live database blocks reads of it for ~70 s, 10–90 s after the clone, which froze the daemon after startup (#6521). About 86 s for 38 GB on an internal SSD. A blocked checkpoint also copies the `-wal` sidecar. |
 | `fs-copy`         | Bun runtime (the pinned runtime)      | File copy that clonefiles on APFS (near-instant, ~zero extra disk until divergence) and uses `copy_file_range` on Linux, which reflinks on btrfs/XFS and falls back to a full copy elsewhere. A non-empty `-wal` sidecar is copied next to the backup so committed WAL frames survive. |
 | `vacuum-into`     | non-Bun runtimes                      | `VACUUM INTO` — SQLite's own consistent snapshot: includes committed WAL content without a checkpoint, and compacts free pages. |
 | `checkpoint-copy` | last resort if the above two fail     | `PRAGMA wal_checkpoint(TRUNCATE)` followed by a plain full-file copy; a blocked checkpoint (`busy ≠ 0`, for example a long-lived reader) also copies the `-wal` sidecar, and the attempt fails closed if that copy fails. |
