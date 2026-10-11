@@ -11,6 +11,7 @@ import {
 import { unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger.ts';
+import { awaitFileCloneSettle } from './clone-settle.ts';
 import { runMessageSearchMerge } from '../lib/message-search-merge.ts';
 import { DatabaseLock } from './database-lock.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
@@ -201,10 +202,23 @@ export class DatabaseCore {
       this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
       return;
     }
+    this.awaitBackupCloneSettle();
     const rotation = setTimeout(() => {
       void this.rotateBackupsInBackground(backupDir, MIGRATION_BACKUP_RETENTION, backupPath);
     }, MIGRATION_BACKUP_ROTATION_DELAY_MS);
     rotation.unref?.();
+  }
+
+  private awaitBackupCloneSettle(): void {
+    try {
+      const result = awaitFileCloneSettle(this.dbPath);
+      if (!result) return;
+      this.logger.info(
+        `[Database] Migration backup clone ${result.verdict} after ${result.waitedMs}ms (longest read ${result.longestReadMs}ms)`
+      );
+    } catch (err) {
+      this.logger.warn('Failed to wait for migration backup clone to settle:', err);
+    }
   }
 
   private writeBackup(backupPath: string, freeRoom: () => void): string | null {
