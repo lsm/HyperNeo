@@ -477,6 +477,14 @@ describe('neo.ask operations', () => {
       ).toMatchObject({ value: { ok: false, reason: expect.stringMatching(/i3/) } });
     await invoke('neo.ask.settle', { ...waiting, summary: 'Still deciding #6545.' });
     expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
+    const quiet: OperationCaller = { ...neo, neoTurn: { ...neo.neoTurn!, human: false } };
+    for (const [name, input] of [
+      ['neo.ask.tick', { askId, itemId: 'i3', state: 'met', evidence: 'Decided for them.' }],
+      ['neo.ask.edit', { askId, remove: ['i3'] }],
+    ] as const)
+      expect(await invoke(name, input, quiet)).toMatchObject({
+        value: { ok: false, reason: expect.stringContaining('decision_open: i3') },
+      });
     expect(
       await invoke(
         'neo.ask.settle',
@@ -484,6 +492,27 @@ describe('neo.ask operations', () => {
         { source: 'rpc', principal: 'local' }
       )
     ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
+  });
+
+  test('a decision on a full checklist is refused until Neo makes room for it', async () => {
+    const askId = await openAsk();
+    await invoke('neo.ask.edit', {
+      askId,
+      add: Array.from({ length: 10 }, (_, index) => ({ text: `step ${index}` })),
+    });
+    const waiting = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Pick the release date.',
+      evidence: 'Two dates fit.',
+    };
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('checklist_full') },
+    });
+    await invoke('neo.ask.edit', { askId, remove: ['i3'] });
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: { ok: true, ask: { status: 'waiting', waitingItem: 'i13' } },
+    });
   });
 
   test('the user can close an ask as done even with items still open', async () => {

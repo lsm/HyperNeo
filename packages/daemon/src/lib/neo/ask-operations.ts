@@ -357,6 +357,46 @@ function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
+export function requireNeoAskDecisionKept<T>(
+  ask: NeoAsk,
+  caller: OperationCaller,
+  clears: readonly string[],
+  value: T
+): Gate<T> {
+  if (caller.source !== 'mcp' || (caller.neoTurn?.human && caller.neoTurn.isLive()))
+    return { value };
+  const asked = (ask.doneItems ?? []).filter(
+    (item) => !item.removed && item.state === 'needs_you' && clears.includes(item.id)
+  );
+  return asked.length
+    ? {
+        reason: fail(
+          `decision_open: ${asked.map((item) => `${item.id} "${item.text}"`).join('; ')} waits on the human. Tick or remove it only in the turn where they answer it.`
+        ),
+      }
+    : { value };
+}
+
+export function requireNeoAskDecisionRoom(
+  input: z.infer<typeof Settle>,
+  ask: NeoAsk,
+  caller: OperationCaller,
+  offered: boolean
+): Gate<NeoAsk> {
+  const active = (ask.doneItems ?? []).filter((item) => !item.removed);
+  return caller.source === 'mcp' &&
+    (input.outcome === 'waiting' || input.outcome === 'blocked') &&
+    !offered &&
+    active.length >= 12 &&
+    !active.some((item) => item.state === 'needs_you')
+    ? {
+        reason: fail(
+          'checklist_full: this decision needs a checklist item and the ask holds 12. Remove an item that is met or no longer applies with neo.ask.edit, then settle again.'
+        ),
+      }
+    : { value: ask };
+}
+
 export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gate<NeoAsk> {
   const active = (ask.doneItems ?? []).filter((item) => !item.removed);
   const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
@@ -562,6 +602,11 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'admission',
       'offered'
     )
+    .pipe(
+      requireNeoAskDecisionRoom,
+      ['input', 'admission', 'caller', 'offered'],
+      'result:admission'
+    )
     .pipe(planNeoAskDecision, ['input', 'admission', 'caller', 'offered'], 'decision')
     .pipe(
       (
@@ -624,6 +669,21 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     )
     .pipe(requireNeoAskTick, ['input', 'admission'], 'result:admission')
     .pipe(
+      (
+        input: z.infer<typeof Tick>,
+        target: { ask: NeoAsk; item: NeoAskItem },
+        caller: OperationCaller
+      ) =>
+        requireNeoAskDecisionKept(
+          target.ask,
+          caller,
+          input.state === 'needs_you' ? [] : [input.itemId],
+          target
+        ),
+      ['input', 'admission', 'caller'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
         service.askRecords.tickItem(
           target.ask.id,
@@ -674,6 +734,12 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'result:admission'
     )
     .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Edit>, ask: NeoAsk, caller: OperationCaller) =>
+        requireNeoAskDecisionKept(ask, caller, input.remove, ask),
+      ['input', 'admission', 'caller'],
+      'result:admission'
+    )
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
       (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {
