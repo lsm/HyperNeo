@@ -133,6 +133,29 @@ describe('neo.ask operations', () => {
     ]);
   });
 
+  test('reads one ask with its cards and their reports', async () => {
+    const askId = await openAsk();
+    const other = (await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }))
+      .value!.ask!.id;
+    const workId = (await propose('card-1', askId)).value!.work!.id;
+    await propose('card-2', other);
+    const queued = service.repo.transitionWork(workId, service.repo.getWork(workId)!, {
+      status: 'queued',
+    })!;
+    service.repo.transitionWork(workId, queued, { status: 'reported', report: 'Merged it.' });
+
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { asks: NeoAsk[]; work: { id: string; report: string | null }[] };
+    };
+    expect(scoped.value?.asks.map((ask) => ask.id)).toEqual([askId]);
+    expect(scoped.value?.work).toEqual([
+      expect.objectContaining({ id: workId, report: 'Merged it.' }),
+    ]);
+    expect(await invoke('neo.snapshot', { askId: 'missing' })).toMatchObject({
+      value: { ok: false, reason: 'Ask not found.' },
+    });
+  });
+
   test('stores the done list as checklist items and shows them in the snapshot', async () => {
     const opened = await invoke('neo.ask.open', {
       ...opening,

@@ -282,7 +282,9 @@ const Snapshot = z.union([
   }),
 ]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
-const Scope = z.object({ concernId: z.string().min(1).optional() }).default({});
+const Scope = z
+  .object({ concernId: z.string().min(1).optional(), askId: z.string().min(1).optional() })
+  .default({});
 const Save = z.object({
   id: z.string().min(1).max(100),
   title: z.string().trim().min(1).max(160),
@@ -559,12 +561,18 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
-  function snapshot(caller: OperationCaller, requested?: string) {
+  function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
+    const focus = askId ? service.askRecords.get(askId) : null;
+    if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
     const scope = binding?.kind === 'concern' ? binding.concernId : requested;
-    const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
-    const concerns = service.repo.listConcerns().filter((item) => !scope || item.id === scope);
-    const work = service.repo.listWork(scope === undefined ? undefined : scope);
+    const detailed = caller.source === 'rpc' || binding?.kind === 'concern' || !!focus;
+    const concerns = service.repo
+      .listConcerns()
+      .filter((item) => (focus ? item.id === focus.concernId : !scope || item.id === scope));
+    const work = focus
+      ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
+      : service.repo.listWork(scope === undefined ? undefined : scope);
     const recentWork = work.slice(0, caller.source === 'rpc' ? 50 : 10);
     const olderActiveWork =
       caller.source === 'rpc'
@@ -574,8 +582,8 @@ export function createNeoOperations(service: NeoService) {
             .slice(0, 50)
         : [];
     const visibleWork = [...recentWork, ...olderActiveWork];
-    const consultations = service.consultations.list(scope ?? undefined);
-    const waiters = service.consultationWaiters.queued(scope ?? undefined);
+    const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
+    const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
     return {
       ok: true as const,
       sessionId: service.repo.getBindingForConcern(scope ?? null)?.sessionId ?? null,
@@ -609,15 +617,15 @@ export function createNeoOperations(service: NeoService) {
             ...(service.isRetryable(receipt.workId) ? { retryable: true as const } : {}),
           };
         }),
-      ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
-      sessionNoticeGroups: service.sessionNoticeGroups,
+      ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: focus ? [] : service.sessionNoticeGroups,
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),
       asks: projectNeoSnapshotAsks(
-        service.askRecords.list(scope === undefined ? undefined : scope),
+        focus ? [focus] : service.askRecords.list(scope === undefined ? undefined : scope),
         caller.source === 'rpc' ? 50 : 10,
         Date.now()
       ),
@@ -717,8 +725,10 @@ export function createNeoOperations(service: NeoService) {
   ) => z.infer<typeof RulesResult>;
   const read = path(
     'neo.snapshot',
-    (input: z.infer<typeof Scope>) => input.concernId,
-    (input, caller) => snapshot(caller, input.concernId)
+    (input: z.infer<typeof Scope>) =>
+      input.concernId ??
+      (input.askId ? (service.askRecords.get(input.askId)?.concernId ?? undefined) : undefined),
+    (input, caller) => snapshot(caller, input.concernId, input.askId)
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
     .input(['input', 'caller'])
@@ -1397,7 +1407,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context.',
+        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
