@@ -9688,6 +9688,54 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('polling checks a subscribed pull request that is not among the recent ones', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      subscribedPullRequests: (owner, repo) => (owner === 'acme' && repo === 'widgets' ? [42] : []),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const recent = Array.from({ length: 10 }, (_, index) => createPullRequestRow(index + 1));
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse(recent);
+      if (path.endsWith('/pulls/42'))
+        return pollingResponse({
+          ...createPullRequestRow(42),
+          mergeable: false,
+          mergeable_state: 'dirty',
+        });
+      if (/\/pulls\/\d+$/.test(path))
+        return pollingResponse({
+          ...createPullRequestRow(Number(path.split('/').pop())),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(
+        received.filter((item) => item.topic.endsWith('.merge_conflict')).map((item) => item.topic)
+      ).toEqual(['github/acme/widgets/pull_request/42.merge_conflict']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling emits no merge_conflict event while mergeability is still computing', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

@@ -141,6 +141,7 @@ interface GitHubEventExtensionOptions {
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
+  subscribedPullRequests?: (owner: string, repo: string) => number[];
 }
 
 interface GitHubTokenStatus {
@@ -2933,7 +2934,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    const trackedPullRequestNumbers = [
+      ...new Set([
+        ...(this.options.subscribedPullRequests?.(watched.owner, watched.repo) ?? []),
+        ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
+      ]),
+    ];
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3041,7 +3048,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3179,7 +3186,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         reactionsFullyPolled = false;
@@ -3279,7 +3286,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    const trackedPrSet = new Set(recentPullRequestNumbers);
+    const trackedPrSet = new Set(trackedPullRequestNumbers);
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }

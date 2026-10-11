@@ -3,6 +3,7 @@ import type { EventInterest } from '@hyperneo/shared';
 import {
   buildPrEventTopicPattern,
   parseGitHubTopic,
+  pullRequestNumbersOfTopics,
   parsePrUrl,
   resolveTopicFromInterest,
 } from '../../../../src/lib/github/parse-pr-url';
@@ -227,5 +228,24 @@ describe('parseGitHubTopic', () => {
     ['space/acme/widgets/pull_request/7.closed', null],
   ] as const)('%s', (topic, expected) => {
     expect(parseGitHubTopic(topic)).toEqual(expected);
+  });
+});
+
+describe('pullRequestNumbersOfTopics', () => {
+  test('returns the numbered pull requests subscribed on one repo, in any case', () => {
+    expect(
+      pullRequestNumbersOfTopics(
+        [
+          'github/Acme/Widgets/pull_request/7.*',
+          'github/acme/widgets/pull_request/7.review_*',
+          'github/acme/widgets/pull_request/*.check_failed',
+          'github/acme/other/pull_request/8.*',
+          'github/acme/widgets/repo/9.*',
+          'github/acme/widgets/pull_request/12.closed',
+        ],
+        'acme',
+        'widgets'
+      )
+    ).toEqual([7, 12]);
   });
 });

@@ -72,6 +72,7 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import {
   initializeProviders,
@@ -911,6 +912,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         autoReconcileWebhooks: true,
         sessionRepoReferenced: (owner, repo) =>
           sessionEventSubscriptions.referencesRepo(owner, repo),
+        subscribedPullRequests: (owner, repo) =>
+          pullRequestNumbersOfTopics(
+            sessionEventSubscriptions.listAll().map((subscription) => subscription.topic),
+            owner,
+            repo
+          ),
       })
     );
 
