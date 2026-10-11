@@ -362,6 +362,24 @@ describe('attach, kickoff and activation rungs', () => {
     ).toEqual({ value: state });
   });
 
+  test('kickoff injects the message tagged as the task kickoff', async () => {
+    const state = makeState({
+      spawnedSessionId: SPAWNED_SESSION_ID,
+      workspacePath: WORKSPACE_PATH,
+    });
+    const injectCalls: Array<Array<unknown>> = [];
+    const outcome = await kickoffSession(
+      async () => 'msg',
+      async (...args: Array<unknown>) => {
+        injectCalls.push(args);
+      },
+      makeRequest(),
+      state
+    );
+    expect(outcome).toEqual({ value: state });
+    expect(injectCalls).toEqual([[SPAWNED_SESSION_ID, 'msg', EXECUTION_ID, { taskKickoff: true }]]);
+  });
+
   test('kickoff resolves the run when the message cannot be built', async () => {
     const state = makeState({
       spawnedSessionId: SPAWNED_SESSION_ID,

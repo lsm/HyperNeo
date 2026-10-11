@@ -13,6 +13,7 @@ export type SessionMailboxEntry = MailboxEntry & {
 type AdmissionMessage = SDKUserMessage & {
   uuid: NonNullable<SDKUserMessage['uuid']>;
   referenceMetadata?: ReferenceMetadata;
+  taskKickoff?: boolean;
 };
 
 export interface MailboxAdmissionPlan {

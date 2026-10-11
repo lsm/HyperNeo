@@ -99,6 +99,7 @@ test.each(['draft', 'open'] as const)(
       new JobQueueRepository(db).getLatestByPayload('mailbox', { id: kickoff.id })?.payload
     ).toEqual(kickoff);
     expect(kickoff.message.message.content).toContain('Do useful work');
+    expect(kickoff.message.taskKickoff).toBe(true);
     expect(mailCount()).toBe(1);
     expect(await start({ taskId, requestKey })).toEqual(result);
     expect(mailCount()).toBe(1);

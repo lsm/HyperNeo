@@ -1103,9 +1103,13 @@ function buildMessageTurn(
 
 const TASK_KICKOFF_HEADING = /^##\s+Your Task #\d+/;
 
+function rowIsTaggedTaskKickoff(row: ParsedThreadRow): boolean {
+  return (row.message as { taskKickoff?: unknown } | null)?.taskKickoff === true;
+}
+
 function buildTaskKickoffTurn(row: ParsedThreadRow): TaskKickoffFeedTurn | null {
   const { body } = extractUserMessageText(row);
-  if (!TASK_KICKOFF_HEADING.test(body)) return null;
+  if (!rowIsTaggedTaskKickoff(row) && !TASK_KICKOFF_HEADING.test(body)) return null;
   return {
     state: 'task_kickoff',
     id: `kickoff-${String(row.id)}`,
