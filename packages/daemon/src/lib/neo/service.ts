@@ -371,12 +371,7 @@ export class NeoService {
       async (work: NeoWork, ref: WorkRef, now: number, card: { since: number }) => {
         this.followReads.set(work.id, now);
         return {
-          outcome: await invokeOperation(
-            this.sessions.getOperationRegistry(),
-            'work.status',
-            { ref, since: card.since },
-            driverWorkCaller(work)
-          ),
+          outcome: await this.invokeAsCard(work, 'work.status', { ref, since: card.since }),
         };
       },
       ['work', 'follow', 'now', 'card'],
@@ -525,7 +520,7 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
     };
-    this.repo = new NeoRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
+    this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
@@ -533,7 +528,7 @@ export class NeoService {
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
-    this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
+    this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
@@ -546,20 +541,17 @@ export class NeoService {
       }),
       createLifeAdminPack(),
     ];
-    this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
-      hub.event('neo.changed', {})
-    );
-    this.consultationWaiters = new NeoConsultationWaiterRepository(db.getDatabase(), () =>
-      hub.event('neo.changed', {})
+    this.consultations = new NeoConsultationRepository(db.getDatabase(), this.notifyChanged);
+    this.consultationWaiters = new NeoConsultationWaiterRepository(
+      db.getDatabase(),
+      this.notifyChanged
     );
     this.reportWork = createNeoWorkReporter({
       readWork: (id) => this.repo.getWork(id),
       readBinding: (id) => this.repo.getBindingBySession(id),
       transitionWork: (id, expected, patch) => this.repo.transitionWork(id, expected, patch),
       returnReport: (work) => this.returnReport(work),
-      resourceReports: new NeoWorkResourceRepository(db.getDatabase(), () =>
-        hub.event('neo.changed', {})
-      ),
+      resourceReports: new NeoWorkResourceRepository(db.getDatabase(), this.notifyChanged),
     });
     const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
     this.inputOrigins = inputOrigins;
@@ -1047,13 +1039,7 @@ export class NeoService {
     isContinuing: (id) => this.continuing.has(id),
     withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
     readSendBaseline: ({ ref, work }, message) => this.readSendBaseline(ref, work, message),
-    send: ({ ref, work }, message) =>
-      invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.send',
-        { ref, message },
-        driverWorkCaller(work)
-      ),
+    send: ({ ref, work }, message) => this.invokeAsCard(work, 'work.send', { ref, message }),
     recordSent: (id, startedAt, sent) => {
       this.driverTargets.recordStartedAt(id, startedAt);
       this.driverTargets.recordSent(id, sent);
@@ -1074,12 +1060,7 @@ export class NeoService {
     message: string
   ): Promise<{ baseline: number | null; sent: DriverSent | null }> {
     const sentAt = Date.now();
-    const outcome = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.status',
-      { ref },
-      driverWorkCaller(work)
-    );
+    const outcome = await this.invokeAsCard(work, 'work.status', { ref });
     return {
       baseline: readDriverSendBaseline(outcome, sentAt, !!ref.daemon),
       sent: readDriverSent(outcome, message, work.createdAt),
@@ -1121,12 +1102,7 @@ export class NeoService {
         ? await this.readSendBaseline(target.ref, queued, String(call.input.message))
         : null;
     const baseline = probe ? probe.baseline : Date.now();
-    const outcome = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      call.name,
-      call.input,
-      driverWorkCaller(queued)
-    );
+    const outcome = await this.invokeAsCard(queued, call.name, call.input);
     const result = readDriverOutcome(target, outcome);
     if ('ref' in result) {
       this.driverTargets.recordRef(
@@ -1181,12 +1157,7 @@ export class NeoService {
   }
 
   private async stopDriverWork(ref: WorkRef, work: NeoWork): Promise<void> {
-    await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      'work.stop',
-      { ref },
-      driverWorkCaller(work)
-    ).catch(() => undefined);
+    await this.invokeAsCard(work, 'work.stop', { ref }).catch(() => undefined);
   }
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {
@@ -1632,11 +1603,10 @@ export class NeoService {
         read: { cards: NeoWork[]; newer: string | null },
         note: { id: string }
       ) => {
-        await this.deliver(
+        await this.deliverToOrigin(
           ask.originSessionId,
           note.id,
           neoAskStalledNote(ask, read.cards, read.newer),
-          ask.originSessionId,
           neoAskParent(ask)
         );
       },
@@ -1683,11 +1653,10 @@ export class NeoService {
     )
     .pipe(
       async (check: NeoAsk, note: { signature: string; evidence: NeoEvidence[] }) => {
-        await this.deliver(
+        await this.deliverToOrigin(
           check.originSessionId,
           neoAskEvidenceMessageId(check.id, note.signature),
           neoAskEvidenceNote(check, note.evidence),
-          check.originSessionId,
           neoAskParent(check)
         );
         this.askChecks.markTold(check.id, note.signature, Date.now());
@@ -1886,12 +1855,7 @@ export class NeoService {
     isContinuing: (workId) =>
       !!this.workContinues.get(workId) || this.driverTargets.get(workId)?.verb === 'send',
     readStatus: (work, ref, since) =>
-      invokeOperation(
-        this.sessions.getOperationRegistry(),
-        'work.status',
-        { ref, ...(since !== null ? { since } : {}) },
-        driverWorkCaller(work)
-      ),
+      this.invokeAsCard(work, 'work.status', { ref, ...(since !== null ? { since } : {}) }),
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),
     recordLive: (workId, status, live) =>
       this.driverTargets.recordLive(workId, status, live.link, live.remoteLink),
@@ -1942,11 +1906,10 @@ export class NeoService {
     }
     if (now - seen.seenAt < NEO_WORK_STALL_MS || !this.db.getSession(work.originSessionId)) return;
     const budget = this.continueBudget(work, now);
-    await this.deliver(
+    await this.deliverToOrigin(
       work.originSessionId,
       neoStallMessageId(work.id, live.lastActivityAt),
       driverStallNote(work, this.workDoneGoal(work.id), live.lastReply, budget),
-      work.originSessionId,
       neoWorkParent(work)
     );
   }
@@ -1955,7 +1918,7 @@ export class NeoService {
     const now = Date.now();
     const reminder = decideStuckReminder(work.updatedAt, now);
     if (!reminder || !this.db.getSession(work.originSessionId)) return;
-    await this.deliver(
+    await this.deliverToOrigin(
       work.originSessionId,
       neoStallMessageId(work.id, reminder.due),
       driverStuckNote(
@@ -1966,7 +1929,6 @@ export class NeoService {
         reminder.abandoned,
         this.continueBudget(work, now)
       ),
-      work.originSessionId,
       neoWorkParent(work)
     );
   }
@@ -2000,11 +1962,10 @@ export class NeoService {
     .pipe(
       async (work: NeoWork, ref: WorkRef, card: NeoNeedsYouCard, plan: NeoNeedsYouPlan) => {
         if (plan.notify !== null && this.db.getSession(work.originSessionId))
-          await this.deliver(
+          await this.deliverToOrigin(
             work.originSessionId,
             neoNeedsYouMessageId(work.id, plan.notify),
             driverNeedsYouNote(work, ref, card.state?.lastReply),
-            work.originSessionId,
             neoWorkParent(work)
           );
         if (plan.record !== undefined) this.driverTargets.recordNeedsYouSince(work.id, plan.record);
@@ -2348,11 +2309,10 @@ export class NeoService {
     )
     .pipe(
       async (work: NeoWork, note: { id: string; content: string }) => {
-        await this.deliver(
+        await this.deliverToOrigin(
           work.originSessionId,
           note.id,
           note.content,
-          work.originSessionId,
           neoWorkParent(work)
         );
         return { at: Date.now() };
@@ -2387,6 +2347,24 @@ export class NeoService {
         .listActiveByPayload('mailbox', { 'to.sessionId': sessionId, messageUuid: messageId })
         .length > 0
     );
+  }
+
+  private invokeAsCard(work: NeoWork, name: string, input: Record<string, unknown>) {
+    return invokeOperation(
+      this.sessions.getOperationRegistry(),
+      name,
+      input,
+      driverWorkCaller(work)
+    );
+  }
+
+  private deliverToOrigin(
+    originSessionId: string,
+    messageId: string,
+    content: string,
+    parent: NeoAskOrigin | null
+  ): Promise<void> {
+    return this.deliver(originSessionId, messageId, content, originSessionId, parent);
   }
 
   private deliver(
