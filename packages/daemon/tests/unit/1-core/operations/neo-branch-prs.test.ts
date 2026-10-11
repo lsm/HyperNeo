@@ -123,4 +123,22 @@ describe('readGithubWorkRepo', () => {
     expect(await readGithubWorkRepo('/tmp/not-a-repo', spawn as never)).toBe(null);
     expect(calls).toBe(1);
   });
+
+  test('reads again after a retryable gh failure instead of keeping it', async () => {
+    let calls = 0;
+    const spawn = () => {
+      calls++;
+      return {
+        stdout: new Response('').body,
+        stderr: new Response('API rate limit exceeded').body,
+        exited: Promise.resolve(1),
+        exitCode: 1,
+        kill: () => {},
+      };
+    };
+    expect(await readGithubWorkRepo('/repo/limited', spawn as never)).toBe(null);
+    const first = calls;
+    expect(await readGithubWorkRepo('/repo/limited', spawn as never)).toBe(null);
+    expect(calls).toBeGreaterThan(first);
+  });
 });

@@ -41,6 +41,7 @@ export async function readGithubWorkRepo(
     resourceHint: 'graphql',
     stripGHRepo: true,
   });
+  if (!outcome.ok && outcome.retryable) return cached?.repo ?? null;
   const parsed = outcome.ok ? RepoSchema.safeParse(outcome.data) : null;
   const repo = parsed?.success ? { owner: parsed.data.owner.login, repo: parsed.data.name } : null;
   repos.set(cwd, { at: Date.now(), repo });
