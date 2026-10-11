@@ -100,7 +100,7 @@ describe('coding pack instructions', () => {
           branch: [],
           stored: stored?.prs ?? [],
         }),
-      claims: { forUrls: () => [], replace: () => {} },
+      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
@@ -162,7 +162,7 @@ describe('readEvidence', () => {
           branch: [],
           stored: stored?.prs ?? [],
         }),
-      claims: { forUrls: () => [], replace: () => {} },
+      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
@@ -334,6 +334,7 @@ describe('readNeoCardPrs', () => {
             },
           ],
           replace: () => {},
+          drop: () => {},
         },
         workPrs: {
           get: () => stored,
@@ -389,6 +390,7 @@ describe('readNeoCardPrs', () => {
           forUrls: () => [],
           replace: (_id: string, claims: readonly { url: string; claim: string }[]) =>
             replaced.push([...claims]),
+          drop: () => {},
         },
         record: (_id: string, prs: readonly NeoWorkPr[]) => {
           recorded.push([...prs]);

@@ -22,6 +22,26 @@ export class NeoWorkPrClaimRepository {
       .all(JSON.stringify(urls.map((url) => url.toLowerCase()))) as NeoPrClaimRow[];
   }
 
+  unclaimedCards(): string[] {
+    if (!this.hasTable()) return [];
+    return (
+      this.db
+        .prepare(
+          `SELECT p.work_id AS workId FROM neo_work_prs p
+            WHERE p.prs_json <> '[]'
+              AND NOT EXISTS (SELECT 1 FROM neo_work_pr_claims c WHERE c.work_id = p.work_id)`
+        )
+        .all() as { workId: string }[]
+    ).map((row) => row.workId);
+  }
+
+  drop(workId: string, urlKey: string, claim: NeoPrClaimState): void {
+    if (!this.hasTable()) return;
+    this.db
+      .prepare('DELETE FROM neo_work_pr_claims WHERE work_id = ? AND url_key = ? AND claim = ?')
+      .run(workId, urlKey, claim);
+  }
+
   replace(
     workId: string,
     claims: readonly { url: string; claim: NeoPrClaimState; claimedAt: number }[]
