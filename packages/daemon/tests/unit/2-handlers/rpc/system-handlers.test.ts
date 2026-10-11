@@ -2,6 +2,8 @@ import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupSystemHandlers } from '../../../../src/lib/rpc-handlers/system-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
+import { BUILD_METADATA } from '../../../../src/lib/build-metadata';
+import daemonPackageJson from '../../../../package.json' with { type: 'json' };
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -58,6 +60,24 @@ describe('System RPC Handlers', () => {
   });
 
   describe('system.health', () => {
+    it('reports the daemon package version', async () => {
+      const handler = messageHubData.handlers.get('system.health')!;
+      const result = (await handler({}, {})) as { version: string };
+
+      expect(result.version).toBe(daemonPackageJson.version);
+      expect(result.version).toBe(BUILD_METADATA.version);
+    });
+
+    it('reports uptime in milliseconds since the daemon started', async () => {
+      const handler = messageHubData.handlers.get('system.health')!;
+      const first = (await handler({}, {})) as { uptime: number };
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const second = (await handler({}, {})) as { uptime: number };
+
+      expect(second.uptime - first.uptime).toBeGreaterThanOrEqual(20);
+      expect(second.uptime - first.uptime).toBeLessThan(5_000);
+    });
+
     it('returns health status', async () => {
       const handler = messageHubData.handlers.get('system.health');
       expect(handler).toBeDefined();
