@@ -435,6 +435,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    const interruptedTurns = db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
     const earlyLogEvidenceService = new EvolutionLogEvidenceService({
@@ -453,6 +454,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
 
     const logInfo = verbose ? console.log : () => {};
+    if (interruptedTurns > 0)
+      logInfo(
+        `[Daemon] Marked ${interruptedTurns} session turn(s) cut off by the restart as interrupted`
+      );
     const logError = verbose ? console.error : () => {};
 
     if (process.env.NODE_ENV !== 'test') {
