@@ -16,6 +16,38 @@ export function parsePrUrl(url: string): ParsedPrUrl | null {
   return { host: match[1]!, owner: match[2]!, repo: match[3]!, number: match[4]! };
 }
 
+export const GITHUB_REF_PATH = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/(\d+)/;
+
+export function parseGitHubRefUrl(
+  url: string
+): { owner: string; repo: string; number: number } | null {
+  const [, owner, repo, number] = GITHUB_REF_PATH.exec(url) ?? [];
+  return owner && repo && number ? { owner, repo, number: Number(number) } : null;
+}
+
+export function githubUrlKey(url: string): string {
+  return url.toLowerCase();
+}
+
+export function githubGraphqlArgs(
+  query: string,
+  ref: { owner: string; repo: string; number: string | number }
+): string[] {
+  return [
+    'gh',
+    'api',
+    'graphql',
+    '-f',
+    `query=${query}`,
+    '-f',
+    `o=${ref.owner}`,
+    '-f',
+    `n=${ref.repo}`,
+    '-F',
+    `p=${ref.number}`,
+  ];
+}
+
 export function buildPrEventTopicPattern(parsed: ParsedPrUrl): string {
   return `github/${parsed.owner}/${parsed.repo}/pull_request/${parsed.number}.*`;
 }

@@ -2,6 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoCardPrUrls } from './branch-prs.ts';
 import { extractNeoWorkPrUrls } from './work-prs.ts';
+import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 
 export type NeoPrClaim = 'branch' | 'named' | 'mentioned';
 export type NeoCardPrCandidate = { url: string; claim: NeoPrClaim };
@@ -21,7 +22,7 @@ export interface NeoPrClaimRow {
 }
 
 const RANK: Record<NeoPrClaim, number> = { branch: 0, named: 1, mentioned: 2 };
-const key = (url: string) => url.toLowerCase();
+const key = githubUrlKey;
 
 export function planNeoCardPrCandidates(input: {
   report: string | null;

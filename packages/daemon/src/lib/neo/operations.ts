@@ -5,6 +5,7 @@ import {
   NEO_CONSULTATION_RECEIPT_RETURNED,
 } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
@@ -13,11 +14,24 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import type {
   NeoBinding,
+  NeoConcern,
   NeoConsultation,
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoAsk,
+  NeoReceiptAskOrigin,
+  NeoSnapshot,
+  NeoWaitingOnHuman,
+  NeoWorkContinue,
+  NeoWorkDriverReceipt,
+  NeoWorkGoal,
+  NeoWorkPr,
+  NeoWorkPrReceipt,
+  NeoWorkResourceReceipt,
+  NeoWorkSupersession,
+} from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_STANDING_RULE_MAX_CHARS,
   NEO_STANDING_RULES_MAX,
@@ -102,6 +116,8 @@ import {
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 
+type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
+
 const Concern = z.object({
   id: z.string(),
   title: z.string(),
@@ -110,7 +126,7 @@ const Concern = z.object({
   revision: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
-});
+} satisfies ZodShape<NeoConcern>);
 const Work = z.object({
   id: z.string(),
   requestKey: z.string(),
@@ -125,7 +141,7 @@ const Work = z.object({
   report: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
-});
+} satisfies ZodShape<NeoWork>);
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const Consultation = z.object({
   id: z.string(),
@@ -138,11 +154,18 @@ const Consultation = z.object({
   status: z.enum(['pending', 'reported', 'failed']),
   answer: z.string().nullable(),
   createdAt: z.number(),
-});
-const ConsultationWaiter = Consultation.omit({ answer: true, status: true }).extend({
+} satisfies ZodShape<NeoConsultation>);
+const ConsultationWaiter = z.object({
+  id: z.string(),
+  requestKey: z.string(),
+  concernId: z.string(),
+  originSessionId: z.string(),
   originMessageId: z.string(),
+  sessionId: z.string(),
+  question: z.string(),
   status: z.enum(['queued', 'admitted', 'cancelled']),
-});
+  createdAt: z.number(),
+} satisfies ZodShape<NeoConsultationWaiter>);
 const Consult = z.object({
   concernId: z.string().min(1),
   requestKey: z.string().min(1).max(160),
@@ -162,126 +185,138 @@ const ConsultationResult = z.union([
     replyGuidance: z.string().optional(),
   }),
 ]);
-const Snapshot = z.union([
-  Failure,
-  z.object({
-    ok: z.literal(true),
-    sessionId: z.string().nullable(),
-    concerns: z.array(Concern),
-    publicAuthorBindings: z
-      .array(
-        z.object({
-          sessionId: z.string(),
-          concernId: z.string(),
-          kind: z.literal('concern'),
-        })
-      )
-      .optional(),
-    work: z.array(Work),
-    standingRules: z.array(z.string()).optional(),
-    consultations: z.array(Consultation),
-    consultationWaiters: z.array(ConsultationWaiter).optional(),
-    workResources: z
-      .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
-      .max(100)
-      .optional(),
-    sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
-    sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
-    mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
-    workDrivers: z
-      .array(
-        z.object({
-          workId: z.string(),
-          adapter: z.string(),
-          daemon: z.string().nullable(),
-          status: WorkStatusSchema.nullable(),
-          link: z.string().nullable(),
-          remoteLink: z.string().optional(),
-          uncheckedSince: z.number().optional(),
-          retryable: z.literal(true).optional(),
-          unconfirmed: z.literal(true).optional(),
-          abandoned: z.literal(true).optional(),
-        })
-      )
-      .max(100)
-      .optional(),
-    workContinues: z
-      .array(
-        z.object({
-          workId: z.string(),
-          count: z.number().int().nonnegative(),
-          continuedAt: z.number(),
-          lastMessage: z.string(),
-        })
-      )
-      .max(100)
-      .optional(),
-    workSupersessions: z
-      .array(z.object({ workId: z.string(), supersededBy: z.string(), supersededAt: z.number() }))
-      .max(100)
-      .optional(),
-    workPrs: z
-      .array(
-        z.object({
-          workId: z.string(),
-          prs: z.array(
-            z.object({
-              url: z.string(),
-              state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
-              checks: z.enum(['pending', 'failing', 'passing', 'none']),
-              review: z.enum(['approved', 'changes_requested', 'none']),
-              blockers: z.array(z.string()).optional(),
-            })
-          ),
-          waiting: z.boolean(),
-        })
-      )
-      .max(100)
-      .optional(),
-    workGoals: z
-      .array(
-        z.object({
-          workId: z.string(),
-          goal: z.string().nullable(),
-          doneWhen: z.string().nullable(),
-        })
-      )
-      .max(100)
-      .optional(),
-    asks: z.array(NeoAskSchema).optional(),
-    waitingOnHuman: z
-      .object({
-        note: z.string(),
-        asks: z.array(
+const SnapshotOk = z.object({
+  ok: z.literal(true),
+  sessionId: z.string().nullable(),
+  concerns: z.array(Concern),
+  publicAuthorBindings: z
+    .array(
+      z.object({
+        sessionId: z.string(),
+        concernId: z.string(),
+        kind: z.literal('concern'),
+      } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
+    )
+    .optional(),
+  work: z.array(Work),
+  standingRules: z.array(z.string()).optional(),
+  consultations: z.array(Consultation),
+  consultationWaiters: z.array(ConsultationWaiter).optional(),
+  workResources: z
+    .array(
+      z.object({
+        workId: z.string(),
+        refs: NeoWorkResourceReferences.nullable(),
+      } satisfies ZodShape<NeoWorkResourceReceipt>)
+    )
+    .max(100)
+    .optional(),
+  sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
+  sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
+  mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
+  workDrivers: z
+    .array(
+      z.object({
+        workId: z.string(),
+        adapter: z.string(),
+        daemon: z.string().nullable(),
+        status: WorkStatusSchema.nullable(),
+        link: z.string().nullable(),
+        remoteLink: z.string().optional(),
+        uncheckedSince: z.number().optional(),
+        retryable: z.literal(true).optional(),
+        unconfirmed: z.literal(true).optional(),
+        abandoned: z.literal(true).optional(),
+      } satisfies ZodShape<NeoWorkDriverReceipt>)
+    )
+    .max(100)
+    .optional(),
+  workContinues: z
+    .array(
+      z.object({
+        workId: z.string(),
+        count: z.number().int().nonnegative(),
+        continuedAt: z.number(),
+        lastMessage: z.string(),
+      } satisfies ZodShape<NeoWorkContinue>)
+    )
+    .max(100)
+    .optional(),
+  workSupersessions: z
+    .array(
+      z.object({
+        workId: z.string(),
+        supersededBy: z.string(),
+        supersededAt: z.number(),
+      } satisfies ZodShape<NeoWorkSupersession>)
+    )
+    .max(100)
+    .optional(),
+  workPrs: z
+    .array(
+      z.object({
+        workId: z.string(),
+        prs: z.array(
           z.object({
-            id: z.string(),
-            title: z.string(),
-            status: NeoAskSchema.shape.status,
-            question: z.string(),
-          })
+            url: z.string(),
+            state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
+            checks: z.enum(['pending', 'failing', 'passing', 'none']),
+            review: z.enum(['approved', 'changes_requested', 'none']),
+            blockers: z.array(z.string()).optional(),
+            createdAt: z.number().optional(),
+            title: z.string().optional(),
+            branch: z.string().optional(),
+          } satisfies ZodShape<NeoWorkPr>)
         ),
-      })
-      .optional(),
-    preferences: z
-      .object({
-        model: z.string(),
-        provider: z.string(),
-        thinkingLevel: z.string(),
-        saved: z.boolean(),
-      })
-      .nullable()
-      .optional(),
-    askOrigins: z
-      .array(
+        waiting: z.boolean(),
+      } satisfies ZodShape<NeoWorkPrReceipt>)
+    )
+    .max(100)
+    .optional(),
+  workGoals: z
+    .array(
+      z.object({
+        workId: z.string(),
+        goal: z.string().nullable(),
+        doneWhen: z.string().nullable(),
+      } satisfies ZodShape<NeoWorkGoal>)
+    )
+    .max(100)
+    .optional(),
+  asks: z.array(NeoAskSchema).optional(),
+  waitingOnHuman: z
+    .object({
+      note: z.string(),
+      asks: z.array(
         z.object({
-          kind: z.enum(['work', 'consultation']),
           id: z.string(),
-          origin: z.object({ sessionId: z.string(), messageId: z.string() }).nullable(),
-        })
-      )
-      .optional(),
-  }),
-]);
+          title: z.string(),
+          status: NeoAskSchema.shape.status,
+          question: z.string(),
+        } satisfies ZodShape<NeoWaitingOnHuman['asks'][number]>)
+      ),
+    } satisfies ZodShape<NeoWaitingOnHuman>)
+    .optional(),
+  preferences: z
+    .object({
+      model: z.string(),
+      provider: z.string(),
+      thinkingLevel: z.enum(THINKING_LEVELS),
+      saved: z.boolean(),
+    })
+    .nullable()
+    .optional(),
+  askOrigins: z
+    .array(
+      z.object({
+        kind: z.enum(['work', 'consultation']),
+        id: z.string(),
+        origin: z.object({ sessionId: z.string(), messageId: z.string() }).nullable(),
+      } satisfies ZodShape<NeoReceiptAskOrigin>)
+    )
+    .optional(),
+} satisfies ZodShape<NeoSnapshot>);
+const Snapshot = z.union([Failure, SnapshotOk]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
 const Scope = z.object({ concernId: z.string().min(1).optional() }).default({});
 const Save = z.object({
@@ -969,30 +1004,14 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>) => ({
-        ask: input.askId ? service.askRecords.get(input.askId) : null,
-      }),
+      (input: z.infer<typeof Propose>) =>
+        input.askId ? service.askRecords.get(input.askId) : null,
       'input',
       'workAsk'
     )
-    .pipe(
-      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoWorkAsk(workAsk.ask, input, caller),
-      ['workAsk', 'input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoWorkAskOwner(workAsk.ask, input, caller),
-      ['workAsk', 'input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoWorkAskLive(workAsk.ask, input, caller),
-      ['workAsk', 'input', 'admission'],
-      'result:admission'
-    )
+    .pipe(requireNeoWorkAsk, ['workAsk', 'input', 'admission'], 'result:admission')
+    .pipe(requireNeoWorkAskOwner, ['workAsk', 'input', 'admission'], 'result:admission')
+    .pipe(requireNeoWorkAskLive, ['workAsk', 'input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Propose>) => {
         const works = input.supersedes === undefined ? service.repo.listWork(input.concernId) : [];

@@ -7,6 +7,7 @@ import { neoWorkPrNumber } from './work-prs.ts';
 export type NeoWorkPrimary =
   | { readonly kind: 'start'; readonly label: string }
   | { readonly kind: 'retry'; readonly label: string }
+  | { readonly kind: 'close'; readonly label: string; readonly link: string | null }
   | { readonly kind: 'answer'; readonly label: string; readonly link: string | null }
   | { readonly kind: 'open'; readonly label: string; readonly link: string }
   | { readonly kind: 'chat'; readonly label: string }
@@ -24,6 +25,17 @@ export function neoWorkPrimaryAction(
 ): NeoWorkPrimary {
   if (work.status === 'proposed') return { kind: 'start', label: 'Start work' };
   if (driver?.retryable) return { kind: 'retry', label: 'Retry' };
+  if (
+    work.status === 'queued' &&
+    driver?.abandoned &&
+    driver.status !== 'failed' &&
+    driver.status !== 'stopped'
+  )
+    return {
+      kind: 'close',
+      label: 'Close',
+      link: work.sessionId ? null : neoWorkDriverLink(driver),
+    };
   if (work.status === 'queued' && waiting && work.sessionId && chat)
     return { kind: 'answer', label: 'Answer in chat', link: null };
   const link = work.sessionId ? null : neoWorkDriverLink(driver);
@@ -41,7 +53,8 @@ export function neoWorkPresentation(
   { compact, attention }: { compact: boolean; attention: boolean }
 ): 'summary' | 'detail' {
   if (!compact || attention) return 'detail';
-  return neoWorkPrimaryAction(work, driver).kind === 'retry' ? 'detail' : 'summary';
+  const kind = neoWorkPrimaryAction(work, driver).kind;
+  return kind === 'retry' || kind === 'close' ? 'detail' : 'summary';
 }
 
 export function neoWorkMeta(

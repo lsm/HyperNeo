@@ -167,7 +167,7 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 **Implemented:**
 - `areDependenciesMet()` check at scheduling time — tasks with unmet deps stay `open`
 - DFS-based circular dependency detection on create and update
-- `blockDependentTasks()` cascades `dependency_failed` block reason to open dependents on failure/cancel
+- Cancelling a task settles its dependents through `settleTaskDependents` (open ones blocked with `dependency_failed`, running ones stopped); a blocked task changes nothing downstream (#6313)
 - Dependency ID validation on `updateTask()` (was only on create)
 
 **Impact:** Medium  

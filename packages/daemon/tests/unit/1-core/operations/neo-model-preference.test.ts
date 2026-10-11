@@ -106,6 +106,12 @@ describe('effectiveNeoPreference', () => {
     ).toMatchObject({ thinkingLevel: 'off' });
     expect(effectiveNeoPreference(undefined, null)).toBe(null);
   });
+
+  test('normalizes a legacy saved thinking level', () => {
+    expect(
+      effectiveNeoPreference({ ...saved, thinkingLevel: 'auto' as never }, null)
+    ).toMatchObject({ thinkingLevel: 'off', saved: true });
+  });
 });
 
 describe('planNeoAlignment', () => {

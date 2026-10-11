@@ -39,11 +39,10 @@ export interface SpaceTaskDependencyDependencies extends SpaceMcpSessionPolicyCo
 
 export async function persistSpaceDependencies(
   getTaskManager: BoundSpaceTaskDependencyDependencies['getTaskManager'],
-  emitTaskUpdated: BoundSpaceTaskDependencyDependencies['emitTaskUpdated'],
   spaceId: string,
   input: SetTaskDependenciesInput
 ): Promise<DependencyState> {
-  return persistSpaceTaskFields(getTaskManager, emitTaskUpdated, undefined, spaceId, input.taskId, {
+  return persistSpaceTaskFields(getTaskManager, undefined, spaceId, input.taskId, {
     dependsOn: input.dependsOn,
   });
 }
@@ -62,11 +61,7 @@ export function selectSpaceDependencyCompletion(
 export function createSpaceDependencyReplacer(dependencies: BoundSpaceTaskDependencyDependencies) {
   return (superpipe({ ...dependencies })('replace-space-task-dependencies') as PipelineAPI)
     .input(['spaceId', 'input'])
-    .pipe(
-      persistSpaceDependencies,
-      ['getTaskManager', 'emitTaskUpdated', 'spaceId', 'input'],
-      'state'
-    )
+    .pipe(persistSpaceDependencies, ['getTaskManager', 'spaceId', 'input'], 'state')
     .pipe(
       selectSpaceDependencyCompletion,
       ['state', 'blockExecution', 'emitTaskUpdated'],

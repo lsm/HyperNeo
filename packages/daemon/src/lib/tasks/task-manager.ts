@@ -536,7 +536,6 @@ export class SpaceTaskManager {
         requested: Readonly<TaskExecutionPointers>
       ) => TaskExecutionPointers;
       guardWrite?: (current: Readonly<SpaceTask>) => string | undefined;
-      onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
     const resolvedParams = await this.resolveWorkspacePathParam(params);
@@ -685,30 +684,6 @@ export class SpaceTaskManager {
     }
 
     return true;
-  }
-
-  async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
-    return this.doBlockCascade(taskId, []);
-  }
-
-  private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
-    const dependents = [
-      ...(await this.listTasksByStatus('in_progress')),
-      ...(await this.listTasksByStatus('rate_limited')),
-      ...(await this.listTasksByStatus('usage_limited')),
-    ];
-    for (const t of dependents) {
-      if (acc.some((a) => a.id === t.id)) continue;
-      if (t.dependsOn?.includes(taskId)) {
-        const blocked = await this.setTaskStatus(t.id, 'blocked', {
-          blockReason: 'dependency_failed',
-          result: `Dependency task ${taskId} failed or was cancelled`,
-        });
-        acc.push(blocked);
-        await this.doBlockCascade(t.id, acc);
-      }
-    }
-    return acc;
   }
 
   private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {
