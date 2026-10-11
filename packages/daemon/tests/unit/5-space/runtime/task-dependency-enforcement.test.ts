@@ -324,7 +324,7 @@ describe('Gap 1 review fix: re-evaluate blocked tasks on dep edits', () => {
   });
 });
 
-describe('Gap 1 review fix: auto-block triggers cascade to dependents', () => {
+describe('auto-blocking a task leaves its dependents alone', () => {
   let db: BunDatabase;
   let taskRepo: SpaceTaskRepository;
   let taskManager: SpaceTaskManager;
@@ -338,7 +338,7 @@ describe('Gap 1 review fix: auto-block triggers cascade to dependents', () => {
     db.close();
   });
 
-  test('auto-blocking an in_progress task also blocks its in_progress dependents', async () => {
+  test('auto-blocking an in_progress task leaves its running dependents running', async () => {
     const taskA = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'A',
@@ -366,8 +366,8 @@ describe('Gap 1 review fix: auto-block triggers cascade to dependents', () => {
     expect(updatedA.status).toBe('blocked');
 
     const updatedB = await taskManager.getTask(taskB.id);
-    expect(updatedB!.status).toBe('blocked');
-    expect(updatedB!.blockReason).toBe('dependency_failed');
+    expect(updatedB!.status).toBe('in_progress');
+    expect(updatedB!.blockReason ?? null).toBeNull();
   });
 });
 
@@ -636,7 +636,7 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
     expect(nowDepsMet).toBe(true);
   });
 
-  test('full lifecycle with cascade: block propagates to transitive dependents', async () => {
+  test('full lifecycle: a dependent keeps running while its dependency is blocked', async () => {
     const newDep = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'New Dependency',
@@ -661,21 +661,12 @@ describe('End-to-end: dependency_added -> dep done -> unblock -> tick-loop eligi
       dependsOn: [newDep.id],
     });
     expect(updatedA.status).toBe('blocked');
-
-    const updatedB = await taskManager.getTask(taskB.id);
-    expect(updatedB!.status).toBe('blocked');
-    expect(updatedB!.blockReason).toBe('dependency_failed');
+    expect((await taskManager.getTask(taskB.id))!.status).toBe('in_progress');
 
     await taskManager.setTaskStatus(newDep.id, 'done');
     const recheckedA = await taskManager.getTask(taskA.id);
     expect(recheckedA!.status).toBe('open');
-
-    const recheckedB = await taskManager.getTask(taskB.id);
-    expect(recheckedB!.status).toBe('blocked');
-
-    await taskManager.setTaskStatus(taskA.id, 'done');
-    const finalB = await taskManager.getTask(taskB.id);
-    expect(finalB!.status).toBe('open');
+    expect((await taskManager.getTask(taskB.id))!.status).toBe('in_progress');
   });
 });
 
