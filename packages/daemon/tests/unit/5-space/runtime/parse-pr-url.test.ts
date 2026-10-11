@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
 import {
   buildPrEventTopicPattern,
+  parseGitHubTopic,
   parsePrUrl,
   resolveTopicFromInterest,
 } from '../../../../src/lib/github/parse-pr-url';
@@ -201,5 +202,30 @@ describe('resolveTopicFromInterest', () => {
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/{repo}/victim/pull/42')
     ).toBeNull();
+  });
+});
+
+describe('parseGitHubTopic', () => {
+  test.each([
+    [
+      'github/Acme/Widgets/pull_request/7.closed',
+      { owner: 'Acme', repo: 'Widgets', resource: 'pull_request', entity: '7', action: 'closed' },
+    ],
+    [
+      'github/acme/widgets/pull_request/*.review_*',
+      { owner: 'acme', repo: 'widgets', resource: 'pull_request', entity: '*', action: 'review_*' },
+    ],
+    [
+      'github/acme/widgets/pull_request/7',
+      { owner: 'acme', repo: 'widgets', resource: 'pull_request', entity: '7', action: '' },
+    ],
+    [
+      'github/acme/widgets',
+      { owner: 'acme', repo: 'widgets', resource: '', entity: '', action: '' },
+    ],
+    ['github/acme', null],
+    ['space/acme/widgets/pull_request/7.closed', null],
+  ] as const)('%s', (topic, expected) => {
+    expect(parseGitHubTopic(topic)).toEqual(expected);
   });
 });
