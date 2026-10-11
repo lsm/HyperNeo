@@ -67,6 +67,7 @@ const SUBJECT_REJECTIONS = z.enum([
   'agent_not_found',
   'invalid_pattern',
   'refresh_failed',
+  'watch_failed',
 ]);
 type SubjectRejection = z.infer<typeof SUBJECT_REJECTIONS>;
 
@@ -363,11 +364,11 @@ function unsubscribeTopic(
   return applyOutcome(input.topicPattern, subs.unregisterSubscription(slot, input.topicPattern));
 }
 
-function subscribeSession(
+async function subscribeSession(
   subject: { spaceId: string | null; sessionId: string },
   input: { topicPattern: string; label?: string },
   subs: SubscriptionDependencies
-): Outcome | SubjectRejection {
+): Promise<Outcome | SubjectRejection> {
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
   if (subject.spaceId === null) {
@@ -377,8 +378,13 @@ function subscribeSession(
       label: input.label,
     });
     const watched = githubRepoOfTopic(topicPattern);
-    if (watched) void subs.watchSessionRepo?.(watched.owner, watched.repo).catch(() => undefined);
-    return { ok: true, topicPattern };
+    const watching = watched
+      ? await subs.watchSessionRepo?.(watched.owner, watched.repo).then(
+          () => true,
+          () => false
+        )
+      : true;
+    return watching === false ? 'watch_failed' : { ok: true, topicPattern };
   }
   const stored = subs.sessionSubscriptions.upsert({
     spaceId: subject.spaceId,
@@ -411,12 +417,12 @@ function unsubscribeSession(
   return { ok: true, topicPattern };
 }
 
-function subscribeSubject(
+async function subscribeSubject(
   subject: SubscriptionSubject,
   input: z.infer<typeof SubscribeInput>,
   caller: OperationCaller,
   subs: SubscriptionDependencies
-): Outcome | AgentSubscribeOutcome | SubjectRejection {
+): Promise<Outcome | AgentSubscribeOutcome | SubjectRejection> {
   if (subject.kind === 'node') return subscribeTopic(subject.slot, input, subs);
   if (subject.kind === 'session') return subscribeSession(subject, input, subs);
   const result = subscribeAgentTopic(
@@ -472,7 +478,7 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
     input: Input,
     caller: OperationCaller,
     subs: SubscriptionDependencies
-  ) => Result
+  ) => Result | Promise<Result>
 ) {
   return (superpipe({ subs })(name) as PipelineAPI)
     .input(['input', 'caller'])
@@ -503,7 +509,7 @@ export function createSubscriptionOperations(
     defineOperation({
       name: 'event.external.subscribe',
       policy: { safetyClass: 'mutate', roles: SUBSCRIPTION_ROLES },
-      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
+      description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. A session outside any Space that subscribes to a GitHub repo topic rejects watch_failed when the repo watch could not start; the subscription is kept, so subscribing again retries the watch. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
       resultSchema: z.union([AgentSubscribeOutcomeSchema, OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline('subscribe-external-event', subs, subscribeSubject),
