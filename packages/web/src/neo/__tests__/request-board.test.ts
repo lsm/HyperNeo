@@ -13,6 +13,8 @@ const origin = { sessionId: 'root', messageId: 'ask-a' };
 function fixture(): NeoSnapshot {
   return {
     ok: true,
+    cards: [],
+    askViews: [],
     sessionId: 'root',
     concerns: ['shared', 'other'].map((id) => ({
       id,

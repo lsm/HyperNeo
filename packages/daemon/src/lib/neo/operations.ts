@@ -23,13 +23,7 @@ import type {
   NeoReceiptAskOrigin,
   NeoSnapshot,
   NeoWaitingOnHuman,
-  NeoWorkContinue,
-  NeoWorkDriverReceipt,
-  NeoWorkGoal,
-  NeoWorkPr,
-  NeoWorkPrReceipt,
   NeoWorkResourceReceipt,
-  NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_STANDING_RULE_MAX_CHARS,
@@ -78,7 +72,7 @@ import {
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
+import type { WorkRef } from '../drivers/types.ts';
 import {
   NEO_SESSION_MUTES_MAX,
   NeoSessionNoticeGroupSchema,
@@ -211,78 +205,9 @@ const SnapshotOk = z.object({
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
-  workDrivers: z
-    .array(
-      z.object({
-        workId: z.string(),
-        adapter: z.string(),
-        daemon: z.string().nullable(),
-        status: WorkStatusSchema.nullable(),
-        link: z.string().nullable(),
-        remoteLink: z.string().optional(),
-        uncheckedSince: z.number().optional(),
-        retryable: z.literal(true).optional(),
-        unconfirmed: z.literal(true).optional(),
-        abandoned: z.literal(true).optional(),
-      } satisfies ZodShape<NeoWorkDriverReceipt>)
-    )
-    .max(100)
-    .optional(),
-  workContinues: z
-    .array(
-      z.object({
-        workId: z.string(),
-        count: z.number().int().nonnegative(),
-        continuedAt: z.number(),
-        lastMessage: z.string(),
-      } satisfies ZodShape<NeoWorkContinue>)
-    )
-    .max(100)
-    .optional(),
-  workSupersessions: z
-    .array(
-      z.object({
-        workId: z.string(),
-        supersededBy: z.string(),
-        supersededAt: z.number(),
-      } satisfies ZodShape<NeoWorkSupersession>)
-    )
-    .max(100)
-    .optional(),
-  workPrs: z
-    .array(
-      z.object({
-        workId: z.string(),
-        prs: z.array(
-          z.object({
-            url: z.string(),
-            state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
-            checks: z.enum(['pending', 'failing', 'passing', 'none']),
-            review: z.enum(['approved', 'changes_requested', 'none']),
-            blockers: z.array(z.string()).optional(),
-            createdAt: z.number().optional(),
-            title: z.string().optional(),
-            branch: z.string().optional(),
-          } satisfies ZodShape<NeoWorkPr>)
-        ),
-        waiting: z.boolean(),
-      } satisfies ZodShape<NeoWorkPrReceipt>)
-    )
-    .max(100)
-    .optional(),
-  workGoals: z
-    .array(
-      z.object({
-        workId: z.string(),
-        goal: z.string().nullable(),
-        doneWhen: z.string().nullable(),
-      } satisfies ZodShape<NeoWorkGoal>)
-    )
-    .max(100)
-    .optional(),
   asks: z.array(NeoAskSchema).optional(),
-  cards: z.array(NeoCardViewSchema).max(100).optional(),
-  askViews: z.array(NeoAskViewSchema).optional(),
+  cards: z.array(NeoCardViewSchema).max(100),
+  askViews: z.array(NeoAskViewSchema),
   waitingOnHuman: z
     .object({
       note: z.string(),
@@ -689,16 +614,11 @@ export function createNeoOperations(service: NeoService) {
         detailed ? item : { ...item, question: '', answer: null }
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
-      workDrivers,
       ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
-      workGoals,
-      workContinues,
-      workSupersessions,
       preferences: service.modelPreference(),
       asks,
-      workPrs,
       cards,
       askViews: projectNeoAskViews(
         asks,

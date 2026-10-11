@@ -4,6 +4,7 @@ import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { render as renderRoot } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -55,6 +56,8 @@ afterEach(() => {
 const mount = (originMessageId: string | null, hasConcern = true, live = true) => {
   const snapshot: NeoSnapshot = {
     ok: true,
+    cards: [],
+    askViews: [],
     sessionId: 'root',
     concerns: hasConcern
       ? [
@@ -108,16 +111,18 @@ const mount = (originMessageId: string | null, hasConcern = true, live = true) =
     destroy: vi.fn(),
   };
   const act = vi.fn();
-  useNeoMock.mockReturnValue({
-    sessionId: 'root',
-    snapshot,
-    store,
-    error: null,
-    setError: vi.fn(),
-    open: vi.fn(),
-    act,
-    busyWork: null,
-  });
+  useNeoMock.mockReturnValue(
+    withNeoViews({
+      sessionId: 'root',
+      snapshot,
+      store,
+      error: null,
+      setError: vi.fn(),
+      open: vi.fn(),
+      act,
+      busyWork: null,
+    })
+  );
   if (live) render(<NeoLive />);
   return { act };
 };

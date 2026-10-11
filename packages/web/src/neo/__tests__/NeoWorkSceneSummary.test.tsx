@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
+import { testCard } from './neo-test-views.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -73,6 +74,7 @@ describe('NeoWorkCard summary presentation', () => {
       const view = render(
         <NeoWorkCard
           work={item}
+          card={testCard(item)}
           busy={true}
           disabled={true}
           onAction={action}
@@ -102,6 +104,7 @@ describe('NeoWorkCard summary presentation', () => {
     const destroy = vi.spyOn(SessionStore.prototype, 'destroy');
     const props = {
       work: work(),
+      card: testCard(work()),
       busy: false,
       disabled: false,
       onAction: vi.fn(),
@@ -127,6 +130,7 @@ describe('NeoWorkCard summary presentation', () => {
     render(
       <NeoWorkCard
         work={{ ...work('proposed'), sessionId: null }}
+        card={testCard({ ...work('proposed'), sessionId: null })}
         busy={false}
         disabled={false}
         onAction={vi.fn()}
@@ -146,6 +150,7 @@ describe('NeoWorkCard summary presentation', () => {
     render(
       <NeoWorkCard
         work={{ ...work('proposed'), sessionId: null }}
+        card={testCard({ ...work('proposed'), sessionId: null })}
         busy={false}
         disabled={false}
         onAction={action}

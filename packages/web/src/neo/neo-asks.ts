@@ -2,22 +2,10 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type {
   NeoAsk,
   NeoAskItem,
-  NeoAskStatus,
   NeoAskView as NeoAskSnapshotView,
   NeoCardView,
-  NeoWorkDriverReceipt,
-  NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
-import type {
-  NeoScene,
-  NeoSceneCards,
-  NeoSceneDrivers,
-  NeoSceneGroup,
-  NeoSceneGroups,
-  NeoScenePrs,
-} from './neo-scenes.ts';
-import { neoWorkDriverLink } from './work-driver.ts';
-import { neoWorkPrNumbers, neoWorkPrSetback } from './work-prs.ts';
+import type { NeoScene, NeoSceneCards, NeoSceneGroup, NeoSceneGroups } from './neo-scenes.ts';
 
 export type NeoAskView = {
   readonly ask: NeoAsk;
@@ -34,8 +22,7 @@ export type NeoAskView = {
 
 export type NeoAskOpenTarget = {
   readonly work: NeoWork;
-  readonly driver: NeoWorkDriverReceipt | undefined;
-  readonly card?: NeoCardView;
+  readonly card: NeoCardView | undefined;
   readonly link: string | null;
 };
 
@@ -45,56 +32,16 @@ export type NeoAskGroups = {
   readonly settledWork: ReadonlySet<string>;
 };
 
-const NEO_ASK_SUMMARY_LIMIT = 160;
-
-const askScenes: Record<NeoAskStatus, { group: NeoSceneGroup; label: string }> = {
-  open: { group: 'running', label: 'Working on it' },
-  waiting: { group: 'attention', label: 'Waiting on you' },
-  blocked: { group: 'attention', label: 'Blocked · needs you' },
-  achieved: { group: 'outcomes', label: 'Done' },
-  abandoned: { group: 'outcomes', label: 'Dropped' },
-};
-
 export type NeoAskOutcome = 'achieved' | 'abandoned';
 
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
-export function neoSupersededAttempts(
-  links: readonly NeoWorkSupersession[] | undefined
-): ReadonlySet<string> {
-  return new Set((links ?? []).map((link) => link.workId));
-}
-
-function replaced(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
+function replaced(scene: NeoScene, cards: NeoSceneCards): boolean {
   return (
     scene.receipt.kind === 'work' &&
     scene.receipt.status === 'failed' &&
-    superseded.has(scene.ref.id)
+    !!cards.get(scene.ref.id)?.superseded
   );
-}
-
-function dropped(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
-  return (
-    (scene.receipt.kind === 'work' && scene.receipt.status === 'cancelled') ||
-    replaced(scene, superseded)
-  );
-}
-
-export function neoAskSummary(
-  ask: NeoAsk,
-  scenes: readonly NeoScene[],
-  prs: NeoScenePrs = new Map()
-): string | null {
-  const outcome = ask.outcome?.trim() || null;
-  if (!outcome || outcome.length <= NEO_ASK_SUMMARY_LIMIT) return outcome;
-  const merged = [
-    ...new Set(scenes.flatMap((scene) => neoWorkPrNumbers(prs.get(scene.ref.id), 'MERGED'))),
-  ];
-  if (ask.status === 'achieved' && merged.length > 0) return `Merged in ${merged.join(', ')}.`;
-  const sentence = outcome.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? outcome;
-  return sentence.length <= NEO_ASK_SUMMARY_LIMIT
-    ? sentence
-    : `${sentence.slice(0, NEO_ASK_SUMMARY_LIMIT - 1).trimEnd()}…`;
 }
 
 export function neoAskItems(ask: NeoAsk): readonly NeoAskItem[] {
@@ -124,52 +71,10 @@ export function describeNeoAskFromView(
   };
 }
 
-export function describeNeoAsk(
-  ask: NeoAsk,
-  scenes: readonly NeoScene[],
-  prs: NeoScenePrs = new Map(),
-  superseded: ReadonlySet<string> = new Set()
-): NeoAskView {
-  const truth = askScenes[ask.status];
-  const settled = truth.group === 'outcomes';
-  const live = scenes.filter((scene) => !dropped(scene, superseded));
-  const needsYou = !settled && live.some((scene) => scene.group === 'attention');
-  const doneIds = new Set(
-    live
-      .filter(
-        (scene) =>
-          scene.group === 'outcomes' &&
-          scene.receipt.kind === 'work' &&
-          scene.receipt.status === 'reported' &&
-          !neoWorkPrSetback(prs.get(scene.ref.id))
-      )
-      .map((scene) => scene.ref.id)
-  );
-  const items = neoAskItems(ask);
-  const counted = items.filter((item) => !item.removed);
-  return {
-    ask,
-    group: needsYou ? 'attention' : truth.group,
-    label: needsYou ? NEO_ASK_NEEDS_YOU_LABEL : truth.label,
-    settled,
-    done: counted.length > 0 ? counted.filter((item) => item.state === 'met').length : doneIds.size,
-    doneIds,
-    total:
-      counted.length > 0
-        ? counted.length
-        : Math.max(ask.workIds.length, scenes.length) - (scenes.length - live.length),
-    scenes: live,
-    summary: neoAskSummary(ask, live, prs),
-    items,
-  };
-}
-
 export function groupNeoAsks(
   asks: readonly NeoAsk[] | undefined,
   groups: NeoSceneGroups | null,
-  prs: NeoScenePrs = new Map(),
-  supersessions?: readonly NeoWorkSupersession[],
-  askViews?: readonly NeoAskSnapshotView[],
+  askViews: readonly NeoAskSnapshotView[] | undefined,
   cards: NeoSceneCards = new Map()
 ): NeoAskGroups {
   const published = new Map((askViews ?? []).map((view) => [view.askId, view]));
@@ -179,29 +84,22 @@ export function groupNeoAsks(
   );
   const owned = new Set<string>();
   const settledWork = new Set<string>();
-  const superseded = new Set([
-    ...neoSupersededAttempts(supersessions),
-    ...[...cards.values()].filter((card) => card.superseded).map((card) => card.workId),
-  ]);
-  const views = (asks ?? []).map((ask) => {
+  const views = (asks ?? []).flatMap((ask) => {
+    const snapshotView = published.get(ask.id);
+    if (!snapshotView) return [];
     const scenes = ask.workIds.flatMap((id) => {
       const scene = byWork.get(id);
       if (!scene) return [];
       owned.add(id);
       return [scene];
     });
-    const snapshotView = published.get(ask.id);
-    const view = snapshotView
-      ? describeNeoAskFromView(ask, scenes, snapshotView)
-      : describeNeoAsk(ask, scenes, prs, superseded);
+    const view = describeNeoAskFromView(ask, scenes, snapshotView);
     if (view.settled) for (const scene of scenes) settledWork.add(scene.ref.id);
-    return view;
+    return [view];
   });
   const pick = (group: NeoSceneGroup) => views.filter((view) => view.group === group);
   const loose = (group: NeoSceneGroup) =>
-    (groups?.[group] ?? []).filter(
-      (scene) => !owned.has(scene.ref.id) && !replaced(scene, superseded)
-    );
+    (groups?.[group] ?? []).filter((scene) => !owned.has(scene.ref.id) && !replaced(scene, cards));
   return {
     asks: { attention: pick('attention'), running: pick('running'), outcomes: pick('outcomes') },
     loose: {
@@ -215,16 +113,14 @@ export function groupNeoAsks(
 
 export function neoAskOpenTarget(
   view: NeoAskView,
-  drivers: NeoSceneDrivers = new Map(),
   cards: NeoSceneCards = new Map()
 ): NeoAskOpenTarget | null {
   const reachable = view.scenes.flatMap((scene): NeoAskOpenTarget[] => {
     const work = scene.receipt;
     if (work.kind !== 'work') return [];
-    const driver = drivers.get(work.id);
     const card = cards.get(work.id);
-    const link = work.sessionId ? null : card ? card.primary.link : neoWorkDriverLink(driver);
-    return work.sessionId || link ? [{ work, driver, card, link }] : [];
+    const link = work.sessionId ? null : (card?.open.link ?? null);
+    return work.sessionId || link ? [{ work, card, link }] : [];
   });
   return (
     reachable.findLast((target) => target.work.status === 'queued') ?? reachable.at(-1) ?? null

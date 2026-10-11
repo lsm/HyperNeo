@@ -3,6 +3,7 @@ import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
@@ -46,6 +47,8 @@ const concern = (id: string) => ({
 });
 const snapshot: NeoSnapshot = {
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: 'root',
   concerns: [concern('a'), concern('b')],
   work: [
@@ -100,7 +103,7 @@ const renderLive = () => {
     store,
   };
   const state = signal(model);
-  useNeoMock.mockImplementation(() => state.value);
+  useNeoMock.mockImplementation(() => withNeoViews(state.value));
   const result = render(<NeoLive />);
   return { ...result, state, model, open };
 };

@@ -48,6 +48,8 @@ const check = (id: string, concernId: string): NeoConsultation => ({
 });
 const snapshot: NeoSnapshot = {
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: 'root',
   concerns: [concern('a'), concern('b')],
   work: [work('a-work', 'a', 'a-worker'), work('b-work', 'b', 'b-worker'), work('one-off', null)],

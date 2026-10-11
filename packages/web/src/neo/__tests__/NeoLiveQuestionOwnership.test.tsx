@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionStore } from '../../lib/session-store.ts';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import { withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -187,7 +188,7 @@ const renderLive = () => {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
   });
-  useNeoMock.mockImplementation(() => model.value);
+  useNeoMock.mockImplementation(() => withNeoViews(model.value));
   const view = render(<NeoLive />);
   const sheet = screen.queryByRole('button', { name: /^Your work/ });
   if (sheet) fireEvent.click(sheet);

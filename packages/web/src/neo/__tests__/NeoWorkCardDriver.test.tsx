@@ -1,8 +1,9 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
-import { neoWorkDriverLabel, neoWorkDriverLink } from '../work-driver.ts';
+import { testCard } from './neo-test-views.ts';
 
 vi.mock('../../lib/state.ts', () => ({
   connectionState: { value: 'connected', subscribe: () => () => {} },
@@ -23,91 +24,35 @@ const work: NeoWork = {
   createdAt: 10,
   updatedAt: 11,
 };
-const driver = {
-  workId: 'w1',
-  adapter: 'codex-desktop',
-  daemon: 'laptop',
-  status: 'needs_you' as const,
-  link: 'codex://threads/t1',
-};
+const codex = (extra: Partial<NeoCardView>) =>
+  testCard(work, {
+    adapter: 'codex-desktop',
+    open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: 'laptop' },
+    ...extra,
+  });
+const renderCard = (card: NeoCardView, props: Partial<Parameters<typeof NeoWorkCard>[0]> = {}) =>
+  render(
+    <NeoWorkCard
+      work={work}
+      card={card}
+      busy={false}
+      disabled={false}
+      onAction={vi.fn()}
+      onOpen={vi.fn()}
+      {...props}
+    />
+  );
 
 afterEach(cleanup);
 
-describe('neoWorkDriverLabel', () => {
-  it('names the app, the machine and the live state', () => {
-    expect(neoWorkDriverLabel(driver)).toBe('Needs you in Codex Desktop on laptop');
-    expect(neoWorkDriverLabel({ ...driver, daemon: null, status: 'running' })).toBe(
-      'Running in Codex Desktop'
-    );
-    expect(neoWorkDriverLabel({ ...driver, adapter: 'space', daemon: null, status: null })).toBe(
-      'Handed to a Space'
-    );
-    expect(neoWorkDriverLabel({ ...driver, adapter: 'oap', daemon: null, status: 'done' })).toBe(
-      'Idle in oap · Neo is checking'
-    );
-    expect(neoWorkDriverLabel({ ...driver, adapter: 'copilot-cli', status: 'done' })).toBe(
-      'Idle in GitHub Copilot on laptop · Neo is checking'
-    );
-  });
-
-  it('asks the human to close a card with no result for three days', () => {
-    expect(neoWorkDriverLabel({ ...driver, daemon: null, status: 'done', abandoned: true })).toBe(
-      'No result from Codex Desktop in 3 days · close it?'
-    );
-  });
-
-  it('says when Neo could not confirm the session got its message', () => {
-    expect(
-      neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', unconfirmed: true })
-    ).toBe('Running in Codex Desktop · not confirmed it got this');
-    expect(
-      neoWorkDriverLabel({ ...driver, daemon: null, status: 'stopped', unconfirmed: true })
-    ).toBe('Stopped in Codex Desktop');
-  });
-
-  it('says when Neo could not check the session lately', () => {
-    const since = new Date(2026, 9, 10, 15, 42).getTime();
-    const time = new Date(since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    expect(
-      neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', uncheckedSince: since })
-    ).toBe(`Running in Codex Desktop · not checked since ${time}`);
-    expect(
-      neoWorkDriverLabel({ ...driver, daemon: null, status: 'stopped', uncheckedSince: since })
-    ).toBe('Stopped in Codex Desktop');
-  });
-});
-
-describe('neoWorkDriverLink', () => {
-  it('keeps app and in-app links and drops anything else', () => {
-    expect(neoWorkDriverLink(driver)).toBe('codex://threads/t1');
-    expect(neoWorkDriverLink({ ...driver, link: 'ghapp://sessions/s1' })).toBe(
-      'ghapp://sessions/s1'
-    );
-    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/space/sp1/task/t1' })).toBe(
-      '/space/sp1/task/t1'
-    );
-    expect(neoWorkDriverLink({ ...driver, link: '/session/s1' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/\t/evil.com' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, daemon: null, link: '/\n\\evil.com' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, link: 'javascript:alert(1)' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, link: '//evil.com' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, link: '/\\evil.com' })).toBeNull();
-    expect(neoWorkDriverLink({ ...driver, link: null })).toBeNull();
-    expect(neoWorkDriverLink(undefined)).toBeNull();
-  });
-});
-
 describe('NeoWorkCard with drivers work', () => {
   it('shows where the work went and opens it there', () => {
-    render(
-      <NeoWorkCard
-        work={work}
-        driver={driver}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
-        onOpen={vi.fn()}
-      />
+    renderCard(
+      codex({
+        phase: 'needs_you',
+        label: 'Needs you in Codex Desktop on laptop',
+        primary: { kind: 'answer', label: 'Answer in Codex', link: 'codex://threads/t1' },
+      })
     );
     expect(screen.getByText('Needs you in Codex Desktop on laptop')).toBeTruthy();
     const link = screen.getByRole('link', { name: 'Open Bigger font' });
@@ -119,34 +64,29 @@ describe('NeoWorkCard with drivers work', () => {
 
   it('offers Close on a card with no result for three days and keeps it openable', () => {
     const onAction = vi.fn();
-    render(
-      <NeoWorkCard
-        work={work}
-        driver={{ ...driver, status: 'running', abandoned: true }}
-        busy={false}
-        disabled={false}
-        onAction={onAction}
-        onOpen={vi.fn()}
-      />
+    renderCard(
+      codex({
+        phase: 'abandoned',
+        primary: { kind: 'close', label: 'Close', link: 'codex://threads/t1' },
+      }),
+      { onAction }
     );
     screen.getByRole('button', { name: 'Close' }).click();
     expect(onAction).toHaveBeenCalledWith('w1', 'close');
-    expect(screen.getByRole('link', { name: 'Open Bigger font' }).getAttribute('href')).toBe(
-      'codex://threads/t1'
-    );
+    const link = screen.getByRole('link', { name: 'Open Bigger font' });
+    expect([link.getAttribute('href'), link.textContent]).toEqual([
+      'codex://threads/t1',
+      'Open in Codex',
+    ]);
   });
 
   it('keeps the summary row openable through the link', () => {
-    render(
-      <NeoWorkCard
-        work={work}
-        driver={{ ...driver, status: 'running' }}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
-        onOpen={vi.fn()}
-        presentation="summary"
-      />
+    renderCard(
+      codex({
+        label: 'Running in Codex Desktop on laptop',
+        primary: { kind: 'open', label: 'Open in Codex', link: 'codex://threads/t1' },
+      }),
+      { presentation: 'summary' }
     );
     expect(screen.getByText('Running in Codex Desktop on laptop')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open Bigger font' }).textContent).toBe(
@@ -154,93 +94,50 @@ describe('NeoWorkCard with drivers work', () => {
     );
   });
 
-  it('tints each summary row by where its work stands', () => {
-    const cases: Array<
-      [Partial<NeoWork>, (typeof driver)['status'] | 'running' | 'done' | 'stopped' | null, string]
-    > = [
-      [{}, 'running', 'accent'],
-      [{}, 'done', 'accent'],
-      [{}, 'stopped', 'warning'],
-      [{ status: 'reported' }, null, 'success'],
-      [{ status: 'failed' }, null, 'warning'],
-      [{ status: 'cancelled' }, null, 'warning'],
-    ];
-    const tones = cases.map(([patch, status, _tone]) => {
-      const { container, unmount } = render(
-        <NeoWorkCard
-          work={{ ...work, ...patch }}
-          driver={status ? { ...driver, status } : undefined}
-          busy={false}
-          disabled={false}
-          onAction={vi.fn()}
-          onOpen={vi.fn()}
-          presentation="summary"
-        />
-      );
-      const tone = container.querySelector('[data-tone]')?.getAttribute('data-tone');
+  it('tints the row from the card tone, and warns while it waits on a chat answer', () => {
+    const tones = (['accent', 'warning', 'success'] as const).map((tone) => {
+      const { container, unmount } = renderCard(testCard(work, { tone }), {
+        presentation: 'summary',
+      });
+      const shown = container.querySelector('[data-tone]')?.getAttribute('data-tone');
       unmount();
-      return tone;
+      return shown;
     });
-    expect(tones).toEqual(cases.map(([, , tone]) => tone));
-    const { container } = render(
-      <NeoWorkCard
-        work={{ ...work, sessionId: 's1' }}
-        busy={false}
-        disabled={false}
-        onAction={vi.fn()}
-        onOpen={vi.fn()}
-        waiting
-      />
-    );
+    expect(tones).toEqual(['accent', 'warning', 'success']);
+    const session = { ...work, sessionId: 's1' };
+    const { container } = renderCard(testCard(session), { work: session, waiting: true });
     expect(screen.getByText('Waiting for your answer')).toBeTruthy();
     expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning');
   });
 
-  it('labels a reported card by its pull request, keeps it in progress while the PR is open and warns when the PR fails or closes', () => {
-    const rows = [
-      ['pending', 'OPEN', 'Waiting on CI · #6039', 'accent'],
-      ['passing', 'MERGED', 'Merged · #6039', 'success'],
-      ['failing', 'OPEN', 'Checks failing · #6039', 'warning'],
-      ['passing', 'CLOSED', 'PR closed · #6039', 'warning'],
-    ] as const;
-    for (const [checks, state, label, tone] of rows) {
-      const { container, unmount } = render(
-        <NeoWorkCard
-          work={{ ...work, status: 'reported' }}
-          prs={{
-            workId: 'w1',
-            waiting: checks === 'pending',
-            prs: [
-              { url: 'https://github.com/lsm/HyperNeo/pull/6039', state, checks, review: 'none' },
-            ],
-          }}
-          busy={false}
-          disabled={false}
-          onAction={vi.fn()}
-        />
-      );
-      expect(screen.getByText(label)).toBeTruthy();
-      expect(container.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe(tone);
-      unmount();
-    }
+  it('shows the PR label and number from the card', () => {
+    const reported = { ...work, status: 'reported' as const };
+    renderCard(
+      testCard(reported, {
+        label: 'Checks failing · #6039',
+        pr: {
+          number: '#6039',
+          label: 'Checks failing · #6039',
+          count: 1,
+          inProgress: false,
+          setback: true,
+          merged: [],
+        },
+      }),
+      { work: reported, onOpen: undefined }
+    );
+    expect(screen.getByText('Checks failing · #6039')).toBeTruthy();
+    expect(screen.getByText('PR #6039')).toBeTruthy();
   });
 
   it('marks the Open link with the app it opens', () => {
-    const logos = [
-      { adapter: 'codex-desktop', link: 'codex://threads/t1' },
-      { adapter: 'claude-desktop', link: 'claude://claude.ai/epitaxy/local_a1' },
-      { adapter: 'hyperneo', daemon: null, link: '/session/s1' },
-    ].map((target) => {
-      const { unmount } = render(
-        <NeoWorkCard
-          work={work}
-          driver={{ ...driver, status: 'running', ...target }}
-          busy={false}
-          disabled={false}
-          onAction={vi.fn()}
-          onOpen={vi.fn()}
-          presentation="summary"
-        />
+    const logos = ['codex-desktop', 'claude-desktop', 'hyperneo'].map((adapter) => {
+      const { unmount } = renderCard(
+        testCard(work, {
+          adapter,
+          primary: { kind: 'open', label: 'Open', link: '/session/s1' },
+        }),
+        { presentation: 'summary' }
       );
       const link = screen.getByRole('link', { name: 'Open Bigger font' });
       const logo = link.querySelector('[data-app-logo]')?.getAttribute('data-app-logo') ?? null;

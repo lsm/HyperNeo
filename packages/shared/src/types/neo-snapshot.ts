@@ -256,18 +256,13 @@ export interface NeoSnapshot {
   consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
-  workDrivers?: NeoWorkDriverReceipt[];
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
   mutedSessions?: string[];
-  workGoals?: NeoWorkGoal[];
-  workContinues?: NeoWorkContinue[];
-  workSupersessions?: NeoWorkSupersession[];
-  workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];
-  cards?: NeoCardView[];
-  askViews?: NeoAskView[];
+  cards: NeoCardView[];
+  askViews: NeoAskView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
 }

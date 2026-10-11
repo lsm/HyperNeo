@@ -46,6 +46,8 @@ const work = (status: NeoWork['status'] = 'proposed'): NeoWork => ({
 });
 const snapshot = (items: NeoWork[]): NeoSnapshot => ({
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: root,
   concerns: [
     {

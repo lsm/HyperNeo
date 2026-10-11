@@ -1,12 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import {
-  NEO_WORK_CONTINUE_LIMIT,
-  type NeoCardView,
-  type NeoWorkContinue,
-  type NeoWorkDriverReceipt,
-  type NeoWorkGoal,
-  type NeoWorkPrReceipt,
-} from '@hyperneo/shared/types/neo-snapshot';
+import { NEO_WORK_CONTINUE_LIMIT, type NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
@@ -23,8 +16,7 @@ import {
 } from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
-import { neoWorkMeta, neoWorkOpenLabel, neoWorkPrimaryAction } from './work-actions.ts';
-import { neoAppLogo, neoWorkDriverLabel, neoWorkDriverLogo } from './work-driver.ts';
+import { neoAppLogo } from './work-driver.ts';
 import {
   neoCardLabel,
   neoCardMeta,
@@ -32,44 +24,12 @@ import {
   neoCardPrimaryAction,
   neoCardTone,
 } from './card-view.ts';
-import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
-
-const labels: Record<NeoWork['status'], string> = {
-  proposed: 'Your call',
-  queued: 'Handed to HyperNeo',
-  reported: 'Response ready',
-  failed: 'Failed',
-  cancelled: 'Stopped',
-};
 
 const tones = {
   success: 'text-success bg-success/10',
   warning: 'text-warning bg-warning/10',
   accent: 'text-accent bg-accent/10',
 };
-
-function neoWorkTone(
-  work: NeoWork,
-  driver: NeoWorkDriverReceipt | undefined,
-  waiting: boolean,
-  prs?: NeoWorkPrReceipt
-): keyof typeof tones {
-  const status = work.status === 'queued' ? driver?.status : null;
-  if (work.status === 'reported') {
-    if (neoWorkPrInProgress(prs)) return 'accent';
-    return neoWorkPrSetback(prs) ? 'warning' : 'success';
-  }
-  if (
-    (work.status === 'queued' && waiting) ||
-    work.status === 'failed' ||
-    work.status === 'cancelled' ||
-    status === 'failed' ||
-    status === 'stopped' ||
-    status === 'needs_you'
-  )
-    return 'warning';
-  return 'accent';
-}
 
 const interactive =
   'button, a, summary, details, input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="button"]';
@@ -90,11 +50,6 @@ function insideUserSelection(scope: Element): boolean {
 export function NeoWorkCard({
   work,
   card,
-  driver,
-  prs,
-  goal,
-  continued,
-  pooled = false,
   busy,
   disabled,
   onAction,
@@ -105,12 +60,7 @@ export function NeoWorkCard({
   summary,
 }: {
   work: NeoWork;
-  card?: NeoCardView;
-  driver?: NeoWorkDriverReceipt;
-  prs?: NeoWorkPrReceipt;
-  goal?: NeoWorkGoal;
-  continued?: NeoWorkContinue;
-  pooled?: boolean;
+  card: NeoCardView;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: NeoWorkAction) => void;
@@ -127,23 +77,17 @@ export function NeoWorkCard({
       previous = node;
     };
   }, [work.id, questionSlot]);
-  const label = card
-    ? neoCardLabel(card)
-    : work.status === 'queued' && driver
-      ? neoWorkDriverLabel(driver)
-      : (work.status === 'reported' && neoWorkPrLabel(prs)) || labels[work.status];
-  const tone = card ? neoCardTone(card, work, waiting) : neoWorkTone(work, driver, waiting, prs);
+  const label = neoCardLabel(card);
+  const tone = neoCardTone(card, work, waiting);
   const active = work.status === 'queued';
-  const primary = card
-    ? neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen })
-    : neoWorkPrimaryAction(work, driver, { waiting, chat: !!onOpen });
+  const primary = neoCardPrimaryAction(card, work, { waiting, chat: !!onOpen });
   const answering = primary.kind === 'answer' && !primary.link;
-  const meta = card ? neoCardMeta(card, work) : neoWorkMeta(work, prs, driver);
-  const logo = card ? neoAppLogo(card.adapter) : neoWorkDriverLogo(driver);
-  const goalText = card ? card.goal : (goal?.goal ?? null);
-  const doneWhen = card ? card.doneWhen : (goal?.doneWhen ?? null);
-  const continuedCount = card ? card.continued : (continued?.count ?? 0);
-  const isPooled = card ? card.pooled : pooled;
+  const meta = neoCardMeta(card, work);
+  const logo = neoAppLogo(card.adapter);
+  const goalText = card.goal;
+  const doneWhen = card.doneWhen;
+  const continuedCount = card.continued;
+  const isPooled = card.pooled;
   const note =
     work.status === 'proposed'
       ? work.instruction
@@ -240,7 +184,7 @@ export function NeoWorkCard({
         {primary.link ? (
           <a href={primary.link} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
             <NeoAppMark logo={logo} />
-            {card ? neoCardOpenLabel(card) : neoWorkOpenLabel(driver)}
+            {neoCardOpenLabel(card)}
           </a>
         ) : (
           chatButton
@@ -356,10 +300,7 @@ export function NeoWorkCard({
         </p>
       )}
       {presentation === 'detail' && continuedCount > 0 && (
-        <p
-          class="mt-1 text-xs text-fg-muted"
-          title={card ? (card.continuedMessage ?? undefined) : continued?.lastMessage}
-        >
+        <p class="mt-1 text-xs text-fg-muted" title={card.continuedMessage ?? undefined}>
           {isPooled
             ? `Neo continued it ${continuedCount}`
             : `Neo continued it ${continuedCount}/${NEO_WORK_CONTINUE_LIMIT}`}

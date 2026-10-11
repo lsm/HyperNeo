@@ -19,6 +19,8 @@ vi.mock('../../lib/connection-manager.ts', () => ({
 const ref = (kind: string, id: string): DaemonInventoryLink => ({ kind, id });
 const snapshot: NeoSnapshot = {
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: 'root',
   concerns: ['a', 'b'].map((id) => ({
     id,

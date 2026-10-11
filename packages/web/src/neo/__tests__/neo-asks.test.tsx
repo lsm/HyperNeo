@@ -1,20 +1,19 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem, NeoAskView } from '@hyperneo/shared/types/neo-snapshot';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskCard } from '../NeoAskCard.tsx';
 import {
-  neoAskApproval,
-  describeNeoAsk,
+  describeNeoAskFromView,
   groupNeoAsks,
   NEO_ASK_NEEDS_YOU_LABEL,
-  neoAskOpenTarget,
+  neoAskApproval,
   neoAskItems,
-  neoAskSummary,
-  neoSupersededAttempts,
+  neoAskOpenTarget,
 } from '../neo-asks.ts';
 import type { NeoConcernBoard } from '../neo-concern-board.ts';
-import { classifyNeoScenes, groupNeoScenes } from '../neo-scenes.ts';
+import { classifyNeoScenes, groupNeoScenes, type NeoScene } from '../neo-scenes.ts';
+import { testAskView, testCard } from './neo-test-views.ts';
 
 afterEach(cleanup);
 
@@ -62,111 +61,6 @@ const scenes = groupNeoScenes(
   ])
 );
 
-describe('groupNeoAsks', () => {
-  it('nests each ask’s cards under it and leaves the rest where they were', () => {
-    const grouped = groupNeoAsks(
-      [
-        ask('a', 'open', ['a1', 'a2']),
-        ask('b', 'open', ['b1']),
-        ask('c', 'achieved', ['c1']),
-        ask('w', 'waiting', []),
-      ],
-      scenes
-    );
-    expect(
-      grouped.asks.running.map((view) => [view.ask.id, view.label, view.done, view.total])
-    ).toEqual([['a', 'Working on it', 1, 2]]);
-    expect(grouped.asks.attention.map((view) => [view.ask.id, view.label])).toEqual([
-      ['b', NEO_ASK_NEEDS_YOU_LABEL],
-      ['w', 'Waiting on you'],
-    ]);
-    expect(grouped.asks.outcomes.map((view) => [view.ask.id, view.label])).toEqual([['c', 'Done']]);
-    expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['loose']);
-    expect(grouped.loose.attention).toEqual([]);
-    expect(grouped.loose.outcomes).toEqual([]);
-  });
-
-  it('hides failed attempts a later attempt replaced, and marks the cards of settled asks', () => {
-    const retried = groupNeoScenes(
-      classifyNeoScenes([
-        { ...work('f1', 'failed'), title: 'Fix it', createdAt: 1 } as Receipt,
-        { ...work('f2', 'reported'), title: 'Fix it', createdAt: 2 } as Receipt,
-        { ...work('lone', 'failed'), title: 'Only try', createdAt: 1 } as Receipt,
-        work('c1', 'reported'),
-      ])
-    );
-    const grouped = groupNeoAsks([ask('c', 'achieved', ['c1'])], retried, new Map(), [
-      { workId: 'f1', supersededBy: 'f2', supersededAt: 2 },
-    ]);
-    expect(grouped.loose.outcomes.map((scene) => scene.ref.id)).toEqual(['f2', 'lone']);
-    expect([...grouped.settledWork]).toEqual(['c1']);
-    const rerun = groupNeoScenes(
-      classifyNeoScenes([{ ...work('f1', 'proposed'), title: 'Fix it', createdAt: 1 } as Receipt])
-    );
-    const retriedLink = groupNeoAsks([], rerun, new Map(), [
-      { workId: 'f1', supersededBy: 'f2', supersededAt: 2 },
-    ]);
-    expect(
-      Object.values(retriedLink.loose)
-        .flat()
-        .map((scene) => scene.ref.id)
-    ).toEqual(['f1']);
-  });
-
-  it('keeps every card loose when there are no asks', () => {
-    const grouped = groupNeoAsks(undefined, scenes);
-    expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['a2', 'loose']);
-    expect(grouped.asks.running).toEqual([]);
-  });
-});
-
-describe('describeNeoAsk', () => {
-  it('counts cards the daemon has not sent yet, not cards still waiting on or stuck on a PR, and never raises a settled ask', () => {
-    const view = describeNeoAsk(ask('a', 'open', ['a1', 'gone']), scenes.outcomes.slice(0, 1));
-    expect([view.done, view.total]).toEqual([1, 2]);
-    const waitingOnPr = { ...scenes.outcomes[0]!, group: 'running' as const };
-    expect(describeNeoAsk(ask('a', 'waiting', ['a1']), [waitingOnPr]).done).toBe(0);
-    const failing = new Map([
-      [
-        'a1',
-        {
-          workId: 'a1',
-          waiting: false,
-          prs: [
-            {
-              url: 'https://github.com/lsm/HyperNeo/pull/1',
-              state: 'OPEN' as const,
-              checks: 'failing' as const,
-              review: 'none' as const,
-            },
-          ],
-        },
-      ],
-    ]);
-    expect(
-      describeNeoAsk(ask('a', 'open', ['a1']), scenes.outcomes.slice(0, 1), failing).done
-    ).toBe(0);
-    const settled = describeNeoAsk(ask('b', 'abandoned', ['b1']), scenes.attention);
-    expect([settled.group, settled.label, settled.settled]).toEqual(['outcomes', 'Dropped', true]);
-    const attempts = classifyNeoScenes([
-      { ...work('x1', 'failed'), title: 'Same', createdAt: 1 } as Receipt,
-      { ...work('x2', 'cancelled'), title: 'Same', createdAt: 2 } as Receipt,
-      { ...work('x3', 'reported'), title: 'Same', createdAt: 3 } as Receipt,
-    ]);
-    const retried = describeNeoAsk(
-      ask('x', 'open', ['x1', 'x2', 'x3']),
-      attempts,
-      new Map(),
-      neoSupersededAttempts([{ workId: 'x1', supersededBy: 'x3', supersededAt: 3 }])
-    );
-    expect([retried.done, retried.total, retried.scenes.map((scene) => scene.ref.id)]).toEqual([
-      1,
-      1,
-      ['x3'],
-    ]);
-  });
-});
-
 const item = (
   id: string,
   state: NeoAskItem['state'],
@@ -182,6 +76,62 @@ const item = (
   addedAt: null,
   ...extra,
 });
+const describeAsk = (value: NeoAsk, owned: readonly NeoScene[], extra: Partial<NeoAskView> = {}) =>
+  describeNeoAskFromView(value, owned, testAskView(value, extra));
+
+describe('groupNeoAsks', () => {
+  it('nests each ask’s cards under it and leaves the rest where they were', () => {
+    const asks = [
+      ask('a', 'open', ['a1', 'a2']),
+      ask('b', 'open', ['b1']),
+      ask('c', 'achieved', ['c1']),
+      ask('w', 'waiting', []),
+    ];
+    const grouped = groupNeoAsks(
+      asks,
+      scenes,
+      asks.map((value) => testAskView(value, value.id === 'a' ? { done: 1 } : {}))
+    );
+    expect(
+      grouped.asks.running.map((view) => [view.ask.id, view.label, view.done, view.total])
+    ).toEqual([['a', 'Working on it', 1, 2]]);
+    expect(grouped.asks.attention.map((view) => [view.ask.id, view.label])).toEqual([
+      ['b', NEO_ASK_NEEDS_YOU_LABEL],
+      ['w', 'Waiting on you'],
+    ]);
+    expect(grouped.asks.outcomes.map((view) => [view.ask.id, view.label])).toEqual([['c', 'Done']]);
+    expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['loose']);
+    expect(grouped.loose.attention).toEqual([]);
+    expect(grouped.loose.outcomes).toEqual([]);
+  });
+
+  it('hides failed attempts a card view marks superseded, and marks the cards of settled asks', () => {
+    const retried = groupNeoScenes(
+      classifyNeoScenes([
+        { ...work('f1', 'failed'), createdAt: 1 } as Receipt,
+        { ...work('f2', 'reported'), createdAt: 2 } as Receipt,
+        { ...work('lone', 'failed'), createdAt: 1 } as Receipt,
+        work('c1', 'reported'),
+      ])
+    );
+    const settled = ask('c', 'achieved', ['c1']);
+    const cards = new Map([
+      [
+        'f1',
+        testCard({ id: 'f1', status: 'failed', sessionId: 'f1-session' }, { superseded: true }),
+      ],
+    ]);
+    const grouped = groupNeoAsks([settled], retried, [testAskView(settled)], cards);
+    expect(grouped.loose.outcomes.map((scene) => scene.ref.id)).toEqual(['f2', 'lone']);
+    expect([...grouped.settledWork]).toEqual(['c1']);
+  });
+
+  it('leaves an ask without a published view out, and its cards loose', () => {
+    const grouped = groupNeoAsks([ask('a', 'open', ['a2'])], scenes, []);
+    expect(grouped.asks.running).toEqual([]);
+    expect(grouped.loose.running.map((scene) => scene.ref.id)).toEqual(['a2', 'loose']);
+  });
+});
 
 describe('neoAskItems', () => {
   it('reads the checklist, and nothing for an ask opened before checklists', () => {
@@ -192,68 +142,25 @@ describe('neoAskItems', () => {
   });
 });
 
-describe('neoSupersededAttempts', () => {
-  it('names only the cards the daemon linked to a replacement, whatever their titles', () => {
-    expect([
-      ...neoSupersededAttempts([{ workId: 'a', supersededBy: 'c', supersededAt: 3 }]),
-    ]).toEqual(['a']);
-    expect([...neoSupersededAttempts(undefined)]).toEqual([]);
-  });
-});
-
-describe('neoAskSummary', () => {
-  const long = `All doneWhen items met, live-verified on GitHub: ${'evidence '.repeat(30)}`;
-  const merged = new Map([
-    [
-      'a1',
-      {
-        workId: 'a1',
-        waiting: false,
-        prs: [
-          {
-            url: 'https://github.com/lsm/HyperNeo/pull/6071',
-            state: 'MERGED' as const,
-            checks: 'passing' as const,
-            review: 'approved' as const,
-          },
-        ],
-      },
-    ],
-  ]);
-
-  it('keeps a short outcome, names the merged PRs for a long one, and else cuts to one sentence', () => {
-    expect(neoAskSummary(ask('a', 'achieved', ['a1']), scenes.outcomes)).toBe('Merged in #12.');
-    const verbose = { ...ask('a', 'achieved', ['a1']), outcome: long };
-    expect(neoAskSummary(verbose, scenes.outcomes, merged)).toBe('Merged in #6071.');
-    expect(
-      neoAskSummary({ ...verbose, outcome: `Shipped the fix. ${long}` }, scenes.outcomes)
-    ).toBe('Shipped the fix.');
-    const cut = neoAskSummary(verbose, scenes.outcomes) ?? '';
-    expect([cut.length, cut.endsWith('…')]).toEqual([160, true]);
-    expect(neoAskSummary(ask('b', 'open', []), [])).toBeNull();
-  });
-});
-
 describe('neoAskOpenTarget', () => {
   const receipt = (id: string, status: NeoWork['status'], sessionId: string | null) =>
     ({ ...(work(id, status) as NeoWork), sessionId, kind: 'work' }) as Receipt;
-  const driver = (id: string, link: string | null) => ({
-    workId: id,
-    adapter: 'claude-desktop',
-    daemon: null,
-    status: 'running' as const,
-    link,
-  });
-  const target = (receipts: Receipt[], drivers = new Map<string, ReturnType<typeof driver>>()) => {
-    const view = describeNeoAsk(
-      ask(
-        'a',
-        'open',
-        receipts.map((item) => item.id)
-      ),
-      classifyNeoScenes(receipts)
+  const target = (receipts: Receipt[], links: Record<string, string> = {}) => {
+    const value = ask(
+      'a',
+      'open',
+      receipts.map((item) => item.id)
     );
-    const found = neoAskOpenTarget(view, drivers);
+    const cards = new Map(
+      Object.entries(links).map(([id, link]) => [
+        id,
+        testCard(
+          { id, status: 'queued', sessionId: null },
+          { open: { link, remoteLink: null, sessionId: null, daemon: null } }
+        ),
+      ])
+    );
+    const found = neoAskOpenTarget(describeAsk(value, classifyNeoScenes(receipts)), cards);
     return found && [found.work.id, found.link];
   };
 
@@ -265,25 +172,19 @@ describe('neoAskOpenTarget', () => {
           receipt('run', 'queued', null),
           receipt('next', 'proposed', null),
         ],
-        new Map([['run', driver('run', 'claude://claude.ai/epitaxy/run')]])
+        { run: 'claude://claude.ai/epitaxy/run' }
       )
     ).toEqual(['run', 'claude://claude.ai/epitaxy/run']);
     expect(
       target([receipt('old', 'reported', 'old-session'), receipt('new', 'reported', 'new-session')])
     ).toEqual(['new', null]);
-    expect(
-      target(
-        [receipt('old', 'reported', 'old-session'), receipt('run', 'queued', null)],
-        new Map([['run', driver('run', 'javascript:alert(1)')]])
-      )
-    ).toEqual(['old', null]);
     expect(target([receipt('p', 'proposed', null)])).toBeNull();
   });
 });
 
 describe('NeoAskCard', () => {
   it('shows progress and names its card, and keeps the done definition and the full card behind Details', () => {
-    const view = describeNeoAsk(ask('a', 'waiting', ['a1', 'a2']), scenes.running.slice(0, 1));
+    const view = describeAsk(ask('a', 'waiting', ['a1', 'a2']), scenes.running.slice(0, 1));
     const card = render(<NeoAskCard view={view} renderCard={() => <p>Step card</p>} />);
     expect(card.container.querySelector('[data-ask-step]')?.textContent).toBe(
       '●Card a2Handed to HyperNeo'
@@ -302,7 +203,7 @@ describe('NeoAskCard', () => {
 
   it('lists several cards as rows with their stage and shows a card that needs you in full', () => {
     const owned = [scenes.outcomes[0]!, scenes.running[0]!, scenes.attention[0]!];
-    const view = describeNeoAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned);
+    const view = describeAsk(ask('a', 'open', ['a1', 'a2', 'b1']), owned, { doneWorkIds: ['a1'] });
     const rendered: string[] = [];
     const card = render(
       <NeoAskCard
@@ -331,15 +232,15 @@ describe('NeoAskCard', () => {
   it('opens the ask’s current card in its app or in chat', () => {
     const queued = { ...(work('a2', 'queued') as NeoWork), sessionId: null };
     const linked = groupNeoScenes(classifyNeoScenes([{ ...queued, kind: 'work' }])).running;
-    const driver = {
-      workId: 'a2',
-      adapter: 'codex-desktop',
-      daemon: null,
-      status: 'running' as const,
-      link: 'codex://threads/t1',
-    };
-    const view = describeNeoAsk(ask('a', 'open', ['a2']), linked);
-    const app = render(<NeoAskCard view={view} drivers={new Map([['a2', driver]])} />);
+    const card = testCard(
+      { id: 'a2', status: 'queued', sessionId: null },
+      {
+        adapter: 'codex-desktop',
+        open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
+      }
+    );
+    const view = describeAsk(ask('a', 'open', ['a2']), linked);
+    const app = render(<NeoAskCard view={view} cards={new Map([['a2', card]])} />);
     const link = app.getByRole('link', { name: 'Open Ask a' });
     expect([link.getAttribute('href'), link.textContent]).toEqual([
       'codex://threads/t1',
@@ -352,7 +253,7 @@ describe('NeoAskCard', () => {
     const open = vi.fn();
     const chat = render(
       <NeoAskCard
-        view={describeNeoAsk(ask('c', 'achieved', ['c1']), scenes.outcomes.slice(1))}
+        view={describeAsk(ask('c', 'achieved', ['c1']), scenes.outcomes.slice(1))}
         onOpen={open}
       />
     );
@@ -361,13 +262,13 @@ describe('NeoAskCard', () => {
     expect(chat.getByRole('button', { name: 'Open Ask c' }).textContent).toBe('Open chat');
     cleanup();
     const unstarted = render(
-      <NeoAskCard view={describeNeoAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
+      <NeoAskCard view={describeAsk(ask('b', 'open', ['b1']), scenes.attention)} onOpen={open} />
     );
     expect(unstarted.queryByRole('button', { name: 'Open Ask b' })).toBeNull();
   });
 
   it('counts checklist items, not cards, and leaves removed items out of the count', () => {
-    const view = describeNeoAsk(
+    const view = describeAsk(
       {
         ...ask('a', 'open', ['a1', 'a2']),
         doneItems: [
@@ -380,7 +281,8 @@ describe('NeoAskCard', () => {
           item('i3', 'pending', { removed: true }),
         ],
       },
-      scenes.running.slice(0, 1)
+      scenes.running.slice(0, 1),
+      { done: 1, total: 2 }
     );
     expect([view.done, view.total]).toEqual([1, 2]);
     const card = render(<NeoAskCard view={view} />);
@@ -399,7 +301,7 @@ describe('NeoAskCard', () => {
   });
 
   it('puts what needs you on the card face and marks items added later', () => {
-    const view = describeNeoAsk(
+    const view = describeAsk(
       {
         ...ask('w', 'waiting', []),
         doneItems: [
@@ -422,7 +324,7 @@ describe('NeoAskCard', () => {
 
   it('lets you mark an item that needs you as done from the card face', () => {
     const done = vi.fn();
-    const view = describeNeoAsk(
+    const view = describeAsk(
       {
         ...ask('w', 'waiting', []),
         doneItems: [
@@ -453,20 +355,20 @@ describe('NeoAskCard', () => {
     );
     expect(proposed.length).toBeGreaterThan(0);
     const approve = vi.fn();
-    const view = describeNeoAsk(ask('b', 'open', ['b1']), proposed);
+    const view = describeAsk(ask('b', 'open', ['b1']), proposed);
     const card = render(<NeoAskCard view={view} onApprove={approve} />);
     fireEvent.click(card.getByRole('button', { name: 'Approve all steps' }));
     expect(approve).toHaveBeenCalledOnce();
     expect(card.queryByText('Approved')).toBeNull();
     cleanup();
-    const approved = describeNeoAsk({ ...ask('b', 'open', ['b1']), approvedAt: 5 }, proposed);
+    const approved = describeAsk({ ...ask('b', 'open', ['b1']), approvedAt: 5 }, proposed);
     const after = render(<NeoAskCard view={approved} onApprove={approve} />);
     expect(after.queryByRole('button', { name: 'Approve all steps' })).toBeNull();
     expect(after.getByText('Approved')).toBeTruthy();
     cleanup();
     const nothing = render(
       <NeoAskCard
-        view={describeNeoAsk(ask('a', 'open', ['a2']), scenes.running.slice(0, 1))}
+        view={describeAsk(ask('a', 'open', ['a2']), scenes.running.slice(0, 1))}
         onApprove={approve}
       />
     );
@@ -489,7 +391,7 @@ describe('NeoAskCard', () => {
       spent: true,
     });
     const approve = vi.fn();
-    const spent = describeNeoAsk(
+    const spent = describeAsk(
       { ...budget, approvedContinues: 20, approvalSpent: 'continues' as const },
       []
     );
@@ -502,7 +404,7 @@ describe('NeoAskCard', () => {
   });
 
   it('shows the done-when text for an ask opened before checklists', () => {
-    const card = render(<NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} />);
+    const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
     fireEvent.click(card.getByRole('button', { name: 'Details' }));
     expect(card.getByText('Merged to dev with CI green')).toBeTruthy();
     expect(card.queryByRole('list', { name: 'Done when' })).toBeNull();
@@ -510,9 +412,10 @@ describe('NeoAskCard', () => {
 
   it('drops the count once settled and keeps a long outcome behind Details', () => {
     const outcome = `Merged after review. ${'evidence '.repeat(30)}`;
-    const view = describeNeoAsk(
+    const view = describeAsk(
       { ...ask('c', 'achieved', ['c1']), outcome },
-      scenes.outcomes.slice(1)
+      scenes.outcomes.slice(1),
+      { summary: 'Merged after review.' }
     );
     const card = render(<NeoAskCard view={view} />);
     expect(card.queryByText(/of \d+ done/)).toBeNull();
@@ -526,7 +429,7 @@ describe('NeoAskCard', () => {
     const settle = vi.fn();
     for (const item of ['Mark done', 'Drop this ask']) {
       const card = render(
-        <NeoAskCard view={describeNeoAsk(ask('a', 'open', []), [])} onSettle={settle} />
+        <NeoAskCard view={describeAsk(ask('a', 'open', []), [])} onSettle={settle} />
       );
       fireEvent.click(card.getByRole('button', { name: 'Ask actions' }));
       fireEvent.click(screen.getByRole('menuitem', { name: item }));
@@ -534,7 +437,7 @@ describe('NeoAskCard', () => {
     }
     expect(settle.mock.calls).toEqual([['achieved'], ['abandoned']]);
     const settled = render(
-      <NeoAskCard view={describeNeoAsk(ask('c', 'achieved', []), [])} onSettle={settle} />
+      <NeoAskCard view={describeAsk(ask('c', 'achieved', []), [])} onSettle={settle} />
     );
     expect(settled.queryByRole('button', { name: 'Ask actions' })).toBeNull();
   });

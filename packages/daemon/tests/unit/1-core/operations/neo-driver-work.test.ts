@@ -1088,7 +1088,7 @@ describe('Neo work with a drivers target', () => {
         { source: 'rpc', principal: 'local' }
       );
       expect(snapshot).toMatchObject({
-        value: { workDrivers: [expect.objectContaining({ workId: 'work-1', unconfirmed: true })] },
+        value: { cards: [expect.objectContaining({ workId: 'work-1', unconfirmed: true })] },
       });
     } finally {
       clock.mockRestore();
@@ -2026,7 +2026,14 @@ describe('Neo work with a drivers target', () => {
         { source: 'rpc', principal: 'local' }
       );
       expect(snapshot).toMatchObject({
-        value: { workPrs: [{ workId: 'work-1', prs: [running], waiting: true }] },
+        value: {
+          cards: [
+            expect.objectContaining({
+              workId: 'work-1',
+              pr: expect.objectContaining({ count: 1, inProgress: true, setback: false }),
+            }),
+          ],
+        },
       });
 
       prs = [{ ...running, checks: 'passing', review: 'approved' }];

@@ -152,14 +152,14 @@ describe('neo.work.propose with supersedes', () => {
     db.close();
   });
 
-  test('links the failed card to the work that replaces it in the snapshot', async () => {
+  test('marks the failed card superseded in the snapshot once new work replaces it', async () => {
     const first = workOf(await propose('A'));
     service.repo.transitionWork(first.id, first, { status: 'failed', report: 'It stopped.' });
     const second = workOf(await propose('B', { supersedes: first.id }));
     const snapshot = await invoke('neo.snapshot', {}, { source: 'rpc', principal: 'local' });
-    expect((snapshot as { value: NeoSnapshot }).value.workSupersessions).toEqual([
-      { workId: first.id, supersededBy: second.id, supersededAt: expect.any(Number) },
-    ]);
+    const cards = (snapshot as { value: NeoSnapshot }).value.cards;
+    expect(cards.find((card) => card.workId === first.id)?.superseded).toBe(true);
+    expect(cards.find((card) => card.workId === second.id)?.superseded).toBe(false);
   });
 
   test('makes Neo say whether new work replaces a recent failed card', async () => {
