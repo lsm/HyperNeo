@@ -291,6 +291,20 @@ describe('NeoWorkCard continues', () => {
     );
     expect(screen.getByText('Neo continued it 2/5').getAttribute('title')).toBe('Build settings.');
   });
+
+  it('drops the per-card limit when the work draws on its approved ask’s shared budget', () => {
+    render(
+      <NeoWorkCard
+        work={work('c1', 'queued')}
+        continued={{ workId: 'c1', count: 7, continuedAt: 1, lastMessage: 'Keep going.' }}
+        pooled
+        busy={false}
+        disabled={false}
+        onAction={() => {}}
+      />
+    );
+    expect(screen.getByText('Neo continued it 7')).toBeTruthy();
+  });
 });
 
 describe('NeoWorkCard result', () => {
