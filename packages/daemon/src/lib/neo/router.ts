@@ -23,7 +23,7 @@ const TURN_TEXT_CHARS = 300;
 const TOPIC_SUMMARY_CHARS = 160;
 const PROFILE_VECTOR_LIMIT = 256;
 export const NEO_INBOX_ID = 'inbox';
-const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
+export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
 const INBOX_CHOICE: NeoHolder = {
   concernId: NEO_INBOX_ID,
   sessionId: '',
