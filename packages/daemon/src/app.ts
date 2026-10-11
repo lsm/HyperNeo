@@ -56,6 +56,7 @@ import {
   mailSessionEvent,
   type SessionEventDeliveryDeps,
 } from './lib/external-events/session-event-delivery.ts';
+import { endClosedPrSubscriptions } from './lib/external-events/session-subscription-close.ts';
 import { SESSION_EVENT_SCOPE } from './lib/external-events/session-external-event-store.ts';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
@@ -810,6 +811,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       'externalEvent.published',
       async (event) => {
         await deliverSessionExternalEvent(sessionEventDeliveryDeps, event);
+        await endClosedPrSubscriptions(
+          {
+            readEvent: sessionEventDeliveryDeps.readEvent,
+            listSubscriptions: sessionEventDeliveryDeps.listSubscriptions,
+            removeSubscription: (sessionId, topic) =>
+              sessionEventSubscriptions.delete(sessionId, topic),
+          },
+          event
+        );
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
