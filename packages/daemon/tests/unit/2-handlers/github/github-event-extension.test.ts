@@ -5636,6 +5636,64 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('polling finds a failed check listed after a check that finished before the watermark', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let checkRuns = [
+      createCheckRunRow({
+        id: 5,
+        name: 'web',
+        conclusion: 'skipped',
+        completed_at: '2099-01-03T00:10:00Z',
+      }),
+    ];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/check-runs')) return pollingResponse({ check_runs: checkRuns });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      checkRuns = [
+        createCheckRunRow({
+          id: 6,
+          name: 'lint',
+          conclusion: 'success',
+          completed_at: '2099-01-03T00:05:00Z',
+        }),
+        ...checkRuns,
+        createCheckRunRow({
+          id: 4,
+          name: 'core',
+          conclusion: 'failure',
+          completed_at: '2099-01-03T00:20:00Z',
+        }),
+      ];
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const failed = received
+        .filter((item) => item.topic.endsWith('.check_failed'))
+        .map((item) => item.payload.checkName);
+      expect(failed).toEqual(['core']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling skips missing check-run refs and continues to later heads', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
