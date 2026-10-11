@@ -1,8 +1,8 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   isPooledNeoAsk,
-  NEO_WORK_CONTINUE_LIMIT,
   type NeoAsk,
+  type NeoWorkContinue,
 } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
@@ -21,7 +21,8 @@ type Delivered = Exclude<ReturnType<typeof readDriverOutcome>, { failure: string
 interface NeoContinueEvidence {
   work: NeoWork | null;
   ref: WorkRef | null;
-  continuedCount: number | null;
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null;
+  progress: string;
   inFlight: boolean;
   ask: NeoAsk | null;
 }
@@ -34,7 +35,8 @@ interface NeoContinueTarget {
 export interface NeoContinueDeps {
   readWork(id: string): NeoWork | null;
   readRef(id: string): WorkRef | null;
-  readContinuedCount(id: string): number | null;
+  readContinued(id: string): NeoWorkContinue | null;
+  readProgress(work: NeoWork): string;
   readAsk(id: string): NeoAsk | null;
   isContinuing(id: string): boolean;
   withGoal(id: string, message: string): string;
@@ -44,7 +46,7 @@ export interface NeoContinueDeps {
   ): Promise<{ baseline: number | null; sent: DriverSent | null }>;
   send(target: NeoContinueTarget, message: string): Promise<OperationOutcome>;
   recordSent(id: string, startedAt: number | null, sent: DriverSent | null): void;
-  recordContinue(id: string, message: string, now: number): number | null;
+  recordContinue(id: string, message: string, now: number, progress: string): number | null;
   reserveAskContinue(ask: NeoAsk): boolean;
   refundAskContinue(ask: NeoAsk): void;
   reopen(id: string, current: NeoWork, report: string): NeoWork | null;
@@ -62,7 +64,8 @@ export function requireNeoWorkContinuable(
   if (work.status !== 'queued' && work.status !== 'reported')
     return reject(`This work already ${work.status}; it cannot be continued.`);
   const budget = readNeoWorkContinueBudget(
-    evidence.continuedCount === null ? null : { count: evidence.continuedCount },
+    evidence.continued,
+    evidence.progress,
     work.createdAt,
     evidence.ask,
     now
@@ -98,20 +101,24 @@ export function requireNeoWorkStillContinuable(current: {
     : reject(`The message was sent, but this work was ${status} meanwhile; it stays ${status}.`);
 }
 
-export function neoContinuedReport(count: number, message: string, pooled = false): string {
-  return `Continued ${count}${pooled ? '' : `/${NEO_WORK_CONTINUE_LIMIT}`}: ${message.slice(0, 300)}`;
+export function neoContinuedReport(count: number, message: string): string {
+  return `Continued ${count}: ${message.slice(0, 300)}`;
 }
 
 export const admitNeoWorkContinue = (superpipe({})('neo.work.continue.admit') as PipelineAPI)
   .input(['deps', 'id', 'now'])
   .pipe(
-    (deps: NeoContinueDeps, id: string): NeoContinueEvidence => ({
-      work: deps.readWork(id),
-      ref: deps.readRef(id),
-      continuedCount: deps.readContinuedCount(id),
-      inFlight: deps.isContinuing(id),
-      ask: deps.readAsk(id),
-    }),
+    (deps: NeoContinueDeps, id: string): NeoContinueEvidence => {
+      const work = deps.readWork(id);
+      return {
+        work,
+        ref: deps.readRef(id),
+        continued: deps.readContinued(id),
+        progress: work ? deps.readProgress(work) : '',
+        inFlight: deps.isContinuing(id),
+        ask: deps.readAsk(id),
+      };
+    },
     ['deps', 'id'],
     'evidence'
   )
@@ -177,7 +184,7 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
   )
   .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget, message: string, now: number) => ({
-      count: deps.recordContinue(target.work.id, message, now) ?? 1,
+      count: deps.recordContinue(target.work.id, message, now, deps.readProgress(target.work)) ?? 1,
     }),
     ['deps', 'target', 'message', 'now'],
     'record'
@@ -196,16 +203,11 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
       target: NeoContinueTarget,
       current: { work: NeoWork },
       record: { count: number },
-      message: string,
-      reserved: NeoAskContinueReserve
+      message: string
     ) => ({
-      work: deps.reopen(
-        target.work.id,
-        current.work,
-        neoContinuedReport(record.count, message, !!reserved.ask)
-      ),
+      work: deps.reopen(target.work.id, current.work, neoContinuedReport(record.count, message)),
     }),
-    ['deps', 'target', 'current', 'record', 'message', 'reserved'],
+    ['deps', 'target', 'current', 'record', 'message'],
     'reopened'
   )
   .pipe(

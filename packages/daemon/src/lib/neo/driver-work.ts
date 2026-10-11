@@ -32,7 +32,7 @@ import {
   NEO_ASK_CONTINUE_LIMIT,
   isPooledNeoAsk,
   neoAskApprovalSpent,
-  NEO_WORK_CONTINUE_LIMIT,
+  NEO_WORK_STALLED_CONTINUES,
   type NeoWorkContinue,
   type NeoWorkGoal,
   type NeoAsk,
@@ -50,6 +50,7 @@ import {
   type WorkStatus,
 } from '../drivers/types.ts';
 import type { NeoPackFragment } from './packs/types.ts';
+import { hashString32 } from '../runtime-hash.ts';
 import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -145,13 +146,33 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
 
 const NEO_WORK_CONTINUE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
+export function neoWorkProgress(
+  work: Pick<NeoWork, 'status' | 'report'>,
+  prRevision: number | null,
+  prior: string | null
+): string {
+  const report =
+    work.status === 'reported'
+      ? hashString32(work.report ?? '').toString(36)
+      : (prior?.split('|')[1] ?? '-');
+  return `${prRevision ?? 0}|${report}`;
+}
+
+export function neoStalledContinues(
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
+  progress: string
+): number {
+  return continued && continued.progress === progress ? continued.stalled + 1 : 0;
+}
+
 export function readContinueBudget(
-  continued: Pick<NeoWorkContinue, 'count'> | null,
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
+  progress: string,
   startedAt: number | null,
   now: number
 ): string | null {
-  if ((continued?.count ?? 0) >= NEO_WORK_CONTINUE_LIMIT)
-    return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
+  if (neoStalledContinues(continued, progress) >= NEO_WORK_STALLED_CONTINUES)
+    return `continue_budget_spent: the last ${NEO_WORK_STALLED_CONTINUES} continues brought no new commit, PR state, review or report; ask the human how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
     return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
   return null;
@@ -160,21 +181,22 @@ export function readContinueBudget(
 export const NEO_ASK_CONTINUES_SPENT = `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
 
 export function neoContinuesLeft(
-  continued: number,
+  stalled: number,
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null
 ): number {
   return isPooledNeoAsk(ask)
     ? Math.max(0, NEO_ASK_CONTINUE_LIMIT - (ask.approvedContinues ?? 0))
-    : Math.max(0, NEO_WORK_CONTINUE_LIMIT - continued);
+    : Math.max(0, NEO_WORK_STALLED_CONTINUES - stalled);
 }
 
 export function readNeoWorkContinueBudget(
-  continued: Pick<NeoWorkContinue, 'count'> | null,
+  continued: Pick<NeoWorkContinue, 'progress' | 'stalled'> | null,
+  progress: string,
   startedAt: number | null,
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
   now: number
 ): string | null {
-  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, startedAt, now);
+  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, progress, startedAt, now);
   const spent = neoAskApprovalSpent(ask, now);
   if (spent === 'continues') return NEO_ASK_CONTINUES_SPENT;
   return spent === 'expired'
@@ -524,6 +546,7 @@ export function driverDoneCheckNote(
   continued: number,
   budget: string | null,
   {
+    stalled = 0,
     prs,
     stale = false,
     ready = false,
@@ -531,6 +554,7 @@ export function driverDoneCheckNote(
     pack = null,
     cards = [],
   }: {
+    stalled?: number;
     prs?: readonly NeoWorkPr[];
     stale?: boolean;
     ready?: boolean;
@@ -553,7 +577,7 @@ export function driverDoneCheckNote(
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
-        continues_left: String(neoContinuesLeft(continued, ask ?? null)),
+        continues_left: String(neoContinuesLeft(stalled, ask ?? null)),
         summary,
       });
   const owner = !ask

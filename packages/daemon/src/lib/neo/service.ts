@@ -108,6 +108,8 @@ import {
   type NeoWorkRetryCard,
   withWorkGoal,
   readNeoWorkContinueBudget,
+  neoStalledContinues,
+  neoWorkProgress,
 } from './driver-work.ts';
 import {
   admitNeoWorkContinue,
@@ -1061,7 +1063,8 @@ export class NeoService {
   private readonly continueDeps: NeoContinueDeps = {
     readWork: (id) => this.repo.getWork(id),
     readRef: (id) => this.driverTargets.readRef(id),
-    readContinuedCount: (id) => this.workContinues.get(id)?.count ?? null,
+    readContinued: (id) => this.workContinues.get(id),
+    readProgress: (work) => this.workProgress(work),
     readAsk: (id) => this.askRecords.forWork(id),
     isContinuing: (id) => this.continuing.has(id),
     withGoal: (id, message) => withWorkGoal(message, this.workDoneGoal(id)),
@@ -1071,8 +1074,8 @@ export class NeoService {
       this.driverTargets.recordStartedAt(id, startedAt);
       this.driverTargets.recordSent(id, sent);
     },
-    recordContinue: (id, message, now) =>
-      this.workContinues.record(id, message, now)?.count ?? null,
+    recordContinue: (id, message, now, progress) =>
+      this.workContinues.record(id, message, now, progress)?.count ?? null,
     reserveAskContinue: (ask) =>
       this.askRecords.reserveApprovedContinue(ask.id, NEO_ASK_CONTINUE_LIMIT),
     refundAskContinue: (ask) => this.askRecords.refundApprovedContinue(ask.id),
@@ -1689,9 +1692,22 @@ export class NeoService {
     return neoWorkDoneGoal(workId, this.workGoals.get(workId), this.askRecords.forWork(workId));
   }
 
+  private workProgress(work: NeoWork): string {
+    return neoWorkProgress(
+      work,
+      this.workPrs.get(work.id)?.revision ?? null,
+      this.workContinues.get(work.id)?.progress ?? null
+    );
+  }
+
+  private stalledContinues(work: NeoWork): number {
+    return neoStalledContinues(this.workContinues.get(work.id), this.workProgress(work));
+  }
+
   private continueBudget(work: NeoWork, now: number): string | null {
     return readNeoWorkContinueBudget(
       this.workContinues.get(work.id),
+      this.workProgress(work),
       work.createdAt,
       this.askRecords.forWork(work.id),
       now
@@ -2094,6 +2110,7 @@ export class NeoService {
             continued,
             this.continueBudget(work, Date.now()),
             {
+              stalled: this.stalledContinues(work),
               prs: found.row?.prs,
               stale: options.stale ?? false,
               ready: options.ready ?? false,

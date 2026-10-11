@@ -4,6 +4,8 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   neoContinuesLeft,
+  neoStalledContinues,
+  neoWorkProgress,
   readContinueBudget,
   readNeoWorkContinueBudget,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -33,20 +35,43 @@ const HOUR = 60 * 60 * 1000;
 const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_ios' };
 
 describe('readContinueBudget', () => {
-  test('allows five continues within twelve hours of the start', () => {
-    expect(readContinueBudget(null, 0, HOUR)).toBeNull();
-    expect(readContinueBudget({ count: 4 }, 0, 11 * HOUR)).toBeNull();
-    expect(readContinueBudget({ count: 5 }, 0, HOUR)).toContain('continue_budget_spent');
-    expect(readContinueBudget({ count: 1 }, 0, 12 * HOUR)).toContain('continue_budget_spent');
+  test('stops only after three continues in a row with no progress, within twelve hours', () => {
+    expect(readContinueBudget(null, '0|a', 0, HOUR)).toBeNull();
+    expect(readContinueBudget({ progress: '0|a', stalled: 1 }, '0|a', 0, 11 * HOUR)).toBeNull();
+    expect(readContinueBudget({ progress: '0|a', stalled: 2 }, '0|a', 0, HOUR)).toContain(
+      'brought no new commit, PR state, review or report'
+    );
+    expect(readContinueBudget({ progress: '0|a', stalled: 9 }, '1|a', 0, HOUR)).toBeNull();
+    expect(readContinueBudget(null, '0|a', 0, 12 * HOUR)).toContain('continue_budget_spent');
+  });
+});
+
+describe('neoStalledContinues', () => {
+  test('counts on while nothing moved and starts over on any progress', () => {
+    expect(neoStalledContinues(null, '0|a')).toBe(0);
+    expect(neoStalledContinues({ progress: '0|a', stalled: 1 }, '0|a')).toBe(2);
+    expect(neoStalledContinues({ progress: '0|a', stalled: 1 }, '0|b')).toBe(0);
+    expect(neoStalledContinues({ progress: null, stalled: 4 }, '0|a')).toBe(0);
+  });
+});
+
+describe('neoWorkProgress', () => {
+  test('moves with a new PR revision or a new worker report, not with Neo reopening the card', () => {
+    const reported = { status: 'reported' as const, report: 'Built the skeleton.' };
+    const first = neoWorkProgress(reported, 2, null);
+    expect(neoWorkProgress({ status: 'queued', report: 'Continued 1: go' }, 2, first)).toBe(first);
+    expect(neoWorkProgress(reported, 3, first)).not.toBe(first);
+    expect(neoWorkProgress({ ...reported, report: 'Built chat.' }, 2, first)).not.toBe(first);
+    expect(neoWorkProgress({ status: 'queued', report: null }, null, null)).toBe('0|-');
   });
 });
 
 describe('neoContinuesLeft', () => {
-  test("counts what is left of the approved ask's shared pool, else the card's own", () => {
+  test("counts what is left of the approved ask's shared pool, else the card's run without progress", () => {
     const ask = { status: 'open' as const, approvedAt: 5, approvedContinues: 6 };
-    expect(neoContinuesLeft(7, ask)).toBe(14);
-    expect(neoContinuesLeft(2, { ...ask, approvedAt: null })).toBe(3);
-    expect(neoContinuesLeft(2, { ...ask, status: 'achieved' })).toBe(3);
+    expect(neoContinuesLeft(2, ask)).toBe(14);
+    expect(neoContinuesLeft(1, { ...ask, approvedAt: null })).toBe(2);
+    expect(neoContinuesLeft(1, { ...ask, status: 'achieved' })).toBe(2);
     expect(neoContinuesLeft(9, null)).toBe(0);
   });
 });
@@ -54,22 +79,38 @@ describe('neoContinuesLeft', () => {
 describe('readNeoWorkContinueBudget', () => {
   const approved = { status: 'open' as const, approvedAt: 0, approvedContinues: 0 };
   test('work under an approved ask shares the ask budget instead of its own', () => {
-    expect(readNeoWorkContinueBudget({ count: 7 }, 0, approved, 13 * HOUR)).toBeNull();
     expect(
-      readNeoWorkContinueBudget(null, 0, { ...approved, approvedContinues: 20 }, HOUR)
+      readNeoWorkContinueBudget({ progress: 'p', stalled: 7 }, 'p', 0, approved, 13 * HOUR)
+    ).toBeNull();
+    expect(
+      readNeoWorkContinueBudget(null, 'p', 0, { ...approved, approvedContinues: 20 }, HOUR)
     ).toContain('approve it again');
-    expect(readNeoWorkContinueBudget(null, 0, approved, 48 * HOUR)).toContain('approve it again');
+    expect(readNeoWorkContinueBudget(null, 'p', 0, approved, 48 * HOUR)).toContain(
+      'approve it again'
+    );
   });
 
   test('work under an ask not approved, or settled, keeps its own budget', () => {
     expect(
-      readNeoWorkContinueBudget({ count: 5 }, 0, { ...approved, approvedAt: null }, HOUR)
-    ).toContain('already continued 5 times');
+      readNeoWorkContinueBudget(
+        { progress: 'p', stalled: 2 },
+        'p',
+        0,
+        { ...approved, approvedAt: null },
+        HOUR
+      )
+    ).toContain('brought no new commit');
     expect(
-      readNeoWorkContinueBudget({ count: 5 }, 0, { ...approved, status: 'achieved' }, HOUR)
-    ).toContain('already continued 5 times');
-    expect(readNeoWorkContinueBudget({ count: 5 }, 0, null, HOUR)).toContain(
-      'already continued 5 times'
+      readNeoWorkContinueBudget(
+        { progress: 'p', stalled: 2 },
+        'p',
+        0,
+        { ...approved, status: 'achieved' },
+        HOUR
+      )
+    ).toContain('brought no new commit');
+    expect(readNeoWorkContinueBudget({ progress: 'p', stalled: 2 }, 'p', 0, null, HOUR)).toContain(
+      'brought no new commit'
     );
   });
 });
@@ -103,7 +144,14 @@ const continued: NeoWork = Object.freeze({
 const rejected = (reason: string) => ({ reason: { ok: false as const, reason } });
 
 describe('requireNeoWorkContinuable', () => {
-  const evidence = { work: continued, ref, continuedCount: null, inFlight: false, ask: null };
+  const evidence = {
+    work: continued,
+    ref,
+    continued: null,
+    progress: '0|a',
+    inFlight: false,
+    ask: null,
+  };
 
   test('admits started work that is queued or reported', () => {
     expect(requireNeoWorkContinuable(evidence, HOUR)).toEqual({ value: { work: continued, ref } });
@@ -128,7 +176,10 @@ describe('requireNeoWorkContinuable', () => {
 
   test('a spent budget is reported before an in-flight continue', () => {
     expect(
-      requireNeoWorkContinuable({ ...evidence, continuedCount: 5, inFlight: true }, HOUR)
+      requireNeoWorkContinuable(
+        { ...evidence, continued: { progress: '0|a', stalled: 2 }, inFlight: true },
+        HOUR
+      )
     ).toMatchObject({ reason: { reason: expect.stringContaining('continue_budget_spent') } });
   });
 });
@@ -169,17 +220,9 @@ describe('requireNeoWorkStillContinuable', () => {
 });
 
 describe('neoContinuedReport', () => {
-  test('counts the continue against the limit and keeps the message short', () => {
-    expect(neoContinuedReport(2, 'Also fix the footer.')).toBe(
-      'Continued 2/5: Also fix the footer.'
-    );
-    expect(neoContinuedReport(1, 'x'.repeat(400))).toHaveLength('Continued 1/5: '.length + 300);
-  });
-
-  test('drops the per-card limit for work drawing on an approved ask pool', () => {
-    expect(neoContinuedReport(7, 'Also fix the footer.', true)).toBe(
-      'Continued 7: Also fix the footer.'
-    );
+  test('counts the continue and keeps the message short', () => {
+    expect(neoContinuedReport(2, 'Also fix the footer.')).toBe('Continued 2: Also fix the footer.');
+    expect(neoContinuedReport(1, 'x'.repeat(400))).toHaveLength('Continued 1: '.length + 300);
   });
 });
 
@@ -278,7 +321,10 @@ describe('neo.work.continue', () => {
     const work = reportedWork();
     const result = await invoke({ id: work.id, message: 'Now build the chat screen.' });
     expect(result).toMatchObject({
-      value: { ok: true, work: { status: 'queued', report: expect.stringContaining('1/5') } },
+      value: {
+        ok: true,
+        work: { status: 'queued', report: expect.stringContaining('Continued 1:') },
+      },
     });
     expect(sent).toHaveLength(1);
     expect(sent[0].ref).toEqual(ref);
@@ -405,21 +451,38 @@ describe('neo.work.continue', () => {
     expect(service.repo.getWork(work.id)?.status).toBe('reported');
   });
 
-  test('stops after five continues and tells Neo to ask the human', async () => {
+  test('stops after three continues with no progress and tells Neo to ask the human', async () => {
     const work = reportedWork();
-    for (let n = 0; n < 5; n++)
+    for (let n = 0; n < 3; n++)
       expect(await invoke({ id: work.id, message: `Step ${n}` })).toMatchObject({
         value: { ok: true },
       });
-    expect(await invoke({ id: work.id, message: 'Step 6' })).toMatchObject({
+    expect(await invoke({ id: work.id, message: 'Step 4' })).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('continue_budget_spent') },
     });
-    expect(sent).toHaveLength(5);
+    expect(sent).toHaveLength(3);
   });
 
-  test('lets only one of two overlapping continues through, so five stays the cap', async () => {
+  test('keeps continuing past three while the worker keeps reporting new progress', async () => {
     const work = reportedWork();
-    for (let n = 0; n < 4; n++) service.workContinues.record(work.id, `Step ${n}`, Date.now());
+    for (let n = 0; n < 6; n++) {
+      expect(await invoke({ id: work.id, message: `Step ${n}` })).toMatchObject({
+        value: { ok: true },
+      });
+      const current = service.repo.getWork(work.id)!;
+      service.repo.transitionWork(work.id, current, {
+        status: 'reported',
+        report: `Finished step ${n}.`,
+      });
+    }
+    expect(service.workContinues.get(work.id)).toMatchObject({ count: 6, stalled: 0 });
+    expect(sent).toHaveLength(6);
+  });
+
+  test('lets only one of two overlapping continues through', async () => {
+    const work = reportedWork();
+    for (let n = 0; n < 4; n++)
+      service.workContinues.record(work.id, `Step ${n}`, Date.now(), `${n}|x`);
     const [first, second] = await Promise.all([
       invoke({ id: work.id, message: 'Step 5' }),
       invoke({ id: work.id, message: 'Step 6' }),
