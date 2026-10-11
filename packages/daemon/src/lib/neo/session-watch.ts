@@ -78,16 +78,16 @@ export function planNeoSessionNotice(
   detail: { status: WorkStatus; lastInputAt: number | null } | null,
   now: number
 ): { seen: NeoSessionSeen; notice: NeoSessionNotice | null } {
-  const status = detail?.status ?? session.status;
+  if (!detail) return { seen: prior, notice: null };
+  const status = detail.status;
   const seen = {
     listed: fingerprint(session),
     status,
     runningSince: status === 'running' ? (prior.runningSince ?? now) : null,
   };
-  const human = detail?.lastInputAt != null && now - detail.lastInputAt < NEO_SESSION_HUMAN_MS;
-  const kind: NeoSessionNoticeKind | null = !detail
-    ? null
-    : status === 'needs_you' && prior.status !== 'needs_you'
+  const human = detail.lastInputAt != null && now - detail.lastInputAt < NEO_SESSION_HUMAN_MS;
+  const kind: NeoSessionNoticeKind | null =
+    status === 'needs_you' && prior.status !== 'needs_you'
       ? 'needs_you'
       : status === 'failed' && prior.status !== 'failed'
         ? 'failed'

@@ -119,6 +119,13 @@ describe('planNeoSessionNotice', () => {
     expect(planNeoSessionNotice(session, prior, detail, now).notice?.kind ?? null).toBe(kind);
   });
 
+  test('keeps what it saw when the status read failed, so the next pass reads again', () => {
+    expect(planNeoSessionNotice(session, running, null, now)).toEqual({
+      seen: running,
+      notice: null,
+    });
+  });
+
   test('holds a notice the human may be answering, and reads the session again next pass', () => {
     const planned = planNeoSessionNotice(session, running, read('needs_you', now - 30_000), now);
     expect(planned).toEqual({ seen: running, notice: null });
@@ -152,6 +159,7 @@ describe('refreshDriverWork', () => {
   let service: NeoService;
   let listed: PlaceGroup['work'];
   let unreachable: { source: string; reason: string }[];
+  let more: boolean;
   let status: { status: WorkStatus; lastActivityAt: number; recentInputs?: unknown[] };
   const events: Array<[string, unknown]> = [];
 
@@ -161,6 +169,7 @@ describe('refreshDriverWork', () => {
     events.length = 0;
     listed = [];
     unreachable = [];
+    more = false;
     status = { status: 'running', lastActivityAt: 0 };
     const registry = createOperationRegistry([
       defineOperation({
@@ -169,7 +178,7 @@ describe('refreshDriverWork', () => {
         inputSchema: z.record(z.string(), z.unknown()),
         resultSchema: z.unknown(),
         policy: { safetyClass: 'read' },
-        execute: async () => ({ places: places(listed), unreachable }),
+        execute: async () => ({ places: places(listed), unreachable, ...(more ? { more } : {}) }),
       }),
       defineOperation({
         name: 'work.status',
@@ -228,6 +237,9 @@ describe('refreshDriverWork', () => {
       unreachable = [{ source: 'codex-desktop', reason: 'locked' }];
       await service.refreshDriverWork();
       unreachable = [];
+      more = true;
+      await service.refreshDriverWork();
+      more = false;
       listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
       status = { status: 'done', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();

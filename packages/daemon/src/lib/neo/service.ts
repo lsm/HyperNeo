@@ -1208,11 +1208,15 @@ export class NeoService {
         );
         const value =
           outcome.kind === 'completed'
-            ? (outcome.value as { places?: PlaceGroup[]; unreachable?: unknown[] } | null)
+            ? (outcome.value as {
+                places?: PlaceGroup[];
+                unreachable?: unknown[];
+                more?: boolean;
+              } | null)
             : null;
         return {
           sessions: listNeoWatchedSessions(value?.places ?? [], this.followedCardRefs(now), now),
-          complete: !!value?.places && !value.unreachable?.length,
+          complete: !!value?.places && !value.unreachable?.length && !value.more,
         };
       },
       ['root', 'now'],
