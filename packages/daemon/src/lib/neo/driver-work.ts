@@ -28,12 +28,15 @@ import {
 import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
+  NEO_ASK_CONTINUE_LIMIT,
+  NEO_ASK_CONTINUE_WINDOW_MS,
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkContinue,
   type NeoWorkGoal,
   type NeoAsk,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
+import { isNeoAskLive } from './done-check.ts';
 import {
   PlaceSchema,
   WorkExchangeEntrySchema,
@@ -149,6 +152,31 @@ export function readContinueBudget(
     return `continue_budget_spent: already continued ${NEO_WORK_CONTINUE_LIMIT} times; ask the human how to proceed.`;
   if (startedAt !== null && now - startedAt >= NEO_WORK_CONTINUE_WINDOW_MS)
     return 'continue_budget_spent: this work started over 12 hours ago; ask the human how to proceed.';
+  return null;
+}
+
+export const NEO_ASK_CONTINUES_SPENT = `continue_budget_spent: the work under this approved ask used its ${NEO_ASK_CONTINUE_LIMIT} shared continues; ask the human to approve it again.`;
+
+export function neoContinuesLeft(
+  continued: number,
+  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null
+): number {
+  return ask?.approvedAt != null && isNeoAskLive(ask)
+    ? Math.max(0, NEO_ASK_CONTINUE_LIMIT - (ask.approvedContinues ?? 0))
+    : Math.max(0, NEO_WORK_CONTINUE_LIMIT - continued);
+}
+
+export function readNeoWorkContinueBudget(
+  continued: Pick<NeoWorkContinue, 'count'> | null,
+  startedAt: number | null,
+  ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
+  now: number
+): string | null {
+  if (ask?.approvedAt == null || !isNeoAskLive(ask))
+    return readContinueBudget(continued, startedAt, now);
+  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT) return NEO_ASK_CONTINUES_SPENT;
+  if (now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS)
+    return 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.';
   return null;
 }
 
@@ -474,7 +502,7 @@ export function driverDoneCheckNote(
   const next = budget
     ? fillPrompt(NEO_WORK_DONE_CHECK_BUDGET, { budget, summary })
     : fillPrompt(NEO_WORK_DONE_CHECK_CONTINUE, {
-        continues_left: String(NEO_WORK_CONTINUE_LIMIT - continued),
+        continues_left: String(neoContinuesLeft(continued, ask ?? null)),
         summary,
       });
   const owner = !ask
