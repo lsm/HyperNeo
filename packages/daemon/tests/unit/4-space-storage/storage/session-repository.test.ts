@@ -753,7 +753,18 @@ describe('SessionRepository', () => {
         repository.createSession(
           createDefaultSession({ id, processingState: JSON.stringify(state) })
         );
+      const spaceCooldown = { status: 'rate_limit_cooldown', messageId: 'm4', retryAt: 9 };
+      repository.createSession({
+        ...createDefaultSession({
+          id: 'space-cooling',
+          processingState: JSON.stringify(spaceCooldown),
+        }),
+        context: { spaceId: 'space-1' },
+      });
       expect(repository.markRestartInterruptedTurns()).toBe(2);
+      expect(JSON.parse(repository.getSession('space-cooling')?.processingState ?? '{}')).toEqual(
+        spaceCooldown
+      );
       expect(JSON.parse(repository.getSession('busy')?.processingState ?? '{}')).toEqual({
         status: 'interrupted',
         reason: 'restart',
