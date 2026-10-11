@@ -1,9 +1,7 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { planTaskDependencies } from '../../lib/tasks/dependency-plan.ts';
 import type { TaskDependencyNode } from '../../lib/tasks/dependency-graph.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { decodeTaskCoreRow } from './task-row.ts';
 import { applyStandaloneTaskEdit, type EditStandaloneTaskInput } from './edit-task.ts';
 
 type Rejection = Extract<ReturnType<typeof planTaskDependencies>, string>;
@@ -40,48 +38,9 @@ export function decideTaskDependencyReplacement(
   return typeof result === 'string' ? { reason: result } : { value: result };
 }
 
-function writeTaskDependencies(
-  db: Database,
-  input: SetTaskDependenciesInput,
-  dependsOn: string[],
-  now: number
-): TaskCore {
-  const row = db
-    .prepare(
-      'UPDATE space_tasks SET depends_on = ?, updated_at = ? WHERE id = ? AND space_id IS NULL RETURNING *'
-    )
-    .get(JSON.stringify(dependsOn), now, input.taskId) as Record<string, unknown> | null;
-  if (!row) throw new Error('Standalone task disappeared during dependency replacement');
-  return decodeTaskCoreRow(row);
-}
-
-const persistTaskDependencies = (
-  superpipe({})('persist-standalone-task-dependencies') as PipelineAPI
-)
-  .input(['db', 'input'])
-  .pipe(selectDependencyScope, ['db', 'input'], 'result:dependencies')
-  .pipe(decideTaskDependencyReplacement, ['dependencies', 'input'], 'result:dependencies')
-  .pipe(Date.now, undefined, 'now')
-  .pipe(writeTaskDependencies, ['db', 'input', 'dependencies', 'now'], 'dependencies')
-  .end('dependencies') as (
-  db: Database,
-  input: SetTaskDependenciesInput
-) => TaskCore | Rejection | null;
-
 function requireOwnTransaction(db: Database): void {
   const active = 'inTransaction' in db ? Boolean(db.inTransaction) : db.isTransaction;
   if (active) throw new Error('Task dependencies require their own transaction');
-}
-
-export function setStandaloneTaskDependencies(
-  db: Database,
-  input: SetTaskDependenciesInput,
-  notifyChange: () => void
-): TaskCore | Rejection | null {
-  requireOwnTransaction(db);
-  const result = db.transaction(() => persistTaskDependencies(db, input))();
-  if (result !== null && typeof result !== 'string') notifyChange();
-  return result;
 }
 
 export function planStandaloneTaskDependencies(

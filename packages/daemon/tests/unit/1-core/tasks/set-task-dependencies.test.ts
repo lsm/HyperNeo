@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { Database } from '../../../../src/storage/database';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import {
-  setStandaloneTaskDependencies,
+  editStandaloneTaskWithDependencies,
   decideTaskDependencyReplacement,
 } from '../../../../src/storage/tasks/set-task-dependencies';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
@@ -28,7 +28,7 @@ describe('standalone dependency persistence', () => {
       db.getDatabase().exec('ROLLBACK');
       expect(readTaskCore(db.getDatabase(), a.id)?.dependsOn).toEqual([b.id]);
     });
-    const result = setStandaloneTaskDependencies(
+    const result = editStandaloneTaskWithDependencies(
       db.getDatabase(),
       { taskId: a.id, dependsOn: [b.id] },
       notify
@@ -37,7 +37,11 @@ describe('standalone dependency persistence', () => {
     expect(readTaskCore(db.getDatabase(), b.id)).toEqual(b);
     expect(notify).toHaveBeenCalledTimes(1);
     expect(
-      setStandaloneTaskDependencies(db.getDatabase(), { taskId: a.id, dependsOn: [] }, () => {})
+      editStandaloneTaskWithDependencies(
+        db.getDatabase(),
+        { taskId: a.id, dependsOn: [] },
+        () => {}
+      )
     ).toMatchObject({ dependsOn: [] });
   });
 
@@ -45,8 +49,16 @@ describe('standalone dependency persistence', () => {
     const a = create('A');
     const b = create('B');
     const c = create('C');
-    setStandaloneTaskDependencies(db.getDatabase(), { taskId: a.id, dependsOn: [b.id] }, () => {});
-    setStandaloneTaskDependencies(db.getDatabase(), { taskId: b.id, dependsOn: [c.id] }, () => {});
+    editStandaloneTaskWithDependencies(
+      db.getDatabase(),
+      { taskId: a.id, dependsOn: [b.id] },
+      () => {}
+    );
+    editStandaloneTaskWithDependencies(
+      db.getDatabase(),
+      { taskId: b.id, dependsOn: [c.id] },
+      () => {}
+    );
     const notify = mock(() => {});
     for (const [dependsOn, reason] of [
       [['absent'], 'dependency_not_found'],
@@ -55,7 +67,7 @@ describe('standalone dependency persistence', () => {
       [[a.id], 'dependency_cycle'],
     ] as const) {
       expect(
-        setStandaloneTaskDependencies(
+        editStandaloneTaskWithDependencies(
           db.getDatabase(),
           { taskId: c.id, dependsOn: [...dependsOn] },
           notify
@@ -78,11 +90,11 @@ describe('standalone dependency persistence', () => {
     const notify = mock(() => {});
     for (const taskId of [owned.id, 'absent']) {
       expect(
-        setStandaloneTaskDependencies(db.getDatabase(), { taskId, dependsOn: [] }, notify)
+        editStandaloneTaskWithDependencies(db.getDatabase(), { taskId, dependsOn: [] }, notify)
       ).toBeNull();
     }
     expect(
-      setStandaloneTaskDependencies(
+      editStandaloneTaskWithDependencies(
         db.getDatabase(),
         { taskId: a.id, dependsOn: [owned.id] },
         notify
@@ -99,7 +111,7 @@ describe('standalone dependency persistence', () => {
     const input = { taskId: a.id, dependsOn: [b.id] };
     const notify = mock(() => {});
     db.getDatabase().transaction(() => {
-      expect(() => setStandaloneTaskDependencies(db.getDatabase(), input, notify)).toThrow(
+      expect(() => editStandaloneTaskWithDependencies(db.getDatabase(), input, notify)).toThrow(
         'own transaction'
       );
       expect(() => db.getDatabase().exec('BEGIN')).toThrow();
@@ -107,7 +119,7 @@ describe('standalone dependency persistence', () => {
     db.getDatabase().exec(
       "CREATE TRIGGER reject_dependencies AFTER UPDATE ON space_tasks BEGIN SELECT RAISE(ABORT, 'rejected'); END"
     );
-    expect(() => setStandaloneTaskDependencies(db.getDatabase(), input, notify)).toThrow(
+    expect(() => editStandaloneTaskWithDependencies(db.getDatabase(), input, notify)).toThrow(
       'rejected'
     );
     expect(readTaskCore(db.getDatabase(), a.id)).toEqual(a);
