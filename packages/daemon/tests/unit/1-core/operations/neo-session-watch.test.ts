@@ -119,6 +119,11 @@ describe('planNeoSessionNotice', () => {
     expect(planNeoSessionNotice(session, prior, detail, now).notice?.kind ?? null).toBe(kind);
   });
 
+  test('holds a notice the human may be answering, and reads the session again next pass', () => {
+    const planned = planNeoSessionNotice(session, running, read('needs_you', now - 30_000), now);
+    expect(planned).toEqual({ seen: running, notice: null });
+  });
+
   test('keeps when a run started while it goes on', () => {
     const idle: NeoSessionSeen = { listed: 'x', status: 'done', runningSince: null };
     const started = planNeoSessionNotice(session, idle, read('running'), now).seen;
@@ -146,6 +151,7 @@ describe('refreshDriverWork', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   let listed: PlaceGroup['work'];
+  let unreachable: { source: string; reason: string }[];
   let status: { status: WorkStatus; lastActivityAt: number; recentInputs?: unknown[] };
   const events: Array<[string, unknown]> = [];
 
@@ -154,6 +160,7 @@ describe('refreshDriverWork', () => {
     db.createSession(createTestSession('neo:root'));
     events.length = 0;
     listed = [];
+    unreachable = [];
     status = { status: 'running', lastActivityAt: 0 };
     const registry = createOperationRegistry([
       defineOperation({
@@ -162,7 +169,7 @@ describe('refreshDriverWork', () => {
         inputSchema: z.record(z.string(), z.unknown()),
         resultSchema: z.unknown(),
         policy: { safetyClass: 'read' },
-        execute: async () => ({ places: places(listed), unreachable: [] }),
+        execute: async () => ({ places: places(listed), unreachable }),
       }),
       defineOperation({
         name: 'work.status',
@@ -205,9 +212,29 @@ describe('refreshDriverWork', () => {
     );
     service.driverTargets.recordRef(card.id, ref);
     const queued = service.repo.transitionWork(card.id, card, { status: 'queued' })!;
-    expect(service.driverTargets.followedRefs(0)).toEqual([ref]);
+    expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
     service.repo.transitionWork(card.id, queued, { status: 'cancelled' });
-    expect(service.driverTargets.followedRefs(0)).toEqual([]);
+    expect(service.driverTargets.cardRefs(0)).toEqual([]);
+  });
+
+  test('keeps what it saw when a listing comes back partial', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [];
+      unreachable = [{ source: 'codex-desktop', reason: 'locked' }];
+      await service.refreshDriverWork();
+      unreachable = [];
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
+    } finally {
+      time.mockRestore();
+    }
   });
 
   test('tells once when a session the human runs finishes a long run', async () => {

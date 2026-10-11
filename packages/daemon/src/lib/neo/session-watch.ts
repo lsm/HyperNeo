@@ -85,19 +85,19 @@ export function planNeoSessionNotice(
     runningSince: status === 'running' ? (prior.runningSince ?? now) : null,
   };
   const human = detail?.lastInputAt != null && now - detail.lastInputAt < NEO_SESSION_HUMAN_MS;
-  const kind: NeoSessionNoticeKind | null =
-    !detail || human
-      ? null
-      : status === 'needs_you' && prior.status !== 'needs_you'
-        ? 'needs_you'
-        : status === 'failed' && prior.status !== 'failed'
-          ? 'failed'
-          : status === 'done' &&
-              prior.status === 'running' &&
-              prior.runningSince !== null &&
-              now - prior.runningSince >= NEO_SESSION_RUN_MS
-            ? 'finished'
-            : null;
+  const kind: NeoSessionNoticeKind | null = !detail
+    ? null
+    : status === 'needs_you' && prior.status !== 'needs_you'
+      ? 'needs_you'
+      : status === 'failed' && prior.status !== 'failed'
+        ? 'failed'
+        : status === 'done' &&
+            prior.status === 'running' &&
+            prior.runningSince !== null &&
+            now - prior.runningSince >= NEO_SESSION_RUN_MS
+          ? 'finished'
+          : null;
+  if (kind && human) return { seen: prior, notice: null };
   return {
     seen,
     notice: kind

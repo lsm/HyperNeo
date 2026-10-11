@@ -45,14 +45,15 @@ export class NeoWorkDriverTargetRepository {
     return target.success ? target.data : null;
   }
 
-  followedRefs(reportedSince: number): WorkRef[] {
+  cardRefs(reportedSince: number): { workId: string; ref: WorkRef }[] {
     if (!this.hasTable()) return [];
     const rows = this.db
-      .prepare(`SELECT t.ref FROM neo_work_driver_targets t JOIN neo_work w ON w.id = t.work_id
+      .prepare(`SELECT t.work_id AS workId, t.ref FROM neo_work_driver_targets t
+        JOIN neo_work w ON w.id = t.work_id
         WHERE t.ref IS NOT NULL
           AND (w.status IN ('proposed', 'queued') OR (w.status = 'reported' AND w.updated_at > ?))`)
-      .all(reportedSince) as { ref: string }[];
-    return rows.map((row) => JSON.parse(row.ref) as WorkRef);
+      .all(reportedSince) as { workId: string; ref: string }[];
+    return rows.map((row) => ({ workId: row.workId, ref: JSON.parse(row.ref) as WorkRef }));
   }
 
   readRef(workId: string): WorkRef | null {

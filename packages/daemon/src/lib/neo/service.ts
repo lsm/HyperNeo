@@ -1167,6 +1167,27 @@ export class NeoService {
     );
   }
 
+  private followedCardRefs(now: number): WorkRef[] {
+    return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
+      const work = this.repo.getWork(card.workId);
+      if (!work) return [];
+      if (work.status !== 'reported') return [card.ref];
+      const following = requireNeoWorkFollow(
+        work,
+        {
+          ref: card.ref,
+          goal: !!this.workDoneGoal(work.id)?.doneWhen,
+          ask: this.askRecords.forWork(work.id),
+          readAt: null,
+          superseded: this.driverTargets.readSupersededAt(work.id) !== null,
+          live: this.driverTargets.readLiveStatus(work.id),
+        },
+        now
+      );
+      return 'value' in following ? [card.ref] : [];
+    });
+  }
+
   private readonly watchSessions = (superpipe({})('neo-session-watch') as PipelineAPI)
     .input(['now'])
     .pipe(
@@ -1186,20 +1207,19 @@ export class NeoService {
           { source: 'internal', sessionId: root, role: 'neo' }
         );
         const value =
-          outcome.kind === 'completed' ? (outcome.value as { places?: PlaceGroup[] } | null) : null;
+          outcome.kind === 'completed'
+            ? (outcome.value as { places?: PlaceGroup[]; unreachable?: unknown[] } | null)
+            : null;
         return {
-          sessions: listNeoWatchedSessions(
-            value?.places ?? [],
-            this.driverTargets.followedRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS),
-            now
-          ),
+          sessions: listNeoWatchedSessions(value?.places ?? [], this.followedCardRefs(now), now),
+          complete: !!value?.places && !value.unreachable?.length,
         };
       },
       ['root', 'now'],
       'listed'
     )
     .pipe(
-      (listed: { sessions: NeoListedSession[] }, now: number) =>
+      (listed: { sessions: NeoListedSession[]; complete: boolean }, now: number) =>
         planNeoSessionWatch(listed.sessions, this.sessionsSeen, now),
       ['listed', 'now'],
       'plan'
@@ -1244,13 +1264,14 @@ export class NeoService {
     )
     .pipe(
       (
-        listed: { sessions: NeoListedSession[] },
+        listed: { sessions: NeoListedSession[]; complete: boolean },
         plan: ReturnType<typeof planNeoSessionWatch>,
         notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }
       ) => {
         const keep = new Set(listed.sessions.map((session) => session.key));
-        for (const key of [...this.sessionsSeen.keys()])
-          if (!keep.has(key)) this.sessionsSeen.delete(key);
+        if (listed.complete)
+          for (const key of [...this.sessionsSeen.keys()])
+            if (!keep.has(key)) this.sessionsSeen.delete(key);
         for (const [key, seen] of plan.baseline) this.sessionsSeen.set(key, seen);
         plan.reads.forEach((session, index) =>
           this.sessionsSeen.set(session.key, notices.planned[index].seen)
