@@ -106,6 +106,7 @@ describe('coding pack instructions', () => {
         }),
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
+      cardReports: () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
       record: () => null,
@@ -165,6 +166,7 @@ describe('readEvidence', () => {
         }),
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
+      cardReports: () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
       record: (_id, prs) => {
@@ -501,6 +503,7 @@ describe('neoPackAskCardEvidence', () => {
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
       runningPrUrls: async () => [],
+      cardReports: () => [],
       readRefStates: async () => [],
       workPrs: {
         get: () => null,

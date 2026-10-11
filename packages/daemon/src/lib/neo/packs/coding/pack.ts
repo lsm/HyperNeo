@@ -4,7 +4,7 @@ import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
 import {
-  extractNeoAskRefs,
+  neoAskReportRefs,
   neoAskCardRefs,
   neoAskRefNews,
   type NeoRefStateReader,
@@ -217,6 +217,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
 export function createCodingPack(
   deps: NeoCardPrDeps & {
     runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
+    cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
   }
 ): NeoPack {
@@ -239,7 +240,7 @@ export function createCodingPack(
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(
-        extractNeoAskRefs(ask, tracked),
+        neoAskReportRefs(ask, deps.cardReports(ask.workIds), tracked),
         await deps.runningPrUrls(ask.workIds),
         tracked
       );

@@ -544,6 +544,7 @@ export class NeoService {
       createCodingPack({
         ...this.cardPrDeps,
         runningPrUrls: (workIds) => this.runningPrUrls(workIds),
+        cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
       }),
       createLifeAdminPack(),
