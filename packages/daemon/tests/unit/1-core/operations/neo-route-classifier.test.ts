@@ -12,7 +12,13 @@ import {
   NEO_INBOX_ID,
   type NeoHolder,
   type NeoRouterDeps,
+  neoNewTopic,
+  openNeoNewTopic,
 } from '../../../../src/lib/neo/router.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
+import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import type { NeoRoute } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 
 const drivers: NeoHolder = {
@@ -255,6 +261,86 @@ describe('chooseNeoRoute with a classifier', () => {
       { choice: null, fallback: 'classifier-timeout' },
       { choice: null, fallback: 'classifier-failed' },
     ]);
+  });
+});
+
+describe('chooseNeoRoute with a new subject', () => {
+  const base = (newTopic?: NeoRouterDeps['newTopic']): NeoRouterDeps => ({
+    holders: () => [drivers, youtube],
+    recentTurns: () => [turn({})],
+    topicTurns: () => [turn({})],
+    recentAsks: () => [],
+    embed: async () => null,
+    classify: async () => ({ decision: 'main', confidence: 0.8, basis: 'new_subject' }),
+    newTopic,
+  });
+
+  test('opens a topic for a new subject and routes the message to its holder', async () => {
+    const asked: string[] = [];
+    const route = await chooseNeoRoute(
+      'Plan the garden for spring',
+      base(async (text) => {
+        asked.push(text);
+        return { concernId: 't1', sessionId: 'neo:t1', title: text, summary: '' };
+      })
+    );
+    expect(asked).toEqual(['Plan the garden for spring']);
+    expect(route).toEqual({
+      choice: {
+        concernId: 't1',
+        sessionId: 'neo:t1',
+        signal: 'classifier:new_subject',
+        confidence: 0.8,
+      },
+    });
+  });
+
+  test('stays with main Neo when no topic can be opened', async () => {
+    expect(
+      await chooseNeoRoute(
+        'Plan the garden',
+        base(async () => null)
+      )
+    ).toEqual({
+      choice: null,
+      fallback: 'classifier:new_subject',
+    });
+    expect(await chooseNeoRoute('Plan the garden', base())).toEqual({
+      choice: null,
+      fallback: 'classifier:new_subject',
+    });
+  });
+
+  test('saves the topic once and opens its holder', async () => {
+    const db = new Sqlite(':memory:');
+    createNeoTables(db);
+    runMigration283(db);
+    const repo = new NeoRepository(db);
+    const opened: string[] = [];
+    const open = async (id: string) => {
+      opened.push(id);
+      return `neo:${id}`;
+    };
+    const topic = neoNewTopic('Plan the garden', 't1');
+    expect(await openNeoNewTopic(repo, open, topic)).toEqual({
+      concernId: 't1',
+      sessionId: 'neo:t1',
+      title: 'Plan the garden',
+      summary: 'Plan the garden',
+    });
+    expect(repo.getConcern('t1')).toMatchObject({ title: 'Plan the garden', context: '' });
+    expect(await openNeoNewTopic(repo, open, topic)).toBeNull();
+    expect(opened).toEqual(['t1']);
+    db.close();
+  });
+
+  test('names the topic after the first line of the message', () => {
+    expect(neoNewTopic('  Plan the garden\nwith tomatoes  ', 'id-1')).toEqual({
+      id: 'id-1',
+      title: 'Plan the garden',
+      summary: 'Plan the garden with tomatoes',
+    });
+    expect(neoNewTopic('x'.repeat(80), 'id-2').title).toBe(`${'x'.repeat(59)}…`);
   });
 });
 

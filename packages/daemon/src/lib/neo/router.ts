@@ -31,6 +31,33 @@ const INBOX_CHOICE: NeoHolder = {
   summary: NEO_INBOX_SUMMARY,
 };
 
+const NEW_TOPIC_TITLE_CHARS = 60;
+
+export function neoNewTopic(
+  text: string,
+  id: string
+): { id: string; title: string; summary: string } {
+  const line = text.trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+  return {
+    id,
+    title:
+      line.length <= NEW_TOPIC_TITLE_CHARS
+        ? line
+        : `${line.slice(0, NEW_TOPIC_TITLE_CHARS - 1).trimEnd()}…`,
+    summary: neoExcerpt(text.trim(), TOPIC_SUMMARY_CHARS),
+  };
+}
+
+export async function openNeoNewTopic(
+  repo: Pick<NeoRepository, 'saveConcern'>,
+  openHolder: (concernId: string) => Promise<string>,
+  topic: { id: string; title: string; summary: string }
+): Promise<NeoHolder | null> {
+  if (!repo.saveConcern({ ...topic, context: '' }, 0)) return null;
+  const sessionId = await openHolder(topic.id);
+  return { concernId: topic.id, sessionId, title: topic.title, summary: topic.summary };
+}
+
 export interface NeoHolder {
   concernId: string;
   sessionId: string;
@@ -77,6 +104,7 @@ export interface NeoRouterDeps {
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
+  newTopic?(text: string): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
 
@@ -244,6 +272,18 @@ async function classifyNeoAsk(
   const chosen = decided
     ? decided.decision
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
+  if (chosen === 'main' && decided?.basis === 'new_subject' && deps.newTopic) {
+    const topic = await deps.newTopic(text);
+    if (topic)
+      return {
+        choice: {
+          concernId: topic.concernId,
+          sessionId: topic.sessionId,
+          signal: classifierSignal('new_subject'),
+          confidence: decided.confidence ?? CLASSIFIER_CONFIDENCE,
+        },
+      };
+  }
   if (chosen === 'main') return { choice: null, fallback: classifierSignal(decided?.basis) };
   if (!chosen || chosen === 'timeout' || chosen === 'failed')
     return { choice: pickNeoHolder(scores), fallback: `classifier-${chosen ?? 'unanswered'}` };
@@ -358,6 +398,9 @@ export function createNeoRouter(
           const sessionId = await openHolder(NEO_INBOX_ID);
           return { ...INBOX_CHOICE, sessionId };
         }
+      : undefined,
+    newTopic: openHolder
+      ? (text) => openNeoNewTopic(repo, openHolder, neoNewTopic(text, crypto.randomUUID()))
       : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
