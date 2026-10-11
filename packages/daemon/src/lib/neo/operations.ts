@@ -618,7 +618,8 @@ export function createNeoOperations(service: NeoService) {
     const work = focus
       ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
       : service.repo.listWork(scope === undefined ? undefined : scope);
-    const recentWork = focus ? work : work.slice(0, caller.source === 'rpc' ? 50 : 10);
+    const limit = caller.source === 'rpc' ? 50 : 10;
+    const recentWork = focus ? work.slice(-limit).reverse() : work.slice(0, limit);
     const olderActiveWork =
       caller.source === 'rpc' && !focus
         ? work

@@ -168,11 +168,15 @@ describe('neo.ask operations', () => {
       });
   });
 
-  test('an ask-scoped read lists every card under the ask', async () => {
+  test("an ask-scoped read lists the ask's newest cards first, within the snapshot's bounds", async () => {
     const askId = await openAsk();
     for (let index = 0; index < 12; index++) await propose(`card-${index}`, askId);
-    const scoped = (await invoke('neo.snapshot', { askId })) as { value?: { work: unknown[] } };
-    expect(scoped.value?.work).toHaveLength(12);
+    const ids = service.askRecords.get(askId)!.workIds;
+    expect(ids).toHaveLength(12);
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { work: { id: string }[] };
+    };
+    expect(scoped.value?.work.map((item) => item.id)).toEqual(ids.slice(-10).reverse());
   });
 
   test('stores the done list as checklist items and shows them in the snapshot', async () => {
