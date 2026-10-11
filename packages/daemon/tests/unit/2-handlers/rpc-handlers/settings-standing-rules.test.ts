@@ -38,4 +38,14 @@ describe('keepNeoOwnedSettings', () => {
       )
     ).toEqual({ neo: { routeTimeoutMs: 9, preferences } });
   });
+
+  test('a settings save cannot replace or drop the muted sessions', () => {
+    const saved = { neo: { mutedSessions: ['codex-desktop::t1'] } } as GlobalSettings;
+    expect(keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9 } }, saved)).toEqual({
+      neo: { routeTimeoutMs: 9, mutedSessions: ['codex-desktop::t1'] },
+    });
+    expect(
+      keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9, mutedSessions: ['x', 'y'] } }, saved)
+    ).toEqual({ neo: { routeTimeoutMs: 9, mutedSessions: ['codex-desktop::t1'] } });
+  });
 });
