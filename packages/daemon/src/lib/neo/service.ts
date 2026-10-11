@@ -1699,11 +1699,14 @@ export class NeoService {
       await this.noteDriverNeedsYou(work, ref, outcome);
     },
     forgetActivity: (workId) => this.activitySeen.delete(workId),
-    transition: (work, settled) =>
-      this.repo.transitionWork(work.id, work, {
+    transition: (work, settled) => {
+      const moved = this.repo.transitionWork(work.id, work, {
         status: settled.status,
         report: settled.report.slice(0, 12000),
-      }),
+      });
+      if (moved) this.driverTargets.recordNeedsYouSince(work.id, null);
+      return moved;
+    },
     anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),
   };
