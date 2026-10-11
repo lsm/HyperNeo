@@ -2439,6 +2439,39 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('stamps a note before it is queued, so a failed enqueue never leaves it unstamped', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: 'Shipped.' },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- shipped');
+    fileUnderAsk(service);
+    const human = { sessionId: 'neo:root', messageId: 'human-1' };
+    const stamped = () =>
+      db
+        .getDatabase()
+        .prepare('SELECT message_id AS id FROM neo_input_origins')
+        .all()
+        .map((row) => (row as { id: string }).id);
+    const seen: string[][] = [];
+    Object.assign(service, {
+      resolveAskOrigin: () => human,
+      enqueueDelivery: async () => {
+        seen.push(stamped());
+        throw new Error('daemon stopped');
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(seen.some((ids) => ids.includes('work-1:done-check:0'))).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('tells the proposing session once each time started work comes to need the user', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const at = (status: string, lastActivityAt: number) => ({

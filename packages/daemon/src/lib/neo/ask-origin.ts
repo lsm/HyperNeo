@@ -3,7 +3,7 @@ import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/type
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { hashString32 } from '../runtime-hash.ts';
-import { isMainNeoBinding, isNeoCoordinatorBinding } from './binding-roles.ts';
+import { isNeoCoordinatorBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
   readonly sessionId: string;
@@ -11,27 +11,12 @@ export interface NeoAskOrigin {
 }
 type Input = { readonly sessionId: string; readonly messageId: string | null };
 type Stop = { kind: 'unknown' } | { kind: 'human'; origin: NeoAskOrigin };
-type Hop = Stop | { kind: 'parent'; origin: NeoAskOrigin };
 type Gate = { value: NeoAskOrigin } | { reason: Stop };
 type NeoAskOriginAsk = Pick<NeoAsk, 'id' | 'originSessionId' | 'originMessageId'>;
 export interface NeoAskOriginReads {
   getBinding(sessionId: string): NeoBinding | null;
   getPrompts(sessionId: string, messageId: string): readonly SDKMessage[];
-  getConsultation(id: string): NeoConsultation | null;
-  getWork(id: string): NeoWork | null;
-  getAsk(id: string): NeoAskOriginAsk | null;
-  getRootBinding(): NeoBinding | null;
-  getStamp?(sessionId: string, messageId: string): NeoAskOrigin | null;
-  stamp?(input: NeoAskOrigin, origin: NeoAskOrigin): void;
-}
-export interface NeoAskEvidence {
-  envelope: 'request' | 'reply' | null;
-  consultation: NeoConsultation | null;
-  work: NeoWork | null;
-  ask: NeoAskOriginAsk | null;
-  root: NeoBinding | null;
-  holder: NeoBinding | null;
-  workOrigin: NeoBinding | null;
+  getStamp(sessionId: string, messageId: string): NeoAskOrigin | null;
 }
 const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
@@ -42,10 +27,6 @@ export function neoAskEvidenceMessageId(askId: string, signature: string): strin
 
 export function neoAskAnswerMessageId(askId: string, itemId: string, at: number): string {
   return `neo-ask-answer:${askId}:${itemId}:${at}`;
-}
-
-export function neoAskEvidenceAskId(messageId: string): string | null {
-  return /^neo-ask-evidence:(.+):[0-9a-z]+$/.exec(messageId)?.[1] ?? null;
 }
 
 export function neoWorkParent(
@@ -105,22 +86,6 @@ export function neoWorkReviewId(workId: string, retries: number, continued = 0):
   return `neo-work:${workId}:review${retries ? `:retry:${retries}` : ''}${continued ? `:continued:${continued}` : ''}`;
 }
 
-function checkedWorkId(messageId: string): string {
-  return (
-    /^(.+?)(?::(?:done-check|stall|needs-you|retry|continued):\d+)+(?::pr:\d+)?(?::at:\d+)?$/.exec(
-      messageId
-    )?.[1] ?? messageId
-  );
-}
-
-function settledOrStalled(work: NeoWork, messageId: string): boolean {
-  return (
-    work.status === 'reported' ||
-    work.status === 'failed' ||
-    (work.status === 'queued' && /:(?:stall|needs-you):\d+$/.test(messageId))
-  );
-}
-
 export function nudgedMessageId(messageId: string): string | null {
   return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
 }
@@ -156,106 +121,25 @@ export function classifyNeoAskInput(input: NeoAskOrigin, prompts: readonly SDKMe
     : { reason: unknown };
 }
 
-export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads): NeoAskEvidence {
-  const envelope = input.messageId.startsWith('neo-consult:')
-    ? input.messageId.endsWith(':request')
-      ? 'request'
-      : input.messageId.endsWith(':reply')
-        ? 'reply'
-        : null
-    : null;
-  const id = envelope ? input.messageId.slice('neo-consult:'.length, -(envelope.length + 1)) : null;
-  const consultation = id ? (reads.getConsultation(id) ?? null) : null;
-  const askId = envelope ? null : neoAskEvidenceAskId(input.messageId);
-  const workId = id ? neoReviewWorkId(id) : askId ? null : checkedWorkId(input.messageId);
-  const work = workId ? (reads.getWork(workId) ?? null) : null;
-  return {
-    envelope,
-    consultation,
-    work,
-    ask: askId ? (reads.getAsk(askId) ?? null) : null,
-    root: reads.getRootBinding() ?? null,
-    holder: consultation ? (reads.getBinding(consultation.sessionId) ?? null) : null,
-    workOrigin: work ? (reads.getBinding(work.originSessionId) ?? null) : null,
-  };
-}
-
-function validWorkOrigin(work: NeoWork, evidence: NeoAskEvidence): boolean {
-  const binding = evidence.workOrigin;
-  return (
-    binding?.sessionId === work.originSessionId &&
-    ((isMainNeoBinding(binding) && binding.sessionId === evidence.root?.sessionId) ||
-      (binding.kind === 'concern' &&
-        binding.concernId !== null &&
-        binding.concernId === work.concernId))
-  );
-}
-
-export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence): Hop {
-  const { root, holder, consultation, work, envelope } = evidence;
-  if (!isMainNeoBinding(root)) return unknown;
-  const nudged = nudgedMessageId(input.messageId);
-  if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
-  if (!envelope && evidence.ask) {
-    const { ask } = evidence;
-    return neoAskEvidenceAskId(input.messageId) === ask.id &&
-      input.sessionId === ask.originSessionId &&
-      ask.originMessageId
-      ? {
-          kind: 'parent',
-          origin: { sessionId: ask.originSessionId, messageId: ask.originMessageId },
-        }
-      : unknown;
-  }
-  if (!envelope) {
-    return work?.id === checkedWorkId(input.messageId) &&
-      settledOrStalled(work, input.messageId) &&
-      (input.sessionId === root.sessionId || input.sessionId === work.originSessionId) &&
-      validWorkOrigin(work, evidence) &&
-      work.originMessageId
-      ? {
-          kind: 'parent',
-          origin: { sessionId: work.originSessionId, messageId: work.originMessageId },
-        }
-      : unknown;
-  }
-  if (
-    !consultation ||
-    input.messageId !== `neo-consult:${consultation.id}:${envelope}` ||
-    consultation.originSessionId !== root.sessionId ||
-    holder?.kind !== 'concern' ||
-    holder.sessionId !== consultation.sessionId ||
-    holder.concernId !== consultation.concernId ||
-    input.sessionId !== (envelope === 'request' ? holder.sessionId : root.sessionId) ||
-    (envelope === 'reply' && consultation.status === 'pending')
-  )
-    return unknown;
-  const reviewId = neoReviewWorkId(consultation.id);
-  if (!reviewId)
-    return consultation.originMessageId
-      ? {
-          kind: 'parent',
-          origin: { sessionId: root.sessionId, messageId: consultation.originMessageId },
-        }
-      : unknown;
-  return work?.id === reviewId &&
-    (work.status === 'reported' || work.status === 'failed') &&
-    consultation.requestKey === consultation.id &&
-    consultation.originMessageId === null &&
-    work.concernId === consultation.concernId &&
-    validWorkOrigin(work, evidence) &&
-    work.originMessageId
-    ? {
-        kind: 'parent',
-        origin: { sessionId: work.originSessionId, messageId: work.originMessageId },
-      }
-    : unknown;
+export function requireNeoAskUnstamped(
+  input: NeoAskOrigin,
+  stamped: { origin: NeoAskOrigin | null }
+): Gate {
+  return stamped.origin ? { reason: { kind: 'human', origin: stamped.origin } } : { value: input };
 }
 
 export function createNeoAskOriginResolver(reads: NeoAskOriginReads) {
-  const hop = (superpipe({})('neo-ask-origin-hop') as PipelineAPI)
+  const resolve = (superpipe({})('neo-ask-origin') as PipelineAPI)
     .input('input')
     .pipe(requireNeoAskReference, 'input', 'result:step')
+    .pipe(
+      (input: NeoAskOrigin) => ({
+        origin: reads.getStamp(input.sessionId, input.messageId) ?? null,
+      }),
+      'step',
+      'stamped'
+    )
+    .pipe(requireNeoAskUnstamped, ['step', 'stamped'], 'result:step')
     .pipe(
       (input: NeoAskOrigin) => ({ binding: reads.getBinding(input.sessionId) ?? null }),
       'step',
@@ -273,27 +157,10 @@ export function createNeoAskOriginResolver(reads: NeoAskOriginReads) {
       'prompts'
     )
     .pipe(classifyNeoAskInput, ['step', 'prompts'], 'result:step')
-    .pipe((input: NeoAskOrigin) => readNeoAskEvidence(input, reads), 'step', 'evidence')
-    .pipe(selectNeoAskParent, ['step', 'evidence'], 'step')
-    .end('step') as (input: Input) => Hop;
+    .pipe((): Stop => unknown, 'step', 'step')
+    .end('step') as (input: Input) => Stop;
   return (input: Input): NeoAskOrigin | null => {
-    const stamped = input.messageId ? reads.getStamp?.(input.sessionId, input.messageId) : null;
-    if (stamped) return stamped;
-    let cursor = input;
-    const visited = new Set<string>();
-    for (let depth = 0; depth < 8; depth++) {
-      const key = JSON.stringify([cursor.sessionId, cursor.messageId]);
-      if (visited.has(key)) return null;
-      visited.add(key);
-      const step = hop(cursor);
-      if (step.kind === 'human') {
-        if (depth > 0 && input.messageId)
-          reads.stamp?.({ sessionId: input.sessionId, messageId: input.messageId }, step.origin);
-        return step.origin;
-      }
-      if (step.kind === 'unknown') return null;
-      cursor = step.origin;
-    }
-    return null;
+    const stop = resolve(input);
+    return stop.kind === 'human' ? stop.origin : null;
   };
 }

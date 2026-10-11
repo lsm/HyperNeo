@@ -29,6 +29,7 @@ import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins';
+import { NeoInputOriginRepository } from '../../../../src/storage/repositories/neo-input-origin-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository';
 import { createTestDb, createTestSession } from '../../../helpers/database';
@@ -420,6 +421,8 @@ describe('QueryRunner', () => {
             report: 'Reported A evidence',
           });
         }
+        if (delayed && variant !== 'unknown-system')
+          new NeoInputOriginRepository(sqlite).record({ sessionId, messageId: nextId }, askA, 0);
         const storedPrompt = (
           id: string,
           uuid: string

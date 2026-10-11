@@ -342,7 +342,7 @@ export class NeoService {
   readonly consultationWaiters: NeoConsultationWaiterRepository;
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
-  private readonly inputOrigins: NeoInputOriginRepository;
+  readonly inputOrigins: NeoInputOriginRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly pending = new Map<string | null, Promise<string>>();
@@ -566,12 +566,7 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
         this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
-      getConsultation: (id) => this.consultations.get(id),
-      getWork: (id) => this.repo.getWork(id),
-      getAsk: (id) => this.askRecords.get(id),
-      getRootBinding: () => this.repo.getBindingForConcern(null),
       getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
-      stamp: (input, origin) => inputOrigins.record(input, origin, Date.now()),
     });
     const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
     const notifyPublication = () => {
@@ -2187,8 +2182,9 @@ export class NeoService {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
-    const delivery = this.enqueueDelivery(sessionId, messageId, content, originSessionId)
+    const delivery = Promise.resolve()
       .then(() => this.stampDelivery({ sessionId, messageId }, parent))
+      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
