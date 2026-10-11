@@ -46,7 +46,7 @@ export interface NeoRouteChoice {
   confidence: number;
 }
 
-export type NeoRouteAnswer = NeoHolder | 'main' | null;
+type NeoRouteAnswer = NeoHolder | 'main' | null;
 export const NEO_ROUTE_BASES = [
   'continues_turn',
   'answers_waiting',
@@ -65,7 +65,7 @@ export type NeoRouteVerdict = NeoRouteAnswer | NeoRouteDecision | 'timeout' | 'f
 const CLASSIFIER_CONFIDENCE = 0.6;
 export type NeoRouteSignal = 'embedding' | 'classifier' | `classifier:${NeoRouteBasis}`;
 
-export function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
+function classifierSignal(basis: NeoRouteBasis | null | undefined): NeoRouteSignal {
   return basis ? `classifier:${basis}` : 'classifier';
 }
 
@@ -101,7 +101,7 @@ export type NeoRouted = { choice: NeoRouteChoice | null; fallback?: string };
 type Routed = NeoRouted;
 type Exit = { reason: Routed };
 
-export function requireAskText(text: string): { value: string } | Exit {
+function requireAskText(text: string): { value: string } | Exit {
   return text.trim() ? { value: text } : { reason: { choice: null } };
 }
 
@@ -181,7 +181,7 @@ export function neoRouteCandidates(
   return holders.filter((holder) => keep.has(holder.concernId)).slice(0, TOPIC_LIMIT);
 }
 
-export function requireRouteQuestion(
+function requireRouteQuestion(
   candidates: readonly NeoHolder[],
   recent: readonly NeoRoute[]
 ): { value: NeoHolder[] } | Exit {
@@ -230,7 +230,7 @@ export function renderNeoRouteContext(
   ].join('\n');
 }
 
-export async function classifyNeoAsk(
+async function classifyNeoAsk(
   text: string,
   candidates: readonly NeoHolder[],
   context: string,

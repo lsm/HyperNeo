@@ -72,7 +72,7 @@ export function neoPackAskReportEvidence(
   );
 }
 
-export const NEO_PACK_EVIDENCE_READ_MS = 2 * 60_000;
+const NEO_PACK_EVIDENCE_READ_MS = 2 * 60_000;
 
 export function requireNeoEvidenceRefresh<
   Refresh extends { work: { status: string; report: string | null; updatedAt: number } },

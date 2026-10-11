@@ -1,6 +1,6 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 
-export type MainNeoBinding = NeoBinding & { kind: 'neo'; concernId: null };
+type MainNeoBinding = NeoBinding & { kind: 'neo'; concernId: null };
 
 export function isMainNeoBinding(
   binding: NeoBinding | null | undefined

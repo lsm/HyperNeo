@@ -11,7 +11,7 @@ export const LIFE_ADMIN_PACK_BRIEF: NeoPackBrief = {
 
 export const LIFE_ADMIN_CHECK_CONFIRMED = 'life-admin.confirmed';
 
-export interface NeoLifeAdminConfirmation {
+interface NeoLifeAdminConfirmation {
   key: string;
   from: string | null;
   date: string | null;
@@ -47,7 +47,7 @@ export function parseLifeAdminConfirmations(report: string): NeoLifeAdminConfirm
   return found;
 }
 
-export function lifeAdminConfirmationSummary(confirmation: NeoLifeAdminConfirmation): string {
+function lifeAdminConfirmationSummary(confirmation: NeoLifeAdminConfirmation): string {
   return [confirmation.from, confirmation.subject, confirmation.date]
     .filter((part): part is string => !!part)
     .join(' — ');
@@ -121,7 +121,7 @@ const STOP_WORDS = new Set([
   'refund',
 ]);
 
-export function lifeAdminItemTokens(text: string): string[] {
+function lifeAdminItemTokens(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9@.]+/)

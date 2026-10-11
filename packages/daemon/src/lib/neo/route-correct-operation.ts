@@ -22,22 +22,18 @@ type Input = z.infer<typeof Input>;
 type Outcome = z.infer<typeof Result>;
 type Gate<T> = { value: T } | { reason: Outcome };
 
-export function requireMainNeo(
-  input: Input,
-  caller: OperationCaller,
-  repo: NeoRepository
-): Gate<Input> {
+function requireMainNeo(input: Input, caller: OperationCaller, repo: NeoRepository): Gate<Input> {
   const binding = caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null;
   return isMainNeoBinding(binding)
     ? { value: input }
     : { reason: { ok: false, reason: 'main_neo_only' } };
 }
 
-export function requireLoggedAsk(route: NeoRoute | null): Gate<NeoRoute> {
+function requireLoggedAsk(route: NeoRoute | null): Gate<NeoRoute> {
   return route ? { value: route } : { reason: { ok: false, reason: 'unknown_ask' } };
 }
 
-export function requireTopicHolder(binding: NeoBinding | null): Gate<NeoBinding> {
+function requireTopicHolder(binding: NeoBinding | null): Gate<NeoBinding> {
   return binding?.kind === 'concern'
     ? { value: binding }
     : { reason: { ok: false, reason: 'unknown_topic' } };

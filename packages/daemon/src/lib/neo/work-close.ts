@@ -8,7 +8,7 @@ export type NeoWorkCloseOutcome = 'done' | 'cancelled';
 export type NeoWorkCloseResult = { ok: true; work: NeoWork } | { ok: false; reason: string };
 type NeoWorkPatch = Parameters<NeoRepository['transitionWork']>[2];
 
-export interface NeoWorkClosePlan {
+interface NeoWorkClosePlan {
   work: NeoWork;
   patch: NeoWorkPatch;
   stopDriver: boolean;

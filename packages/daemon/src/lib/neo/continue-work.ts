@@ -18,7 +18,7 @@ export type NeoContinueResult = { ok: true; work: NeoWork } | { ok: false; reaso
 type Rejection = Extract<NeoContinueResult, { ok: false }>;
 type Delivered = Exclude<ReturnType<typeof readDriverOutcome>, { failure: string }>;
 
-export interface NeoContinueEvidence {
+interface NeoContinueEvidence {
   work: NeoWork | null;
   ref: WorkRef | null;
   continuedCount: number | null;
@@ -26,7 +26,7 @@ export interface NeoContinueEvidence {
   ask: NeoAsk | null;
 }
 
-export interface NeoContinueTarget {
+interface NeoContinueTarget {
   work: NeoWork;
   ref: WorkRef;
 }

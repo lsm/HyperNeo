@@ -296,7 +296,7 @@ export function requireNeoAskSettleable(input: z.infer<typeof Settle>, ask: NeoA
   return isNeoAskReplay(ask, input) ? { value: ask } : requireNeoAskLive(ask);
 }
 
-export function requireNeoAskChecklistMet(
+function requireNeoAskChecklistMet(
   input: z.infer<typeof Settle>,
   ask: NeoAsk,
   caller: OperationCaller
@@ -311,7 +311,7 @@ export function requireNeoAskChecklistMet(
     : { value: ask };
 }
 
-export function requireNeoAskTick(
+function requireNeoAskTick(
   input: z.infer<typeof Tick>,
   ask: NeoAsk
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {

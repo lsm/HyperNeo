@@ -2,7 +2,7 @@ import type { Database } from '../sqlite-compat.ts';
 
 const TEXT_CHARS = 10_000;
 
-export type NeoRouteDestination = 'main' | 'holder' | 'new';
+export type NeoRouteDestination = 'main' | 'holder';
 
 export interface NeoRoute {
   id: number;
@@ -102,13 +102,6 @@ export class NeoRoutingLogRepository {
           WHERE destination != 'main' AND digested_at IS NULL AND id < ?`
       )
       .run(at, answered.id);
-  }
-
-  listAfter(afterId: number, limit: number): NeoRoute[] {
-    if (!this.ready()) return [];
-    return this.db
-      .prepare(`SELECT ${columns} FROM neo_routing_log WHERE id > ? ORDER BY id LIMIT ?`)
-      .all(afterId, limit) as NeoRoute[];
   }
 
   undigested(limit: number): NeoRoute[] {

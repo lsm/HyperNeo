@@ -5,7 +5,7 @@ import { type PlaceGroup, type WorkRef, WorkRefSchema, type WorkStatus } from '.
 export type { NeoSessionNotice, NeoSessionNoticeGroup };
 
 export const NEO_SESSION_RUN_MS = 3 * 60_000;
-export const NEO_SESSION_HUMAN_MS = 2 * 60_000;
+const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
 export const NEO_SESSION_WATCH_LIMIT = 30;
 export const NEO_SESSION_GROUP_NOTICES_MAX = 30;
