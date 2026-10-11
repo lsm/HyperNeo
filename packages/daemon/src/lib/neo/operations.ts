@@ -481,18 +481,27 @@ export function requireNeoWorkCancellation(
   };
 }
 
-export function requireNeoWorkContinuation(
+function requireNeoWorkProposer(
   work: NeoWork,
-  caller: OperationCaller
+  caller: OperationCaller,
+  verb: 'continue' | 'retry'
 ): { value: NeoWork } | { reason: Rejection } {
   if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId)
     return {
       reason: {
         ok: false,
-        reason: 'Only the Neo session that proposed this work or the user can continue it.',
+        reason: `Only the Neo session that proposed this work or the user can ${verb} it.`,
       },
     };
   return { value: work };
+}
+
+export function requireNeoWorkContinuation(work: NeoWork, caller: OperationCaller) {
+  return requireNeoWorkProposer(work, caller, 'continue');
+}
+
+export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller) {
+  return requireNeoWorkProposer(work, caller, 'retry');
 }
 
 export function admitNeoCaller(
@@ -1254,7 +1263,7 @@ export function createNeoOperations(service: NeoService) {
       'found',
       'result:retry'
     )
-    .pipe(requireNeoWorkContinuation, ['retry', 'caller'], 'result:retry')
+    .pipe(requireNeoWorkRetryCaller, ['retry', 'caller'], 'result:retry')
     .pipe(
       (found: NeoWorkRetryFound) => readNeoStartFolder(found.target, existsSync),
       'found',
