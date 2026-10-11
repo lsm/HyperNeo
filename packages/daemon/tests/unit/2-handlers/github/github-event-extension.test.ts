@@ -11024,6 +11024,31 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('publishEvent keeps filtering with the last known login once the cache expires', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user'))
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      lastTokenStatusAt: number;
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+    aware.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await ext.publishEvent('space-1', selfCommentEvent('someone-else'), context);
+    await aware.selfEchoLoginRefresh;
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['someone-else']);
+    await extension.stop();
+  });
+
   test('publishEvent retains the last known login for filtering during rate-limit backoff', async () => {
     const db = setupDb();
     let userCalls = 0;
