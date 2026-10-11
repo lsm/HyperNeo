@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
+import { withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
@@ -109,7 +110,7 @@ function mount(publicMode = true, status = 'ready') {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
   });
-  useNeoMock.mockImplementation(() => model.value);
+  useNeoMock.mockImplementation(() => withNeoViews(model.value));
   return { ...render(<NeoLive />), model };
 }
 

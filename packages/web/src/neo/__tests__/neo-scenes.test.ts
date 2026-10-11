@@ -3,19 +3,13 @@ import type {
   NeoConsultationWaiter,
   NeoWork,
 } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoSnapshot,
-  NeoWorkDriverReceipt,
-  NeoWorkPrReceipt,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
 import { type NeoConcernBoard, projectNeoConcernBoard } from '../neo-concern-board.ts';
 import {
   admitNeoSceneReceipts,
   classifyNeoScene,
   classifyNeoScenes,
-  describeNeoDriverScenes,
-  describeNeoPrScenes,
   groupNeoScenes,
   type NeoSceneRef,
   projectNeoScenes,
@@ -102,6 +96,8 @@ const isCheck = (r: NeoBoardReceipt): r is Check =>
   r.kind === 'consultation' && r.status !== 'queued';
 const fullSnapshot: NeoSnapshot = {
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: 'root',
   concerns: [
     { id: 'a', title: 'A', summary: 'A', context: 'A', revision: 1, createdAt: 1, updatedAt: 2 },
@@ -269,93 +265,5 @@ describe('selectNeoScene', () => {
       selectNeoScene(scenes, null),
       selectNeoScene(null, { kind: 'work', id: 'w-queued' }),
     ]).toEqual([unknown, unknown, unknown, unknown]);
-  });
-});
-
-describe('describeNeoDriverScenes', () => {
-  const driver: NeoWorkDriverReceipt = {
-    workId: 'w',
-    adapter: 'codex-desktop',
-    daemon: 'laptop',
-    status: 'needs_you',
-    link: 'codex://threads/t1',
-  };
-
-  it('names where queued work went, raises it when it needs the user and keeps idle work in progress until Neo checks it', () => {
-    const scenes = classifyNeoScenes([
-      { kind: 'work', ...work('w', 'queued', 1) },
-      { kind: 'work', ...work('r', 'queued', 2) },
-      { kind: 'work', ...work('f', 'queued', 3) },
-      { kind: 'work', ...work('s', 'queued', 4) },
-      { kind: 'work', ...work('a', 'queued', 6) },
-      { kind: 'work', ...work('done', 'reported', 5) },
-    ] as NeoBoardReceipt[]);
-    const described = describeNeoDriverScenes(
-      scenes,
-      new Map([
-        ['w', driver],
-        ['r', { ...driver, workId: 'r', status: 'running' }],
-        ['f', { ...driver, workId: 'f', status: 'done' }],
-        ['s', { ...driver, workId: 's', status: 'stopped' }],
-        ['a', { ...driver, workId: 'a', status: 'done', abandoned: true }],
-        ['done', { ...driver, workId: 'done', status: 'done' }],
-      ])
-    );
-    expect(described.map((scene) => [scene.ref.id, scene.group, scene.label])).toEqual([
-      ['w', 'attention', 'Needs you in Codex Desktop on laptop'],
-      ['r', 'running', 'Running in Codex Desktop on laptop'],
-      ['f', 'running', 'Idle in Codex Desktop on laptop · Neo is checking'],
-      ['s', 'outcomes', 'Stopped in Codex Desktop on laptop'],
-      ['a', 'attention', 'No result from Codex Desktop on laptop in 3 days · close it?'],
-      ['done', 'outcomes', 'Response ready'],
-    ]);
-  });
-});
-
-describe('describeNeoPrScenes', () => {
-  const prs = (
-    workId: string,
-    change: Partial<NeoWorkPrReceipt['prs'][number]>
-  ): [string, NeoWorkPrReceipt] => [
-    workId,
-    {
-      workId,
-      waiting: false,
-      prs: [
-        {
-          url: `https://github.com/lsm/HyperNeo/pull/${workId.length}`,
-          state: 'OPEN',
-          checks: 'passing',
-          review: 'none',
-          ...change,
-        },
-      ],
-    },
-  ];
-
-  it('keeps a reported card in progress while its PR is open and settles it when the PR ends', () => {
-    const scenes = classifyNeoScenes([
-      { kind: 'work', ...work('ci', 'reported', 1) },
-      { kind: 'work', ...work('merged', 'reported', 2) },
-      { kind: 'work', ...work('red', 'reported', 3) },
-      { kind: 'work', ...work('plain', 'reported', 4) },
-      { kind: 'work', ...work('queue', 'queued', 5) },
-    ] as NeoBoardReceipt[]);
-    const described = describeNeoPrScenes(
-      scenes,
-      new Map([
-        prs('ci', { checks: 'pending' }),
-        prs('merged', { state: 'MERGED' }),
-        prs('red', { checks: 'failing' }),
-        prs('queue', { checks: 'pending' }),
-      ])
-    );
-    expect(described.map((scene) => [scene.ref.id, scene.group, scene.label])).toEqual([
-      ['ci', 'running', 'Waiting on CI · #2'],
-      ['merged', 'outcomes', 'Merged · #6'],
-      ['red', 'outcomes', 'Checks failing · #3'],
-      ['plain', 'outcomes', 'Response ready'],
-      ['queue', 'running', 'Handed to HyperNeo'],
-    ]);
   });
 });

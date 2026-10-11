@@ -44,6 +44,8 @@ const board = (works: NeoWork[]) =>
   projectNeoConcernBoard(
     {
       ok: true,
+      cards: [],
+      askViews: [],
       sessionId: 'neo',
       concerns: [
         {

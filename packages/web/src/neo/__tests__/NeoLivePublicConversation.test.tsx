@@ -69,6 +69,8 @@ const publication = (
 });
 const snapshot = (): NeoSnapshot => ({
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: root,
   concerns: ['a', 'b'].map((id) => ({
     id,

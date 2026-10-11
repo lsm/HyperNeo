@@ -196,8 +196,6 @@ describe('groupNeoAsks', () => {
     const result = groupNeoAsks(
       [ask('a', ['w1'])],
       groups,
-      new Map(),
-      undefined,
       [askView('a', { group: 'outcomes', label: 'Done', settled: true, workIds: ['w1'] })],
       new Map([['old', card('old', { superseded: true, phase: 'failed' })]])
     );
@@ -210,7 +208,7 @@ describe('neoAskOpenTarget', () => {
   it('opens the card view link for work without a session', () => {
     const scenes = classifyNeoScenes([{ ...work('w', 'queued'), kind: 'work' } as Receipt]);
     const view = describeNeoAskFromView(ask('a', ['w']), scenes, askView('a', { workIds: ['w'] }));
-    const target = neoAskOpenTarget(view, new Map(), new Map([['w', card('w')]]));
+    const target = neoAskOpenTarget(view, new Map([['w', card('w')]]));
     expect(target).toMatchObject({ link: 'codex://threads/t1', card: { workId: 'w' } });
   });
 });

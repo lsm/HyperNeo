@@ -72,6 +72,8 @@ describe('neoActivityItems', () => {
   it('uses real receipt truth for work, context checks and queued checks', () => {
     const snapshot: NeoSnapshot = {
       ok: true,
+      cards: [],
+      askViews: [],
       sessionId: 'root',
       concerns: [],
       work: [work('same-id')],

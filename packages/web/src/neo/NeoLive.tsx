@@ -66,14 +66,7 @@ export function NeoLive() {
   const concerns = neo.snapshot?.concerns ?? [];
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
-  const drivers = new Map((view?.workDrivers ?? []).map((driver) => [driver.workId, driver]));
-  const goals = new Map((view?.workGoals ?? []).map((goal) => [goal.workId, goal]));
-  const prs = new Map((view?.workPrs ?? []).map((item) => [item.workId, item]));
-  const continues = new Map((view?.workContinues ?? []).map((item) => [item.workId, item]));
   const cards = new Map((view?.cards ?? []).map((card) => [card.workId, card]));
-  const pooled = new Set(
-    (view?.asks ?? []).filter((ask) => ask.pooled).flatMap((ask) => ask.workIds)
-  );
   const topics = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
       const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
@@ -155,18 +148,9 @@ export function NeoLive() {
     publicConversation && unavailableSessions.scope === sceneScope
       ? unavailableSessions.values
       : undefined,
-    drivers,
-    prs,
     cards
   );
-  const askGroups = groupNeoAsks(
-    view?.asks,
-    scenes,
-    prs,
-    view?.workSupersessions,
-    view?.askViews,
-    cards
-  );
+  const askGroups = groupNeoAsks(view?.asks, scenes, view?.askViews, cards);
   const sceneGroups = [
     { key: 'attention', label: 'Needs your attention' },
     { key: 'running', label: 'In progress' },
@@ -195,26 +179,20 @@ export function NeoLive() {
     neo.store.messagesLoaded.value &&
     neo.store.activeSessionId.value === neo.sessionId;
   function renderScene(scene: NeoScene, groupKey: NeoSceneGroup) {
-    return scene.receipt.kind === 'work' ? (
+    const card = cards.get(scene.ref.id);
+    return scene.receipt.kind === 'work' && card ? (
       <NeoWorkCard
         key={JSON.stringify(scene.ref)}
         work={scene.receipt}
-        card={cards.get(scene.ref.id)}
-        driver={drivers.get(scene.ref.id)}
-        prs={prs.get(scene.ref.id)}
-        goal={goals.get(scene.ref.id)}
-        continued={continues.get(scene.ref.id)}
-        pooled={pooled.has(scene.ref.id)}
+        card={card}
         busy={neo.busyWork === scene.ref.id}
         disabled={!connected || !!neo.busyWork}
         onAction={(id, action) => void neo.act(id, action)}
         onOpen={() => openScene(scene.ref)}
-        presentation={neoWorkPresentation(
-          scene.receipt,
-          drivers.get(scene.ref.id),
-          { compact: !!publicConversation, attention: groupKey === 'attention' },
-          cards.get(scene.ref.id)
-        )}
+        presentation={neoWorkPresentation(card, {
+          compact: !!publicConversation,
+          attention: groupKey === 'attention',
+        })}
         questionSlot={publicConversation ? attachQuestion : undefined}
         waiting={questions.scope === sceneScope && questions.values.has(scene.ref.id)}
         summary={neoWorkSummary(summaries, scene.receipt)}
@@ -643,7 +621,6 @@ export function NeoLive() {
                   <NeoAskCard
                     key={ask.ask.id}
                     view={ask}
-                    drivers={drivers}
                     cards={cards}
                     disabled={!connected || !!neo.busyWork}
                     onSettle={(outcome) => void neo.settleAsk(ask.ask.id, outcome)}

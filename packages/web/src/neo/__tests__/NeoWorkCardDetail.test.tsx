@@ -1,8 +1,9 @@
-import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { testCard } from './neo-test-views.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 vi.mock('../../lib/state.ts', () => ({
@@ -62,12 +63,12 @@ const show = (
   item: NeoWork,
   onOpen?: (id: string) => void,
   onAction = vi.fn(),
-  driver?: NeoWorkDriverReceipt
+  extra?: Partial<NeoCardView>
 ) => {
   const result = render(
     <NeoWorkCard
       work={item}
-      driver={driver}
+      card={testCard(item, extra)}
       busy={false}
       disabled={false}
       onAction={onAction}
@@ -113,7 +114,14 @@ describe('NeoWorkCard detail opening', () => {
     const item = work('w', 'proposed', { sessionId: 'w-session', report: 'Report w' });
     const names = ['Decline', 'Start work'];
     render(
-      <NeoWorkCard work={item} busy={false} disabled={false} onAction={action} onOpen={open} />
+      <NeoWorkCard
+        work={item}
+        card={testCard(item)}
+        busy={false}
+        disabled={false}
+        onAction={action}
+        onOpen={open}
+      />
     );
     const card = screen.getByRole('article', { name: item.title });
     expect(card.getAttribute('data-scene-open')).toBeNull();
@@ -162,13 +170,9 @@ describe('NeoWorkCard detail opening', () => {
       sessionId: null,
       report: 'Could not start the execution: logged out',
     });
-    const retryable = {
-      workId: 'f',
-      adapter: 'hyperneo',
-      daemon: null,
-      status: null,
-      link: null,
-      retryable: true as const,
+    const retryable: Partial<NeoCardView> = {
+      retryable: true,
+      primary: { kind: 'retry', label: 'Retry', link: null },
     };
     const { card } = show(failed, vi.fn(), action, retryable);
     fireEvent.click(within(card).getByRole('button', { name: 'Retry' }));
@@ -177,7 +181,7 @@ describe('NeoWorkCard detail opening', () => {
     render(
       <NeoWorkCard
         work={failed}
-        driver={retryable}
+        card={testCard(failed, retryable)}
         busy={true}
         disabled={false}
         onAction={action}
@@ -228,6 +232,7 @@ describe('NeoWorkCard detail opening', () => {
     render(
       <NeoWorkCard
         work={work('q', 'queued')}
+        card={testCard(work('q', 'queued'))}
         busy={false}
         disabled={false}
         onAction={action}
@@ -283,7 +288,7 @@ describe('NeoWorkCard goal', () => {
     const goal = { workId: 'g1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
     const props = {
       work: work('g1', 'queued'),
-      goal,
+      card: testCard(work('g1', 'queued'), { goal: goal.goal, doneWhen: goal.doneWhen }),
       busy: false,
       disabled: false,
       onAction: () => {},
@@ -306,7 +311,10 @@ describe('NeoWorkCard continues', () => {
     render(
       <NeoWorkCard
         work={work('c1', 'queued')}
-        continued={{ workId: 'c1', count: 2, continuedAt: 1, lastMessage: 'Build settings.' }}
+        card={testCard(work('c1', 'queued'), {
+          continued: 2,
+          continuedMessage: 'Build settings.',
+        })}
         busy={false}
         disabled={false}
         onAction={() => {}}
@@ -319,8 +327,11 @@ describe('NeoWorkCard continues', () => {
     render(
       <NeoWorkCard
         work={work('c1', 'queued')}
-        continued={{ workId: 'c1', count: 7, continuedAt: 1, lastMessage: 'Keep going.' }}
-        pooled
+        card={testCard(work('c1', 'queued'), {
+          continued: 7,
+          continuedMessage: 'Keep going.',
+          pooled: true,
+        })}
         busy={false}
         disabled={false}
         onAction={() => {}}
@@ -335,6 +346,7 @@ describe('NeoWorkCard result', () => {
     render(
       <NeoWorkCard
         work={work('r', 'reported', { report: 'A long raw agent reply' })}
+        card={testCard(work('r', 'reported', { report: 'A long raw agent reply' }))}
         busy={false}
         disabled={false}
         onAction={vi.fn()}
@@ -347,6 +359,7 @@ describe('NeoWorkCard result', () => {
     render(
       <NeoWorkCard
         work={work('n', 'reported', { report: 'A long raw agent reply' })}
+        card={testCard(work('n', 'reported', { report: 'A long raw agent reply' }))}
         busy={false}
         disabled={false}
         onAction={vi.fn()}
@@ -357,6 +370,7 @@ describe('NeoWorkCard result', () => {
     render(
       <NeoWorkCard
         work={work('f', 'failed', { report: 'Could not start.' })}
+        card={testCard(work('f', 'failed', { report: 'Could not start.' }))}
         busy={false}
         disabled={false}
         onAction={vi.fn()}

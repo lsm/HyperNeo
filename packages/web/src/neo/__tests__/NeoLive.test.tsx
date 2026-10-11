@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionStore } from '../../lib/session-store.ts';
 import { NeoComposer } from '../NeoComposer.tsx';
 import { NeoConversation } from '../NeoConversation.tsx';
+import { testCard } from './neo-test-views.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 
 const sendMessage = vi.hoisted(() => vi.fn());
@@ -70,7 +71,15 @@ afterEach(cleanup);
 describe('Neo MVP controls', () => {
   it('proposals require an explicit Start and cancellation is a separate action', () => {
     const action = vi.fn();
-    render(<NeoWorkCard work={work} busy={false} disabled={false} onAction={action} />);
+    render(
+      <NeoWorkCard
+        work={work}
+        card={testCard(work)}
+        busy={false}
+        disabled={false}
+        onAction={action}
+      />
+    );
     expect(action).not.toHaveBeenCalled();
     expect(screen.getByText(work.instruction)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start work' }));
@@ -80,7 +89,9 @@ describe('Neo MVP controls', () => {
   });
   it('disables duplicate work actions and leaves a returned report to the work chat', () => {
     const action = vi.fn();
-    const view = render(<NeoWorkCard work={work} busy disabled={false} onAction={action} />);
+    const view = render(
+      <NeoWorkCard work={work} card={testCard(work)} busy disabled={false} onAction={action} />
+    );
     expect((screen.getByRole('button', { name: 'Starting…' }) as HTMLButtonElement).disabled).toBe(
       true
     );
@@ -92,6 +103,12 @@ describe('Neo MVP controls', () => {
           sessionId: 'worker-one',
           report: 'A draft, not a booking.',
         }}
+        card={testCard({
+          ...work,
+          status: 'reported',
+          sessionId: 'worker-one',
+          report: 'A draft, not a booking.',
+        })}
         busy={false}
         disabled={false}
         onAction={action}
@@ -107,6 +124,7 @@ describe('Neo MVP controls', () => {
     const view = render(
       <NeoWorkCard
         work={{ ...work, targetSessionId: 'project-chat' }}
+        card={testCard({ ...work, targetSessionId: 'project-chat' })}
         busy={false}
         disabled={false}
         onAction={action}
@@ -122,6 +140,12 @@ describe('Neo MVP controls', () => {
           sessionId: 'project-chat',
           status: 'queued',
         }}
+        card={testCard({
+          ...work,
+          targetSessionId: 'project-chat',
+          sessionId: 'project-chat',
+          status: 'queued',
+        })}
         busy={false}
         disabled={false}
         onAction={action}
@@ -140,6 +164,12 @@ describe('Neo MVP controls', () => {
           sessionId: 'project-chat',
           status: 'cancelled',
         }}
+        card={testCard({
+          ...work,
+          targetSessionId: 'project-chat',
+          sessionId: 'project-chat',
+          status: 'cancelled',
+        })}
         busy={false}
         disabled={false}
         onAction={action}

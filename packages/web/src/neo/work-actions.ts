@@ -1,12 +1,4 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoCardView,
-  NeoWorkDriverReceipt,
-  NeoWorkPrReceipt,
-} from '@hyperneo/shared/types/neo-snapshot';
-import { getRelativeTime } from '../lib/utils.ts';
-import { neoWorkDriverApp, neoWorkDriverLink } from './work-driver.ts';
-import { neoWorkPrNumber } from './work-prs.ts';
+import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 
 export type NeoWorkPrimary =
   | { readonly kind: 'start'; readonly label: string }
@@ -17,61 +9,11 @@ export type NeoWorkPrimary =
   | { readonly kind: 'chat'; readonly label: string }
   | { readonly kind: 'none' };
 
-export function neoWorkOpenLabel(driver: NeoWorkDriverReceipt | undefined): string {
-  const app = driver ? neoWorkDriverApp(driver) : 'HyperNeo';
-  return app === 'HyperNeo' ? 'Open chat' : `Open in ${app}`;
-}
-
-export function neoWorkPrimaryAction(
-  work: NeoWork,
-  driver: NeoWorkDriverReceipt | undefined,
-  { waiting = false, chat = false }: { waiting?: boolean; chat?: boolean } = {}
-): NeoWorkPrimary {
-  if (work.status === 'proposed') return { kind: 'start', label: 'Start work' };
-  if (driver?.retryable) return { kind: 'retry', label: 'Retry' };
-  if (
-    work.status === 'queued' &&
-    driver?.abandoned &&
-    driver.status !== 'failed' &&
-    driver.status !== 'stopped'
-  )
-    return {
-      kind: 'close',
-      label: 'Close',
-      link: work.sessionId ? null : neoWorkDriverLink(driver),
-    };
-  if (work.status === 'queued' && waiting && work.sessionId && chat)
-    return { kind: 'answer', label: 'Answer in chat', link: null };
-  const link = work.sessionId ? null : neoWorkDriverLink(driver);
-  if (link && driver)
-    return work.status === 'queued' && driver.status === 'needs_you'
-      ? { kind: 'answer', label: `Answer in ${neoWorkDriverApp(driver)}`, link }
-      : { kind: 'open', label: neoWorkOpenLabel(driver), link };
-  if (work.sessionId && chat) return { kind: 'chat', label: 'Open chat' };
-  return { kind: 'none' };
-}
-
 export function neoWorkPresentation(
-  work: NeoWork,
-  driver: NeoWorkDriverReceipt | undefined,
-  { compact, attention }: { compact: boolean; attention: boolean },
-  card?: NeoCardView
+  card: NeoCardView | undefined,
+  { compact, attention }: { compact: boolean; attention: boolean }
 ): 'summary' | 'detail' {
   if (!compact || attention) return 'detail';
-  const kind = card ? card.primary.kind : neoWorkPrimaryAction(work, driver).kind;
+  const kind = card?.primary.kind;
   return kind === 'retry' || kind === 'close' ? 'detail' : 'summary';
-}
-
-export function neoWorkMeta(
-  work: NeoWork,
-  prs: NeoWorkPrReceipt | undefined,
-  driver?: NeoWorkDriverReceipt,
-  now = Date.now()
-): string | null {
-  const pr = neoWorkPrNumber(prs);
-  if (pr) return `PR ${pr}`;
-  if (work.status === 'proposed') return null;
-  const when = getRelativeTime(work.createdAt, now);
-  const neverStarted = !work.sessionId && (work.status === 'cancelled' || !!driver?.retryable);
-  return neverStarted ? when : `Started ${when}`;
 }

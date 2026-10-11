@@ -8,6 +8,7 @@ import { connectionState } from '../../lib/state.ts';
 import { NeoLive } from '../NeoLive.tsx';
 import { projectNeoConcernBoard } from '../neo-concern-board.ts';
 import { projectNeoScenes } from '../neo-scenes.ts';
+import { withNeoViews } from './neo-test-views.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
 const transport = vi.hoisted(() => ({ hub: null as unknown }));
@@ -158,7 +159,7 @@ function mount() {
     asks: { retry: vi.fn() },
     publications: { refresh: vi.fn() },
   });
-  useNeoMock.mockImplementation(() => model.value);
+  useNeoMock.mockImplementation(() => withNeoViews(model.value));
   const view = render(<NeoLive />);
   const sheet = screen.queryByRole('button', { name: /^Your work/ });
   if (sheet) fireEvent.click(sheet);
@@ -252,7 +253,15 @@ describe('NeoLive native question failure attention', () => {
     'promotes only queued current-owned failure: %s/%s',
     (status, owner, group, label) => {
       const board = projectNeoConcernBoard(
-        { ok: true, sessionId: root, concerns: [], work: [{ ...work, status }], consultations: [] },
+        {
+          ok: true,
+          cards: [],
+          askViews: [],
+          sessionId: root,
+          concerns: [],
+          work: [{ ...work, status }],
+          consultations: [],
+        },
         null,
         null
       );

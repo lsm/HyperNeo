@@ -14,6 +14,8 @@ const question =
   JSON.stringify({ workId: 'work-A', report: 'Worker claim only. <script>never run</script>' });
 const snapshot: NeoSnapshot = {
   ok: true,
+  cards: [],
+  askViews: [],
   sessionId: 'root',
   concerns: [
     {

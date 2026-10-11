@@ -68,43 +68,6 @@ describe('Neo snapshot resource consumer', () => {
       db.close();
     }
   });
-  test('the snapshot schema keeps PR title, branch and opened time', async () => {
-    const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
-    await db.initialize(createReactiveDatabase(db));
-    const service = new NeoService(
-      db,
-      {} as SessionManager,
-      { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
-    );
-    try {
-      const operation = createNeoOperations(service).find((entry) => entry.name === 'neo.snapshot');
-      if (!operation) throw new Error('Snapshot operation missing');
-      const pr = {
-        url: 'https://github.com/o/r/pull/1',
-        state: 'OPEN' as const,
-        checks: 'passing' as const,
-        review: 'none' as const,
-        createdAt: 1,
-        title: 'Fix it',
-        branch: 'fix-it',
-      };
-      const snapshot: NeoSnapshot = {
-        ok: true,
-        sessionId: null,
-        concerns: [],
-        work: [],
-        consultations: [],
-        workPrs: [{ workId: 'A', prs: [pr], waiting: false }],
-      };
-      expect(operation.resultSchema.parse(snapshot)).toMatchObject({
-        workPrs: [{ workId: 'A', prs: [pr] }],
-      });
-    } finally {
-      service.dispose();
-      db.close();
-    }
-  });
   test('legacy unknown and explicitly empty stored reports remain distinct', async () => {
     const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
     await db.initialize(createReactiveDatabase(db));

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuestionPrompt } from '../../components/QuestionPrompt.tsx';
 import { markAllSessionStoresRecovering } from '../../lib/session-store.ts';
 import { toast } from '../../lib/toast.ts';
+import { testCard } from './neo-test-views.ts';
 import { NeoWorkCard } from '../NeoWorkCard.tsx';
 import { NeoWorkQuestion } from '../NeoWorkQuestion.tsx';
 import { NeoWorkQuestionResource } from '../NeoWorkQuestionResource.tsx';
@@ -159,7 +160,14 @@ describe('NeoWorkQuestion native controls', () => {
   });
   it('observes from the actual work card without inline reply controls and releases its subscriptions', async () => {
     const view = render(
-      <NeoWorkCard work={work} busy={false} disabled={false} onAction={vi.fn()} onOpen={vi.fn()} />
+      <NeoWorkCard
+        work={work}
+        card={testCard(work)}
+        busy={false}
+        disabled={false}
+        onAction={vi.fn()}
+        onOpen={vi.fn()}
+      />
     );
     await waitFor(() => expect(join).toHaveBeenCalledWith('session:manager-A'));
     await waitFor(() =>

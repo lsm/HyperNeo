@@ -1,33 +1,3 @@
-import type { NeoWorkDriverReceipt } from '@hyperneo/shared/types/neo-snapshot';
-
-const apps: Record<string, string> = {
-  hyperneo: 'HyperNeo',
-  space: 'a Space',
-  'codex-desktop': 'Codex Desktop',
-  'claude-desktop': 'Claude Code Desktop',
-  'copilot-cli': 'GitHub Copilot',
-  opencode: 'OpenCode',
-};
-
-export function neoWorkDriverLabel(driver: NeoWorkDriverReceipt): string {
-  const app = `${apps[driver.adapter] ?? driver.adapter}${driver.daemon ? ` on ${driver.daemon}` : ''}`;
-  if (driver.status === 'failed' || driver.status === 'stopped') return `Stopped in ${app}`;
-  if (driver.abandoned) return `No result from ${app} in 3 days · close it?`;
-  const unchecked =
-    (driver.unconfirmed ? ' · not confirmed it got this' : '') +
-    (driver.uncheckedSince
-      ? ` · not checked since ${new Date(driver.uncheckedSince).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-      : '');
-  if (driver.status === 'needs_you') return `Needs you in ${app}${unchecked}`;
-  if (driver.status === 'running') return `Running in ${app}${unchecked}`;
-  if (driver.status === 'done') return `Idle in ${app} · Neo is checking${unchecked}`;
-  return `Handed to ${app}${unchecked}`;
-}
-
-export function neoWorkDriverLink(driver: NeoWorkDriverReceipt | undefined): string | null {
-  return neoSessionLink(driver?.link, driver?.daemon);
-}
-
 export function neoSessionLink(
   link: string | null | undefined,
   daemon: string | null | undefined
@@ -51,15 +21,7 @@ const logos: Record<string, string> = {
   'codex-desktop': 'anthropic-codex',
 };
 
-export function neoWorkDriverApp(driver: NeoWorkDriverReceipt): string {
-  return neoAppLabel(driver.adapter);
-}
-
 export const neoAppLabel = (adapter: string): string => shortApps[adapter] ?? adapter;
-
-export function neoWorkDriverLogo(driver: NeoWorkDriverReceipt | undefined): string | undefined {
-  return neoAppLogo(driver?.adapter);
-}
 
 export const neoAppLogo = (adapter: string | null | undefined): string | undefined =>
   adapter ? logos[adapter] : undefined;
