@@ -12,16 +12,10 @@ import type { SpaceMcpSessionPolicyContext } from '../space/runtime/space-mcp-se
 import { TaskWithSpaceFieldsSchema } from './get-operation.ts';
 import { awaitsWorkerHandoff, isRetryableTaskStatus, retryTargetStatus } from './transitions.ts';
 import { isActiveSessionInSpace, resolveSpaceTaskOwner } from './metadata.ts';
-import {
-  claimsTaskSlot,
-  guardTaskSlot,
-  readTaskSlotUsage,
-  requireTaskSlot,
-  type TaskSlotUsage,
-} from './capacity.ts';
+import { guardTaskSlot } from './capacity.ts';
 import {
   type SpaceTaskManager,
-  StaleTaskGuardError,
+  staleTaskGuardRejection,
   type TaskTransitionExpectation,
 } from './task-manager.ts';
 
@@ -81,13 +75,6 @@ export function routeRetry(task: SpaceTask): { value: RetryPlan } | { reason: Re
   };
 }
 
-export function readRetrySlotUsage(plan: RetryPlan, db: Database): TaskSlotUsage | null {
-  const { task } = plan;
-  return claimsTaskSlot(plan.recoverTo ?? retryTargetStatus(task.status), task)
-    ? readTaskSlotUsage(db, task.spaceId)
-    : null;
-}
-
 export async function applyRetry(
   plan: RetryPlan,
   input: Input,
@@ -97,10 +84,8 @@ export async function applyRetry(
   try {
     return await writeRetry(plan, input, tasks, db);
   } catch (error) {
-    if (error instanceof StaleTaskGuardError)
-      return error.guardReason === 'space_at_task_capacity'
-        ? 'space_at_task_capacity'
-        : 'invalid_transition';
+    const rejection = staleTaskGuardRejection(error);
+    if (rejection) return rejection;
     throw error;
   }
 }
@@ -144,8 +129,6 @@ export function createRetryTaskOperation(
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitRetrier, ['db', 'input', 'caller', 'tasks'], 'result:outcome')
     .pipe(routeRetry, 'outcome', 'result:outcome')
-    .pipe(readRetrySlotUsage, ['outcome', 'db'], 'slots')
-    .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
     .pipe(applyRetry, ['outcome', 'input', 'tasks', 'db'], 'outcome')
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
   return defineOperation({

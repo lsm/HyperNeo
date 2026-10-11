@@ -63,7 +63,17 @@ function makeHarness(session: Session | null = memberSession()): Harness {
     sessionId: 'space-chat-1',
   });
   const taskRepo = new SpaceTaskRepository(db);
-  const retryTask = mock(async (taskId: string) => taskRepo.getTask(taskId) as SpaceTask);
+  const retryTask = mock(
+    async (
+      taskId: string,
+      options?: { guardWrite?: (current: SpaceTask) => string | undefined }
+    ) => {
+      const current = taskRepo.getTask(taskId) as SpaceTask;
+      const reason = options?.guardWrite?.(current);
+      if (reason) throw new StaleTaskGuardError('rejected', reason);
+      return current;
+    }
+  );
   const recoverWorkflowTask = mock(async (_spaceId: string, taskId: string) => {
     return taskRepo.getTask(taskId) as SpaceTask;
   });
@@ -326,9 +336,9 @@ describe('task.retry operation', () => {
       expect(await harness.operation.execute({ taskId: cancelled.id }, { source: 'rpc' })).toBe(
         'space_at_task_capacity'
       );
-      expect(harness.retryTask).not.toHaveBeenCalled();
-      await harness.operation.execute({ taskId: blocked.id }, { source: 'rpc' });
-      expect(harness.retryTask).toHaveBeenCalledTimes(1);
+      expect(
+        await harness.operation.execute({ taskId: blocked.id }, { source: 'rpc' })
+      ).toMatchObject({ id: blocked.id });
     } finally {
       harness.db.close();
     }

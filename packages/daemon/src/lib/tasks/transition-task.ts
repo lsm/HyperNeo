@@ -5,16 +5,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { DirectTaskExecutionRepository } from '../../storage/repositories/direct-task-execution-repository.ts';
 import { Logger } from '../logger.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import {
-  claimsTaskSlot,
-  guardTaskSlot,
-  readTaskSlotUsage,
-  requireTaskSlot,
-  type TaskSlotUsage,
-} from './capacity.ts';
+import { guardTaskSlot } from './capacity.ts';
 import {
   type SpaceTaskManager,
   StaleTaskGuardError,
+  staleTaskGuardRejection,
   type TaskTransitionExpectation,
 } from './task-manager.ts';
 import { decideSpaceTaskTransition } from './transition-decision.ts';
@@ -280,15 +275,6 @@ export async function decide(
     },
   };
 }
-export function readTransitionSlotUsage(
-  decided: DecidedTask,
-  input: In,
-  deps: Deps
-): TaskSlotUsage | null {
-  return claimsTaskSlot(input.status, decided.task)
-    ? readTaskSlotUsage(deps.db, decided.spaceId)
-    : null;
-}
 async function emitUpdated(spaceId: string, task: SpaceTask, deps: Deps): Promise<void> {
   await deps
     .emitTaskUpdated(spaceId, task)
@@ -331,11 +317,8 @@ export async function writeStatus(decided: DecidedTask, input: In, deps: Deps): 
     await emitUpdated(spaceId, updated, deps);
     return updated;
   } catch (error) {
-    if (error instanceof StaleTaskGuardError) {
-      return error.guardReason === 'space_at_task_capacity'
-        ? 'space_at_task_capacity'
-        : 'invalid_transition';
-    }
+    const rejection = staleTaskGuardRejection(error);
+    if (rejection) return rejection;
     throw error;
   }
 }
@@ -352,8 +335,6 @@ export function createSpaceTransitionTaskOperation(deps: Deps) {
     .pipe(requireHandoffBeforeReopen, ['outcome', 'input'], 'result:outcome')
     .pipe(decide, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
     .pipe(routeActiveDirectAttempt, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')
-    .pipe(readTransitionSlotUsage, ['outcome', 'input', 'deps'], 'slots')
-    .pipe(requireTaskSlot, ['outcome', 'slots'], 'result:outcome')
     .pipe(writeStatus, ['outcome', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: In, caller: Caller) => Promise<Result>;
   return createTransitionTaskOperation(transition, {
