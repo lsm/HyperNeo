@@ -60,6 +60,21 @@ const ownedUrls = (plan: NeoCardPrPlan) => plan.owned.map((item) => item.url);
 const stripReadTimes = (prs: readonly NeoWorkPr[]) =>
   prs.map(({ createdAt: _createdAt, ...pr }) => pr);
 
+export function cachedNeoCardPrRead(row: NeoWorkPrRow | null): NeoCardPrRead {
+  return { row, ok: !row || row.readOkAt >= row.readAt };
+}
+
+export function neoCardPrsFresh(
+  current: { row: NeoWorkPrRow | null },
+  plan: NeoCardPrPlan,
+  now: number
+): boolean {
+  return (
+    !shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) &&
+    plan.owned.every((item) => item.claimed)
+  );
+}
+
 export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
   .input(['deps', 'work', 'stored', 'now'])
   .pipe(
@@ -101,19 +116,12 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     'current'
   )
   .pipe(
-    (current: { row: NeoWorkPrRow | null }, plan: NeoCardPrPlan, now: number) =>
-      shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) ||
-      plan.owned.some((item) => !item.claimed)
-        ? { value: plan }
-        : {
-            reason: {
-              row: current.row,
-              ok: !current.row || current.row.readOkAt >= current.row.readAt,
-            },
-          },
-    ['current', 'plan', 'now'],
+    (current: { row: NeoWorkPrRow | null }) => ({ value: cachedNeoCardPrRead(current.row) }),
+    ['current'],
     'result:read'
   )
+  .pipe(neoCardPrsFresh, ['current', 'plan', 'now'], 'fresh')
+  .pipe('!fresh')
   .pipe(
     async (deps: NeoCardPrDeps, plan: NeoCardPrPlan) => ({
       prs: await deps.readPrs(ownedUrls(plan)),
@@ -131,7 +139,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     (deps: NeoCardPrDeps, work: NeoWork, plan: NeoCardPrPlan) => ({
       owned: keepNeoUnbeatenPrs(work, plan.owned, deps.claims.forUrls(ownedUrls(plan))),
     }),
-    ['deps', 'work', 'read'],
+    ['deps', 'work', 'plan'],
     'unbeaten'
   )
   .pipe(

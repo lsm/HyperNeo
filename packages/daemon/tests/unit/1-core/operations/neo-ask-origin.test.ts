@@ -5,6 +5,8 @@ import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/type
 import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
+  neoAskEvidenceAskId,
+  neoAskEvidenceMessageId,
   neoDoneCheckMessageId,
   neoNeedsYouMessageId,
   neoStallMessageId,
@@ -19,7 +21,6 @@ import {
   type NeoAskOrigin,
   type NeoAskOriginReads,
 } from '../../../../src/lib/neo/ask-origin.ts';
-import { neoAskEvidenceMessageId } from '../../../../src/lib/neo/ask-evidence.ts';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
@@ -433,6 +434,10 @@ describe('synchronous bounded ask resolver', () => {
     const note = { sessionId: root.sessionId, messageId: neoNeedsYouMessageId(work.id, 7) };
     f.put(note, 'system');
     expect(f.resolve(note)).toEqual(ask);
+  });
+  test('reads the ask back out of the ask evidence note id it builds', () => {
+    expect(neoAskEvidenceAskId(neoAskEvidenceMessageId('a:1', 'sig'))).toBe('a:1');
+    expect(neoAskEvidenceAskId('w1:done-check:2')).toBeNull();
   });
   test('an ask evidence note answers the ask it reports on', () => {
     const f = fixtures();

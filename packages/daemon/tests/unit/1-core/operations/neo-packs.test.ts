@@ -4,8 +4,10 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
+  cachedNeoCardPrRead,
   codingPrMergedCheck,
   createCodingPack,
+  neoCardPrsFresh,
   readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
@@ -398,5 +400,52 @@ describe('readNeoCardPrs', () => {
     ]);
     expect(recorded.at(-1)?.map((pr) => pr.url)).toEqual([second, url]);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('neoCardPrsFresh', () => {
+  const url = 'https://github.com/lsm/HyperNeo/pull/1';
+  const row = {
+    workId: 'w1',
+    prs: [{ url, state: 'OPEN', checks: 'pending', review: 'none' }],
+    revision: 1,
+    delivered: null,
+    deliveredAt: null,
+    reminded: null,
+    readAt: 10,
+    readOkAt: 10,
+  } as NeoWorkPrRow;
+  const owned = (claimed: boolean) => ({
+    owned: [{ url, claim: 'mentioned' as const, claimedAt: 0, claimed }],
+  });
+
+  test.each([
+    ['a claimed PR read moments ago', row, owned(true), 20, true],
+    ['an owned PR not yet claimed', row, owned(false), 20, false],
+    ['a read that has gone stale', row, owned(true), 10 * 60_000, false],
+    ['a card with no stored read', null, owned(true), 20, false],
+  ])('%s', (_name, stored, plan, now, fresh) => {
+    expect(neoCardPrsFresh({ row: stored }, plan, now)).toBe(fresh);
+  });
+});
+
+describe('cachedNeoCardPrRead', () => {
+  test('a cached read is ok unless the last read failed', () => {
+    const row = {
+      workId: 'w1',
+      prs: [],
+      revision: 1,
+      delivered: null,
+      deliveredAt: null,
+      reminded: null,
+      readAt: 10,
+      readOkAt: 10,
+    } as NeoWorkPrRow;
+    expect(cachedNeoCardPrRead(row)).toEqual({ row, ok: true });
+    expect(cachedNeoCardPrRead({ ...row, readAt: 20 })).toEqual({
+      row: { ...row, readAt: 20 },
+      ok: false,
+    });
+    expect(cachedNeoCardPrRead(null)).toEqual({ row: null, ok: true });
   });
 });
