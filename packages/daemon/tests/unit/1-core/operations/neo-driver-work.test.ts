@@ -2453,6 +2453,29 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('a start that throws fails the card and returns its report', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const returned: Array<{ status: string; report: string | null }> = [];
+    Object.assign(service, {
+      returnReport: async (work: { status: string; report: string | null }) => {
+        returned.push({ status: work.status, report: work.report });
+      },
+      startReservedWork: async (id: string) => {
+        const proposed = service.repo.getWork(id);
+        if (proposed) service.repo.transitionWork(id, proposed, { status: 'queued' });
+        throw new Error('adapter crashed');
+      },
+    });
+    try {
+      await expect(service.start('work-1')).rejects.toThrow('adapter crashed');
+      expect(returned).toEqual([
+        { status: 'failed', report: 'Could not start the execution: adapter crashed' },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('fails the work with the adapter reason when it cannot start', async () => {
     const { db, service } = await setup({
       ok: false,
