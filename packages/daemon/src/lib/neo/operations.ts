@@ -66,11 +66,19 @@ import {
   readNeoStartFolder,
   requireNeoDriverVerb,
   requireNeoStartFolder,
+  requireNeoWorkRetryable,
   type NeoDriverTarget,
+  type NeoWorkRetryCard,
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { type WorkRef, WorkRefSchema, WorkStatusSchema } from '../drivers/types.ts';
+import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
+import {
+  NEO_SESSION_MUTES_MAX,
+  NeoSessionNoticeGroupSchema,
+  NeoSessionNoticeSchema,
+  planNeoSessionMutes,
+} from './session-watch.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -81,10 +89,16 @@ import {
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
+  requireNeoWorkAskLive,
+  requireNeoWorkAskOwner,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
-import { requireNeoWorkSupersedable } from './work-supersede.ts';
+import {
+  neoWorkSupersedeCandidates,
+  requireNeoWorkSupersedable,
+  requireNeoWorkSupersedeDecision,
+} from './work-supersede.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 
@@ -171,19 +185,9 @@ const Snapshot = z.union([
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
       .optional(),
-    sessionNotices: z
-      .array(
-        z.object({
-          key: z.string(),
-          ref: WorkRefSchema,
-          title: z.string(),
-          kind: z.enum(['needs_you', 'failed', 'finished']),
-          at: z.number(),
-          link: z.string().optional(),
-        })
-      )
-      .max(20)
-      .optional(),
+    sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
+    sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
+    mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
     workDrivers: z
       .array(
         z.object({
@@ -303,9 +307,14 @@ const Propose = z.object({
   goal: z.string().trim().min(1).max(1000).optional(),
   doneWhen: z.string().trim().min(1).max(2000).optional(),
   askId: z.string().min(1).max(160).optional(),
-  supersedes: z.string().min(1).max(160).optional(),
+  supersedes: z.string().min(1).max(160).nullable().optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
+const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
+const SessionMuteResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), mutedSessions: z.array(z.string()) }),
+]);
 const SaveRules = z.object({
   rules: z
     .array(z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS))
@@ -601,13 +610,16 @@ export function createNeoOperations(service: NeoService) {
           };
         }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: service.sessionNoticeGroups,
+      mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),
       asks: projectNeoSnapshotAsks(
         service.askRecords.list(scope === undefined ? undefined : scope),
-        caller.source === 'rpc' ? 50 : 10
+        caller.source === 'rpc' ? 50 : 10,
+        Date.now()
       ),
       workPrs: service.workPrs
         .list(visibleWork.map((item) => item.id))
@@ -632,6 +644,41 @@ export function createNeoOperations(service: NeoService) {
       ),
     };
   }
+  const muteSession = (superpipe({})('neo.session.mute') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.session.mute'),
+      'caller',
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof SessionMute>) => ({
+        mutedSessions: planNeoSessionMutes(
+          service.db.getGlobalSettings().neo?.mutedSessions ?? [],
+          input.key,
+          input.muted
+        ),
+      }),
+      'input',
+      'planned'
+    )
+    .pipe(
+      (planned: { mutedSessions: string[] }) => {
+        const neo = service.db.getGlobalSettings().neo;
+        const updated = service.db.updateGlobalSettings({
+          neo: { ...neo, mutedSessions: planned.mutedSessions },
+        });
+        service.publishSettings?.(updated);
+        service.notifyChanged();
+        return { ok: true as const, mutedSessions: planned.mutedSessions };
+      },
+      'planned',
+      'admission'
+    )
+    .end('admission') as (
+    input: z.infer<typeof SessionMute>,
+    caller: OperationCaller
+  ) => z.infer<typeof SessionMuteResult>;
   const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -912,8 +959,42 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoWorkAsk(input.askId ? service.askRecords.get(input.askId) : null, input, caller),
+      (input: z.infer<typeof Propose>) => ({
+        ask: input.askId ? service.askRecords.get(input.askId) : null,
+      }),
+      'input',
+      'workAsk'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAsk(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAskOwner(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAskLive(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+        const works = input.supersedes === undefined ? service.repo.listWork(input.concernId) : [];
+        const superseded = new Set(
+          service.workSupersessions.list(works.map((work) => work.id)).map((row) => row.workId)
+        );
+        return requireNeoWorkSupersedeDecision(
+          input,
+          neoWorkSupersedeCandidates(works, superseded, input.concernId, Date.now()),
+          caller
+        );
+      },
       ['input', 'admission'],
       'result:admission'
     )
@@ -1177,8 +1258,15 @@ export function createNeoOperations(service: NeoService) {
       ['found', 'folder', 'retry'],
       'result:retry'
     )
+    .pipe((work: NeoWork) => ({ card: service.retryCard(work.id) }), 'retry', 'retryCard')
     .pipe(
-      async (work: NeoWork) => ({ value: await service.retryWork(work.id) }),
+      (work: NeoWork, retryCard: { card: NeoWorkRetryCard }) =>
+        requireNeoWorkRetryable(work, retryCard.card, work),
+      ['retry', 'retryCard'],
+      'result:retry'
+    )
+    .pipe(
+      async (work: NeoWork) => ({ value: await service.retryWork(work) }),
       'retry',
       'result:retry'
     )
@@ -1282,6 +1370,15 @@ export function createNeoOperations(service: NeoService) {
       execute: async (input, caller) => saveRules(input, caller),
     }),
     defineOperation({
+      name: 'neo.session.mute',
+      description:
+        'Mute or unmute notices about a session the human started themselves. key is the notice key from snapshot.sessionNoticeGroups or sessionNotices; a muted session gets no more needs-you, failed or finished notices until unmuted. snapshot.mutedSessions lists the muted keys.',
+      inputSchema: SessionMute,
+      resultSchema: SessionMuteResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => muteSession(input, caller),
+    }),
+    defineOperation({
       name: 'neo.pack.read',
       description:
         'Read the full instructions of an installed domain pack (enabled or not), the guidance an ask names with its pack field: what work in that domain looks like and what done means there. neo.snapshot and the system prompt carry only each enabled pack’s one-line describe.',
@@ -1311,7 +1408,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

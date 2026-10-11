@@ -21,6 +21,7 @@ describe('neoWorkPrLabel', () => {
       [receipt(pr(1, { review: 'approved' })), 'Approved, not merged · #1'],
       [receipt(pr(1, { checks: 'failing', review: 'approved' })), 'Checks failing · #1'],
       [receipt(pr(1, { review: 'changes_requested' })), 'Changes requested · #1'],
+      [receipt(pr(1, { checks: 'pending', review: 'changes_requested' })), 'Waiting on CI · #1'],
       [receipt(pr(1, { state: 'MERGED' })), 'Merged · #1'],
       [receipt(pr(1, { state: 'CLOSED' })), 'PR closed · #1'],
       [receipt(pr(1, { state: 'MERGED' }), pr(2, { checks: 'pending' })), 'Waiting on CI · #2 +1'],
@@ -44,6 +45,7 @@ describe('neoWorkPrInProgress', () => {
       [receipt(pr(1, { state: 'CLOSED' })), false],
       [receipt(pr(1, { checks: 'failing' })), false],
       [receipt(pr(1, { review: 'changes_requested' })), false],
+      [receipt(pr(1, { checks: 'pending', review: 'changes_requested' })), true],
       [receipt(pr(1, { state: 'MERGED' }), pr(2)), true],
     ];
     expect(rows.map(([input]) => neoWorkPrInProgress(input))).toEqual(rows.map(([, v]) => v));

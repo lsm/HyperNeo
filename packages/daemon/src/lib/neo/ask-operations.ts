@@ -1,5 +1,10 @@
 import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  isPooledNeoAsk,
+  type NeoAsk,
+  type NeoAskItem,
+  neoAskApprovalSpent,
+} from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -40,6 +45,8 @@ export const NeoAskSchema = z.object({
   approvedContinues: z.number().optional(),
   approvedUntil: z.number().optional(),
   approvedContinueLimit: z.number().optional(),
+  pooled: z.boolean().optional(),
+  approvalSpent: z.enum(['continues', 'expired']).nullable().optional(),
   waitingItem: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
@@ -133,17 +140,35 @@ export function requireNeoAskLive(ask: NeoAsk, hint = ''): Gate<NeoAsk> {
     : { value: ask };
 }
 
+type WorkAskInput = { askId?: string; concernId: string | null };
+
 export function requireNeoWorkAsk(
   ask: NeoAsk | null,
-  input: { askId?: string; concernId: string | null },
+  input: WorkAskInput,
+  caller: OperationCaller
+): Gate<OperationCaller> {
+  return input.askId && ask && ask.concernId !== input.concernId
+    ? { reason: fail('This ask belongs to another concern; propose under its concernId.') }
+    : { value: caller };
+}
+
+export function requireNeoWorkAskOwner(
+  ask: NeoAsk | null,
+  input: WorkAskInput,
   caller: OperationCaller
 ): Gate<OperationCaller> {
   if (!input.askId) return { value: caller };
-  if (ask && ask.concernId !== input.concernId)
-    return { reason: fail('This ask belongs to another concern; propose under its concernId.') };
   const owned = requireNeoAskOwner(ask, caller, 'file work under', '; open your own ask');
-  if ('reason' in owned) return owned;
-  const live = requireNeoAskLive(owned.value, '; open a new ask');
+  return 'reason' in owned ? owned : { value: caller };
+}
+
+export function requireNeoWorkAskLive(
+  ask: NeoAsk | null,
+  input: WorkAskInput,
+  caller: OperationCaller
+): Gate<OperationCaller> {
+  if (!input.askId || !ask) return { value: caller };
+  const live = requireNeoAskLive(ask, '; open a new ask');
   return 'reason' in live ? live : { value: caller };
 }
 
@@ -192,9 +217,17 @@ export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'
   );
 }
 
-export function projectNeoSnapshotAsks(asks: readonly NeoAsk[], settledLimit: number): NeoAsk[] {
+export function projectNeoSnapshotAsks(
+  asks: readonly NeoAsk[],
+  settledLimit: number,
+  now: number
+): NeoAsk[] {
   const active = asks.filter((ask) => !isFinal(ask)).slice(0, ACTIVE_ASK_LIMIT);
-  return [...active, ...asks.filter(isFinal).slice(0, settledLimit)];
+  return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
+    ...ask,
+    pooled: isPooledNeoAsk(ask),
+    approvalSpent: neoAskApprovalSpent(ask, now),
+  }));
 }
 
 export function requireNeoAskConcern<T>(
@@ -258,14 +291,8 @@ export function requireNeoAskSummary(
     : { value: caller };
 }
 
-export function requireNeoAskSettlement(
-  input: z.infer<typeof Settle>,
-  current: { ask: NeoAsk | null },
-  caller: OperationCaller
-): Gate<NeoAsk> {
-  const owned = requireNeoAskOwner(current.ask, caller, 'settle');
-  if ('reason' in owned) return owned;
-  return isNeoAskReplay(owned.value, input) ? owned : requireNeoAskLive(owned.value);
+export function requireNeoAskSettleable(input: z.infer<typeof Settle>, ask: NeoAsk): Gate<NeoAsk> {
+  return isNeoAskReplay(ask, input) ? { value: ask } : requireNeoAskLive(ask);
 }
 
 export function requireNeoAskChecklistMet(
@@ -285,13 +312,8 @@ export function requireNeoAskChecklistMet(
 
 export function requireNeoAskTick(
   input: z.infer<typeof Tick>,
-  current: { ask: NeoAsk | null },
-  caller: OperationCaller
+  ask: NeoAsk
 ): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
-  const owned = requireNeoAskOwner(current.ask, caller, 'tick');
-  const live = 'reason' in owned ? owned : requireNeoAskLive(owned.value);
-  if ('reason' in live) return live;
-  const ask = live.value;
   const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
   if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
   return input.state !== 'pending' && !input.evidence
@@ -303,15 +325,7 @@ export function requireNeoAskTick(
     : { value: { ask, item } };
 }
 
-export function requireNeoAskEdit(
-  input: z.infer<typeof Edit>,
-  current: { ask: NeoAsk | null },
-  caller: OperationCaller
-): Gate<NeoAsk> {
-  const owned = requireNeoAskOwner(current.ask, caller, 'edit');
-  const live = 'reason' in owned ? owned : requireNeoAskLive(owned.value);
-  if ('reason' in live) return live;
-  const ask = live.value;
+export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gate<NeoAsk> {
   const active = (ask.doneItems ?? []).filter((item) => !item.removed);
   const missing = input.remove.filter((id) => !active.some((item) => item.id === id));
   if (missing.length)
@@ -321,14 +335,6 @@ export function requireNeoAskEdit(
   return left > 12
     ? { reason: fail('checklist_full: an ask holds at most 12 items.') }
     : { value: ask };
-}
-
-export function requireNeoAskApprove(
-  current: { ask: NeoAsk | null },
-  caller: OperationCaller
-): Gate<NeoAsk> {
-  const owned = requireNeoAskOwner(current.ask, caller, 'approve');
-  return 'reason' in owned ? owned : requireNeoAskLive(owned.value);
 }
 
 export function planNeoAskEdit(
@@ -482,7 +488,13 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'result:admission'
     )
     .pipe(requireNeoAskSummary, ['input', 'admission'], 'result:admission')
-    .pipe(requireNeoAskSettlement, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(
+      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
+        requireNeoAskOwner(current.ask, caller, 'settle'),
+      ['current', 'caller'],
+      'result:admission'
+    )
+    .pipe(requireNeoAskSettleable, ['input', 'admission'], 'result:admission')
     .pipe(requireNeoAskChecklistMet, ['input', 'admission', 'caller'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Settle>, ask: NeoAsk) => ({
@@ -528,7 +540,14 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['caller', 'current'],
       'result:admission'
     )
-    .pipe(requireNeoAskTick, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(
+      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
+        requireNeoAskOwner(current.ask, caller, 'tick'),
+      ['current', 'caller'],
+      'result:admission'
+    )
+    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
+    .pipe(requireNeoAskTick, ['input', 'admission'], 'result:admission')
     .pipe(
       (input: z.infer<typeof Tick>, target: { ask: NeoAsk }, caller: OperationCaller) => {
         service.askRecords.tickItem(
@@ -581,7 +600,13 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['caller', 'current'],
       'result:admission'
     )
-    .pipe(requireNeoAskApprove, ['current', 'caller'], 'result:admission')
+    .pipe(
+      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
+        requireNeoAskOwner(current.ask, caller, 'approve'),
+      ['current', 'caller'],
+      'result:admission'
+    )
+    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
     .pipe(
       (ask: NeoAsk) => ({ ask: service.askRecords.approve(ask.id, Date.now()) }),
       'admission',
@@ -605,7 +630,14 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       ['caller', 'current'],
       'result:admission'
     )
-    .pipe(requireNeoAskEdit, ['input', 'current', 'admission'], 'result:admission')
+    .pipe(
+      (current: { ask: NeoAsk | null }, caller: OperationCaller) =>
+        requireNeoAskOwner(current.ask, caller, 'edit'),
+      ['current', 'caller'],
+      'result:admission'
+    )
+    .pipe((ask: NeoAsk) => requireNeoAskLive(ask), 'admission', 'result:admission')
+    .pipe(requireNeoAskEdit, ['input', 'admission'], 'result:admission')
     .pipe(planNeoAskEdit, ['admission', 'input'], 'plan')
     .pipe(
       (ask: NeoAsk, plan: ReturnType<typeof planNeoAskEdit>) => {

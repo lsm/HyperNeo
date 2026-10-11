@@ -138,7 +138,11 @@ describe('durable public conversation projection', () => {
     expect(first.entries).toEqual(reordered.entries);
     expect(
       first.entries.map((entry) =>
-        entry.kind === 'ask' ? entry.ask.requestId : entry.publication.publicationId
+        entry.kind === 'ask'
+          ? entry.ask.requestId
+          : entry.kind === 'publication'
+            ? entry.publication.publicationId
+            : entry.group.id
       )
     ).toEqual(['publication-2', 'ask-1', 'publication-1', 'ask-2']);
     expect(a[0]).toBe(laterAsk);
@@ -267,5 +271,47 @@ describe('neoWorkSummary', () => {
     expect(neoWorkSummary(summaries, { id: 'work:1', updatedAt: 100 })).toBe('Handed it to Codex.');
     expect(neoWorkSummary(summaries, { id: 'work:1', updatedAt: 101 })).toBeUndefined();
     expect(neoWorkSummary(summaries, { id: 'work:2', updatedAt: 0 })).toBeUndefined();
+  });
+});
+
+describe('session notice groups in the public conversation', () => {
+  const group = (minute: number) => ({
+    id: `neo-session-notices:${minute}`,
+    at: Date.parse(at) + minute * 60_000,
+    line: 'Codex · Research finished',
+    notices: [
+      {
+        key: `codex-desktop::t${minute}`,
+        ref: { adapter: 'codex-desktop', id: `t${minute}` },
+        title: 'Research',
+        kind: 'finished' as const,
+        at: Date.parse(at) + minute * 60_000,
+      },
+    ],
+  });
+  const later = (sequence: number, minute: number) => ({
+    ...ask(sequence),
+    createdAt: new Date(Date.parse(at) + minute * 60_000).toISOString(),
+  });
+
+  it('places each group between the messages around it by time', () => {
+    const conversation = projectNeoPublicConversation(
+      root,
+      asks([later(1, 0), later(2, 10)]),
+      publications([]),
+      [group(5)]
+    );
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(['ask', 'notices', 'ask']);
+  });
+
+  it('holds back groups older than a partly loaded page until earlier messages load', () => {
+    const page = { ...asks([later(5, 10), later(6, 20)]), hasEarlier: true };
+    const conversation = projectNeoPublicConversation(root, page, publications([]), [
+      group(5),
+      group(15),
+    ]);
+    expect(
+      conversation.entries.flatMap((entry) => (entry.kind === 'notices' ? [entry.group.id] : []))
+    ).toEqual(['neo-session-notices:15']);
   });
 });

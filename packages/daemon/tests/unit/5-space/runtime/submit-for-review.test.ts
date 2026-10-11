@@ -46,7 +46,7 @@ type SubmissionDependencies = Parameters<typeof admitManagedSubmission>[3];
 function submitter(submissionDeps: SubmissionDependencies) {
   return async (input: { taskId: string; reason?: string | null }, caller: OperationCaller) => {
     const managed = await admitManagedSubmission(db, input, caller, submissionDeps);
-    if ('reason' in managed) return managed.reason;
+    if (managed) return managed;
     const direct = admitSubmission(db, input, caller);
     if ('reason' in direct) return direct.reason;
     return enqueueDirectOutcome(db, jobs, direct.value);

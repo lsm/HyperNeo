@@ -9,17 +9,17 @@ import {
   TERMINAL_SPACE_TASK_STATUSES,
 } from './message-search-admission.ts';
 import {
+  planSessionInputDraftWrite,
+  type SessionInputDraftSnapshot,
+  sessionInputDraftSnapshotFromRow,
+} from './session-input-draft-write.ts';
+import {
   buildSessionRuntimeSettingsWrite,
-  type RuntimeSettingsPatch,
   planRuntimeSettingsPatch,
+  type RuntimeSettingsPatch,
   type SessionRuntimeSettingsSnapshot,
   sessionRuntimeSettingsSnapshotFromRow,
 } from './session-runtime-settings-write.ts';
-import {
-  planSessionInputDraftWrite,
-  sessionInputDraftSnapshotFromRow,
-  type SessionInputDraftSnapshot,
-} from './session-input-draft-write.ts';
 
 function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
@@ -130,6 +130,21 @@ export class SessionRepository {
     }
   }
 
+  listProcessingSessionIds(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id FROM sessions
+            WHERE status = 'active'
+              AND json_valid(processing_state)
+              AND json_extract(processing_state, '$.status') = 'processing'
+              AND NOT (json_valid(session_context)
+                AND json_extract(session_context, '$.spaceId') IS NOT NULL)`
+        )
+        .all() as Array<{ id: string }>
+    ).map((row) => row.id);
+  }
+
   getSession(id: string): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -193,6 +208,7 @@ export class SessionRepository {
         `UPDATE sessions
          SET processing_state = json_object(
            'status', 'interrupted',
+           'reason', 'restart',
            'messageId', json_extract(processing_state, '$.messageId')
          )
          WHERE json_valid(processing_state)

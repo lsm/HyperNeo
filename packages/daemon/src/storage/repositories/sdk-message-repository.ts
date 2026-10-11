@@ -1264,6 +1264,22 @@ export class SDKMessageRepository {
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
   }
 
+  getLatestSDKMessagesByType(
+    sessionId: string,
+    messageType: string,
+    messageSubtype: string,
+    limit: number
+  ): SDKMessage[] {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = ? AND message_subtype = ?
+          ORDER BY timestamp DESC, rowid DESC LIMIT ?`
+      )
+      .all(sessionId, messageType, messageSubtype, limit) as Record<string, unknown>[];
+    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage).reverse();
+  }
+
   getLastSDKMessage(sessionId: string): (SDKMessage & { dbId: string; timestamp: number }) | null {
     const stmt = this.db.prepare(
       `SELECT id, sdk_message, timestamp FROM sdk_messages
@@ -1912,6 +1928,32 @@ export class SDKMessageRepository {
     } catch {
       return null;
     }
+  }
+
+  readRestartRecoveryEvidence(
+    sessionId: string
+  ): { promptUuid: string; workedAfter: boolean } | null {
+    const prompt = this.db
+      .prepare(
+        `SELECT sdk_uuid AS uuid, timestamp FROM sdk_messages
+          WHERE session_id = ? AND send_status = 'consumed' AND message_type = 'user'
+            AND sdk_uuid IS NOT NULL AND parent_tool_use_id IS NULL
+            AND NOT (json_valid(sdk_message)
+              AND json_type(sdk_message, '$.message.content') = 'array'
+              AND EXISTS (
+                SELECT 1 FROM json_each(sdk_message, '$.message.content')
+                 WHERE json_extract(value, '$.type') = 'tool_result'))
+          ORDER BY timestamp DESC, id DESC LIMIT 1`
+      )
+      .get(sessionId) as { uuid: string; timestamp: string } | undefined;
+    if (!prompt) return null;
+    const worked = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'assistant' AND timestamp > ? LIMIT 1`
+      )
+      .get(sessionId, prompt.timestamp);
+    return { promptUuid: prompt.uuid, workedAfter: !!worked };
   }
 
   getDeliveryContent(

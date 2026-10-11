@@ -30,14 +30,14 @@ import { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   NEO_ASK_CONTINUE_LIMIT,
-  NEO_ASK_CONTINUE_WINDOW_MS,
+  isPooledNeoAsk,
+  neoAskApprovalSpent,
   NEO_WORK_CONTINUE_LIMIT,
   type NeoWorkContinue,
   type NeoWorkGoal,
   type NeoAsk,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { isNeoAskLive } from './done-check.ts';
 import {
   PlaceSchema,
   WorkExchangeEntrySchema,
@@ -162,7 +162,7 @@ export function neoContinuesLeft(
   continued: number,
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null
 ): number {
-  return ask?.approvedAt != null && isNeoAskLive(ask)
+  return isPooledNeoAsk(ask)
     ? Math.max(0, NEO_ASK_CONTINUE_LIMIT - (ask.approvedContinues ?? 0))
     : Math.max(0, NEO_WORK_CONTINUE_LIMIT - continued);
 }
@@ -173,12 +173,12 @@ export function readNeoWorkContinueBudget(
   ask: Pick<NeoAsk, 'status' | 'approvedAt' | 'approvedContinues'> | null,
   now: number
 ): string | null {
-  if (ask?.approvedAt == null || !isNeoAskLive(ask))
-    return readContinueBudget(continued, startedAt, now);
-  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT) return NEO_ASK_CONTINUES_SPENT;
-  if (now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS)
-    return 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.';
-  return null;
+  if (!ask || !isPooledNeoAsk(ask)) return readContinueBudget(continued, startedAt, now);
+  const spent = neoAskApprovalSpent(ask, now);
+  if (spent === 'continues') return NEO_ASK_CONTINUES_SPENT;
+  return spent === 'expired'
+    ? 'continue_budget_spent: this ask was approved over 48 hours ago; ask the human to approve it again.'
+    : null;
 }
 
 export function withWorkGoal(instruction: string, goal: NeoWorkGoal | null): string {
@@ -338,20 +338,29 @@ export function isNeoCardUnconfirmed(
 
 export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 
-export function requireNeoWorkRetryable(
-  work: Pick<NeoWork, 'status' | 'report'>,
-  card: { target: boolean; ref: boolean }
-): { value: true } | { reason: string } {
-  if (work.report?.startsWith(NEO_DRIVER_START_INTERRUPTED))
+export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
+
+export function requireNeoWorkRetryable<T>(
+  work: Pick<NeoWork, 'status'>,
+  card: NeoWorkRetryCard,
+  admitted: T
+): { value: T } | { reason: { ok: false; reason: string } } {
+  if (card.interrupted)
     return {
-      reason:
-        'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+      reason: {
+        ok: false,
+        reason:
+          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+      },
     };
   return work.status === 'failed' && card.target && !card.ref
-    ? { value: true }
+    ? { value: admitted }
     : {
-        reason:
-          'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
+        reason: {
+          ok: false,
+          reason:
+            'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
+        },
       };
 }
 

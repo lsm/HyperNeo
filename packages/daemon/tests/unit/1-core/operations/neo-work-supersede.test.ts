@@ -4,7 +4,12 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { requireNeoWorkSupersedable } from '../../../../src/lib/neo/work-supersede.ts';
+import {
+  NEO_SUPERSEDE_WINDOW_MS,
+  neoWorkSupersedeCandidates,
+  requireNeoWorkSupersedable,
+  requireNeoWorkSupersedeDecision,
+} from '../../../../src/lib/neo/work-supersede.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -43,6 +48,61 @@ describe('requireNeoWorkSupersedable', () => {
     });
     expect(requireNeoWorkSupersedable(input, { ...old, concernId: 'other' }, 'ok')).toEqual({
       reason: { ok: false, reason: 'The work this supersedes belongs to another concern.' },
+    });
+  });
+});
+
+describe('neoWorkSupersedeCandidates', () => {
+  const now = 10 * NEO_SUPERSEDE_WINDOW_MS;
+  const work = (id: string, overrides = {}) => ({
+    id,
+    title: `Card ${id}`,
+    status: 'failed' as const,
+    concernId: null,
+    updatedAt: now - 1_000,
+    ...overrides,
+  });
+  test('lists recent failed or cancelled work in the concern that nothing replaced yet', () => {
+    expect(
+      neoWorkSupersedeCandidates(
+        [
+          work('a'),
+          work('b', { status: 'cancelled' }),
+          work('c', { status: 'reported' }),
+          work('d', { concernId: 'other' }),
+          work('e', { updatedAt: now - NEO_SUPERSEDE_WINDOW_MS }),
+          work('f'),
+        ],
+        new Set(['f']),
+        null,
+        now
+      )
+    ).toEqual([
+      { id: 'a', title: 'Card a' },
+      { id: 'b', title: 'Card b' },
+    ]);
+  });
+});
+
+describe('requireNeoWorkSupersedeDecision', () => {
+  const candidates = [{ id: 'a', title: 'Card a' }];
+  test('asks Neo to decide when a replacement is likely and it said nothing', () => {
+    expect(requireNeoWorkSupersedeDecision({ concernId: null }, candidates, 'ok')).toEqual({
+      reason: {
+        ok: false,
+        reason:
+          'This concern has failed or cancelled work from the last three days: a ("Card a"). Pass supersedes with the id this work replaces, or supersedes: null if it replaces none.',
+      },
+    });
+  });
+
+  test('passes once Neo decides either way, or when nothing is likely', () => {
+    for (const supersedes of ['a', null])
+      expect(
+        requireNeoWorkSupersedeDecision({ concernId: null, supersedes }, candidates, 'ok')
+      ).toEqual({ value: 'ok' });
+    expect(requireNeoWorkSupersedeDecision({ concernId: null }, [], 'ok')).toEqual({
+      value: 'ok',
     });
   });
 });
@@ -100,6 +160,16 @@ describe('neo.work.propose with supersedes', () => {
     expect((snapshot as { value: NeoSnapshot }).value.workSupersessions).toEqual([
       { workId: first.id, supersededBy: second.id, supersededAt: expect.any(Number) },
     ]);
+  });
+
+  test('makes Neo say whether new work replaces a recent failed card', async () => {
+    const first = workOf(await propose('A'));
+    service.repo.transitionWork(first.id, first, { status: 'failed', report: 'It stopped.' });
+    expect(await propose('B')).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining(first.id) },
+    });
+    expect(await propose('B', { supersedes: null })).toMatchObject({ value: { ok: true } });
+    expect(service.workSupersessions.list([first.id])).toEqual([]);
   });
 
   test('refuses to supersede work that is still live, and records nothing', async () => {

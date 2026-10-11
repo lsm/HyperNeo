@@ -229,6 +229,10 @@ export class Database {
     this.sessionRepo.clearAcpSessionIds();
   }
 
+  listProcessingSessionIds(): string[] {
+    return this.sessionRepo.listProcessingSessionIds();
+  }
+
   markRestartInterruptedTurns(): number {
     return this.sessionRepo.markRestartInterruptedTurns();
   }

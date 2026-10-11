@@ -1,4 +1,3 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SessionEventSubscription } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -77,12 +76,6 @@ export function requireSessionScopedEvent(
     : { reason: 'not_session_scope' };
 }
 
-export function requireStoredSessionEvent(found: {
-  record: ExternalEventRecord | null;
-}): Gate<ExternalEvent> {
-  return found.record ? { value: found.record.event } : { reason: 'event_missing' };
-}
-
 export function requireSessionFeedbackEvent(event: ExternalEvent): Gate<FeedbackEvent> {
   if (event.urgency === 'immediate') return { value: { event, urgent: true } };
   return SESSION_FEEDBACK_ACTION.test(externalEventTopicSuffix(event.topic))
@@ -114,42 +107,6 @@ export function planSessionEventDeliveries(
     })),
   };
 }
-
-export const deliverSessionExternalEvent = (
-  superpipe({})('deliver-session-external-event') as PipelineAPI
-)
-  .input(['deps', 'payload'])
-  .pipe(requireSessionScopedEvent, 'payload', 'result:delivery')
-  .pipe(
-    (deps: SessionEventDeliveryDeps, payload: ExternalEventPublishedPayload) => ({
-      record: deps.readEvent(payload.eventId),
-    }),
-    ['deps', 'payload'],
-    'found'
-  )
-  .pipe(requireStoredSessionEvent, 'found', 'result:delivery')
-  .pipe(requireSessionFeedbackEvent, 'delivery', 'result:delivery')
-  .pipe(
-    (deps: SessionEventDeliveryDeps) => ({ subscriptions: deps.listSubscriptions() }),
-    'deps',
-    'subscribed'
-  )
-  .pipe(
-    (deps: SessionEventDeliveryDeps, feedback: FeedbackEvent, subscribed) =>
-      planSessionEventDeliveries(feedback, subscribed, (id) => deps.isSessionBusy(id)),
-    ['deps', 'delivery', 'subscribed'],
-    'result:delivery'
-  )
-  .pipe(
-    async (deps: SessionEventDeliveryDeps, deliveries: SessionEventDelivery[]) => {
-      await Promise.all(deliveries.map((delivery) => deps.deliver(delivery)));
-    },
-    ['deps', 'delivery']
-  )
-  .endAsync('delivery') as (
-  deps: SessionEventDeliveryDeps,
-  payload: ExternalEventPublishedPayload
-) => Promise<SessionEventDelivery[] | SessionEventSkip>;
 
 export function mailSessionEvent(
   jobQueue: JobQueueRepository,

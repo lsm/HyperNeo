@@ -4,6 +4,7 @@ import type {
   NeoAskItem,
   NeoAskStatus,
   NeoWorkDriverReceipt,
+  NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
 import type {
   NeoScene,
@@ -54,28 +55,24 @@ export type NeoAskOutcome = 'achieved' | 'abandoned';
 
 export const NEO_ASK_NEEDS_YOU_LABEL = 'Needs you';
 
-export function neoSupersededAttempts(scenes: readonly NeoScene[]): ReadonlySet<string> {
-  const works = scenes.flatMap((scene) => (scene.receipt.kind === 'work' ? [scene.receipt] : []));
-  return new Set(
-    works
-      .filter(
-        (work) =>
-          work.status === 'failed' &&
-          works.some(
-            (later) =>
-              later.id !== work.id &&
-              later.createdAt > work.createdAt &&
-              later.title.trim() === work.title.trim()
-          )
-      )
-      .map((work) => work.id)
+export function neoSupersededAttempts(
+  links: readonly NeoWorkSupersession[] | undefined
+): ReadonlySet<string> {
+  return new Set((links ?? []).map((link) => link.workId));
+}
+
+function replaced(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
+  return (
+    scene.receipt.kind === 'work' &&
+    scene.receipt.status === 'failed' &&
+    superseded.has(scene.ref.id)
   );
 }
 
 function dropped(scene: NeoScene, superseded: ReadonlySet<string>): boolean {
   return (
-    scene.receipt.kind === 'work' &&
-    (scene.receipt.status === 'cancelled' || superseded.has(scene.ref.id))
+    (scene.receipt.kind === 'work' && scene.receipt.status === 'cancelled') ||
+    replaced(scene, superseded)
   );
 }
 
@@ -103,11 +100,11 @@ export function neoAskItems(ask: NeoAsk): readonly NeoAskItem[] {
 export function describeNeoAsk(
   ask: NeoAsk,
   scenes: readonly NeoScene[],
-  prs: NeoScenePrs = new Map()
+  prs: NeoScenePrs = new Map(),
+  superseded: ReadonlySet<string> = new Set()
 ): NeoAskView {
   const truth = askScenes[ask.status];
   const settled = truth.group === 'outcomes';
-  const superseded = neoSupersededAttempts(scenes);
   const live = scenes.filter((scene) => !dropped(scene, superseded));
   const needsYou = !settled && live.some((scene) => scene.group === 'attention');
   const doneIds = new Set(
@@ -143,7 +140,8 @@ export function describeNeoAsk(
 export function groupNeoAsks(
   asks: readonly NeoAsk[] | undefined,
   groups: NeoSceneGroups | null,
-  prs: NeoScenePrs = new Map()
+  prs: NeoScenePrs = new Map(),
+  supersessions?: readonly NeoWorkSupersession[]
 ): NeoAskGroups {
   const all = groups ? [...groups.attention, ...groups.running, ...groups.outcomes] : [];
   const byWork = new Map(
@@ -151,7 +149,7 @@ export function groupNeoAsks(
   );
   const owned = new Set<string>();
   const settledWork = new Set<string>();
-  const superseded = neoSupersededAttempts(all);
+  const superseded = neoSupersededAttempts(supersessions);
   const views = (asks ?? []).map((ask) => {
     const scenes = ask.workIds.flatMap((id) => {
       const scene = byWork.get(id);
@@ -159,14 +157,14 @@ export function groupNeoAsks(
       owned.add(id);
       return [scene];
     });
-    const view = describeNeoAsk(ask, scenes, prs);
+    const view = describeNeoAsk(ask, scenes, prs, superseded);
     if (view.settled) for (const scene of scenes) settledWork.add(scene.ref.id);
     return view;
   });
   const pick = (group: NeoSceneGroup) => views.filter((view) => view.group === group);
   const loose = (group: NeoSceneGroup) =>
     (groups?.[group] ?? []).filter(
-      (scene) => !owned.has(scene.ref.id) && !superseded.has(scene.ref.id)
+      (scene) => !owned.has(scene.ref.id) && !replaced(scene, superseded)
     );
   return {
     asks: { attention: pick('attention'), running: pick('running'), outcomes: pick('outcomes') },
@@ -196,15 +194,12 @@ export function neoAskOpenTarget(
 }
 
 export function neoAskApproval(
-  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit' | 'approvedUntil'>,
-  now: number
+  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues' | 'approvedContinueLimit' | 'approvalSpent'>
 ): { line: string; spent: boolean } | null {
   if (!ask.approvedAt) return null;
   const used = ask.approvedContinues ?? 0;
   const limit = ask.approvedContinueLimit;
-  const spent =
-    (limit !== undefined && used >= limit) ||
-    (ask.approvedUntil !== undefined && now > ask.approvedUntil);
+  const spent = ask.approvalSpent != null;
   const count =
     limit !== undefined ? `${used} of ${limit} continues used` : `${used} continues used`;
   return { line: spent ? `${count} · approval ran out` : count, spent };

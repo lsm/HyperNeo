@@ -44,6 +44,22 @@ export interface NeoWorkSupersession {
 }
 
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
+export type NeoAskApprovalSpent = 'continues' | 'expired';
+
+export function isPooledNeoAsk<T extends Pick<NeoAsk, 'status' | 'approvedAt'>>(
+  ask: T | null | undefined
+): ask is T & { approvedAt: number } {
+  return ask?.approvedAt != null && ask.status !== 'achieved' && ask.status !== 'abandoned';
+}
+
+export function neoAskApprovalSpent(
+  ask: Pick<NeoAsk, 'approvedAt' | 'approvedContinues'>,
+  now: number
+): NeoAskApprovalSpent | null {
+  if (ask.approvedAt == null) return null;
+  if ((ask.approvedContinues ?? 0) >= NEO_ASK_CONTINUE_LIMIT) return 'continues';
+  return now - ask.approvedAt >= NEO_ASK_CONTINUE_WINDOW_MS ? 'expired' : null;
+}
 
 export interface NeoAskItem {
   id: string;
@@ -71,6 +87,8 @@ export interface NeoAsk {
   approvedContinues?: number;
   approvedUntil?: number;
   approvedContinueLimit?: number;
+  pooled?: boolean;
+  approvalSpent?: NeoAskApprovalSpent | null;
   waitingItem?: string | null;
   status: NeoAskStatus;
   outcome: string | null;
@@ -124,6 +142,13 @@ export interface NeoSessionNotice {
   link?: string;
 }
 
+export interface NeoSessionNoticeGroup {
+  id: string;
+  at: number;
+  line: string;
+  notices: NeoSessionNotice[];
+}
+
 export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
@@ -136,6 +161,8 @@ export interface NeoSnapshot {
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
   sessionNotices?: NeoSessionNotice[];
+  sessionNoticeGroups?: NeoSessionNoticeGroup[];
+  mutedSessions?: string[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
   workSupersessions?: NeoWorkSupersession[];

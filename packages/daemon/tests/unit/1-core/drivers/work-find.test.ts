@@ -103,6 +103,8 @@ describe('hyperneoWorkStatus', () => {
     ['pending_worktree_choice', null, 'needs_you'],
     ['active', 'rate_limit_cooldown', 'queued'],
     ['active', 'interrupted', 'stopped'],
+    ['active', 'interrupted_by_restart', 'queued'],
+    ['archived', 'interrupted_by_restart', 'stopped'],
     ['active', 'idle', 'done'],
     ['ended', 'idle', 'stopped'],
   ] as const)('%s with %s is %s', (status, processing, expected) => {

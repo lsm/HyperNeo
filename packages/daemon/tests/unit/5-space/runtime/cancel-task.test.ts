@@ -81,7 +81,7 @@ function canceller(policy: CancelPolicyContext) {
     ) => {
       const context = { ...sessionPolicy(), ...policy };
       const managed = await admitManagedCancellation(db, input, caller, context);
-      if ('reason' in managed) return managed.reason;
+      if (managed) return managed;
       const direct = admitCancellation(db, input, caller, context);
       if ('reason' in direct) return direct.reason;
       return enqueueDirectOutcome(db, jobs, direct.value);
