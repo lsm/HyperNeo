@@ -117,6 +117,7 @@ import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { unmutedNeoAskSessions } from './session-ask-links.ts';
+import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -1198,7 +1199,12 @@ export function createNeoOperations(service: NeoService) {
           );
           if (
             owned &&
-            isNeoTrackedFollowUp(owned, targets, input.work, service.driverTargets.adoptedRefs())
+            isNeoTrackedFollowUp(
+              owned,
+              targets,
+              input.work,
+              service.driverTargets.adoptedRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
+            )
           )
             service.askRecords.approve(owned.id, Date.now());
           return;

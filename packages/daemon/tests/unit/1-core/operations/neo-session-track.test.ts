@@ -1,3 +1,4 @@
+import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
@@ -262,7 +263,7 @@ describe('neo.session.track', () => {
       neo
     );
     expect(adopted).toMatchObject({ value: { ok: true } });
-    expect(service.driverTargets.adoptedRefs()).toEqual([ref]);
+    expect(service.driverTargets.adoptedRefs(0)).toEqual([ref]);
     const propose = async (requestKey: string, target: { adapter: string; id: string }) => {
       const proposed = await invokeOperation(
         registry,
@@ -284,6 +285,15 @@ describe('neo.session.track', () => {
     expect(
       (await propose('elsewhere', { adapter: 'codex-desktop', id: 't9' }))?.approvedAt ?? null
     ).toBeNull();
+    const card = service.repo.getWork(
+      (adopted as { value: { work: { id: string } } }).value.work.id
+    )!;
+    service.repo.transitionWork(card.id, card, {
+      status: 'reported',
+      report: NEO_WORK_CLOSED_DONE,
+    });
+    expect(service.driverTargets.adoptedRefs(0)).toEqual([]);
+    expect((await propose('after-close', ref))?.approvedAt ?? null).toBeNull();
   });
 
   test('a tap starts the card but never approves an existing ask Neo names', async () => {
