@@ -57,7 +57,6 @@ import {
   type SessionEventDeliveryDeps,
 } from './lib/external-events/session-event-delivery.ts';
 import { SESSION_EVENT_SCOPE } from './lib/external-events/session-external-event-store.ts';
-import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
   ExternalEventExtensionManager,
@@ -65,6 +64,7 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -836,6 +836,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,
         autoReconcileWebhooks: true,
+        sessionRepoReferenced: (owner, repo) =>
+          sessionEventSubscriptions.referencesRepo(owner, repo),
       })
     );
 
@@ -896,6 +898,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
+      watchSessionRepo: async (owner, repo) => githubEventExtension?.watchSessionRepo(owner, repo),
       messageHub,
       sessionManager,
       authManager,

@@ -48,6 +48,13 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
     SessionEventSubscriptionRepository,
     'upsert' | 'listBySession' | 'delete'
   >;
+  watchSessionRepo?: (owner: string, repo: string) => Promise<void>;
+}
+
+export function githubRepoOfTopic(topic: string): { owner: string; repo: string } | null {
+  const [source, owner, repo] = topic.split('/');
+  if (source !== 'github' || !owner || !repo) return null;
+  return owner.includes('*') || repo.includes('*') ? null : { owner, repo };
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
@@ -103,6 +110,13 @@ function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: stri
   const parsed = parsePrUrl(prUrl ?? '');
   if (!parsed) {
     ctx.addIssue({ code: 'custom', message: `Could not parse GitHub PR URL: ${prUrl}` });
+    return z.NEVER;
+  }
+  if (parsed.host.toLowerCase() !== 'github.com') {
+    ctx.addIssue({
+      code: 'custom',
+      message: `Only github.com pull requests can be followed: ${prUrl}`,
+    });
     return z.NEVER;
   }
   return { ...rest, topicPattern: buildPrEventTopicPattern(parsed) };
@@ -362,6 +376,8 @@ function subscribeSession(
       topic: topicPattern,
       label: input.label,
     });
+    const watched = githubRepoOfTopic(topicPattern);
+    if (watched) void subs.watchSessionRepo?.(watched.owner, watched.repo).catch(() => undefined);
     return { ok: true, topicPattern };
   }
   const stored = subs.sessionSubscriptions.upsert({

@@ -51,6 +51,13 @@ export class SessionEventSubscriptionRepository {
     return rows.map(toSubscription);
   }
 
+  referencesRepo(owner: string, repo: string): boolean {
+    const escape = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
+    return !!this.db
+      .prepare(`SELECT 1 FROM session_event_subscriptions WHERE topic LIKE ? ESCAPE '\\' LIMIT 1`)
+      .get(`github/${escape(owner)}/${escape(repo)}/%`);
+  }
+
   listAll(): SessionEventSubscription[] {
     const rows = this.db
       .prepare(

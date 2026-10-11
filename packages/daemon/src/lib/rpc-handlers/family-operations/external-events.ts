@@ -60,6 +60,7 @@ export function registerExternalEventOperations(
       unscopedSessionSubscriptions: new SessionEventSubscriptionRepository(
         context.deps.db.getDatabase()
       ),
+      watchSessionRepo: context.deps.watchSessionRepo,
       refreshSessionSubscription: (spaceId, subscriptionId) =>
         context.spaceRuntimeService.refreshSessionSubscription(spaceId, subscriptionId),
       listRunSubscriptions: (workflowRunId, spaceId, nodeId) =>

@@ -1,16 +1,17 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { CredentialStore } from '../../credentials/credential-store.js';
 import { Logger } from '../../logger.ts';
 import { isRateLimitError } from '../../session/rate-limit-detector.ts';
-import { type CredentialStore } from '../../credentials/credential-store.js';
+import { ExternalEventStore } from '../external-event-store.ts';
+import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import type {
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
 } from '../types.ts';
-import { ExternalEventStore } from '../external-event-store.ts';
-import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import {
   checkRunAppKeyFrom,
   checkRunConclusionFrom,
@@ -19,6 +20,19 @@ import {
   checkRunOccurredAt,
   checkRunTopicAction,
 } from './github-check-run-fields.ts';
+import {
+  type GitHubPollingRepo,
+  normalizeGitHubCheckRun,
+  normalizeGitHubDeployment,
+  normalizeGitHubDeploymentStatus,
+  normalizeGitHubMergeConflict,
+  normalizeGitHubPollingRow,
+  normalizeGitHubReaction,
+  normalizeGitHubReview,
+  normalizeGitHubStatus,
+  repoFromPayload,
+  toExternalEvent,
+} from './github-normalizer.ts';
 import {
   gitHubRepoPath,
   headRefKey,
@@ -34,25 +48,12 @@ import {
 } from './github-pr-head-ref-index.ts';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
-import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
-import {
-  normalizeGitHubCheckRun,
-  normalizeGitHubDeployment,
-  normalizeGitHubDeploymentStatus,
-  normalizeGitHubMergeConflict,
-  normalizeGitHubPollingRow,
-  normalizeGitHubReaction,
-  normalizeGitHubReview,
-  normalizeGitHubStatus,
-  toExternalEvent,
-  repoFromPayload,
-  type GitHubPollingRepo,
-} from './github-normalizer.ts';
 import {
   GitHubEventExtensionRepository,
   type GitHubWatchedRepo,
   type PollCursor,
 } from './github-repository.ts';
+import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
 import {
   runGithubWebhookAdmission,
   type WebhookAdmissionContext,
@@ -139,6 +140,7 @@ interface GitHubEventExtensionOptions {
   credentialStore?: CredentialStore;
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
+  sessionRepoReferenced?: (owner: string, repo: string) => boolean;
 }
 
 interface GitHubTokenStatus {
@@ -1024,6 +1026,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let count = 0;
     for (const repo of this.repo.listPollingRepos()) {
       if (Date.now() < this.rateLimitedUntil) break;
+      if (this.reapUnreferencedSessionRepo(repo)) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
       count += await this.pollWatchedRepo(repo, fetchImpl);
@@ -1064,6 +1067,31 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!this.context) return false;
     const global = await this.context.config.getGlobalConfig(this.sourceId);
     return global.globallyEnabled && global.capabilities.webhooks !== false;
+  }
+
+  private reapUnreferencedSessionRepo(watched: GitHubWatchedRepo): boolean {
+    const referenced = this.options.sessionRepoReferenced;
+    if (watched.spaceId !== SESSION_EVENT_SCOPE || !referenced) return false;
+    if (referenced(watched.owner, watched.repo)) return false;
+    this.repo.removeWatchedRepo(SESSION_EVENT_SCOPE, watched.owner, watched.repo);
+    return true;
+  }
+
+  async watchSessionRepo(owner: string, repo: string): Promise<void> {
+    const existing = this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, owner, repo);
+    if (!existing?.enabled || !existing.pollingEnabled)
+      this.repo.upsertWatchedRepo({
+        spaceId: SESSION_EVENT_SCOPE,
+        owner,
+        repo,
+        enabled: true,
+        pollingEnabled: true,
+        webhookEnabled: false,
+      });
+    const context = this.context;
+    if (!context || this.getPollIntervalMs() <= 0) return;
+    await this.enablePollingCapability(context);
+    this.ensurePollingActive();
   }
 
   async refreshPollingInterval(): Promise<void> {
@@ -1700,6 +1728,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   ): Promise<void> {
     if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
     if (this.repo.countSpacesWithPollingIntent() > 0) return;
+    if (this.repo.listPollingRepos(SESSION_EVENT_SCOPE).length > 0) return;
     const global = await context.config.getGlobalConfig(this.sourceId);
     if (global.capabilities.polling !== true) return;
     await context.config.setGlobalConfig(this.sourceId, {
