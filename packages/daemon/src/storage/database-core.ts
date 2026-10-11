@@ -254,7 +254,11 @@ export class DatabaseCore {
 
   private writeBackupTo(tempDb: string, freeRoom: () => void): string | null {
     if (shouldStreamCopyBackup(process.platform, statSync(this.dbPath).size)) {
-      return this.tryStreamCopy(tempDb) ? 'stream-copy' : null;
+      if (this.tryStreamCopy(tempDb)) return 'stream-copy';
+      if (!this.removePartialBackup(tempDb)) {
+        this.logger.error('Failed to create migration backup: partial artifacts remain');
+        return null;
+      }
     }
     if (this.tryFastCopy(tempDb)) {
       if (this.copyWalSidecar(tempDb)) {
@@ -355,14 +359,17 @@ export class DatabaseCore {
     const backupDir = dirname(tempDb);
     const dbBytes = statSync(this.dbPath).size;
     try {
-      const oldestFirst = this.backupsBeyondRetention(backupDir, 0).reverse();
+      const oldestFirst = this.backupsBeyondRetention(
+        backupDir,
+        MIGRATION_BACKUP_RETENTION - 1
+      ).reverse();
       while (!hasRoomForBackupCopy(freeBytesAt(backupDir), dbBytes) && oldestFirst.length > 0) {
         try {
           unlinkSync(oldestFirst.shift() as string);
         } catch {}
       }
       if (!hasRoomForBackupCopy(freeBytesAt(backupDir), dbBytes)) {
-        this.logger.error('Failed to create migration backup: not enough free space for a copy');
+        this.logger.warn('Not enough free space for a migration backup copy; falling back');
         return false;
       }
     } catch (err) {
