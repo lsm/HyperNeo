@@ -429,6 +429,27 @@ describe('refreshDriverWork', () => {
     }
   });
 
+  test('a watch still running at shutdown posts nothing after Neo stops', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      await openFinishedGroup(
+        (ms) => {
+          clock += ms;
+        },
+        () => clock
+      );
+      service.dispose();
+      const saved = db.getSDKMessagesByType('neo:root', 'system', 'session_notices');
+      events.length = 0;
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual(saved);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
   test('a group whose row could not be saved is neither kept nor announced', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);

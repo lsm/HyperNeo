@@ -274,6 +274,7 @@ export class NeoService {
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   private openSessionNotices: NeoSessionNotice[] = [];
   private watching: Promise<unknown> | null = null;
+  private disposed = false;
   filePacks: readonly NeoPack[] = [];
   private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
@@ -787,6 +788,7 @@ export class NeoService {
 
   dispose() {
     this.flushSessionNoticeGroup();
+    this.disposed = true;
     this.unsubscribe();
     for (const timer of this.replyRechecks.values()) clearTimeout(timer);
     this.replyRechecks.clear();
@@ -1304,6 +1306,7 @@ export class NeoService {
         added: { notices: NeoSessionNotice[] },
         grouped: ReturnType<typeof planNeoSessionNoticeGroup>
       ) => {
+        if (this.disposed) return;
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.announceSessionNotice(notice);
