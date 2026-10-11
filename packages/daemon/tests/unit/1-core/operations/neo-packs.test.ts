@@ -6,6 +6,7 @@ import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   codingPrMergedCheck,
   createCodingPack,
+  readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { extractNeoWorkPrUrls } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
@@ -279,5 +280,67 @@ describe('requireNeoPackTickable', () => {
     expect(requireNeoPackTickable({ ask: current })).toEqual(
       tickable ? { value: current } : { reason: null }
     );
+  });
+});
+
+describe('readNeoCardPrs', () => {
+  const url = 'https://github.com/lsm/HyperNeo/pull/1';
+  const open: NeoWorkPr = { url, state: 'OPEN', checks: 'pending', review: 'none' };
+  const stored = {
+    workId: 'w1',
+    prs: [open],
+    revision: 1,
+    delivered: null,
+    deliveredAt: null,
+    reminded: null,
+    readAt: 0,
+    readOkAt: 0,
+  } as NeoWorkPrRow;
+  const work = { id: 'w1', report: `Opened ${url}.` } as NeoWork;
+  const harness = (read: NeoWorkPr[] | null) => {
+    const calls = { reads: 0, failed: [] as number[], recorded: [] as NeoWorkPr[][] };
+    return {
+      calls,
+      deps: {
+        readPrs: async () => {
+          calls.reads++;
+          return read;
+        },
+        prUrls: async () => [url],
+        workPrs: {
+          get: () => stored,
+          list: () => [],
+          recordFailedRead: (_id: string, at: number) => calls.failed.push(at),
+        },
+        record: (_id: string, prs: readonly NeoWorkPr[]) => {
+          calls.recorded.push([...prs]);
+          return { ...stored, prs: [...prs], revision: 2, readAt: 5, readOkAt: 5 };
+        },
+      },
+    };
+  };
+
+  test('skips a read the card made moments ago', async () => {
+    const { deps, calls } = harness([open]);
+    expect(await readNeoCardPrs(deps, work, { ...stored, readAt: 10, readOkAt: 10 }, 20)).toEqual({
+      row: { ...stored, readAt: 10, readOkAt: 10 },
+      ok: true,
+    });
+    expect(calls.reads).toBe(0);
+  });
+
+  test('records a fresh read, or marks a failed one and keeps what was stored', async () => {
+    const merged: NeoWorkPr = { ...open, state: 'MERGED' };
+    const fresh = harness([merged]);
+    expect(await readNeoCardPrs(fresh.deps, work, stored, 10 * 60_000)).toMatchObject({
+      row: { prs: [merged] },
+      ok: true,
+    });
+    const failed = harness(null);
+    expect(await readNeoCardPrs(failed.deps, work, stored, 10 * 60_000)).toEqual({
+      row: stored,
+      ok: false,
+    });
+    expect(failed.calls.failed).toEqual([10 * 60_000]);
   });
 });

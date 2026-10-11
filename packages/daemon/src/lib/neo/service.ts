@@ -126,7 +126,7 @@ import {
   type NeoBranchPrReader,
 } from './packs/coding/branch-prs.ts';
 import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
-import { createCodingPack } from './packs/coding/pack.ts';
+import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
 import {
   neoEnabledPacks,
   neoPackBriefs,
@@ -141,14 +141,12 @@ import {
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
   extractNeoWorkPrUrls,
-  mergeNeoWorkPrReads,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
   readGithubPrs,
-  shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
 } from './packs/coding/work-prs.ts';
 import { closeNeoWork, type NeoWorkCloseOutcome, type NeoWorkCloseResult } from './work-close.ts';
@@ -373,19 +371,8 @@ export class NeoService {
     .pipe(requireNeoDoneCheckUntold, ['unread', 'check'], 'result:check')
     .pipe(
       async (work: NeoWork, card: NeoDoneCheckCard) => {
-        const urls = await this.cardPrUrls(work, card.stored);
-        const prs = shouldReadNeoWorkPrs(card.stored, urls, Date.now())
-          ? await this.readPrs(urls)
-          : null;
-        return {
-          row: prs
-            ? this.recordWorkPrs(
-                work.id,
-                mergeNeoWorkPrReads(urls, prs, card.stored?.prs),
-                card.stored
-              )
-            : card.stored,
-        };
+        const read = await readNeoCardPrs(this.cardPrDeps, work, card.stored, Date.now());
+        return { row: read.row };
       },
       ['work', 'card'],
       'found'
@@ -453,12 +440,9 @@ export class NeoService {
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
       createCodingPack({
-        readPrs: (urls) => this.readPrs(urls),
-        prUrls: (work, stored) => this.cardPrUrls(work, stored),
+        ...this.cardPrDeps,
         runningPrUrls: (workIds) => this.runningPrUrls(workIds),
         readRefStates: (refs) => this.readRefStates(refs),
-        workPrs: this.workPrs,
-        record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
       }),
     ];
     this.consultations = new NeoConsultationRepository(db.getDatabase(), () =>
@@ -1460,6 +1444,15 @@ export class NeoService {
 
   askPackFragment(ask: NeoAsk | null | undefined): NeoPackFragment | null {
     return neoPackFragment(ask, this.installedPacks());
+  }
+
+  private get cardPrDeps(): NeoCardPrDeps {
+    return {
+      readPrs: (urls) => this.readPrs(urls),
+      prUrls: (work, stored) => this.cardPrUrls(work, stored),
+      workPrs: this.workPrs,
+      record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
+    };
   }
 
   private recordWorkPrs(

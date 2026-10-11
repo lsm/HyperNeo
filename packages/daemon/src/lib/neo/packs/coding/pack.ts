@@ -10,7 +10,13 @@ import {
   type NeoRefStateReader,
 } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
-import { mergeNeoWorkPrReads, neoWorkPrEvidence, type NeoWorkPrReader } from './work-prs.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import {
+  mergeNeoWorkPrReads,
+  neoWorkPrEvidence,
+  shouldReadNeoWorkPrs,
+  type NeoWorkPrReader,
+} from './work-prs.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -22,33 +28,88 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
     ? { value: `Merged: ${evidence.map((item) => item.key).join(', ')}` }
     : { reason: 'not_merged' };
 
-export function createCodingPack(deps: {
+export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;
   prUrls: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<string[]>;
-  runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
-  readRefStates: NeoRefStateReader;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
     prs: readonly NeoWorkPr[],
     before: NeoWorkPrRow | null
   ) => NeoWorkPrRow | null;
-}): NeoPack {
+}
+
+type NeoCardPrRead = { row: NeoWorkPrRow | null; ok: boolean };
+
+export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
+  .input(['deps', 'work', 'stored', 'now'])
+  .pipe(
+    async (deps: NeoCardPrDeps, work: NeoWork, stored: NeoWorkPrRow | null) => ({
+      urls: await deps.prUrls(work, stored),
+    }),
+    ['deps', 'work', 'stored'],
+    'found'
+  )
+  .pipe(
+    (stored: NeoWorkPrRow | null, found: { urls: string[] }, now: number) =>
+      shouldReadNeoWorkPrs(stored, found.urls, now)
+        ? { value: found }
+        : { reason: { row: stored, ok: !stored || stored.readOkAt >= stored.readAt } },
+    ['stored', 'found', 'now'],
+    'result:read'
+  )
+  .pipe(
+    async (deps: NeoCardPrDeps, found: { urls: string[] }) => ({
+      prs: await deps.readPrs(found.urls),
+    }),
+    ['deps', 'found'],
+    'fetched'
+  )
+  .pipe(
+    (deps: NeoCardPrDeps, work: NeoWork, fetched: { prs: NeoWorkPr[] | null }, now: number) => {
+      if (!fetched.prs) deps.workPrs.recordFailedRead(work.id, now);
+    },
+    ['deps', 'work', 'fetched', 'now']
+  )
+  .pipe(
+    (
+      deps: NeoCardPrDeps,
+      work: NeoWork,
+      stored: NeoWorkPrRow | null,
+      found: { urls: string[] },
+      fetched: { prs: NeoWorkPr[] | null }
+    ) => ({
+      value: {
+        row: fetched.prs
+          ? deps.record(work.id, mergeNeoWorkPrReads(found.urls, fetched.prs, stored?.prs), stored)
+          : stored,
+        ok: !!fetched.prs,
+      },
+    }),
+    ['deps', 'work', 'stored', 'found', 'fetched'],
+    'result:read'
+  )
+  .endAsync('read') as (
+  deps: NeoCardPrDeps,
+  work: NeoWork,
+  stored: NeoWorkPrRow | null,
+  now: number
+) => Promise<NeoCardPrRead>;
+
+export function createCodingPack(
+  deps: NeoCardPrDeps & {
+    runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
+    readRefStates: NeoRefStateReader;
+  }
+): NeoPack {
   return {
     ...CODING_PACK_BRIEF,
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     checks: { pr_merged: codingPrMergedCheck },
     readEvidence: async (work: NeoWork) => {
-      const stored = deps.workPrs.get(work.id);
-      const urls = await deps.prUrls(work, stored);
-      if (!urls.length) return null;
-      const prs = await deps.readPrs(urls);
-      if (!prs) deps.workPrs.recordFailedRead(work.id, Date.now());
-      const row = prs
-        ? deps.record(work.id, mergeNeoWorkPrReads(urls, prs, stored?.prs), stored)
-        : stored;
-      return row
-        ? { evidence: neoWorkPrEvidence(row.prs), read: { ok: !!prs, okAt: row.readOkAt } }
+      const { row, ok } = await readNeoCardPrs(deps, work, deps.workPrs.get(work.id), Date.now());
+      return row?.prs.length
+        ? { evidence: neoWorkPrEvidence(row.prs), read: { ok, okAt: row.readOkAt } }
         : null;
     },
     readAskEvidence: async (ask: NeoAsk) => {
