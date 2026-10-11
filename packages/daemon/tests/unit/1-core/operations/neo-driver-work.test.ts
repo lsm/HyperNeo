@@ -1,6 +1,7 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
+import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
 import { z } from 'zod';
 import {
   type DaemonInternalEventMap,
@@ -604,6 +605,44 @@ describe('Neo work with a drivers target', () => {
     );
     return { db, service, calls, proposed };
   }
+
+  test('a card that stopped being checked still reads unchecked after a restart', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const check = service as unknown as {
+      recordCardCheck(workId: string, read: boolean, now: number): boolean;
+    };
+    try {
+      check.recordCardCheck('work-1', true, 1_000);
+      expect(check.recordCardCheck('work-1', false, 1_000 + NEO_CARD_UNCHECKED_MS + 1)).toBe(true);
+      const restarted = new NeoService(
+        db,
+        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      expect(restarted.uncheckedSince('work-1')).toBe(1_000);
+      expect(restarted.uncheckedSince('work-unknown')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the minute pass forgets read throttles of cards it no longer follows', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const throttles = service as unknown as {
+      followReads: Map<string, number>;
+      askEvidenceReads: Map<string, number>;
+    };
+    try {
+      throttles.followReads.set('gone-card', 1);
+      throttles.askEvidenceReads.set('gone-ask', 1);
+      await service.refreshDriverWork();
+      expect([...throttles.followReads.keys()]).toEqual([]);
+      expect([...throttles.askEvidenceReads.keys()]).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 
   test('starts the work through work.start as Neo and keeps the ref', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };

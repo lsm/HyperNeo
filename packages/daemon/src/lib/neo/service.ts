@@ -138,7 +138,7 @@ import {
   type NeoPrClaimRow,
 } from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
-import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
+import { planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
@@ -305,7 +305,6 @@ export class NeoService {
   private watching: Promise<unknown> | null = null;
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
-  private readonly cardChecks = new Map<string, NeoCardCheck>();
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
@@ -676,14 +675,26 @@ export class NeoService {
   }
 
   private recordCardCheck(workId: string, read: boolean, now: number): boolean {
-    const { next, changed } = planNeoCardCheck(this.cardChecks.get(workId), read, now);
-    this.cardChecks.set(workId, next);
+    const prior = this.driverTargets.readCardCheck(workId) ?? undefined;
+    const { next, changed } = planNeoCardCheck(prior, read, now);
+    this.driverTargets.recordCardCheck(workId, next);
     return changed;
   }
 
   uncheckedSince(workId: string): number | null {
-    const check = this.cardChecks.get(workId);
+    const check = this.driverTargets.readCardCheck(workId);
     return check?.unchecked ? check.checkedAt : null;
+  }
+
+  private pruneReadThrottles(now: number): void {
+    const followed = new Set(
+      this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).map((card) => card.workId)
+    );
+    for (const workId of this.followReads.keys())
+      if (!followed.has(workId)) this.followReads.delete(workId);
+    const live = new Set(this.askRecords.listLive().map((ask) => ask.id));
+    for (const askId of this.askEvidenceReads.keys())
+      if (!live.has(askId)) this.askEvidenceReads.delete(askId);
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
@@ -1213,6 +1224,7 @@ export class NeoService {
         this.log.warn('Ask stall note pending', error)
       );
     }
+    this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.watchSessions(Date.now())
       .catch((error) => this.log.warn('Session watch pending', error))
