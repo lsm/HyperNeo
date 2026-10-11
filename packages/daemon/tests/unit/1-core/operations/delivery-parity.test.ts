@@ -1,5 +1,5 @@
 import { transitionStandaloneTask } from '../../../../src/storage/tasks/transition-task';
-import { editStandaloneTask } from '../../../../src/storage/tasks/edit-task';
+import { editStandaloneTaskWithDependencies } from '../../../../src/storage/tasks/set-task-dependencies';
 import { listTaskCores } from '../../../../src/storage/tasks/list-tasks';
 import { createStandaloneTask } from '../../../../src/storage/tasks/create-task';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
@@ -60,7 +60,7 @@ describe('shared operation delivery parity', () => {
         createTask: (input, creatorSessionId) =>
           createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
         listTasks: (input) => listTaskCores(mailbox.db, input),
-        editTask: (input) => editStandaloneTask(mailbox.db, input, () => {}),
+        editTask: (input) => editStandaloneTaskWithDependencies(mailbox.db, input, () => {}),
         transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
       })
     );
@@ -104,7 +104,7 @@ describe('shared operation delivery parity', () => {
             createTask: (input, creatorSessionId) =>
               createStandaloneTask(mailbox.db, input, creatorSessionId, () => {}),
             listTasks: (input) => listTaskCores(mailbox.db, input),
-            editTask: (input) => editStandaloneTask(mailbox.db, input, () => {}),
+            editTask: (input) => editStandaloneTaskWithDependencies(mailbox.db, input, () => {}),
             transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
           }),
           () => ({

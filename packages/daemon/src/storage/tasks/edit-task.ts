@@ -1,5 +1,4 @@
 import type { TaskCore, TaskPriority } from '@hyperneo/shared/types/task-core';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import { decodeTaskCoreRow } from './task-row.ts';
@@ -46,10 +45,6 @@ function updateStandaloneTask(
   return row ? { value: row } : { reason: null };
 }
 
-function notifyTaskEdited(notifyChange: () => void): void {
-  notifyChange();
-}
-
 export function applyStandaloneTaskEdit(
   db: Database,
   input: EditStandaloneTaskInput
@@ -57,16 +52,3 @@ export function applyStandaloneTaskEdit(
   const written = updateStandaloneTask(db, buildTaskEditQuery(input, Date.now()));
   return 'reason' in written ? null : decodeTaskCoreRow(written.value);
 }
-
-export const editStandaloneTask = (superpipe({})('edit-standalone-task') as PipelineAPI)
-  .input(['db', 'input', 'notifyChange'])
-  .pipe(Date.now, undefined, 'now')
-  .pipe(buildTaskEditQuery, ['input', 'now'], 'query')
-  .pipe(updateStandaloneTask, ['db', 'query'], 'result:task')
-  .pipe(decodeTaskCoreRow, 'task', 'task')
-  .pipe(notifyTaskEdited, 'notifyChange')
-  .end('task') as (
-  db: Database,
-  input: EditStandaloneTaskInput,
-  notifyChange: () => void
-) => TaskCore | null;
