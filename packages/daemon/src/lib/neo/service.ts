@@ -2127,8 +2127,9 @@ export class NeoService {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
-    const delivery = this.enqueueDelivery(sessionId, messageId, content, originSessionId)
+    const delivery = Promise.resolve()
       .then(() => this.stampDelivery({ sessionId, messageId }, parent))
+      .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
