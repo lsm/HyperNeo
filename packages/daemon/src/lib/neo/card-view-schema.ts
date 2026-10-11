@@ -31,7 +31,7 @@ export const NeoCardViewSchema = z.object({
   label: z.string(),
   hidden: z.boolean(),
   primary: z.object({
-    kind: z.enum(['start', 'retry', 'close', 'answer', 'open', 'none']),
+    kind: z.enum(['start', 'retry', 'close', 'answer', 'open', 'chat', 'none']),
     label: z.string().nullable(),
     link: z.string().nullable(),
   } satisfies ZodShape<NeoCardPrimary>),

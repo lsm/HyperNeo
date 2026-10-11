@@ -155,9 +155,25 @@ describe('projectNeoCardViews', () => {
       doneWhen: 'Merged',
       continued: 2,
       pooled: true,
-      primary: { kind: 'none', label: null, link: null },
+      primary: { kind: 'chat', label: 'Open chat', link: null },
       actions: [],
     });
+  });
+
+  test('an abandoned card that still needs you keeps the warning tone', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('a', 'queued'), work('b', 'queued')],
+        drivers: [
+          driver('a', 'needs_you', { abandoned: true }),
+          driver('b', 'running', { abandoned: true }),
+        ],
+      })
+    );
+    expect(cards.map((card) => [card.phase, card.tone])).toEqual([
+      ['abandoned', 'warning'],
+      ['abandoned', 'accent'],
+    ]);
   });
 
   test('a proposed card can start or be declined; a sessionless cancel is hidden', () => {

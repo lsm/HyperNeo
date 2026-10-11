@@ -123,7 +123,10 @@ export function neoCardPrimary(
     driver.status !== 'stopped'
   )
     return { kind: 'close', label: 'Close', link };
-  if (!link || !driver) return { kind: 'none', label: null, link: null };
+  if (!link || !driver)
+    return work.sessionId
+      ? { kind: 'chat', label: 'Open chat', link: null }
+      : { kind: 'none', label: null, link: null };
   const app = shortApps[driver.adapter] ?? driver.adapter;
   return work.status === 'queued' && driver.status === 'needs_you'
     ? { kind: 'answer', label: `Answer in ${app}`, link }
@@ -139,7 +142,12 @@ export function neoCardActions(work: NeoWork, retryable: boolean): NeoCardAction
   ];
 }
 
-export function neoCardTone(phase: NeoCardPhase, pr: NeoCardPrSummary | null): NeoCardTone {
+export function neoCardTone(
+  phase: NeoCardPhase,
+  pr: NeoCardPrSummary | null,
+  driver: NeoWorkDriverReceipt | undefined
+): NeoCardTone {
+  if (phase === 'abandoned') return driver?.status === 'needs_you' ? 'warning' : 'accent';
   if (phase === 'pr_open' || phase === 'pr_setback' || phase === 'merged' || phase === 'reported')
     return pr?.inProgress ? 'accent' : pr?.setback ? 'warning' : 'success';
   return phase === 'needs_you' || phase === 'stopped' || phase === 'failed' || phase === 'cancelled'
@@ -169,7 +177,7 @@ export function describeNeoCard(work: NeoWork, index: CardIndex): NeoCardView {
     workId: work.id,
     phase,
     group: neoCardGroup(phase),
-    tone: neoCardTone(phase, pr),
+    tone: neoCardTone(phase, pr, driver),
     label:
       work.status === 'queued' && driver
         ? neoCardDriverLabel(driver)

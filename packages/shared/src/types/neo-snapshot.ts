@@ -150,7 +150,7 @@ export type NeoCardTone = 'accent' | 'warning' | 'success';
 export type NeoCardAction = 'start' | 'cancel' | 'retry' | 'close' | 'done';
 
 export interface NeoCardPrimary {
-  kind: 'start' | 'retry' | 'close' | 'answer' | 'open' | 'none';
+  kind: 'start' | 'retry' | 'close' | 'answer' | 'open' | 'chat' | 'none';
   label: string | null;
   link: string | null;
 }
