@@ -106,7 +106,7 @@ describe('hyperneo adapter send and status', () => {
   const ref = (id: string) => ({ adapter: 'hyperneo', id });
   const from = { from: 'session:neo:root', caller: { source: 'rpc' as const } };
 
-  test('status returns the session with its last top-level reply', async () => {
+  test('status returns the session with its last top-level reply and when it came', async () => {
     expect(await adapter().status?.(ref('idle'))).toEqual({
       ok: true,
       value: {
@@ -117,6 +117,7 @@ describe('hyperneo adapter send and status', () => {
         lastActivityAt: Date.parse('2026-10-04T10:00:00.000Z'),
         link: '/session/idle',
         lastReply: 'loader is fixed',
+        lastReplyAt: Date.parse('2026-10-04T10:00:00.000Z'),
         recentInputs: [],
       },
     });
