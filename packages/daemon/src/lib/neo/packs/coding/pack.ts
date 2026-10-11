@@ -68,16 +68,18 @@ export function cachedNeoCardPrRead(row: NeoWorkPrRow | null): NeoCardPrRead {
 export function neoCardPrsFresh(
   current: { row: NeoWorkPrRow | null },
   plan: NeoCardPrPlan,
-  now: number
+  now: number,
+  force = false
 ): boolean {
   return (
+    !force &&
     !shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) &&
-    plan.owned.every((item) => item.claimed && (item.claim !== 'mentioned' || item.score != null))
+    plan.owned.every((item) => item.claimed)
   );
 }
 
 export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
-  .input(['deps', 'work', 'stored', 'now'])
+  .input(['deps', 'work', 'stored', 'now', 'force'])
   .pipe(
     async (deps: NeoCardPrDeps, work: NeoWork, stored: NeoWorkPrRow | null) => ({
       candidates: await deps.prCandidates(work, stored),
@@ -121,7 +123,7 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     ['current'],
     'result:read'
   )
-  .pipe(neoCardPrsFresh, ['current', 'plan', 'now'], 'fresh')
+  .pipe(neoCardPrsFresh, ['current', 'plan', 'now', 'force'], 'fresh')
   .pipe('!fresh')
   .pipe(
     async (deps: NeoCardPrDeps, plan: NeoCardPrPlan) => ({
@@ -203,7 +205,8 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
   deps: NeoCardPrDeps,
   work: NeoWork,
   stored: NeoWorkPrRow | null,
-  now: number
+  now: number,
+  force?: boolean
 ) => Promise<NeoCardPrRead>;
 
 export function createCodingPack(

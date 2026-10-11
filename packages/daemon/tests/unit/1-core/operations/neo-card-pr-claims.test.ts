@@ -636,7 +636,7 @@ describe('readNeoCardPrs', () => {
     expect(stored.get('icons')?.map((item) => item.url)).toEqual([pull(65)]);
   });
 
-  test('a settled card with an unscored mention reads once and records its score', async () => {
+  test('the startup pass reads a settled card once to score its mention', async () => {
     const merged = { ...pr(64, 50), state: 'MERGED' as const, title: 'Desktop startup splash' };
     const replaced: { claim: string; score?: number | null }[][] = [];
     let reads = 0;
@@ -675,7 +675,8 @@ describe('readNeoCardPrs', () => {
         readAt: 900,
         readOkAt: 900,
       },
-      1_000
+      1_000,
+      true
     );
     expect(reads).toBe(1);
     expect(replaced.map((claims) => claims.map((item) => [item.claim, item.score]))).toEqual([

@@ -421,19 +421,21 @@ describe('neoCardPrsFresh', () => {
   });
 
   test.each([
-    ['a claimed PR read moments ago', row, owned(true), 20, true],
-    ['an owned PR not yet claimed', row, owned(false), 20, false],
-    ['a read that has gone stale', row, owned(true), 10 * 60_000, false],
-    ['a card with no stored read', null, owned(true), 20, false],
+    ['a claimed PR read moments ago', row, owned(true), 20, false, true],
+    ['an owned PR not yet claimed', row, owned(false), 20, false, false],
+    ['a read that has gone stale', row, owned(true), 10 * 60_000, false, false],
+    ['a card with no stored read', null, owned(true), 20, false, false],
+    ['a forced read', row, owned(true), 20, true, false],
     [
-      'a claimed mention not yet scored',
+      'an unscored mention outside the startup pass',
       row,
       { owned: [{ url, claim: 'mentioned' as const, claimedAt: 0, claimed: true, score: null }] },
       20,
       false,
+      true,
     ],
-  ])('%s', (_name, stored, plan, now, fresh) => {
-    expect(neoCardPrsFresh({ row: stored }, plan, now)).toBe(fresh);
+  ])('%s', (_name, stored, plan, now, force, fresh) => {
+    expect(neoCardPrsFresh({ row: stored }, plan, now, force)).toBe(fresh);
   });
 });
 
