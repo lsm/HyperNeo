@@ -434,7 +434,16 @@ export class NeoService {
       (work: NeoWork, card: NeoDoneCheckCard, followed: boolean) => ({
         told:
           !card.stored &&
-          this.toldDoneCheck(work, neoDoneCheckToldIds(work, card.continued, undefined, followed)),
+          this.toldDoneCheck(
+            work,
+            neoDoneCheckToldIds(
+              work,
+              card.continued,
+              undefined,
+              followed,
+              this.stalledContinues(work)
+            )
+          ),
       }),
       ['work', 'card', 'followed'],
       'unread'
@@ -467,7 +476,13 @@ export class NeoService {
           !!found.row &&
           this.toldDoneCheck(
             work,
-            neoDoneCheckToldIds(work, card.continued, found.row.revision, false)
+            neoDoneCheckToldIds(
+              work,
+              card.continued,
+              found.row.revision,
+              false,
+              this.stalledContinues(work)
+            )
           ),
       }),
       ['work', 'card', 'followed', 'found'],
@@ -1909,6 +1924,7 @@ export class NeoService {
             retries: this.driverTargets.readRetries(work.id),
             continued: this.workContinues.get(work.id)?.count ?? 0,
             prRevision: this.workPrs.get(work.id)?.revision,
+            stalled: this.stalledContinues(work),
           })
         ),
       }),
@@ -2098,7 +2114,13 @@ export class NeoService {
       ) => {
         const continued = this.workContinues.get(work.id)?.count ?? 0;
         return {
-          id: neoDoneCheckMessageId(work.id, continued, found.row?.revision, options.followedAt),
+          id: neoDoneCheckMessageId(
+            work.id,
+            continued,
+            found.row?.revision,
+            options.followedAt,
+            this.stalledContinues(work)
+          ),
           content: driverDoneCheckNote(
             work,
             goal,

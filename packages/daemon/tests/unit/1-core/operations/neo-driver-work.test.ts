@@ -942,7 +942,7 @@ describe('Neo work with a drivers target', () => {
       for (let n = 0; n < 5; n++)
         service.workContinues.record('work-1', `Step ${n}`, Date.now(), still);
       await service.reconcile('work-1');
-      expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5']);
+      expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5:s:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
       expect(notes[1][2]).toContain('Do not continue it.');
       expect(notes[1][2]).toContain(NEO_WORK_SUMMARY_NOTE);

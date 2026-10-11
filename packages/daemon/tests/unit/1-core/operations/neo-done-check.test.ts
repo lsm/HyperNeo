@@ -61,6 +61,14 @@ describe('neoDoneCheckToldIds', () => {
   ])('%s', (_label, revision, followed, ids) => {
     expect(neoDoneCheckToldIds({ id: 'w1', updatedAt: 900 }, 2, revision, followed)).toEqual(ids);
   });
+
+  test('a card that was stalled and then moved gets a new note id', () => {
+    const work = { id: 'w1', updatedAt: 900 };
+    const stalled = neoDoneCheckToldIds(work, 2, 3, false, 3);
+    const moved = neoDoneCheckToldIds(work, 2, 3, false, 0);
+    expect(stalled).toEqual(['w1:done-check:2:pr:3:s:3', 'w1:done-check:2:pr:3:at:900:s:3']);
+    expect(moved.some((id) => stalled.includes(id))).toBe(false);
+  });
 });
 
 describe('neoWorkReturnToldIds', () => {

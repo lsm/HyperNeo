@@ -64,9 +64,10 @@ export function neoDoneCheckMessageId(
   workId: string,
   continued: number,
   prRevision?: number,
-  followedAt?: number
+  followedAt?: number,
+  stalled = 0
 ): string {
-  return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}${followedAt ? `:at:${followedAt}` : ''}`;
+  return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}${followedAt ? `:at:${followedAt}` : ''}${stalled > 0 ? `:s:${stalled}` : ''}`;
 }
 
 export function neoStallMessageId(workId: string, since: number): string {

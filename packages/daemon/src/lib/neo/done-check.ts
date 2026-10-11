@@ -35,21 +35,24 @@ export function neoDoneCheckToldIds(
   work: Pick<NeoWork, 'id' | 'updatedAt'>,
   continued: number,
   revision: number | undefined,
-  followed: boolean
+  followed: boolean,
+  stalled = 0
 ): string[] {
   return (followed ? [work.updatedAt] : [undefined, work.updatedAt]).map((at) =>
-    neoDoneCheckMessageId(work.id, continued, revision, at)
+    neoDoneCheckMessageId(work.id, continued, revision, at, stalled)
   );
 }
 
 export function neoWorkReturnToldIds(
   work: Pick<NeoWork, 'id' | 'updatedAt'>,
-  card: { retries: number; continued: number; prRevision: number | undefined }
+  card: { retries: number; continued: number; prRevision: number | undefined; stalled?: number }
 ): string[] {
   return [
     neoWorkReturnMessageId(work.id, card.retries, card.continued),
-    ...neoDoneCheckToldIds(work, card.continued, undefined, false),
-    ...(card.prRevision ? neoDoneCheckToldIds(work, card.continued, card.prRevision, false) : []),
+    ...neoDoneCheckToldIds(work, card.continued, undefined, false, card.stalled),
+    ...(card.prRevision
+      ? neoDoneCheckToldIds(work, card.continued, card.prRevision, false, card.stalled)
+      : []),
   ];
 }
 
