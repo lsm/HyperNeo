@@ -13,7 +13,7 @@ const NEO_WORK_REPORT_MAX = 12_000;
 
 const NEO_WORK_LIVE_FINAL: readonly WorkStatus[] = ['done', 'failed', 'stopped'];
 
-type NeoWorkFollowCard = {
+export type NeoWorkFollowCard = {
   ref: WorkRef | null;
   goal: boolean;
   ask: Pick<NeoAsk, 'status'> | null;

@@ -236,6 +236,7 @@ import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
   planNeoWorkFollowLive,
+  type NeoWorkFollowCard,
   requireNeoWorkFollow,
   requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
@@ -351,18 +352,7 @@ export class NeoService {
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
     .pipe(
-      (work: NeoWork) => {
-        const driver = this.driverTargets.readCard(work.id);
-        return {
-          ref: driver?.ref ?? null,
-          goal: !!this.workDoneGoal(work.id)?.doneWhen,
-          ask: this.askRecords.forWork(work.id),
-          readAt: this.followReads.get(work.id) ?? null,
-          since: driver?.followAnchor ?? work.updatedAt,
-          superseded: this.driverTargets.readSupersededAt(work.id) !== null,
-          live: driver?.liveStatus ?? null,
-        };
-      },
+      (work: NeoWork) => this.followCard(work, this.followReads.get(work.id) ?? null),
       'work',
       'card'
     )
@@ -1282,23 +1272,25 @@ export class NeoService {
     return [...ids];
   }
 
+  private followCard(work: NeoWork, readAt: number | null): NeoWorkFollowCard & { since: number } {
+    const driver = this.driverTargets.readCard(work.id);
+    return {
+      ref: driver?.ref ?? null,
+      goal: !!this.workDoneGoal(work.id)?.doneWhen,
+      ask: this.askRecords.forWork(work.id),
+      readAt,
+      since: driver?.followAnchor ?? work.updatedAt,
+      superseded: this.driverTargets.readSupersededAt(work.id) !== null,
+      live: driver?.liveStatus ?? null,
+    };
+  }
+
   private followedCardRefs(now: number): WorkRef[] {
     return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
       const work = this.repo.getWork(card.workId);
       if (!work) return [];
       if (work.status !== 'reported') return [card.ref];
-      const following = requireNeoWorkFollow(
-        work,
-        {
-          ref: card.ref,
-          goal: !!this.workDoneGoal(work.id)?.doneWhen,
-          ask: this.askRecords.forWork(work.id),
-          readAt: null,
-          superseded: this.driverTargets.readSupersededAt(work.id) !== null,
-          live: this.driverTargets.readLiveStatus(work.id),
-        },
-        now
-      );
+      const following = requireNeoWorkFollow(work, this.followCard(work, null), now);
       return 'value' in following ? [card.ref] : [];
     });
   }
