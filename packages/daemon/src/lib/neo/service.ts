@@ -312,7 +312,16 @@ export class NeoService {
     ];
   }
 
-  trackedSessions = new Map<string, number>();
+  get trackedSessions(): Map<string, number> {
+    return new Map(Object.entries(this.db.getGlobalSettings?.().neo?.trackedSessions ?? {}));
+  }
+
+  set trackedSessions(tracked: ReadonlyMap<string, number>) {
+    const neo = this.db.getGlobalSettings().neo;
+    this.db.updateGlobalSettings({
+      neo: { ...neo, trackedSessions: Object.fromEntries(tracked) },
+    });
+  }
 
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;

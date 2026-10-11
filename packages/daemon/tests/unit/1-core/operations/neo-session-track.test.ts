@@ -63,16 +63,23 @@ describe('keepNeoTrackedSessions', () => {
 });
 
 describe('requireNeoTrackedAdoption', () => {
+  test('says a card already follows the session instead of suggesting a send', () => {
+    const adopt = { verb: 'adopt' as const, ref };
+    expect(requireNeoTrackedAdoption(adopt, new Map(), [ref], 1_000, 'ok')).toEqual({
+      reason: { ok: false, reason: 'A Neo card already follows this session.' },
+    });
+  });
+
   test('passes other verbs and adopts only a session tapped within the window', () => {
     const tracked = new Map([[key, 1_000]]);
     const send = { verb: 'send' as const, ref };
     const adopt = { verb: 'adopt' as const, ref };
-    expect(requireNeoTrackedAdoption(send, new Map(), 1_000, 'ok')).toEqual({ value: 'ok' });
-    expect(requireNeoTrackedAdoption(adopt, tracked, 2_000, 'ok')).toEqual({ value: 'ok' });
+    expect(requireNeoTrackedAdoption(send, new Map(), [], 1_000, 'ok')).toEqual({ value: 'ok' });
+    expect(requireNeoTrackedAdoption(adopt, tracked, [], 2_000, 'ok')).toEqual({ value: 'ok' });
     expect(
-      requireNeoTrackedAdoption(adopt, tracked, 1_000 + NEO_SESSION_TRACK_MS, 'ok')
+      requireNeoTrackedAdoption(adopt, tracked, [], 1_000 + NEO_SESSION_TRACK_MS, 'ok')
     ).toMatchObject({ reason: { ok: false } });
-    expect(requireNeoTrackedAdoption(adopt, new Map(), 1_000, 'ok')).toMatchObject({
+    expect(requireNeoTrackedAdoption(adopt, new Map(), [], 1_000, 'ok')).toMatchObject({
       reason: { ok: false },
     });
   });
@@ -181,6 +188,7 @@ describe('neo.session.track', () => {
       ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
       expect(await invoke({ key })).toMatchObject({ value: { ok: true } });
       expect(service.trackedSessions.get(key)).toBe(clock);
+      expect(db.getGlobalSettings().neo?.trackedSessions).toEqual({ [key]: clock });
       expect(
         db
           .getJobQueueRepo()

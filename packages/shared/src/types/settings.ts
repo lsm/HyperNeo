@@ -104,6 +104,7 @@ export interface NeoSettings {
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];
+  trackedSessions?: Record<string, number>;
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

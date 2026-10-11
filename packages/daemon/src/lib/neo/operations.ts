@@ -986,7 +986,13 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoTrackedAdoption(input.work, service.trackedSessions, Date.now(), caller),
+        requireNeoTrackedAdoption(
+          input.work,
+          service.trackedSessions,
+          service.followedCardRefs(Date.now()),
+          Date.now(),
+          caller
+        ),
       ['input', 'admission'],
       'result:admission'
     )
@@ -1166,7 +1172,9 @@ export function createNeoOperations(service: NeoService) {
         receipt: { work: NeoWork }
       ) => {
         if (input.work?.verb !== 'adopt') return;
-        service.trackedSessions.delete(neoSessionKey(input.work.ref));
+        const tracked = service.trackedSessions;
+        tracked.delete(neoSessionKey(input.work.ref));
+        service.trackedSessions = tracked;
         if (ask.askId) service.askRecords.approve(ask.askId, Date.now());
         await service.start(receipt.work.id);
       },

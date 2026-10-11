@@ -224,7 +224,7 @@ export function driverStartedReport(ref: WorkRef, link?: string, model?: string)
 
 export function driverAdoptedReport(ref: WorkRef, link?: string): string {
   const where = link ? ` It opens at ${link}.` : '';
-  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; it was not sent anything.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
+  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; adopting it sent it nothing.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {

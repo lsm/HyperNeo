@@ -38,18 +38,22 @@ export function keepNeoTrackedSessions(
 export function requireNeoTrackedAdoption<T>(
   target: NeoDriverTarget | undefined,
   tracked: ReadonlyMap<string, number>,
+  followed: readonly WorkRef[],
   now: number,
   value: T
 ): { value: T } | { reason: Rejection } {
   if (target?.verb !== 'adopt') return { value };
-  const at = tracked.get(neoSessionKey(target.ref));
+  const key = neoSessionKey(target.ref);
+  if (followed.some((item) => neoSessionKey(item) === key))
+    return { reason: { ok: false, reason: 'A Neo card already follows this session.' } };
+  const at = tracked.get(key);
   return at !== undefined && now - at < NEO_SESSION_TRACK_MS
     ? { value }
     : {
         reason: {
           ok: false,
           reason:
-            'Only a session the human tapped Track on within the last hour can be adopted; use {verb:"send", ref} to hand work to another session.',
+            'Only a session the human tapped Track on within the last hour can be adopted; ask the human to tap Track on its notice again.',
         },
       };
 }
