@@ -313,7 +313,9 @@ const SnapshotOk = z.object({
 } satisfies ZodShape<NeoSnapshot>);
 const Snapshot = z.union([Failure, SnapshotOk]);
 const WorkResult = z.union([Failure, z.object({ ok: z.literal(true), work: Work })]);
-const Scope = z.object({ concernId: z.string().min(1).optional() }).default({});
+const Scope = z
+  .object({ concernId: z.string().min(1).optional(), askId: z.string().min(1).optional() })
+  .default({});
 const Save = z.object({
   id: z.string().min(1).max(100),
   title: z.string().trim().min(1).max(160),
@@ -534,6 +536,10 @@ export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller
   return requireNeoWorkProposer(work, caller, 'retry');
 }
 
+export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
+  return ask ? ask.concernId : undefined;
+}
+
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
@@ -597,23 +603,36 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
-  function snapshot(caller: OperationCaller, requested?: string) {
+  function snapshot(caller: OperationCaller, requested?: string, askId?: string) {
+    const focus = askId ? service.askRecords.get(askId) : null;
+    if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-    const scope = binding?.kind === 'concern' ? binding.concernId : requested;
+    const scope =
+      binding?.kind === 'concern'
+        ? binding.concernId
+        : focus
+          ? (focus.concernId ?? undefined)
+          : requested;
     const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
-    const concerns = service.repo.listConcerns().filter((item) => !scope || item.id === scope);
-    const work = service.repo.listWork(scope === undefined ? undefined : scope);
-    const recentWork = work.slice(0, caller.source === 'rpc' ? 50 : 10);
+    const cardDetail = detailed || !!focus;
+    const concerns = service.repo
+      .listConcerns()
+      .filter((item) => (focus ? item.id === focus.concernId : !scope || item.id === scope));
+    const work = focus
+      ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
+      : service.repo.listWork(scope === undefined ? undefined : scope);
+    const limit = caller.source === 'rpc' ? 50 : 10;
+    const recentWork = focus ? work.slice(-limit).reverse() : work.slice(0, limit);
     const olderActiveWork =
-      caller.source === 'rpc'
+      caller.source === 'rpc' && !focus
         ? work
             .slice(50)
             .filter((item) => item.status === 'proposed' || item.status === 'queued')
             .slice(0, 50)
         : [];
     const visibleWork = [...recentWork, ...olderActiveWork];
-    const consultations = service.consultations.list(scope ?? undefined);
-    const waiters = service.consultationWaiters.queued(scope ?? undefined);
+    const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
+    const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
     const workIds = visibleWork.map((item) => item.id);
     const workDrivers = service.driverTargets.receipts(workIds).map((receipt) => {
       const since = service.uncheckedSince(receipt.workId);
@@ -627,7 +646,7 @@ export function createNeoOperations(service: NeoService) {
     const workContinues = service.workContinues.list(workIds);
     const workSupersessions = service.workSupersessions.list(workIds);
     const asks = projectNeoSnapshotAsks(
-      service.askRecords.list(scope === undefined ? undefined : scope),
+      focus ? [focus] : service.askRecords.list(scope === undefined ? undefined : scope),
       caller.source === 'rpc' ? 50 : 10,
       Date.now()
     );
@@ -667,8 +686,8 @@ export function createNeoOperations(service: NeoService) {
       ),
       consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
       workDrivers,
-      ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
-      sessionNoticeGroups: service.sessionNoticeGroups,
+      ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: focus ? [] : service.sessionNoticeGroups,
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       workGoals,
       workContinues,
@@ -691,8 +710,8 @@ export function createNeoOperations(service: NeoService) {
           ? item
           : {
               ...item,
-              instruction: detailed ? item.instruction.slice(0, 1000) : '',
-              report: detailed ? (item.report?.slice(0, 3000) ?? null) : null,
+              instruction: cardDetail ? item.instruction.slice(0, 1000) : '',
+              report: cardDetail ? (item.report?.slice(0, 3000) ?? null) : null,
             }
       ),
     };
@@ -770,8 +789,9 @@ export function createNeoOperations(service: NeoService) {
   ) => z.infer<typeof RulesResult>;
   const read = path(
     'neo.snapshot',
-    (input: z.infer<typeof Scope>) => input.concernId,
-    (input, caller) => snapshot(caller, input.concernId)
+    (input: z.infer<typeof Scope>) =>
+      input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.concernId,
+    (input, caller) => snapshot(caller, input.concernId, input.askId)
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
     .input(['input', 'caller'])
@@ -1387,7 +1407,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context.',
+        'Read durable concern summaries and execution receipts. Pass concernId to load that concern’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

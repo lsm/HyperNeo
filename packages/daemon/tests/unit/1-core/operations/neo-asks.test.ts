@@ -38,7 +38,7 @@ import {
   neoWorkDoneGoal,
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations, neoAskScope } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -132,6 +132,66 @@ describe('neo.ask operations', () => {
     expect(snapshot.value?.asks).toEqual([
       expect.objectContaining({ id: askId, doneWhen: opening.doneWhen, workIds: [workId] }),
     ]);
+  });
+
+  test('reads one ask with its cards and their reports', async () => {
+    const askId = await openAsk();
+    const other = (await invoke('neo.ask.open', { ...opening, requestKey: 'other', ask: 'Other' }))
+      .value!.ask!.id;
+    const workId = (await propose('card-1', askId)).value!.work!.id;
+    await propose('card-2', other);
+    const queued = service.repo.transitionWork(workId, service.repo.getWork(workId)!, {
+      status: 'queued',
+    })!;
+    service.repo.transitionWork(workId, queued, { status: 'reported', report: 'Merged it.' });
+
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { asks: NeoAsk[]; work: { id: string; report: string | null }[] };
+    };
+    expect(scoped.value?.asks.map((ask) => ask.id)).toEqual([askId]);
+    expect(scoped.value?.work).toEqual([
+      expect.objectContaining({ id: workId, report: 'Merged it.' }),
+    ]);
+    expect(await invoke('neo.snapshot', { askId: 'missing' })).toMatchObject({
+      value: { ok: false, reason: 'Ask not found.' },
+    });
+  });
+
+  test("an ask-scoped read shows the cards' reports but not the concern's private context", async () => {
+    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: 'S', context: 'Private' }, 0);
+    const askId = (
+      await invoke('neo.ask.open', { ...opening, requestKey: 'scoped', concernId: 'c1' })
+    ).value!.ask!.id;
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { concerns: { id: string; context: string }[] };
+    };
+    expect(scoped.value?.concerns).toEqual([expect.objectContaining({ id: 'c1', context: '' })]);
+  });
+
+  test("a context holder cannot read another concern's ask, whatever concern it names", async () => {
+    const askId = await openAsk();
+    service.repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
+    db.createSession(createTestSession('holder'));
+    service.repo.reserveBinding({ sessionId: 'holder', kind: 'concern', concernId: 'c1' });
+    const holder: OperationCaller = { source: 'mcp', sessionId: 'holder', role: 'neo' };
+    for (const input of [{ askId }, { concernId: 'c1', askId }])
+      expect(await invoke('neo.snapshot', input, holder)).toMatchObject({
+        value: { ok: false, reason: 'This context holder cannot access another concern.' },
+      });
+    expect(await invoke('neo.snapshot', { askId: 'missing' }, holder)).toMatchObject({
+      value: { ok: false, reason: 'Ask not found.' },
+    });
+  });
+
+  test("an ask-scoped read lists the ask's newest cards first, within the snapshot's bounds", async () => {
+    const askId = await openAsk();
+    for (let index = 0; index < 12; index++) await propose(`card-${index}`, askId);
+    const ids = service.askRecords.get(askId)!.workIds;
+    expect(ids).toHaveLength(12);
+    const scoped = (await invoke('neo.snapshot', { askId })) as {
+      value?: { work: { id: string }[] };
+    };
+    expect(scoped.value?.work.map((item) => item.id)).toEqual(ids.slice(-10).reverse());
   });
 
   test('stores the done list as checklist items and shows them in the snapshot', async () => {
@@ -1163,6 +1223,14 @@ describe('neoPrompt place resolution', () => {
       expect(prompt).toContain('Never build or guess a folder path yourself.');
       expect(prompt).toContain('using an adapter that can start work');
     }
+  });
+});
+
+describe('neoAskScope', () => {
+  test("admits an ask-scoped read by the ask's own concern, and a missing ask by none", () => {
+    expect(neoAskScope({ concernId: 'c1' })).toBe('c1');
+    expect(neoAskScope({ concernId: null })).toBe(null);
+    expect(neoAskScope(null)).toBe(undefined);
   });
 });
 
