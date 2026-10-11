@@ -3,6 +3,7 @@ import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-r
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks';
 import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence';
 import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items';
+import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 function withWork() {
@@ -98,9 +99,10 @@ describe('NeoAskRepository', () => {
     runMigration316(db);
     runMigration318(db);
     runMigration318(db);
+    runMigration328(db);
     const asks = new NeoAskRepository(db);
     const items = [
-      { text: 'Merged', check: 'pr_merged' as const },
+      { text: 'Merged', check: 'coding.pr_merged' as const },
       { text: 'Docs', check: null },
     ];
     expect(asks.open(input, items)?.doneItems?.map((item) => [item.id, item.state])).toEqual([

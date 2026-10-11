@@ -1164,7 +1164,7 @@ describe('Neo work with a drivers target', () => {
         doneSource: 'human',
       },
       [
-        { text: 'Icons merged to dev', check: 'pr_merged' },
+        { text: 'Icons merged to dev', check: 'coding.pr_merged' },
         { text: 'App shows them', check: null },
       ]
     )!;
@@ -1215,7 +1215,7 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons and docs merged to dev', check: 'pr_merged' }]
+      [{ text: 'Icons and docs merged to dev', check: 'coding.pr_merged' }]
     )!;
     service.repo.proposeWork({
       id: 'work-2',
@@ -1269,7 +1269,7 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons and docs merged to dev', check: 'pr_merged' }]
+      [{ text: 'Icons and docs merged to dev', check: 'coding.pr_merged' }]
     )!;
     service.repo.proposeWork({
       id: 'work-2',
@@ -1316,7 +1316,7 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons merged to dev', check: 'pr_merged' }]
+      [{ text: 'Icons merged to dev', check: 'coding.pr_merged' }]
     )!;
     service.askRecords.link(opened.id, 'work-1');
     service.askRecords.tickItem(
@@ -1359,7 +1359,7 @@ describe('Neo work with a drivers target', () => {
         doneWhen: '- merged to dev',
         doneSource: 'human',
       },
-      [{ text: 'Icons merged to dev', check: 'pr_merged' }]
+      [{ text: 'Icons merged to dev', check: 'coding.pr_merged' }]
     )!;
     service.askRecords.link(opened.id, 'work-1');
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';

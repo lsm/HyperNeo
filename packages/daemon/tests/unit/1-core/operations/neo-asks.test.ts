@@ -130,9 +130,12 @@ describe('neo.ask operations', () => {
       ...opening,
       requestKey: 'checklist',
       doneWhen: undefined,
-      doneItems: [{ text: 'Fix merged to dev', check: 'pr_merged' }, { text: 'Docs updated' }],
+      doneItems: [
+        { text: 'Fix merged to dev', check: 'coding.pr_merged' },
+        { text: 'Docs updated' },
+      ],
     });
-    const item = (id: string, text: string, check: 'pr_merged' | null) => ({
+    const item = (id: string, text: string, check: 'coding.pr_merged' | null) => ({
       id,
       text,
       state: 'pending',
@@ -148,7 +151,7 @@ describe('neo.ask operations', () => {
         ask: {
           doneWhen: '- Fix merged to dev\n- Docs updated',
           doneItems: [
-            item('i1', 'Fix merged to dev', 'pr_merged'),
+            item('i1', 'Fix merged to dev', 'coding.pr_merged'),
             item('i2', 'Docs updated', null),
           ],
         },
@@ -159,7 +162,10 @@ describe('neo.ask operations', () => {
         ...opening,
         requestKey: 'checklist',
         doneWhen: undefined,
-        doneItems: [{ text: 'Fix merged to dev', check: 'pr_merged' }, { text: 'Docs updated' }],
+        doneItems: [
+          { text: 'Fix merged to dev', check: 'coding.pr_merged' },
+          { text: 'Docs updated' },
+        ],
       })
     ).toMatchObject({ value: { ok: true, ask: { id: opened.value!.ask!.id } } });
     const asks = (await invoke('neo.snapshot', {})).value?.asks as NeoAsk[];
@@ -731,14 +737,14 @@ describe('planNeoAskItems', () => {
       'a checklist',
       {
         doneItems: [
-          { text: 'Merged', check: 'pr_merged' },
+          { text: 'Merged', check: 'coding.pr_merged' },
           { text: 'Docs', check: null },
         ],
       },
       {
         doneWhen: '- Merged\n- Docs',
         items: [
-          { text: 'Merged', check: 'pr_merged' },
+          { text: 'Merged', check: 'coding.pr_merged' },
           { text: 'Docs', check: null },
         ],
       },

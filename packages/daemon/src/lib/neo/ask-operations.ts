@@ -11,6 +11,7 @@ import type {
 import type { NeoService } from './service.ts';
 import { isNeoAskSettled } from './done-check.ts';
 import { requireNeoAskPack } from './packs/index.ts';
+import { CODING_CHECK_PR_MERGED } from './packs/coding/pack.ts';
 import { admitNeoWorkOrigin, type NeoWorkOrigin } from './work-origin.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -50,7 +51,7 @@ export const NeoAskSchema = z.object({
         text: z.string(),
         state: z.enum(['pending', 'met', 'needs_you']),
         evidence: z.string().nullable(),
-        check: z.enum(['pr_merged']).nullable(),
+        check: z.enum([CODING_CHECK_PR_MERGED]).nullable(),
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
@@ -68,7 +69,7 @@ const AskResult = z.union([
 ]);
 const Item = z.object({
   text: z.string().trim().min(1).max(300),
-  check: z.enum(['pr_merged']).nullable().default(null),
+  check: z.enum([CODING_CHECK_PR_MERGED]).nullable().default(null),
 });
 const Open = z
   .object({
