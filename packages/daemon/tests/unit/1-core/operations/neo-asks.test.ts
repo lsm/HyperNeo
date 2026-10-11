@@ -522,7 +522,9 @@ describe('neo.ask operations', () => {
     };
     const first = await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
     await invoke('neo.work.propose', { ...card, requestKey: 'card-1' });
-    await invoke('neo.work.propose', { ...card, requestKey: 'card-2', doneWhen: undefined });
+    expect(
+      await invoke('neo.work.propose', { ...card, requestKey: 'card-2', doneWhen: undefined })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('doneWhen') } });
 
     const asks = service.askRecords.list();
     expect(asks).toEqual([
