@@ -23,6 +23,14 @@ const work = (status: NeoWork['status'], extra: Partial<NeoWork> = {}): NeoWork 
   updatedAt: 0,
   ...extra,
 });
+const retryable = {
+  workId: 'w1',
+  adapter: 'hyperneo',
+  daemon: null,
+  status: null,
+  link: null,
+  retryable: true as const,
+};
 const driver = (adapter: string, status: 'running' | 'needs_you' = 'running') => ({
   workId: 'w1',
   adapter,
@@ -38,7 +46,8 @@ describe('neoWorkPrimaryAction', () => {
       label: 'Start work',
     });
     const never = work('failed', { report: 'Could not start the execution: logged out' });
-    expect(neoWorkPrimaryAction(never, undefined)).toEqual({ kind: 'retry', label: 'Retry' });
+    expect(neoWorkPrimaryAction(never, retryable)).toEqual({ kind: 'retry', label: 'Retry' });
+    expect(neoWorkPrimaryAction(never, undefined)).toEqual({ kind: 'none' });
     expect(neoWorkPrimaryAction(work('failed', { report: 'Tests broke' }), undefined)).toEqual({
       kind: 'none',
     });
@@ -96,13 +105,14 @@ describe('neoWorkOpenLabel', () => {
 describe('neoWorkMeta', () => {
   it('shows the PR number when there is one, else when the work started, and only the time for work that never started', () => {
     const now = 3 * 60 * 60_000;
-    expect(neoWorkMeta(work('queued'), undefined, now)).toBe('Started 3h ago');
-    expect(neoWorkMeta(work('proposed'), undefined, now)).toBeNull();
-    expect(neoWorkMeta(work('cancelled'), undefined, now)).toBe('3h ago');
+    expect(neoWorkMeta(work('queued'), undefined, undefined, now)).toBe('Started 3h ago');
+    expect(neoWorkMeta(work('proposed'), undefined, undefined, now)).toBeNull();
+    expect(neoWorkMeta(work('cancelled'), undefined, undefined, now)).toBe('3h ago');
     expect(
       neoWorkMeta(
         work('failed', { report: 'Could not start the execution: login expired' }),
         undefined,
+        retryable,
         now
       )
     ).toBe('3h ago');
@@ -121,6 +131,7 @@ describe('neoWorkMeta', () => {
             },
           ],
         },
+        undefined,
         now
       )
     ).toBe('PR #6013');
@@ -131,7 +142,7 @@ describe('neoWorkPresentation', () => {
   it('keeps a retryable failure in detail so its Retry stays reachable in the compact list', () => {
     const failed = work('failed', { report: 'Could not start the execution: login expired' });
     const compact = { compact: true, attention: false };
-    expect(neoWorkPresentation(failed, undefined, compact)).toBe('detail');
+    expect(neoWorkPresentation(failed, retryable, compact)).toBe('detail');
     expect(neoWorkPresentation(work('reported'), undefined, compact)).toBe('summary');
     expect(
       neoWorkPresentation(work('failed', { report: 'The agent gave up.' }), undefined, compact)
