@@ -331,15 +331,18 @@ export class NeoService {
   private readonly followWork = (superpipe({})('neo-work-follow') as PipelineAPI)
     .input(['work', 'now'])
     .pipe(
-      (work: NeoWork) => ({
-        ref: this.driverTargets.readRef(work.id),
-        goal: !!this.workDoneGoal(work.id)?.doneWhen,
-        ask: this.askRecords.forWork(work.id),
-        readAt: this.followReads.get(work.id) ?? null,
-        since: this.driverTargets.readFollowAnchor(work.id) ?? work.updatedAt,
-        superseded: this.driverTargets.readSupersededAt(work.id) !== null,
-        live: this.driverTargets.readLiveStatus(work.id),
-      }),
+      (work: NeoWork) => {
+        const driver = this.driverTargets.readCard(work.id);
+        return {
+          ref: driver?.ref ?? null,
+          goal: !!this.workDoneGoal(work.id)?.doneWhen,
+          ask: this.askRecords.forWork(work.id),
+          readAt: this.followReads.get(work.id) ?? null,
+          since: driver?.followAnchor ?? work.updatedAt,
+          superseded: this.driverTargets.readSupersededAt(work.id) !== null,
+          live: driver?.liveStatus ?? null,
+        };
+      },
       'work',
       'card'
     )
@@ -1122,10 +1125,11 @@ export class NeoService {
   }
 
   retryCard(workId: string): NeoWorkRetryCard {
+    const driver = this.driverTargets.readCard(workId);
     return {
-      target: !!this.driverTargets.get(workId),
-      ref: !!this.driverTargets.readRef(workId),
-      interrupted: this.driverTargets.readStartInterrupted(workId),
+      target: !!driver?.target,
+      ref: !!driver?.ref,
+      interrupted: !!driver?.startInterrupted,
     };
   }
 
