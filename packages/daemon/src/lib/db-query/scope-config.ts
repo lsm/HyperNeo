@@ -450,6 +450,7 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 
 const EXCLUDED_TABLE_NAMES: string[] = [
   'session_incarnations',
+  'session_event_subscriptions',
   'session_external_events',
   'neo_agent_work_targets',
   'neo_concerns',

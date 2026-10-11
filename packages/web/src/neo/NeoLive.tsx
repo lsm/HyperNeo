@@ -70,6 +70,9 @@ export function NeoLive() {
   const goals = new Map((view?.workGoals ?? []).map((goal) => [goal.workId, goal]));
   const prs = new Map((view?.workPrs ?? []).map((item) => [item.workId, item]));
   const continues = new Map((view?.workContinues ?? []).map((item) => [item.workId, item]));
+  const pooled = new Set(
+    (view?.asks ?? []).filter((ask) => ask.approvedAt).flatMap((ask) => ask.workIds)
+  );
   const topics = new Map(
     (view?.publicAuthorBindings ?? []).flatMap((binding) => {
       const title = concerns.find((concern) => concern.id === binding.concernId)?.title.trim();
@@ -191,6 +194,7 @@ export function NeoLive() {
         prs={prs.get(scene.ref.id)}
         goal={goals.get(scene.ref.id)}
         continued={continues.get(scene.ref.id)}
+        pooled={pooled.has(scene.ref.id)}
         busy={neo.busyWork === scene.ref.id}
         disabled={!connected || !!neo.busyWork}
         onAction={(id, action) => void neo.act(id, action)}

@@ -16,6 +16,7 @@ export interface NeoWorkDriverReceipt {
   remoteLink?: string;
   uncheckedSince?: number;
   unconfirmed?: true;
+  retryable?: true;
 }
 
 export interface NeoWorkGoal {

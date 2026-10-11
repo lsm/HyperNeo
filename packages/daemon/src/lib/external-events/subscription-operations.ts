@@ -7,6 +7,7 @@ import {
   type OperationDefinition,
 } from '../operations/registry.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import type { SpaceSessionEventSubscriptionRepository } from '../../storage/repositories/space-session-event-subscription-repository.ts';
 import {
   type AgentSubscriptionDependencies,
@@ -43,6 +44,10 @@ export interface SubscriptionDependencies extends AgentSubscriptionDependencies 
     'upsert' | 'listBySpace' | 'delete'
   >;
   refreshSessionSubscription: (spaceId: string, subscriptionId: string) => RunOutcome;
+  unscopedSessionSubscriptions: Pick<
+    SessionEventSubscriptionRepository,
+    'upsert' | 'listBySession' | 'delete'
+  >;
 }
 
 const REJECTIONS = z.enum(['caller_denied', 'session_inactive', 'node_unresolved']);
@@ -81,7 +86,9 @@ type Subject = z.infer<typeof SubjectSchema>;
 export type SubscriptionSubject =
   | { kind: 'node'; slot: SubscriptionSlot }
   | { kind: 'agent'; scope: AgentSubscriptionScope }
-  | { kind: 'session'; spaceId: string; sessionId: string };
+  | { kind: 'session'; spaceId: string | null; sessionId: string };
+
+type SubscriptionScope = { spaceId: string | null };
 
 function resolveTopicPattern<Input extends { topicPattern?: string; prUrl?: string }>(
   input: Input,
@@ -174,15 +181,32 @@ const SubscriptionListSchema = z.object({
   }),
 }) satisfies z.ZodType<SubscriptionList>;
 
+export function isUnscopedSessionCaller(
+  input: { spaceId?: string; subject?: Subject },
+  caller: OperationCaller,
+  subs: Pick<SubscriptionDependencies, 'getSession'>
+): boolean {
+  if (caller.source !== 'mcp' || caller.spaceId || !caller.sessionId) return false;
+  if (input.spaceId !== undefined) return false;
+  if (input.subject !== undefined && input.subject.type !== 'session') return false;
+  return !subs.getSession(caller.sessionId)?.context?.spaceId;
+}
+
 export function admitSubscriptionSpace(
-  input: { spaceId?: string },
+  input: { spaceId?: string; subject?: Subject },
   caller: OperationCaller,
   subs: SubscriptionDependencies
-): { value: string } | { reason: 'caller_denied' | 'session_inactive' } {
+): { value: SubscriptionScope } | { reason: 'caller_denied' | 'session_inactive' } {
+  if (isUnscopedSessionCaller(input, caller, subs)) {
+    const session = subs.getSession(caller.sessionId as string);
+    return session?.status === 'active'
+      ? { value: { spaceId: null } }
+      : { reason: 'session_inactive' };
+  }
   const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   return callerSessionActiveIn(caller, space.value, subs)
-    ? { value: space.value }
+    ? { value: { spaceId: space.value } }
     : { reason: 'session_inactive' };
 }
 
@@ -206,11 +230,15 @@ export function defaultSubject(
 }
 
 export function resolveSubscriptionSubject(
-  spaceId: string,
+  { spaceId }: SubscriptionScope,
   input: { subject?: Subject },
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: SubscriptionSubject } | { reason: SubjectRejection } {
+  if (spaceId === null)
+    return caller.sessionId
+      ? { value: { kind: 'session', spaceId: null, sessionId: caller.sessionId } }
+      : { reason: 'caller_denied' };
   const subject = input.subject ?? defaultSubject(caller, subs);
   if (!subject) return { reason: 'agent_not_found' };
   if (subject.type === 'node') {
@@ -230,7 +258,7 @@ export function resolveSubscriptionSubject(
 
 type ReaderScope =
   | { spaceId: string; workflowRunId: string }
-  | { spaceId: string; owner: { type: 'agent' | 'session'; id: string } };
+  | { spaceId: string | null; owner: { type: 'agent' | 'session'; id: string } };
 
 const StoredSubscriptionSchema = z.object({
   topic: z.string(),
@@ -239,20 +267,24 @@ const StoredSubscriptionSchema = z.object({
 });
 
 function readStoredSubscriptions(
-  scope: { spaceId: string; owner: { type: 'agent' | 'session'; id: string } },
+  scope: { spaceId: string | null; owner: { type: 'agent' | 'session'; id: string } },
   subs: SubscriptionDependencies
 ) {
   const rows =
-    scope.owner.type === 'agent'
-      ? subs.subscriptionRepo.listSubscriptions(scope.owner.id).map((row) => ({
-          topic: row.topic,
-          label: typeof row.filter.label === 'string' ? row.filter.label : null,
-          createdAt: row.createdAt,
-        }))
-      : subs.sessionSubscriptions
-          .listBySpace(scope.spaceId)
-          .filter((row) => row.sessionId === scope.owner.id)
-          .map((row) => ({ topic: row.topic, label: row.label, createdAt: row.createdAt }));
+    scope.spaceId === null
+      ? subs.unscopedSessionSubscriptions
+          .listBySession(scope.owner.id)
+          .map(({ topic, label, createdAt }) => ({ topic, label, createdAt }))
+      : scope.owner.type === 'agent'
+        ? subs.subscriptionRepo.listSubscriptions(scope.owner.id).map((row) => ({
+            topic: row.topic,
+            label: typeof row.filter.label === 'string' ? row.filter.label : null,
+            createdAt: row.createdAt,
+          }))
+        : subs.sessionSubscriptions
+            .listBySpace(scope.spaceId)
+            .filter((row) => row.sessionId === scope.owner.id)
+            .map((row) => ({ topic: row.topic, label: row.label, createdAt: row.createdAt }));
   return { ok: true as const, owner: scope.owner, stored: rows, scope: { spaceId: scope.spaceId } };
 }
 
@@ -261,6 +293,10 @@ export function admitSubscriptionReader(
   caller: OperationCaller,
   subs: SubscriptionDependencies
 ): { value: ReaderScope } | { reason: Rejection } {
+  if (isUnscopedSessionCaller(input, caller, subs) && input.workflowRunId === undefined)
+    return {
+      value: { spaceId: null, owner: { type: 'session', id: caller.sessionId as string } },
+    };
   const space = admitEventCallerSpace(input, caller);
   if ('reason' in space) return { reason: 'caller_denied' };
   if (input.workflowRunId === undefined && caller.role !== 'workflow_worker') {
@@ -314,12 +350,20 @@ function unsubscribeTopic(
 }
 
 function subscribeSession(
-  subject: { spaceId: string; sessionId: string },
+  subject: { spaceId: string | null; sessionId: string },
   input: { topicPattern: string; label?: string },
   subs: SubscriptionDependencies
 ): Outcome | SubjectRejection {
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
+  if (subject.spaceId === null) {
+    subs.unscopedSessionSubscriptions.upsert({
+      sessionId: subject.sessionId,
+      topic: topicPattern,
+      label: input.label,
+    });
+    return { ok: true, topicPattern };
+  }
   const stored = subs.sessionSubscriptions.upsert({
     spaceId: subject.spaceId,
     sessionId: subject.sessionId,
@@ -331,12 +375,16 @@ function subscribeSession(
 }
 
 function unsubscribeSession(
-  subject: { spaceId: string; sessionId: string },
+  subject: { spaceId: string | null; sessionId: string },
   input: { topicPattern: string },
   subs: SubscriptionDependencies
 ): Outcome | SubjectRejection {
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
+  if (subject.spaceId === null) {
+    subs.unscopedSessionSubscriptions.delete(subject.sessionId, topicPattern);
+    return { ok: true, topicPattern };
+  }
   const stored = subs.sessionSubscriptions
     .listBySpace(subject.spaceId)
     .find((row) => row.sessionId === subject.sessionId && row.topic === topicPattern);
@@ -422,12 +470,14 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
 }
 
 const SUBJECT_DOC =
-  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, a direct task worker\'s own session ({ type: "session" }), otherwise { type: "node" }. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
+  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, a direct task worker\'s own session ({ type: "session" }), otherwise { type: "node" }. A session outside any Space (a plain chat session or a Neo-driven worker) always subscribes its own session, with no spaceId. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
 
 const SUBSCRIPTION_ROLES = [
   ...NODE_EVENT_ROLES,
   ...AGENT_EVENT_ROLES,
   'direct_task_worker' as const,
+  'universal_read' as const,
+  'neo' as const,
 ];
 
 export function createSubscriptionOperations(
@@ -466,7 +516,7 @@ export function createSubscriptionOperations(
           ok: z.literal(true),
           owner: z.object({ type: z.enum(['agent', 'session']), id: z.string() }),
           stored: z.array(StoredSubscriptionSchema),
-          scope: z.object({ spaceId: z.string() }),
+          scope: z.object({ spaceId: z.string().nullable() }),
         }),
         z.object({ ok: z.literal(false), error: z.string() }),
         REJECTIONS,
