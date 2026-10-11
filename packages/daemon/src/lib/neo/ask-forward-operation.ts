@@ -19,6 +19,10 @@ const Rejection = z.object({
     'forward_limit',
     'unknown_topic',
   ]),
+  topics: z
+    .array(z.object({ id: z.string(), title: z.string() }))
+    .max(50)
+    .optional(),
 });
 const Result = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), hop: z.number().int(), to: z.string() }),
@@ -39,6 +43,7 @@ export interface NeoAskForwardRuntime {
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   forwards(ask: NeoAskOrigin): NeoAskForward[];
   getConcern(id: string): Pick<NeoConcern, 'id' | 'title'> | null;
+  listTopics(): Pick<NeoConcern, 'id' | 'title'>[];
   rootSessionId(): string | null;
   askText(ask: NeoAskOrigin): string | null;
   open(concernId: string): Promise<string>;
@@ -145,10 +150,19 @@ export function planNeoAskForward(
 
 export function requireForwardTarget(
   plan: Plan,
-  concern: Pick<NeoConcern, 'id' | 'title'> | null
+  concern: Pick<NeoConcern, 'id' | 'title'> | null,
+  topics: readonly Pick<NeoConcern, 'id' | 'title'>[]
 ): Gate<Target> {
   if (plan.to === NEO_FORWARD_MAIN) return { value: { ...plan, title: 'main' } };
-  return concern ? { value: { ...plan, title: concern.title } } : refuse('unknown_topic');
+  return concern
+    ? { value: { ...plan, title: concern.title } }
+    : {
+        reason: {
+          ok: false,
+          reason: 'unknown_topic',
+          topics: topics.slice(0, 50).map(({ id, title }) => ({ id, title })),
+        },
+      };
 }
 
 export function neoForwardContent(from: string, hop: number, message: string): string {
@@ -195,7 +209,12 @@ function createForward(runtime: NeoAskForwardRuntime) {
       'plan',
       'concern'
     )
-    .pipe(requireForwardTarget, ['plan', 'concern'], 'result:outcome')
+    .pipe(
+      (plan: Plan, concern: Pick<NeoConcern, 'id' | 'title'> | null) =>
+        requireForwardTarget(plan, concern, concern ? [] : runtime.listTopics()),
+      ['plan', 'concern'],
+      'result:outcome'
+    )
     .pipe(take, 'outcome', 'target')
     .pipe((ask: NeoAskOrigin) => runtime.askText(ask), 'ask', 'text')
     .pipe(
@@ -256,7 +275,7 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
   return defineOperation({
     name: 'neo.ask.forward',
     description:
-      'From a topic holder, hand the human message you are answering to the topic that knows it, when it is clearly not your subject. to is that topic id from neo.snapshot, or "main". The routed holder may forward once, to another topic or main; a holder that received a forward may forward only to main. Nothing forwards back. End your turn without answering after forwarding.',
+      'From a topic holder, hand the human message you are answering to the topic that knows it, when it is clearly not your subject. to is that topic id, or "main"; an unknown id is refused with the list of topics, so call again with the right one. The routed holder may forward once, to another topic or main; a holder that received a forward may forward only to main. Nothing forwards back. End your turn without answering after forwarding.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

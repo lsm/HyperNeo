@@ -168,6 +168,10 @@ describe('neo.ask.forward', () => {
       resolveAskOrigin: () => ask,
       forwards: () => forwards,
       getConcern: (id) => (id === 'garden' || id === 'pond' ? { id, title: id } : null),
+      listTopics: () => [
+        { id: 'garden', title: 'Garden' },
+        { id: 'pond', title: 'Pond' },
+      ],
       rootSessionId: () => root.sessionId,
       askText: () => 'Fix the pond pump',
       open: async (id) => `neo:${id}`,
@@ -264,7 +268,14 @@ describe('neo.ask.forward', () => {
   test('refuses a topic that does not exist', async () => {
     const { invoke, delivered } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'nowhere')).toMatchObject({
-      value: { ok: false, reason: 'unknown_topic' },
+      value: {
+        ok: false,
+        reason: 'unknown_topic',
+        topics: [
+          { id: 'garden', title: 'Garden' },
+          { id: 'pond', title: 'Pond' },
+        ],
+      },
     });
     expect(delivered).toEqual([]);
   });

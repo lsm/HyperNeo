@@ -1374,6 +1374,7 @@ export function createNeoOperations(service: NeoService) {
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       forwards: (ask) => service.askForwards.list(ask),
       getConcern: (id) => service.repo.getConcern(id),
+      listTopics: () => service.repo.listConcerns(),
       rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
       askText: (ask) => {
         const root = service.repo.getBindingForConcern(null)?.sessionId;
