@@ -245,6 +245,25 @@ describe('readGithubPrs', () => {
     );
     expect(asked[0].slice(0, 4)).toEqual(['gh', 'pr', 'view', pr.url]);
   });
+  test('reads branch rules and commits only for a github.com pull request', async () => {
+    const asked: string[][] = [];
+    const spawn = (args: string[]) => {
+      asked.push(args);
+      const body = args[1] === 'pr' ? ghPr({ url: args[3], baseRefName: 'dev' }) : [];
+      return {
+        stdout: new Response(JSON.stringify(body)).body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    };
+    await readGithubPrs(['https://ghe.example.com/lsm/HyperNeo/pull/42'], spawn as never);
+    expect(asked.map((args) => args[1])).toEqual(['pr']);
+    asked.length = 0;
+    await readGithubPrs(['https://github.com/lsm/Rules/pull/42'], spawn as never);
+    expect(asked.map((args) => args[1])).toEqual(['pr', 'api', 'api']);
+  });
 });
 
 describe('mergeNeoWorkPrReads', () => {

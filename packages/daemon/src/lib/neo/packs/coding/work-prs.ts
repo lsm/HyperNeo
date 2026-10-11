@@ -191,6 +191,10 @@ type BranchRule = {
 type PrDetail = { commits: { oid: string; signed: boolean }[]; unresolved: number };
 
 const RULES_MS = 10 * 60_000;
+const githubPr = (url: string) => {
+  const pr = parsePrUrl(url);
+  return pr?.host === 'github.com' ? pr : null;
+};
 const rulesCache = new Map<string, { at: number; rules: BranchRule[] }>();
 const RulesSchema = z.array(
   z.object({
@@ -297,7 +301,7 @@ async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
 }
 
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {
-  const pr = parsePrUrl(url);
+  const pr = githubPr(url);
   if (!pr) return null;
   const outcome = await gh(
     [
@@ -370,7 +374,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
   .pipe(
     async (url: string, spawnImpl: SpawnFn, found: { pr: NeoWorkPr; base?: string }) => {
       if (!wantsNeoWorkPrBlockers(found.pr, found.base)) return { rules: [], detail: null };
-      const pr = parsePrUrl(url);
+      const pr = githubPr(url);
       return {
         rules: pr ? await readBranchRules(`${pr.owner}/${pr.repo}`, found.base!, spawnImpl) : [],
         detail: await readPrDetail(url, spawnImpl),
