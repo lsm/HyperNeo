@@ -29,6 +29,7 @@ import type {
   NeoWorkGoal,
   NeoWorkPr,
   NeoWorkPrReceipt,
+  NeoWorkResourceReceipt,
   NeoWorkSupersession,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -154,10 +155,17 @@ const Consultation = z.object({
   answer: z.string().nullable(),
   createdAt: z.number(),
 } satisfies ZodShape<NeoConsultation>);
-const ConsultationWaiter = Consultation.omit({ answer: true, status: true }).extend({
+const ConsultationWaiter = z.object({
+  id: z.string(),
+  requestKey: z.string(),
+  concernId: z.string(),
+  originSessionId: z.string(),
   originMessageId: z.string(),
+  sessionId: z.string(),
+  question: z.string(),
   status: z.enum(['queued', 'admitted', 'cancelled']),
-});
+  createdAt: z.number(),
+} satisfies ZodShape<NeoConsultationWaiter>);
 const Consult = z.object({
   concernId: z.string().min(1),
   requestKey: z.string().min(1).max(160),
@@ -187,7 +195,7 @@ const SnapshotOk = z.object({
         sessionId: z.string(),
         concernId: z.string(),
         kind: z.literal('concern'),
-      })
+      } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
     )
     .optional(),
   work: z.array(Work),
@@ -195,7 +203,12 @@ const SnapshotOk = z.object({
   consultations: z.array(Consultation),
   consultationWaiters: z.array(ConsultationWaiter).optional(),
   workResources: z
-    .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
+    .array(
+      z.object({
+        workId: z.string(),
+        refs: NeoWorkResourceReferences.nullable(),
+      } satisfies ZodShape<NeoWorkResourceReceipt>)
+    )
     .max(100)
     .optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
