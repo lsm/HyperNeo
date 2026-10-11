@@ -515,8 +515,12 @@ describe('neo.ask operations', () => {
       expect.objectContaining({ id: askId, status: 'waiting' }),
     ]);
 
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(2);
+
     await service.start(offered).catch(() => {});
     expect(service.askRecords.get(askId)).toMatchObject({ status: 'open', settledAt: null });
+    await invoke('neo.ask.tick', { askId, itemId: 'i1', state: 'met', evidence: 'PR #12 merged.' });
+    expect(service.askRecords.get(askId)).toMatchObject({ status: 'open' });
   });
 
   test("settling for good stops its live work; only the user can settle another session's ask", async () => {
