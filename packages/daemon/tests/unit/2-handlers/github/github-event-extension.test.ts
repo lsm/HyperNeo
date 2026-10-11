@@ -5779,7 +5779,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('polling does not cache full check-run pages before pagination completes', async () => {
+  test('polling revalidates every check-run page, not just the first', async () => {
     const db = setupDb();
     const { service } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -5802,7 +5802,9 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
       if (path.endsWith('/check-runs')) {
-        checkRunIfNoneMatch.push(new Headers(init?.headers).get('If-None-Match'));
+        const ifNoneMatch = new Headers(init?.headers).get('If-None-Match');
+        checkRunIfNoneMatch.push(ifNoneMatch);
+        if (ifNoneMatch) return new Response(null, { status: 304 });
         const page = parsed.searchParams.get('page');
         if (page === '1') {
           return pollingResponseWithHeaders(
@@ -5821,7 +5823,12 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      expect(checkRunIfNoneMatch).toEqual([null, null, null, 'W/"checks-empty-page"']);
+      expect(checkRunIfNoneMatch).toEqual([
+        null,
+        null,
+        'W/"checks-full-page"',
+        'W/"checks-empty-page"',
+      ]);
     } finally {
       await extension.stop();
     }

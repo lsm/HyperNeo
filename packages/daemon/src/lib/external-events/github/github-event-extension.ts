@@ -2718,7 +2718,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             if (response.status === 304) {
-              break;
+              const lastPage = Number(checkRunEtags[`${headRef}:${checkRunRepoPath}:last-page`]);
+              if (page >= lastPage) break;
+              page++;
+              continue;
             }
             if (!response.ok) {
               const errorText = await response.text();
@@ -2776,11 +2779,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             const rows = rowsFromPollingPayload(await response.json(), checkRunEndpointKey);
-            let pageHasNewRows = false;
             for (const row of rows) {
               const rowOccurredAt = checkRunOccurredAt(row);
               if (rowOccurredAt < headWatermark) continue;
-              pageHasNewRows = true;
               headPending = Math.max(headPending, rowOccurredAt);
               const checkRunId = checkRunIdFrom(row);
               if (seenCheckRunIds.has(checkRunId)) continue;
@@ -2847,11 +2848,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               break;
             }
             const checkRunEtag = response.headers.get('ETag');
-            if (rows.length < 100 || !pageHasNewRows) {
-              if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+            if (checkRunEtag) checkRunEtags[checkRunEtagKey] = checkRunEtag;
+            else delete checkRunEtags[checkRunEtagKey];
+            if (rows.length < 100) {
+              checkRunEtags[`${headRef}:${checkRunRepoPath}:last-page`] = String(page);
               break;
             }
-            delete checkRunEtags[checkRunEtagKey];
             page++;
           }
           if (checkRunRateLimited || checkRunPermissionDenied) break;
