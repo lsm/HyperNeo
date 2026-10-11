@@ -708,7 +708,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             context.config.getSpaceConfig(spaceId, this.sourceId),
           publishEvent: async (spaceId: string, event) => {
             if (tokenLoginSnapshot === undefined) {
-              tokenLoginSnapshot = this.knownTokenLogin();
+              tokenLoginSnapshot = await this.loginSnapshot();
             }
             const ok = await this.publishEvent(spaceId, event, context, tokenLoginSnapshot);
             if (!ok) dropped++;
@@ -837,7 +837,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
-    const tokenLoginSnapshot = this.knownTokenLogin();
+    const tokenLoginSnapshot = await this.loginSnapshot();
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized =
@@ -914,7 +914,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
-    const tokenLoginSnapshot = this.knownTokenLogin();
+    const tokenLoginSnapshot = await this.loginSnapshot();
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized = normalizeGitHubStatus({
@@ -1376,6 +1376,45 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         validatedFingerprint: credentialFingerprint(token),
       };
     }
+  }
+
+  private seedKnownLogin(
+    stored: { login: string; fingerprint: string } | undefined,
+    token: string | undefined
+  ): void {
+    const fingerprint = credentialFingerprint(token);
+    const current = this.knownLogin;
+    if (current?.generation === this.credentialGeneration && current.fingerprint === fingerprint)
+      return;
+    if (!stored || stored.fingerprint !== fingerprint) return;
+    this.knownLogin = {
+      login: stored.login,
+      generation: this.credentialGeneration,
+      fingerprint: stored.fingerprint,
+    };
+  }
+
+  private knownLoginFor(
+    token: string | undefined
+  ): { login: string; fingerprint: string } | undefined {
+    const fingerprint = credentialFingerprint(token);
+    if (fingerprint === 'none') return undefined;
+    const known = this.knownLogin;
+    if (known?.generation === this.credentialGeneration && known.fingerprint === fingerprint)
+      return { login: known.login, fingerprint };
+    const cached = this.cachedTokenStatus();
+    return cached?.login && cached.validatedFingerprint === fingerprint
+      ? { login: cached.login, fingerprint }
+      : undefined;
+  }
+
+  private async loginSnapshot(): Promise<string> {
+    const login = this.knownTokenLogin();
+    if (login) return login;
+    const token = await this.resolveToken();
+    for (const watched of this.repo.listPollingRepos())
+      this.seedKnownLogin(watched.pollCursor?.selfLogin, token);
+    return this.knownTokenLogin();
   }
 
   private knownTokenLogin(): string {
@@ -2427,6 +2466,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let pullsFetchedResumedPage = false;
 
     const token = await this.resolveToken();
+    this.seedKnownLogin(cursor.selfLogin, token);
     this.pollCycleCredentialFingerprint = credentialFingerprint(token);
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
@@ -3322,6 +3362,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastPollCredentialFingerprint: accessible
         ? credentialFingerprint(token)
         : cursor.lastPollCredentialFingerprint,
+      selfLogin: credentialGenerationStale
+        ? cursor.selfLogin
+        : (this.knownLoginFor(token) ?? cursor.selfLogin),
     };
     if (accessible) {
       this.repo.updatePollCursor(watched.id, cursorPayload);

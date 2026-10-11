@@ -10951,6 +10951,91 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     }
   });
 
+  test('poll: a restarted daemon filters self-echo with the login the last poll saved', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const first = new GitHubEventExtension(db, 'token', { fetchImpl: selfUserFetch('octocat') });
+    await first.start({ publisher: service, config, onSourceConfigChanged() {} });
+    first.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    expect(await resolveOwnLogin(first)).toBe('octocat');
+    const rows: Array<Record<string, unknown>> = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse(rows);
+      return pollingResponse([]);
+    }) as typeof fetch;
+    await first.pollWatchedRepo(first.repo.listPollingRepos()[0], fetchImpl);
+    await first.stop();
+
+    const restarted = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () =>
+        new Response('{"message": "rate limited"}', {
+          status: 403,
+          headers: { 'X-RateLimit-Remaining': '0' },
+        })) as typeof fetch,
+    });
+    await restarted.start({ publisher: service, config, onSourceConfigChanged() {} });
+    rows.push({
+      id: 102,
+      html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-102',
+      body: 'own reply',
+      user: { login: 'octocat', type: 'User' },
+      updated_at: '2099-08-01T00:00:00Z',
+      issue: { number: 7, pull_request: { url: 'api' } },
+    });
+    try {
+      await restarted.pollWatchedRepo(restarted.repo.listPollingRepos()[0], fetchImpl);
+      expect(received).toHaveLength(0);
+    } finally {
+      await restarted.stop();
+    }
+  });
+
+  test('webhook: a restarted daemon filters self-echo with the login a poll saved', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const first = new GitHubEventExtension(db, 'token', { fetchImpl: selfUserFetch('octocat') });
+    await first.start({ publisher: service, config, onSourceConfigChanged() {} });
+    first.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(first)).toBe('octocat');
+    await first.pollWatchedRepo(first.repo.listPollingRepos()[0], (async () =>
+      pollingResponse([])) as typeof fetch);
+    await first.stop();
+
+    const restarted = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () =>
+        new Response('{"message": "rate limited"}', {
+          status: 403,
+          headers: { 'X-RateLimit-Remaining': '0' },
+        })) as typeof fetch,
+    });
+    await restarted.start({ publisher: service, config, onSourceConfigChanged() {} });
+    const payload = selfCommentPayload('octocat');
+    const raw = JSON.stringify(payload);
+    try {
+      const res = await restarted.routes[0].handle(
+        webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+      );
+      expect(res.status).toBe(200);
+      expect(received).toHaveLength(0);
+    } finally {
+      await restarted.stop();
+    }
+  });
+
   test("publishEvent drops the token's own login and passes other actors through", async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
