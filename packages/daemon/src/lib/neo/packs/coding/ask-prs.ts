@@ -47,7 +47,9 @@ const GhRefSchema = z.object({
     }),
   }),
 });
-const settled = new Map<string, NeoRefState | null>();
+const settled = new Map<string, NeoRefState>();
+const missing = new Map<string, number>();
+const NEO_REF_MISSING_MS = 60 * 60_000;
 
 const refKey = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
 
@@ -130,7 +132,10 @@ export function neoAskRefNews(states: readonly NeoRefState[], since: number): Ne
 
 async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoRefState | null> {
   const key = refKey(ref);
-  if (settled.has(key)) return settled.get(key) ?? null;
+  const done = settled.get(key);
+  if (done) return done;
+  const gone = missing.get(key);
+  if (gone !== undefined && Date.now() - gone < NEO_REF_MISSING_MS) return null;
   const outcome = await runGhJson(
     [
       'gh',
@@ -151,7 +156,7 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
   );
   const parsed = outcome.ok ? GhRefSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) {
-    if (!outcome.ok && NOT_A_REF.test(outcome.error)) settled.set(key, null);
+    if (!outcome.ok && NOT_A_REF.test(outcome.error)) missing.set(key, Date.now());
     return null;
   }
   const found = parsed.data.data.repository.issueOrPullRequest;

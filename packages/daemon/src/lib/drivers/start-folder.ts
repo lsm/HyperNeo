@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, normalize, relative, sep } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Rejected, StartRequest } from './types.ts';
 import { reject } from './work-operations.ts';
 
@@ -10,7 +11,41 @@ export interface StartFolderDeps {
 
 const PROTECTED_HOME_FOLDERS = new Set(['Library', 'Applications']);
 
-function creatableReason(folder: string, deps: StartFolderDeps): string | null {
+type StartFolderFound = { exists: boolean; parentExists: boolean };
+
+export function readStartFolder(
+  folder: string,
+  deps: Pick<StartFolderDeps, 'folderExists'>
+): StartFolderFound {
+  const exists = deps.folderExists(folder);
+  return { exists, parentExists: exists || deps.folderExists(dirname(folder)) };
+}
+
+export function requireStartFolder(
+  folder: string,
+  createFolder: boolean | undefined,
+  found: StartFolderFound,
+  deps: Pick<StartFolderDeps, 'homeDir'>
+): { value: { folder: string; create: boolean } } | { reason: Rejected } {
+  if (found.exists) return { value: { folder, create: false } };
+  if (!createFolder)
+    return {
+      reason: reject(
+        'invalid_place',
+        `${folder} does not exist. To start a new project there, pass createFolder: true.`
+      ),
+    };
+  const refused = creatableReason(folder, found, deps);
+  return refused
+    ? { reason: reject('invalid_place', refused) }
+    : { value: { folder, create: true } };
+}
+
+function creatableReason(
+  folder: string,
+  found: StartFolderFound,
+  deps: Pick<StartFolderDeps, 'homeDir'>
+): string | null {
   if (!isAbsolute(folder) || normalize(folder) !== folder) {
     return `${folder} is not a plain absolute path.`;
   }
@@ -22,35 +57,44 @@ function creatableReason(folder: string, deps: StartFolderDeps): string | null {
   if (top.startsWith('.') || PROTECTED_HOME_FOLDERS.has(top)) {
     return `New folders cannot be created inside ${top}.`;
   }
-  if (!deps.folderExists(dirname(folder))) {
+  if (!found.parentExists) {
     return `${dirname(folder)} does not exist, so ${folder} was not created.`;
   }
   return null;
 }
+
+export function createStartFolder(
+  plan: { folder: string; create: boolean },
+  deps: Pick<StartFolderDeps, 'makeFolder'>
+): { value: string } | { reason: Rejected } {
+  if (!plan.create) return { value: plan.folder };
+  try {
+    deps.makeFolder(plan.folder);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    return { reason: reject('invalid_place', `Could not create ${plan.folder}: ${why}`) };
+  }
+  return { value: plan.folder };
+}
+
+const runStartFolder = (superpipe({})('drivers-start-folder') as PipelineAPI)
+  .input(['path', 'createFolder', 'deps'])
+  .pipe(readStartFolder, ['path', 'deps'], 'found')
+  .pipe(requireStartFolder, ['path', 'createFolder', 'found', 'deps'], 'result:folder')
+  .pipe(createStartFolder, ['folder', 'deps'], 'result:folder')
+  .end('folder') as (
+  path: string,
+  createFolder: boolean | undefined,
+  deps: StartFolderDeps
+) => string | Rejected;
 
 export function ensureStartFolder(
   folder: string,
   createFolder: boolean | undefined,
   deps: StartFolderDeps
 ): { value: string } | { reason: Rejected } {
-  if (deps.folderExists(folder)) return { value: folder };
-  if (!createFolder) {
-    return {
-      reason: reject(
-        'invalid_place',
-        `${folder} does not exist. To start a new project there, pass createFolder: true.`
-      ),
-    };
-  }
-  const refused = creatableReason(folder, deps);
-  if (refused) return { reason: reject('invalid_place', refused) };
-  try {
-    deps.makeFolder(folder);
-  } catch (error) {
-    const why = error instanceof Error ? error.message : String(error);
-    return { reason: reject('invalid_place', `Could not create ${folder}: ${why}`) };
-  }
-  return { value: folder };
+  const result = runStartFolder(folder, createFolder, deps);
+  return typeof result === 'string' ? { value: result } : { reason: result };
 }
 
 export function selectLocalStartFolder(
