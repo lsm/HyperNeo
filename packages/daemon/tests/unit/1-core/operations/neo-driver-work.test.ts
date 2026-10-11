@@ -1,6 +1,7 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
+import { NEO_CARD_UNCHECKED_MS } from '../../../../src/lib/neo/card-check.ts';
 import { z } from 'zod';
 import {
   type DaemonInternalEventMap,
@@ -604,6 +605,44 @@ describe('Neo work with a drivers target', () => {
     );
     return { db, service, calls, proposed };
   }
+
+  test('a card that stopped being checked still reads unchecked after a restart', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const check = service as unknown as {
+      recordCardCheck(workId: string, read: boolean, now: number): boolean;
+    };
+    try {
+      check.recordCardCheck('work-1', true, 1_000);
+      expect(check.recordCardCheck('work-1', false, 1_000 + NEO_CARD_UNCHECKED_MS + 1)).toBe(true);
+      const restarted = new NeoService(
+        db,
+        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      expect(restarted.uncheckedSince('work-1')).toBe(1_000);
+      expect(restarted.uncheckedSince('work-unknown')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the minute pass forgets read throttles of cards it no longer follows', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const throttles = service as unknown as {
+      followReads: Map<string, number>;
+      askEvidenceReads: Map<string, number>;
+    };
+    try {
+      throttles.followReads.set('gone-card', 1);
+      throttles.askEvidenceReads.set('gone-ask', 1);
+      await service.refreshDriverWork();
+      expect([...throttles.followReads.keys()]).toEqual([]);
+      expect([...throttles.askEvidenceReads.keys()]).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
 
   test('starts the work through work.start as Neo and keeps the ref', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
@@ -2104,6 +2143,74 @@ describe('Neo work with a drivers target', () => {
       due: 10 + NEO_WORK_STUCK_STEPS_MS[3],
       abandoned: true,
     });
+  });
+
+  test('a reported card whose session later waits on the user goes back to needing you', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const at = (status: string, lastActivityAt: number) => ({
+      ok: true,
+      value: { status, lastActivityAt, lastReply: 'Merge it for me?' },
+    });
+    const done = Date.now() + 1_000;
+    const asked = done + 5_000;
+    let reply: unknown = at('done', done);
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- merged to dev');
+    fileUnderAsk(service);
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      reply = at('needs_you', asked);
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(notes.filter((id) => id.includes('needs-you'))).toEqual([`work-1:needs-you:${asked}`]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a card answered and finished between refreshes is told again when it next needs the user', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const at = (status: string, lastActivityAt: number) => ({
+      ok: true,
+      value: { status, lastActivityAt, lastReply: 'Merge it for me?' },
+    });
+    const first = Date.now() + 1_000;
+    let reply: unknown = at('needs_you', first);
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- merged to dev');
+    fileUnderAsk(service);
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      reply = at('done', first + 5_000);
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      reply = at('needs_you', first + 10_000);
+      await service.refreshDriverWork();
+      expect(notes.filter((id) => id.includes('needs-you'))).toEqual([
+        `work-1:needs-you:${first}`,
+        `work-1:needs-you:${first + 10_000}`,
+      ]);
+    } finally {
+      db.close();
+    }
   });
 
   test('tells Neo once when no card under an open ask is running any more', async () => {

@@ -89,6 +89,69 @@ export function presentNeoWorkTarget(target: NeoWorkTarget): Resolution {
   return { accepted: true, workId: target.id, targetSessionId: target.targetSessionId };
 }
 
+export type NeoWorkTargetReads = Pick<
+  NeoWorkTargetDependencies,
+  'readSession' | 'readBinding' | 'readAgentOwner'
+>;
+
+export const checkNeoWorkTarget = (superpipe({})('neo-work-target-check') as PipelineAPI)
+  .input(['target', 'reads'])
+  .pipe(requireNeoAgentWorkReference, 'target', 'result:target')
+  .pipe(
+    (target: NeoWorkTarget, reads: NeoWorkTargetReads) => ({
+      session:
+        target.targetSessionId === null
+          ? null
+          : (reads.readSession(target.targetSessionId) ?? null),
+    }),
+    ['target', 'reads'],
+    'session'
+  )
+  .pipe(
+    (target: NeoWorkTarget, reads: NeoWorkTargetReads) => ({
+      owner: target.agent ? (reads.readAgentOwner?.(target.agent) ?? null) : null,
+    }),
+    ['target', 'reads'],
+    'agentOwner'
+  )
+  .pipe(
+    (
+      target: NeoWorkTarget,
+      { session }: { session: ExecutionSession | null },
+      { owner }: { owner: NeoAgentWorkOwner | null }
+    ) =>
+      target.agent
+        ? requireNeoAgentWorkSession(target, session, owner)
+        : requireNeoWorkTargetSession(target, session),
+    ['target', 'session', 'agentOwner'],
+    'result:target'
+  )
+  .pipe(
+    (target: NeoWorkTarget, reads: NeoWorkTargetReads) => ({
+      binding:
+        target.targetSessionId === null
+          ? null
+          : (reads.readBinding(target.targetSessionId) ?? null),
+    }),
+    ['target', 'reads'],
+    'binding'
+  )
+  .pipe(
+    (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
+      target.agent
+        ? requireNeoAgentWorkBinding(target, binding)
+        : requireNeoWorkTargetBinding(target, binding),
+    ['target', 'binding'],
+    'result:target'
+  )
+  .end('target') as (target: NeoWorkTarget, reads: NeoWorkTargetReads) => NeoWorkTarget | Rejection;
+
+export function requireCheckedNeoWorkTarget(
+  checked: NeoWorkTarget | Rejection
+): Gate<NeoWorkTarget> {
+  return 'accepted' in checked ? { reason: checked } : { value: checked };
+}
+
 export function createNeoWorkTargetResolver(deps: NeoWorkTargetDependencies) {
   return (superpipe({})('neo-work-target') as PipelineAPI)
     .input(['workId'])
@@ -100,52 +163,9 @@ export function createNeoWorkTargetResolver(deps: NeoWorkTargetDependencies) {
       ['target', 'stored'],
       'result:target'
     )
-    .pipe(requireNeoAgentWorkReference, 'target', 'result:target')
     .pipe(
-      (target: NeoWorkTarget) => ({
-        session:
-          target.targetSessionId === null
-            ? null
-            : (deps.readSession(target.targetSessionId) ?? null),
-      }),
+      (target: NeoWorkTarget) => requireCheckedNeoWorkTarget(checkNeoWorkTarget(target, deps)),
       'target',
-      'session'
-    )
-    .pipe(
-      (target: NeoWorkTarget) => ({
-        owner: target.agent ? (deps.readAgentOwner?.(target.agent) ?? null) : null,
-      }),
-      'target',
-      'agentOwner'
-    )
-    .pipe(
-      (
-        target: NeoWorkTarget,
-        { session }: { session: ExecutionSession | null },
-        { owner }: { owner: NeoAgentWorkOwner | null }
-      ) =>
-        target.agent
-          ? requireNeoAgentWorkSession(target, session, owner)
-          : requireNeoWorkTargetSession(target, session),
-      ['target', 'session', 'agentOwner'],
-      'result:target'
-    )
-    .pipe(
-      (target: NeoWorkTarget) => ({
-        binding:
-          target.targetSessionId === null
-            ? null
-            : (deps.readBinding(target.targetSessionId) ?? null),
-      }),
-      'target',
-      'binding'
-    )
-    .pipe(
-      (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
-        target.agent
-          ? requireNeoAgentWorkBinding(target, binding)
-          : requireNeoWorkTargetBinding(target, binding),
-      ['target', 'binding'],
       'result:target'
     )
     .pipe(presentNeoWorkTarget, 'target', 'target')

@@ -26,6 +26,7 @@ import {
   requireNeoAskWritten,
   requireNeoAskLive,
   requireNeoAskOwner,
+  requireNeoOwnedLiveAsk,
   requireNeoWorkAsk,
   requireNeoWorkAskLive,
   requireNeoWorkAskOwner,
@@ -1230,5 +1231,14 @@ describe('neoAskScope', () => {
     expect(neoAskScope({ concernId: 'c1' })).toBe('c1');
     expect(neoAskScope({ concernId: null })).toBe(null);
     expect(neoAskScope(null)).toBe(undefined);
+  });
+});
+
+describe('requireNeoOwnedLiveAsk', () => {
+  test('passes the ask through and turns a refusal into the gate reason', () => {
+    const ask = { id: 'a1', status: 'open' } as NeoAsk;
+    const refused = { ok: false as const, reason: 'Ask not found.' };
+    expect(requireNeoOwnedLiveAsk(ask)).toEqual({ value: ask });
+    expect(requireNeoOwnedLiveAsk(refused)).toEqual({ reason: refused });
   });
 });

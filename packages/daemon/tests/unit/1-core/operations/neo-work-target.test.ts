@@ -3,8 +3,10 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { MessageHub } from '@hyperneo/shared';
 import {
   admitNeoWorkTargetId,
+  checkNeoWorkTarget,
   createNeoWorkTargetResolver,
   presentNeoWorkTarget,
+  requireCheckedNeoWorkTarget,
   requireNeoWorkTargetBinding,
   requireNeoWorkTargetSession,
   requireStoredNeoWorkTarget,
@@ -318,5 +320,23 @@ describe('NeoService work-target read facet', () => {
       service.dispose();
       db.close();
     }
+  });
+});
+
+describe('checkNeoWorkTarget', () => {
+  const target = { id: 'w1', targetSessionId: 's1' };
+  const reads = (status: string, kind: 'worker' | 'neo' = 'worker') => ({
+    readSession: () => ({ id: 's1', status }),
+    readBinding: () => ({ sessionId: 's1', kind, concernId: null }),
+  });
+  test.each<[string, ReturnType<typeof reads>, string | null]>([
+    ['an active worker session', reads('active'), null],
+    ['a session that is not active', reads('archived'), 'target_session_not_active'],
+    ['a coordinator session', reads('active', 'neo'), 'target_is_coordinator'],
+  ])('%s', (_label, deps, refused) => {
+    const checked = checkNeoWorkTarget(target, deps);
+    expect(requireCheckedNeoWorkTarget(checked)).toEqual(
+      refused ? { reason: { accepted: false, reason: refused } } : { value: target }
+    );
   });
 });
