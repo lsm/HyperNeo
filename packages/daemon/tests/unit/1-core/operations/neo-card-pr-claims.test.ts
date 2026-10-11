@@ -6,6 +6,7 @@ import {
   keepNeoCardPrReads,
   planNeoCardPrCandidates,
   planNeoCardPrOwnership,
+  planNeoPrCedes,
   type NeoPrClaim,
   type NeoPrClaimRow,
 } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
@@ -70,6 +71,28 @@ describe('beatsNeoPrClaim', () => {
     ['a mention never beats a named claim', { claimedAt: 1 }, { claim: 'named' }, false],
   ])('%s', (_label, rival, own, beats) => {
     expect(beatsNeoPrClaim({ ...mention, ...rival }, { ...mention, ...own })).toBe(beats);
+  });
+});
+
+describe('planNeoPrCedes', () => {
+  const key = pull(2).toLowerCase();
+  const mine = claim({ workId: 'me', urlKey: key, claim: 'branch', cardCreatedAt: 20 });
+  test.each<[string, NeoPrClaimRow[], string[]]>([
+    ['a weaker claim elsewhere is ceded', [mine, claim({ urlKey: key })], ['other']],
+    [
+      'a stronger claim elsewhere is kept',
+      [{ ...mine, claim: 'mentioned' }, claim({ urlKey: key, claim: 'branch' })],
+      [],
+    ],
+    ['a rejection elsewhere is left alone', [mine, claim({ urlKey: key, claim: 'rejected' })], []],
+    ['a claim on another PR is left alone', [mine, claim({})], []],
+    [
+      'nothing is ceded to a rejection of my own',
+      [{ ...mine, claim: 'rejected' }, claim({ urlKey: key })],
+      [],
+    ],
+  ])('%s', (_label, claims, ceded) => {
+    expect(planNeoPrCedes({ id: 'me' }, claims).map((row) => row.workId)).toEqual(ceded);
   });
 });
 
@@ -214,6 +237,38 @@ describe('NeoWorkPrClaimRepository', () => {
   });
 });
 
+describe('NeoWorkPrClaimRepository settled cards', () => {
+  test('lists cards with stored PRs and no claims, and drops one claim', async () => {
+    const db = await createTestDb();
+    try {
+      const raw = db.getDatabase();
+      for (const id of ['a', 'b', 'c'])
+        raw
+          .prepare(
+            `INSERT INTO neo_work(id, request_key, origin_session_id, title, instruction, status, created_at, updated_at)
+             VALUES (?, ?, 'root', 'T', 'I', 'reported', 1, 1)`
+          )
+          .run(id, `key-${id}`);
+      const prs = new NeoWorkPrRepository(raw);
+      prs.record('a', [pr(1)], 1);
+      prs.record('b', [pr(2)], 1);
+      prs.record('c', [], 1);
+      const repo = new NeoWorkPrClaimRepository(raw);
+      repo.replace('b', [
+        { url: pull(2), claim: 'branch', claimedAt: 1 },
+        { url: pull(3), claim: 'mentioned', claimedAt: 1 },
+      ]);
+      expect(repo.unclaimedCards()).toEqual(['a']);
+      repo.drop('b', pull(3).toLowerCase());
+      expect(repo.forUrls([pull(2), pull(3)]).map((row) => row.urlKey)).toEqual([
+        pull(2).toLowerCase(),
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('NeoWorkPrRepository.replacePrs', () => {
   test('changes the stored PRs without stamping a read', async () => {
     const db = await createTestDb();
@@ -265,6 +320,7 @@ describe('readNeoCardPrs', () => {
             )
           );
         },
+        drop: () => {},
       },
       workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
       record: () => null,
@@ -308,6 +364,7 @@ describe('readNeoCardPrs', () => {
             claim({ urlKey: pull(2).toLowerCase(), claim: 'branch' }),
           ],
           replace: (_id, claims) => replaced.push(claims),
+          drop: () => {},
         },
         workPrs: { get: () => stored, list: () => [], recordFailedRead: () => {} },
         record: (_id, prs, _before, read) => {
@@ -325,5 +382,56 @@ describe('readNeoCardPrs', () => {
     expect(readFlags).toEqual([false]);
     expect(replaced).toEqual([[{ url: pull(1), claim: 'mentioned', claimedAt: 5, claimed: true }]]);
     expect(result).toEqual({ row: { ...stored, prs: [pr(1)], revision: 2 }, ok: true });
+  });
+
+  test('a card that wins a PR takes it out of the losing card', async () => {
+    const theirs: NeoWorkPrRow = {
+      workId: 'other',
+      prs: [pr(1), pr(2)],
+      revision: 1,
+      delivered: null,
+      deliveredAt: null,
+      reminded: null,
+      readAt: 1,
+      readOkAt: 1,
+    };
+    const dropped: string[][] = [];
+    const recorded: [string, NeoWorkPr[], boolean | undefined][] = [];
+    const rows = [claim({ urlKey: pull(2).toLowerCase() })];
+    await readNeoCardPrs(
+      {
+        readPrs: async () => [pr(2, 50)],
+        prCandidates: async () => [{ url: pull(2), claim: 'branch' }],
+        claims: {
+          forUrls: () => rows,
+          replace: (_id, claims) =>
+            rows.push(
+              ...claims.map((item) =>
+                claim({
+                  workId: 'me',
+                  urlKey: item.url.toLowerCase(),
+                  claim: item.claim,
+                  cardCreatedAt: 20,
+                })
+              )
+            ),
+          drop: (workId, urlKey) => dropped.push([workId, urlKey]),
+        },
+        workPrs: {
+          get: (id) => (id === 'other' ? theirs : null),
+          list: () => [],
+          recordFailedRead: () => {},
+        },
+        record: (id, prs, _before, read) => {
+          recorded.push([id, [...prs], read]);
+          return id === 'me' ? { ...theirs, workId: 'me', prs: [...prs] } : null;
+        },
+      },
+      { id: 'me', createdAt: 20, report: null } as NeoWork,
+      null,
+      1_000
+    );
+    expect(dropped).toEqual([['other', pull(2).toLowerCase()]]);
+    expect(recorded.at(-1)).toEqual(['other', [pr(1)], false]);
   });
 });
