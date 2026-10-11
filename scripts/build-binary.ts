@@ -49,11 +49,19 @@ run('bun run scripts/generate-embedded-assets.ts');
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
+const buildCommit = (
+  process.env.GITHUB_SHA || execSync('git rev-parse HEAD', { encoding: 'utf8' })
+).trim();
+const defineBuildCommit = `--define 'process.env.HYPERNEO_BUILD_COMMIT="${buildCommit}"'`;
+console.log(`Build commit: ${buildCommit}`);
+
 for (const target of targets) {
   const outputPath = outputFileForTarget(target);
 
   console.log(`\nStep 3: Compiling binary for ${target}...`);
-  run(`bun build --compile --target=${target} --outfile=${outputPath} packages/cli/prod-entry.ts`);
+  run(
+    `bun build --compile --target=${target} ${defineBuildCommit} --outfile=${outputPath} packages/cli/prod-entry.ts`
+  );
   console.log(`  -> ${outputPath}`);
 
   console.log('  Verifying Copilot SDK bundle markers...');
@@ -64,7 +72,7 @@ for (const target of targets) {
     const daemonOutputPath = outputFileForTarget(target, 'hyperneod');
     console.log(`  Compiling standalone daemon binary for ${target}...`);
     run(
-      `bun build --compile --target=${target} --outfile=${daemonOutputPath} packages/cli/daemon-entry.ts`
+      `bun build --compile --target=${target} ${defineBuildCommit} --outfile=${daemonOutputPath} packages/cli/daemon-entry.ts`
     );
     console.log(`  -> ${daemonOutputPath}`);
 

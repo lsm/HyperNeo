@@ -55,5 +55,5 @@ function sourceGitHead(): string {
 
 export const BUILD_METADATA: BuildMetadata = readBuildMetadata(
   daemonPackageJson,
-  readBuildCommit(process.env, sourceGitHead)
+  readBuildCommit({ HYPERNEO_BUILD_COMMIT: process.env.HYPERNEO_BUILD_COMMIT }, sourceGitHead)
 );
