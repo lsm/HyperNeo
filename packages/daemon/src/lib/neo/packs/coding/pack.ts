@@ -36,10 +36,12 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 
 export const CODING_CHECK_PR_MERGED = 'coding.pr_merged';
 
-export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) =>
-  evidence.length && evidence.every((item) => item.state === 'done')
-    ? { value: `Merged: ${evidence.map((item) => item.key).join(', ')}` }
+export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoEvidence[]) => {
+  const prs = evidence.filter((item) => /^https?:\/\//.test(item.key));
+  return prs.length && evidence.every((item) => item.state === 'done')
+    ? { value: `Merged: ${prs.map((item) => item.key).join(', ')}` }
     : { reason: 'not_merged' };
+};
 
 export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;

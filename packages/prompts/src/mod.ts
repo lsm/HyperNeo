@@ -110,6 +110,9 @@ import mdneoWorkGoalMerge from './neo/packs/coding/goal-merge.md' with { type: '
 import mdneoPacksCodingGoalPrEvents from './neo/packs/coding/goal-pr-events.md' with {
   type: 'text',
 };
+import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions.md' with {
+  type: 'text',
+};
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
 import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
 import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
@@ -377,6 +380,7 @@ const registry: Record<string, string> = {
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
+  'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
   'neo/work/needs-you.md': mdneoWorkNeedsYou,
@@ -523,6 +527,7 @@ export const {
   NEO_CONSULTATION_SETTLED_STOPPED,
   NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_PUBLISH_NUDGE,
   NEO_RECENT_CONVERSATION_HEADER,
   NEO_ROUTE_PROMPT,
