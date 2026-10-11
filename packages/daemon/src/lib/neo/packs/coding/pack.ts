@@ -173,10 +173,10 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
   .pipe(
     (deps: NeoCardPrDeps, ceded: { rows: NeoPrClaimRow[] }) => {
       for (const lost of ceded.rows) {
-        deps.claims.drop(lost.workId, lost.urlKey);
         const row = deps.workPrs.get(lost.workId);
         const prs = row?.prs.filter((pr) => pr.url.toLowerCase() !== lost.urlKey);
         if (row && prs && prs.length !== row.prs.length) deps.record(lost.workId, prs, row, false);
+        deps.claims.drop(lost.workId, lost.urlKey, lost.claim);
       }
     },
     ['deps', 'ceded']

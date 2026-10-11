@@ -35,11 +35,11 @@ export class NeoWorkPrClaimRepository {
     ).map((row) => row.workId);
   }
 
-  drop(workId: string, urlKey: string): void {
+  drop(workId: string, urlKey: string, claim: NeoPrClaimState): void {
     if (!this.hasTable()) return;
     this.db
-      .prepare('DELETE FROM neo_work_pr_claims WHERE work_id = ? AND url_key = ?')
-      .run(workId, urlKey);
+      .prepare('DELETE FROM neo_work_pr_claims WHERE work_id = ? AND url_key = ? AND claim = ?')
+      .run(workId, urlKey, claim);
   }
 
   replace(

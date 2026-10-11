@@ -275,7 +275,8 @@ describe('NeoWorkPrClaimRepository settled cards', () => {
         { url: pull(3), claim: 'mentioned', claimedAt: 1 },
       ]);
       expect(repo.unclaimedCards()).toEqual(['a']);
-      repo.drop('b', pull(3).toLowerCase());
+      repo.drop('b', pull(2).toLowerCase(), 'mentioned');
+      repo.drop('b', pull(3).toLowerCase(), 'mentioned');
       expect(repo.forUrls([pull(2), pull(3)]).map((row) => row.urlKey)).toEqual([
         pull(2).toLowerCase(),
       ]);
@@ -400,7 +401,7 @@ describe('readNeoCardPrs', () => {
     expect(result).toEqual({ row: { ...stored, prs: [pr(1)], revision: 2 }, ok: true });
   });
 
-  test('a card that wins a PR takes it out of the losing card', async () => {
+  test('a card that wins a PR takes it out of the losing card before dropping its claim', async () => {
     const theirs: NeoWorkPrRow = {
       workId: 'other',
       prs: [pr(1), pr(2)],
@@ -431,7 +432,7 @@ describe('readNeoCardPrs', () => {
                 })
               )
             ),
-          drop: (workId, urlKey) => dropped.push([workId, urlKey]),
+          drop: (workId, urlKey, held) => dropped.push([workId, urlKey, held]),
         },
         workPrs: {
           get: (id) => (id === 'other' ? theirs : null),
@@ -440,6 +441,7 @@ describe('readNeoCardPrs', () => {
         },
         record: (id, prs, _before, read) => {
           recorded.push([id, [...prs], read]);
+          if (id === 'other') expect(dropped).toEqual([]);
           return id === 'me' ? { ...theirs, workId: 'me', prs: [...prs] } : null;
         },
       },
@@ -447,7 +449,7 @@ describe('readNeoCardPrs', () => {
       null,
       1_000
     );
-    expect(dropped).toEqual([['other', pull(2).toLowerCase()]]);
+    expect(dropped).toEqual([['other', pull(2).toLowerCase(), 'mentioned']]);
     expect(recorded.at(-1)).toEqual(['other', [pr(1)], false]);
   });
 
