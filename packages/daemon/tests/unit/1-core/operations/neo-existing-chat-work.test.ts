@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
@@ -185,12 +186,12 @@ describe('Neo existing chat work', () => {
     expect(brief).toContain('If you stop before this is done, say what remains and why.');
     expect(await invoke('neo.snapshot', {})).toMatchObject({
       value: {
-        workGoals: [
-          {
+        cards: [
+          expect.objectContaining({
             workId: work.id,
             goal: 'A full-featured native iOS app for Neo',
             doneWhen: '- chat, work cards and settings screens\n- builds and runs in the simulator',
-          },
+          }),
         ],
       },
     });
@@ -205,7 +206,8 @@ describe('Neo existing chat work', () => {
         source('ask-R')
       )
     ).toMatchObject({ value: { ok: false } });
-    expect(await invoke('neo.snapshot', {})).toMatchObject({ value: { workGoals: [] } });
+    const snapshot = (await invoke('neo.snapshot', {})) as { value: NeoSnapshot };
+    expect(snapshot.value.cards.map((card) => card.goal)).toEqual([null]);
   });
 
   test.each([
