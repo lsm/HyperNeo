@@ -1194,7 +1194,7 @@ export function createNeoOperations(service: NeoService) {
         const tracked = service.trackedSessions;
         tracked.delete(neoSessionKey(input.work.ref));
         service.trackedSessions = tracked;
-        const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
+        const owned = ask.askId && !input.askId ? service.askRecords.get(ask.askId) : null;
         if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
           service.askRecords.approve(owned.id, Date.now());
         await service.start(receipt.work.id);
@@ -1433,7 +1433,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.session.track',
       description:
-        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. Neo is asked to write the goal and doneWhen from the session\'s first message and propose a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as the human’s Start for that card, so it starts on its own; its ask is approved only when the card is that ask’s only work, and a shared ask keeps needing the human’s approval for its other work.',
+        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. Neo is asked to write the goal and doneWhen from the session\'s first message and propose a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as the human’s Start for that card, so it starts on its own; the ask the proposal opens for it is approved, but an existing ask Neo names is not, and a shared ask keeps needing the human’s approval for its other work.',
       inputSchema: SessionTrack,
       resultSchema: SessionTrackResult,
       policy: { safetyClass: 'human_only' },

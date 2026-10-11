@@ -214,6 +214,45 @@ describe('neo.session.track', () => {
     expect(sent).not.toHaveBeenCalled();
   });
 
+  test('a tap starts the card but never approves an existing ask Neo names', async () => {
+    const neo = {
+      source: 'mcp' as const,
+      sessionId: 'neo:root',
+      role: 'neo' as const,
+      neoTurn: { messageId: 'turn-1', human: true, isLive: () => true },
+    };
+    const registry = createOperationRegistry(createNeoOperations(service));
+    service.trackedSessions = new Map([[key, Date.now()]]);
+    const opened = await invokeOperation(
+      registry,
+      'neo.ask.open',
+      {
+        requestKey: 'research',
+        title: 'Research',
+        ask: 'Research quiet models',
+        doneWhen: '- done',
+        doneSource: 'human',
+      },
+      neo
+    );
+    const askId = (opened as { value: { ask: { id: string } } }).value.ask.id;
+    const proposed = await invokeOperation(
+      registry,
+      'neo.work.propose',
+      {
+        requestKey: 'track',
+        title: 'Quiet-model research',
+        instruction: 'Follow the research session.',
+        askId,
+        work: { verb: 'adopt', ref },
+      },
+      neo
+    );
+    const card = (proposed as { value: { work: { id: string } } }).value.work;
+    expect(service.repo.getWork(card.id)?.status).toBe('queued');
+    expect(service.askRecords.get(askId)?.approvedAt ?? null).toBeNull();
+  });
+
   test('asks Neo to adopt the session, and the adopted card follows it without sending', async () => {
     const human = { source: 'rpc' as const, principal: 'local' as const };
     const invoke = (input: unknown, caller: Parameters<typeof invokeOperation>[3] = human) =>
