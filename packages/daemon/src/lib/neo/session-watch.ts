@@ -213,6 +213,7 @@ export function latestNeoSessionNoticeGroups(
       const notices = group.notices
         .toReversed()
         .filter((notice) => !shown.has(notice.key) && !!shown.add(notice.key))
+        .filter((notice) => notice.kind !== 'finished')
         .toReversed();
       if (!notices.length) return [];
       return notices.length === group.notices.length

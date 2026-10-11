@@ -292,6 +292,14 @@ describe('latestNeoSessionNoticeGroups', () => {
     expect(shown[0]!.line).toBe('Codex · b failed');
   });
 
+  test('hides a session whose newest notice is a saved finished one', () => {
+    const shown = latestNeoSessionNoticeGroups([
+      group('g1', [at('a', 'needs_you', 1), at('b', 'needs_you', 2)]),
+      group('g2', [at('a', 'finished', 3), at('c', 'finished', 4)]),
+    ]);
+    expect(shown.map((item) => [item.id, item.notices.map((n) => n.key)])).toEqual([['g1', ['b']]]);
+  });
+
   test('keeps a group untouched when none of its sessions comes again', () => {
     const only = group('g1', [at('a', 'needs_you', 1)]);
     expect(latestNeoSessionNoticeGroups([only])).toEqual([only]);
