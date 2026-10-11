@@ -58,6 +58,16 @@ export class SessionEventSubscriptionRepository {
       .get(`github/${escape(owner)}/${escape(repo)}/%`);
   }
 
+  listAll(): SessionEventSubscription[] {
+    const rows = this.db
+      .prepare(
+        `SELECT session_id, topic, label, created_at FROM session_event_subscriptions
+          ORDER BY created_at, rowid`
+      )
+      .all() as SubscriptionRow[];
+    return rows.map(toSubscription);
+  }
+
   delete(sessionId: string, topic: string): void {
     this.db
       .prepare(`DELETE FROM session_event_subscriptions WHERE session_id = ? AND topic = ?`)
