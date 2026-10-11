@@ -140,7 +140,12 @@ import {
 import { planNeoCardPrCandidates, type NeoCardPrCandidate } from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { planNeoCardCheck } from './card-check.ts';
-import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
+import {
+  CODING_PACK_BRIEF,
+  createCodingPack,
+  type NeoCardPrDeps,
+  readNeoCardPrs,
+} from './packs/coding/pack.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
   neoEnabledPacks,
@@ -1203,6 +1208,7 @@ export class NeoService {
   }
 
   private async reclaimCardPrs(): Promise<void> {
+    if (!this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id)) return;
     const works = this.workPrClaims
       .cardsToReclaim()
       .flatMap((id) => this.repo.getWork(id) ?? [])
