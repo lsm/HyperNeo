@@ -18,6 +18,8 @@ import {
   requireNeoAskSettlement,
   requireNeoAskSummary,
   requireNeoAskWritten,
+  requireNeoAskLive,
+  requireNeoAskOwner,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
 } from '../../../../src/lib/neo/ask-operations.ts';
@@ -603,6 +605,32 @@ describe('requireNeoWorkAsk', () => {
   test('passes work with no ask or under an active one', () => {
     expect(requireNeoWorkAsk(null, { concernId: null }, neo)).toEqual({ value: neo });
     expect(requireNeoWorkAsk({ ...ask, status: 'blocked' }, input, neo)).toEqual({ value: neo });
+  });
+});
+
+describe('requireNeoAskOwner', () => {
+  test('lets the opening Neo session and the user act, and refuses other sessions', () => {
+    const user: OperationCaller = { source: 'rpc', principal: 'local' };
+    expect(requireNeoAskOwner(ask, neo, 'tick')).toEqual({ value: ask });
+    expect(requireNeoAskOwner(ask, user, 'tick')).toEqual({ value: ask });
+    expect(requireNeoAskOwner(ask, { ...neo, sessionId: 'holder' }, 'tick')).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that opened this ask or the user can tick it.',
+      },
+    });
+    expect(requireNeoAskOwner(null, neo, 'tick')).toEqual({
+      reason: { ok: false, reason: 'ask_not_found' },
+    });
+  });
+});
+
+describe('requireNeoAskLive', () => {
+  test('refuses a settled ask with its status', () => {
+    expect(requireNeoAskLive({ ...ask, status: 'waiting' })).toMatchObject({ value: {} });
+    expect(requireNeoAskLive({ ...ask, status: 'abandoned' }, '; open a new ask')).toEqual({
+      reason: { ok: false, reason: 'ask_settled: this ask is already abandoned; open a new ask.' },
+    });
   });
 });
 

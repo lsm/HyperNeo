@@ -85,6 +85,7 @@ export function NeoWorkCard({
   prs,
   goal,
   continued,
+  pooled = false,
   busy,
   disabled,
   onAction,
@@ -99,6 +100,7 @@ export function NeoWorkCard({
   prs?: NeoWorkPrReceipt;
   goal?: NeoWorkGoal;
   continued?: NeoWorkContinue;
+  pooled?: boolean;
   busy: boolean;
   disabled: boolean;
   onAction: (id: string, action: NeoWorkAction) => void;
@@ -318,7 +320,9 @@ export function NeoWorkCard({
       )}
       {presentation === 'detail' && continued && (
         <p class="mt-1 text-xs text-fg-muted" title={continued.lastMessage}>
-          Neo continued it {continued.count}/{NEO_WORK_CONTINUE_LIMIT}
+          {pooled
+            ? `Neo continued it ${continued.count}`
+            : `Neo continued it ${continued.count}/${NEO_WORK_CONTINUE_LIMIT}`}
         </p>
       )}
       {presentation === 'detail' && goal?.doneWhen && (
