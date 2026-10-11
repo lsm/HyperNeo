@@ -123,6 +123,13 @@ export interface NeoSessionNotice {
   link?: string;
 }
 
+export interface NeoSessionNoticeGroup {
+  id: string;
+  at: number;
+  line: string;
+  notices: NeoSessionNotice[];
+}
+
 export interface NeoSnapshot {
   ok: true;
   sessionId: string | null;
@@ -135,6 +142,7 @@ export interface NeoSnapshot {
   workResources?: NeoWorkResourceReceipt[];
   workDrivers?: NeoWorkDriverReceipt[];
   sessionNotices?: NeoSessionNotice[];
+  sessionNoticeGroups?: NeoSessionNoticeGroup[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
   workSupersessions?: NeoWorkSupersession[];

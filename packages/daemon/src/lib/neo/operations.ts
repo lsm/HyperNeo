@@ -70,7 +70,8 @@ import {
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
-import { type WorkRef, WorkRefSchema, WorkStatusSchema } from '../drivers/types.ts';
+import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
+import { NeoSessionNoticeGroupSchema, NeoSessionNoticeSchema } from './session-watch.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -175,19 +176,8 @@ const Snapshot = z.union([
       .array(z.object({ workId: z.string(), refs: NeoWorkResourceReferences.nullable() }))
       .max(100)
       .optional(),
-    sessionNotices: z
-      .array(
-        z.object({
-          key: z.string(),
-          ref: WorkRefSchema,
-          title: z.string(),
-          kind: z.enum(['needs_you', 'failed', 'finished']),
-          at: z.number(),
-          link: z.string().optional(),
-        })
-      )
-      .max(20)
-      .optional(),
+    sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
+    sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
     workDrivers: z
       .array(
         z.object({
@@ -605,6 +595,7 @@ export function createNeoOperations(service: NeoService) {
           };
         }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: service.sessionNoticeGroups,
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
