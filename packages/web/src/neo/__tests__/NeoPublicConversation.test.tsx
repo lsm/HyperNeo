@@ -583,4 +583,34 @@ describe('session notice rows', () => {
     fireEvent.click(within(row).getByRole('button', { name: '2 more' }));
     expect(row.textContent).toContain('Session 7 finished');
   });
+
+  it('mutes a session from its row, and offers to unmute one already muted', () => {
+    const onMute = vi.fn();
+    const notices = [notice(1, 'finished'), notice(2, 'needs_you')];
+    render(
+      <NeoPublicConversation
+        mute={{ muted: new Set([notices[1].key]), onMute }}
+        conversation={{
+          conversationId: 'c1',
+          status: 'ready',
+          hasEarlier: false,
+          hasMore: false,
+          entries: [
+            {
+              kind: 'notices',
+              key: 'notices:1',
+              group: { id: 'g1', at: notices[0].at, line: '', notices },
+            },
+          ],
+        }}
+      />
+    );
+    const row = screen.getByRole('note');
+    fireEvent.click(within(row).getByRole('button', { name: 'Mute Session 1' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Unmute Session 2' }));
+    expect(onMute.mock.calls).toEqual([
+      [notices[0].key, true],
+      [notices[1].key, false],
+    ]);
+  });
 });

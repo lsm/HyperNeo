@@ -62,7 +62,20 @@ const NOTICE_KINDS = {
 } as const;
 const NOTICES_SHOWN = 5;
 
-function NoticeRow({ entryKey, group }: { entryKey: string; group: NeoSessionNoticeGroup }) {
+export type NeoSessionMute = {
+  muted: ReadonlySet<string>;
+  onMute: (key: string, muted: boolean) => void;
+};
+
+function NoticeRow({
+  entryKey,
+  group,
+  mute,
+}: {
+  entryKey: string;
+  group: NeoSessionNoticeGroup;
+  mute?: NeoSessionMute;
+}) {
   const [all, setAll] = useState(false);
   const shown = all ? group.notices : group.notices.slice(0, NOTICES_SHOWN);
   const more = group.notices.length - shown.length;
@@ -97,6 +110,19 @@ function NoticeRow({ entryKey, group }: { entryKey: string; group: NeoSessionNot
                 >
                   Open
                 </a>
+              </>
+            )}
+            {mute && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  class="text-fg-faint hover:text-fg hover:underline"
+                  aria-label={`${mute.muted.has(notice.key) ? 'Unmute' : 'Mute'} ${notice.title}`}
+                  onClick={() => mute.onMute(notice.key, !mute.muted.has(notice.key))}
+                >
+                  {mute.muted.has(notice.key) ? 'Unmute' : 'Mute'}
+                </button>
               </>
             )}
           </span>
@@ -385,8 +411,10 @@ export function NeoPublicConversation({
   onLoadEarlier,
   onEditUndelivered,
   topics,
+  mute,
 }: {
   conversation: Conversation;
+  mute?: NeoSessionMute;
   topics?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
@@ -425,7 +453,7 @@ export function NeoPublicConversation({
       )}
       {conversation.entries.map((entry) =>
         entry.kind === 'notices' ? (
-          <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} />
+          <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
         ) : (
           <PublicEntry
             key={entry.key}

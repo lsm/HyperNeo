@@ -536,6 +536,10 @@ export function NeoLive() {
                 acceptedCleanups.delete(requestId);
                 writeDraft(failed.text);
               }}
+              mute={{
+                muted: new Set(view?.mutedSessions ?? []),
+                onMute: (key, muted) => void neo.muteSession(key, muted),
+              }}
               onEditUndelivered={(ask) => {
                 if (!neo.sessionId) return false;
                 const images = publicAskImages(ask.content);
