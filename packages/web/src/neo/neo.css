@@ -362,7 +362,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .neo-arrive {
-    animation: neo-arrive 180ms ease-out both;
+    animation: neo-arrive 180ms ease-out backwards;
   }
 }
 
