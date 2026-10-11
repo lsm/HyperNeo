@@ -73,6 +73,7 @@ import {
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
+import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import { SpaceAgentSubscriptionRepository } from './storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceSessionEventSubscriptionRepository } from './storage/repositories/space-session-event-subscription-repository.ts';
@@ -923,13 +924,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           sessionEventSubscriptions.referencesRepo(owner, repo),
         subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
-            (watched.spaceId === SESSION_EVENT_SCOPE
-              ? sessionEventSubscriptions.listAll()
+            watched.spaceId === SESSION_EVENT_SCOPE
+              ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
               : [
-                  ...spaceSessionEventSubscriptions.listBySpace(watched.spaceId),
-                  ...spaceAgentSubscriptions.listActiveSubscriptionsBySpace(watched.spaceId),
-                ]
-            ).map((subscription) => subscription.topic),
+                  ...spaceSessionEventSubscriptions
+                    .listBySpace(watched.spaceId)
+                    .map((subscription) => subscription.topic),
+                  ...spaceAgentSubscriptions
+                    .listActiveSubscriptionsBySpace(watched.spaceId)
+                    .flatMap((subscription) => {
+                      try {
+                        return [
+                          composeLongHorizonSubscriptionPattern(
+                            subscription.source,
+                            subscription.topic
+                          ),
+                        ];
+                      } catch {
+                        return [];
+                      }
+                    }),
+                ],
             watched.owner,
             watched.repo
           ),

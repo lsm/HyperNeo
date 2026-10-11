@@ -7,6 +7,7 @@ import {
   parsePrUrl,
   resolveTopicFromInterest,
 } from '../../../../src/lib/github/parse-pr-url';
+import { composeLongHorizonSubscriptionPattern } from '../../../../src/lib/external-events/long-horizon-subscription-pattern';
 import { validateGlobPattern } from '../../../../src/lib/external-events/topic-validator';
 
 describe('parsePrUrl', () => {
@@ -247,5 +248,15 @@ describe('pullRequestNumbersOfTopics', () => {
         'widgets'
       )
     ).toEqual([7, 12]);
+  });
+
+  test('reads an agent subscription stored in owner/repo shorthand once composed', () => {
+    expect(
+      pullRequestNumbersOfTopics(
+        [composeLongHorizonSubscriptionPattern('github', 'acme/widgets/pull_request/42.*')],
+        'acme',
+        'widgets'
+      )
+    ).toEqual([42]);
   });
 });
