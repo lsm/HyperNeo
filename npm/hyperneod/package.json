@@ -1,15 +1,15 @@
 {
   "name": "hyperneod",
-  "version": "0.42.0",
+  "version": "0.43.0",
   "description": "HyperNeo standalone daemon binary (no web UI)",
   "bin": {
     "hyperneod": "bin/hyperneod.js"
   },
   "optionalDependencies": {
-    "@hyperneo/hyperneod-darwin-arm64": "0.42.0",
-    "@hyperneo/hyperneod-darwin-x64": "0.42.0",
-    "@hyperneo/hyperneod-linux-x64": "0.42.0",
-    "@hyperneo/hyperneod-linux-arm64": "0.42.0"
+    "@hyperneo/hyperneod-darwin-arm64": "0.43.0",
+    "@hyperneo/hyperneod-darwin-x64": "0.43.0",
+    "@hyperneo/hyperneod-linux-x64": "0.43.0",
+    "@hyperneo/hyperneod-linux-arm64": "0.43.0"
   },
   "files": [
     "bin/"

@@ -4,6 +4,36 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-10
+
+260 commits since v0.42.0. Headline families: Neo asks with done-when checklists that Neo, the daemon, and the human tick, approve-once asks that start their cards under a shared continue budget, Neo packs (core prompt plus a per-ask pack, starting with coding), pull request and issue awareness on asks and cards, direct-task dependency and stop hardening, and adaptive thinking levels.
+
+### Added
+
+- **Neo asks**: Every request opens an ask with its done definition, its cards filed under it, and a settle step that stops live work when it ends; done-when checklists Neo ticks with evidence, the daemon ticks for merged pull requests, and the human edits, ticks, or drops from the card; achieved requires every item met; approve an ask once and Neo starts its cards under one shared continue budget; asks waiting on you shown under Needs your attention; close an ask as done or dropped from its card.
+- **Neo awareness**: Asks watch the pull requests and issues they name (including bare `#N` in one repo); cards track the PRs their session opened, coding card sessions subscribe to their PR's events, PR state names what blocks the merge, and the done check holds while CI runs; Neo is told when the human's own sessions need them, fail, or finish, and when a message to Neo was never delivered.
+- **Neo packs**: A NeoPack contract and registry, the system prompt split into a domain-agnostic core plus the ask's pack, `neo.pack.read`, a pack enable setting with a file-pack loader, and coding moved into `neo/packs/coding`; a core evidence and done-check planner with `neo_work_checks` bookkeeping.
+- **Neo work**: Neo learns while working (reuses precedent and saves standing rules, saying which it saved), finds where a request belongs with `work.find` before proposing, retries a failed hand-off on the same card, lets the user close any card as done or cancelled, reads and changes the default model, and sets one model and thinking preference for all its sessions; Neo-started Claude Code sessions go to the phone via Remote Control; Codex and HyperNeo work in a linked worktree runs in place.
+- **Tasks**: A person can finish, cancel, or archive a task from any status; `task.start` accepts a kickoff note and the composer runs a not-started task with one; cancelling a direct task stops and blocks its running dependents; one status-change table shared by web and daemon.
+- **Web**: One task page with the thread first; ask and work cards with full-width titles, a status chip, PR state, Retry from the daemon's retryable flag, and notices when Neo could not confirm or check a session; Neo's short reply with details one tap away; a swipe-in mobile work list.
+- **Thinking and clients**: Low to Ultra thinking levels with a slider picker and adaptive thinking with effort for Claude models that support it; a user-only registry for companion clients; sessions outside a Space can subscribe to external events.
+
+### Changed
+
+- **Performance**: Web global snapshots omit the unused session inventory, health session totals read the maintained `session_counters` row, metadata-only deltas keep the sessions array, and review-summary patches are batched into one diff per range.
+- **Sessions**: User sessions left in retired rooms are archived on upgrade (migration 319); nothing is deleted.
+
+### Fixed
+
+- **Neo**: Cards follow their session until it finishes or stops and stop following once a newer card lands there; sent work settles once its message lands, including in busy sessions; waiting asks are re-asked once when the human next writes and reopen when the human answers the work session; old failures are re-checked before repeating; asks admitted behind a running turn keep their place; voice keeps the draft visible and its height.
+- **Tasks**: Dependents settle the same way however a task ends, and one failing dependent no longer stops the rest; dead direct start and outcome jobs recover; expected-status and Space slot checks happen inside the status writes; typed rejections for approve, reject, reopen, and handoff-blocked retry.
+- **Drivers and daemon**: Claude hand-offs report an expired CLI login, Remote Control failures are logged, Codex threads that asked the user read as needs-you, provider credentials stay off the SDK command line, a gone provider fails a delivery once, and new sessions skip an unavailable default model.
+- **Web and desktop**: GlobalStore initialization is single-flight and retryable, archived tasks stay listed after reload, the hidden-page socket closes with an allowed code, and the desktop app gets past its startup splash; the file index honors gitignore matching and refreshes its rules.
+
+### Removed
+
+- **Dead code**: The task manager's own dependent settling and unused cancel cascade, task modules nothing imports, unused provider env mutators, the `workflow_run_artifact_cache` table, and the web EntityStore, no-op cleanup registration, and write-only message count.
+
 ## [0.42.0] - 2026-10-08
 
 1149 commits since v0.41.0. Headline families: Neo as the conversational front door (routing, durable asks, work cards, and drivers that start and track work in HyperNeo sessions, Space tasks, Claude Code Desktop and Codex), the operations door (ADR 0006) replacing `call_action` and most Space action and RPC paths, durable direct (workflow-free) Space task execution, Space agents rebuilt around Space-owned templates with the coordinator and Space chat sessions removed, chat display modes with write-time task feeds, and connection/reconnect and iPhone keyboard reliability in the web UI.
