@@ -1,5 +1,10 @@
 import type { NeoConcern, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  isPooledNeoAsk,
+  type NeoAsk,
+  type NeoAskItem,
+  neoAskApprovalSpent,
+} from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -40,6 +45,8 @@ export const NeoAskSchema = z.object({
   approvedContinues: z.number().optional(),
   approvedUntil: z.number().optional(),
   approvedContinueLimit: z.number().optional(),
+  pooled: z.boolean().optional(),
+  approvalSpent: z.enum(['continues', 'expired']).nullable().optional(),
   waitingItem: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
@@ -192,9 +199,17 @@ export function isNeoCardAsk(ask: NeoAsk | null, planned: Omit<NeoAskInput, 'id'
   );
 }
 
-export function projectNeoSnapshotAsks(asks: readonly NeoAsk[], settledLimit: number): NeoAsk[] {
+export function projectNeoSnapshotAsks(
+  asks: readonly NeoAsk[],
+  settledLimit: number,
+  now: number
+): NeoAsk[] {
   const active = asks.filter((ask) => !isFinal(ask)).slice(0, ACTIVE_ASK_LIMIT);
-  return [...active, ...asks.filter(isFinal).slice(0, settledLimit)];
+  return [...active, ...asks.filter(isFinal).slice(0, settledLimit)].map((ask) => ({
+    ...ask,
+    pooled: isPooledNeoAsk(ask),
+    approvalSpent: neoAskApprovalSpent(ask, now),
+  }));
 }
 
 export function requireNeoAskConcern<T>(

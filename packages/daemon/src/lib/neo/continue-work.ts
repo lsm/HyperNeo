@@ -1,9 +1,12 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CONTINUE_LIMIT, type NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  isPooledNeoAsk,
+  NEO_WORK_CONTINUE_LIMIT,
+  type NeoAsk,
+} from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
-import { isNeoAskLive } from './done-check.ts';
 import {
   type DriverSent,
   NEO_ASK_CONTINUES_SPENT,
@@ -137,7 +140,7 @@ export const sendNeoWorkContinue = (superpipe({})('neo.work.continue.send') as P
   .pipe(
     (deps: NeoContinueDeps, target: NeoContinueTarget) => {
       const ask = deps.readAsk(target.work.id);
-      if (ask?.approvedAt == null || !isNeoAskLive(ask)) return { ask: null, ok: true };
+      if (!isPooledNeoAsk(ask)) return { ask: null, ok: true };
       return { ask, ok: deps.reserveAskContinue(ask) };
     },
     ['deps', 'target'],

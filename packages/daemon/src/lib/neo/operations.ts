@@ -602,7 +602,8 @@ export function createNeoOperations(service: NeoService) {
       preferences: service.modelPreference(),
       asks: projectNeoSnapshotAsks(
         service.askRecords.list(scope === undefined ? undefined : scope),
-        caller.source === 'rpc' ? 50 : 10
+        caller.source === 'rpc' ? 50 : 10,
+        Date.now()
       ),
       workPrs: service.workPrs
         .list(visibleWork.map((item) => item.id))

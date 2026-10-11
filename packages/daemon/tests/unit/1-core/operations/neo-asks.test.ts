@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  isPooledNeoAsk,
+  NEO_ASK_CONTINUE_LIMIT,
+  NEO_ASK_CONTINUE_WINDOW_MS,
+  type NeoAsk,
+  neoAskApprovalSpent,
+} from '@hyperneo/shared/types/neo-snapshot';
 import {
   projectNeoSnapshotAsks,
   requireNeoAskConcern,
@@ -658,7 +664,44 @@ describe('projectNeoSnapshotAsks', () => {
       { ...ask, id: 's2', status: 'abandoned' as const },
       { ...ask, id: 'b1', status: 'blocked' as const },
     ];
-    expect(projectNeoSnapshotAsks(asks, 1).map((item) => item.id)).toEqual(['o1', 'b1', 's1']);
+    expect(projectNeoSnapshotAsks(asks, 1, 0).map((item) => item.id)).toEqual(['o1', 'b1', 's1']);
+  });
+
+  test('says whether each ask draws on an approved pool and whether that pool is spent', () => {
+    const approved = { ...ask, id: 'p1', approvedAt: 0, approvedContinues: 3 };
+    expect(
+      projectNeoSnapshotAsks([approved, { ...ask, id: 'n1' }], 0, NEO_ASK_CONTINUE_WINDOW_MS).map(
+        ({ id, pooled, approvalSpent }) => ({ id, pooled, approvalSpent })
+      )
+    ).toEqual([
+      { id: 'p1', pooled: true, approvalSpent: 'expired' },
+      { id: 'n1', pooled: false, approvalSpent: null },
+    ]);
+  });
+});
+
+describe('isPooledNeoAsk', () => {
+  test('pools continues only for an approved ask that is still live', () => {
+    expect(isPooledNeoAsk({ status: 'open', approvedAt: 0 })).toBe(true);
+    expect(isPooledNeoAsk({ status: 'waiting', approvedAt: 5 })).toBe(true);
+    expect(isPooledNeoAsk({ status: 'achieved', approvedAt: 5 })).toBe(false);
+    expect(isPooledNeoAsk({ status: 'open', approvedAt: null })).toBe(false);
+    expect(isPooledNeoAsk(null)).toBe(false);
+  });
+});
+
+describe('neoAskApprovalSpent', () => {
+  test('is spent at the continue limit or once the window has fully passed', () => {
+    const at = 1_000;
+    expect(neoAskApprovalSpent({ approvedAt: at, approvedContinues: 19 }, at)).toBeNull();
+    expect(
+      neoAskApprovalSpent({ approvedAt: at, approvedContinues: NEO_ASK_CONTINUE_LIMIT }, at)
+    ).toBe('continues');
+    expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS - 1)).toBeNull();
+    expect(neoAskApprovalSpent({ approvedAt: at }, at + NEO_ASK_CONTINUE_WINDOW_MS)).toBe(
+      'expired'
+    );
+    expect(neoAskApprovalSpent({ approvedAt: null }, at)).toBeNull();
   });
 });
 
