@@ -32,10 +32,13 @@ import {
   readNeoStartFolder,
   requireNeoStartFolder,
 } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
+  requireNeoWorkContinuation,
+  requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
@@ -67,6 +70,28 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
+
+describe('requireNeoWorkRetryCaller', () => {
+  test('refuses another Neo session in words about retrying, not continuing', () => {
+    const work = { id: 'w1', originSessionId: 'neo:root' } as NeoWork;
+    const other = { source: 'mcp' as const, sessionId: 'neo:other' };
+    expect(requireNeoWorkRetryCaller(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can retry it.',
+      },
+    });
+    expect(requireNeoWorkContinuation(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can continue it.',
+      },
+    });
+    expect(requireNeoWorkRetryCaller(work, { source: 'mcp', sessionId: 'neo:root' })).toEqual({
+      value: work,
+    });
+  });
+});
 
 describe('requireNeoWorkRetryable', () => {
   test.each<
