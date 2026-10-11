@@ -253,8 +253,15 @@ describe('keepNeoSessionNoticeGroups', () => {
 describe('savedNeoSessionNoticeGroups', () => {
   test('reads the group off each saved row and skips rows without one', () => {
     const group = { id: 'g1', at: now, line: 'Codex · x finished', notices: [notice(now)] };
+    const badNotice = { ...group, id: 'g3', notices: [{ key: 'k', kind: 'finished' }] };
     expect(
-      savedNeoSessionNoticeGroups([{ group }, { group: { id: 'g2' } }, null, { type: 'system' }])
+      savedNeoSessionNoticeGroups([
+        { group },
+        { group: { id: 'g2' } },
+        { group: badNotice },
+        null,
+        { type: 'system' },
+      ])
     ).toEqual([group]);
   });
 });

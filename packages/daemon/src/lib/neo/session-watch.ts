@@ -1,5 +1,6 @@
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
-import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
+import { z } from 'zod';
+import { type PlaceGroup, type WorkRef, WorkRefSchema, type WorkStatus } from '../drivers/types.ts';
 
 export type { NeoSessionNotice, NeoSessionNoticeGroup };
 
@@ -7,6 +8,20 @@ export const NEO_SESSION_RUN_MS = 3 * 60_000;
 export const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
 export const NEO_SESSION_WATCH_LIMIT = 30;
+export const NeoSessionNoticeSchema = z.object({
+  key: z.string(),
+  ref: WorkRefSchema,
+  title: z.string(),
+  kind: z.enum(['needs_you', 'failed', 'finished']),
+  at: z.number(),
+  link: z.string().optional(),
+});
+export const NeoSessionNoticeGroupSchema = z.object({
+  id: z.string(),
+  at: z.number(),
+  line: z.string(),
+  notices: z.array(NeoSessionNoticeSchema).max(NEO_SESSION_WATCH_LIMIT),
+});
 export const NEO_SESSION_GROUP_MS = 60_000;
 export const NEO_SESSION_GROUPS_MAX = 10;
 const NEO_SESSION_GROUP_LINE_MAX = 5;
@@ -179,14 +194,10 @@ export function planNeoSessionNoticeGroup(
 
 export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessionNoticeGroup[] {
   return rows.flatMap((row) => {
-    const group = (row as { group?: Partial<NeoSessionNoticeGroup> } | null)?.group;
-    return group &&
-      typeof group.id === 'string' &&
-      typeof group.at === 'number' &&
-      typeof group.line === 'string' &&
-      Array.isArray(group.notices)
-      ? [group as NeoSessionNoticeGroup]
-      : [];
+    const parsed = NeoSessionNoticeGroupSchema.safeParse(
+      (row as { group?: unknown } | null)?.group
+    );
+    return parsed.success ? [parsed.data] : [];
   });
 }
 
