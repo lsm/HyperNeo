@@ -151,7 +151,8 @@ export function shouldReadNeoWorkPrs(
   now: number
 ): boolean {
   if (!urls.length) return false;
-  if (!stored || urls.some((url) => !stored.prs.some((pr) => pr.url === url))) return true;
+  const same = (url: string) => (pr: { url: string }) => pr.url.toLowerCase() === url.toLowerCase();
+  if (!stored || urls.some((url) => !stored.prs.some(same(url)))) return true;
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
 }
 

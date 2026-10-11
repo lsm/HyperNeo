@@ -238,6 +238,7 @@ describe('shouldReadNeoWorkPrs', () => {
     ['a first report', null, [pr.url], 0, true],
     ['a new pull request', stored, [pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], 0, true],
     ['an open PR read moments ago', stored, [pr.url], late - 1, false],
+    ['the same PR spelled in another case', stored, [pr.url.toLowerCase()], late - 1, false],
     ['an open PR read a while ago', stored, [pr.url], late, true],
     ['a merged PR', { ...stored, prs: [{ ...pr, state: 'MERGED' }] }, [pr.url], late, false],
   ])('%s', (_case, row, urls, now, read) => {
