@@ -1,5 +1,6 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isMainNeoBinding, isNeoCoordinatorBinding } from './binding-roles.ts';
 
@@ -11,23 +12,27 @@ type Input = { readonly sessionId: string; readonly messageId: string | null };
 type Stop = { kind: 'unknown' } | { kind: 'human'; origin: NeoAskOrigin };
 type Hop = Stop | { kind: 'parent'; origin: NeoAskOrigin };
 type Gate = { value: NeoAskOrigin } | { reason: Stop };
+type NeoAskOriginAsk = Pick<NeoAsk, 'id' | 'originSessionId' | 'originMessageId'>;
 export interface NeoAskOriginReads {
   getBinding(sessionId: string): NeoBinding | null;
   getPrompts(sessionId: string, messageId: string): readonly SDKMessage[];
   getConsultation(id: string): NeoConsultation | null;
   getWork(id: string): NeoWork | null;
+  getAsk(id: string): NeoAskOriginAsk | null;
   getRootBinding(): NeoBinding | null;
 }
 export interface NeoAskEvidence {
   envelope: 'request' | 'reply' | null;
   consultation: NeoConsultation | null;
   work: NeoWork | null;
+  ask: NeoAskOriginAsk | null;
   root: NeoBinding | null;
   holder: NeoBinding | null;
   workOrigin: NeoBinding | null;
 }
 const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
+const ASK_EVIDENCE = /^neo-ask-evidence:(.+):[0-9a-z]+$/;
 
 export function neoNudgeMessageId(messageId: string): string {
   return `${NUDGE_PREFIX}${messageId}`;
@@ -46,6 +51,10 @@ export function neoStallMessageId(workId: string, since: number): string {
   return `${workId}:stall:${since}`;
 }
 
+export function neoNeedsYouMessageId(workId: string, at: number): string {
+  return `${workId}:needs-you:${at}`;
+}
+
 export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {
   const base = retries ? `${workId}:retry:${retries}` : workId;
   return continued ? `${base}:continued:${continued}` : base;
@@ -57,7 +66,7 @@ export function neoWorkReviewId(workId: string, retries: number): string {
 
 function checkedWorkId(messageId: string): string {
   return (
-    /^(.+?)(?::(?:done-check|stall|retry|continued):\d+)+(?::pr:\d+)?(?::at:\d+)?$/.exec(
+    /^(.+?)(?::(?:done-check|stall|needs-you|retry|continued):\d+)+(?::pr:\d+)?(?::at:\d+)?$/.exec(
       messageId
     )?.[1] ?? messageId
   );
@@ -67,7 +76,7 @@ function settledOrStalled(work: NeoWork, messageId: string): boolean {
   return (
     work.status === 'reported' ||
     work.status === 'failed' ||
-    (work.status === 'queued' && /:stall:\d+$/.test(messageId))
+    (work.status === 'queued' && /:(?:stall|needs-you):\d+$/.test(messageId))
   );
 }
 
@@ -120,12 +129,14 @@ export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads
     : null;
   const id = envelope ? input.messageId.slice('neo-consult:'.length, -(envelope.length + 1)) : null;
   const consultation = id ? (reads.getConsultation(id) ?? null) : null;
-  const workId = id ? reviewWorkId(id) : checkedWorkId(input.messageId);
+  const askId = envelope ? null : (ASK_EVIDENCE.exec(input.messageId)?.[1] ?? null);
+  const workId = id ? reviewWorkId(id) : askId ? null : checkedWorkId(input.messageId);
   const work = workId ? (reads.getWork(workId) ?? null) : null;
   return {
     envelope,
     consultation,
     work,
+    ask: askId ? (reads.getAsk(askId) ?? null) : null,
     root: reads.getRootBinding() ?? null,
     holder: consultation ? (reads.getBinding(consultation.sessionId) ?? null) : null,
     workOrigin: work ? (reads.getBinding(work.originSessionId) ?? null) : null,
@@ -148,6 +159,17 @@ export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence
   if (!isMainNeoBinding(root)) return unknown;
   const nudged = nudgedMessageId(input.messageId);
   if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
+  if (!envelope && evidence.ask) {
+    const { ask } = evidence;
+    return ASK_EVIDENCE.exec(input.messageId)?.[1] === ask.id &&
+      input.sessionId === ask.originSessionId &&
+      ask.originMessageId
+      ? {
+          kind: 'parent',
+          origin: { sessionId: ask.originSessionId, messageId: ask.originMessageId },
+        }
+      : unknown;
+  }
   if (!envelope) {
     return work?.id === checkedWorkId(input.messageId) &&
       settledOrStalled(work, input.messageId) &&

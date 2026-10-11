@@ -48,6 +48,7 @@ import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts'
 import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
+  neoNeedsYouMessageId,
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
   neoStallMessageId,
@@ -472,6 +473,7 @@ export class NeoService {
         this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
       getConsultation: (id) => this.consultations.get(id),
       getWork: (id) => this.repo.getWork(id),
+      getAsk: (id) => this.askRecords.get(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
     });
     const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
@@ -1598,7 +1600,7 @@ export class NeoService {
         if (plan.notify !== null && this.db.getSession(work.originSessionId))
           await this.deliver(
             work.originSessionId,
-            `${work.id}:needs-you:${plan.notify}`,
+            neoNeedsYouMessageId(work.id, plan.notify),
             driverNeedsYouNote(work, ref, card.state?.lastReply),
             work.originSessionId
           );
