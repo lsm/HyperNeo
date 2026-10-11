@@ -28,12 +28,19 @@ export function planNeoCardPrCandidates(input: {
   brief: string;
   branch: readonly string[];
   stored: readonly { url: string }[];
+  refs?: { named: readonly string[]; mentioned: readonly string[] };
 }): NeoCardPrCandidate[] {
-  const named = new Set(extractNeoWorkPrUrls(input.brief).map(key));
+  const named = new Set(
+    [...extractNeoWorkPrUrls(input.brief), ...(input.refs?.named ?? [])].map(key)
+  );
   const opened = new Set(input.branch.map(key));
   const seen = new Set<string>();
   return neoCardPrUrls(
-    extractNeoWorkPrUrls([input.brief, input.report].filter(Boolean).join('\n'), input.stored),
+    [
+      ...extractNeoWorkPrUrls([input.brief, input.report].filter(Boolean).join('\n'), input.stored),
+      ...(input.refs?.named ?? []),
+      ...(input.refs?.mentioned ?? []),
+    ],
     input.branch
   ).flatMap((url) => {
     if (seen.has(key(url))) return [];

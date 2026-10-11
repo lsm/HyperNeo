@@ -13,9 +13,11 @@ import {
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   extractNeoAskRefs,
+  extractNeoCardRefs,
   neoAskCardRefs,
   neoAskRefNews,
   readGithubRefStates,
+  readNeoPrRefUrls,
   type NeoRef,
   type NeoRefState,
 } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -99,6 +101,92 @@ describe('extractNeoAskRefs', () => {
   });
 });
 
+describe('extractNeoCardRefs', () => {
+  const repo = { owner: 'lsm', repo: 'HyperNeo' };
+  test.each<[string, string, typeof repo | null, string[]]>([
+    ['reads owner/repo#N', 'See lsm/HyperNeo#6403.', null, ['lsm/HyperNeo#6403']],
+    [
+      'reads bare #N against the card repo',
+      'CI on #6403 and #6440.',
+      repo,
+      ['lsm/HyperNeo#6403', 'lsm/HyperNeo#6440'],
+    ],
+    ['skips bare #N without a repo', 'CI on #6403.', null, []],
+    ['lists each ref once', 'lsm/HyperNeo#6403 then #6403', repo, ['lsm/HyperNeo#6403']],
+  ])('%s', (_label, text, known, refs) => {
+    expect(
+      extractNeoCardRefs(text, known).map((ref) => `${ref.owner}/${ref.repo}#${ref.number}`)
+    ).toEqual(refs);
+  });
+});
+
+describe('readNeoPrRefUrls', () => {
+  test('keeps pull requests, drops issues, and reads each ref once', async () => {
+    const asked: string[] = [];
+    const read = async (refs: readonly NeoRef[]): Promise<NeoRefState[]> => {
+      asked.push(...refs.map((ref) => String(ref.number)));
+      return refs.map((ref) => ({
+        url: `https://github.com/lsm/HyperNeo/${ref.number === 7001 ? 'issues' : 'pull'}/${ref.number}`,
+        kind: ref.number === 7001 ? ('issue' as const) : ('pr' as const),
+        state: 'OPEN' as const,
+        at: null,
+        done: false,
+        closedBy: null,
+      }));
+    };
+    const refs = [7001, 7002].map((number) => ({ owner: 'lsm', repo: 'hyperneo', number }));
+    expect(await readNeoPrRefUrls(refs, read)).toEqual([
+      'https://github.com/lsm/HyperNeo/pull/7002',
+    ]);
+    expect(await readNeoPrRefUrls(refs, read)).toEqual([
+      'https://github.com/lsm/HyperNeo/pull/7002',
+    ]);
+    expect(asked).toEqual(['7001', '7002']);
+  });
+
+  test('waits ten minutes before asking again about a ref GitHub gave no answer for', async () => {
+    let reads = 0;
+    const read = async (): Promise<NeoRefState[]> => {
+      reads++;
+      return [];
+    };
+    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7201 }];
+    let now = 1_000_000;
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(reads).toBe(1);
+      now += 10 * 60_000;
+      await readNeoPrRefUrls(refs, read);
+      expect(reads).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('keeps the answer under the cited ref when the repository was renamed', async () => {
+    let reads = 0;
+    const read = async (): Promise<NeoRefState[]> => {
+      reads++;
+      return [
+        {
+          url: 'https://github.com/lsm/neokai/pull/7101',
+          kind: 'pr',
+          state: 'MERGED',
+          at: 1,
+          done: true,
+          closedBy: null,
+        },
+      ];
+    };
+    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7101 }];
+    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
+    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
+    expect(reads).toBe(1);
+  });
+});
+
 describe('neoAskCardRefs', () => {
   test("adds running cards' branch pull requests the cards don't track yet, each once", () => {
     expect(neoAskCardRefs([ref(6159)], [url(6159), url(6283), url(6288)], [url(6288)])).toEqual([
@@ -151,12 +239,54 @@ describe('neoAskRefNews', () => {
         },
       ],
     ],
+    [
+      'an issue closed as a duplicate',
+      issue({ done: false, duplicate: true }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'failed',
+          summary: 'closed as a duplicate',
+          blockers: [],
+        },
+      ],
+    ],
   ])('%s', (_label, state, evidence) => {
     expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
 describe('readGithubRefStates', () => {
+  test('reads an issue closed as a duplicate as not done', async () => {
+    const issue = {
+      __typename: 'Issue',
+      url: 'https://github.com/lsm/HyperNeo/issues/9105',
+      state: 'CLOSED',
+      stateReason: 'DUPLICATE',
+      closedAt: '2026-10-10T15:00:00Z',
+      closedByPullRequestsReferences: { nodes: [] },
+    };
+    const spawn = () => ({
+      stdout: new Response(JSON.stringify({ data: { repository: { issueOrPullRequest: issue } } }))
+        .body,
+      stderr: new Response('').body,
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      kill: () => {},
+    });
+    expect(await readGithubRefStates([ref(9105)], spawn as never)).toEqual([
+      {
+        url: issue.url,
+        kind: 'issue',
+        state: 'CLOSED',
+        at: Date.parse(issue.closedAt),
+        done: false,
+        closedBy: null,
+        duplicate: true,
+      },
+    ]);
+  });
+
   test('reads pull requests and issues, keeps a merge, skips non-refs for an hour, retries the rest', async () => {
     const asked: number[] = [];
     const node = (number: number) =>

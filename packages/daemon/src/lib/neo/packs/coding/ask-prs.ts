@@ -13,6 +13,7 @@ export type NeoRefState = {
   at: number | null;
   done: boolean;
   closedBy: string | null;
+  duplicate?: true;
 };
 export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState[]>;
 
@@ -49,6 +50,9 @@ const GhRefSchema = z.object({
   }),
 });
 const settled = new Map<string, NeoRefState>();
+const kinds = new Map<string, string | null>();
+const unanswered = new Map<string, number>();
+const NEO_REF_RETRY_MS = 10 * 60_000;
 const missing = new Map<string, number>();
 const NEO_REF_MISSING_MS = 60 * 60_000;
 
@@ -94,6 +98,42 @@ export function extractNeoAskRefs(
   return [...refs.values()].slice(0, NEO_ASK_REF_MAX);
 }
 
+export function extractNeoCardRefs(
+  text: string,
+  repo: Pick<NeoRef, 'owner' | 'repo'> | null
+): NeoRef[] {
+  const named = [...text.matchAll(REF_NAME)].map(([, owner, name, number]) => ({
+    owner,
+    repo: name,
+    number: Number(number),
+  }));
+  const bare = repo
+    ? [...text.matchAll(REF_BARE)].map(([, number]) => ({ ...repo, number: Number(number) }))
+    : [];
+  return [...new Map([...named, ...bare].map((ref) => [refKey(ref), ref])).values()].slice(
+    0,
+    NEO_ASK_REF_MAX
+  );
+}
+
+export async function readNeoPrRefUrls(
+  refs: readonly NeoRef[],
+  readStates: NeoRefStateReader
+): Promise<string[]> {
+  const now = Date.now();
+  const open = refs.filter(
+    (item) =>
+      !kinds.has(refKey(item)) &&
+      now - (unanswered.get(refKey(item)) ?? -Infinity) >= NEO_REF_RETRY_MS
+  );
+  for (const ref of open) {
+    const [state] = await readStates([ref]);
+    if (state) kinds.set(refKey(ref), state.kind === 'pr' ? state.url : null);
+    else unanswered.set(refKey(ref), now);
+  }
+  return refs.flatMap((ref) => kinds.get(refKey(ref)) ?? []);
+}
+
 export function neoAskCardRefs(
   named: readonly NeoRef[],
   running: readonly string[],
@@ -117,7 +157,9 @@ export function neoAskRefNews(states: readonly NeoRefState[], since: number): Ne
           : 'closed unmerged'
         : ref.done
           ? `closed as completed${ref.closedBy ? ` by ${ref.closedBy}` : ''}`
-          : 'closed as not planned';
+          : ref.duplicate
+            ? 'closed as a duplicate'
+            : 'closed as not planned';
     return [
       {
         key: ref.url,
@@ -176,7 +218,8 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
           kind: 'issue',
           state: found.state,
           at: closed ? Date.parse(found.closedAt ?? '') || null : null,
-          done: closed && found.stateReason !== 'NOT_PLANNED',
+          done: closed && found.stateReason !== 'NOT_PLANNED' && found.stateReason !== 'DUPLICATE',
+          ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
           closedBy:
             found.closedByPullRequestsReferences?.nodes.find((pr) => pr.merged)?.url ?? null,
         };

@@ -83,6 +83,7 @@ export interface HyperneoAdapterDeps {
 export interface HyperneoLastResult {
   reply: string | null;
   failed: number | null;
+  at: string | null;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -291,7 +292,8 @@ export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessio
 export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
   const row = db
     .prepare(
-      `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed
+      `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed,
+              timestamp AS at
          FROM sdk_messages WHERE session_id = ? AND message_type = 'result' AND parent_tool_use_id IS NULL
           AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
         ORDER BY timestamp DESC LIMIT 1`
@@ -368,7 +370,9 @@ export function describeHyperneoWork(
     value: {
       ...work,
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
-      ...(last?.reply ? { lastReply: last.reply.slice(0, REPLY_LIMIT) } : {}),
+      ...(last?.reply
+        ? { lastReply: last.reply.slice(0, REPLY_LIMIT), lastReplyAt: timestamp(last.at) }
+        : {}),
       recentInputs: readHyperneoInputs(deps.db(), row.id, since),
     },
   };

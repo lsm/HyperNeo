@@ -29,7 +29,7 @@ export class NeoWorkPrClaimRepository {
         .prepare(
           `SELECT w.id AS workId FROM neo_work w
             WHERE (NOT EXISTS (SELECT 1 FROM neo_work_pr_claims c WHERE c.work_id = w.id)
-                AND (w.report LIKE '%/pull/%'
+                AND (w.report LIKE '%/pull/%' OR w.report GLOB '*#[0-9]*'
                   OR EXISTS (SELECT 1 FROM neo_work_prs p
                               WHERE p.work_id = w.id AND p.prs_json <> '[]')))
                OR EXISTS (SELECT 1 FROM neo_work_pr_claims c
