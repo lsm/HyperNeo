@@ -13,7 +13,6 @@ import type { NeoService } from './service.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import type { NeoWorkTarget } from '../../storage/repositories/neo-repository.ts';
 import type {
-  NeoBinding,
   NeoConcern,
   NeoConsultation,
   NeoConsultationWaiter,
@@ -39,19 +38,12 @@ import {
   type NeoSettings,
 } from '@hyperneo/shared/types/settings';
 import {
-  requireNeoWorkTargetSession,
-  requireNeoWorkTargetBinding,
+  checkNeoWorkTarget,
+  requireCheckedNeoWorkTarget,
   type presentNeoWorkTarget,
 } from './work-target.ts';
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
-import {
-  requireNeoAgentWorkReference,
-  requireNeoAgentWorkSession,
-  requireNeoAgentWorkBinding,
-  requireNeoProposal,
-  type NeoAgentWorkOwner,
-  type NeoProposal,
-} from './agent-work-target.ts';
+import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import { createNeoRouter } from './router.ts';
@@ -1063,54 +1055,18 @@ export function createNeoOperations(service: NeoService) {
       'input',
       'candidate'
     )
-    .pipe(requireNeoAgentWorkReference, 'candidate', 'result:admission')
     .pipe(
-      (target: NeoWorkTarget) => ({
-        session:
-          target.targetSessionId === null ? null : inventory.readSession(target.targetSessionId),
-      }),
-      'candidate',
-      'targetSession'
-    )
-    .pipe(
-      (target: NeoWorkTarget) => ({
-        owner: target.agent ? service.agentTargets.readOwner(target.agent) : null,
-      }),
-      'candidate',
-      'targetOwner'
-    )
-    .pipe(
-      (
-        target: NeoWorkTarget,
-        { session }: { session: ReturnType<typeof inventory.readSession> },
-        { owner }: { owner: NeoAgentWorkOwner | null }
-      ) =>
+      (candidate: NeoWorkTarget) =>
         explainOwnedNeoTarget(
-          target.agent
-            ? requireNeoAgentWorkSession(target, session, owner)
-            : requireNeoWorkTargetSession(target, session)
+          requireCheckedNeoWorkTarget(
+            checkNeoWorkTarget(candidate, {
+              readSession: (id) => inventory.readSession(id),
+              readAgentOwner: (agent) => service.agentTargets.readOwner(agent),
+              readBinding: (id) => service.repo.getBindingBySession(id),
+            })
+          )
         ),
-      ['candidate', 'targetSession', 'targetOwner'],
-      'result:admission'
-    )
-    .pipe(
-      (target: NeoWorkTarget) => ({
-        binding:
-          target.targetSessionId === null
-            ? null
-            : service.repo.getBindingBySession(target.targetSessionId),
-      }),
-      'admission',
-      'targetBinding'
-    )
-    .pipe(
-      (target: NeoWorkTarget, { binding }: { binding: NeoBinding | null }) =>
-        explainOwnedNeoTarget(
-          target.agent
-            ? requireNeoAgentWorkBinding(target, binding)
-            : requireNeoWorkTargetBinding(target, binding)
-        ),
-      ['admission', 'targetBinding'],
+      'candidate',
       'result:admission'
     )
     .pipe((target: NeoWorkTarget) => target, 'admission', 'target')
