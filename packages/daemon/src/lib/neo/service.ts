@@ -126,8 +126,11 @@ import {
 } from './evidence.ts';
 import {
   neoWorkBranch,
+  neoWorkRepoCwd,
   readGithubBranchPrs,
+  readGithubWorkRepo,
   type NeoBranchPrReader,
+  type NeoWorkRepoReader,
 } from './packs/coding/branch-prs.ts';
 import {
   planNeoCardPrCandidates,
@@ -199,7 +202,12 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
-import { readGithubRefStates, type NeoRefStateReader } from './packs/coding/ask-prs.ts';
+import {
+  extractNeoCardRefs,
+  readGithubRefStates,
+  readNeoPrRefUrls,
+  type NeoRefStateReader,
+} from './packs/coding/ask-prs.ts';
 import {
   NeoAskCheckRepository,
   type NeoAskCheckRow,
@@ -293,6 +301,7 @@ export class NeoService {
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
+  readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
   readonly consultations: NeoConsultationRepository;
   readonly consultationWaiters: NeoConsultationWaiterRepository;
@@ -1891,12 +1900,27 @@ export class NeoService {
     stored: { prs: readonly NeoWorkPr[] } | null
   ): Promise<NeoCardPrCandidate[]> {
     const goal = this.workGoals.get(work.id);
+    const brief = [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n');
     return planNeoCardPrCandidates({
       report: work.report,
-      brief: [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n'),
+      brief,
       branch: await this.branchPrUrls(work.id),
       stored: stored?.prs ?? [],
+      refs: await this.cardPrRefs(work, brief),
     });
+  }
+
+  private async cardPrRefs(
+    work: NeoWork,
+    brief: string
+  ): Promise<{ named: string[]; mentioned: string[] }> {
+    if (!/#\d/.test(`${brief}\n${work.report ?? ''}`)) return { named: [], mentioned: [] };
+    const ref = this.driverTargets.readRef(work.id);
+    const cwd = neoWorkRepoCwd(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
+    const repo = cwd ? await this.readWorkRepo(cwd) : null;
+    const read = (text: string) =>
+      readNeoPrRefUrls(extractNeoCardRefs(text, repo), (refs) => this.readRefStates(refs));
+    return { named: await read(brief), mentioned: await read(work.report ?? '') };
   }
 
   private async branchPrUrls(workId: string): Promise<string[]> {

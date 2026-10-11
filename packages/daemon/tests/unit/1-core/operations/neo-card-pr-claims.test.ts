@@ -57,6 +57,23 @@ describe('planNeoCardPrCandidates', () => {
   });
 });
 
+describe('planNeoCardPrCandidates with resolved refs', () => {
+  test('a PR the brief cites by number is named, one only the report cites is mentioned', () => {
+    expect(
+      planNeoCardPrCandidates({
+        report: 'CI on #6440.',
+        brief: 'Address lsm/HyperNeo#6403.',
+        branch: [],
+        stored: [],
+        refs: { named: [pull(6403)], mentioned: [pull(6440)] },
+      })
+    ).toEqual([
+      { url: pull(6403), claim: 'named' },
+      { url: pull(6440), claim: 'mentioned' },
+    ]);
+  });
+});
+
 describe('neoPrMatchScore', () => {
   const startup = {
     title: 'fix(desktop): get past the startup splash',
@@ -354,6 +371,26 @@ describe('NeoWorkPrClaimRepository settled cards', () => {
       expect(repo.forUrls([pull(2), pull(3)]).map((row) => row.urlKey)).toEqual([
         pull(2).toLowerCase(),
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('also lists a card with no claims whose report cites a PR by number', async () => {
+    const db = await createTestDb();
+    try {
+      const raw = db.getDatabase();
+      for (const [id, report] of [
+        ['bare', 'Waiting on CI for #6403.'],
+        ['words', 'Pushed the fix; nothing to cite.'],
+      ])
+        raw
+          .prepare(
+            `INSERT INTO neo_work(id, request_key, origin_session_id, title, instruction, status, report, created_at, updated_at)
+             VALUES (?, ?, 'root', 'T', 'I', 'reported', ?, 1, 1)`
+          )
+          .run(id, `key-${id}`, report);
+      expect(new NeoWorkPrClaimRepository(raw).cardsToReclaim()).toEqual(['bare']);
     } finally {
       db.close();
     }
