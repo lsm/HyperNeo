@@ -4,7 +4,6 @@ import { type PlaceGroup, type WorkRef, WorkRefSchema, type WorkStatus } from '.
 
 export type { NeoSessionNotice, NeoSessionNoticeGroup };
 
-export const NEO_SESSION_RUN_MS = 3 * 60_000;
 const NEO_SESSION_HUMAN_MS = 2 * 60_000;
 export const NEO_SESSION_NOTICES_MAX = 20;
 export const NEO_SESSION_WATCH_LIMIT = 30;
@@ -56,7 +55,6 @@ export interface NeoListedSession {
 export interface NeoSessionSeen {
   listed: string;
   status: WorkStatus;
-  runningSince: number | null;
 }
 
 export const neoSessionKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? ''}:${ref.id}`;
@@ -98,20 +96,12 @@ export function listNeoWatchedSessions(
 
 export function planNeoSessionWatch(
   listed: readonly NeoListedSession[],
-  seen: ReadonlyMap<string, NeoSessionSeen>,
-  now: number
+  seen: ReadonlyMap<string, NeoSessionSeen>
 ): { baseline: [string, NeoSessionSeen][]; reads: NeoListedSession[] } {
   return {
     baseline: listed
       .filter((session) => !seen.has(session.key))
-      .map((session) => [
-        session.key,
-        {
-          listed: fingerprint(session),
-          status: session.status,
-          runningSince: session.status === 'running' ? now : null,
-        },
-      ]),
+      .map((session) => [session.key, { listed: fingerprint(session), status: session.status }]),
     reads: listed.filter((session) => {
       const prior = seen.get(session.key);
       return !!prior && prior.listed !== fingerprint(session);
@@ -127,23 +117,14 @@ export function planNeoSessionNotice(
 ): { seen: NeoSessionSeen; notice: NeoSessionNotice | null } {
   if (!detail) return { seen: prior, notice: null };
   const status = detail.status;
-  const seen = {
-    listed: fingerprint(session),
-    status,
-    runningSince: status === 'running' ? (prior.runningSince ?? now) : null,
-  };
+  const seen = { listed: fingerprint(session), status };
   const human = detail.lastInputAt != null && now - detail.lastInputAt < NEO_SESSION_HUMAN_MS;
   const kind: NeoSessionNoticeKind | null =
     status === 'needs_you' && prior.status !== 'needs_you'
       ? 'needs_you'
       : status === 'failed' && prior.status !== 'failed'
         ? 'failed'
-        : status === 'done' &&
-            prior.status === 'running' &&
-            prior.runningSince !== null &&
-            now - prior.runningSince >= NEO_SESSION_RUN_MS
-          ? 'finished'
-          : null;
+        : null;
   if (kind && human) return { seen: prior, notice: null };
   return {
     seen,
@@ -220,6 +201,25 @@ export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessio
     );
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+export function latestNeoSessionNoticeGroups(
+  groups: readonly NeoSessionNoticeGroup[]
+): NeoSessionNoticeGroup[] {
+  const shown = new Set<string>();
+  return groups
+    .toReversed()
+    .flatMap((group) => {
+      const notices = group.notices
+        .toReversed()
+        .filter((notice) => !shown.has(notice.key) && !!shown.add(notice.key))
+        .toReversed();
+      if (!notices.length) return [];
+      return notices.length === group.notices.length
+        ? [group]
+        : [{ ...group, line: neoSessionNoticeLine(notices), notices }];
+    })
+    .toReversed();
 }
 
 export function keepNeoSessionNoticeGroups(
