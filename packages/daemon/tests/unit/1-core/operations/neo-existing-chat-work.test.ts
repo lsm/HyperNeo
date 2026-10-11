@@ -94,6 +94,7 @@ describe('Neo existing chat work', () => {
       targetSessionId,
       title: `Work ${requestKey}`,
       instruction: 'Draft a bounded answer. Do not send, publish or modify files.',
+      doneWhen: '- answer drafted',
     };
   }
   async function propose(requestKey = 'A', targetSessionId = 'project'): Promise<NeoWork> {
@@ -158,7 +159,10 @@ describe('Neo existing chat work', () => {
       });
       expect(content(deliveries[0])).toContain('neo.work.report');
       expect(content(deliveries[0])).toContain(
-        JSON.stringify({ workId: work.id, title: work.title, instruction: work.instruction })
+        JSON.stringify({ workId: work.id, title: work.title, instruction: work.instruction }).slice(
+          0,
+          -2
+        )
       );
       expect(resources()).toBe(before);
       expect(createSession).not.toHaveBeenCalled();

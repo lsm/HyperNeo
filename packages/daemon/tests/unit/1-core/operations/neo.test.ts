@@ -518,6 +518,7 @@ describe('Neo MVP', () => {
           targetSessionId: 'ordinary',
           title: 'Draft an agenda',
           instruction: 'Draft only.',
+          doneWhen: '- agenda drafted',
           originMessageId: 'forged',
           neoTurn: { messageId: 'forged' },
         },

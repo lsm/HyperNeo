@@ -361,6 +361,21 @@ export function requireNeoConsultationReceipt(
     : { value: item };
 }
 
+export function requireNeoProposalDoneWhen(
+  input: { doneWhen?: string; askId?: string },
+  caller: OperationCaller
+): { value: OperationCaller } | { reason: Rejection } {
+  return input.doneWhen || input.askId || caller.source !== 'mcp'
+    ? { value: caller }
+    : {
+        reason: {
+          ok: false,
+          reason:
+            'Set doneWhen to a short checklist of what finished means (and goal to what the human asked), or pass the askId of the ask this work serves.',
+        },
+      };
+}
+
 export function requireNeoExecutionChoice(
   input: { targetSessionId?: string | null; work?: NeoDriverTarget },
   caller: OperationCaller
@@ -1029,6 +1044,7 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe((target: NeoWorkTarget) => target, 'admission', 'target')
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
+    .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
       (
         input: z.infer<typeof Propose>,

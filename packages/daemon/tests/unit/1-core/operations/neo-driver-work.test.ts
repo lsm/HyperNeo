@@ -39,6 +39,7 @@ import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
+  requireNeoProposalDoneWhen,
   requireNeoWorkContinuation,
   requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
@@ -158,6 +159,23 @@ describe('isNeoReceiptUnconfirmed', () => {
     ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
   ])('%s', (_label, overrides, now, unconfirmed) => {
     expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
+  });
+});
+
+describe('requireNeoProposalDoneWhen', () => {
+  const neo = { source: 'mcp' as const, sessionId: 'neo:root', role: 'neo' as const };
+  const human = { source: 'rpc' as const, principal: 'local' as const };
+
+  test('refuses a Neo proposal with neither doneWhen nor an ask', () => {
+    expect(requireNeoProposalDoneWhen({}, neo)).toMatchObject({
+      reason: { ok: false, reason: expect.stringContaining('doneWhen') },
+    });
+    expect(requireNeoProposalDoneWhen({ doneWhen: '- merged' }, neo)).toEqual({ value: neo });
+    expect(requireNeoProposalDoneWhen({ askId: 'a1' }, neo)).toEqual({ value: neo });
+  });
+
+  test('leaves the human proposing from the app alone', () => {
+    expect(requireNeoProposalDoneWhen({}, human)).toEqual({ value: human });
   });
 });
 
@@ -3241,7 +3259,13 @@ describe('neo.work.propose with a drivers target', () => {
       invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.work.propose',
-        { requestKey: 'font', title: work.title, instruction: work.instruction, ...target },
+        {
+          requestKey: 'font',
+          title: work.title,
+          instruction: work.instruction,
+          doneWhen: '- font raised',
+          ...target,
+        },
         neo
       );
     try {
@@ -3305,6 +3329,7 @@ describe('neo.work.propose with a drivers target', () => {
           requestKey,
           title: 'Fix it',
           instruction: 'Fix the bug.',
+          doneWhen: '- bug fixed',
           work: { verb: 'start', adapter, place },
         },
         neo

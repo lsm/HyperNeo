@@ -126,6 +126,7 @@ describe('neo.work.propose with supersedes', () => {
         targetSessionId: 'project',
         title: 'Fix the bug',
         instruction: 'Fix the bug and report.',
+        doneWhen: '- bug fixed',
         ...extra,
       },
       neo(`ask-${requestKey}`)
