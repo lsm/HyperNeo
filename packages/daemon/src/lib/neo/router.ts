@@ -278,14 +278,15 @@ async function classifyNeoAsk(
   const chosen = decided
     ? decided.decision
     : (verdict as Exclude<NeoRouteVerdict, NeoRouteDecision>);
-  if (chosen === 'main' && decided?.basis === 'new_subject' && deps.newTopic) {
+  const unheld = decided?.basis === 'new_subject' || decided?.basis === 'matches_topic';
+  if (chosen === 'main' && unheld && deps.newTopic) {
     const topic = await deps.newTopic(text);
     if (topic)
       return {
         choice: {
           concernId: topic.concernId,
           sessionId: topic.sessionId,
-          signal: classifierSignal('new_subject'),
+          signal: classifierSignal(decided.basis),
           confidence: decided.confidence ?? CLASSIFIER_CONFIDENCE,
         },
       };
@@ -340,6 +341,20 @@ export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRo
 
 export type NeoRouter = (text: string, requestId?: string) => Promise<NeoRouted>;
 
+export interface NeoHolderWake {
+  asleep(sessionId: string): boolean;
+  wake?(concernId: string): Promise<string | null>;
+}
+
+export async function wakeNeoRoute(routed: NeoRouted, holders: NeoHolderWake): Promise<NeoRouted> {
+  const choice = routed.choice;
+  if (!choice || !holders.asleep(choice.sessionId)) return routed;
+  const sessionId = holders.wake ? await holders.wake(choice.concernId) : null;
+  return sessionId
+    ? { ...routed, choice: { ...choice, sessionId } }
+    : { choice: null, fallback: 'holder-unavailable' };
+}
+
 export function createNeoRouter(
   db: Database,
   repo: NeoRepository,
@@ -351,14 +366,14 @@ export function createNeoRouter(
       const holders: NeoHolder[] = repo.listConcerns().flatMap((concern) => {
         const binding = repo.getBindingForConcern(concern.id);
         const session = binding ? db.getSession(binding.sessionId) : null;
-        return binding && session && session.status !== 'archived'
+        return binding?.kind === 'concern'
           ? [
               {
                 concernId: concern.id,
                 sessionId: binding.sessionId,
                 title: concern.title,
                 summary: concern.summary,
-                provider: session.config.provider,
+                ...(session?.config.provider ? { provider: session.config.provider } : {}),
               },
             ]
           : [];
@@ -419,10 +434,31 @@ export function createNeoRouter(
         .catch(() => false);
     },
   };
+  const holders: NeoHolderWake = {
+    asleep: (sessionId) => {
+      const session = db.getSession(sessionId);
+      return !session || session.status === 'archived';
+    },
+    wake: openHolder
+      ? async (concernId) => {
+          const binding = repo.getBindingForConcern(concernId);
+          if (binding && db.getSession(binding.sessionId)?.status === 'archived')
+            repo.retireArchivedBinding(concernId, binding.sessionId);
+          try {
+            return await openHolder(concernId);
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
+  };
   const newTopic = deps.newTopic;
-  return (text, requestId) =>
-    chooseNeoRoute(text, {
-      ...deps,
-      newTopic: newTopic && ((ask) => newTopic(ask, requestId)),
-    });
+  return async (text, requestId) =>
+    wakeNeoRoute(
+      await chooseNeoRoute(text, {
+        ...deps,
+        newTopic: newTopic && ((ask) => newTopic(ask, requestId)),
+      }),
+      holders
+    );
 }

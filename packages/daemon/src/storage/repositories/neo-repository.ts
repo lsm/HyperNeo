@@ -71,6 +71,15 @@ export class NeoRepository {
     return row as NeoConcern | null;
   }
 
+  retireArchivedBinding(concernId: string, sessionId: string): boolean {
+    const result = this.db
+      .prepare(`DELETE FROM neo_session_bindings
+        WHERE concern_id = ? AND session_id = ? AND kind = 'concern'`)
+      .run(concernId, sessionId);
+    if (result.changes > 0) this.notify();
+    return result.changes > 0;
+  }
+
   discardUnopenedConcern(id: string): boolean {
     const removed = this.db.transaction(() => {
       this.db

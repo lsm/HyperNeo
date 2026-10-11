@@ -294,6 +294,18 @@ describe('chooseNeoRoute with a new subject', () => {
     });
   });
 
+  test('opens a topic when the classifier matches a topic but names no holder', async () => {
+    const route = await chooseNeoRoute('fix HyperNeo #5554', {
+      ...base(async () => ({ concernId: 't4', sessionId: 'neo:t4', title: 'fix', summary: '' })),
+      classify: async () => ({ decision: 'main', confidence: 0.7, basis: 'matches_topic' }),
+    });
+    expect(route.choice).toMatchObject({
+      concernId: 't4',
+      signal: 'classifier:matches_topic',
+      confidence: 0.7,
+    });
+  });
+
   test('stays with main Neo when no topic can be opened', async () => {
     expect(
       await chooseNeoRoute(

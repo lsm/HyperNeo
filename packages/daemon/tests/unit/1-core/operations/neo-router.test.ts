@@ -15,6 +15,7 @@ import {
   renderNeoRouteContext,
   runnableNeoHolders,
   scoreNeoHolders,
+  wakeNeoRoute,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -222,6 +223,51 @@ describe('chooseNeoRoute', () => {
   });
 });
 
+describe('wakeNeoRoute', () => {
+  const choice = {
+    concernId: 'drivers',
+    sessionId: drivers.sessionId,
+    signal: 'embedding' as const,
+    confidence: 0.8,
+  };
+
+  test('leaves a route to an awake holder or to main Neo alone', async () => {
+    const asleep = () => false;
+    expect(await wakeNeoRoute({ choice }, { asleep })).toEqual({ choice });
+    expect(
+      await wakeNeoRoute({ choice: null, fallback: 'classifier' }, { asleep: () => true })
+    ).toEqual({ choice: null, fallback: 'classifier' });
+  });
+
+  test('wakes a sleeping holder and delivers to its new session', async () => {
+    const woken: string[] = [];
+    const routed = await wakeNeoRoute(
+      { choice },
+      {
+        asleep: (id) => id === drivers.sessionId,
+        wake: async (concernId) => {
+          woken.push(concernId);
+          return 'neo:holder:drivers-2';
+        },
+      }
+    );
+    expect(woken).toEqual(['drivers']);
+    expect(routed).toEqual({ choice: { ...choice, sessionId: 'neo:holder:drivers-2' } });
+  });
+
+  test('says why when a sleeping holder cannot be woken', async () => {
+    const asleep = () => true;
+    expect(await wakeNeoRoute({ choice }, { asleep, wake: async () => null })).toEqual({
+      choice: null,
+      fallback: 'holder-unavailable',
+    });
+    expect(await wakeNeoRoute({ choice }, { asleep })).toEqual({
+      choice: null,
+      fallback: 'holder-unavailable',
+    });
+  });
+});
+
 describe('neo.message.send with a router', () => {
   const conversationId = '10000000-0000-4000-8000-000000000001';
   const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', concernId: null };
@@ -324,6 +370,23 @@ describe('neo.message.send with a router', () => {
     await send(root.sessionId, ask(3), 'merge the driver PR');
     expect(calls).toEqual(['weather tomorrow?', 'merge the driver PR']);
     expect(delivered(holder.sessionId, ask(3))).toBe(1);
+  });
+
+  test('queues an ask for a holder that is busy with another turn', async () => {
+    new SessionRepository(writer).updateSession(holder.sessionId, {
+      processingState: JSON.stringify({ status: 'processing', messageId: 'other' }),
+    });
+    await send(root.sessionId, ask(5), 'merge the driver PR');
+    expect([delivered(holder.sessionId, ask(5)), delivered(root.sessionId, ask(5))]).toEqual([
+      1, 0,
+    ]);
+  });
+
+  test('retires the binding of an archived holder so the next open makes a fresh session', () => {
+    expect(repo.retireArchivedBinding('drivers', 'neo:other')).toBe(false);
+    expect(repo.retireArchivedBinding('drivers', holder.sessionId)).toBe(true);
+    expect(repo.getBindingForConcern('drivers')).toBeNull();
+    expect(repo.getBindingForConcern(null)).toMatchObject({ sessionId: root.sessionId });
   });
 
   test('does not reroute an ask sent to a holder directly', async () => {
