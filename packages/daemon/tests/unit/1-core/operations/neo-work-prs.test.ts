@@ -9,6 +9,7 @@ import {
   countNeoWorkPrApprovals,
   planNeoWorkPrBlockers,
   readGithubPrs,
+  requireNeoWorkPrCurrent,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
   shouldReadNeoWorkPrs,
@@ -443,9 +444,17 @@ describe('requireNeoWorkPrRefresh', () => {
     ['one without tracked pull requests', reported, { row: null }, 3 * 60_000, false],
     ['one whose Neo session is gone', reported, { session: false }, 3 * 60_000, false],
   ])('%s', (_label, work, overrides, now, refreshes) => {
-    expect(requireNeoWorkPrRefresh(work, { ...card, ...overrides }, now, 'closed')).toEqual(
-      refreshes ? { value: row } : { reason: null }
+    expect(requireNeoWorkPrRefresh({ work }, { ...card, ...overrides }, now, 'closed')).toEqual(
+      refreshes ? { value: { work, row } } : { reason: 'not_due' }
     );
+  });
+});
+
+describe('requireNeoWorkPrCurrent', () => {
+  test('carries the work on, and stops when the card is gone', () => {
+    const work = { id: 'w1' };
+    expect(requireNeoWorkPrCurrent({ work })).toEqual({ value: { work } });
+    expect(requireNeoWorkPrCurrent({ work: null })).toEqual({ reason: 'missing' });
   });
 });
 
@@ -456,13 +465,15 @@ describe('requireNeoWorkPrDelivery', () => {
     ['wait', false],
     ['unchanged', false],
   ])('%s', (plan, delivers) => {
-    const gate = requireNeoWorkPrDelivery(plan, true);
-    expect('value' in gate).toBe(delivers);
-    if ('value' in gate) expect(gate.value as string).toBe(plan);
+    const refresh = { work: { id: 'w1' } };
+    expect(requireNeoWorkPrDelivery(refresh, plan, true)).toEqual(
+      delivers ? { value: { ...refresh, delivery: plan } } : { reason: 'quiet' }
+    );
   });
 
   test('never delivers for a card whose ask is settled or missing', () => {
-    expect(requireNeoWorkPrDelivery('deliver', false)).toEqual({ reason: null });
-    expect(requireNeoWorkPrDelivery('remind', false)).toEqual({ reason: null });
+    const refresh = { work: { id: 'w1' } };
+    expect(requireNeoWorkPrDelivery(refresh, 'deliver', false)).toEqual({ reason: 'quiet' });
+    expect(requireNeoWorkPrDelivery(refresh, 'remind', false)).toEqual({ reason: 'quiet' });
   });
 });

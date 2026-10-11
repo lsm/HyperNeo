@@ -3,7 +3,8 @@ import type { NeoAsk, NeoWorkGoal, NeoWorkPr } from '@hyperneo/shared/types/neo-
 import { neoDoneCheckMessageId, neoWorkReturnMessageId } from './ask-origin.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 
-type Gate<T> = { value: T } | { reason: boolean };
+export type NeoDoneCheckSkip = 'settled' | 'not_checked' | 'told' | 'waiting';
+type Gate<T> = { value: T } | { reason: NeoDoneCheckSkip };
 
 export const isNeoAskSettled = (ask: Pick<NeoAsk, 'status'>) =>
   ask.status === 'achieved' || ask.status === 'abandoned';
@@ -19,14 +20,15 @@ export function requireNeoDoneCheck(
     ask: Pick<NeoAsk, 'status'> | null;
   }
 ): Gate<NeoWorkGoal> {
-  if (work.status === 'reported' && card.ask && isNeoAskSettled(card.ask)) return { reason: true };
+  if (work.status === 'reported' && card.ask && isNeoAskSettled(card.ask))
+    return { reason: 'settled' };
   return work.status === 'reported' &&
     card.goal?.doneWhen &&
     card.driver &&
     card.session &&
     card.ask
     ? { value: card.goal }
-    : { reason: false };
+    : { reason: 'not_checked' };
 }
 
 export function neoDoneCheckToldIds(
@@ -53,17 +55,17 @@ export function neoWorkReturnToldIds(
 
 export function requireNeoWorkReturnUntold(told: {
   told: boolean;
-}): { value: true } | { reason: null } {
-  return told.told ? { reason: null } : { value: true };
+}): { value: true } | { reason: 'told' } {
+  return told.told ? { reason: 'told' } : { value: true };
 }
 
 export function requireNeoDoneCheckUntold<T>(read: { told: boolean }, value: T): Gate<T> {
-  return read.told ? { reason: true } : { value };
+  return read.told ? { reason: 'told' } : { value };
 }
 
 export function requireNeoDoneCheckDue<T>(
   found: { row: { prs: readonly NeoWorkPr[] } | null },
   value: T
 ): Gate<T> {
-  return found.row && isNeoWorkPrWaiting(found.row.prs) ? { reason: true } : { value };
+  return found.row && isNeoWorkPrWaiting(found.row.prs) ? { reason: 'waiting' } : { value };
 }
