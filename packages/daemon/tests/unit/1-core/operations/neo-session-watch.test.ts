@@ -296,6 +296,7 @@ describe('refreshDriverWork', () => {
   let unreachable: { source: string; reason: string }[];
   let more: boolean;
   let status: { status: WorkStatus; lastActivityAt: number; recentInputs?: unknown[] };
+  let hold: Promise<void> = Promise.resolve();
   const events: Array<[string, unknown]> = [];
 
   beforeEach(async () => {
@@ -321,7 +322,10 @@ describe('refreshDriverWork', () => {
         inputSchema: z.record(z.string(), z.unknown()),
         resultSchema: z.unknown(),
         policy: { safetyClass: 'read' },
-        execute: async () => ({ ok: true, value: status }),
+        execute: async () => {
+          await hold;
+          return { ok: true, value: status };
+        },
       }),
     ]);
     service = new NeoService(
@@ -438,6 +442,37 @@ describe('refreshDriverWork', () => {
         expect.objectContaining({ content: 'Codex · Quiet-model research finished · Open' }),
       ]);
     } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('a watch still reading at shutdown lands its notices in the saved group', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      let release = () => {};
+      hold = new Promise((resolve) => {
+        release = resolve;
+      });
+      const refreshing = service.refreshDriverWork();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const disposing = service.dispose();
+      release();
+      await Promise.all([refreshing, disposing]);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
+        expect.objectContaining({
+          group: expect.objectContaining({
+            notices: [expect.objectContaining({ kind: 'finished' })],
+          }),
+        }),
+      ]);
+    } finally {
+      hold = Promise.resolve();
       time.mockRestore();
     }
   });

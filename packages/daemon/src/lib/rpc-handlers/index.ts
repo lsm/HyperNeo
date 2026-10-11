@@ -1685,7 +1685,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   return {
     cleanup: async () => {
-      neoService.dispose();
+      await neoService.dispose();
       inactivityRunNowCancelled = true;
       await Promise.allSettled(pendingInactivityRunNow);
       unsubLiveQuery();

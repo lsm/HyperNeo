@@ -787,14 +787,15 @@ export class NeoService {
     this.replyRechecks.delete(sessionId);
   }
 
-  dispose() {
-    this.flushSessionNoticeGroup();
+  async dispose(): Promise<void> {
     this.disposed = true;
     this.unsubscribe();
     for (const timer of this.replyRechecks.values()) clearTimeout(timer);
     this.replyRechecks.clear();
     this.processingStatus.clear();
     this.interruptedSessions.clear();
+    if (this.watching) await this.watching;
+    this.flushSessionNoticeGroup();
   }
 
   private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
@@ -1163,7 +1164,7 @@ export class NeoService {
         this.log.warn('Ask evidence check pending', error)
       );
     }
-    if (this.watching) return;
+    if (this.watching || this.disposed) return;
     this.watching = this.watchSessions(Date.now())
       .catch((error) => this.log.warn('Session watch pending', error))
       .finally(() => {
@@ -1307,7 +1308,6 @@ export class NeoService {
         added: { notices: NeoSessionNotice[] },
         grouped: ReturnType<typeof planNeoSessionNoticeGroup>
       ) => {
-        if (this.disposed) return;
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.announceSessionNotice(notice);
