@@ -175,6 +175,12 @@ describe('neoContinuedReport', () => {
     );
     expect(neoContinuedReport(1, 'x'.repeat(400))).toHaveLength('Continued 1/5: '.length + 300);
   });
+
+  test('drops the per-card limit for work drawing on an approved ask pool', () => {
+    expect(neoContinuedReport(7, 'Also fix the footer.', true)).toBe(
+      'Continued 7: Also fix the footer.'
+    );
+  });
 });
 
 describe('neo.work.continue', () => {
