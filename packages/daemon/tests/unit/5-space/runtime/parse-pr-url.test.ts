@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
 import {
   buildPrEventTopicPattern,
+  githubGraphqlArgs,
+  githubUrlKey,
+  parseGitHubRefUrl,
   parseGitHubTopic,
   pullRequestNumbersOfTopics,
   parsePrUrl,
@@ -258,5 +261,47 @@ describe('pullRequestNumbersOfTopics', () => {
         'widgets'
       )
     ).toEqual([42]);
+  });
+});
+
+describe('parseGitHubRefUrl', () => {
+  test('reads pull request and issue URLs, and nothing else', () => {
+    expect(parseGitHubRefUrl('https://github.com/lsm/HyperNeo/pull/6403')).toEqual({
+      owner: 'lsm',
+      repo: 'HyperNeo',
+      number: 6403,
+    });
+    expect(parseGitHubRefUrl('https://github.com/lsm/HyperNeo/issues/6230#top')).toEqual({
+      owner: 'lsm',
+      repo: 'HyperNeo',
+      number: 6230,
+    });
+    expect(parseGitHubRefUrl('https://github.com/lsm/HyperNeo/commit/abc')).toBe(null);
+  });
+});
+
+describe('githubUrlKey', () => {
+  test('compares GitHub URLs without regard to case', () => {
+    expect(githubUrlKey('https://github.com/LSM/HyperNeo/pull/1')).toBe(
+      githubUrlKey('https://github.com/lsm/hyperneo/pull/1')
+    );
+  });
+});
+
+describe('githubGraphqlArgs', () => {
+  test('passes owner, name and number as GraphQL variables', () => {
+    expect(githubGraphqlArgs('query{x}', { owner: 'lsm', repo: 'HyperNeo', number: 7 })).toEqual([
+      'gh',
+      'api',
+      'graphql',
+      '-f',
+      'query=query{x}',
+      '-f',
+      'o=lsm',
+      '-f',
+      'n=HyperNeo',
+      '-F',
+      'p=7',
+    ]);
   });
 });

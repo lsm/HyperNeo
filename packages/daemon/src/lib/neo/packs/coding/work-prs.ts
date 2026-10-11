@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
-import { parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { githubGraphqlArgs, githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import type { NeoEvidence, planNeoDoneCheck } from '../../evidence.ts';
 
@@ -44,7 +44,7 @@ export function extractNeoWorkPrUrls(
 ): string[] {
   const urls = new Map<string, string>();
   for (const url of [...tracked.map((pr) => pr.url), ...(report?.match(PR_URL) ?? [])])
-    if (!urls.has(url.toLowerCase())) urls.set(url.toLowerCase(), url);
+    if (!urls.has(githubUrlKey(url))) urls.set(githubUrlKey(url), url);
   return [...urls.values()].slice(0, 8);
 }
 
@@ -109,7 +109,7 @@ export function neoCardDisownsPr(
   workId: string,
   url: string
 ): boolean {
-  const held = claims.filter((claim) => claim.urlKey === url.toLowerCase());
+  const held = claims.filter((claim) => claim.urlKey === githubUrlKey(url));
   const mine = held.find((claim) => claim.workId === workId);
   return mine ? mine.claim === 'rejected' : held.some((claim) => claim.claim !== 'rejected');
 }
@@ -124,12 +124,12 @@ export function neoAskPrEvidence(
   const prs = new Map(
     rows
       .filter((row) => live.some((work) => work.id === row.workId))
-      .flatMap((row) => row.prs.map((pr) => [pr.url.toLowerCase(), pr] as const))
+      .flatMap((row) => row.prs.map((pr) => [githubUrlKey(pr.url), pr] as const))
   );
   const unread = new Set(
     live.flatMap((work) =>
       extractNeoWorkPrUrls(work.report).filter(
-        (url) => !prs.has(url.toLowerCase()) && !neoCardDisownsPr(claims, work.id, url)
+        (url) => !prs.has(githubUrlKey(url)) && !neoCardDisownsPr(claims, work.id, url)
       )
     )
   );
@@ -159,7 +159,7 @@ export function shouldReadNeoWorkPrs(
   now: number
 ): boolean {
   if (!urls.length) return false;
-  const same = (url: string) => (pr: { url: string }) => pr.url.toLowerCase() === url.toLowerCase();
+  const same = (url: string) => (pr: { url: string }) => githubUrlKey(pr.url) === githubUrlKey(url);
   if (!stored || urls.some((url) => !stored.prs.some(same(url)))) return true;
   return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
 }
@@ -323,23 +323,7 @@ async function readBranchRules(repo: string, base: string, spawnImpl: SpawnFn) {
 async function readPrDetail(url: string, spawnImpl: SpawnFn): Promise<PrDetail | null> {
   const pr = githubPr(url);
   if (!pr) return null;
-  const outcome = await gh(
-    [
-      'gh',
-      'api',
-      'graphql',
-      '-f',
-      `query=${DETAIL_QUERY}`,
-      '-f',
-      `o=${pr.owner}`,
-      '-f',
-      `n=${pr.repo}`,
-      '-F',
-      `p=${pr.number}`,
-    ],
-    spawnImpl,
-    'graphql'
-  );
+  const outcome = await gh(githubGraphqlArgs(DETAIL_QUERY, pr), spawnImpl, 'graphql');
   const parsed = outcome.ok ? DetailSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) return null;
   const pull = parsed.data.data.repository.pullRequest;
@@ -440,6 +424,6 @@ export function mergeNeoWorkPrReads(
   read: readonly NeoWorkPr[],
   stored: readonly NeoWorkPr[] = []
 ): NeoWorkPr[] {
-  const same = (url: string) => (pr: NeoWorkPr) => pr.url.toLowerCase() === url.toLowerCase();
+  const same = (url: string) => (pr: NeoWorkPr) => githubUrlKey(pr.url) === githubUrlKey(url);
   return [...new Set(urls.flatMap((url) => read.find(same(url)) ?? stored.find(same(url)) ?? []))];
 }
