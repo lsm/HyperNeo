@@ -419,6 +419,7 @@ describe('Neo MVP', () => {
       'neo.message.send',
       'neo.publication.publish',
       'neo.route.correct',
+      'neo.ask.forward',
       'neo.publication.read',
       'neo.conversation.asks.read',
       'neo.draft.recover',
