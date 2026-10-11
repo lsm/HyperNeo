@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SpaceTaskStatus } from '@hyperneo/shared';
-import {
-  decideSpawnExecutionAdmission,
-  type SpawnExecutionAdmissionDecision,
-} from '../../../../src/lib/tasks/spawn-admission-gates';
+import { decideSpawnExecutionAdmissionViaPipeline } from '../../../../src/lib/tasks/spawn-admission-decision-pipeline';
+import type { SpawnExecutionAdmissionDecision } from '../../../../src/lib/tasks/spawn-admission-gates';
 
 const ALL_STATUSES: SpaceTaskStatus[] = [
   'draft',
@@ -33,9 +31,9 @@ function statusDecision(status: SpaceTaskStatus): SpawnExecutionAdmissionDecisio
 }
 
 function decide(
-  overrides: Partial<Parameters<typeof decideSpawnExecutionAdmission>[0]>
+  overrides: Partial<Parameters<typeof decideSpawnExecutionAdmissionViaPipeline>[0]>
 ): SpawnExecutionAdmissionDecision {
-  return decideSpawnExecutionAdmission({
+  return decideSpawnExecutionAdmissionViaPipeline({
     hasLiveIndexedSession: false,
     isSpawningExecution: false,
     taskStatus: 'in_progress',
@@ -45,7 +43,7 @@ function decide(
   });
 }
 
-describe('decideSpawnExecutionAdmission — decision table over task status and workflow/slot inputs', () => {
+describe('decideSpawnExecutionAdmissionViaPipeline — decision table over task status and workflow/slot inputs', () => {
   for (const status of ALL_STATUSES) {
     const statusOutcome = statusDecision(status);
 
@@ -114,7 +112,7 @@ describe('decideSpawnExecutionAdmission — decision table over task status and 
   });
 });
 
-describe('decideSpawnExecutionAdmission — precedence', () => {
+describe('decideSpawnExecutionAdmissionViaPipeline — precedence', () => {
   test('reuse_live beats wait_concurrent, both rejects, and proceed', () => {
     expect(
       decide({
