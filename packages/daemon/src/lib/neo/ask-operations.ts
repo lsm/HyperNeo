@@ -39,6 +39,7 @@ export const NeoAskSchema = z.object({
   approvedContinues: z.number().optional(),
   approvedUntil: z.number().optional(),
   approvedContinueLimit: z.number().optional(),
+  waitingItem: z.string().nullable().optional(),
   status: z.enum(['open', 'waiting', 'achieved', 'abandoned', 'blocked']),
   outcome: z.string().nullable(),
   evidence: z.string().nullable().optional(),
@@ -347,17 +348,18 @@ export function planNeoAskEdit(
 
 export function planNeoAskTickStatus(
   ask: NeoAsk
-): { status: 'waiting'; outcome: string } | { status: 'open' } | { status: 'unchanged' } {
+):
+  | { status: 'waiting'; outcome: string; item: string }
+  | { status: 'open' }
+  | { status: 'unchanged' } {
   if (isFinal(ask)) return { status: 'unchanged' };
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const asked = items.find((item) => item.state === 'needs_you');
   if (asked)
-    return ask.status === 'waiting' && ask.outcome === asked.text
+    return ask.status === 'waiting' && ask.waitingItem === asked.id
       ? { status: 'unchanged' }
-      : { status: 'waiting', outcome: asked.text };
-  return ask.status === 'waiting' && (ask.doneItems ?? []).some((item) => item.text === ask.outcome)
-    ? { status: 'open' }
-    : { status: 'unchanged' };
+      : { status: 'waiting', outcome: asked.text, item: asked.id };
+  return ask.status === 'waiting' && ask.waitingItem ? { status: 'open' } : { status: 'unchanged' };
 }
 
 export function writeNeoAskTickStatus(
@@ -366,7 +368,7 @@ export function writeNeoAskTickStatus(
   plan: ReturnType<typeof planNeoAskTickStatus>
 ): NeoAsk | null {
   return plan.status === 'waiting'
-    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome)
+    ? records.settle(ask, 'waiting', plan.outcome, plan.outcome, plan.item)
     : plan.status === 'open'
       ? records.reopen(ask)
       : ask;
