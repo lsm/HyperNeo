@@ -221,6 +221,7 @@ export interface NeoSessionNotice {
   kind: 'needs_you' | 'failed' | 'finished';
   at: number;
   link?: string;
+  remoteLink?: string;
 }
 
 export interface NeoSessionNoticeGroup {
