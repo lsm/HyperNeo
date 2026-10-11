@@ -61,12 +61,24 @@ export const neoSessionKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? '
 
 const fingerprint = (session: NeoListedSession) => `${session.status}:${session.lastActivityAt}`;
 
+export const NEO_SESSION_MUTES_MAX = 200;
+
+export function planNeoSessionMutes(
+  current: readonly string[],
+  key: string,
+  muted: boolean
+): string[] {
+  const rest = current.filter((item) => item !== key);
+  return (muted ? [...rest, key] : rest).slice(-NEO_SESSION_MUTES_MAX);
+}
+
 export function listNeoWatchedSessions(
   places: readonly PlaceGroup[],
   cards: readonly WorkRef[],
-  now: number
+  now: number,
+  muted: readonly string[] = []
 ): NeoListedSession[] {
-  const skip = new Set(cards.map(neoSessionKey));
+  const skip = new Set([...cards.map(neoSessionKey), ...muted]);
   return places
     .flatMap((place) => place.work)
     .filter((work) => now - work.lastActivityAt < NEO_SESSION_ACTIVE_MS)

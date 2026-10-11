@@ -103,6 +103,7 @@ export interface NeoSettings {
   standingRules?: string[];
   preferences?: NeoModelPreference;
   packs?: string[];
+  mutedSessions?: string[];
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

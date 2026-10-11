@@ -71,7 +71,12 @@ import {
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
 import { type WorkRef, WorkStatusSchema } from '../drivers/types.ts';
-import { NeoSessionNoticeGroupSchema, NeoSessionNoticeSchema } from './session-watch.ts';
+import {
+  NEO_SESSION_MUTES_MAX,
+  NeoSessionNoticeGroupSchema,
+  NeoSessionNoticeSchema,
+  planNeoSessionMutes,
+} from './session-watch.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -178,6 +183,7 @@ const Snapshot = z.union([
       .optional(),
     sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
     sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
+    mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
     workDrivers: z
       .array(
         z.object({
@@ -300,6 +306,11 @@ const Propose = z.object({
   supersedes: z.string().min(1).max(160).nullable().optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
+const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
+const SessionMuteResult = z.union([
+  Failure,
+  z.object({ ok: z.literal(true), mutedSessions: z.array(z.string()) }),
+]);
 const SaveRules = z.object({
   rules: z
     .array(z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS))
@@ -596,6 +607,7 @@ export function createNeoOperations(service: NeoService) {
         }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: service.sessionNoticeGroups,
+      mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
       workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
@@ -628,6 +640,41 @@ export function createNeoOperations(service: NeoService) {
       ),
     };
   }
+  const muteSession = (superpipe({})('neo.session.mute') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.session.mute'),
+      'caller',
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof SessionMute>) => ({
+        mutedSessions: planNeoSessionMutes(
+          service.db.getGlobalSettings().neo?.mutedSessions ?? [],
+          input.key,
+          input.muted
+        ),
+      }),
+      'input',
+      'planned'
+    )
+    .pipe(
+      (planned: { mutedSessions: string[] }) => {
+        const neo = service.db.getGlobalSettings().neo;
+        const updated = service.db.updateGlobalSettings({
+          neo: { ...neo, mutedSessions: planned.mutedSessions },
+        });
+        service.publishSettings?.(updated);
+        service.notifyChanged();
+        return { ok: true as const, mutedSessions: planned.mutedSessions };
+      },
+      'planned',
+      'admission'
+    )
+    .end('admission') as (
+    input: z.infer<typeof SessionMute>,
+    caller: OperationCaller
+  ) => z.infer<typeof SessionMuteResult>;
   const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -1291,6 +1338,15 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => saveRules(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.session.mute',
+      description:
+        'Mute or unmute notices about a session the human started themselves. key is the notice key from snapshot.sessionNoticeGroups or sessionNotices; a muted session gets no more needs-you, failed or finished notices until unmuted. snapshot.mutedSessions lists the muted keys.',
+      inputSchema: SessionMute,
+      resultSchema: SessionMuteResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => muteSession(input, caller),
     }),
     defineOperation({
       name: 'neo.pack.read',

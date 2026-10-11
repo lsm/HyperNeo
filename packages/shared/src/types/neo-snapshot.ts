@@ -161,6 +161,7 @@ export interface NeoSnapshot {
   workDrivers?: NeoWorkDriverReceipt[];
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
+  mutedSessions?: string[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
   workSupersessions?: NeoWorkSupersession[];
