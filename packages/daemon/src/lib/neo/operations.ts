@@ -84,6 +84,11 @@ import {
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
+import {
+  neoWorkSupersedeCandidates,
+  requireNeoWorkSupersedable,
+  requireNeoWorkSupersedeDecision,
+} from './work-supersede.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 
@@ -210,6 +215,10 @@ const Snapshot = z.union([
       )
       .max(100)
       .optional(),
+    workSupersessions: z
+      .array(z.object({ workId: z.string(), supersededBy: z.string(), supersededAt: z.number() }))
+      .max(100)
+      .optional(),
     workPrs: z
       .array(
         z.object({
@@ -298,6 +307,7 @@ const Propose = z.object({
   goal: z.string().trim().min(1).max(1000).optional(),
   doneWhen: z.string().trim().min(1).max(2000).optional(),
   askId: z.string().min(1).max(160).optional(),
+  supersedes: z.string().min(1).max(160).nullable().optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const SaveRules = z.object({
@@ -597,6 +607,7 @@ export function createNeoOperations(service: NeoService) {
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       workGoals: service.workGoals.list(visibleWork.map((item) => item.id)),
       workContinues: service.workContinues.list(visibleWork.map((item) => item.id)),
+      workSupersessions: service.workSupersessions.list(visibleWork.map((item) => item.id)),
       preferences: service.modelPreference(),
       asks: projectNeoSnapshotAsks(
         service.askRecords.list(scope === undefined ? undefined : scope),
@@ -911,6 +922,31 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+        const works = input.supersedes === undefined ? service.repo.listWork(input.concernId) : [];
+        const superseded = new Set(
+          service.workSupersessions.list(works.map((work) => work.id)).map((row) => row.workId)
+        );
+        return requireNeoWorkSupersedeDecision(
+          input,
+          neoWorkSupersedeCandidates(works, superseded, input.concernId, Date.now()),
+          caller
+        );
+      },
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkSupersedable(
+          input,
+          input.supersedes ? service.repo.getWork(input.supersedes) : null,
+          caller
+        ),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Propose>, caller: OperationCaller) =>
         admitNeoWorkOrigin(
           caller,
@@ -1007,6 +1043,13 @@ export function createNeoOperations(service: NeoService) {
       'proposal'
     )
     .pipe(requireNeoProposal, ['target', 'origin', 'proposal'], 'result:admission')
+    .pipe(
+      (input: z.infer<typeof Propose>, receipt: { work: NeoWork }) => {
+        if (input.supersedes)
+          service.workSupersessions.record(input.supersedes, receipt.work.id, Date.now());
+      },
+      ['input', 'admission']
+    )
     .pipe(
       (input: z.infer<typeof Propose>, origin: NeoWorkOrigin, receipt: { work: NeoWork }) => {
         const planned = planNeoCardAsk(input, origin);
@@ -1287,7 +1330,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

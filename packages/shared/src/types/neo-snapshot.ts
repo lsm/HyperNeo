@@ -37,6 +37,12 @@ export interface NeoWorkContinue {
   lastMessage: string;
 }
 
+export interface NeoWorkSupersession {
+  workId: string;
+  supersededBy: string;
+  supersededAt: number;
+}
+
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
 
 export interface NeoAskItem {
@@ -84,6 +90,18 @@ export interface NeoWorkPr {
   blockers?: string[];
 }
 
+export type NeoWorkPrVerdict = 'done' | 'failed' | 'waiting' | 'ready' | 'pending';
+
+export function neoWorkPrVerdict(
+  pr: Pick<NeoWorkPr, 'state' | 'checks' | 'review'>
+): NeoWorkPrVerdict {
+  if (pr.state === 'MERGED') return 'done';
+  if (pr.state === 'CLOSED') return 'failed';
+  if (pr.checks === 'pending') return 'waiting';
+  if (pr.checks === 'failing' || pr.review === 'changes_requested') return 'failed';
+  return pr.review === 'approved' ? 'ready' : 'pending';
+}
+
 export interface NeoWorkPrReceipt {
   workId: string;
   prs: NeoWorkPr[];
@@ -119,6 +137,7 @@ export interface NeoSnapshot {
   sessionNotices?: NeoSessionNotice[];
   workGoals?: NeoWorkGoal[];
   workContinues?: NeoWorkContinue[];
+  workSupersessions?: NeoWorkSupersession[];
   workPrs?: NeoWorkPrReceipt[];
   standingRules?: string[];
   asks?: NeoAsk[];

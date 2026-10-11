@@ -4,7 +4,9 @@ import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -19,15 +21,16 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { selectLocalStartFolder } from './start-folder.ts';
-import { reject } from './work-operations.ts';
-import { matchChatsBy } from './match-chats.ts';
 import { recentWorkInputs, workEntryTime, workInput } from './work-messages.ts';
+import { reject } from './work-operations.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
 const FOLDER = 'COALESCE(main_repo_path, workspace_path)';
-const PROCESSING = `CASE WHEN json_valid(processing_state) THEN json_extract(processing_state, '$.status') END`;
+const PROCESSING = `CASE WHEN json_valid(processing_state) THEN CASE
+  WHEN json_extract(processing_state, '$.status') = 'interrupted'
+    AND json_extract(processing_state, '$.reason') = 'restart' THEN 'interrupted_by_restart'
+  ELSE json_extract(processing_state, '$.status') END END`;
 const SESSION_COLUMNS = `id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
   ${PROCESSING} AS processing`;
 const SESSIONS_PER_PLACE = 20;
@@ -86,6 +89,7 @@ type Gate<Value> = { value: Value } | { reason: Rejected };
 
 export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
   if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
+  if (processing === 'interrupted_by_restart') return 'queued';
   if (status === 'pending_worktree_choice' || processing === 'waiting_for_input')
     return 'needs_you';
   if (processing === 'processing') return 'running';

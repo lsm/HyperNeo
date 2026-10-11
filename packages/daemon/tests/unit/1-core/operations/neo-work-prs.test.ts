@@ -16,7 +16,7 @@ import {
   summarizeNeoWorkPr,
   wantsNeoWorkPrBlockers,
 } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidenceState } from '../../../../src/lib/neo/evidence.ts';
 
 const head = 'abc123';
@@ -204,6 +204,28 @@ describe('isNeoWorkPrWaiting', () => {
   test('means an open PR still runs checks', () => {
     expect(isNeoWorkPrWaiting([{ ...pr, checks: 'pending' }])).toBe(true);
     expect(isNeoWorkPrWaiting([{ ...pr, state: 'MERGED', checks: 'pending' }])).toBe(false);
+  });
+});
+
+describe('neoWorkPrVerdict', () => {
+  test.each<[string, Partial<NeoWorkPr>, ReturnType<typeof neoWorkPrVerdict>]>([
+    ['merged', { state: 'MERGED' }, 'done'],
+    ['closed unmerged', { state: 'CLOSED' }, 'failed'],
+    [
+      'CI still running, even with changes requested',
+      { checks: 'pending', review: 'changes_requested' },
+      'waiting',
+    ],
+    ['failing checks', { checks: 'failing' }, 'failed'],
+    [
+      'changes requested on settled checks',
+      { checks: 'passing', review: 'changes_requested' },
+      'failed',
+    ],
+    ['approved with green checks', { checks: 'passing', review: 'approved' }, 'ready'],
+    ['green checks, no review yet', { checks: 'passing' }, 'pending'],
+  ])('%s', (_label, overrides, verdict) => {
+    expect(neoWorkPrVerdict({ ...pr, ...overrides })).toBe(verdict);
   });
 });
 

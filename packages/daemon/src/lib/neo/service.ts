@@ -35,6 +35,7 @@ import {
   type NeoWorkCheckRow,
 } from '../../storage/repositories/neo-work-check-repository.ts';
 import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
+import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
 import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
 import { planNeoAskTickStatus, writeNeoAskTickStatus } from './ask-operations.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
@@ -48,6 +49,7 @@ import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts'
 import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
+  neoNeedsYouMessageId,
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
   neoStallMessageId,
@@ -260,6 +262,7 @@ export class NeoService {
   readonly driverTargets: NeoWorkDriverTargetRepository;
   readonly workGoals: NeoWorkGoalRepository;
   readonly workContinues: NeoWorkContinueRepository;
+  readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
   readonly workChecks: NeoWorkCheckRepository;
@@ -440,6 +443,7 @@ export class NeoService {
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
+    this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
@@ -472,6 +476,7 @@ export class NeoService {
         this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
       getConsultation: (id) => this.consultations.get(id),
       getWork: (id) => this.repo.getWork(id),
+      getAsk: (id) => this.askRecords.get(id),
       getRootBinding: () => this.repo.getBindingForConcern(null),
     });
     const publicationSettlements = new NeoConsultationRepository(db.getDatabase(), () => {});
@@ -1598,7 +1603,7 @@ export class NeoService {
         if (plan.notify !== null && this.db.getSession(work.originSessionId))
           await this.deliver(
             work.originSessionId,
-            `${work.id}:needs-you:${plan.notify}`,
+            neoNeedsYouMessageId(work.id, plan.notify),
             driverNeedsYouNote(work, ref, card.state?.lastReply),
             work.originSessionId
           );
