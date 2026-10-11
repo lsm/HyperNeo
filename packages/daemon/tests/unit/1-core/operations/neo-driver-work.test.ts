@@ -54,6 +54,15 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen', daemon: 'laptop' };
+const retryVia = async (service: NeoService, id = 'work-1') => {
+  const outcome = await invokeOperation(
+    createOperationRegistry(createNeoOperations(service)),
+    'neo.work.retry',
+    { id },
+    { source: 'rpc', principal: 'local' }
+  );
+  return 'value' in outcome ? outcome.value : outcome;
+};
 const startTarget: NeoDriverTarget = { verb: 'start', adapter: 'codex-desktop', place };
 const sendTarget: NeoDriverTarget = {
   verb: 'send',
@@ -66,32 +75,42 @@ describe('requireNeoWorkRetryable', () => {
     [
       string,
       { status: NeoWork['status']; report: string | null },
-      { target: boolean; ref: boolean },
+      { target: boolean; ref: boolean; interrupted: boolean },
       boolean,
     ]
   >([
     [
       'a hand-off that failed before it started',
       { status: 'failed', report: 'down' },
-      { target: true, ref: false },
+      { target: true, ref: false, interrupted: false },
       true,
     ],
-    ['started work', { status: 'failed', report: 'down' }, { target: true, ref: true }, false],
+    [
+      'started work',
+      { status: 'failed', report: 'down' },
+      { target: true, ref: true, interrupted: false },
+      false,
+    ],
     [
       'work with no driver target',
       { status: 'failed', report: null },
-      { target: false, ref: false },
+      { target: false, ref: false, interrupted: false },
       false,
     ],
-    ['work still queued', { status: 'queued', report: null }, { target: true, ref: false }, false],
+    [
+      'work still queued',
+      { status: 'queued', report: null },
+      { target: true, ref: false, interrupted: false },
+      false,
+    ],
     [
       'a start that was interrupted',
-      { status: 'failed', report: 'Starting was interrupted before codex confirmed it.' },
-      { target: true, ref: false },
+      { status: 'failed', report: 'down' },
+      { target: true, ref: false, interrupted: true },
       false,
     ],
   ])('%s', (_label, work, card, retryable) => {
-    expect('value' in requireNeoWorkRetryable(work, card)).toBe(retryable);
+    expect('value' in requireNeoWorkRetryable(work, card, true)).toBe(retryable);
   });
 });
 
@@ -2291,7 +2310,7 @@ describe('Neo work with a drivers target', () => {
       await service.start('work-1');
       expect(delivered).toHaveLength(1);
       expect(delivered[0]).not.toContain('neo.work.retry');
-      expect(await service.retryWork('work-1')).toEqual({
+      expect(await retryVia(service)).toEqual({
         ok: false,
         reason:
           'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
@@ -2325,7 +2344,7 @@ describe('Neo work with a drivers target', () => {
       Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
       delete reply.reason;
       delete reply.detail;
-      const retried = service.retryWork('work-1');
+      const retried = retryVia(service);
       finish();
       expect(await retried).toMatchObject({ ok: true, work: { status: 'queued' } });
       expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(2);
@@ -2356,7 +2375,7 @@ describe('Neo work with a drivers target', () => {
       expect(service.isRetryable('work-1')).toBe(true);
       expect(service.driverTargets.receipts(['work-1'])).toHaveLength(1);
 
-      expect(await service.retryWork('work-1')).toMatchObject({
+      expect(await retryVia(service)).toMatchObject({
         ok: true,
         work: { id: 'work-1', status: 'failed' },
       });
@@ -2366,13 +2385,13 @@ describe('Neo work with a drivers target', () => {
       delete reply.reason;
       delete reply.detail;
       Object.assign(reply, { ok: true, value: { ref: { adapter: 'codex-desktop', id: 't1' } } });
-      expect(await service.retryWork('work-1')).toMatchObject({
+      expect(await retryVia(service)).toMatchObject({
         ok: true,
         work: { id: 'work-1', status: 'queued' },
       });
       expect(calls.filter((call) => call.name === 'work.start')).toHaveLength(3);
       expect(service.repo.listWork()).toHaveLength(1);
-      expect(await service.retryWork('work-1')).toMatchObject({ ok: false });
+      expect(await retryVia(service)).toMatchObject({ ok: false });
       expect(service.isRetryable('work-1')).toBe(false);
     } finally {
       db.close();

@@ -127,6 +127,21 @@ export class NeoWorkDriverTargetRepository {
     return row?.retries ?? 0;
   }
 
+  readStartInterrupted(workId: string): boolean {
+    const row = this.db
+      .prepare(
+        'SELECT start_interrupted AS interrupted FROM neo_work_driver_targets WHERE work_id = ?'
+      )
+      .get(workId) as { interrupted: number } | null | undefined;
+    return !!row?.interrupted;
+  }
+
+  recordStartInterrupted(workId: string): void {
+    this.db
+      .prepare('UPDATE neo_work_driver_targets SET start_interrupted = 1 WHERE work_id = ?')
+      .run(workId);
+  }
+
   recordRetry(workId: string): number {
     this.db
       .prepare('UPDATE neo_work_driver_targets SET retries = retries + 1 WHERE work_id = ?')

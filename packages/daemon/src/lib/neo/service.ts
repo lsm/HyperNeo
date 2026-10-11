@@ -90,6 +90,7 @@ import {
   readDriverLastInputAt,
   readDriverLive,
   requireNeoWorkRetryable,
+  type NeoWorkRetryCard,
   withWorkGoal,
   readNeoWorkContinueBudget,
 } from './driver-work.ts';
@@ -1018,6 +1019,7 @@ export class NeoService {
   private async startDriverWork(work: NeoWork, target: NeoDriverTarget): Promise<void> {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
+      this.driverTargets.recordStartInterrupted(work.id);
       const interrupted = this.repo.transitionWork(work.id, work, {
         status: 'failed',
         report: `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
@@ -1070,30 +1072,23 @@ export class NeoService {
     if (failed) await this.returnReport(failed);
   }
 
-  private retryCard(workId: string): { target: boolean; ref: boolean } {
-    return { target: !!this.driverTargets.get(workId), ref: !!this.driverTargets.readRef(workId) };
+  retryCard(workId: string): NeoWorkRetryCard {
+    return {
+      target: !!this.driverTargets.get(workId),
+      ref: !!this.driverTargets.readRef(workId),
+      interrupted: this.driverTargets.readStartInterrupted(workId),
+    };
   }
 
   isRetryable(workId: string): boolean {
     const work = this.repo.getWork(workId);
-    return !!work && 'value' in requireNeoWorkRetryable(work, this.retryCard(workId));
-  }
-
-  private neverStarted(work: NeoWork): boolean {
-    return (
-      work.status === 'failed' &&
-      !!this.driverTargets.get(work.id) &&
-      !this.driverTargets.readRef(work.id)
-    );
+    return !!work && 'value' in requireNeoWorkRetryable(work, this.retryCard(workId), true);
   }
 
   async retryWork(
-    id: string
+    work: NeoWork
   ): Promise<{ ok: true; work: NeoWork } | { ok: false; reason: string }> {
-    const work = this.repo.getWork(id);
-    if (!work) return { ok: false, reason: 'work_not_found' };
-    const retryable = requireNeoWorkRetryable(work, this.retryCard(work.id));
-    if ('reason' in retryable) return { ok: false, reason: retryable.reason };
+    const id = work.id;
     const proposed = this.repo.transitionWork(id, work, { status: 'proposed', report: null });
     if (!proposed) return { ok: false, reason: 'This work changed meanwhile; read it again.' };
     await this.workPending.get(id)?.catch(() => undefined);
@@ -1828,7 +1823,7 @@ export class NeoService {
     const targets = new Set([rootId, work.originSessionId]);
     const retries = this.driverTargets.readRetries(work.id);
     const retryNote =
-      this.neverStarted(work) && !work.report?.startsWith(NEO_DRIVER_START_INTERRUPTED)
+      'value' in requireNeoWorkRetryable(work, this.retryCard(work.id), true)
         ? ` ${fillPrompt(NEO_WORK_RETURNED_RETRY, {
             retried: retries
               ? fillPrompt(NEO_WORK_RETURNED_RETRIED, {
