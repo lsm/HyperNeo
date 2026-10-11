@@ -51,6 +51,13 @@ import {
   routeExternalEventPublisher,
   SessionExternalEventStore,
 } from './lib/external-events/index.ts';
+import {
+  deliverSessionExternalEvent,
+  mailSessionEvent,
+  type SessionEventDeliveryDeps,
+} from './lib/external-events/session-event-delivery.ts';
+import { SESSION_EVENT_SCOPE } from './lib/external-events/session-external-event-store.ts';
+import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
   ExternalEventExtensionManager,
@@ -779,9 +786,32 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
     const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
+    const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
     const sessionExternalEventService = new ExternalEventService(
-      new SessionExternalEventStore(db.getDatabase()),
+      sessionExternalEventStore,
       internalEventBus
+    );
+    const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
+    const sessionEventDeliveryDeps: SessionEventDeliveryDeps = {
+      readEvent: (eventId) => sessionExternalEventStore.getById(eventId),
+      listSubscriptions: () => sessionEventSubscriptions.listAll(),
+      isSessionBusy: (sessionId) =>
+        (sessionManager?.getCachedSession(sessionId)?.getProcessingState().status ?? 'idle') !==
+        'idle',
+      deliver: async (delivery) => {
+        const outcome = await mailSessionEvent(db.getJobQueueRepo(), delivery);
+        if (outcome.kind === 'rejected')
+          logError(
+            `[Daemon] External event for session ${delivery.sessionId} was rejected: ${outcome.reason}`
+          );
+      },
+    };
+    internalEventBus.subscribe(
+      'externalEvent.published',
+      async (event) => {
+        await deliverSessionExternalEvent(sessionEventDeliveryDeps, event);
+      },
+      { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
