@@ -48,15 +48,16 @@ export function keepNeoTrackedSessions(
   return kept;
 }
 
-export function takeNeoTrackedAdoption<T>(
-  target: NeoDriverTarget | undefined,
-  tracked: Map<string, number>,
-  now: number,
-  value: T
-): { value: T } | { reason: Rejection } {
-  const checked = requireNeoTrackedAdoption(target, tracked, [], now, value);
-  if ('value' in checked && target?.verb === 'adopt') tracked.delete(neoSessionKey(target.ref));
-  return checked;
+export function reserveNeoAdoption(
+  adopting: Set<string>,
+  target: NeoDriverTarget | undefined
+): { value: string | null } | { reason: Rejection } {
+  if (target?.verb !== 'adopt') return { value: null };
+  const key = neoSessionKey(target.ref);
+  if (adopting.has(key))
+    return { reason: { ok: false, reason: 'This session is already being adopted.' } };
+  adopting.add(key);
+  return { value: key };
 }
 
 export function requireNeoTrackedAdoption<T>(

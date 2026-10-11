@@ -12,7 +12,7 @@ import {
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
-  takeNeoTrackedAdoption,
+  reserveNeoAdoption,
 } from '../../../../src/lib/neo/session-track.ts';
 import { neoSessionKey, type NeoSessionNotice } from '../../../../src/lib/neo/session-watch.ts';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
@@ -47,15 +47,13 @@ describe('isNeoAdoptOnlyAsk', () => {
   });
 });
 
-describe('takeNeoTrackedAdoption', () => {
-  test('uses the tap up, so a second adopt of the same session is refused', () => {
-    const tracked = new Map([[key, 1_000]]);
+describe('reserveNeoAdoption', () => {
+  test('lets one adoption of a session run at a time', () => {
+    const adopting = new Set<string>();
     const adopt = { verb: 'adopt' as const, ref };
-    expect(takeNeoTrackedAdoption(adopt, tracked, 2_000, 'ok')).toEqual({ value: 'ok' });
-    expect(tracked.has(key)).toBe(false);
-    expect(takeNeoTrackedAdoption(adopt, tracked, 2_000, 'ok')).toMatchObject({
-      reason: { ok: false },
-    });
+    expect(reserveNeoAdoption(adopting, { verb: 'send', ref })).toEqual({ value: null });
+    expect(reserveNeoAdoption(adopting, adopt)).toEqual({ value: key });
+    expect(reserveNeoAdoption(adopting, adopt)).toMatchObject({ reason: { ok: false } });
   });
 });
 

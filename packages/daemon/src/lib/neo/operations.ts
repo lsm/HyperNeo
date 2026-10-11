@@ -78,6 +78,7 @@ import {
   NeoSessionNoticeGroupSchema,
   NeoSessionNoticeSchema,
   latestNeoSessionNoticeGroups,
+  neoSessionKey,
   planNeoSessionMutes,
   type NeoSessionNotice,
 } from './session-watch.ts';
@@ -87,7 +88,7 @@ import {
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
-  takeNeoTrackedAdoption,
+  reserveNeoAdoption,
 } from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
@@ -718,6 +719,7 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof SessionMute>,
     caller: OperationCaller
   ) => z.infer<typeof SessionMuteResult>;
+  const adopting = new Set<string>();
   const trackSession = (superpipe({})('neo.session.track') as PipelineAPI)
     .input(['input', 'caller', 'now'])
     .pipe(
@@ -1113,16 +1115,6 @@ export function createNeoOperations(service: NeoService) {
     .pipe(requireLiveNeoWorkOrigin, ['origin', 'caller'], 'result:admission')
     .pipe(requireNeoProposalDoneWhen, ['input', 'caller'], 'result:admission')
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
-        const tracked = service.trackedSessions;
-        const taken = takeNeoTrackedAdoption(input.work, tracked, Date.now(), caller);
-        if ('value' in taken && input.work?.verb === 'adopt') service.trackedSessions = tracked;
-        return taken;
-      },
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
       (
         input: z.infer<typeof Propose>,
         origin: NeoWorkOrigin,
@@ -1199,6 +1191,9 @@ export function createNeoOperations(service: NeoService) {
         receipt: { work: NeoWork }
       ) => {
         if (input.work?.verb !== 'adopt') return;
+        const tracked = service.trackedSessions;
+        tracked.delete(neoSessionKey(input.work.ref));
+        service.trackedSessions = tracked;
         const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
         if (owned && isNeoAdoptOnlyAsk(owned, receipt.work.id))
           service.askRecords.approve(owned.id, Date.now());
@@ -1479,8 +1474,14 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => {
-        const result = await propose(input, caller);
-        return 'accepted' in result ? { ok: false as const, reason: result.reason } : result;
+        const reserved = reserveNeoAdoption(adopting, input.work);
+        if ('reason' in reserved) return reserved.reason;
+        try {
+          const result = await propose(input, caller);
+          return 'accepted' in result ? { ok: false as const, reason: result.reason } : result;
+        } finally {
+          if (reserved.value) adopting.delete(reserved.value);
+        }
       },
     }),
     defineOperation({
