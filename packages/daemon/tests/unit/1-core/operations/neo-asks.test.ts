@@ -459,6 +459,15 @@ describe('neo.ask operations', () => {
         itemId: 'i2',
         state: 'needs_you',
         evidence: 'Is red CI on main acceptable?',
+        options: ['Yes', 'Yes'],
+      })
+    ).toMatchObject({ kind: 'failed', message: expect.stringContaining('Options must differ') });
+    expect(
+      await invoke('neo.ask.tick', {
+        askId,
+        itemId: 'i2',
+        state: 'needs_you',
+        evidence: 'Is red CI on main acceptable?',
         options: ['Accept it', 'Fix CI first'],
       })
     ).toMatchObject({
@@ -473,10 +482,18 @@ describe('neo.ask operations', () => {
         },
       },
     });
-    const delivered = mock(async (_ask: NeoAsk, _item: unknown, _choice: string) => {});
-    service.deliverAskAnswer = delivered;
     const user: OperationCaller = { source: 'rpc', principal: 'local' };
     const answer = { askId, itemId: 'i2', choice: 'Fix CI first' };
+    service.deliverAskAnswer = async () => {
+      throw new Error('mailbox rejected');
+    };
+    expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
+      kind: 'failed',
+      message: 'mailbox rejected',
+    });
+    expect(service.askRecords.get(askId)?.doneItems?.[1]).toMatchObject({ state: 'needs_you' });
+    const delivered = mock(async (_ask: NeoAsk, _item: unknown, _choice: string) => {});
+    service.deliverAskAnswer = delivered;
     expect(await invoke('neo.ask.answer', answer)).toMatchObject({ value: { ok: false } });
     expect(await invoke('neo.ask.answer', answer, user)).toMatchObject({
       value: {

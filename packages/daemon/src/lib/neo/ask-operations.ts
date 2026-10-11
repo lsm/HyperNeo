@@ -105,7 +105,12 @@ const Tick = z.object({
   itemId: z.string().min(1),
   state: z.enum(['pending', 'met', 'needs_you']),
   evidence: z.string().trim().min(1).max(2000).optional(),
-  options: z.array(z.string().trim().min(1).max(80)).min(2).max(4).optional(),
+  options: z
+    .array(z.string().trim().min(1).max(80))
+    .min(2)
+    .max(4)
+    .refine((options) => new Set(options).size === options.length, 'Options must differ.')
+    .optional(),
 });
 
 const Answer = z.object({
@@ -621,7 +626,12 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
       'result:admission'
     )
     .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
-    .pipe((target: { item: NeoAskItem }) => ({ item: target.item }), 'admission', 'question')
+    .pipe(
+      async (input: z.infer<typeof Answer>, target: { ask: NeoAsk; item: NeoAskItem }) => {
+        await service.deliverAskAnswer(target.ask, target.item, input.choice);
+      },
+      ['input', 'admission']
+    )
     .pipe(
       (input: z.infer<typeof Answer>, target: { ask: NeoAsk }) => {
         service.askRecords.tickItem(
@@ -642,12 +652,6 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     .pipe(requireNeoAskWritten, 'answered', 'result:admission')
     .pipe(replanAsk, 'admission', 'written')
     .pipe(requireNeoAskWritten, 'written', 'result:admission')
-    .pipe(
-      async (input: z.infer<typeof Answer>, target: { item: NeoAskItem }, receipt: AskReceipt) => {
-        await service.deliverAskAnswer(receipt.ask, target.item, input.choice);
-      },
-      ['input', 'question', 'admission']
-    )
     .endAsync('admission') as (
     input: z.infer<typeof Answer>,
     caller: OperationCaller
