@@ -1232,7 +1232,12 @@ export class NeoService {
               } | null)
             : null;
         return {
-          sessions: listNeoWatchedSessions(value?.places ?? [], this.followedCardRefs(now), now),
+          sessions: listNeoWatchedSessions(
+            value?.places ?? [],
+            this.followedCardRefs(now),
+            now,
+            this.db.getGlobalSettings?.().neo?.mutedSessions
+          ),
           complete: !!value?.places && !value.unreachable?.length && !value.more,
         };
       },

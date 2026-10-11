@@ -17,7 +17,9 @@ import {
   neoSessionNoticeLine,
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
+  planNeoSessionMutes,
   planNeoSessionWatch,
+  NEO_SESSION_MUTES_MAX,
   savedNeoSessionNoticeGroups,
   type NeoListedSession,
   type NeoSessionNotice,
@@ -82,6 +84,21 @@ describe('listNeoWatchedSessions', () => {
         now
       ).map((item) => item.key)
     ).toEqual([session.key]);
+  });
+
+  test('skips sessions the human muted', () => {
+    expect(listNeoWatchedSessions(places([work()]), [], now, [session.key])).toEqual([]);
+  });
+});
+
+describe('planNeoSessionMutes', () => {
+  test('mutes a key once, unmutes it, and keeps only the newest mutes', () => {
+    expect(planNeoSessionMutes(['a'], 'b', true)).toEqual(['a', 'b']);
+    expect(planNeoSessionMutes(['a', 'b'], 'a', true)).toEqual(['b', 'a']);
+    expect(planNeoSessionMutes(['a', 'b'], 'a', false)).toEqual(['b']);
+    const full = Array.from({ length: NEO_SESSION_MUTES_MAX }, (_, index) => `k${index}`);
+    expect(planNeoSessionMutes(full, 'new', true)).toHaveLength(NEO_SESSION_MUTES_MAX);
+    expect(planNeoSessionMutes(full, 'new', true).at(-1)).toBe('new');
   });
 });
 
@@ -555,6 +572,42 @@ describe('refreshDriverWork', () => {
       } finally {
         restarted.dispose();
       }
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('a muted session sends no notice until it is unmuted', async () => {
+    const human = { source: 'rpc' as const, principal: 'local' as const };
+    const invoke = (name: string, input: unknown) =>
+      invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, human);
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      expect(await invoke('neo.session.mute', { key: session.key, muted: true })).toMatchObject({
+        value: { ok: true, mutedSessions: [session.key] },
+      });
+      const snapshot = await invoke('neo.snapshot', {});
+      expect('value' in snapshot && snapshot.value).toMatchObject({
+        mutedSessions: [session.key],
+      });
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notice')).toEqual([]);
+
+      await invoke('neo.session.mute', { key: session.key, muted: false });
+      listed = [work({ lastActivityAt: clock - 500 })];
+      status = { status: 'running', lastActivityAt: clock - 500 };
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
     } finally {
       time.mockRestore();
     }
