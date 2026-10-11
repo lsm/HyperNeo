@@ -93,4 +93,13 @@ export const NeoAskViewSchema = z.object({
       } satisfies ZodShape<NeoAskSessionView>)
     )
     .optional(),
+  answer: z
+    .object({
+      itemId: z.string(),
+      question: z.string(),
+      label: z.literal('Answer in chat'),
+      options: z.array(z.string()),
+    })
+    .nullable()
+    .optional(),
 } satisfies ZodShape<NeoAskView>);

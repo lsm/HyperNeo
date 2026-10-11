@@ -218,6 +218,27 @@ export function useNeo() {
     }
   }
 
+  async function answerAskItem(askId: string, itemId: string, choice: string) {
+    if (busyWork) return;
+    setBusyWork(itemId);
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.ask.answer', {
+        askId,
+        itemId,
+        choice,
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That answer could not be sent.');
+    } finally {
+      if (alive.current) setBusyWork(null);
+    }
+  }
+
   const publicConversation = projectNeoPublicConversation(
     snapshot?.sessionId ?? null,
     asks,
@@ -250,6 +271,7 @@ export function useNeo() {
     approveAsk,
     muteSession,
     tickAskItem,
+    answerAskItem,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,

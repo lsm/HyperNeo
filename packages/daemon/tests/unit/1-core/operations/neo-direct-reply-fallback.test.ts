@@ -7,6 +7,8 @@ import {
   NEO_UNFINISHED_REPLY,
   type NeoDirectReplyRuntime,
   type NeoTurnReply,
+  neoIdleReplySessions,
+  neoSessionStatus,
   publishNeoDirectReplyFallback,
   requireNeoReplySession,
   requireUnpublishedDirectAnswer,
@@ -287,6 +289,30 @@ describe('Neo direct reply fallback', () => {
   });
 });
 
+describe('neoIdleReplySessions', () => {
+  test('keeps only Neo and concern sessions whose saved turn state is idle', () => {
+    const states: Record<string, string> = {
+      a: JSON.stringify({ status: 'idle' }),
+      b: JSON.stringify({ status: 'interrupted', reason: 'restart' }),
+      c: JSON.stringify({ status: 'idle' }),
+      d: 'not json',
+    };
+    expect(
+      neoIdleReplySessions(
+        [
+          { sessionId: 'a', concernId: null, kind: 'neo' },
+          { sessionId: 'b', concernId: 'x', kind: 'concern' },
+          { sessionId: 'c', concernId: 'x', kind: 'worker' },
+          { sessionId: 'd', concernId: 'x', kind: 'concern' },
+          null,
+        ],
+        (id) => neoSessionStatus(states[id])
+      )
+    ).toEqual(['a']);
+    expect(neoSessionStatus(undefined)).toBeNull();
+  });
+});
+
 describe('readNeoTurnReply', () => {
   let db: Database;
   beforeEach(async () => {
@@ -453,6 +479,28 @@ describe('NeoService direct reply fallback wiring', () => {
         });
       await vi.advanceTimersByTimeAsync(21_000);
       await vi.waitFor(() => expect(nudgeQueued()).toBe(expected));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each([
+    ['publishes a finished reply the restart left unpublished', 'idle', 1],
+    ['leaves a turn the restart cut to its own resume', 'interrupted', 0],
+  ])('%s', async (_name, status, expected) => {
+    db.updateSession(root, { processingState: JSON.stringify({ status }) });
+    await service.recover();
+    expect(published()).toHaveLength(expected);
+  });
+
+  test('never nudges an unfinished turn after a restart, since a human stop also saves idle', async () => {
+    stallNewestAsk();
+    db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
+    vi.useFakeTimers();
+    try {
+      await service.recover();
+      await vi.advanceTimersByTimeAsync(21_000);
+      expect(nudgeQueued()).toBe(false);
     } finally {
       vi.useRealTimers();
     }

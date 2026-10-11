@@ -37,6 +37,27 @@ type Reply = Turn & { text: string };
 const skip: { reason: Skip } = { reason: { skipped: true } };
 const recheck: { reason: Skip } = { reason: { skipped: true, recheck: true } };
 
+export function neoSessionStatus(processingState: string | undefined): string | null {
+  if (!processingState) return null;
+  try {
+    const status = (JSON.parse(processingState) as { status?: unknown } | null)?.status;
+    return typeof status === 'string' ? status : null;
+  } catch {
+    return null;
+  }
+}
+
+export function neoIdleReplySessions(
+  bindings: readonly (NeoBinding | null)[],
+  readStatus: (sessionId: string) => string | null
+): string[] {
+  return bindings.flatMap((binding) =>
+    binding && binding.kind !== 'worker' && readStatus(binding.sessionId) === 'idle'
+      ? [binding.sessionId]
+      : []
+  );
+}
+
 export const NEO_UNFINISHED_REPLY = 'I couldn’t finish answering that. Please ask again.';
 
 export function requireNeoReplySession(

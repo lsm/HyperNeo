@@ -587,6 +587,62 @@ describe('refreshDriverWork', () => {
     }
   });
 
+  test('a session that fails while Neo is down still gets its notice after a restart', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      service.dispose();
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
+      const announced: string[] = [];
+      const restarted = new NeoService(
+        db,
+        service.sessions,
+        {
+          event: mock((name: string) => {
+            announced.push(name);
+          }),
+        } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      try {
+        await restarted.refreshDriverWork();
+        expect(announced.filter((name) => name === 'neo.session.notice')).toHaveLength(1);
+        expect(restarted.sessionNotices).toEqual([expect.objectContaining({ kind: 'failed' })]);
+      } finally {
+        restarted.dispose();
+      }
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  test('a failed save of what the watcher saw still announces the notice, and the next pass saves', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    const table = db.getDatabase();
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      table.exec('ALTER TABLE neo_session_seen RENAME TO neo_session_seen_away');
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
+      table.exec('ALTER TABLE neo_session_seen_away RENAME TO neo_session_seen');
+      await service.refreshDriverWork();
+      expect(table.prepare('SELECT status FROM neo_session_seen').all()).toEqual([
+        { status: 'failed' },
+      ]);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
   test('a group still open at shutdown is saved, and a restart reads it back', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);

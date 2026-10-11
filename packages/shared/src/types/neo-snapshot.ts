@@ -65,12 +65,13 @@ export function neoAskApprovalSpent(
 export interface NeoAskItem {
   id: string;
   text: string;
-  state: 'pending' | 'met' | 'needs_you';
+  state: 'pending' | 'met' | 'needs_you' | 'reported';
   evidence: string | null;
   check: 'coding.pr_merged' | 'life-admin.confirmed' | null;
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
   addedAt: number | null;
+  options?: string[];
 }
 
 export interface NeoAsk {
@@ -216,6 +217,14 @@ export interface NeoAskView {
   doneWorkIds: string[];
   summary: string | null;
   sessions?: NeoAskSessionView[];
+  answer?: NeoAskAnswer | null;
+}
+
+export interface NeoAskAnswer {
+  itemId: string;
+  question: string;
+  label: 'Answer in chat';
+  options: string[];
 }
 
 export interface NeoReceiptAskOrigin {

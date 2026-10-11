@@ -23,6 +23,7 @@ export interface ApiConnectionState {
 export interface SystemState {
   version: string;
   claudeSDKVersion: string;
+  commit?: string;
 
   defaultModel: string;
   maxSessions: number;
