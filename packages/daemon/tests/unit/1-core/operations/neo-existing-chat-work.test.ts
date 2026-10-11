@@ -95,6 +95,7 @@ describe('Neo existing chat work', () => {
       title: `Work ${requestKey}`,
       instruction: 'Draft a bounded answer. Do not send, publish or modify files.',
       doneWhen: '- answer drafted',
+      allowBusyTarget: true,
     };
   }
   async function propose(requestKey = 'A', targetSessionId = 'project'): Promise<NeoWork> {
@@ -263,6 +264,39 @@ describe('Neo existing chat work', () => {
     expect(neoPrompt('research')).toContain(
       'a work proposal always shows targetSessionId null because its target is the work field'
     );
+  });
+
+  test('a second card for a chat that already holds one is refused with its load', async () => {
+    await propose('A');
+    const busy = { ...input('B'), allowBusyTarget: undefined };
+
+    expect(await invoke('neo.work.propose', busy, source('ask-B'))).toMatchObject({
+      value: {
+        ok: false,
+        reason: expect.stringContaining('Session project already holds 1 live card'),
+      },
+    });
+    expect(await invoke('neo.work.propose', input('A'), source('ask-A'))).toMatchObject({
+      value: { ok: true },
+    });
+    expect(service.repo.listWork()).toHaveLength(1);
+  });
+
+  test('a retry returns its card even after another card joined the same chat', async () => {
+    const first = await invoke(
+      'neo.work.propose',
+      { ...input('A'), allowBusyTarget: undefined },
+      source('ask-A')
+    );
+    await propose('B');
+
+    expect(
+      await invoke(
+        'neo.work.propose',
+        { ...input('A'), allowBusyTarget: undefined },
+        source('ask-A')
+      )
+    ).toMatchObject({ value: (first as { value: unknown }).value });
   });
 
   test('request retries cannot change the chosen target or input lineage', async () => {

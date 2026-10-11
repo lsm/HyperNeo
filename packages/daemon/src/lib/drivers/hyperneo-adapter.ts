@@ -78,6 +78,7 @@ export interface HyperneoAdapterDeps {
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
   homeDir: string;
+  liveCards?: () => ReadonlyMap<string, number>;
 }
 
 export interface HyperneoLastResult {
@@ -142,6 +143,15 @@ export function readHyperneoSessions(
     .all(includeClosed ? 1 : 0) as HyperneoSessionRow[];
 }
 
+export function withSessionLoad(work: WorkSummary, liveCards: number): WorkSummary {
+  const busy = work.status === 'running' || work.status === 'queued';
+  return {
+    ...work,
+    ...(liveCards > 0 ? { liveCards } : {}),
+    ...(busy ? { busy: true as const } : {}),
+  };
+}
+
 function toWork(row: HyperneoSessionRow, machine: string): WorkSummary {
   return {
     ref: { adapter: 'hyperneo', id: row.id },
@@ -158,7 +168,8 @@ export function buildHyperneoGroups(
   sessions: readonly HyperneoSessionRow[],
   query: FindQuery,
   deps: Pick<HyperneoAdapterDeps, 'machine'>,
-  matched: ReadonlyMap<string, WorkChatMatch>
+  matched: ReadonlyMap<string, WorkChatMatch>,
+  liveCards: ReadonlyMap<string, number> = new Map()
 ): PlaceGroup[] {
   const machine = deps.machine;
   const text = query.text?.toLowerCase();
@@ -176,7 +187,12 @@ export function buildHyperneoGroups(
             matched.has(session.id) ||
             session.title.toLowerCase().includes(text ?? '')
         )
-        .map((session) => withChatEvidence(toWork(session, machine), matched.get(session.id)))
+        .map((session) =>
+          withSessionLoad(
+            withChatEvidence(toWork(session, machine), matched.get(session.id)),
+            liveCards.get(session.id) ?? 0
+          )
+        )
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .slice(0, SESSIONS_PER_PLACE);
       if (!placeMatches && work.length === 0) return [];
@@ -267,7 +283,12 @@ const runHyperneoFind = (superpipe({})('hyperneo-find-work') as PipelineAPI)
   .pipe(foldNeoPlaces, ['rawPlaces', 'neoRoot'], 'places')
   .pipe(foldNeoSessions, ['rawSessions', 'neoRoot'], 'sessions')
   .pipe(matchHyperneoSessions, 'chats', 'matched')
-  .pipe(buildHyperneoGroups, ['places', 'sessions', 'query', 'deps', 'matched'], 'groups')
+  .pipe((deps: HyperneoAdapterDeps) => deps.liveCards?.() ?? new Map(), 'deps', 'liveCards')
+  .pipe(
+    buildHyperneoGroups,
+    ['places', 'sessions', 'query', 'deps', 'matched', 'liveCards'],
+    'groups'
+  )
   .end('groups') as (
   query: FindQuery,
   deps: HyperneoAdapterDeps,

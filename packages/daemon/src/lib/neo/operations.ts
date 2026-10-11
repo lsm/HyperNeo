@@ -1,5 +1,12 @@
 import { existsSync } from 'node:fs';
 import {
+  hasNeoWorkRequest,
+  neoTargetSessionId,
+  readNeoIdleSessions,
+  readNeoSessionLoad,
+  requireIdleNeoTarget,
+} from './session-load.ts';
+import {
   NEO_CONSULTATION_RECEIPT_CLOSED,
   NEO_CONSULTATION_RECEIPT_PENDING,
   NEO_CONSULTATION_RECEIPT_RETURNED,
@@ -219,6 +226,10 @@ const SnapshotOk = z.object({
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
   cards: z.array(NeoCardViewSchema).max(100),
+  sessionLoad: z
+    .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
+    .max(50)
+    .optional(),
   askViews: z.array(NeoAskViewSchema),
   waitingOnHuman: z
     .object({
@@ -282,6 +293,7 @@ const Propose = z.object({
   doneWhen: z.string().trim().min(1).max(2000).optional(),
   askId: z.string().min(1).max(160).optional(),
   supersedes: z.string().min(1).max(160).nullable().optional(),
+  allowBusyTarget: z.boolean().optional(),
 });
 const WorkId = z.object({ id: z.string().min(1) });
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
@@ -657,6 +669,7 @@ export function createNeoOperations(service: NeoService) {
       preferences: service.modelPreference(),
       asks,
       cards,
+      sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       askViews: projectNeoAskViews(
         asks,
         cards,
@@ -1091,6 +1104,20 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe((origin: NeoWorkOrigin) => origin, 'admission', 'origin')
     .pipe(
+      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin) => {
+        const requestKey = `${origin.originSessionId}:${input.requestKey}`;
+        const db = service.db.getDatabase();
+        return requireIdleNeoTarget(
+          neoTargetSessionId(input.targetSessionId, input.work),
+          readNeoSessionLoad(db, requestKey),
+          input.allowBusyTarget || hasNeoWorkRequest(db, requestKey),
+          (sessionId, loaded) => readNeoIdleSessions(db, sessionId, loaded)
+        );
+      },
+      ['input', 'origin'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Propose>) => ({
         id: crypto.randomUUID(),
         targetSessionId: input.targetSessionId ?? null,
@@ -1487,7 +1514,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human tapped Track on without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human tapped Track on without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. A proposal to a session that already holds live cards is refused with its load and the idle sessions in the same place; split independent items across idle sessions, and pass allowBusyTarget:true only to queue behind the work of that session on purpose. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
