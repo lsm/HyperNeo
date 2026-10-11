@@ -92,6 +92,88 @@ describe('watchSessionRepo', () => {
   });
 });
 
+describe('the first poll of a session watch', () => {
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+  const pr = (number: number, updatedMsAgo: number, state = 'open') => ({
+    id: number * 10,
+    number,
+    state,
+    title: `PR ${number}`,
+    html_url: `https://github.com/acme/widgets/pull/${number}`,
+    head: { sha: `sha-${number}` },
+    user: { login: 'dev', type: 'User' },
+    created_at: iso(updatedMsAgo),
+    updated_at: iso(updatedMsAgo),
+  });
+  const ok = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'X-RateLimit-Remaining': '5000' },
+    });
+
+  test('skips old PRs and reads a fresh approval in the same cycle', async () => {
+    const db = freshDb();
+    const topics: string[] = [];
+    const pullsPages: string[] = [];
+    const github = new GitHubEventExtension(db, 'token', { getPollIntervalMs: () => 0 });
+    extension = github;
+    const config = new ExternalEventExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    await github.start({
+      publisher: {
+        publish: async (event) => {
+          topics.push(event.topic);
+          return { outcome: 'published', eventId: event.id };
+        },
+      },
+      config,
+      onSourceConfigChanged() {},
+    });
+    await github.watchSessionRepo('acme', 'widgets');
+    const DAY = 24 * 60 * 60 * 1000;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname;
+      if (path.endsWith('/pulls')) {
+        pullsPages.push(parsed.searchParams.get('page') ?? '');
+        return ok([
+          pr(7, 60_000),
+          ...Array.from({ length: 99 }, (_, index) => pr(100 + index, 10 * DAY, 'closed')),
+        ]);
+      }
+      if (path.endsWith('/pulls/7/reviews'))
+        return ok([
+          {
+            id: 70,
+            state: 'APPROVED',
+            body: '',
+            user: { login: 'reviewer[bot]', type: 'Bot' },
+            submitted_at: iso(30_000),
+            html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-70',
+          },
+        ]);
+      if (path.endsWith('/check-runs')) return ok({ check_runs: [] });
+      if (path.endsWith('/pulls/7')) return ok(pr(7, 60_000));
+      return ok([]);
+    }) as unknown as typeof fetch;
+    await github.pollWatchedRepo(
+      github.repo.listPollingRepos(SESSION_EVENT_SCOPE)[0] ?? fail(),
+      fetchImpl
+    );
+    expect(pullsPages).toEqual(['1']);
+    expect(topics).toContain('github/acme/widgets/pull_request/7.review_submitted');
+    expect(topics.filter((topic) => /pull_request\/1\d\d\./.test(topic))).toEqual([]);
+  });
+});
+
+function fail(): never {
+  throw new Error('no sessions-scope watch');
+}
+
 describe('unreferenced session watches', () => {
   test('a poll cycle drops a sessions-scope repo no subscription references any more', async () => {
     const db = freshDb();

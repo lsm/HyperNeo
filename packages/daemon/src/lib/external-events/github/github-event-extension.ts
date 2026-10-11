@@ -2424,7 +2424,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const seedCommentEndpointWatermark =
         savedEndpointWatermark === 0 &&
         watermarks.committed === 0 &&
-        (endpoint.key === 'issue_comments' || endpoint.key === 'review_comments');
+        (endpoint.key === 'issue_comments' ||
+          endpoint.key === 'review_comments' ||
+          watched.spaceId === SESSION_EVENT_SCOPE);
       const endpointWatermark = seedCommentEndpointWatermark
         ? Date.now() - COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS
         : savedEndpointWatermark > 0
@@ -2508,7 +2510,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const payload = await response.json();
       let rows = rowsFromPollingPayload(payload, endpoint.key);
       let pullsBacklogClearedByCutoff = false;
-      if (endpoint.key === 'pulls' && !pullsNeedsSeed && savedEndpointWatermark > 0) {
+      if (
+        endpoint.key === 'pulls' &&
+        (seedCommentEndpointWatermark || (!pullsNeedsSeed && savedEndpointWatermark > 0))
+      ) {
         const cutoffIndex = rows.findIndex((row) => {
           const updatedAt = pullRequestUpdatedAt(row);
           return updatedAt > 0 && updatedAt < endpointWatermark;
