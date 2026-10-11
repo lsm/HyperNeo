@@ -5,6 +5,8 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
+import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository';
+import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
 import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -26,6 +28,7 @@ let nodeExecutions: NodeExecutionRepository;
 let agents: SpaceLongHorizonAgentRepository;
 let agentSubscriptions: SpaceAgentSubscriptionRepository;
 let sessionSubscriptions: SpaceSessionEventSubscriptionRepository;
+let unscopedSubscriptions: SessionEventSubscriptionRepository;
 let sessionRefreshed: string[];
 let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
@@ -155,6 +158,8 @@ beforeEach(() => {
   agentSubscriptions = new SpaceAgentSubscriptionRepository(db, new SpaceAgentRepository(db));
   auditLogRepo = new McpAuditLogRepository(db);
   sessionSubscriptions = new SpaceSessionEventSubscriptionRepository(db);
+  runMigration329(db);
+  unscopedSubscriptions = new SessionEventSubscriptionRepository(db);
   sessionRefreshed = [];
   registered = [];
   unregistered = [];
@@ -187,6 +192,7 @@ beforeEach(() => {
       result: { ...LIST_RESULT, workflowRunId },
     }),
     sessionSubscriptions,
+    unscopedSessionSubscriptions: unscopedSubscriptions,
     refreshSessionSubscription: (_spaceId, subscriptionId) => {
       sessionRefreshed.push(subscriptionId);
       return refreshOutcome;
@@ -765,5 +771,105 @@ describe('subscription.list for callers without a run', () => {
     };
     expect(result.owner).toEqual({ type: 'session', id: 's-direct-list' });
     expect(result.stored.map((row) => row.topic)).toEqual([AGENT_TOPIC]);
+  });
+});
+
+describe('a session outside any Space', () => {
+  const PR = 'https://github.com/Acme/Widgets/pull/7';
+  const PR_TOPIC = 'github/Acme/Widgets/pull_request/7.*';
+
+  function plainSession(id: string, status: 'active' | 'archived' = 'active'): OperationCaller {
+    sessions.createSession(
+      { ...createTestSession(id), workspacePath: '/repo', status },
+      { enforceWorkspaceOwnership: false }
+    );
+    return { source: 'mcp', sessionId: id, role: 'universal_read' };
+  }
+
+  test('subscribes, lists and unsubscribes its own session by prUrl', async () => {
+    const caller = plainSession('s-plain');
+    expect(
+      await runParsed('event.external.subscribe', { prUrl: PR, label: 'mine' }, caller)
+    ).toEqual({ ok: true, topicPattern: PR_TOPIC });
+    expect(await runParsed('event.external.subscription.list', {}, caller)).toMatchObject({
+      ok: true,
+      owner: { type: 'session', id: 's-plain' },
+      stored: [{ topic: PR_TOPIC, label: 'mine' }],
+      scope: { spaceId: null },
+    });
+    expect(await runParsed('event.external.unsubscribe', { prUrl: PR }, caller)).toEqual({
+      ok: true,
+      topicPattern: PR_TOPIC,
+    });
+    expect(unscopedSubscriptions.listBySession('s-plain')).toEqual([]);
+    expect(sessionSubscriptions.listBySpace(SPACE)).toEqual([]);
+    expect(sessionRefreshed).toEqual([]);
+  });
+
+  test('a Neo-bound session subscribes the same way', async () => {
+    sessions.createSession(
+      { ...createTestSession('s-neo'), workspacePath: '/repo' },
+      { enforceWorkspaceOwnership: false }
+    );
+    const caller: OperationCaller = { source: 'mcp', sessionId: 's-neo', role: 'neo' };
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toEqual({
+      ok: true,
+      topicPattern: PR_TOPIC,
+    });
+    expect(unscopedSubscriptions.listBySession('s-neo').map((row) => row.topic)).toEqual([
+      PR_TOPIC,
+    ]);
+  });
+
+  test('refuses an inactive session, another subject or a named Space', async () => {
+    expect(
+      await runParsed('event.external.subscribe', { prUrl: PR }, plainSession('s-gone', 'archived'))
+    ).toBe('session_inactive');
+    const caller = plainSession('s-pick');
+    expect(
+      await runParsed('event.external.subscribe', { prUrl: PR, subject: { type: 'node' } }, caller)
+    ).toBe('caller_denied');
+    expect(await runParsed('event.external.subscribe', { prUrl: PR, spaceId: SPACE }, caller)).toBe(
+      'caller_denied'
+    );
+    expect(unscopedSubscriptions.listBySession('s-pick')).toEqual([]);
+  });
+
+  test('a session that belongs to a Space never takes the unscoped path', async () => {
+    sessions.createSession(
+      {
+        ...createTestSession('s-chat'),
+        workspacePath: '/repo',
+        type: 'space_chat',
+        context: { spaceId: SPACE },
+      },
+      { enforceWorkspaceOwnership: false }
+    );
+    const caller: OperationCaller = { source: 'mcp', sessionId: 's-chat', role: 'universal_read' };
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toBe(
+      'caller_denied'
+    );
+    expect(await runParsed('event.external.subscription.list', {}, caller)).toBe('caller_denied');
+    expect(unscopedSubscriptions.listBySession('s-chat')).toEqual([]);
+  });
+
+  test('deleting the session removes its subscriptions', async () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    const caller = plainSession('s-deleted');
+    await runParsed('event.external.subscribe', { prUrl: PR }, caller);
+    expect(unscopedSubscriptions.listBySession('s-deleted')).toHaveLength(1);
+    db.prepare('DELETE FROM sessions WHERE id = ?').run('s-deleted');
+    expect(unscopedSubscriptions.listBySession('s-deleted')).toEqual([]);
+  });
+
+  test('is listed for plain and Neo sessions', () => {
+    for (const name of [
+      'event.external.subscribe',
+      'event.external.unsubscribe',
+      'event.external.subscription.list',
+    ])
+      expect(operations.get(name)?.policy?.roles).toEqual(
+        expect.arrayContaining(['universal_read', 'neo'])
+      );
   });
 });
