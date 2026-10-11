@@ -875,7 +875,7 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
       expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
-      expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
+      expect(config.envVars.API_TIMEOUT_MS).toBe('900000');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-for-coding');
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');

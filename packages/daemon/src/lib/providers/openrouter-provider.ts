@@ -9,6 +9,7 @@ import type {
   ModelTier,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 interface OpenRouterModel {
   id: string;
@@ -278,7 +279,7 @@ export class OpenRouterProvider implements Provider {
         ANTHROPIC_BASE_URL: baseUrl,
         ANTHROPIC_AUTH_TOKEN: apiKey,
         ANTHROPIC_API_KEY: '',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

@@ -36,6 +36,7 @@ import {
   type OllamaNativeBridgeConfig,
   type OllamaNativeBridgeServer,
 } from './ollama-native-bridge/server.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export const CUSTOM_ENDPOINT_PROVIDER_PREFIX = 'custom:';
 
@@ -258,7 +259,7 @@ export class CustomEndpointProvider implements Provider {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
         ANTHROPIC_AUTH_TOKEN: `custom-endpoint:${sessionConfig?.sessionId ?? 'default'}`,
         ANTHROPIC_API_KEY: '',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: upstreamModel,
         ANTHROPIC_DEFAULT_SONNET_MODEL: upstreamModel,

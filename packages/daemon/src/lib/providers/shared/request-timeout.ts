@@ -1,0 +1,1 @@
+export const PROVIDER_REQUEST_TIMEOUT_MS = '900000';
