@@ -161,6 +161,14 @@ export interface NeoCardPrSummary {
   count: number;
   inProgress: boolean;
   setback: boolean;
+  merged: string[];
+}
+
+export interface NeoCardOpenTarget {
+  link: string | null;
+  remoteLink: string | null;
+  sessionId: string | null;
+  daemon: string | null;
 }
 
 export interface NeoCardView {
@@ -173,10 +181,12 @@ export interface NeoCardView {
   primary: NeoCardPrimary;
   actions: NeoCardAction[];
   adapter: string | null;
+  open: NeoCardOpenTarget;
   pr: NeoCardPrSummary | null;
   goal: string | null;
   doneWhen: string | null;
   continued: number;
+  continuedMessage: string | null;
   pooled: boolean;
   superseded: boolean;
   uncheckedSince: number | null;

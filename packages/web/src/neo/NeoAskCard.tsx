@@ -21,9 +21,10 @@ import {
   neoAskApproval,
   neoAskOpenTarget,
 } from './neo-asks.ts';
-import type { NeoScene, NeoSceneDrivers } from './neo-scenes.ts';
+import type { NeoScene, NeoSceneCards, NeoSceneDrivers } from './neo-scenes.ts';
+import { neoCardOpenLabel } from './card-view.ts';
 import { neoWorkOpenLabel } from './work-actions.ts';
-import { neoWorkDriverLogo } from './work-driver.ts';
+import { neoAppLogo, neoWorkDriverLogo } from './work-driver.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -137,6 +138,7 @@ function Checklist({
 export function NeoAskCard({
   view,
   drivers,
+  cards,
   disabled = false,
   onSettle,
   onDone,
@@ -146,6 +148,7 @@ export function NeoAskCard({
 }: {
   view: NeoAskView;
   drivers?: NeoSceneDrivers;
+  cards?: NeoSceneCards;
   disabled?: boolean;
   onSettle?: (outcome: NeoAskOutcome) => void;
   onDone?: (itemId: string) => void;
@@ -175,14 +178,16 @@ export function NeoAskCard({
       (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
     );
   const approval = neoAskApproval(ask);
-  const target = neoAskOpenTarget(view, drivers);
+  const target = neoAskOpenTarget(view, drivers, cards);
   const openName = `Open ${ask.title}`;
   const openControl =
     target &&
     (target.link ? (
       <a href={target.link} class={neoSecondaryClass} aria-label={openName}>
-        <NeoAppMark logo={neoWorkDriverLogo(target.driver)} />
-        {neoWorkOpenLabel(target.driver)}
+        <NeoAppMark
+          logo={target.card ? neoAppLogo(target.card.adapter) : neoWorkDriverLogo(target.driver)}
+        />
+        {target.card ? neoCardOpenLabel(target.card) : neoWorkOpenLabel(target.driver)}
       </a>
     ) : (
       onOpen && (

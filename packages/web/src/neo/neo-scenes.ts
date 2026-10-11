@@ -1,10 +1,15 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingUserQuestion } from '@hyperneo/shared';
 import type { NeoConcernBoard } from './neo-concern-board.ts';
-import type { NeoWorkDriverReceipt, NeoWorkPrReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import type {
+  NeoCardView,
+  NeoWorkDriverReceipt,
+  NeoWorkPrReceipt,
+} from '@hyperneo/shared/types/neo-snapshot';
 import { requireNeoQuestionOrigin, requireNeoQuestionWork } from './work-question.ts';
 import { neoWorkDriverLabel } from './work-driver.ts';
 import { neoWorkPrInProgress, neoWorkPrLabel } from './work-prs.ts';
+import { neoCardLabel } from './card-view.ts';
 
 type NeoBoardReceipt = NeoConcernBoard['receipts'][number];
 type NeoWorkReceipt = Extract<NeoBoardReceipt, { kind: 'work' }>;
@@ -36,6 +41,7 @@ export type NeoSceneQuestions = ReadonlyMap<string, PendingUserQuestion>;
 export type NeoSceneUnavailableSessions = ReadonlyMap<string, string>;
 export type NeoSceneDrivers = ReadonlyMap<string, NeoWorkDriverReceipt>;
 export type NeoScenePrs = ReadonlyMap<string, NeoWorkPrReceipt>;
+export type NeoSceneCards = ReadonlyMap<string, NeoCardView>;
 type SceneTruth = { group: NeoSceneGroup; label: string };
 
 const workScenes: Record<NeoWorkReceipt['status'], SceneTruth> = {
@@ -134,6 +140,16 @@ export function describeNeoPrScenes(scenes: readonly NeoScene[], prs: NeoScenePr
   });
 }
 
+export function describeNeoCardScenes(
+  scenes: readonly NeoScene[],
+  cards: NeoSceneCards
+): NeoScene[] {
+  return scenes.map((scene) => {
+    const card = scene.receipt.kind === 'work' ? cards.get(scene.ref.id) : undefined;
+    return card ? { ...scene, group: card.group, label: neoCardLabel(card) } : scene;
+  });
+}
+
 function promoteNeoUnavailableScenes(
   scenes: NeoScene[],
   unavailableSessions: NeoSceneUnavailableSessions
@@ -193,13 +209,14 @@ export function hideNeoInternalReceipts(receipts: readonly NeoBoardReceipt[]): N
 }
 
 const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
-  .input(['board', 'questions', 'unavailableSessions', 'drivers', 'prs'])
+  .input(['board', 'questions', 'unavailableSessions', 'drivers', 'prs', 'cards'])
   .pipe(admitNeoSceneReceipts, 'board', 'result:scenes')
   .pipe(hideNeoInternalReceipts, 'scenes', 'visible')
   .pipe(classifyNeoScenes, 'visible', 'classified')
   .pipe(describeNeoDriverScenes, ['classified', 'drivers'], 'driven')
   .pipe(describeNeoPrScenes, ['driven', 'prs'], 'described')
-  .pipe(promoteNeoQuestionScenes, ['described', 'questions'], 'promoted')
+  .pipe(describeNeoCardScenes, ['described', 'cards'], 'carded')
+  .pipe(promoteNeoQuestionScenes, ['carded', 'questions'], 'promoted')
   .pipe(promoteNeoUnavailableScenes, ['promoted', 'unavailableSessions'], 'observed')
   .pipe(groupNeoScenes, 'observed', 'scenes')
   .end('scenes') as (
@@ -207,7 +224,8 @@ const projectScenes = (superpipe({})('neo-scenes') as PipelineAPI)
   questions: NeoSceneQuestions,
   unavailableSessions: NeoSceneUnavailableSessions,
   drivers: NeoSceneDrivers,
-  prs: NeoScenePrs
+  prs: NeoScenePrs,
+  cards: NeoSceneCards
 ) => NeoSceneGroups | null;
 
 export function projectNeoScenes(
@@ -215,7 +233,8 @@ export function projectNeoScenes(
   questions: NeoSceneQuestions = new Map(),
   unavailableSessions: NeoSceneUnavailableSessions = new Map(),
   drivers: NeoSceneDrivers = new Map(),
-  prs: NeoScenePrs = new Map()
+  prs: NeoScenePrs = new Map(),
+  cards: NeoSceneCards = new Map()
 ): NeoSceneGroups | null {
-  return projectScenes(board, questions, unavailableSessions, drivers, prs);
+  return projectScenes(board, questions, unavailableSessions, drivers, prs, cards);
 }

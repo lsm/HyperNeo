@@ -24,7 +24,9 @@ import {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import {
+  extractNeoWorkPrUrls,
   mergeNeoWorkPrReads,
+  neoAskPrEvidence,
   neoWorkPrEvidence,
   shouldReadNeoWorkPrs,
   type NeoWorkPrReader,
@@ -228,6 +230,12 @@ export function createCodingPack(
         ? { evidence: neoWorkPrEvidence(row.prs), read: { ok, okAt: row.readOkAt } }
         : null;
     },
+    askCardEvidence: (ask: NeoAsk, works: readonly NeoWork[]) =>
+      neoAskPrEvidence(
+        works,
+        deps.workPrs.list(ask.workIds),
+        deps.claims.forUrls(works.flatMap((work) => extractNeoWorkPrUrls(work.report)))
+      ),
     readAskEvidence: async (ask: NeoAsk) => {
       const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
       const refs = neoAskCardRefs(

@@ -60,16 +60,16 @@ export function neoPackReportEvidence(packs: readonly NeoPack[], works: readonly
   return works.flatMap((work) => packs.flatMap((pack) => pack.reportEvidence?.(work) ?? []));
 }
 
-export function neoPackAskReportEvidence(
+export function neoPackAskCardEvidence(
   packs: readonly NeoPack[],
   ask: NeoAsk,
   works: readonly NeoWork[]
-) {
-  return works.flatMap((work) =>
-    packs
-      .filter((pack) => !ask.pack || pack.id === ask.pack)
-      .flatMap((pack) => pack.reportEvidence?.(work) ?? [])
-  );
+): NeoEvidence[] {
+  const chosen = packs.filter((pack) => !ask.pack || pack.id === ask.pack);
+  return [
+    ...chosen.flatMap((pack) => pack.askCardEvidence?.(ask, works) ?? []),
+    ...works.flatMap((work) => chosen.flatMap((pack) => pack.reportEvidence?.(work) ?? [])),
+  ];
 }
 
 const NEO_PACK_EVIDENCE_READ_MS = 2 * 60_000;
