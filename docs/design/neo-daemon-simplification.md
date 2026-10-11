@@ -14,9 +14,9 @@ Five slices were reviewed separately and the main claims were checked by hand: s
 
 ### 1. The daemon should publish views, not parts
 
-The snapshot sends `work` plus seven arrays that clients join by work id: `workDrivers`, `workGoals`, `workContinues`, `workPrs`, `workSupersessions`, `workResources`, `workChecks`. Each client then works out what a card should say. Tonight's fixes each moved one such rule back into the daemon: `retryable`, `uncheckedSince`, the PR verdict (#6400), supersession (#6397) and `pooled`/`approvalSpent` (#6426).
+The snapshot sends `work` plus six arrays that clients join by work id: `workDrivers`, `workGoals`, `workContinues`, `workPrs`, `workSupersessions`, `workResources`. Each client then works out what a card should say. Tonight's fixes each moved one such rule back into the daemon: `retryable`, `uncheckedSince`, the PR verdict (#6400), supersession (#6397) and `pooled`/`approvalSpent` (#6426).
 
-Proposal: the daemon publishes one presentation-ready `NeoCardView` per card and one `NeoAskView` per ask. These carry the phase, its label, the actions allowed, the PR summary, and whether the card is superseded or unchecked. Web and iOS only render them. The views ship alongside the seven arrays for one release, because iOS reaches users through TestFlight. The arrays go after that. Cleanup 8 lands first, or the zod schema strips the new view fields silently.
+Proposal: the daemon publishes one presentation-ready `NeoCardView` per card and one `NeoAskView` per ask. These carry the phase, its label, the actions allowed, the PR summary, and whether the card is superseded or unchecked. Web and iOS only render them. The views ship alongside the six arrays for one release, because iOS reaches users through TestFlight. The arrays go after that. Cleanup 8 lands first, or the zod schema strips the new view fields silently.
 
 ### 2. A card has one phase, computed in one place
 
@@ -26,7 +26,7 @@ Proposal: one pure `neoCardPhase(work, driver, evidence)` that every reader uses
 
 ### 3. Restart safety is an invariant, not a patch list
 
-Restarts caused #6356, #6389, #6395, #6396 and #6432 (a rate-limit cooldown never retried). `NeoService` holds 17 in-memory maps and sets. Some drive behaviour or the UI: `cardChecks` feeds "not checked since", which silently resets on restart. Several are never pruned (`cardChecks`, `followReads`, `askEvidenceReads`, `processingStatus`).
+Restarts caused #6356, #6389, #6395, #6396 and #6432 (a rate-limit cooldown never retried). `NeoService` holds 17 in-memory maps and sets. Some drive behaviour or the UI: `cardChecks` feeds "not checked since", which silently resets on restart. Three are never pruned (`cardChecks`, `followReads`, `askEvidenceReads`).
 
 Proposal: persist only state whose loss changes what the user sees or drops work. `cardChecks` is the clear case. Locks and throttles stay in memory and are pruned when their card or ask reaches a final state. Anything in flight is a persisted row with a resume rule. That covers turns, cooldowns, pending deliveries, reminders and checks. Memory may only cache what can be rebuilt from the database. There is no second reconciler. The rows hook into the startup pass `app.ts` already runs, and each owner keeps its own resume rule: the session, the Space runtime and Neo. A generic sweep almost broke the Space workers' `TaskAgentManager` rehydrate in #6433.
 
