@@ -356,7 +356,10 @@ export function NeoWorkCard({
         </p>
       )}
       {presentation === 'detail' && continuedCount > 0 && (
-        <p class="mt-1 text-xs text-fg-muted" title={continued?.lastMessage}>
+        <p
+          class="mt-1 text-xs text-fg-muted"
+          title={card ? (card.continuedMessage ?? undefined) : continued?.lastMessage}
+        >
           {isPooled
             ? `Neo continued it ${continuedCount}`
             : `Neo continued it ${continuedCount}/${NEO_WORK_CONTINUE_LIMIT}`}

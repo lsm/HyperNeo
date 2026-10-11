@@ -1,9 +1,5 @@
 import type { DaemonInventoryLink, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
-import type {
-  NeoSnapshot,
-  NeoWorkDriverReceipt,
-  NeoWorkPrReceipt,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoCardView, NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { readDaemonInventory } from '../lib/daemon-inventory.ts';
@@ -12,8 +8,7 @@ import { neoBoardReceiptLabel } from './board-receipt-label.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoConcernBoard, projectNeoConcernBoard } from './neo-concern-board.ts';
 import { type NeoRequestOrigin, projectNeoRequestSnapshot } from './request-board.ts';
-import { neoWorkDriverLabel } from './work-driver.ts';
-import { neoWorkPrLabel } from './work-prs.ts';
+import { neoCardLabel } from './card-view.ts';
 
 const statusLabels = {
   proposed: 'Your call',
@@ -28,25 +23,17 @@ const refKey = (ref: DaemonInventoryLink) => JSON.stringify([ref.kind, ref.id]);
 export function NeoConcernBoardView({
   board,
   requestScoped = false,
-  drivers = [],
-  prs = [],
+  cards = [],
 }: {
   board: NeoConcernBoard;
   requestScoped?: boolean;
-  drivers?: readonly NeoWorkDriverReceipt[];
-  prs?: readonly NeoWorkPrReceipt[];
+  cards?: readonly NeoCardView[];
 }) {
   const statusOf = (item: NeoConcernBoard['receipts'][number]) => {
     if (item.kind === 'consultation' && item.status === 'queued') return 'Waiting for context';
-    const driver =
-      item.kind === 'work' && item.status === 'queued'
-        ? drivers.find((candidate) => candidate.workId === item.id)
-        : undefined;
-    const pr =
-      item.kind === 'work' && item.status === 'reported'
-        ? neoWorkPrLabel(prs.find((candidate) => candidate.workId === item.id))
-        : null;
-    return driver ? neoWorkDriverLabel(driver) : (pr ?? statusLabels[item.status]);
+    const card =
+      item.kind === 'work' ? cards.find((candidate) => candidate.workId === item.id) : undefined;
+    return card ? neoCardLabel(card) : statusLabels[item.status];
   };
   const name = (ref: DaemonInventoryLink) =>
     board.participants.find((item) => refKey(item.ref) === refKey(ref))?.metadata?.name || ref.id;
@@ -235,8 +222,7 @@ export function NeoConcernBoardPanel({
           <NeoConcernBoardView
             board={board}
             requestScoped={!!requestOrigin}
-            drivers={snapshot?.workDrivers}
-            prs={snapshot?.workPrs}
+            cards={snapshot?.cards}
           />
           {!connected && (
             <p role="status" class="mt-3 text-xs text-warning">
