@@ -2934,9 +2934,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
+    const subscribedPullRequestNumbers = this.options.subscribedPullRequests?.(watched) ?? [];
+    for (const prNumber of cursor.subscribedPullRequestNumbers ?? []) {
+      if (
+        !subscribedPullRequestNumbers.includes(prNumber) &&
+        !recentPullRequestNumbers.includes(prNumber)
+      ) {
+        delete mergeConflictStates[prNumber];
+        delete recentPullRequestHeadShas[prNumber];
+        delete recentPullRequestHeadRepos[prNumber];
+      }
+    }
     const trackedPullRequestNumbers = [
       ...new Set([
-        ...(this.options.subscribedPullRequests?.(watched) ?? []),
+        ...subscribedPullRequestNumbers,
         ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
       ]),
     ];
@@ -3018,7 +3029,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const pullDetail = asPollingObject(await mergeResponse.json());
       if (pullDetail.state !== 'open') {
         delete mergeConflictStates[prNumber];
+        if (subscribedPullRequestNumbers.includes(prNumber))
+          delete recentPullRequestHeadShas[prNumber];
         continue;
+      }
+      const detailHeadSha = headShaFromPullRequest(pullDetail);
+      if (subscribedPullRequestNumbers.includes(prNumber) && detailHeadSha) {
+        recentPullRequestHeadShas[prNumber] = detailHeadSha;
+        recentPullRequestHeadRepos[prNumber] = headRepoFromPullRequest(pullDetail, watched);
       }
       const mergeable = typeof pullDetail.mergeable === 'boolean' ? pullDetail.mergeable : null;
       const mergeableState =
@@ -3350,6 +3368,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       etags,
       processedPages,
       recentPullRequestNumbers,
+      subscribedPullRequestNumbers,
       recentPullRequestHeadShas,
       recentPullRequestHeadRepos,
       checkRunEtags,

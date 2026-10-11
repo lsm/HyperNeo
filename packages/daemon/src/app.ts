@@ -77,6 +77,7 @@ import { composeLongHorizonSubscriptionPattern } from './lib/external-events/lon
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import { SpaceAgentSubscriptionRepository } from './storage/repositories/space-agent-subscription-repository.ts';
 import { SpaceSessionEventSubscriptionRepository } from './storage/repositories/space-session-event-subscription-repository.ts';
+import { SpaceWorkflowEventSubscriptionRepository } from './storage/repositories/space-workflow-event-subscription-repository.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -813,6 +814,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
       db.getDatabase()
     );
+    const spaceWorkflowEventSubscriptions = new SpaceWorkflowEventSubscriptionRepository(
+      db.getDatabase()
+    );
     const spaceAgentSubscriptions = new SpaceAgentSubscriptionRepository(
       db.getDatabase(),
       new SpaceAgentRepository(db.getDatabase())
@@ -928,6 +932,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               ? sessionEventSubscriptions.listAll().map((subscription) => subscription.topic)
               : [
                   ...spaceSessionEventSubscriptions
+                    .listBySpace(watched.spaceId)
+                    .map((subscription) => subscription.topic),
+                  ...spaceWorkflowEventSubscriptions
                     .listBySpace(watched.spaceId)
                     .map((subscription) => subscription.topic),
                   ...spaceAgentSubscriptions

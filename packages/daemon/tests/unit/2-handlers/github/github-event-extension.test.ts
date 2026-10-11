@@ -9739,6 +9739,90 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('a new subscription to a still-conflicting pull request is told again', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    let subscribed: number[] = [42];
+    const extension = new GitHubEventExtension(db, 'token', {
+      subscribedPullRequests: () => subscribed,
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/pulls/42'))
+        return pollingResponse({
+          ...createPullRequestRow(42),
+          mergeable: false,
+          mergeable_state: 'dirty',
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    const conflicts = () => received.filter((item) => item.topic.endsWith('42.merge_conflict'));
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(conflicts()).toHaveLength(1);
+      subscribed = [];
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      subscribed = [42];
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(conflicts()).toHaveLength(2);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('polling reads check runs of a subscribed pull request outside the recent ones', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      subscribedPullRequests: () => [42],
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/pulls/42'))
+        return pollingResponse({
+          ...createPullRequestRow(42, { head: { sha: 'sha-42' } }),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      if (path.endsWith('/commits/sha-42/check-runs'))
+        return pollingResponse({
+          check_runs: [createCheckRunRow({ id: 9001, head_sha: 'sha-42', pull_requests: [] })],
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(
+        received.filter((item) => item.topic.endsWith('.check_failed')).map((item) => item.topic)
+      ).toEqual(['github/acme/widgets/pull_request/42.check_failed']);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('a subscribed pull request that does not exist does not stop the other checks', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
