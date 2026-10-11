@@ -67,14 +67,19 @@ function readManagedRoute(db: Database, evidence: CancelEvidence): CancellationR
   return evidence.task?.spaceId ? resolveCancellationRoute(db, evidence.task) : null;
 }
 
+export function cancellationNotManaged(
+  evidence: CancelEvidence,
+  route: CancellationRoute | null
+): boolean {
+  return !evidence.task || !route || route.kind === 'direct';
+}
+
 export function requireManagedCancellation(
   evidence: CancelEvidence,
-  route: CancellationRoute | null,
   caller: OperationCaller
-): { value: SpaceTask } | { reason: Ack | null } {
+): { value: SpaceTask } | { reason: Ack } {
   const { task } = evidence;
-  if (!task || !route || route.kind === 'direct') return { reason: null };
-  return task.archivedAt || finishedForCaller(task.status, caller)
+  return !task || task.archivedAt || finishedForCaller(task.status, caller)
     ? reject('cancellation_unavailable')
     : { value: task };
 }
@@ -168,11 +173,14 @@ function executeManagedCancellation(
   return writeManagedCancellation(db, task, route, caller, policy);
 }
 
-const runManagedCancellation = (superpipe({})('cancel-managed-space-task') as PipelineAPI)
+const runManagedCancellation = (
+  superpipe({ cancellationNotManaged })('cancel-managed-space-task') as PipelineAPI
+)
   .input(['db', 'input', 'caller', 'policy'])
   .pipe(readCancelEvidence, ['db', 'input', 'caller'], 'evidence')
   .pipe(readManagedRoute, ['db', 'evidence'], 'route')
-  .pipe(requireManagedCancellation, ['evidence', 'route', 'caller'], 'result:ack')
+  .pipe('!cancellationNotManaged', ['evidence', 'route'])
+  .pipe(requireManagedCancellation, ['evidence', 'caller'], 'result:ack')
   .pipe(requireExpectedCancelStatus, ['ack', 'input'], 'result:ack')
   .pipe((task: SpaceTask) => task, 'ack', 'task')
   .pipe(
@@ -191,16 +199,15 @@ const runManagedCancellation = (superpipe({})('cancel-managed-space-task') as Pi
   input: Input,
   caller: OperationCaller,
   policy: CancelPolicyContext
-) => Promise<Ack | null>;
+) => Promise<Ack | undefined>;
 
 export async function admitManagedCancellation(
   db: Database,
   input: Input,
   caller: OperationCaller,
   policy: CancelPolicyContext
-): Promise<{ value: undefined } | { reason: Ack }> {
-  const ack = await runManagedCancellation(db, input, caller, policy);
-  return ack ? { reason: ack } : { value: undefined };
+): Promise<Ack | null> {
+  return (await runManagedCancellation(db, input, caller, policy)) ?? null;
 }
 
 export function requireDirectCancelTask(

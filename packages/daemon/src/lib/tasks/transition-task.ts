@@ -118,7 +118,7 @@ async function cancelTask(
   const policy = cancelPolicy(owned, deps);
   const request = { taskId: owned.task.id, expectedStatus: owned.task.status };
   const managed = await admitManagedCancellation(deps.db, request, caller, policy);
-  if ('reason' in managed) return managed.reason;
+  if (managed) return managed;
   const direct = admitCancellation(deps.db, request, caller, policy);
   if ('reason' in direct) return direct.reason;
   if (!deps.requestDirectOutcome)
@@ -138,7 +138,7 @@ async function submitForReview(
     expectedStatus: task.status,
   };
   const managed = await admitManagedSubmission(deps.db, request, caller, deps);
-  if ('reason' in managed) return managed.reason;
+  if (managed) return managed;
   const direct = admitSubmission(deps.db, request, caller);
   if ('reason' in direct) return direct.reason;
   if (!deps.requestDirectOutcome)
