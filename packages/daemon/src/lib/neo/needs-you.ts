@@ -20,13 +20,14 @@ export function planNeoAskResume(
   siblingsWaiting: boolean
 ): NeoAskResume | null {
   if (!ask || isNeoAskSettled(ask) || siblingsWaiting) return null;
-  const items = (ask.doneItems ?? [])
-    .filter((item) => !item.removed && item.state === 'needs_you')
-    .map((item) => item.id);
+  const decided = (item: NeoAskItem) => item.decision === true;
+  const open = (ask.doneItems ?? []).filter((item) => !item.removed && item.state === 'needs_you');
+  const items = open.filter((item) => !decided(item)).map((item) => item.id);
   const confirming = (ask.doneItems ?? []).some(
     (item) => item.id === ask.waitingItem && !item.removed && item.state === 'reported'
   );
-  const reopen = (ask.status === 'waiting' || ask.status === 'blocked') && !confirming;
+  const reopen =
+    (ask.status === 'waiting' || ask.status === 'blocked') && !open.some(decided) && !confirming;
   return items.length || reopen ? { ask, items, reopen } : null;
 }
 

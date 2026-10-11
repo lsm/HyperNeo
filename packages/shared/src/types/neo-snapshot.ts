@@ -72,6 +72,7 @@ export interface NeoAskItem {
   removed: boolean;
   addedAt: number | null;
   options?: string[];
+  decision?: true;
 }
 
 export interface NeoAsk {

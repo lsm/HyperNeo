@@ -28,6 +28,39 @@ describe('planNeoAskResume', () => {
       { ask: { ...ask, status: 'blocked', doneItems: [] }, items: [], reopen: true },
     ],
     [
+      'a decision the ask was settled waiting on stays, whatever its evidence says',
+      {
+        ...ask,
+        waitingItem: 'i4',
+        evidence: 'Item i4',
+        doneItems: [item('i1', 'needs_you'), { ...item('i4', 'needs_you'), decision: true }],
+      },
+      {
+        ask: {
+          ...ask,
+          waitingItem: 'i4',
+          evidence: 'Item i4',
+          doneItems: [item('i1', 'needs_you'), { ...item('i4', 'needs_you'), decision: true }],
+        },
+        items: ['i1'],
+        reopen: false,
+      },
+    ],
+    [
+      'a question a tick put the ask waiting on is reset',
+      { ...ask, waitingItem: 'i1', evidence: 'Other words', doneItems: [item('i1', 'needs_you')] },
+      {
+        ask: {
+          ...ask,
+          waitingItem: 'i1',
+          evidence: 'Other words',
+          doneItems: [item('i1', 'needs_you')],
+        },
+        items: ['i1'],
+        reopen: true,
+      },
+    ],
+    [
       'an ask waiting on the human to confirm a reported item',
       { ...ask, waitingItem: 'i4', doneItems: [item('i2', 'met'), item('i4', 'reported')] },
       null,

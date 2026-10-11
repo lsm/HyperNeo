@@ -62,12 +62,17 @@ export function neoAskParent(ask: NeoAskOriginAsk): NeoAskOrigin | null {
     : null;
 }
 
+export function neoReviewWorkId(id: string): string | null {
+  return /^neo-work:(.+):review(?::retry:\d+)?(?::continued:\d+)?$/.exec(id)?.[1] ?? null;
+}
+
 export function neoConsultationParent(
-  item: Pick<NeoConsultation, 'originSessionId' | 'originMessageId'>
+  item: Pick<NeoConsultation, 'id' | 'originSessionId' | 'originMessageId'>,
+  reviewed: Pick<NeoWork, 'id' | 'originSessionId' | 'originMessageId'> | null = null
 ): NeoAskOrigin | null {
-  return item.originMessageId
-    ? { sessionId: item.originSessionId, messageId: item.originMessageId }
-    : null;
+  if (item.originMessageId)
+    return { sessionId: item.originSessionId, messageId: item.originMessageId };
+  return reviewed && neoReviewWorkId(item.id) === reviewed.id ? neoWorkParent(reviewed) : null;
 }
 
 export function neoNudgeMessageId(messageId: string): string {
@@ -151,10 +156,6 @@ export function classifyNeoAskInput(input: NeoAskOrigin, prompts: readonly SDKMe
     : { reason: unknown };
 }
 
-function reviewWorkId(id: string): string | null {
-  return /^neo-work:(.+):review(?::retry:\d+)?(?::continued:\d+)?$/.exec(id)?.[1] ?? null;
-}
-
 export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads): NeoAskEvidence {
   const envelope = input.messageId.startsWith('neo-consult:')
     ? input.messageId.endsWith(':request')
@@ -166,7 +167,7 @@ export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads
   const id = envelope ? input.messageId.slice('neo-consult:'.length, -(envelope.length + 1)) : null;
   const consultation = id ? (reads.getConsultation(id) ?? null) : null;
   const askId = envelope ? null : neoAskEvidenceAskId(input.messageId);
-  const workId = id ? reviewWorkId(id) : askId ? null : checkedWorkId(input.messageId);
+  const workId = id ? neoReviewWorkId(id) : askId ? null : checkedWorkId(input.messageId);
   const work = workId ? (reads.getWork(workId) ?? null) : null;
   return {
     envelope,
@@ -229,7 +230,7 @@ export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence
     (envelope === 'reply' && consultation.status === 'pending')
   )
     return unknown;
-  const reviewId = reviewWorkId(consultation.id);
+  const reviewId = neoReviewWorkId(consultation.id);
   if (!reviewId)
     return consultation.originMessageId
       ? {
