@@ -268,6 +268,7 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         recentInputs: z.array(WorkInputSchema).optional(),
         exchange: z.array(WorkExchangeEntrySchema).optional(),
         exchangeCut: z.boolean().optional(),
+        openedPrs: z.array(z.string()).optional(),
       })
       .passthrough(),
   }),
@@ -419,6 +420,10 @@ export function messageOpening(message: string): string {
 
 function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
+}
+
+export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {
+  return parseDriverStatus(outcome)?.openedPrs ?? [];
 }
 
 export function readDriverLastInputAt(outcome: OperationOutcome): number | null {

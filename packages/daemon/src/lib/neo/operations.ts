@@ -111,6 +111,7 @@ import { planNeoSavedRules } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
+import { unmutedNeoAskSessions } from './session-ask-links.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -699,7 +700,15 @@ export function createNeoOperations(service: NeoService) {
       asks,
       workPrs,
       cards,
-      askViews: projectNeoAskViews(asks, cards, workPrs),
+      askViews: projectNeoAskViews(
+        asks,
+        cards,
+        workPrs,
+        unmutedNeoAskSessions(
+          service.askSessions,
+          service.db.getGlobalSettings?.().neo?.mutedSessions ?? []
+        )
+      ),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,

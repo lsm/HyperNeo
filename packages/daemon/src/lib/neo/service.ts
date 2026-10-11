@@ -15,6 +15,7 @@ import {
   NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
   type NeoAsk,
+  type NeoAskSessionView,
   type NeoWorkGoal,
   type NeoWorkPr,
 } from '@hyperneo/shared/types/neo-snapshot';
@@ -95,6 +96,7 @@ import {
   readDriverActivity,
   readDriverLastInputAt,
   readDriverLive,
+  readDriverOpenedPrs,
   requireNeoWorkRetryable,
   type NeoWorkRetryCard,
   withWorkGoal,
@@ -204,6 +206,16 @@ import {
   type NeoSessionSeen,
 } from './session-watch.ts';
 import {
+  describeNeoAskSessions,
+  keepNeoSessionPrs,
+  linkNeoSessionsToAsks,
+  neoAskPrKeys,
+  type NeoAskPrs,
+  type NeoSessionAskLink,
+  planNeoHeldSessionNotices,
+  planNeoSessionPrReads,
+} from './session-ask-links.ts';
+import {
   neoAskEvidenceNote,
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
@@ -304,6 +316,10 @@ export class NeoService {
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
   private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
+  private sessionPrs = new Map<string, string[]>();
+  private sessionPrsCheckedAt = new Map<string, number>();
+  private heldSessionNotices = new Map<string, NeoSessionNotice>();
+  askSessions = new Map<string, NeoAskSessionView[]>();
   sessionNotices: NeoSessionNotice[] = [];
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   private openSessionNotices: NeoSessionNotice[] = [];
@@ -1362,9 +1378,31 @@ export class NeoService {
       'plan'
     )
     .pipe(
-      async (root: string, plan: ReturnType<typeof planNeoSessionWatch>) => ({
-        details: await Promise.all(
-          plan.reads.map(async (session) => {
+      (
+        listed: { sessions: NeoListedSession[]; complete: boolean },
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        now: number
+      ) => ({
+        sessions: planNeoSessionPrReads(
+          listed.sessions,
+          this.sessionPrs,
+          plan.reads,
+          this.sessionPrsCheckedAt,
+          now
+        ),
+      }),
+      ['listed', 'plan', 'now'],
+      'prReads'
+    )
+    .pipe(
+      async (
+        root: string,
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        prReads: { sessions: NeoListedSession[] }
+      ) => {
+        const sessions = [...plan.reads, ...prReads.sessions];
+        const reads = await Promise.all(
+          sessions.map(async (session) => {
             const outcome = await invokeOperation(
               this.sessions.getOperationRegistry(),
               'work.status',
@@ -1373,12 +1411,33 @@ export class NeoService {
             );
             const live = readDriverLive(outcome);
             return live
-              ? { status: live.status, lastInputAt: readDriverLastInputAt(outcome) }
+              ? {
+                  detail: { status: live.status, lastInputAt: readDriverLastInputAt(outcome) },
+                  opened: [
+                    ...readDriverOpenedPrs(outcome),
+                    ...(await this.sessionBranchPrs(session.ref)),
+                  ],
+                }
               : null;
           })
-        ),
-      }),
-      ['root', 'plan'],
+        );
+        return {
+          details: reads.slice(0, plan.reads.length).map((read) => read?.detail ?? null),
+          statuses: new Map(
+            prReads.sessions.flatMap((session, index) => {
+              const detail = reads[plan.reads.length + index]?.detail;
+              return detail ? [[session.key, detail.status] as const] : [];
+            })
+          ),
+          found: new Map(
+            sessions.flatMap((session, index) => {
+              const opened = reads[index]?.opened;
+              return opened ? [[session.key, opened] as const] : [];
+            })
+          ),
+        };
+      },
+      ['root', 'plan', 'prReads'],
       'read'
     )
     .pipe(
@@ -1400,10 +1459,42 @@ export class NeoService {
       'notices'
     )
     .pipe(
-      (notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }) => ({
-        notices: notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
-      }),
-      'notices',
+      (
+        listed: { sessions: NeoListedSession[]; complete: boolean },
+        read: { found: ReadonlyMap<string, readonly string[]> }
+      ) => {
+        const kept = keepNeoSessionPrs(this.sessionPrs, read.found);
+        const keep = new Set(listed.sessions.map((session) => session.key));
+        const prs = listed.complete ? new Map([...kept].filter(([key]) => keep.has(key))) : kept;
+        const watched = new Map([...prs].filter(([key, urls]) => keep.has(key) && urls.length));
+        const asks = watched.size ? this.askRecords.listLive().map((ask) => this.askPrs(ask)) : [];
+        return { prs, links: linkNeoSessionsToAsks(asks, watched) };
+      },
+      ['listed', 'read'],
+      'linked'
+    )
+    .pipe(
+      (
+        listed: { sessions: NeoListedSession[] },
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
+        linked: { links: NeoSessionAskLink[] }
+      ) => {
+        const shown = new Set(listed.sessions.map((session) => session.key));
+        const read = new Map(
+          plan.reads.map((session, index) => [session.key, notices.planned[index]?.seen.status])
+        );
+        const next = planNeoHeldSessionNotices(
+          this.heldSessionNotices,
+          notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
+          new Set(linked.links.map((link) => link.key)),
+          (key) =>
+            shown.has(key) ? (read.get(key) ?? this.sessionsSeen.get(key)?.status) : undefined
+        );
+        this.heldSessionNotices = next.held;
+        return { notices: next.notices };
+      },
+      ['listed', 'plan', 'notices', 'linked'],
       'added'
     )
     .pipe(
@@ -1416,7 +1507,9 @@ export class NeoService {
       (
         listed: { sessions: NeoListedSession[]; complete: boolean },
         plan: ReturnType<typeof planNeoSessionWatch>,
-        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }
+        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
+        read: { statuses: ReadonlyMap<string, WorkStatus>; found: ReadonlyMap<string, unknown> },
+        now: number
       ) => {
         const keep = new Set(listed.sessions.map((session) => session.key));
         if (listed.complete)
@@ -1426,22 +1519,39 @@ export class NeoService {
         plan.reads.forEach((session, index) =>
           this.sessionsSeen.set(session.key, notices.planned[index].seen)
         );
+        for (const [key, status] of read.statuses) {
+          const seen = this.sessionsSeen.get(key);
+          if (seen) this.sessionsSeen.set(key, { ...seen, status });
+        }
+        for (const key of read.found.keys()) this.sessionPrsCheckedAt.set(key, now);
+        for (const key of [...this.sessionPrsCheckedAt.keys()])
+          if (!this.sessionsSeen.has(key)) this.sessionPrsCheckedAt.delete(key);
       },
-      ['listed', 'plan', 'notices']
+      ['listed', 'plan', 'notices', 'read', 'now']
     )
     .pipe(
       (
         root: string,
+        listed: { sessions: NeoListedSession[]; complete: boolean },
+        linked: { prs: Map<string, string[]>; links: NeoSessionAskLink[] },
         added: { notices: NeoSessionNotice[] },
         grouped: ReturnType<typeof planNeoSessionNoticeGroup>
       ) => {
+        const askSessions = describeNeoAskSessions(
+          linked.links,
+          listed.sessions,
+          (session) => this.sessionsSeen.get(session.key)?.status ?? session.status
+        );
+        const moved = JSON.stringify([...askSessions]) !== JSON.stringify([...this.askSessions]);
+        this.sessionPrs = linked.prs;
+        this.askSessions = askSessions;
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.announceSessionNotice(notice);
         for (const group of grouped.closed) this.postSessionNoticeGroup(root, group);
-        if (added.notices.length || grouped.closed.length) this.notifyChanged();
+        if (added.notices.length || grouped.closed.length || moved) this.notifyChanged();
       },
-      ['root', 'added', 'grouped']
+      ['root', 'listed', 'linked', 'added', 'grouped']
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
 
@@ -2104,9 +2214,21 @@ export class NeoService {
   }
 
   private async branchPrUrls(workId: string): Promise<string[]> {
-    const ref = this.driverTargets.readRef(workId);
+    return this.sessionBranchPrs(this.driverTargets.readRef(workId));
+  }
+
+  private async sessionBranchPrs(ref: WorkRef | null): Promise<string[]> {
     const branch = neoWorkBranch(ref?.adapter === 'hyperneo' ? this.db.getSession(ref.id) : null);
     return branch ? this.readBranchPrs(branch) : [];
+  }
+
+  private askPrs(ask: NeoAsk): NeoAskPrs {
+    const works = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+    return {
+      id: ask.id,
+      status: ask.status,
+      prs: neoAskPrKeys(ask, neoPackAskCardEvidence(this.packs(), ask, works)),
+    };
   }
 
   private async runningPrUrls(workIds: readonly string[]): Promise<string[]> {

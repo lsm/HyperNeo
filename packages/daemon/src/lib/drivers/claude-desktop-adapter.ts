@@ -33,6 +33,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { matchChatsBy } from './match-chats.ts';
+import { claudeOpenedPrs } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
 
@@ -342,6 +343,7 @@ export interface ClaudeTranscriptState {
   inputs: WorkInput[];
   lastAt: number;
   exchange?: WorkExchange;
+  openedPrs?: string[];
 }
 
 interface ClaudeTranscriptEntry {
@@ -419,6 +421,7 @@ export function claudeTranscriptState(
             : null;
     if (next) exchange.push(next);
   }
+  const openedPrs = claudeOpenedPrs(lines);
   return {
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
@@ -432,6 +435,7 @@ export function claudeTranscriptState(
           ),
         }
       : {}),
+    ...(openedPrs.length ? { openedPrs } : {}),
   };
 }
 
@@ -480,6 +484,7 @@ export function describeClaudeSession(
         : {}),
       recentInputs: transcript.inputs,
       ...withExchange(transcript.exchange),
+      ...(transcript.openedPrs ? { openedPrs: transcript.openedPrs } : {}),
     },
   };
 }
