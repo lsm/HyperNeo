@@ -264,7 +264,7 @@ export async function kickoffSession(
       sessionId,
       workspacePath: state.workspacePath!,
     });
-    await injectKickoffMessage(sessionId, message, request.execution.id);
+    await injectKickoffMessage(sessionId, message, request.execution.id, { taskKickoff: true });
   } catch (error) {
     return { reason: settledFailure(state, 'error', 'kickoff-session', error) };
   }

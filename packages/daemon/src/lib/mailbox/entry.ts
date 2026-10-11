@@ -28,6 +28,7 @@ export type MailboxMessage = {
   parent_tool_use_id: null;
   priority?: 'now' | 'next' | 'later';
   inputKind?: MessageInputKind;
+  taskKickoff?: boolean;
   referenceMetadata?: ReferenceMetadata;
 };
 
@@ -125,6 +126,9 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
   if (message.inputKind !== undefined && !MAILBOX_INPUT_KINDS.includes(message.inputKind)) {
     return { reason: 'message.inputKind must be one of "task", "human", "system"' };
   }
+  if (message.taskKickoff !== undefined && typeof message.taskKickoff !== 'boolean') {
+    return { reason: 'message.taskKickoff must be a boolean' };
+  }
   const content = message.message?.content;
   let projected: { role?: 'user'; content: MailboxMessageContent } | null = null;
   if (typeof content === 'string') {
@@ -154,6 +158,7 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
       parent_tool_use_id: null,
       ...(message.priority !== undefined ? { priority: message.priority } : {}),
       ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
+      ...(message.taskKickoff === true ? { taskKickoff: true } : {}),
       ...(referenceMetadata !== undefined ? { referenceMetadata } : {}),
     },
   };

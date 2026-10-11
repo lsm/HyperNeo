@@ -1187,13 +1187,23 @@ export class TaskAgentManager {
         const kickoffBase = recoveryNote ? `${initialMessage}\n\n${recoveryNote}` : initialMessage;
         return runtimeContract ? `${kickoffBase}\n\n${runtimeContract}` : kickoffBase;
       },
-      injectKickoffMessage: async (sessionId, message, executionId) => {
+      injectKickoffMessage: async (sessionId, message, executionId, options) => {
         const spawned = this.getSubSession(sessionId);
         if (!spawned) {
           throw new Error(`Spawned node session ${sessionId} is not registered in memory`);
         }
         await this.withSessionInjectLock(spawned.session.id, () =>
-          this.injectMessageIntoSession(spawned, message)
+          this.injectMessageIntoSession(
+            spawned,
+            message,
+            'immediate',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            options?.taskKickoff === true
+          )
         );
         const execution = this.config.nodeExecutionRepo.getById(executionId);
         if (execution && readRestartRecoveryNote(execution)) {
@@ -4116,7 +4126,8 @@ export class TaskAgentManager {
     isSyntheticMessage = true,
     images?: MessageImage[],
     inputKind: MessageInputKind = 'task',
-    explicitMessageId?: string
+    explicitMessageId?: string,
+    taskKickoff = false
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -4146,13 +4157,18 @@ export class TaskAgentManager {
         ]
       : [{ type: 'text' as const, text: message }];
 
-    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean; inputKind: MessageInputKind } = {
+    const sdkUserMessage: SDKUserMessage & {
+      isSynthetic: boolean;
+      inputKind: MessageInputKind;
+      taskKickoff?: boolean;
+    } = {
       type: 'user' as const,
       uuid: messageId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
       isSynthetic: isSyntheticMessage,
       inputKind,
+      ...(taskKickoff ? { taskKickoff: true } : {}),
       message: {
         role: 'user' as const,
         content: sdkContent,
@@ -4314,6 +4330,7 @@ export class TaskAgentManager {
         parent_tool_use_id: null,
         message: { role: 'user', content: sdkContent },
         inputKind,
+        ...(taskKickoff ? { taskKickoff: true } : {}),
       };
       verifyPromptContent({
         db: this.config.db.getDatabase(),

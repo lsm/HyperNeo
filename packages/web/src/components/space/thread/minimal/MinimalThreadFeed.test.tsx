@@ -99,6 +99,15 @@ function humanUserMessage(uuid: string, text: string) {
   };
 }
 
+function taggedKickoffUserMessage(uuid: string, text: string) {
+  return {
+    ...humanUserMessage(uuid, text),
+    isSynthetic: true,
+    inputKind: 'task',
+    taskKickoff: true,
+  };
+}
+
 function syntheticPeerMessage(
   uuid: string,
   text: string,
@@ -2724,6 +2733,53 @@ describe('MinimalThreadFeed', () => {
       expect(screen.getByTestId('minimal-thread-human-bubble').textContent).toContain(
         'Please look at Your Task #7'
       );
+    });
+
+    it('folds a tagged kickoff whose text has no task heading', () => {
+      const rows = [
+        makeRow({
+          id: 'k1',
+          label: 'Coder Agent',
+          createdAt: 1,
+          message: taggedKickoffUserMessage('k1', 'Get the build green again'),
+          messageType: 'user',
+        }),
+      ];
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      const toggle = screen.getByTestId('minimal-thread-task-kickoff');
+      expect(toggle.textContent).toContain('Task sent to Coder Agent');
+      expect(screen.queryByTestId('minimal-thread-human-bubble')).toBeNull();
+    });
+
+    it('folds the first tagged kickoff ahead of a later heading-styled message', () => {
+      const t = 1_700_000_000_000;
+      const rows = [
+        makeRow({
+          id: 'k1',
+          label: 'Coder Agent',
+          createdAt: t,
+          message: taggedKickoffUserMessage('k1', 'Plain kickoff prose without any heading'),
+          messageType: 'user',
+        }),
+        makeRow({
+          id: 'k2',
+          label: 'Coder Agent',
+          createdAt: t + 100,
+          message: humanUserMessage('k2', '## Your Task #7\n\nAgain'),
+          messageType: 'user',
+        }),
+      ];
+      render(<MinimalThreadFeed parsedRows={rows} />);
+
+      const kickoff = screen.getByTestId('minimal-thread-task-kickoff');
+      fireEvent.click(kickoff);
+      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toBe(
+        'Plain kickoff prose without any heading'
+      );
+      const bubbles = screen.getAllByTestId('minimal-thread-human-bubble');
+      expect(bubbles).toHaveLength(1);
+      expect(bubbles[0].textContent).toContain('Again');
     });
   });
 

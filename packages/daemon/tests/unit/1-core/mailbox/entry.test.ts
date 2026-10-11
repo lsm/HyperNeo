@@ -170,8 +170,15 @@ describe('toMailboxMessage', () => {
       ['inputKind task', { ...validMessage, inputKind: 'task' }],
       ['inputKind human', { ...validMessage, inputKind: 'human' }],
       ['inputKind system', { ...validMessage, inputKind: 'system' }],
+      ['taskKickoff true', { ...validMessage, taskKickoff: true }],
     ])('projects %s to a fresh deep-equal message', (_label, input) => {
       expect(toMailboxMessage(input)).toEqual({ message: input });
+    });
+
+    test('drops a false taskKickoff instead of carrying it', () => {
+      expect(toMailboxMessage({ ...validMessage, taskKickoff: false })).toEqual({
+        message: validMessage,
+      });
     });
 
     test('drops retired task and goal reference metadata instead of rejecting the entry', () => {
@@ -205,6 +212,7 @@ describe('toMailboxMessage', () => {
         ...validMessage,
         priority: 'next',
         inputKind: 'system',
+        taskKickoff: true,
         referenceMetadata: {
           '@ref{folder:src}': { type: 'folder', id: 'src', displayText: 'src' },
         },
@@ -215,6 +223,7 @@ describe('toMailboxMessage', () => {
         'parent_tool_use_id',
         'priority',
         'referenceMetadata',
+        'taskKickoff',
         'type',
       ]);
     });
@@ -321,6 +330,7 @@ describe('toMailboxMessage', () => {
       ['a non-null parent_tool_use_id', { ...validMessage, parent_tool_use_id: 'tool-1' }],
       ['an invalid priority', { ...validMessage, priority: 'soon' }],
       ['an invalid inputKind', { ...validMessage, inputKind: 'nudge' as MessageInputKind }],
+      ['a non-boolean taskKickoff', { ...validMessage, taskKickoff: 'yes' }],
     ])('returns a reason for %s', (_label, message) => {
       expect(toMailboxMessage(message as unknown as MailboxMessage)).toEqual({
         reason: expect.any(String),
@@ -820,6 +830,30 @@ describe('parseMailboxEntry', () => {
             message: { content: 'hello' },
             parent_tool_use_id: null,
             inputKind: 'nudge',
+          },
+        })
+      ).toBeNull();
+    });
+
+    test('round-trips taskKickoff through a stored entry and rejects non-boolean values', () => {
+      const payload = {
+        ...sessionPayload,
+        message: {
+          type: 'user',
+          message: { content: 'hello' },
+          parent_tool_use_id: null,
+          taskKickoff: true,
+        },
+      };
+      expect(parseMailboxEntry(payload)?.message.taskKickoff).toBe(true);
+      expect(
+        parseMailboxEntry({
+          ...sessionPayload,
+          message: {
+            type: 'user',
+            message: { content: 'hello' },
+            parent_tool_use_id: null,
+            taskKickoff: 'yes',
           },
         })
       ).toBeNull();

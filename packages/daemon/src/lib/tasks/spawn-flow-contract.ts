@@ -84,7 +84,12 @@ export interface SpawnExecutionFlowDeps {
   attachNodeAgent(request: AttachNodeAgentRequest): Promise<void>;
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
-  injectKickoffMessage(sessionId: string, message: string, executionId: string): Promise<void>;
+  injectKickoffMessage(
+    sessionId: string,
+    message: string,
+    executionId: string,
+    options?: { taskKickoff?: boolean }
+  ): Promise<void>;
   activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): void;
 }
 

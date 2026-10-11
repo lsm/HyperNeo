@@ -104,5 +104,11 @@ describe('prompt-comparison', () => {
       const normalized = normalizePromptForComparison(userMessage());
       expect((normalized.message as Record<string, unknown>).role).toBeUndefined();
     });
+
+    it('treats a taskKickoff tag as metadata, not content', () => {
+      expect(canonicalJson(normalizePromptForComparison(userMessage({ taskKickoff: true })))).toBe(
+        canonicalJson(normalizePromptForComparison(userMessage()))
+      );
+    });
   });
 });

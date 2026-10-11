@@ -284,6 +284,7 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession, input: Dire
         }),
       },
       parent_tool_use_id: null,
+      taskKickoff: true,
     },
   };
 }

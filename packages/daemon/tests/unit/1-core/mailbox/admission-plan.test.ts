@@ -129,4 +129,13 @@ describe('planMailboxAdmission', () => {
     expect(plan.message.inputKind).toBe('human');
     expect(plan.delivery).not.toHaveProperty('admissionRowid');
   });
+
+  test('a task kickoff tag survives into the persisted admission message', () => {
+    const plan = planMailboxAdmission({
+      ...entry,
+      origin: 'direct-task-kickoff',
+      message: { ...entry.message, taskKickoff: true },
+    });
+    expect(plan.message.taskKickoff).toBe(true);
+  });
 });
