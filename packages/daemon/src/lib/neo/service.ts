@@ -121,11 +121,12 @@ import {
   planNeoDoneCheck,
 } from './evidence.ts';
 import {
-  neoCardPrUrls,
   neoWorkBranch,
   readGithubBranchPrs,
   type NeoBranchPrReader,
 } from './packs/coding/branch-prs.ts';
+import { planNeoCardPrCandidates, type NeoCardPrCandidate } from './packs/coding/card-pr-claims.ts';
+import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
 import {
@@ -141,7 +142,6 @@ import {
 } from './packs/index.ts';
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
-  extractNeoWorkPrUrls,
   neoAskPrEvidence,
   neoWorkPrEvidence,
   neoWorkPrSignature,
@@ -263,6 +263,7 @@ export class NeoService {
   readonly workContinues: NeoWorkContinueRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
+  readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -443,6 +444,7 @@ export class NeoService {
     this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
@@ -1461,7 +1463,8 @@ export class NeoService {
   private get cardPrDeps(): NeoCardPrDeps {
     return {
       readPrs: (urls) => this.readPrs(urls),
-      prUrls: (work, stored) => this.cardPrUrls(work, stored),
+      prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
+      claims: this.workPrClaims,
       workPrs: this.workPrs,
       record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
     };
@@ -1763,14 +1766,17 @@ export class NeoService {
     }
   }
 
-  private async cardPrUrls(
+  private async cardPrCandidates(
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
-  ): Promise<string[]> {
-    return neoCardPrUrls(
-      extractNeoWorkPrUrls(work.report, stored?.prs),
-      await this.branchPrUrls(work.id)
-    );
+  ): Promise<NeoCardPrCandidate[]> {
+    const goal = this.workGoals.get(work.id);
+    return planNeoCardPrCandidates({
+      report: work.report,
+      brief: [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n'),
+      branch: await this.branchPrUrls(work.id),
+      stored: stored?.prs ?? [],
+    });
   }
 
   private async branchPrUrls(workId: string): Promise<string[]> {

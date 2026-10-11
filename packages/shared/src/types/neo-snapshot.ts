@@ -82,6 +82,7 @@ export interface NeoWorkPr {
   checks: 'pending' | 'failing' | 'passing' | 'none';
   review: 'approved' | 'changes_requested' | 'none';
   blockers?: string[];
+  createdAt?: number;
 }
 
 export interface NeoWorkPrReceipt {

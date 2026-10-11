@@ -8,7 +8,7 @@ import {
   createCodingPack,
   readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import { extractNeoWorkPrUrls } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
+import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
@@ -91,7 +91,14 @@ describe('neoPackFragment', () => {
 describe('coding pack instructions', () => {
   test('carry the moved coding guidance', () => {
     const coding = createCodingPack({
-      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      prCandidates: async (work, stored) =>
+        planNeoCardPrCandidates({
+          report: work.report,
+          brief: '',
+          branch: [],
+          stored: stored?.prs ?? [],
+        }),
+      claims: { forUrls: () => [], replace: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
@@ -146,7 +153,14 @@ describe('readEvidence', () => {
     const failed: number[] = [];
     const recorded: NeoWorkPr[][] = [];
     const coding = createCodingPack({
-      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      prCandidates: async (work, stored) =>
+        planNeoCardPrCandidates({
+          report: work.report,
+          brief: '',
+          branch: [],
+          stored: stored?.prs ?? [],
+        }),
+      claims: { forUrls: () => [], replace: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
@@ -306,7 +320,19 @@ describe('readNeoCardPrs', () => {
           calls.reads++;
           return read;
         },
-        prUrls: async () => [url],
+        prCandidates: async () => [{ url, claim: 'mentioned' as const }],
+        claims: {
+          forUrls: () => [
+            {
+              workId: 'w1',
+              urlKey: url.toLowerCase(),
+              claim: 'mentioned' as const,
+              claimedAt: 0,
+              cardCreatedAt: 0,
+            },
+          ],
+          replace: () => {},
+        },
         workPrs: {
           get: () => stored,
           list: () => [],

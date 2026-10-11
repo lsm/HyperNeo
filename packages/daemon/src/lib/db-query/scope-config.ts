@@ -470,6 +470,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_asks',
   'neo_ask_work',
   'neo_work_prs',
+  'neo_work_pr_claims',
   'neo_work_checks',
   'neo_ask_checks',
   'neo_ask_items',

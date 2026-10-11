@@ -10,6 +10,13 @@ import {
   type NeoRefStateReader,
 } from './ask-prs.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
+import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
+import {
+  keepNeoCardPrReads,
+  planNeoCardPrOwnership,
+  type NeoCardPrCandidate,
+  type NeoCardPrOwned,
+} from './card-pr-claims.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   mergeNeoWorkPrReads,
@@ -32,7 +39,8 @@ export const codingPrMergedCheck: NeoPackCheck = (_item, evidence: readonly NeoE
 
 export interface NeoCardPrDeps {
   readPrs: NeoWorkPrReader;
-  prUrls: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<string[]>;
+  prCandidates: (work: NeoWork, stored: NeoWorkPrRow | null) => Promise<NeoCardPrCandidate[]>;
+  claims: Pick<NeoWorkPrClaimRepository, 'forUrls' | 'replace'>;
   workPrs: Pick<NeoWorkPrRepository, 'get' | 'list' | 'recordFailedRead'>;
   record: (
     workId: string,
@@ -42,29 +50,71 @@ export interface NeoCardPrDeps {
 }
 
 type NeoCardPrRead = { row: NeoWorkPrRow | null; ok: boolean };
+type NeoCardPrPlan = { owned: NeoCardPrOwned[] };
+
+const ownedUrls = (plan: NeoCardPrPlan) => plan.owned.map((item) => item.url);
+const stripReadTimes = (prs: readonly NeoWorkPr[]) =>
+  prs.map(({ createdAt: _createdAt, ...pr }) => pr);
 
 export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
   .input(['deps', 'work', 'stored', 'now'])
   .pipe(
     async (deps: NeoCardPrDeps, work: NeoWork, stored: NeoWorkPrRow | null) => ({
-      urls: await deps.prUrls(work, stored),
+      candidates: await deps.prCandidates(work, stored),
     }),
     ['deps', 'work', 'stored'],
     'found'
   )
   .pipe(
-    (stored: NeoWorkPrRow | null, found: { urls: string[] }, now: number) =>
-      shouldReadNeoWorkPrs(stored, found.urls, now)
-        ? { value: found }
-        : { reason: { row: stored, ok: !stored || stored.readOkAt >= stored.readAt } },
-    ['stored', 'found', 'now'],
+    (
+      deps: NeoCardPrDeps,
+      work: NeoWork,
+      found: { candidates: NeoCardPrCandidate[] },
+      now: number
+    ) => ({
+      owned: planNeoCardPrOwnership(
+        work,
+        found.candidates,
+        deps.claims.forUrls(found.candidates.map((item) => item.url)),
+        now
+      ),
+    }),
+    ['deps', 'work', 'found', 'now'],
+    'plan'
+  )
+  .pipe(
+    (deps: NeoCardPrDeps, work: NeoWork, stored: NeoWorkPrRow | null, plan: NeoCardPrPlan) => {
+      const keep = new Set(ownedUrls(plan).map((url) => url.toLowerCase()));
+      const kept = stored?.prs.filter((pr) => keep.has(pr.url.toLowerCase())) ?? [];
+      if (!stored || kept.length === stored.prs.length) return { row: stored };
+      deps.claims.replace(
+        work.id,
+        plan.owned.filter((item) => item.claimed)
+      );
+      return { row: deps.record(work.id, kept, stored) ?? stored };
+    },
+    ['deps', 'work', 'stored', 'plan'],
+    'current'
+  )
+  .pipe(
+    (current: { row: NeoWorkPrRow | null }, plan: NeoCardPrPlan, now: number) =>
+      shouldReadNeoWorkPrs(current.row, ownedUrls(plan), now) ||
+      plan.owned.some((item) => !item.claimed)
+        ? { value: plan }
+        : {
+            reason: {
+              row: current.row,
+              ok: !current.row || current.row.readOkAt >= current.row.readAt,
+            },
+          },
+    ['current', 'plan', 'now'],
     'result:read'
   )
   .pipe(
-    async (deps: NeoCardPrDeps, found: { urls: string[] }) => ({
-      prs: await deps.readPrs(found.urls),
+    async (deps: NeoCardPrDeps, plan: NeoCardPrPlan) => ({
+      prs: await deps.readPrs(ownedUrls(plan)),
     }),
-    ['deps', 'found'],
+    ['deps', 'plan'],
     'fetched'
   )
   .pipe(
@@ -77,18 +127,26 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
     (
       deps: NeoCardPrDeps,
       work: NeoWork,
-      stored: NeoWorkPrRow | null,
-      found: { urls: string[] },
+      current: { row: NeoWorkPrRow | null },
+      plan: NeoCardPrPlan,
       fetched: { prs: NeoWorkPr[] | null }
-    ) => ({
-      value: {
-        row: fetched.prs
-          ? deps.record(work.id, mergeNeoWorkPrReads(found.urls, fetched.prs, stored?.prs), stored)
-          : stored,
-        ok: !!fetched.prs,
-      },
-    }),
-    ['deps', 'work', 'stored', 'found', 'fetched'],
+    ) => {
+      if (!fetched.prs) return { value: { row: current.row, ok: false } };
+      const kept = keepNeoCardPrReads(work, plan.owned, fetched.prs);
+      deps.claims.replace(work.id, kept);
+      const prs = mergeNeoWorkPrReads(
+        kept.map((item) => item.url),
+        fetched.prs,
+        current.row?.prs
+      );
+      return {
+        value: {
+          row: deps.record(work.id, stripReadTimes(prs), current.row),
+          ok: true,
+        },
+      };
+    },
+    ['deps', 'work', 'current', 'read', 'fetched'],
     'result:read'
   )
   .endAsync('read') as (

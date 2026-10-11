@@ -14,6 +14,7 @@ export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
+  createdAt: z.string().optional(),
   mergeStateStatus: z.string().optional(),
   baseRefName: z.string().optional(),
   state: z.enum(['OPEN', 'MERGED', 'CLOSED']),
@@ -59,7 +60,7 @@ function checkResult(check: GhCheck): NeoWorkPr['checks'] {
 export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
   const parsed = GhPrSchema.safeParse(raw);
   if (!parsed.success) return null;
-  const { url, state, headRefOid, reviews, statusCheckRollup } = parsed.data;
+  const { url, state, headRefOid, reviews, statusCheckRollup, createdAt } = parsed.data;
   const results = statusCheckRollup.map(checkResult);
   const checks = results.includes('pending')
     ? 'pending'
@@ -74,7 +75,14 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     .filter((item) => item === 'APPROVED' || item === 'CHANGES_REQUESTED')
     .at(-1);
   const review = verdict === 'APPROVED' ? 'approved' : verdict ? 'changes_requested' : 'none';
-  return { url, state, checks, review };
+  const created = Date.parse(createdAt ?? '');
+  return {
+    url,
+    state,
+    checks,
+    review,
+    ...(Number.isFinite(created) ? { createdAt: created } : {}),
+  };
 }
 
 export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
@@ -358,7 +366,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName',
+          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt',
         ],
         spawnImpl,
         'graphql'
