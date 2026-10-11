@@ -905,6 +905,37 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('flags a card abandoned after the last stuck step, and a cancelled card has no live status', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: { status: 'running', lastActivityAt: Date.now(), recentInputs: [] },
+      }),
+      sendTarget
+    );
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0].abandoned).toBeUndefined();
+
+      now += NEO_WORK_STUCK_STEPS_MS[NEO_WORK_STUCK_STEPS_MS.length - 1];
+      expect(service.driverTargets.receipts(['work-1'], now)[0].abandoned).toBe(true);
+
+      await service.cancel('work-1');
+      const cancelled = service.driverTargets.receipts(['work-1'], now)[0];
+      expect([cancelled.status, cancelled.abandoned]).toEqual([null, undefined]);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('marks a card unconfirmed when it shows its session without its message seen landing', async () => {
     const { db, service } = await setup(
       { ok: true, value: { delivered: true } },
