@@ -204,6 +204,53 @@ describe('projectNeoCardViews', () => {
     );
     expect(NeoCardViewSchema.parse(cards[0])).toEqual(cards[0]);
   });
+
+  test('a card needing you in its own chat still asks for an answer', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('w', 'queued', 's1')],
+        drivers: [driver('w', 'needs_you', { adapter: 'hyperneo', link: '/session/s1' })],
+      })
+    );
+    expect(cards[0].primary).toEqual({ kind: 'answer', label: 'Answer in chat', link: null });
+  });
+
+  test('the open target carries the raw link, Remote Control link and session', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('h', 'queued'), work('c', 'queued', 's9')],
+        drivers: [
+          driver('h', 'running', { adapter: 'hyperneo', link: '/session/abc-1' }),
+          driver('c', 'running', {
+            adapter: 'claude-desktop',
+            daemon: 'imac',
+            link: 'claude://claude.ai/epitaxy/x',
+            remoteLink: 'https://claude.ai/code/session_1',
+          }),
+        ],
+      })
+    );
+    expect(cards.map((card) => card.open)).toEqual([
+      { link: '/session/abc-1', remoteLink: null, sessionId: 'abc-1', daemon: null },
+      {
+        link: 'claude://claude.ai/epitaxy/x',
+        remoteLink: 'https://claude.ai/code/session_1',
+        sessionId: 's9',
+        daemon: 'imac',
+      },
+    ]);
+  });
+
+  test('a card carries its last continue message and merged PR numbers', () => {
+    const cards = projectNeoCardViews(
+      parts({
+        work: [work('w', 'reported')],
+        prs: [{ workId: 'w', prs: [pr(3, { state: 'MERGED' }), pr(4)], waiting: false }],
+        continues: [{ workId: 'w', count: 1, continuedAt: 1, lastMessage: 'Fix CI' }],
+      })
+    );
+    expect(cards[0]).toMatchObject({ continuedMessage: 'Fix CI', pr: { merged: ['#3'] } });
+  });
 });
 
 const item = (id: string, state: NeoAskItem['state'], removed = false): NeoAskItem => ({

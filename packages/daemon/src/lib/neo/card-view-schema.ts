@@ -1,5 +1,6 @@
 import type {
   NeoAskView,
+  NeoCardOpenTarget,
   NeoCardPrimary,
   NeoCardPrSummary,
   NeoCardView,
@@ -38,6 +39,12 @@ export const NeoCardViewSchema = z.object({
   } satisfies ZodShape<NeoCardPrimary>),
   actions: z.array(z.enum(['start', 'cancel', 'retry', 'close', 'done'])),
   adapter: z.string().nullable(),
+  open: z.object({
+    link: z.string().nullable(),
+    remoteLink: z.string().nullable(),
+    sessionId: z.string().nullable(),
+    daemon: z.string().nullable(),
+  } satisfies ZodShape<NeoCardOpenTarget>),
   pr: z
     .object({
       number: z.string(),
@@ -45,11 +52,13 @@ export const NeoCardViewSchema = z.object({
       count: z.number().int().nonnegative(),
       inProgress: z.boolean(),
       setback: z.boolean(),
+      merged: z.array(z.string()),
     } satisfies ZodShape<NeoCardPrSummary>)
     .nullable(),
   goal: z.string().nullable(),
   doneWhen: z.string().nullable(),
   continued: z.number().int().nonnegative(),
+  continuedMessage: z.string().nullable(),
   pooled: z.boolean(),
   superseded: z.boolean(),
   uncheckedSince: z.number().nullable(),
