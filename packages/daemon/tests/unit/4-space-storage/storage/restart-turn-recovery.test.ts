@@ -143,14 +143,17 @@ describe('restart recovery reads', () => {
     expect(sessions.listProcessingSessionIds().sort()).toEqual(['asked', 'working']);
   });
 
-  test('re-queues only a consumed user prompt', () => {
+  test('the cut-off prompt reopens for delivery through the shared retry transition', () => {
     row('asked', 'user', '2026-10-11T02:00:00.000Z', prompt('new'), {
       uuid: 'u1',
       status: 'consumed',
     });
-    expect(sdk.requeueConsumedPrompt('asked', 'u1')).toBe(true);
+    expect(sdk.markDeliveryRetryableByUuid('asked', 'u1')).not.toBeNull();
     expect(sdk.getDeliveryContent('asked', 'u1')?.sendStatus).toBe('enqueued');
-    expect(sdk.requeueConsumedPrompt('asked', 'u1')).toBe(false);
-    expect(sdk.requeueConsumedPrompt('asked', 'missing')).toBe(false);
+  });
+
+  test('archived sessions are not resumed', () => {
+    sessions.updateSession('asked', { status: 'archived' });
+    expect(sessions.listProcessingSessionIds()).toEqual(['working']);
   });
 });

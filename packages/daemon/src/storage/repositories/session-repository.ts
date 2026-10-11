@@ -135,7 +135,8 @@ export class SessionRepository {
       this.db
         .prepare(
           `SELECT id FROM sessions
-            WHERE json_valid(processing_state)
+            WHERE status = 'active'
+              AND json_valid(processing_state)
               AND json_extract(processing_state, '$.status') = 'processing'
               AND NOT (json_valid(session_context)
                 AND json_extract(session_context, '$.spaceId') IS NOT NULL)`

@@ -1938,17 +1938,6 @@ export class SDKMessageRepository {
     return { promptUuid: prompt.uuid, workedAfter: !!worked };
   }
 
-  requeueConsumedPrompt(sessionId: string, uuid: string): boolean {
-    return (
-      this.db
-        .prepare(
-          `UPDATE sdk_messages SET send_status = 'enqueued'
-            WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user' AND send_status = 'consumed'`
-        )
-        .run(sessionId, uuid).changes > 0
-    );
-  }
-
   getDeliveryContent(
     sessionId: string,
     uuid: string

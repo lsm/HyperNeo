@@ -841,7 +841,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       hasActiveDelivery: (sessionId, uuid) =>
         db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
       resend: (sessionId, uuid) => {
-        if (!db.getSDKMessageRepo().requeueConsumedPrompt(sessionId, uuid)) return false;
+        const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
+        if (!reopenedId) return false;
+        void internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [reopenedId],
+            status: 'enqueued',
+          })
+          .catch(() => {});
         deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
         return true;
       },
