@@ -1,5 +1,6 @@
 import {
   fillPrompt,
+  NEO_SESSION_TRACK,
   NEO_WORK_DELEGATED,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
@@ -77,6 +78,8 @@ import {
   type DriverSent,
   type NeoDriverTarget,
   readDriverOutcome,
+  driverAdoptedReport,
+  readDriverLive,
   readDriverSendBaseline,
   neoCardSent,
   readDriverSent,
@@ -186,6 +189,7 @@ import {
   type NeoReminderListing,
 } from './waiting-reminders.ts';
 import { type NeoSessionNotice, type NeoSessionNoticeGroup } from './session-watch.ts';
+import { keepNeoTrackedSessions } from './session-track.ts';
 import { neoAskPrKeys, type NeoAskPrs } from './session-ask-links.ts';
 import {
   neoAskEvidenceNote,
@@ -300,6 +304,15 @@ export class NeoService {
   get askSessions(): Map<string, NeoAskSessionView[]> {
     return this.sessionWatcher.askSessions;
   }
+
+  get trackableNotices(): NeoSessionNotice[] {
+    return [
+      ...this.sessionWatcher.sessionNoticeGroups.flatMap((group) => group.notices),
+      ...this.sessionWatcher.sessionNotices,
+    ];
+  }
+
+  trackedSessions = new Map<string, number>();
 
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
@@ -1073,6 +1086,7 @@ export class NeoService {
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
     if (!queued || queued.status !== 'queued') return;
+    if (target.verb === 'adopt') return this.adoptDriverWork(queued, target.ref);
     const call = driverWorkCall(target, queued, this.workDoneGoal(queued.id));
     const probe =
       target.verb === 'send'
@@ -1105,6 +1119,23 @@ export class NeoService {
       return;
     }
     await this.failWork(queued, `Could not start the execution: ${result.failure}`);
+  }
+
+  private async adoptDriverWork(work: NeoWork, ref: WorkRef): Promise<void> {
+    const live = readDriverLive(await this.invokeAsCard(work, 'work.status', { ref }));
+    if (!live) {
+      await this.failWork(work, `Could not track the session: ${ref.adapter} did not find it.`);
+      return;
+    }
+    this.driverTargets.recordRef(work.id, ref, Date.now(), live.link);
+    this.driverTargets.recordSent(work.id, null);
+    this.driverTargets.recordLive(work.id, live.status, live.link, live.remoteLink);
+    const current = this.repo.getWork(work.id);
+    if (current?.status === 'queued')
+      this.repo.transitionWork(work.id, current, {
+        status: 'queued',
+        report: driverAdoptedReport(ref, live.link),
+      });
   }
 
   retryCard(workId: string): NeoWorkRetryCard {
@@ -1273,7 +1304,19 @@ export class NeoService {
     };
   }
 
-  private followedCardRefs(now: number): WorkRef[] {
+  async trackSession(notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
+    const root = this.repo.getBindingForConcern(null)?.sessionId;
+    if (!root) throw new Error('Neo has no root session to track this session with.');
+    this.trackedSessions = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
+    const content = fillPrompt(NEO_SESSION_TRACK, {
+      title: JSON.stringify(notice.title),
+      ref: JSON.stringify(notice.ref),
+    });
+    await this.deliver(root, `neo-track:${notice.key}:${now}`, content, root);
+    return { ok: true };
+  }
+
+  followedCardRefs(now: number): WorkRef[] {
     return this.driverTargets.cardRefs(now - NEO_WORK_FOLLOW_MAX_AGE_MS).flatMap((card) => {
       const work = this.repo.getWork(card.workId);
       if (!work) return [];

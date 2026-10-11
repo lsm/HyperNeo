@@ -78,8 +78,15 @@ import {
   NeoSessionNoticeGroupSchema,
   NeoSessionNoticeSchema,
   latestNeoSessionNoticeGroups,
+  neoSessionKey,
   planNeoSessionMutes,
+  type NeoSessionNotice,
 } from './session-watch.ts';
+import {
+  findNeoSessionNotice,
+  requireNeoTrackableSession,
+  requireNeoTrackedAdoption,
+} from './session-track.ts';
 import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import {
   createNeoAskOperations,
@@ -277,6 +284,8 @@ const SessionMuteResult = z.union([
   Failure,
   z.object({ ok: z.literal(true), mutedSessions: z.array(z.string()) }),
 ]);
+const SessionTrack = z.object({ key: z.string().trim().min(1).max(400) });
+const SessionTrackResult = z.union([Failure, z.object({ ok: z.literal(true) })]);
 const SaveRules = z.object({
   rules: z
     .array(z.string().trim().min(1).max(NEO_STANDING_RULE_MAX_CHARS))
@@ -523,7 +532,7 @@ function admitNeoCaller(
     if (!active || !(human || (askApproved && name === 'neo.work.start')))
       return { reason: { ok: false, reason: 'This action needs the user.' } };
   }
-  if (['neo.open', 'neo.concern.cancel', 'neo.work.close'].includes(name))
+  if (['neo.open', 'neo.concern.cancel', 'neo.work.close', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (binding.kind === 'concern' && concernId !== undefined && concernId !== binding.concernId)
     return { reason: { ok: false, reason: 'This context holder cannot access another concern.' } };
@@ -699,6 +708,35 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof SessionMute>,
     caller: OperationCaller
   ) => z.infer<typeof SessionMuteResult>;
+  const trackSession = (superpipe({})('neo.session.track') as PipelineAPI)
+    .input(['input', 'caller', 'now'])
+    .pipe(
+      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.session.track'),
+      'caller',
+      'result:track'
+    )
+    .pipe(
+      (input: z.infer<typeof SessionTrack>) =>
+        findNeoSessionNotice(service.trackableNotices, input.key),
+      'input',
+      'result:track'
+    )
+    .pipe(
+      (notice: NeoSessionNotice, now: number) =>
+        requireNeoTrackableSession(notice, service.followedCardRefs(now)),
+      ['track', 'now'],
+      'result:track'
+    )
+    .pipe(
+      (notice: NeoSessionNotice, now: number) => service.trackSession(notice, now),
+      ['track', 'now'],
+      'track'
+    )
+    .endAsync('track') as (
+    input: z.infer<typeof SessionTrack>,
+    caller: OperationCaller,
+    now: number
+  ) => Promise<z.infer<typeof SessionTrackResult>>;
   const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -947,6 +985,12 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
+      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoTrackedAdoption(input.work, service.trackedSessions, Date.now(), caller),
+      ['input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
       (input: z.infer<typeof Propose>) => readNeoStartFolder(input.work, existsSync),
       'input',
       'startFolder'
@@ -1114,6 +1158,19 @@ export function createNeoOperations(service: NeoService) {
       },
       ['input', 'admission'],
       'goalRecorded'
+    )
+    .pipe(
+      async (
+        input: z.infer<typeof Propose>,
+        ask: { askId?: string },
+        receipt: { work: NeoWork }
+      ) => {
+        if (input.work?.verb !== 'adopt') return;
+        service.trackedSessions.delete(neoSessionKey(input.work.ref));
+        if (ask.askId) service.askRecords.approve(ask.askId, Date.now());
+        await service.start(receipt.work.id);
+      },
+      ['input', 'ask', 'admission']
     )
     .endAsync('admission') as (
     input: z.infer<typeof Propose>,
@@ -1345,6 +1402,15 @@ export function createNeoOperations(service: NeoService) {
       execute: async (input, caller) => muteSession(input, caller),
     }),
     defineOperation({
+      name: 'neo.session.track',
+      description:
+        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. Neo is asked to write the goal and doneWhen from the session\'s first message and propose a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as approval, so that card starts on its own and its ask is approved.',
+      inputSchema: SessionTrack,
+      resultSchema: SessionTrackResult,
+      policy: { safetyClass: 'human_only' },
+      execute: (input, caller) => trackSession(input, caller, Date.now()),
+    }),
+    defineOperation({
       name: 'neo.pack.read',
       description:
         'Read the full instructions of an installed domain pack (enabled or not), the guidance an ask names with its pack field: what work in that domain looks like and what done means there. neo.snapshot and the system prompt carry only each enabled pack’s one-line describe.',
@@ -1374,7 +1440,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.work.propose',
       description:
-        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found; starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. This does not start execution.',
+        'Propose work for user approval from the current live input. Every proposal must choose where it runs. targetSessionId names an exact ordinary project/non-project chat, or an existing active long-horizon Space agent with matching targetAgent {spaceId,agentId,sessionId} from daemon.snapshot; there is no standalone scratch session. Instead of targetSessionId, work may name a drivers target: {verb:"start", adapter, place, model?} to start new work in a place from work.find (model only applies to a new HyperNeo session; set it when the human names one) (for a new project folder that does not exist yet, use place {machine, daemon?, folder, name} and add createFolder:true; the folder must be under the home folder with an existing parent; never ask another session to create a folder), or {verb:"send", ref} to continue work it found, or {verb:"adopt", ref} to follow a session the human tapped Track on without sending it anything (that card starts on its own); starting the proposal then runs work.start or work.send as Neo. Managed targets keep native tools and permissions. A targetSessionId that belongs to exactly one Space task or agent is proposed as work {verb:"send"} to that task or agent; other owned and Neo-bound sessions are refused with the route to use. Instructions alone do not bind a target. The target is immutable for this requestKey. When no target clearly fits, ask the human instead of proposing. Set goal to what the human asked, in their own words, and doneWhen to a short checklist of what finished means; both are sent to the worker with the instruction, so a shorter instruction never drops the real goal. When this work replaces a failed or cancelled card, pass supersedes with the id of that card so it shows as replaced; when the concern has failed or cancelled work from the last three days, the proposal is refused until you pass supersedes, using null when it replaces none. This does not start execution.',
       inputSchema: Propose,
       resultSchema: WorkResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

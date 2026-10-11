@@ -282,9 +282,9 @@ export class NeoWorkDriverTargetRepository {
         (target.data.verb === 'start' ? target.data.adapter : target.data.ref.adapter);
       const daemon =
         ref?.daemon ??
-        (target.data.verb === 'send'
-          ? (target.data.ref.daemon ?? null)
-          : (target.data.place.daemon ?? null));
+        (target.data.verb === 'start'
+          ? (target.data.place.daemon ?? null)
+          : (target.data.ref.daemon ?? null));
       const status = WorkStatusSchema.safeParse(row.workStatus === 'cancelled' ? null : row.status);
       return [
         {
