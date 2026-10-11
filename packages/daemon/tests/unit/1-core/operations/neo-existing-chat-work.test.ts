@@ -282,6 +282,23 @@ describe('Neo existing chat work', () => {
     expect(service.repo.listWork()).toHaveLength(1);
   });
 
+  test('a retry returns its card even after another card joined the same chat', async () => {
+    const first = await invoke(
+      'neo.work.propose',
+      { ...input('A'), allowBusyTarget: undefined },
+      source('ask-A')
+    );
+    await propose('B');
+
+    expect(
+      await invoke(
+        'neo.work.propose',
+        { ...input('A'), allowBusyTarget: undefined },
+        source('ask-A')
+      )
+    ).toMatchObject({ value: (first as { value: unknown }).value });
+  });
+
   test('request retries cannot change the chosen target or input lineage', async () => {
     const work = await propose();
     expect(await invoke('neo.work.propose', input(), source('ask-A'))).toMatchObject({

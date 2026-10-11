@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import {
+  hasNeoWorkRequest,
   neoTargetSessionId,
   readNeoIdleSessions,
   readNeoSessionLoad,
@@ -1101,16 +1102,16 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe((origin: NeoWorkOrigin) => origin, 'admission', 'origin')
     .pipe(
-      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin) =>
-        requireIdleNeoTarget(
+      (input: z.infer<typeof Propose>, origin: NeoWorkOrigin) => {
+        const requestKey = `${origin.originSessionId}:${input.requestKey}`;
+        const db = service.db.getDatabase();
+        return requireIdleNeoTarget(
           neoTargetSessionId(input.targetSessionId, input.work),
-          readNeoSessionLoad(
-            service.db.getDatabase(),
-            `${origin.originSessionId}:${input.requestKey}`
-          ),
-          input.allowBusyTarget,
-          (sessionId, loaded) => readNeoIdleSessions(service.db.getDatabase(), sessionId, loaded)
-        ),
+          readNeoSessionLoad(db, requestKey),
+          input.allowBusyTarget || hasNeoWorkRequest(db, requestKey),
+          (sessionId, loaded) => readNeoIdleSessions(db, sessionId, loaded)
+        );
+      },
       ['input', 'origin'],
       'result:admission'
     )
