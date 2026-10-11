@@ -9,7 +9,11 @@ import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 import { connectionState } from '../lib/state.ts';
 import type { NeoPendingAsk } from './neo-intake.ts';
 import { projectNeoProcessingActivity } from './processing-activity.ts';
-import { NeoPublicConversation, PendingAsk } from './NeoPublicConversation.tsx';
+import {
+  NeoPublicConversation,
+  type NeoSessionMute,
+  PendingAsk,
+} from './NeoPublicConversation.tsx';
 import type { NeoPublicConversation as PublicConversation } from './public-conversation.ts';
 
 type QuestionEpoch = Readonly<{ store: SessionStore; sessionId: string; toolUseId: string }>;
@@ -65,8 +69,10 @@ export function NeoConversation({
   onRetryAsk,
   onEditAsk,
   onEditUndelivered,
+  mute,
 }: {
   store: SessionStore;
+  mute?: NeoSessionMute;
   onEditUndelivered?: (ask: NeoConversationAsk) => boolean | void;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
@@ -154,6 +160,7 @@ export function NeoConversation({
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
             onEditUndelivered={onEditUndelivered}
+            mute={mute}
           />
         )}
         {pendingAsks

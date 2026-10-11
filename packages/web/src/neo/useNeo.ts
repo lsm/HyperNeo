@@ -180,6 +180,22 @@ export function useNeo() {
     }
   }
 
+  async function muteSession(key: string, muted: boolean) {
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.session.mute', {
+        key,
+        muted,
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That session could not be muted.');
+    }
+  }
+
   async function tickAskItem(askId: string, itemId: string) {
     if (busyWork) return;
     setBusyWork(itemId);
@@ -232,6 +248,7 @@ export function useNeo() {
     act,
     settleAsk,
     approveAsk,
+    muteSession,
     tickAskItem,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
