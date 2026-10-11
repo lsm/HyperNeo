@@ -33,6 +33,7 @@ import {
   readDriverSettlement,
   readNeoStartFolder,
   requireNeoStartFolder,
+  neoWorkProgress,
 } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -937,7 +938,9 @@ describe('Neo work with a drivers target', () => {
       expect(notes[0][2]).toContain('do not tell the human yet');
       expect(notes[0][2]).toContain(NEO_WORK_SUMMARY_NOTE);
 
-      for (let n = 0; n < 5; n++) service.workContinues.record('work-1', `Step ${n}`, Date.now());
+      const still = neoWorkProgress(service.repo.getWork('work-1')!, null, null);
+      for (let n = 0; n < 5; n++)
+        service.workContinues.record('work-1', `Step ${n}`, Date.now(), still);
       await service.reconcile('work-1');
       expect(notes[1].slice(0, 2)).toEqual(['neo:root', 'work-1:done-check:5']);
       expect(notes[1][2]).toContain('continue_budget_spent');
@@ -2207,7 +2210,7 @@ describe('Neo work with a drivers target', () => {
       await service.reconcile('work-1');
       expect(sent).toEqual([]);
 
-      service.workContinues.record('work-1', 'Also the footer.', Date.now());
+      service.workContinues.record('work-1', 'Also the footer.', Date.now(), '0|x');
       await service.reconcile('work-1');
       expect(sent).toContain('work-1:continued:1');
     } finally {

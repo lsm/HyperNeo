@@ -147,7 +147,9 @@ describe('projectNeoCardViews', () => {
         work: [work('w', 'reported', 's1')],
         prs: [{ workId: 'w', prs: [pr(7, { checks: 'pending' }), pr(8)], waiting: true }],
         goals: [{ workId: 'w', goal: 'Ship it', doneWhen: 'Merged' }],
-        continues: [{ workId: 'w', count: 2, continuedAt: 1, lastMessage: 'go' }],
+        continues: [
+          { workId: 'w', count: 2, continuedAt: 1, lastMessage: 'go', progress: null, stalled: 0 },
+        ],
         asks: [ask({ workIds: ['w'], pooled: true })],
       })
     );
@@ -246,7 +248,16 @@ describe('projectNeoCardViews', () => {
       parts({
         work: [work('w', 'reported')],
         prs: [{ workId: 'w', prs: [pr(3, { state: 'MERGED' }), pr(4)], waiting: false }],
-        continues: [{ workId: 'w', count: 1, continuedAt: 1, lastMessage: 'Fix CI' }],
+        continues: [
+          {
+            workId: 'w',
+            count: 1,
+            continuedAt: 1,
+            lastMessage: 'Fix CI',
+            progress: null,
+            stalled: 0,
+          },
+        ],
       })
     );
     expect(cards[0]).toMatchObject({ continuedMessage: 'Fix CI', pr: { merged: ['#3'] } });

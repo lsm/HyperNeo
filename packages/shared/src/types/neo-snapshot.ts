@@ -26,7 +26,7 @@ export interface NeoWorkGoal {
   doneWhen: string | null;
 }
 
-export const NEO_WORK_CONTINUE_LIMIT = 5;
+export const NEO_WORK_STALLED_CONTINUES = 3;
 export const NEO_ASK_CONTINUE_LIMIT = 20;
 export const NEO_ASK_CONTINUE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export const NEO_WORK_CLOSED_DONE = 'Closed as done by the user.';
@@ -36,6 +36,8 @@ export interface NeoWorkContinue {
   count: number;
   continuedAt: number;
   lastMessage: string;
+  progress: string | null;
+  stalled: number;
 }
 
 export interface NeoWorkSupersession {
