@@ -222,9 +222,9 @@ export function driverStartedReport(ref: WorkRef, link?: string, model?: string)
   return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${runs}${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
-export function driverAdoptedReport(ref: WorkRef, link?: string): string {
+export function driverAdoptedReport(ref: WorkRef, status: WorkStatus, link?: string): string {
   const where = link ? ` It opens at ${link}.` : '';
-  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; adopting it sent it nothing.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
+  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; adopting it sent it nothing. It was ${status} when adopted; the card settles only on what it does next, so judge a session that already finished, failed or stopped against doneWhen now and continue it with neo.work.continue.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {

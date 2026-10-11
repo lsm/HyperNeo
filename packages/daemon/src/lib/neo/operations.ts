@@ -84,6 +84,7 @@ import {
 } from './session-watch.ts';
 import {
   findNeoSessionNotice,
+  requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
 } from './session-track.ts';
@@ -410,7 +411,7 @@ export function requireNeoExecutionChoice(
         reason: {
           ok: false,
           reason:
-            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
+            'Choose where the work runs: targetSessionId for an existing chat, or work {verb:"start", adapter, place} or {verb:"send", ref} from work.find, or {verb:"adopt", ref} for a session the human tapped Track on. There is no standalone scratch session. If no project, Space or chat clearly fits, ask the human where the work belongs instead of proposing.',
         },
       };
 }
@@ -716,6 +717,12 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
+      () => requireNeoTrackRoot(service.repo.getBindingForConcern(null)?.sessionId),
+      'caller',
+      'result:track'
+    )
+    .pipe((root: string) => root, 'track', 'root')
+    .pipe(
       (input: z.infer<typeof SessionTrack>) =>
         findNeoSessionNotice(service.trackableNotices, input.key),
       'input',
@@ -728,8 +735,9 @@ export function createNeoOperations(service: NeoService) {
       'result:track'
     )
     .pipe(
-      (notice: NeoSessionNotice, now: number) => service.trackSession(notice, now),
-      ['track', 'now'],
+      (root: string, notice: NeoSessionNotice, now: number) =>
+        service.trackSession(root, notice, now),
+      ['root', 'track', 'now'],
       'track'
     )
     .endAsync('track') as (

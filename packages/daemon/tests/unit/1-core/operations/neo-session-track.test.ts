@@ -8,6 +8,7 @@ import {
   findNeoSessionNotice,
   keepNeoTrackedSessions,
   NEO_SESSION_TRACK_MS,
+  requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
 } from '../../../../src/lib/neo/session-track.ts';
@@ -34,6 +35,13 @@ const notice = (overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => 
   kind: 'failed',
   at: 1,
   ...overrides,
+});
+
+describe('requireNeoTrackRoot', () => {
+  test('refuses cleanly before Neo has a root session', () => {
+    expect(requireNeoTrackRoot('neo:root')).toEqual({ value: 'neo:root' });
+    expect(requireNeoTrackRoot(undefined)).toMatchObject({ reason: { ok: false } });
+  });
 });
 
 describe('findNeoSessionNotice', () => {
@@ -197,25 +205,37 @@ describe('neo.session.track', () => {
           .join('\n')
       ).toContain('tapped Track');
 
-      const { work: card } = service.driverTargets.propose(
-        service.repo,
+      const proposed = await invokeOperation(
+        createOperationRegistry(createNeoOperations(service)),
+        'neo.work.propose',
         {
-          id: 'w-track',
-          requestKey: 'root:track',
-          concernId: null,
-          originSessionId: 'neo:root',
+          requestKey: 'track',
           title: 'Quiet-model research',
           instruction: 'Follow the research session.',
+          goal: 'Research quiet models',
+          doneWhen: '- findings written up',
+          work: { verb: 'adopt', ref },
         },
-        { verb: 'adopt', ref }
+        {
+          source: 'mcp',
+          sessionId: 'neo:root',
+          role: 'neo',
+          neoTurn: { messageId: 'turn-1', human: false, isLive: () => true },
+        }
       );
-      await service.start(card.id);
+      expect(proposed).toMatchObject({ value: { ok: true } });
+      const card = (proposed as { value: { work: { id: string } } }).value.work;
+      expect(service.trackedSessions.has(key)).toBe(false);
+      expect(service.askRecords.forWork(card.id)?.approvedAt).toBe(clock);
       expect(sent).not.toHaveBeenCalled();
       expect(service.repo.getWork(card.id)).toMatchObject({
         status: 'queued',
         report: expect.stringContaining('Tracking the codex-desktop session'),
       });
       expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
+      clock += 11 * 60_000;
+      await service.refreshDriverWork();
+      expect(service.repo.getWork(card.id)?.status).toBe('queued');
       expect(await invoke({ key })).toMatchObject({
         value: { ok: false, reason: 'A Neo card already follows this session.' },
       });

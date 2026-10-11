@@ -1146,7 +1146,7 @@ export class NeoService {
     if (current?.status === 'queued')
       this.repo.transitionWork(work.id, current, {
         status: 'queued',
-        report: driverAdoptedReport(ref, live.link),
+        report: driverAdoptedReport(ref, live.status, live.link),
       });
   }
 
@@ -1316,9 +1316,7 @@ export class NeoService {
     };
   }
 
-  async trackSession(notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    const root = this.repo.getBindingForConcern(null)?.sessionId;
-    if (!root) throw new Error('Neo has no root session to track this session with.');
+  async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
     this.trackedSessions = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
     const content = fillPrompt(NEO_SESSION_TRACK, {
       title: JSON.stringify(notice.title),
@@ -1621,7 +1619,8 @@ export class NeoService {
       neoCardSent(this.driverTargets.readSent(workId), this.repo.getWork(workId)),
     readLiveStatus: (workId) => this.driverTargets.readLiveStatus(workId),
     isContinuing: (workId) =>
-      !!this.workContinues.get(workId) || this.driverTargets.get(workId)?.verb === 'send',
+      !!this.workContinues.get(workId) ||
+      ['send', 'adopt'].includes(this.driverTargets.get(workId)?.verb ?? ''),
     readStatus: (work, ref, since) =>
       this.invokeAsCard(work, 'work.status', { ref, ...(since !== null ? { since } : {}) }),
     recordStartedAt: (workId, at) => this.driverTargets.recordStartedAt(workId, at),

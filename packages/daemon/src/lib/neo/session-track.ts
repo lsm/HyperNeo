@@ -6,6 +6,14 @@ export const NEO_SESSION_TRACK_MS = 60 * 60_000;
 
 type Rejection = { ok: false; reason: string };
 
+export function requireNeoTrackRoot(
+  root: string | undefined
+): { value: string } | { reason: Rejection } {
+  return root
+    ? { value: root }
+    : { reason: { ok: false, reason: 'Neo has not started yet; open Neo once, then tap Track.' } };
+}
+
 export function findNeoSessionNotice(
   notices: readonly NeoSessionNotice[],
   key: string
