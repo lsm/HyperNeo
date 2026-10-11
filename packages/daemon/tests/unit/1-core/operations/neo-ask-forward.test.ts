@@ -113,6 +113,7 @@ describe('neoForwardedText', () => {
 describe('neoForwardContent', () => {
   test('tells the first receiver it may still forward to main, and the last one nothing', () => {
     expect(neoForwardContent('Garden', 0, 'Fix the pond pump')).toContain('forward it to main');
+    expect(neoForwardContent('Pond', 1, 'Fix the pond pump')).toContain('neo.publication.publish');
     expect(neoForwardContent('Pond', 1, 'Fix the pond pump')).not.toContain('forward it to main');
   });
 });
@@ -121,6 +122,7 @@ describe('neo.ask.forward', () => {
   function runtime() {
     const bindings = new Map([garden, pond, root].map((binding) => [binding.sessionId, binding]));
     const forwards: NeoAskForward[] = [];
+    let failDelivery = false;
     const delivered: unknown[] = [];
     const deps: NeoAskForwardRuntime = {
       getBinding: (id) => bindings.get(id) ?? null,
@@ -135,7 +137,14 @@ describe('neo.ask.forward', () => {
         forwards.push(forward);
         return true;
       },
+      unrecord: (_ask, hop) => {
+        forwards.splice(
+          forwards.findIndex((item) => item.hop === hop),
+          1
+        );
+      },
       deliver: async (...args) => {
+        if (failDelivery) throw new Error('mailbox handoff rejected');
         delivered.push(args);
       },
     };
@@ -146,7 +155,14 @@ describe('neo.ask.forward', () => {
         { to },
         who
       );
-    return { invoke, forwards, delivered };
+    return {
+      invoke,
+      forwards,
+      delivered,
+      failNextDelivery: (fail: boolean) => {
+        failDelivery = fail;
+      },
+    };
   }
 
   test('hands the ask on once, then only to main, stamping each hand-off with the ask', async () => {
@@ -169,6 +185,20 @@ describe('neo.ask.forward', () => {
       [pond.sessionId, 'neo-forward:ask-1:0', garden.sessionId, ask],
       [root.sessionId, 'neo-forward:ask-1:1', pond.sessionId, ask],
     ]);
+  });
+
+  test('a failed delivery takes the hop back, so the holder can forward again', async () => {
+    const { invoke, forwards, delivered, failNextDelivery } = runtime();
+    failNextDelivery(true);
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+      kind: 'failed',
+    });
+    expect(forwards).toEqual([]);
+    failNextDelivery(false);
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+      value: { ok: true, hop: 0 },
+    });
+    expect(delivered).toHaveLength(1);
   });
 
   test('refuses a topic that does not exist', async () => {
@@ -198,6 +228,8 @@ describe('NeoAskForwardRepository', () => {
     expect(repo.record(ask, forward(0))).toBe(false);
     expect(repo.list(ask).map((item) => item.hop)).toEqual([0, 1]);
     expect(repo.list({ ...ask, messageId: 'other' })).toEqual([]);
+    repo.remove(ask, 1);
+    expect(repo.list(ask).map((item) => item.hop)).toEqual([0]);
   });
 
   test('a forwarded ask counts as handled, so the forwarder publishes no reply of its own', async () => {

@@ -43,6 +43,7 @@ export interface NeoAskForwardRuntime {
   askText(ask: NeoAskOrigin): string | null;
   open(concernId: string): Promise<string>;
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean;
+  unrecord(ask: NeoAskOrigin, hop: number): void;
   deliver(
     sessionId: string,
     messageId: string,
@@ -199,13 +200,18 @@ function createForward(runtime: NeoAskForwardRuntime) {
         });
         if (!recorded) return { ok: false, reason: 'forward_limit' };
         const from = runtime.getConcern(holder.concernId)?.title ?? holder.concernId;
-        await runtime.deliver(
-          session,
-          neoForwardMessageId(ask, target.hop),
-          neoForwardContent(from, target.hop, message),
-          holder.sessionId,
-          ask
-        );
+        try {
+          await runtime.deliver(
+            session,
+            neoForwardMessageId(ask, target.hop),
+            neoForwardContent(from, target.hop, message),
+            holder.sessionId,
+            ask
+          );
+        } catch (error) {
+          runtime.unrecord(ask, target.hop);
+          throw error;
+        }
         return { ok: true, hop: target.hop, to: target.to };
       },
       ['target', 'session', 'holder', 'ask', 'message'],

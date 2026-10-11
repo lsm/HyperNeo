@@ -22,6 +22,14 @@ export class NeoAskForwardRepository {
       .all(ask.sessionId, ask.messageId) as NeoAskForward[];
   }
 
+  remove(ask: NeoAskOrigin, hop: number): void {
+    this.db
+      .prepare(
+        'DELETE FROM neo_ask_forwards WHERE ask_session_id = ? AND ask_message_id = ? AND hop = ?'
+      )
+      .run(ask.sessionId, ask.messageId, hop);
+  }
+
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean {
     return (
       this.db

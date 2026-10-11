@@ -1383,6 +1383,7 @@ export function createNeoOperations(service: NeoService) {
       },
       open: (concernId) => service.open(concernId),
       record: (ask, forward) => service.askForwards.record(ask, forward),
+      unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
       deliver: (sessionId, messageId, content, from, ask) =>
         service.deliverForward(sessionId, messageId, content, from, ask),
     }),
