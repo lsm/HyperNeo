@@ -13,9 +13,11 @@ import {
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   extractNeoAskRefs,
+  extractNeoCardRefs,
   neoAskCardRefs,
   neoAskRefNews,
   readGithubRefStates,
+  readNeoPrRefUrls,
   type NeoRef,
   type NeoRefState,
 } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -96,6 +98,50 @@ describe('extractNeoAskRefs', () => {
         []
       )
     ).toEqual([ref(5546)]);
+  });
+});
+
+describe('extractNeoCardRefs', () => {
+  const repo = { owner: 'lsm', repo: 'HyperNeo' };
+  test.each<[string, string, typeof repo | null, string[]]>([
+    ['reads owner/repo#N', 'See lsm/HyperNeo#6403.', null, ['lsm/HyperNeo#6403']],
+    [
+      'reads bare #N against the card repo',
+      'CI on #6403 and #6440.',
+      repo,
+      ['lsm/HyperNeo#6403', 'lsm/HyperNeo#6440'],
+    ],
+    ['skips bare #N without a repo', 'CI on #6403.', null, []],
+    ['lists each ref once', 'lsm/HyperNeo#6403 then #6403', repo, ['lsm/HyperNeo#6403']],
+  ])('%s', (_label, text, known, refs) => {
+    expect(
+      extractNeoCardRefs(text, known).map((ref) => `${ref.owner}/${ref.repo}#${ref.number}`)
+    ).toEqual(refs);
+  });
+});
+
+describe('readNeoPrRefUrls', () => {
+  test('keeps pull requests, drops issues, and reads each ref once', async () => {
+    const asked: string[] = [];
+    const read = async (refs: readonly NeoRef[]): Promise<NeoRefState[]> => {
+      asked.push(...refs.map((ref) => String(ref.number)));
+      return refs.map((ref) => ({
+        url: `https://github.com/lsm/HyperNeo/${ref.number === 7001 ? 'issues' : 'pull'}/${ref.number}`,
+        kind: ref.number === 7001 ? ('issue' as const) : ('pr' as const),
+        state: 'OPEN' as const,
+        at: null,
+        done: false,
+        closedBy: null,
+      }));
+    };
+    const refs = [7001, 7002].map((number) => ({ owner: 'lsm', repo: 'hyperneo', number }));
+    expect(await readNeoPrRefUrls(refs, read)).toEqual([
+      'https://github.com/lsm/HyperNeo/pull/7002',
+    ]);
+    expect(await readNeoPrRefUrls(refs, read)).toEqual([
+      'https://github.com/lsm/HyperNeo/pull/7002',
+    ]);
+    expect(asked).toEqual(['7001', '7002']);
   });
 });
 

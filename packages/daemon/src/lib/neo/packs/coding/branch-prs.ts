@@ -6,11 +6,15 @@ import { NEO_WORK_PR_READ_MS } from './work-prs.ts';
 
 export type NeoWorkBranch = { branch: string; cwd: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
+export type NeoWorkRepo = { owner: string; repo: string };
+export type NeoWorkRepoReader = (cwd: string) => Promise<NeoWorkRepo | null>;
 
 export const NEO_BRANCH_PR_MAX = 2;
 const NEO_BRANCH_PR_READ = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
+const RepoSchema = z.object({ owner: z.object({ login: z.string() }), name: z.string() });
 const read = new Map<string, { at: number; urls: string[] }>();
+const repos = new Map<string, NeoWorkRepo>();
 
 export function neoWorkBranch(
   session: { worktree?: WorktreeMetadata } | null
@@ -18,6 +22,29 @@ export function neoWorkBranch(
   return session?.worktree?.branch
     ? { branch: session.worktree.branch, cwd: session.worktree.worktreePath }
     : null;
+}
+
+export function neoWorkRepoCwd(
+  session: { worktree?: WorktreeMetadata; workspacePath?: string | null } | null
+): string | null {
+  return session?.worktree?.worktreePath ?? session?.workspacePath ?? null;
+}
+
+export async function readGithubWorkRepo(
+  cwd: string,
+  spawnImpl: SpawnFn = spawnProcess
+): Promise<NeoWorkRepo | null> {
+  const cached = repos.get(cwd);
+  if (cached) return cached;
+  const outcome = await runGhJson(['gh', 'repo', 'view', '--json', 'owner,name'], cwd, spawnImpl, {
+    resourceHint: 'graphql',
+    stripGHRepo: true,
+  });
+  const parsed = outcome.ok ? RepoSchema.safeParse(outcome.data) : null;
+  if (!parsed?.success) return null;
+  const repo = { owner: parsed.data.owner.login, repo: parsed.data.name };
+  repos.set(cwd, repo);
+  return repo;
 }
 
 export function neoCardPrUrls(base: readonly string[], opened: readonly string[]): string[] {

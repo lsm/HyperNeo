@@ -1155,6 +1155,59 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('tracks the pull requests a card reports by bare number in its repository', async () => {
+    const ref = { adapter: 'hyperneo', id: 'card-session' };
+    const pull = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply: 'Waiting on CI results on #6403 and #6440; epic #6230 stays open.',
+      },
+    }));
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Split the packs', '- merged to dev');
+    fileUnderAsk(service);
+    const cwds: string[] = [];
+    service.readBranchPrs = async () => [];
+    service.readWorkRepo = async (cwd) => {
+      cwds.push(cwd);
+      return { owner: 'lsm', repo: 'HyperNeo' };
+    };
+    service.readRefStates = async (refs) =>
+      refs.map((item) => ({
+        url:
+          item.number === 6230 ? 'https://github.com/lsm/HyperNeo/issues/6230' : pull(item.number),
+        kind: item.number === 6230 ? ('issue' as const) : ('pr' as const),
+        state: 'OPEN' as const,
+        at: null,
+        done: false,
+        closedBy: null,
+      }));
+    service.readPrs = async (urls) =>
+      urls.map((url) => ({
+        url,
+        state: 'OPEN',
+        checks: 'passing',
+        review: 'approved',
+        createdAt: Date.now() + 60_000,
+      }));
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      db.createSession({ ...createTestSession('card-session'), workspacePath: '/repo' });
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(cwds).toContain('/repo');
+      expect(service.workPrs.get('work-1')?.prs.map((pr) => pr.url)).toEqual([
+        pull(6403),
+        pull(6440),
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('ticks a merged-PR item itself when the card reports its PR merged', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/6265';

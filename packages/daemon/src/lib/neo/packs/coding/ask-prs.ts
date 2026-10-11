@@ -49,6 +49,7 @@ const GhRefSchema = z.object({
   }),
 });
 const settled = new Map<string, NeoRefState>();
+const kinds = new Map<string, string | null>();
 const missing = new Map<string, number>();
 const NEO_REF_MISSING_MS = 60 * 60_000;
 
@@ -92,6 +93,39 @@ export function extractNeoAskRefs(
     [...named, ...bare].filter((ref) => !skip.has(refKey(ref))).map((ref) => [refKey(ref), ref])
   );
   return [...refs.values()].slice(0, NEO_ASK_REF_MAX);
+}
+
+export function extractNeoCardRefs(
+  text: string,
+  repo: Pick<NeoRef, 'owner' | 'repo'> | null
+): NeoRef[] {
+  const named = [...text.matchAll(REF_NAME)].map(([, owner, name, number]) => ({
+    owner,
+    repo: name,
+    number: Number(number),
+  }));
+  const bare = repo
+    ? [...text.matchAll(REF_BARE)].map(([, number]) => ({ ...repo, number: Number(number) }))
+    : [];
+  return [...new Map([...named, ...bare].map((ref) => [refKey(ref), ref])).values()].slice(
+    0,
+    NEO_ASK_REF_MAX
+  );
+}
+
+export async function readNeoPrRefUrls(
+  refs: readonly NeoRef[],
+  readStates: NeoRefStateReader
+): Promise<string[]> {
+  const unknown = refs.filter((ref) => !kinds.has(refKey(ref)));
+  if (unknown.length) {
+    const states = await readStates(unknown);
+    for (const state of states) {
+      const found = neoRefFromUrl(state.url);
+      if (found) kinds.set(refKey(found), state.kind === 'pr' ? state.url : null);
+    }
+  }
+  return refs.flatMap((ref) => kinds.get(refKey(ref)) ?? []);
 }
 
 export function neoAskCardRefs(

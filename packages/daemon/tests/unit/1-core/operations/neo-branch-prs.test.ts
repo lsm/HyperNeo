@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   neoCardPrUrls,
   neoWorkBranch,
+  neoWorkRepoCwd,
   readGithubBranchPrs,
+  readGithubWorkRepo,
 } from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
 
 const worktree = {
@@ -69,6 +71,39 @@ describe('readGithubBranchPrs', () => {
       'url',
       '--limit',
       '5',
+    ]);
+  });
+});
+
+describe('neoWorkRepoCwd', () => {
+  test("uses the card session's worktree, then its workspace folder", () => {
+    expect(neoWorkRepoCwd({ worktree, workspacePath: '/repo' })).toBe('/repo/.worktrees/fix');
+    expect(neoWorkRepoCwd({ workspacePath: '/repo' })).toBe('/repo');
+    expect(neoWorkRepoCwd({ workspacePath: null })).toBe(null);
+    expect(neoWorkRepoCwd(null)).toBe(null);
+  });
+});
+
+describe('readGithubWorkRepo', () => {
+  test('reads the repository of a folder once and keeps it', async () => {
+    const calls: Array<{ args: string[]; cwd?: string }> = [];
+    const spawn = (args: string[], options?: { cwd?: string }) => {
+      calls.push({ args, cwd: options?.cwd });
+      return {
+        stdout: new Response(JSON.stringify({ owner: { login: 'lsm' }, name: 'HyperNeo' })).body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    };
+    expect(await readGithubWorkRepo('/repo/a', spawn as never)).toEqual({
+      owner: 'lsm',
+      repo: 'HyperNeo',
+    });
+    await readGithubWorkRepo('/repo/a', spawn as never);
+    expect(calls).toEqual([
+      { args: ['gh', 'repo', 'view', '--json', 'owner,name'], cwd: '/repo/a' },
     ]);
   });
 });
