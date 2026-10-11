@@ -257,7 +257,7 @@ type NeoWorkPrCard = {
   packEvidence: boolean;
   toldAt: number | null;
 };
-type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; readable: boolean };
+type NeoWorkPrRefreshed = { read: NeoEvidenceRead | null; failed: boolean };
 type NeoNeedsYouCard = {
   state: ReturnType<typeof readDriverNeedsYou>;
   noted: number | null;
@@ -1577,13 +1577,16 @@ export class NeoService {
     )
     .pipe(
       async (refresh: { work: NeoWork }, card: NeoWorkPrCard) => {
-        const packs = this.evidencePacks(card.ask, !!card.row);
-        return {
-          read: await readNeoPackEvidence(packs, refresh.work, (id, error) =>
-            this.log.warn(`Neo pack ${id} evidence read failed`, error)
-          ),
-          readable: packs.some((pack) => !!pack.readEvidence),
-        };
+        let failed = false;
+        const read = await readNeoPackEvidence(
+          this.evidencePacks(card.ask, !!card.row),
+          refresh.work,
+          (id, error) => {
+            failed = true;
+            this.log.warn(`Neo pack ${id} evidence read failed`, error);
+          }
+        );
+        return { read, failed };
       },
       ['refresh', 'card'],
       'refreshed'
@@ -1595,8 +1598,8 @@ export class NeoService {
     )
     .pipe(
       (refreshed: NeoWorkPrRefreshed, now: number) => ({
-        read: neoPackEvidenceOrNone(refreshed.read, refreshed.readable, now),
-        stand: !refreshed.read && !refreshed.readable,
+        read: neoPackEvidenceOrNone(refreshed.read, refreshed.failed, now),
+        stand: !refreshed.read && !refreshed.failed,
       }),
       ['refreshed', 'now'],
       'planned'
@@ -1651,7 +1654,7 @@ export class NeoService {
                 signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
               }
             : {
-                stale: !refreshed.read?.read.ok && refreshed.readable,
+                stale: refreshed.failed || refreshed.read?.read.ok === false,
                 ask: card.ask,
                 signature: planned.read ? neoEvidenceSignature(planned.read.evidence) : undefined,
               }

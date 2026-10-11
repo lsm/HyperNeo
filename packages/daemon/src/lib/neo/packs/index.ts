@@ -149,10 +149,10 @@ export async function readNeoPackEvidence(
 
 export function neoPackEvidenceOrNone(
   read: NeoEvidenceRead | null,
-  readable: boolean,
+  failed: boolean,
   now: number
 ): NeoEvidenceRead | null {
-  return read ?? (readable ? null : { evidence: [], read: { ok: true, okAt: now } });
+  return read ?? (failed ? null : { evidence: [], read: { ok: true, okAt: now } });
 }
 
 export function neoPackChecks(packs: readonly NeoPack[]): Record<string, NeoPackCheck> {

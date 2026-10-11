@@ -581,7 +581,7 @@ describe('requireNeoEvidenceRefresh', () => {
 });
 
 describe('neoPackEvidenceOrNone', () => {
-  test('stands in an empty read only when no pack can read the card', () => {
+  test('stands in an empty read unless a pack failed to read the card', () => {
     const read = { evidence: [], read: { ok: false, okAt: 1 } };
     expect(neoPackEvidenceOrNone(read, true, 50)).toBe(read);
     expect(neoPackEvidenceOrNone(null, true, 50)).toBe(null);
