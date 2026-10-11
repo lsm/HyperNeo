@@ -2,6 +2,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { hashString32 } from '../runtime-hash.ts';
 import { isMainNeoBinding, isNeoCoordinatorBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
@@ -32,7 +33,14 @@ export interface NeoAskEvidence {
 }
 const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
-const ASK_EVIDENCE = /^neo-ask-evidence:(.+):[0-9a-z]+$/;
+
+export function neoAskEvidenceMessageId(askId: string, signature: string): string {
+  return `neo-ask-evidence:${askId}:${hashString32(signature).toString(36)}`;
+}
+
+export function neoAskEvidenceAskId(messageId: string): string | null {
+  return /^neo-ask-evidence:(.+):[0-9a-z]+$/.exec(messageId)?.[1] ?? null;
+}
 
 export function neoNudgeMessageId(messageId: string): string {
   return `${NUDGE_PREFIX}${messageId}`;
@@ -129,7 +137,7 @@ export function readNeoAskEvidence(input: NeoAskOrigin, reads: NeoAskOriginReads
     : null;
   const id = envelope ? input.messageId.slice('neo-consult:'.length, -(envelope.length + 1)) : null;
   const consultation = id ? (reads.getConsultation(id) ?? null) : null;
-  const askId = envelope ? null : (ASK_EVIDENCE.exec(input.messageId)?.[1] ?? null);
+  const askId = envelope ? null : neoAskEvidenceAskId(input.messageId);
   const workId = id ? reviewWorkId(id) : askId ? null : checkedWorkId(input.messageId);
   const work = workId ? (reads.getWork(workId) ?? null) : null;
   return {
@@ -161,7 +169,7 @@ export function selectNeoAskParent(input: NeoAskOrigin, evidence: NeoAskEvidence
   if (nudged) return { kind: 'parent', origin: { sessionId: input.sessionId, messageId: nudged } };
   if (!envelope && evidence.ask) {
     const { ask } = evidence;
-    return ASK_EVIDENCE.exec(input.messageId)?.[1] === ask.id &&
+    return neoAskEvidenceAskId(input.messageId) === ask.id &&
       input.sessionId === ask.originSessionId &&
       ask.originMessageId
       ? {

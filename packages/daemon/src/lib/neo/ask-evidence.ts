@@ -1,6 +1,5 @@
 import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import { hashString32 } from '../runtime-hash.ts';
 import { isNeoAskLive } from './done-check.ts';
 import { neoEvidenceSignature, type NeoEvidence } from './evidence.ts';
 
@@ -51,10 +50,6 @@ export function planNeoAskEvidenceNote(
         .sort((a, b) => a.key.localeCompare(b.key)),
     },
   };
-}
-
-export function neoAskEvidenceMessageId(askId: string, signature: string): string {
-  return `neo-ask-evidence:${askId}:${hashString32(signature).toString(36)}`;
 }
 
 export function neoAskEvidenceNote(

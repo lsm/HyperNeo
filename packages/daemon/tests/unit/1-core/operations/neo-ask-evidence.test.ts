@@ -3,8 +3,8 @@ import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
+import { neoAskEvidenceMessageId } from '../../../../src/lib/neo/ask-origin.ts';
 import {
-  neoAskEvidenceMessageId,
   neoAskEvidenceNote,
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,

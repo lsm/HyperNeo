@@ -50,6 +50,7 @@ import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts'
 import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
+  neoAskEvidenceMessageId,
   neoNeedsYouMessageId,
   neoDoneCheckMessageId,
   neoWorkReturnMessageId,
@@ -190,7 +191,6 @@ import {
   type NeoSessionSeen,
 } from './session-watch.ts';
 import {
-  neoAskEvidenceMessageId,
   neoAskEvidenceNote,
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
@@ -1205,7 +1205,7 @@ export class NeoService {
     .pipe(
       () => {
         const root = this.repo.getBindingForConcern(null)?.sessionId;
-        return root ? { value: root } : { reason: null };
+        return root ? { value: root } : { reason: 'no_root' as const };
       },
       'now',
       'result:root'
