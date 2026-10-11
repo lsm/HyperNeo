@@ -7,7 +7,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import {
-  createDirectKickoffRecorder,
+  recordDirectKickoffAtomically,
   readDirectKickoffIntent,
   requireDirectKickoffClaim,
   type DirectKickoffInput,
@@ -54,8 +54,9 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-test('inert factory persists one validated entry with stable identity across connections and restart', () => {
-  const record = createDirectKickoffRecorder(db);
+test('recordDirectKickoffAtomically persists one validated entry with stable identity across connections and restart', () => {
+  const record = (input: Parameters<typeof recordDirectKickoffAtomically>[1]) =>
+    recordDirectKickoffAtomically(db, input);
   expect(readDirectKickoffIntent(db, 'attempt')).toBeNull();
   const first = record(input);
   expect(first.recorded).toBe(true);
@@ -63,10 +64,10 @@ test('inert factory persists one validated entry with stable identity across con
   expect(parseMailboxEntry(first.entry)).toEqual(first.entry);
   expect(first.entry.to).toEqual({ kind: 'session', sessionId: 'worker' });
   expect(first.entry.messageUuid).toBeTruthy();
-  expect(createDirectKickoffRecorder(peer)(input)).toEqual(first);
+  expect(recordDirectKickoffAtomically(peer, input)).toEqual(first);
   db.close();
   db = new Database(join(directory, 'test.db'));
-  expect(createDirectKickoffRecorder(db)(input)).toEqual(first);
+  expect(recordDirectKickoffAtomically(db, input)).toEqual(first);
   expect(db.prepare('SELECT COUNT(*) AS count FROM direct_task_kickoff_intents').get()).toEqual({
     count: 1,
   });
@@ -75,7 +76,8 @@ test('inert factory persists one validated entry with stable identity across con
 });
 
 test('content change cannot replace frozen entry, message UUID, priority or TTL', () => {
-  const record = createDirectKickoffRecorder(db);
+  const record = (input: Parameters<typeof recordDirectKickoffAtomically>[1]) =>
+    recordDirectKickoffAtomically(db, input);
   const first = record(input);
   const changed = {
     ...input,
@@ -101,7 +103,7 @@ test.each(['stop-requested', 'running', 'stopped', 'wrong-session', 'missing'] a
         : state === 'missing'
           ? { ...input, attemptId: 'missing' }
           : input;
-    expect(createDirectKickoffRecorder(db)(target)).toEqual({
+    expect(recordDirectKickoffAtomically(db, target)).toEqual({
       recorded: false,
       reason: 'unavailable',
     });
@@ -119,7 +121,8 @@ test('pure claim gate rejects stale generation and stop fences', () => {
 });
 
 test('invalid message creates no partial row and later valid request succeeds', () => {
-  const record = createDirectKickoffRecorder(db);
+  const record = (input: Parameters<typeof recordDirectKickoffAtomically>[1]) =>
+    recordDirectKickoffAtomically(db, input);
   expect(record({ ...input, message: { ...input.message, message: { content: '' } } })).toEqual({
     recorded: false,
     reason: 'invalid_message',
@@ -129,17 +132,17 @@ test('invalid message creates no partial row and later valid request succeeds', 
 });
 
 test('running recovery reads frozen content while missing running content is never invented', () => {
-  const first = createDirectKickoffRecorder(db)(input);
+  const first = recordDirectKickoffAtomically(db, input);
   if (!first.recorded) throw new Error('expected recorded intent');
   tasks.updateTask(taskId, { description: 'Edited after capture' });
   attempts.activate('attempt', 'worker');
   expect(readDirectKickoffIntent(peer, 'attempt')).toEqual(first.entry);
-  expect(createDirectKickoffRecorder(db)(input)).toHaveProperty('reason', 'unavailable');
+  expect(recordDirectKickoffAtomically(db, input)).toHaveProperty('reason', 'unavailable');
   attempts.stop('attempt', 'worker', 'finished');
   attempts.claim(taskId, 'next', 'next-worker');
   attempts.activate('next', 'next-worker');
   expect(
-    createDirectKickoffRecorder(db)({ ...input, attemptId: 'next', sessionId: 'next-worker' })
+    recordDirectKickoffAtomically(db, { ...input, attemptId: 'next', sessionId: 'next-worker' })
   ).toHaveProperty('reason', 'unavailable');
   expect(readDirectKickoffIntent(db, 'next')).toBeNull();
   expect(readDirectKickoffIntent(db, 'attempt')).toEqual(first.entry);
@@ -149,7 +152,7 @@ test('failed storage write leaves no intent and no attempt phase change', () => 
   db.exec(
     "CREATE TRIGGER fail_intent BEFORE INSERT ON direct_task_kickoff_intents BEGIN SELECT RAISE(ABORT, 'intent failure'); END"
   );
-  expect(() => createDirectKickoffRecorder(db)(input)).toThrow('intent failure');
+  expect(() => recordDirectKickoffAtomically(db, input)).toThrow('intent failure');
   expect(readDirectKickoffIntent(db, 'attempt')).toBeNull();
   expect(attempts.get('attempt')?.phase).toBe('reserved');
 });

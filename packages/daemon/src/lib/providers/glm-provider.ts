@@ -17,6 +17,7 @@ import {
   ProviderDiscoveryCache,
   providerDiscoveryFingerprint,
 } from './shared/discovery-cache.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export class GlmProvider implements Provider {
   readonly id = 'glm';
@@ -332,7 +333,7 @@ export class GlmProvider implements Provider {
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,
       ANTHROPIC_AUTH_TOKEN: apiKey,
-      API_TIMEOUT_MS: '3000000',
+      API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
       ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,

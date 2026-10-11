@@ -1,7 +1,7 @@
 import { decodeUlidTimestamp } from '../../../../src/lib/mailbox/ulid';
 import { mailboxEntryExpired } from '../../../../src/lib/mailbox/entry';
 import {
-  createDirectKickoffRecorder,
+  recordDirectKickoffAtomically,
   readDirectKickoffIntent,
 } from '../../../../src/lib/tasks/direct-kickoff-intent';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
@@ -14,7 +14,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import {
-  createDirectAttemptActivator,
+  activateDirectAttemptAtomically,
   requireDirectActivation,
 } from '../../../../src/lib/tasks/activate-direct-attempt';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -29,7 +29,7 @@ let spaceId: string;
 let taskId: string;
 const input = { attemptId: 'attempt', sessionId: 'worker' };
 function activate() {
-  return createDirectAttemptActivator({ db })(input);
+  return activateDirectAttemptAtomically(db, undefined, input);
 }
 beforeEach(() => {
   db = new Database(':memory:');
@@ -42,7 +42,7 @@ beforeEach(() => {
   taskId = tasks.createTask({ spaceId, title: 'Task', description: '' }).id;
   attempts.select(taskId);
   attempts.claim(taskId, 'attempt', 'worker');
-  createDirectKickoffRecorder(db)({
+  recordDirectKickoffAtomically(db, {
     ...input,
     message: { type: 'user', message: { content: 'Frozen kickoff' }, parent_tool_use_id: null },
   });
@@ -58,8 +58,9 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-test('factory is inert and activation preserves repository timestamps and full task fields', () => {
-  const start = createDirectAttemptActivator({ db });
+test('activateDirectAttemptAtomically preserves repository timestamps and full task fields', () => {
+  const start = (input: Parameters<typeof activateDirectAttemptAtomically>[2]) =>
+    activateDirectAttemptAtomically(db, undefined, input);
   expect(tasks.getTask(taskId)?.status).toBe('open');
   expect(attempts.get('attempt')?.phase).toBe('reserved');
   const result = start(input);
@@ -91,7 +92,7 @@ test('stale caller cannot activate its successor or another session', () => {
   attempts.claim(taskId, 'next', 'next-worker');
   expect(activate()).toHaveProperty('activated', false);
   expect(
-    createDirectAttemptActivator({ db })({ attemptId: 'next', sessionId: 'worker' })
+    activateDirectAttemptAtomically(db, undefined, { attemptId: 'next', sessionId: 'worker' })
   ).toHaveProperty('activated', false);
   expect(attempts.getActive(taskId)?.phase).toBe('reserved');
   expect(tasks.getTask(taskId)?.status).toBe('open');
@@ -173,7 +174,7 @@ test('attempt-write failure rolls back task binding and aborts buffered notifica
   db.exec(
     "CREATE TRIGGER fail_activation BEFORE UPDATE OF phase ON direct_task_execution_attempts WHEN NEW.phase = 'running' BEGIN SELECT RAISE(ABORT, 'activation write failed'); END"
   );
-  expect(() => createDirectAttemptActivator({ db, reactiveDb })(input)).toThrow(
+  expect(() => activateDirectAttemptAtomically(db, reactiveDb, input)).toThrow(
     'activation write failed'
   );
   expect(tasks.getTask(taskId)?.status).toBe('open');
@@ -197,7 +198,7 @@ test('notifications commit only once both persisted states are visible', () => {
     abortTransaction: mock(() => {}),
     notifyChange: mock(() => {}),
   } as unknown as ReactiveDatabase;
-  expect(createDirectAttemptActivator({ db, reactiveDb })(input)).toHaveProperty('activated', true);
+  expect(activateDirectAttemptAtomically(db, reactiveDb, input)).toHaveProperty('activated', true);
   expect(commitTransaction).toHaveBeenCalledTimes(1);
 });
 
@@ -277,7 +278,7 @@ test('a previous attempt intent cannot satisfy a successor activation', () => {
   const row = sessions.getSession('worker')!;
   sessions.createSession({ ...row, id: 'next-worker' }, { enforceWorkspaceOwnership: false });
   expect(
-    createDirectAttemptActivator({ db })({ attemptId: 'next', sessionId: 'next-worker' })
+    activateDirectAttemptAtomically(db, undefined, { attemptId: 'next', sessionId: 'next-worker' })
   ).toHaveProperty('activated', false);
   expect(attempts.get('next')?.phase).toBe('reserved');
   expect(readDirectKickoffIntent(db, 'next')).toBeNull();

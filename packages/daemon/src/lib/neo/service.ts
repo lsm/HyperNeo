@@ -125,11 +125,16 @@ import {
   planNeoDoneCheck,
 } from './evidence.ts';
 import {
-  neoCardPrUrls,
   neoWorkBranch,
   readGithubBranchPrs,
   type NeoBranchPrReader,
 } from './packs/coding/branch-prs.ts';
+import {
+  planNeoCardPrCandidates,
+  type NeoCardPrCandidate,
+  type NeoPrClaimRow,
+} from './packs/coding/card-pr-claims.ts';
+import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { type NeoCardCheck, planNeoCardCheck } from './card-check.ts';
 import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
 import {
@@ -274,6 +279,7 @@ export class NeoService {
   readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly workPrs: NeoWorkPrRepository;
+  readonly workPrClaims: NeoWorkPrClaimRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -461,6 +467,7 @@ export class NeoService {
     this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.askRecords = new NeoAskRepository(db.getDatabase(), () => hub.event('neo.changed', {}));
     this.workPrs = new NeoWorkPrRepository(db.getDatabase());
+    this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
@@ -1552,18 +1559,22 @@ export class NeoService {
   private get cardPrDeps(): NeoCardPrDeps {
     return {
       readPrs: (urls) => this.readPrs(urls),
-      prUrls: (work, stored) => this.cardPrUrls(work, stored),
+      prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
+      claims: this.workPrClaims,
       workPrs: this.workPrs,
-      record: (workId, prs, before) => this.recordWorkPrs(workId, prs, before),
+      record: (workId, prs, before, read) => this.recordWorkPrs(workId, prs, before, read),
     };
   }
 
   private recordWorkPrs(
     workId: string,
     prs: readonly NeoWorkPr[],
-    before: NeoWorkPrRow | null
+    before: NeoWorkPrRow | null,
+    read = true
   ): NeoWorkPrRow | null {
-    const row = this.workPrs.record(workId, prs, Date.now());
+    const row = read
+      ? this.workPrs.record(workId, prs, Date.now())
+      : this.workPrs.replacePrs(workId, prs);
     if (row && row.revision !== before?.revision) this.notifyChanged();
     return row;
   }
@@ -1854,14 +1865,17 @@ export class NeoService {
     }
   }
 
-  private async cardPrUrls(
+  private async cardPrCandidates(
     work: NeoWork,
     stored: { prs: readonly NeoWorkPr[] } | null
-  ): Promise<string[]> {
-    return neoCardPrUrls(
-      extractNeoWorkPrUrls(work.report, stored?.prs),
-      await this.branchPrUrls(work.id)
-    );
+  ): Promise<NeoCardPrCandidate[]> {
+    const goal = this.workGoals.get(work.id);
+    return planNeoCardPrCandidates({
+      report: work.report,
+      brief: [work.instruction, goal?.goal, goal?.doneWhen].filter(Boolean).join('\n'),
+      branch: await this.branchPrUrls(work.id),
+      stored: stored?.prs ?? [],
+    });
   }
 
   private async branchPrUrls(workId: string): Promise<string[]> {
@@ -1880,18 +1894,27 @@ export class NeoService {
     .pipe((askId: string) => ({ ask: this.askRecords.get(askId) }), 'askId', 'read')
     .pipe(requireNeoPackTickable, 'read', 'result:ticks')
     .pipe(
-      (ask: NeoAsk) => ({
-        works: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-        rows: this.workPrs.list(ask.workIds),
-      }),
+      (ask: NeoAsk) => {
+        const works = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
+        return {
+          works,
+          rows: this.workPrs.list(ask.workIds),
+          claims: this.workPrClaims.forUrls(
+            works.flatMap((work) => extractNeoWorkPrUrls(work.report))
+          ),
+        };
+      },
       'ticks',
       'linked'
     )
     .pipe(
-      (ask: NeoAsk, linked: { works: NeoWork[]; rows: NeoWorkPrRow[] }) => ({
+      (
+        ask: NeoAsk,
+        linked: { works: NeoWork[]; rows: NeoWorkPrRow[]; claims: NeoPrClaimRow[] }
+      ) => ({
         ticks: planNeoPackTicks(
           ask,
-          neoAskPrEvidence(linked.works, linked.rows),
+          neoAskPrEvidence(linked.works, linked.rows, linked.claims),
           neoPackChecks(this.packs())
         ),
       }),

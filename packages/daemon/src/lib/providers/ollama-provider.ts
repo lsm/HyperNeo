@@ -14,6 +14,7 @@ import {
   type OllamaBridgeServer,
 } from './ollama-bridge-server.js';
 import { DEFAULT_PROBE_TIMEOUT_MS } from './shared/credential-probe.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 type OllamaProviderKind = 'local' | 'cloud';
 
@@ -248,7 +249,7 @@ export class OllamaProvider implements Provider {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
         ANTHROPIC_AUTH_TOKEN: 'ollama-bridge',
         ANTHROPIC_API_KEY: '',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,

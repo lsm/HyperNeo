@@ -8,7 +8,7 @@ import {
   createCodingPack,
   readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import { extractNeoWorkPrUrls } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
+import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
@@ -91,7 +91,14 @@ describe('neoPackFragment', () => {
 describe('coding pack instructions', () => {
   test('carry the moved coding guidance', () => {
     const coding = createCodingPack({
-      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      prCandidates: async (work, stored) =>
+        planNeoCardPrCandidates({
+          report: work.report,
+          brief: '',
+          branch: [],
+          stored: stored?.prs ?? [],
+        }),
+      claims: { forUrls: () => [], replace: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
@@ -146,7 +153,14 @@ describe('readEvidence', () => {
     const failed: number[] = [];
     const recorded: NeoWorkPr[][] = [];
     const coding = createCodingPack({
-      prUrls: async (work, stored) => extractNeoWorkPrUrls(work.report, stored?.prs),
+      prCandidates: async (work, stored) =>
+        planNeoCardPrCandidates({
+          report: work.report,
+          brief: '',
+          branch: [],
+          stored: stored?.prs ?? [],
+        }),
+      claims: { forUrls: () => [], replace: () => {} },
       runningPrUrls: async () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
@@ -306,7 +320,19 @@ describe('readNeoCardPrs', () => {
           calls.reads++;
           return read;
         },
-        prUrls: async () => [url],
+        prCandidates: async () => [{ url, claim: 'mentioned' as const }],
+        claims: {
+          forUrls: () => [
+            {
+              workId: 'w1',
+              urlKey: url.toLowerCase(),
+              claim: 'mentioned' as const,
+              claimedAt: 0,
+              cardCreatedAt: 0,
+            },
+          ],
+          replace: () => {},
+        },
         workPrs: {
           get: () => stored,
           list: () => [],
@@ -342,5 +368,39 @@ describe('readNeoCardPrs', () => {
       ok: false,
     });
     expect(failed.calls.failed).toEqual([10 * 60_000]);
+  });
+
+  test('keeps a stored PR a partial read missed without claiming it', async () => {
+    const second = 'https://github.com/lsm/HyperNeo/pull/2';
+    const replaced: { url: string; claim: string }[][] = [];
+    const recorded: NeoWorkPr[][] = [];
+    const { deps } = harness(null);
+    const result = await readNeoCardPrs(
+      {
+        ...deps,
+        readPrs: async () => [{ ...open, url: second, createdAt: 50 }],
+        prCandidates: async () => [
+          { url, claim: 'mentioned' as const },
+          { url: second, claim: 'mentioned' as const },
+        ],
+        claims: {
+          forUrls: () => [],
+          replace: (_id: string, claims: readonly { url: string; claim: string }[]) =>
+            replaced.push([...claims]),
+        },
+        record: (_id: string, prs: readonly NeoWorkPr[]) => {
+          recorded.push([...prs]);
+          return { ...stored, prs: [...prs] };
+        },
+      },
+      { ...work, createdAt: 10 } as NeoWork,
+      stored,
+      10 * 60_000
+    );
+    expect(replaced.at(-1)?.map((claim) => [claim.url, claim.claim])).toEqual([
+      [second, 'mentioned'],
+    ]);
+    expect(recorded.at(-1)?.map((pr) => pr.url)).toEqual([second, url]);
+    expect(result.ok).toBe(true);
   });
 });

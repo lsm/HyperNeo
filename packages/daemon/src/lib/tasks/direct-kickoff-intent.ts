@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import {
   DirectTaskExecutionRepository,
@@ -85,11 +84,4 @@ export function recordDirectKickoffAtomically(
     );
     return { recorded: true, entry };
   }, 'immediate')();
-}
-
-export function createDirectKickoffRecorder(db: Database) {
-  return (superpipe({ db })('record-direct-task-kickoff') as PipelineAPI)
-    .input('input')
-    .pipe(recordDirectKickoffAtomically, ['db', 'input'], 'result')
-    .end('result') as (input: DirectKickoffInput) => DirectKickoffResult;
 }

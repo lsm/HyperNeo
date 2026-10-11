@@ -8,7 +8,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { createDirectKickoffRecorder } from '../../../../src/lib/tasks/direct-kickoff-intent';
+import { recordDirectKickoffAtomically } from '../../../../src/lib/tasks/direct-kickoff-intent';
 import { createDirectKickoffReconciler } from '../../../../src/lib/tasks/reconcile-direct-kickoff';
 import { captureDirectMailboxAdmission } from '../../../../src/lib/tasks/direct-mailbox-admission';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan';
@@ -50,7 +50,7 @@ beforeEach(() => {
   sessions.createSession(live, { enforceWorkspaceOwnership: false });
   attempts.select(taskId);
   attempts.claim(taskId, input.attemptId, input.sessionId);
-  const recorded = createDirectKickoffRecorder(db)({
+  const recorded = recordDirectKickoffAtomically(db, {
     ...input,
     message: { type: 'user', message: { content: 'Task prompt' }, parent_tool_use_id: null },
   });

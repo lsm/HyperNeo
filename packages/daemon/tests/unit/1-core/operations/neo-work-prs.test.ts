@@ -4,6 +4,7 @@ import {
   isNeoWorkPrWaiting,
   mergeNeoWorkPrReads,
   neoAskPrEvidence,
+  neoCardDisownsPr,
   neoWorkPrEvidence,
   neoWorkPrSignature,
   countNeoWorkPrApprovals,
@@ -184,6 +185,26 @@ describe('neoAskPrEvidence', () => {
     ]);
   });
 
+  test('leaves out reported pull requests the card ceded or had rejected', () => {
+    const third = 'https://github.com/lsm/HyperNeo/pull/44';
+    expect(
+      neoAskPrEvidence(
+        [
+          {
+            id: 'w1',
+            status: 'reported',
+            report: `Opened ${pr.url}, saw ${other.url} and ${third}.`,
+          },
+        ],
+        [{ workId: 'w1', prs: [] }],
+        [
+          { workId: 'w9', urlKey: pr.url.toLowerCase(), claim: 'branch' },
+          { workId: 'w1', urlKey: other.url.toLowerCase(), claim: 'rejected' },
+        ]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([[third, 'pending']]);
+  });
+
   test('leaves out cards that were cancelled', () => {
     expect(
       neoAskPrEvidence(
@@ -238,6 +259,7 @@ describe('shouldReadNeoWorkPrs', () => {
     ['a first report', null, [pr.url], 0, true],
     ['a new pull request', stored, [pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], 0, true],
     ['an open PR read moments ago', stored, [pr.url], late - 1, false],
+    ['the same PR spelled in another case', stored, [pr.url.toLowerCase()], late - 1, false],
     ['an open PR read a while ago', stored, [pr.url], late, true],
     ['a merged PR', { ...stored, prs: [{ ...pr, state: 'MERGED' }] }, [pr.url], late, false],
   ])('%s', (_case, row, urls, now, read) => {
@@ -516,5 +538,27 @@ describe('requireNeoWorkPrDelivery', () => {
     const refresh = { work: { id: 'w1' } };
     expect(requireNeoWorkPrDelivery(refresh, 'deliver', false)).toEqual({ reason: 'quiet' });
     expect(requireNeoWorkPrDelivery(refresh, 'remind', false)).toEqual({ reason: 'quiet' });
+  });
+});
+
+describe('neoCardDisownsPr', () => {
+  const url = 'https://github.com/lsm/HyperNeo/pull/42';
+  const key = url.toLowerCase();
+  test.each([
+    ['nobody has claimed it yet', [], false],
+    ['the card holds it', [{ workId: 'w1', urlKey: key, claim: 'mentioned' }], false],
+    ['the card had it rejected', [{ workId: 'w1', urlKey: key, claim: 'rejected' }], true],
+    ['another card holds it', [{ workId: 'w2', urlKey: key, claim: 'branch' }], true],
+    [
+      'another card holds it but this card does too',
+      [
+        { workId: 'w2', urlKey: key, claim: 'mentioned' },
+        { workId: 'w1', urlKey: key, claim: 'branch' },
+      ],
+      false,
+    ],
+    ['only a rejection elsewhere', [{ workId: 'w2', urlKey: key, claim: 'rejected' }], false],
+  ])('%s', (_name, claims, disowned) => {
+    expect(neoCardDisownsPr(claims, 'w1', url.toUpperCase())).toBe(disowned);
   });
 });

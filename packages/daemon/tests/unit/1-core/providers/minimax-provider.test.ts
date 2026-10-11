@@ -353,7 +353,7 @@ describe('MinimaxProvider', () => {
         ANTHROPIC_BASE_URL: 'https://api.minimax.io/anthropic',
         ANTHROPIC_AUTH_TOKEN: 'test-key',
         ANTHROPIC_API_KEY: '',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: '900000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M2.5',
         ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M2.5',

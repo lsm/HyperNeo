@@ -7,7 +7,7 @@ import { externalEventTopicSuffix } from './event-tiers.ts';
 import type { ExternalEventPublishedPayload } from './external-event-service.ts';
 import { buildImmediateEventMessageUuid } from './immediate-delivery-pipeline.ts';
 import { SESSION_EVENT_SCOPE } from './session-external-event-store.ts';
-import { segmentMatches } from './topic-trie.ts';
+import { topicMatchesPattern } from './topic-trie.ts';
 import type { ExternalEvent, ExternalEventRecord } from './types.ts';
 
 export const SESSION_EVENT_ORIGIN = 'external_event';
@@ -40,14 +40,6 @@ const SESSION_FEEDBACK_ACTION = /^(review_|comment_)/;
 function payloadText(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   return typeof value === 'string' ? value.trim() : '';
-}
-
-export function topicMatchesPattern(pattern: string, topic: string): boolean {
-  const want = pattern.toLowerCase().split('/');
-  const have = topic.toLowerCase().split('/');
-  return (
-    want.length === have.length && want.every((segment, i) => segmentMatches(segment, have[i]))
-  );
 }
 
 export function sessionEventHeadline(event: ExternalEvent): string {

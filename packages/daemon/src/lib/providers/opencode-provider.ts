@@ -32,6 +32,7 @@ import {
   MODEL_CATALOGUE,
   type OpencodeModelMetadata,
 } from './opencode-catalogue.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export interface OpencodeProviderOptions {
   bridgeFactory?: (
@@ -435,7 +436,7 @@ export class OpencodeProvider implements Provider {
     }
     const contextWindow = this.contextWindowFor(modelId);
     const routingEnvVars: Record<string, string> = {
-      API_TIMEOUT_MS: '3000000',
+      API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
       ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,

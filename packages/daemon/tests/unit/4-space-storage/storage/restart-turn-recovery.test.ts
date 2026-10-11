@@ -104,13 +104,17 @@ describe('restart recovery reads', () => {
     runMigrations(db, () => {});
     sdk = new SDKMessageRepository(db);
     sessions = new SessionRepository(db);
-    for (const sessionId of ['asked', 'working', 'idle', 'space-worker'])
+    for (const sessionId of ['asked', 'working', 'idle', 'space-worker', 'cooling'])
       sessions.createSession(
         {
           ...createTestSession(sessionId),
           ...(sessionId === 'space-worker' ? { context: { spaceId: 'space-1' } } : {}),
           processingState: JSON.stringify(
-            sessionId === 'idle' ? { status: 'idle' } : { status: 'processing', messageId: 'x' }
+            sessionId === 'idle'
+              ? { status: 'idle' }
+              : sessionId === 'cooling'
+                ? { status: 'rate_limit_cooldown', messageId: 'x', retryAt: 1 }
+                : { status: 'processing', messageId: 'x' }
           ),
         },
         { enforceWorkspaceOwnership: false }
@@ -171,6 +175,19 @@ describe('restart recovery reads', () => {
     });
     expect(sdk.markDeliveryRetryableByUuid('asked', 'u1')).not.toBeNull();
     expect(sdk.getDeliveryContent('asked', 'u1')?.sendStatus).toBe('enqueued');
+  });
+
+  test('a cooldown cut off by the restart resumes once, at its retry time', () => {
+    expect(sessions.markRestartInterruptedTurns()).toBe(4);
+    expect(sessions.listRestartCooldownResumes()).toEqual([{ sessionId: 'cooling', resumeAt: 1 }]);
+    expect(sessions.takeRestartCooldownResume('cooling')).toBe(true);
+    expect(sessions.takeRestartCooldownResume('cooling')).toBe(false);
+    expect(sessions.listRestartCooldownResumes()).toEqual([]);
+    expect(JSON.parse(sessions.getSession('cooling')?.processingState ?? '{}')).toEqual({
+      status: 'interrupted',
+      reason: 'restart',
+      messageId: 'x',
+    });
   });
 
   test('archived sessions are not resumed', () => {

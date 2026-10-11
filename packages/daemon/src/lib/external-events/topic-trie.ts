@@ -121,6 +121,14 @@ export function segmentMatches(pattern: string, segment: string): boolean {
   return regex.test(segment);
 }
 
+export function topicMatchesPattern(pattern: string, topic: string): boolean {
+  const want = pattern.toLowerCase().split('/');
+  const have = topic.toLowerCase().split('/');
+  return (
+    want.length === have.length && want.every((segment, i) => segmentMatches(segment, have[i]))
+  );
+}
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

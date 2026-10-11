@@ -106,6 +106,7 @@ export interface NeoWorkPr {
   checks: 'pending' | 'failing' | 'passing' | 'none';
   review: 'approved' | 'changes_requested' | 'none';
   blockers?: string[];
+  createdAt?: number;
 }
 
 export type NeoWorkPrVerdict = 'done' | 'failed' | 'waiting' | 'ready' | 'pending';
