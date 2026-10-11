@@ -67,6 +67,7 @@ const SUBJECT_REJECTIONS = z.enum([
   'agent_not_found',
   'invalid_pattern',
   'refresh_failed',
+  'watch_failed',
 ]);
 type SubjectRejection = z.infer<typeof SUBJECT_REJECTIONS>;
 
@@ -363,11 +364,11 @@ function unsubscribeTopic(
   return applyOutcome(input.topicPattern, subs.unregisterSubscription(slot, input.topicPattern));
 }
 
-function subscribeSession(
+async function subscribeSession(
   subject: { spaceId: string | null; sessionId: string },
   input: { topicPattern: string; label?: string },
   subs: SubscriptionDependencies
-): Outcome | SubjectRejection {
+): Promise<Outcome | SubjectRejection> {
   const topicPattern = input.topicPattern.trim();
   if (invalidPattern(topicPattern)) return 'invalid_pattern';
   if (subject.spaceId === null) {
@@ -377,8 +378,13 @@ function subscribeSession(
       label: input.label,
     });
     const watched = githubRepoOfTopic(topicPattern);
-    if (watched) void subs.watchSessionRepo?.(watched.owner, watched.repo).catch(() => undefined);
-    return { ok: true, topicPattern };
+    const watching = watched
+      ? await subs.watchSessionRepo?.(watched.owner, watched.repo).then(
+          () => true,
+          () => false
+        )
+      : true;
+    return watching === false ? 'watch_failed' : { ok: true, topicPattern };
   }
   const stored = subs.sessionSubscriptions.upsert({
     spaceId: subject.spaceId,
@@ -411,12 +417,12 @@ function unsubscribeSession(
   return { ok: true, topicPattern };
 }
 
-function subscribeSubject(
+async function subscribeSubject(
   subject: SubscriptionSubject,
   input: z.infer<typeof SubscribeInput>,
   caller: OperationCaller,
   subs: SubscriptionDependencies
-): Outcome | AgentSubscribeOutcome | SubjectRejection {
+): Promise<Outcome | AgentSubscribeOutcome | SubjectRejection> {
   if (subject.kind === 'node') return subscribeTopic(subject.slot, input, subs);
   if (subject.kind === 'session') return subscribeSession(subject, input, subs);
   const result = subscribeAgentTopic(
@@ -472,7 +478,7 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
     input: Input,
     caller: OperationCaller,
     subs: SubscriptionDependencies
-  ) => Result
+  ) => Result | Promise<Result>
 ) {
   return (superpipe({ subs })(name) as PipelineAPI)
     .input(['input', 'caller'])
@@ -486,7 +492,7 @@ function subjectPipeline<Input extends { subject?: Subject }, Result>(
 }
 
 const SUBJECT_DOC =
-  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, a direct task worker\'s own session ({ type: "session" }), otherwise { type: "node" }. A session outside any Space (a plain chat session or a Neo-driven worker) always subscribes its own session, with no spaceId. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, and invalid_pattern when topicPattern is not a valid topic glob.';
+  'subject names what the subscription is recorded against and defaults to the caller itself: a long-horizon agent\'s own record, a direct task worker\'s own session ({ type: "session" }), otherwise { type: "node" }. A session outside any Space (a plain chat session or a Neo-driven worker) always subscribes its own session, with no spaceId. For the node subject the slot (workflow run, node, agent, task) is resolved from the calling session and never from input, so a worker can only change its own subscriptions. For { type: "agent", agentId } the target long-horizon agent must belong to the caller Space, which is derived from the calling session; an omitted spaceId defaults to that Space. Rejections are returned as a bare reason: caller_denied for a caller with no Space scope or one naming another Space, session_inactive when the calling session is not active in that Space, node_unresolved when no node execution backs a node-subject caller, agent_not_found when the named agent is unknown or belongs to another Space, invalid_pattern when topicPattern is not a valid topic glob, and watch_failed when a session outside any Space subscribed to a GitHub repo topic but the repo watch could not start; the subscription is kept, so subscribing again retries the watch.';
 
 const SUBSCRIPTION_ROLES = [
   ...NODE_EVENT_ROLES,

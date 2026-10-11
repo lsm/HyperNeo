@@ -30,6 +30,7 @@ let agentSubscriptions: SpaceAgentSubscriptionRepository;
 let sessionSubscriptions: SpaceSessionEventSubscriptionRepository;
 let unscopedSubscriptions: SessionEventSubscriptionRepository;
 let watchedRepos: string[];
+let watchFails: boolean;
 let sessionRefreshed: string[];
 let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
@@ -162,6 +163,7 @@ beforeEach(() => {
   runMigration329(db);
   unscopedSubscriptions = new SessionEventSubscriptionRepository(db);
   watchedRepos = [];
+  watchFails = false;
   sessionRefreshed = [];
   registered = [];
   unregistered = [];
@@ -196,6 +198,7 @@ beforeEach(() => {
     sessionSubscriptions,
     unscopedSessionSubscriptions: unscopedSubscriptions,
     watchSessionRepo: async (owner, repo) => {
+      if (watchFails) throw new Error('watch store unavailable');
       watchedRepos.push(`${owner}/${repo}`);
     },
     refreshSessionSubscription: (_spaceId, subscriptionId) => {
@@ -823,6 +826,21 @@ describe('a session outside any Space', () => {
       { topicPattern: 'github/*/widgets/pull_request/*.review_*' },
       caller
     );
+    expect(watchedRepos).toEqual(['Acme/Widgets']);
+  });
+
+  test('a repo watch that fails rejects watch_failed and keeps the subscription to retry', async () => {
+    const caller = plainSession('s-unwatched');
+    watchFails = true;
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toBe('watch_failed');
+    expect(unscopedSubscriptions.listBySession('s-unwatched').map((row) => row.topic)).toEqual([
+      PR_TOPIC,
+    ]);
+    watchFails = false;
+    expect(await runParsed('event.external.subscribe', { prUrl: PR }, caller)).toEqual({
+      ok: true,
+      topicPattern: PR_TOPIC,
+    });
     expect(watchedRepos).toEqual(['Acme/Widgets']);
   });
 
