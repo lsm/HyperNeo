@@ -82,6 +82,8 @@ import {
   projectNeoSnapshotAsks,
   requireNeoWorkAsk,
   requireNeoWorkAskLink,
+  requireNeoWorkAskLive,
+  requireNeoWorkAskOwner,
 } from './ask-operations.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
@@ -907,9 +909,28 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) =>
-        requireNeoWorkAsk(input.askId ? service.askRecords.get(input.askId) : null, input, caller),
-      ['input', 'admission'],
+      (input: z.infer<typeof Propose>) => ({
+        ask: input.askId ? service.askRecords.get(input.askId) : null,
+      }),
+      'input',
+      'workAsk'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAsk(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAskOwner(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
+      'result:admission'
+    )
+    .pipe(
+      (workAsk: { ask: NeoAsk | null }, input: z.infer<typeof Propose>, caller: OperationCaller) =>
+        requireNeoWorkAskLive(workAsk.ask, input, caller),
+      ['workAsk', 'input', 'admission'],
       'result:admission'
     )
     .pipe(
