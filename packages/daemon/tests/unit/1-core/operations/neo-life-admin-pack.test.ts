@@ -16,7 +16,7 @@ import {
   NEO_DEFAULT_PACKS,
   neoPackBriefs,
   neoPackChecks,
-  neoPackReportEvidence,
+  neoPackAskCardEvidence,
   planNeoPackTicks,
 } from '../../../../src/lib/neo/packs/index.ts';
 
@@ -195,27 +195,26 @@ describe('planNeoPackTicks', () => {
     expect(
       planNeoPackTicks(
         ask,
-        neoPackReportEvidence(
-          [createLifeAdminPack()],
-          [
-            {
-              report:
-                'Confirmation: id=<msg-1>; from=orders@amazon.com; subject=Your order is confirmed',
-              createdAt: 0,
-            } as NeoWork,
-          ]
-        ),
+        neoPackAskCardEvidence([createLifeAdminPack()], ask, [
+          {
+            report:
+              'Confirmation: id=<msg-1>; from=orders@amazon.com; subject=Your order is confirmed',
+            createdAt: 0,
+          } as NeoWork,
+        ]),
         neoPackChecks([createLifeAdminPack()])
       )
     ).toEqual([{ id: 'i1', evidence: 'Confirmed: orders@amazon.com — Your order is confirmed' }]);
   });
 });
 
-describe('neoPackReportEvidence', () => {
+describe('neoPackAskCardEvidence', () => {
   test('a pack without report evidence contributes none', () => {
     const plain = { id: 'plain', describe: 'plain', instructions: () => null };
     expect(
-      neoPackReportEvidence([plain], [{ report: 'Confirmation: id=<x>', createdAt: 0 } as NeoWork])
+      neoPackAskCardEvidence([plain], { pack: null } as NeoAsk, [
+        { report: 'Confirmation: id=<x>', createdAt: 0 } as NeoWork,
+      ])
     ).toEqual([]);
   });
 });

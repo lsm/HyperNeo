@@ -140,7 +140,12 @@ import {
 import { planNeoCardPrCandidates, type NeoCardPrCandidate } from './packs/coding/card-pr-claims.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { planNeoCardCheck } from './card-check.ts';
-import { createCodingPack, type NeoCardPrDeps, readNeoCardPrs } from './packs/coding/pack.ts';
+import {
+  CODING_PACK_BRIEF,
+  createCodingPack,
+  type NeoCardPrDeps,
+  readNeoCardPrs,
+} from './packs/coding/pack.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import {
   neoEnabledPacks,
@@ -149,7 +154,6 @@ import {
   neoPackChecks,
   neoPackEvidenceOrNone,
   neoPackFragment,
-  neoPackReportEvidence,
   neoPacks,
   planNeoPackTicks,
   readNeoAskPackEvidence,
@@ -159,7 +163,6 @@ import {
 } from './packs/index.ts';
 import type { NeoPack, NeoPackBrief } from './packs/types.ts';
 import {
-  neoWorkPrEvidence,
   requireNeoWorkPrCurrent,
   requireNeoWorkPrDelivery,
   type NeoWorkPrRefreshSkip,
@@ -280,6 +283,7 @@ type NeoDoneCheckCard = {
   stored: NeoWorkPrRow | null;
 };
 type NeoDoneCheckFound = { row: NeoWorkPrRow | null };
+type NeoDoneCheckRead = NeoDoneCheckFound & { read: NeoEvidenceRead | null; stale: boolean };
 type NeoReminderTurnInput = { sessionId: string; messageId: string };
 type NeoRemindersDue = { key: string; asks: ReturnType<typeof planNeoWaitingReminders> };
 
@@ -431,14 +435,26 @@ export class NeoService {
     .pipe(requireNeoDoneCheckUntold, ['unread', 'check'], 'result:check')
     .pipe(
       async (work: NeoWork, card: NeoDoneCheckCard) => {
-        const read = await readNeoCardPrs(this.cardPrDeps, work, card.stored, Date.now());
-        return { row: read.row };
+        let failed = false;
+        const read = await readNeoPackEvidence(
+          this.evidencePacks(card.ask, !!card.stored),
+          work,
+          (id, error) => {
+            failed = true;
+            this.log.warn(`Neo pack ${id} evidence read failed`, error);
+          }
+        );
+        return {
+          row: this.workPrs.get(work.id),
+          read: neoPackEvidenceOrNone(read, failed, Date.now()),
+          stale: failed || read?.read.ok === false,
+        };
       },
       ['work', 'card'],
       'found'
     )
     .pipe(
-      (work: NeoWork, card: NeoDoneCheckCard, followed: boolean, found: NeoDoneCheckFound) => ({
+      (work: NeoWork, card: NeoDoneCheckCard, followed: boolean, found: NeoDoneCheckRead) => ({
         told:
           !followed &&
           !!found.row &&
@@ -457,16 +473,14 @@ export class NeoService {
         work: NeoWork,
         goal: NeoWorkGoal,
         card: NeoDoneCheckCard,
-        found: NeoDoneCheckFound,
+        found: NeoDoneCheckRead,
         followed: boolean
       ) => {
         await this.deliverDoneCheck(work, goal, found.row, {
           ask: card.ask,
+          stale: found.stale,
           followedAt: followed ? work.updatedAt : undefined,
-          signature: neoEvidenceSignature([
-            ...neoWorkPrEvidence(found.row?.prs ?? []),
-            ...neoPackReportEvidence(this.packs(), [work]),
-          ]),
+          signature: found.read ? neoEvidenceSignature(found.read.evidence) : undefined,
         });
         return 'checked' as const;
       },
@@ -1194,6 +1208,7 @@ export class NeoService {
   }
 
   private async reclaimCardPrs(): Promise<void> {
+    if (!this.packs().some((pack) => pack.id === CODING_PACK_BRIEF.id)) return;
     const works = this.workPrClaims
       .cardsToReclaim()
       .flatMap((id) => this.repo.getWork(id) ?? [])
@@ -2020,8 +2035,10 @@ export class NeoService {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')
-      await readNeoCardPrs(this.cardPrDeps, work, this.workPrs.get(work.id), Date.now()).catch(
-        (error) => this.log.warn('Card pull request read pending', error)
+      await readNeoPackEvidence(
+        this.evidencePacks(this.askRecords.forWork(work.id), !!this.workPrs.get(work.id)),
+        work,
+        (id, error) => this.log.warn(`Neo pack ${id} evidence read failed`, error)
       );
     const rootId = await this.open(null);
     if (work.concernId) {
@@ -2222,25 +2239,11 @@ export class NeoService {
       'sent'
     )
     .pipe(
-      (
-        work: NeoWork,
-        found: NeoDoneCheckFound,
-        options: NeoDoneCheckDelivery,
-        sent: { at: number }
-      ) => {
-        const ready = options.ready ?? false;
-        if (found.row) {
-          this.workChecks.markTold(
-            work.id,
-            options.signature ?? neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
-            sent.at,
-            ready
-          );
-          return;
-        }
-        if (options.signature) this.workChecks.markTold(work.id, options.signature, sent.at, ready);
+      (work: NeoWork, options: NeoDoneCheckDelivery, sent: { at: number }) => {
+        if (options.signature)
+          this.workChecks.markTold(work.id, options.signature, sent.at, options.ready ?? false);
       },
-      ['work', 'found', 'options', 'sent']
+      ['work', 'options', 'sent']
     )
     .endAsync('sent') as (
     work: NeoWork,

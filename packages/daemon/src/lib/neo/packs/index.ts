@@ -56,10 +56,6 @@ export function requireNeoAskPack(
       };
 }
 
-export function neoPackReportEvidence(packs: readonly NeoPack[], works: readonly NeoWork[]) {
-  return works.flatMap((work) => packs.flatMap((pack) => pack.reportEvidence?.(work) ?? []));
-}
-
 export function neoPackAskCardEvidence(
   packs: readonly NeoPack[],
   ask: NeoAsk,

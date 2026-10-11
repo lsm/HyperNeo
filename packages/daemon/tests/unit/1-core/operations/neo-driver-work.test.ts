@@ -1315,7 +1315,7 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
-  test('without the coding pack enabled, a card waiting on its PR still gets its done check', async () => {
+  test('without the coding pack enabled, a card with a PR gets its done check at once', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/8';
     const reply: unknown = {
@@ -1339,19 +1339,47 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
-      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0']);
       now += 3 * 60_000;
       await service.refreshDriverWork();
-      now += 3 * 60_000;
-      await service.refreshDriverWork();
-      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0:pr:1']);
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0']);
+      expect(service.workPrs.get('work-1')).toBeNull();
     } finally {
       clock.mockRestore();
       db.close();
     }
   });
 
-  test('with only a pack that cannot read PRs enabled, a card waiting on its PR still gets its done check', async () => {
+  test('with coding disabled, recovery does not reclaim a card PR', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const url = 'https://github.com/lsm/HyperNeo/pull/8';
+    const reply: unknown = {
+      ok: true,
+      value: { status: 'done', lastActivityAt: Date.now() + 1_000, lastReply: `Opened ${url}.` },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: [] } });
+    fileUnderAsk(service);
+    service.workGoals.record('work-1', 'Fix it', '- merged to dev');
+    let reads = 0;
+    service.readPrs = async () => {
+      reads++;
+      return [{ url, state: 'OPEN', checks: 'pending', review: 'none' }];
+    };
+    Object.assign(service, { deliver: async () => {} });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.recover();
+      expect(reads).toBe(0);
+      expect(service.workPrs.get('work-1')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('with only a pack that cannot read PRs enabled, a card with a PR gets its done check at once', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const url = 'https://github.com/lsm/HyperNeo/pull/8';
     const reply: unknown = {
@@ -1375,12 +1403,11 @@ describe('Neo work with a drivers target', () => {
     try {
       await service.start('work-1');
       await service.refreshDriverWork();
-      expect(notes.filter((id) => id.includes('done-check'))).toEqual([]);
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0']);
       now += 3 * 60_000;
       await service.refreshDriverWork();
-      now += 3 * 60_000;
-      await service.refreshDriverWork();
-      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0:pr:1']);
+      expect(notes.filter((id) => id.includes('done-check'))).toEqual(['work-1:done-check:0']);
+      expect(service.workPrs.get('work-1')).toBeNull();
     } finally {
       clock.mockRestore();
       db.close();
