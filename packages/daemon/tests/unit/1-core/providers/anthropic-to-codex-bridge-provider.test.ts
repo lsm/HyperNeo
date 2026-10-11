@@ -774,7 +774,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const cfg = provider.buildSdkConfig('gpt-5.6-terra', { workspacePath: '/tmp/ws-model' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.6-sol');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.6-terra');
       expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1050000');
     });
 
@@ -1342,6 +1342,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
       expect(dynamicConfig.envVars.ANTHROPIC_BASE_URL).toContain('127.0.0.1');
       expect(dynamicConfig.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-6-astra');
+      expect(dynamicConfig.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-6-astra');
 
       const savedConfig = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-discovery',
