@@ -108,3 +108,13 @@ export function planNeoHeldSessionNotices(
     held: next,
   };
 }
+
+export function unmutedNeoAskSessions(
+  sessions: ReadonlyMap<string, readonly NeoAskSessionView[]>,
+  muted: readonly string[]
+): Map<string, NeoAskSessionView[]> {
+  const off = new Set(muted);
+  return new Map(
+    [...sessions].map(([askId, list]) => [askId, list.filter((item) => !off.has(item.key))])
+  );
+}

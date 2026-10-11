@@ -13,6 +13,7 @@ import {
   neoAskPrKeys,
   planNeoHeldSessionNotices,
   planNeoSessionPrReads,
+  unmutedNeoAskSessions,
 } from '../../../../src/lib/neo/session-ask-links.ts';
 import { type NeoListedSession, neoSessionKey } from '../../../../src/lib/neo/session-watch.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -154,6 +155,21 @@ describe('planNeoHeldSessionNotices', () => {
     const held = new Map([['a', notice('a', 'needs_you')]]);
     expect(planNeoHeldSessionNotices(held, [], new Set(['a']), () => 'running').held.size).toBe(0);
     expect(planNeoHeldSessionNotices(held, [], new Set(), () => undefined).notices).toEqual([]);
+  });
+});
+
+describe('unmutedNeoAskSessions', () => {
+  test('drops a muted session from every ask at once, before the next watch pass', () => {
+    const view = (key: string) => ({
+      key,
+      title: key,
+      adapter: 'codex-desktop',
+      status: 'needs_you' as const,
+      kind: 'needs_you' as const,
+      open: { link: null, remoteLink: null, sessionId: null, daemon: null },
+    });
+    const shown = unmutedNeoAskSessions(new Map([['ask-1', [view('a'), view('b')]]]), ['a']);
+    expect(shown.get('ask-1')?.map((item) => item.key)).toEqual(['b']);
   });
 });
 
