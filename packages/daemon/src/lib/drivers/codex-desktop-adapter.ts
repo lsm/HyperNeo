@@ -1,11 +1,14 @@
 import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
+import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { CodexAppServer } from './codex-app-server.ts';
-import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import { skipSpaceQuery } from './hyperneo-adapter.ts';
+import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
+import { selectLocalStartFolder } from './start-folder.ts';
+import { readTailLines } from './transcript-tail.ts';
 import type {
   FindQuery,
   PlaceGroup,
@@ -20,8 +23,6 @@ import type {
   WorkStatus,
   WorkSummary,
 } from './types.ts';
-import { selectLocalStartFolder } from './start-folder.ts';
-import { reject } from './work-operations.ts';
 import {
   boundExchange,
   exchangeEntry,
@@ -31,9 +32,8 @@ import {
   workEntryTime,
   workInput,
 } from './work-messages.ts';
-import { matchChatsBy } from './match-chats.ts';
-import { readTailLines } from './transcript-tail.ts';
-import { planWorkPlacement, type GitCheckout } from './work-placement.ts';
+import { reject } from './work-operations.ts';
+import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
 const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
@@ -48,6 +48,7 @@ const REPLY_LIMIT = 4_000;
 const QUEUE_TIMEOUT_MS = 30_000;
 const TURN_MARKERS = new Set(['task_started', 'task_complete', 'turn_aborted']);
 const INJECTED_INPUT = /^<([a-z_]+)>[\s\S]*<\/\1>$/;
+const CODEX_ASK_TOOL = 'request_user_input_async';
 
 export interface CodexRootRow {
   name: string;
@@ -98,6 +99,7 @@ export interface CodexThreadDetail {
 
 export interface CodexTurnState {
   marker: string | null;
+  outcome?: 'asked' | 'errored';
   reply: string | null;
   replyAt?: number;
   inputs?: WorkInput[];
@@ -338,11 +340,34 @@ function withReplyAt(state: CodexTurnState, replyAt: number | undefined): CodexT
   return state.reply !== null && replyAt !== undefined ? { ...state, replyAt } : state;
 }
 
+function completedTurnAsked(lines: readonly string[], end: number): boolean {
+  for (let index = end - 1; index >= 0; index--) {
+    const entry = parseLine(lines[index]);
+    const payload = entry?.payload ?? {};
+    if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) return false;
+    if (entry?.type !== 'response_item') continue;
+    if (payload.type === 'function_call' && payload.name === CODEX_ASK_TOOL) return true;
+    const asked = messageText(payload, 'user');
+    if (asked !== null && !INJECTED_INPUT.test(asked)) return false;
+  }
+  return false;
+}
+
+function completedTurnOutcome(
+  payload: Record<string, unknown>,
+  lines: readonly string[],
+  index: number
+): Pick<CodexTurnState, 'outcome'> {
+  if (payload.type !== 'task_complete') return {};
+  if (payload.error) return { outcome: 'errored' };
+  return completedTurnAsked(lines, index) ? { outcome: 'asked' } : {};
+}
+
 export function codexTurnState(lines: readonly string[]): CodexTurnState {
   let reply: string | null = null;
   let replyAt: number | undefined;
-  for (const line of [...lines].reverse()) {
-    const entry = parseLine(line);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const entry = parseLine(lines[index]);
     const payload = entry?.payload ?? {};
     if (reply === null && entry?.type === 'response_item') {
       reply = messageText(payload, 'assistant');
@@ -350,9 +375,13 @@ export function codexTurnState(lines: readonly string[]): CodexTurnState {
     }
     if (entry?.type === 'event_msg' && TURN_MARKERS.has(String(payload.type))) {
       const marker = String(payload.type);
+      const outcome = completedTurnOutcome(payload, lines, index);
       return payload.type === 'task_complete' && typeof payload.last_agent_message === 'string'
-        ? withReplyAt({ marker, reply: payload.last_agent_message }, workEntryTime(entry.timestamp))
-        : withReplyAt({ marker, reply }, replyAt);
+        ? withReplyAt(
+            { marker, ...outcome, reply: payload.last_agent_message },
+            workEntryTime(entry.timestamp)
+          )
+        : withReplyAt({ marker, ...outcome, reply }, replyAt);
     }
   }
   return withReplyAt({ marker: null, reply }, replyAt);
@@ -435,7 +464,9 @@ function turnStatus(thread: CodexThreadRow, state: CodexTurnState, now: number):
   if (thread.archived) return 'stopped';
   if (state.marker === 'task_started') return 'running';
   if (state.marker === 'turn_aborted') return 'stopped';
-  return state.marker === 'task_complete' ? 'done' : codexStatus(thread, now);
+  if (state.marker !== 'task_complete') return codexStatus(thread, now);
+  if (state.outcome === 'errored') return 'failed';
+  return state.outcome === 'asked' ? 'needs_you' : 'done';
 }
 
 export function requireCodexThread(
