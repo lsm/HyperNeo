@@ -14,14 +14,14 @@ import {
   neoSettingsPackBriefs,
 } from '../../../../src/lib/neo/packs/index.ts';
 
-const skill = (name = 'life-admin', description = 'Inbox, calendar and orders.'): string =>
+const skill = (name = 'inbox-triage', description = 'Inbox, calendar and orders.'): string =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\nFile the inbox daily.\n`;
 
 describe('parseNeoPackSkill', () => {
   test('reads name, description and body from the frontmatter', () => {
     expect(parseNeoPackSkill(skill())).toEqual({
       value: {
-        name: 'life-admin',
+        name: 'inbox-triage',
         description: 'Inbox, calendar and orders.',
         body: 'File the inbox daily.',
       },
@@ -32,15 +32,15 @@ describe('parseNeoPackSkill', () => {
       }
     );
     expect(parseNeoPackSkill(skill().replace(/\r?\n/g, '\r\n'))).toEqual({
-      value: expect.objectContaining({ name: 'life-admin' }),
+      value: expect.objectContaining({ name: 'inbox-triage' }),
     });
   });
 
   test.each<[string, string, string]>([
     ['no frontmatter', 'Just a body.', 'needs a frontmatter block'],
     ['a name that is not a pack id', skill('Life_Admin'), 'kebab-case pack id'],
-    ['no description', skill('life-admin', ''), 'one non-empty line'],
-    ['no body', '---\nname: life-admin\ndescription: Desc\n---\n\n', 'no instructions'],
+    ['no description', skill('inbox-triage', ''), 'one non-empty line'],
+    ['no body', '---\nname: inbox-triage\ndescription: Desc\n---\n\n', 'no instructions'],
   ])('refuses %s', (_label, markdown, message) => {
     expect(parseNeoPackSkill(markdown)).toEqual({ reason: expect.stringContaining(message) });
   });
@@ -63,7 +63,7 @@ describe('requireNeoPackSkillStatic', () => {
 describe('requireNeoPackFolderName', () => {
   const parsed = parseNeoPackSkill(skill()).value!;
   test('accepts a folder matching the pack id and refuses any other', () => {
-    expect(requireNeoPackFolderName('life-admin', parsed)).toEqual({ value: parsed });
+    expect(requireNeoPackFolderName('inbox-triage', parsed)).toEqual({ value: parsed });
     expect(requireNeoPackFolderName('admin', parsed)).toEqual({
       reason: expect.stringContaining('must match'),
     });
@@ -72,9 +72,9 @@ describe('requireNeoPackFolderName', () => {
 
 describe('loadNeoPackSkill', () => {
   test('loads a pack whose folder matches its SKILL.md', () => {
-    const files = new Map([['life-admin/SKILL.md', skill()]]);
-    expect(loadNeoPackSkill('life-admin', '', (file) => files.get(file)!)).toEqual({
-      id: 'life-admin',
+    const files = new Map([['inbox-triage/SKILL.md', skill()]]);
+    expect(loadNeoPackSkill('inbox-triage', '', (file) => files.get(file)!)).toEqual({
+      id: 'inbox-triage',
       describe: 'Inbox, calendar and orders.',
       instructions: expect.any(Function),
     });
@@ -105,15 +105,15 @@ describe('loadNeoFilePacks', () => {
     const packs = loadNeoFilePacks({
       root: '/packs',
       read: folders({
-        'life-admin': skill(),
+        'inbox-triage': skill(),
         Notes: skill('notes'),
         broken: 'no frontmatter',
         'pack-2': skill('pack-2'),
       }),
-      list: () => ['life-admin', 'Notes', 'broken', 'pack-2'],
+      list: () => ['inbox-triage', 'Notes', 'broken', 'pack-2'],
       warn: (id, error) => warned.push([id, error]),
     });
-    expect(packs.map((pack) => pack.id)).toEqual(['life-admin', 'pack-2']);
+    expect(packs.map((pack) => pack.id)).toEqual(['inbox-triage', 'pack-2']);
     expect(packs[0].instructions(null)).toBe('File the inbox daily.');
     expect(warned.map(([id]) => id)).toEqual(['broken']);
   });
@@ -122,12 +122,12 @@ describe('loadNeoFilePacks', () => {
     const warned: [string, unknown][] = [];
     const packs = loadNeoFilePacks({
       root: '/packs',
-      read: folders({ coding: skill('coding') }),
-      list: () => ['coding'],
+      read: folders({ coding: skill('coding'), 'life-admin': skill('life-admin') }),
+      list: () => ['coding', 'life-admin'],
       warn: (id, error) => warned.push([id, error]),
     });
     expect(packs).toEqual([]);
-    expect(warned.map(([id]) => id)).toEqual(['coding']);
+    expect(warned.map(([id]) => id)).toEqual(['coding', 'life-admin']);
     expect((warned[0][1] as Error).message).toContain('reserved by a built-in pack');
   });
 
@@ -147,7 +147,10 @@ describe('neoEnabledPacks', () => {
   test('defaults to coding and follows the settings list', () => {
     expect(neoEnabledPacks()).toEqual(NEO_DEFAULT_PACKS);
     expect(neoEnabledPacks({ packs: [] })).toEqual([]);
-    expect(neoEnabledPacks({ packs: ['coding', 'life-admin'] })).toEqual(['coding', 'life-admin']);
+    expect(neoEnabledPacks({ packs: ['coding', 'inbox-triage'] })).toEqual([
+      'coding',
+      'inbox-triage',
+    ]);
   });
 });
 
@@ -163,12 +166,12 @@ describe('neoSettingsPackBriefs', () => {
     adoptNeoFilePacks(
       loadNeoFilePacks({
         root: '',
-        read: () => skill('life-admin'),
-        list: () => ['life-admin'],
+        read: () => skill('inbox-triage'),
+        list: () => ['inbox-triage'],
       })
     );
-    expect(neoSettingsPackBriefs({ packs: ['life-admin'] }).map((brief) => brief.id)).toEqual([
-      'life-admin',
+    expect(neoSettingsPackBriefs({ packs: ['inbox-triage'] }).map((brief) => brief.id)).toEqual([
+      'inbox-triage',
     ]);
     expect(neoSettingsPackBriefs().map((brief) => brief.id)).toEqual(['coding']);
     adoptNeoFilePacks([]);
@@ -177,9 +180,9 @@ describe('neoSettingsPackBriefs', () => {
 
 describe('neoPackIds', () => {
   test('keeps only kebab-case folder names', () => {
-    expect(neoPackIds(['life-admin', 'Notes', 'a', 'pack-2', 'x_1'])).toEqual([
+    expect(neoPackIds(['inbox-triage', 'Notes', 'a', 'pack-2', 'x_1'])).toEqual([
       'a',
-      'life-admin',
+      'inbox-triage',
       'pack-2',
     ]);
   });

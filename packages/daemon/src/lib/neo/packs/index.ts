@@ -3,6 +3,8 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskLive } from '../done-check.ts';
 import { combineNeoEvidenceReads, type NeoEvidence, type NeoEvidenceRead } from '../evidence.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
+import { requireNeoWorkPrRefresh } from './coding/work-prs.ts';
+import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './types.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
@@ -22,7 +24,10 @@ export function neoSettingsPackBriefs(settings?: { packs?: string[] }): NeoPackB
   return neoPackBriefs(neoEnabledPacks(settings), [...NEO_BUILTIN_PACK_BRIEFS, ...fileBriefs]);
 }
 
-export const NEO_BUILTIN_PACK_BRIEFS: readonly NeoPackBrief[] = [CODING_PACK_BRIEF];
+export const NEO_BUILTIN_PACK_BRIEFS: readonly NeoPackBrief[] = [
+  CODING_PACK_BRIEF,
+  LIFE_ADMIN_PACK_BRIEF,
+];
 
 export function neoPackBriefs(
   enabled: readonly string[],
@@ -49,6 +54,57 @@ export function requireNeoAskPack(
           reason: `pack_not_enabled: "${pack}" is not an enabled pack (enabled: ${enabled.map((item) => item.id).join(', ') || 'none'}). Open the ask without pack, or enable the pack first.`,
         },
       };
+}
+
+export function neoPackReportEvidence(packs: readonly NeoPack[], works: readonly NeoWork[]) {
+  return works.flatMap((work) => packs.flatMap((pack) => pack.reportEvidence?.(work) ?? []));
+}
+
+export function neoPackAskReportEvidence(
+  packs: readonly NeoPack[],
+  ask: NeoAsk,
+  works: readonly NeoWork[]
+) {
+  return works.flatMap((work) =>
+    packs
+      .filter((pack) => !ask.pack || pack.id === ask.pack)
+      .flatMap((pack) => pack.reportEvidence?.(work) ?? [])
+  );
+}
+
+export const NEO_PACK_EVIDENCE_READ_MS = 2 * 60_000;
+
+export function requireNeoEvidenceRefresh<
+  Refresh extends { work: { status: string; report: string | null; updatedAt: number } },
+  Row extends { readAt: number },
+>(
+  refresh: Refresh,
+  card: {
+    goal: boolean;
+    row: Row | null;
+    session: boolean;
+    packEvidence: boolean;
+    toldAt: number | null;
+  },
+  now: number,
+  closedDone: string
+): { value: Refresh & { row: Row | null } } | { reason: 'not_due' } {
+  const pr = requireNeoWorkPrRefresh(
+    refresh,
+    { row: card.row, session: card.session },
+    now,
+    closedDone
+  );
+  if ('value' in pr) return pr;
+  const { work } = refresh;
+  return card.packEvidence &&
+    work.status === 'reported' &&
+    work.report !== closedDone &&
+    card.goal &&
+    card.session &&
+    (work.updatedAt > (card.toldAt ?? 0) || now - (card.toldAt ?? 0) >= NEO_PACK_EVIDENCE_READ_MS)
+    ? { value: { ...refresh, row: card.row } }
+    : { reason: 'not_due' };
 }
 
 export function neoPackFragment(
