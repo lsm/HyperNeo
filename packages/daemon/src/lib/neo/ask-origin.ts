@@ -40,6 +40,10 @@ export function neoAskEvidenceMessageId(askId: string, signature: string): strin
   return `neo-ask-evidence:${askId}:${hashString32(signature).toString(36)}`;
 }
 
+export function neoAskAnswerMessageId(askId: string, itemId: string, at: number): string {
+  return `neo-ask-answer:${askId}:${itemId}:${at}`;
+}
+
 export function neoAskEvidenceAskId(messageId: string): string | null {
   return /^neo-ask-evidence:(.+):[0-9a-z]+$/.exec(messageId)?.[1] ?? null;
 }

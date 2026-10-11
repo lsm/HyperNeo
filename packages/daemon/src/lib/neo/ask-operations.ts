@@ -63,6 +63,7 @@ export const NeoAskSchema = z.object({
         metBy: z.enum(['neo', 'daemon', 'human']).nullable(),
         removed: z.boolean(),
         addedAt: z.number().nullable(),
+        options: z.array(z.string()).optional(),
       })
     )
     .optional(),
@@ -104,6 +105,18 @@ const Tick = z.object({
   itemId: z.string().min(1),
   state: z.enum(['pending', 'met', 'needs_you', 'reported']),
   evidence: z.string().trim().min(1).max(2000).optional(),
+  options: z
+    .array(z.string().trim().min(1).max(80))
+    .min(2)
+    .max(4)
+    .refine((options) => new Set(options).size === options.length, 'Options must differ.')
+    .optional(),
+});
+
+const Answer = z.object({
+  askId: z.string().min(1),
+  itemId: z.string().min(1),
+  choice: z.string().trim().min(1).max(1000),
 });
 
 const Approve = z.object({ askId: z.string().min(1) });
@@ -330,6 +343,8 @@ function requireNeoAskTick(
         "unverified: this evidence is only a working agent's word. Tick the item reported; it counts as met once you read it yourself or the human confirms it."
       ),
     };
+  if (input.options && input.state !== 'needs_you')
+    return { reason: fail('options_need_decision: only a needs_you item carries options.') };
   return input.state !== 'pending' && !input.evidence
     ? {
         reason: fail(
@@ -337,6 +352,17 @@ function requireNeoAskTick(
         ),
       }
     : { value: { ask, item } };
+}
+
+export function requireNeoAskQuestion(
+  input: z.infer<typeof Answer>,
+  ask: NeoAsk
+): Gate<{ ask: NeoAsk; item: NeoAskItem }> {
+  const item = ask.doneItems?.find((entry) => entry.id === input.itemId && !entry.removed);
+  if (!item) return { reason: fail(`item_not_found: ${input.itemId} is not on this checklist.`) };
+  return item.state === 'needs_you'
+    ? { value: { ask, item } }
+    : { reason: fail(`item_not_waiting: ${item.id} is ${item.state}, not waiting on an answer.`) };
 }
 
 export function requireNeoAskEdit(input: z.infer<typeof Edit>, ask: NeoAsk): Gate<NeoAsk> {
@@ -596,6 +622,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
             state: input.state,
             evidence: input.evidence ?? null,
             metBy: input.state === 'met' ? (caller.source === 'mcp' ? 'neo' : 'human') : null,
+            options: input.options,
           },
           Date.now()
         );
@@ -611,6 +638,45 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     input: z.infer<typeof Tick>,
     caller: OperationCaller
   ) => AskReceipt | Rejection;
+  const answer = (superpipe({})('neo.ask.answer') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Answer>, caller: OperationCaller) =>
+        requireNeoOwnedLiveAsk(readOwnedLiveAsk(input.askId, caller, 'neo.ask.answer', 'answer')),
+      ['input', 'caller'],
+      'result:admission'
+    )
+    .pipe(requireNeoAskQuestion, ['input', 'admission'], 'result:admission')
+    .pipe(
+      async (input: z.infer<typeof Answer>, target: { ask: NeoAsk; item: NeoAskItem }) => {
+        await service.deliverAskAnswer(target.ask, target.item, input.choice);
+      },
+      ['input', 'admission']
+    )
+    .pipe(
+      (input: z.infer<typeof Answer>, target: { ask: NeoAsk }) => {
+        service.askRecords.tickItem(
+          target.ask.id,
+          {
+            id: input.itemId,
+            state: 'met',
+            evidence: `The human answered: ${input.choice}`,
+            metBy: 'human',
+          },
+          Date.now()
+        );
+        return { ask: service.askRecords.get(target.ask.id) };
+      },
+      ['input', 'admission'],
+      'answered'
+    )
+    .pipe(requireNeoAskWritten, 'answered', 'result:admission')
+    .pipe(replanAsk, 'admission', 'written')
+    .pipe(requireNeoAskWritten, 'written', 'result:admission')
+    .endAsync('admission') as (
+    input: z.infer<typeof Answer>,
+    caller: OperationCaller
+  ) => Promise<AskReceipt | Rejection>;
   const approve = (superpipe({})('neo.ask.approve') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -667,11 +733,20 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.tick',
       description:
-        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide, or back to pending. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
+        "Tick one item of an ask's done checklist (neo.snapshot returns ask.doneItems): met with the evidence that shows it, read by you or the daemon (never for a part the human dropped: remove that item with neo.ask.edit), reported when a working agent says it is done but you cannot read it yourself (another machine, a deploy, a physical change: an agent's word never makes an item met, and the ask cannot be achieved until the human confirms it), needs_you with what the human must decide (pass options, 2-4 short choices, when the answer is one of a few; the human taps one and neo.ask.answer sends it back to you), or back to pending. A needs_you item puts the ask waiting with that item as its question until no item needs the human. Only the Neo session that opened the ask or the user can tick it.",
       inputSchema: Tick,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => tick(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.ask.answer',
+      description:
+        "Answer a needs_you item of an ask: the human's choice (one of its options, or their own words) ticks the item met and is sent to the Neo session that opened the ask, which acts on it.",
+      inputSchema: Answer,
+      resultSchema: AskResult,
+      policy: { safetyClass: 'human_only' },
+      execute: async (input, caller) => answer(input, caller),
     }),
     defineOperation({
       name: 'neo.ask.approve',

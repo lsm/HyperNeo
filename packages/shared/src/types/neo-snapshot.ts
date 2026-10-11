@@ -71,6 +71,7 @@ export interface NeoAskItem {
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
   addedAt: number | null;
+  options?: string[];
 }
 
 export interface NeoAsk {
@@ -216,6 +217,14 @@ export interface NeoAskView {
   doneWorkIds: string[];
   summary: string | null;
   sessions?: NeoAskSessionView[];
+  answer?: NeoAskAnswer | null;
+}
+
+export interface NeoAskAnswer {
+  itemId: string;
+  question: string;
+  label: 'Answer in chat';
+  options: string[];
 }
 
 export interface NeoReceiptAskOrigin {

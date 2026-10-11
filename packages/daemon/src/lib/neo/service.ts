@@ -14,6 +14,7 @@ import {
   NEO_ASK_CONTINUE_LIMIT,
   NEO_WORK_CLOSED_DONE,
   type NeoAsk,
+  type NeoAskItem,
   type NeoAskSessionView,
   type NeoWorkGoal,
   type NeoWorkPr,
@@ -51,6 +52,7 @@ import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts'
 import type { SessionManager } from '../session/session-manager.ts';
 import {
   createNeoAskOriginResolver,
+  neoAskAnswerMessageId,
   neoAskEvidenceMessageId,
   neoAskParent,
   neoConsultationParent,
@@ -205,7 +207,7 @@ import {
   NeoAskCheckRepository,
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
-import { planNeoNeedsYou } from './needs-you.ts';
+import { neoAskAnswerNote, planNeoNeedsYou } from './needs-you.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
@@ -1544,6 +1546,15 @@ export class NeoService {
 
   pack(id: string): NeoPack | null {
     return this.installedPacks().find((pack) => pack.id === id) ?? null;
+  }
+
+  deliverAskAnswer(ask: NeoAsk, item: NeoAskItem, choice: string): Promise<void> {
+    return this.deliverToOrigin(
+      ask.originSessionId,
+      neoAskAnswerMessageId(ask.id, item.id, Date.now()),
+      neoAskAnswerNote(ask, item, choice),
+      neoAskParent(ask)
+    );
   }
 
   packBriefing(ask: NeoAsk): string | undefined {

@@ -285,6 +285,7 @@ describe('projectNeoAskViews', () => {
       doneWorkIds: ['done'],
       summary: null,
       sessions: [],
+      answer: null,
     });
   });
 
@@ -339,6 +340,31 @@ describe('projectNeoAskViews', () => {
     });
     const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
     expect(views[0]).toMatchObject({ group: 'running', label: 'Working on it', done: 1, total: 2 });
+  });
+
+  test('an ask waiting on a decision answers it in chat, with the item options', () => {
+    const decision = { ...item('b', 'needs_you'), options: ['Yes', 'No'] };
+    const input = parts({
+      work: [work('w', 'queued')],
+      asks: [
+        ask({
+          workIds: ['w'],
+          status: 'waiting',
+          waitingItem: 'b',
+          doneItems: [item('a', 'met'), decision],
+        }),
+        ask({ id: 'a2', status: 'achieved', workIds: [], doneItems: [decision] }),
+      ],
+    });
+    const views = projectNeoAskViews(input.asks, projectNeoCardViews(input), input.prs);
+    expect(views[0]?.answer).toEqual({
+      itemId: 'b',
+      question: decision.text,
+      label: 'Answer in chat',
+      options: ['Yes', 'No'],
+    });
+    expect(NeoAskViewSchema.parse(views[0])).toEqual(views[0]);
+    expect(views[1]?.answer).toBeNull();
   });
 
   test('an achieved ask with a long outcome summarizes its merged PRs', () => {
