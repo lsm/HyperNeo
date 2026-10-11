@@ -239,12 +239,54 @@ describe('neoAskRefNews', () => {
         },
       ],
     ],
+    [
+      'an issue closed as a duplicate',
+      issue({ done: false, duplicate: true }),
+      [
+        {
+          key: 'https://github.com/lsm/HyperNeo/issues/1',
+          state: 'failed',
+          summary: 'closed as a duplicate',
+          blockers: [],
+        },
+      ],
+    ],
   ])('%s', (_label, state, evidence) => {
     expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
 describe('readGithubRefStates', () => {
+  test('reads an issue closed as a duplicate as not done', async () => {
+    const issue = {
+      __typename: 'Issue',
+      url: 'https://github.com/lsm/HyperNeo/issues/9105',
+      state: 'CLOSED',
+      stateReason: 'DUPLICATE',
+      closedAt: '2026-10-10T15:00:00Z',
+      closedByPullRequestsReferences: { nodes: [] },
+    };
+    const spawn = () => ({
+      stdout: new Response(JSON.stringify({ data: { repository: { issueOrPullRequest: issue } } }))
+        .body,
+      stderr: new Response('').body,
+      exited: Promise.resolve(0),
+      exitCode: 0,
+      kill: () => {},
+    });
+    expect(await readGithubRefStates([ref(9105)], spawn as never)).toEqual([
+      {
+        url: issue.url,
+        kind: 'issue',
+        state: 'CLOSED',
+        at: Date.parse(issue.closedAt),
+        done: false,
+        closedBy: null,
+        duplicate: true,
+      },
+    ]);
+  });
+
   test('reads pull requests and issues, keeps a merge, skips non-refs for an hour, retries the rest', async () => {
     const asked: number[] = [];
     const node = (number: number) =>
