@@ -141,7 +141,7 @@ interface GitHubEventExtensionOptions {
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
-  subscribedPullRequests?: (owner: string, repo: string) => number[];
+  subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
 }
 
 interface GitHubTokenStatus {
@@ -2936,10 +2936,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     const trackedPullRequestNumbers = [
       ...new Set([
-        ...(this.options.subscribedPullRequests?.(watched.owner, watched.repo) ?? []),
+        ...(this.options.subscribedPullRequests?.(watched) ?? []),
         ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
       ]),
     ];
+    const missingPullRequests = new Set<number>();
     for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
@@ -2982,6 +2983,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
         partialScan = true;
         break;
+      }
+      if (mergeResponse.status === 404) {
+        missingPullRequests.add(prNumber);
+        continue;
       }
       if (!mergeResponse.ok) {
         const errorText = await mergeResponse.text();
@@ -3049,6 +3054,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     for (const prNumber of trackedPullRequestNumbers) {
+      if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3187,6 +3193,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     for (const prNumber of trackedPullRequestNumbers) {
+      if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         reactionsFullyPolled = false;

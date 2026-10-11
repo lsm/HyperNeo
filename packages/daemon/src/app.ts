@@ -74,6 +74,8 @@ import {
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
+import { SpaceAgentSubscriptionRepository } from './storage/repositories/space-agent-subscription-repository.ts';
+import { SpaceSessionEventSubscriptionRepository } from './storage/repositories/space-session-event-subscription-repository.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -807,6 +809,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       internalEventBus
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
+    const spaceSessionEventSubscriptions = new SpaceSessionEventSubscriptionRepository(
+      db.getDatabase()
+    );
+    const spaceAgentSubscriptions = new SpaceAgentSubscriptionRepository(
+      db.getDatabase(),
+      new SpaceAgentRepository(db.getDatabase())
+    );
     const sessionEventRouteDeps: SessionEventRouteDeps = {
       readEvent: (eventId) => sessionExternalEventStore.getById(eventId),
       listSubscriptions: () => sessionEventSubscriptions.listAll(),
@@ -912,11 +921,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         autoReconcileWebhooks: true,
         sessionRepoReferenced: (owner, repo) =>
           sessionEventSubscriptions.referencesRepo(owner, repo),
-        subscribedPullRequests: (owner, repo) =>
+        subscribedPullRequests: (watched) =>
           pullRequestNumbersOfTopics(
-            sessionEventSubscriptions.listAll().map((subscription) => subscription.topic),
-            owner,
-            repo
+            (watched.spaceId === SESSION_EVENT_SCOPE
+              ? sessionEventSubscriptions.listAll()
+              : [
+                  ...spaceSessionEventSubscriptions.listBySpace(watched.spaceId),
+                  ...spaceAgentSubscriptions.listActiveSubscriptionsBySpace(watched.spaceId),
+                ]
+            ).map((subscription) => subscription.topic),
+            watched.owner,
+            watched.repo
           ),
       })
     );
