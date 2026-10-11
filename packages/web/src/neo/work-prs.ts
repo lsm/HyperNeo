@@ -1,7 +1,10 @@
-import type { NeoWorkPr, NeoWorkPrReceipt } from '@hyperneo/shared/types/neo-snapshot';
+import {
+  type NeoWorkPr,
+  type NeoWorkPrReceipt,
+  neoWorkPrVerdict,
+} from '@hyperneo/shared/types/neo-snapshot';
 
-const stuck = (pr: NeoWorkPr) =>
-  pr.state === 'OPEN' && (pr.checks === 'failing' || pr.review === 'changes_requested');
+const stuck = (pr: NeoWorkPr) => pr.state === 'OPEN' && neoWorkPrVerdict(pr) === 'failed';
 
 export function neoWorkPrInProgress(receipt: NeoWorkPrReceipt | undefined): boolean {
   const prs = receipt?.prs ?? [];
@@ -10,7 +13,7 @@ export function neoWorkPrInProgress(receipt: NeoWorkPrReceipt | undefined): bool
 
 export function neoWorkPrSetback(receipt: NeoWorkPrReceipt | undefined): boolean {
   const prs = receipt?.prs ?? [];
-  return prs.some(stuck) || prs.some((pr) => pr.state === 'CLOSED');
+  return prs.some((pr) => neoWorkPrVerdict(pr) === 'failed');
 }
 
 function headlinePr(receipt: NeoWorkPrReceipt | undefined): NeoWorkPr | undefined {
@@ -38,19 +41,17 @@ export function neoWorkPrLabel(receipt: NeoWorkPrReceipt | undefined): string | 
   if (!pr) return null;
   const number = prNumber(pr);
   const more = prs.length > 1 ? ` +${prs.length - 1}` : '';
-  const state =
-    pr.state === 'MERGED'
-      ? 'Merged'
-      : pr.state === 'CLOSED'
+  const state = {
+    done: 'Merged',
+    failed:
+      pr.state === 'CLOSED'
         ? 'PR closed'
         : pr.checks === 'failing'
           ? 'Checks failing'
-          : pr.review === 'changes_requested'
-            ? 'Changes requested'
-            : pr.checks === 'pending'
-              ? 'Waiting on CI'
-              : pr.review === 'approved'
-                ? 'Approved, not merged'
-                : 'Waiting on review';
+          : 'Changes requested',
+    waiting: 'Waiting on CI',
+    ready: 'Approved, not merged',
+    pending: 'Waiting on review',
+  }[neoWorkPrVerdict(pr)];
   return `${state} · ${number}${more}`;
 }
