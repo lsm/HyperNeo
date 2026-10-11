@@ -627,6 +627,7 @@ export function NeoLive() {
                     onDone={(itemId) => void neo.tickAskItem(ask.ask.id, itemId)}
                     onApprove={() => void neo.approveAsk(ask.ask.id)}
                     onOpen={(id) => openScene({ kind: 'work', id })}
+                    onOpenSession={(sessionId, title) => setChat({ sessionId, title })}
                     renderCard={(scene) => renderScene(scene, ask.group)}
                   />
                 ))}
