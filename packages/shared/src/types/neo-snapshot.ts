@@ -274,9 +274,16 @@ export interface NeoSnapshot {
   standingRules?: string[];
   asks?: NeoAsk[];
   cards: NeoCardView[];
+  sessionLoad?: NeoSessionLoad[];
   askViews: NeoAskView[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
+}
+
+export interface NeoSessionLoad {
+  sessionId: string;
+  liveCards: number;
+  busy: boolean;
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

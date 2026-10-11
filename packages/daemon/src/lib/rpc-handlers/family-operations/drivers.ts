@@ -36,6 +36,7 @@ import {
 import type { WorkAdapter } from '../../drivers/types.ts';
 import { createWorkVerbOperations } from '../../drivers/work-operations.ts';
 import { renderAddress } from '../../mailbox/address.ts';
+import { readNeoSessionLoad } from '../../neo/session-load.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import type { OperationCaller, OperationDefinition } from '../../operations/registry.ts';
@@ -357,6 +358,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       folderExists: existsSync,
       makeFolder: (folder: string) => mkdirSync(folder),
       homeDir: homedir(),
+      liveCards: () =>
+        new Map(readNeoSessionLoad(db()).map((load) => [load.sessionId, load.liveCards])),
     }),
     createSpaceAdapter({
       db,

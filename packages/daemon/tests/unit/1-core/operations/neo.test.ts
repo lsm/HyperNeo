@@ -551,7 +551,10 @@ describe('Neo MVP', () => {
           reason: 'This request key belongs to another input.',
         });
         expect(service.repo.listWork()).toEqual([receipt.work]);
-        const independent = { ...request, input: { ...request.input, requestKey: 'second' } };
+        const independent = {
+          ...request,
+          input: { ...request.input, requestKey: 'second', allowBusyTarget: true },
+        };
         expect(JSON.parse((await handler(next)(independent)).content[0].text)).toMatchObject({
           ok: true,
           work: { originMessageId: 'ask-B' },
