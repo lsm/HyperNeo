@@ -1467,7 +1467,7 @@ export class NeoService {
     )
     .pipe(
       (refresh: { work: NeoWork }, card: NeoWorkPrCard, now: number) =>
-        requireNeoWorkPrRefresh(refresh, { ...card, goal: !!card.goal }, now, NEO_WORK_CLOSED_DONE),
+        requireNeoWorkPrRefresh(refresh, card, now, NEO_WORK_CLOSED_DONE),
       ['refresh', 'card', 'now'],
       'result:refresh'
     )
@@ -1493,7 +1493,7 @@ export class NeoService {
         told: NeoWorkTold,
         now: number
       ) =>
-        refreshed.read
+        refreshed.read && card.goal
           ? planNeoDoneCheck(refreshed.read.evidence, told.row, refreshed.read.read, now, {
               quietSince: refresh.work.updatedAt,
               remindable: !card.ask || card.ask.status === 'open',
@@ -1848,6 +1848,10 @@ export class NeoService {
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && work.report === NEO_WORK_CLOSED_DONE) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
+    if (work.status === 'reported')
+      await readNeoCardPrs(this.cardPrDeps, work, this.workPrs.get(work.id), Date.now()).catch(
+        (error) => this.log.warn('Card pull request read pending', error)
+      );
     const rootId = await this.open(null);
     if (work.concernId) {
       await returnWorkThroughHolder(this, work, rootId);
