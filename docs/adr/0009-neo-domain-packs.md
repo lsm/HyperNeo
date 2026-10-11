@@ -97,7 +97,6 @@ interface NeoPack {
   readEvidence?(work: NeoWork, report: string | null): Promise<NeoEvidence[]>;
   readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   checks?: Record<string, (item: NeoAskItem, evidence: readonly NeoEvidence[]) => Gate>;
-  workerSkills?: string[];
   workerMcpServers?: string[];
 }
 ```
@@ -122,8 +121,8 @@ interface NeoPack {
   as `readEvidence`, at most every 15 minutes per ask, and tells the ask's Neo
   session once per change (`neo_ask_checks`); Neo judges and settles (#6286).
 - `checks`: pure gates, one per item kind.
-- `workerSkills` / `workerMcpServers`: ids in the existing skills and app MCP
-  registries that sessions working on the pack's asks should get. A pack
+- `workerMcpServers`: ids in the existing app MCP registry that sessions
+  working on the pack's asks should get. Skills can join when a pack needs them. A pack
   references them; it does not ship a second plugin mechanism.
 
 ### 4. Evidence and bookkeeping
