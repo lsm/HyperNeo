@@ -160,6 +160,7 @@ describe('Neo world briefing delivery', () => {
       'work.status {ref} instead of searching again',
       'any other connected work apps',
       'Neo context operations (not the full HyperNeo catalog)',
+      'a separate task in the same project starts new work',
     ]) {
       expect(prompt.replace(/\s+/g, ' ')).toContain(text);
     }
