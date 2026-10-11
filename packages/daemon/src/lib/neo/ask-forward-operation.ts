@@ -74,6 +74,10 @@ export function neoForwardedText(
   return text.trim() || null;
 }
 
+export function neoForwardedAskMessageId(messageId: string): string | null {
+  return /^neo-forward:(.+):\d+$/.exec(messageId)?.[1] ?? null;
+}
+
 export function neoForwardMessageId(ask: NeoAskOrigin, hop: number): string {
   return `neo-forward:${ask.messageId}:${hop}`;
 }

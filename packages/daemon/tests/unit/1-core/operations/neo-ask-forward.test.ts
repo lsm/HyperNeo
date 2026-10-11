@@ -356,6 +356,19 @@ describe('NeoAskForwardRepository', () => {
       });
       expect(service.forwardedAway(garden.sessionId, 'ask-1')).toBe(true);
       expect(service.forwardedAway(pond.sessionId, 'ask-1')).toBe(false);
+      service.askForwards.record(ask, {
+        hop: 1,
+        fromSessionId: pond.sessionId,
+        toSessionId: root.sessionId,
+        toConcernId: null,
+        forwardedAt: 2,
+      });
+      expect(service.forwardedAway(pond.sessionId, 'neo-forward:ask-1:0')).toBe(false);
+      db.getJobQueueRepo().enqueue({
+        queue: 'mailbox',
+        payload: { to: { sessionId: root.sessionId }, messageUuid: 'neo-forward:ask-1:1' },
+      });
+      expect(service.forwardedAway(pond.sessionId, 'neo-forward:ask-1:0')).toBe(true);
     } finally {
       service.dispose();
       db.close();

@@ -29,7 +29,7 @@ import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-age
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
-import { neoForwardMessageId } from './ask-forward-operation.ts';
+import { neoForwardedAskMessageId, neoForwardMessageId } from './ask-forward-operation.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -2174,13 +2174,10 @@ export class NeoService {
   }
 
   forwardedAway(sessionId: string, messageId: string): boolean {
-    const ask = { sessionId, messageId };
     return this.askForwards
-      .list(ask)
-      .some(
-        (forward) =>
-          forward.fromSessionId === sessionId &&
-          this.hasDelivery(forward.toSessionId, neoForwardMessageId(ask, forward.hop))
+      .listFrom(sessionId, neoForwardedAskMessageId(messageId) ?? messageId)
+      .some((forward) =>
+        this.hasDelivery(forward.toSessionId, neoForwardMessageId(forward.ask, forward.hop))
       );
   }
 
