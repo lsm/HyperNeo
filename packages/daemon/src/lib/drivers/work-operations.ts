@@ -33,7 +33,8 @@ export interface WorkVerbDeps {
   daemonName: string;
 }
 
-const MessageSchema = z.string().trim().min(1).max(20_000);
+export const WORK_MESSAGE_MAX = 20_000;
+const MessageSchema = z.string().trim().min(1).max(WORK_MESSAGE_MAX);
 const REMOTE_START_TIMEOUT_MS = 360_000;
 const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(500).optional();

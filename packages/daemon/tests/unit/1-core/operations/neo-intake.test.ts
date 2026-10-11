@@ -4,6 +4,7 @@ import {
   admitNeoIntake,
   createNeoIntakeOperation,
   loggedNeoRoute,
+  replayedNeoRoute,
   requireNeoIntakeTarget,
   wantsNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
@@ -88,6 +89,44 @@ describe('loggedNeoRoute', () => {
     expect(
       loggedNeoRoute({ ...earlier!, destination: 'main' } as Parameters<typeof loggedNeoRoute>[0])
     ).toEqual({ reason: { choice: null } });
+  });
+});
+
+describe('replayedNeoRoute', () => {
+  const logged = {
+    destination: 'holder',
+    concernId: 'c1',
+    targetSessionId: 's1',
+    signal: 'classifier',
+    confidence: 0.8,
+  } as unknown as Parameters<typeof replayedNeoRoute>[1];
+  const holder = { sessionId: 's1', kind: 'concern' as const, concernId: 'c1' };
+  test('a first ask has nothing to replay', () => {
+    expect(replayedNeoRoute(null, null)).toEqual({ value: null });
+  });
+  test('a retry with only a log entry reuses the logged route', () => {
+    expect(replayedNeoRoute(null, logged)).toEqual(loggedNeoRoute(logged));
+  });
+  test('the log keeps its signal when it agrees with where the ask went', () => {
+    expect(replayedNeoRoute({ sessionId: 's1', holder }, logged)).toEqual(loggedNeoRoute(logged));
+  });
+  test('the ask ledger wins when the log is missing or points elsewhere', () => {
+    const replayed = {
+      reason: {
+        choice: { concernId: 'c1', sessionId: 's1', signal: 'embedding', confidence: 1 },
+        fallback: 'replayed',
+      },
+    };
+    expect(replayedNeoRoute({ sessionId: 's1', holder }, null)).toEqual(replayed);
+    expect(
+      replayedNeoRoute({ sessionId: 's1', holder }, {
+        ...logged!,
+        targetSessionId: 'root',
+      } as Parameters<typeof replayedNeoRoute>[1])
+    ).toEqual(replayed);
+    expect(replayedNeoRoute({ sessionId: 'root', holder: null }, logged)).toEqual({
+      reason: { choice: null, fallback: 'replayed' },
+    });
   });
 });
 
@@ -207,6 +246,29 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(2);
     expect(repo.listConcerns()).toEqual([]);
   });
+  test('a retry whose routing log was lost goes back to the holder its ask first went to', async () => {
+    const holderId = 'neo:holder:c1';
+    repo.saveConcern({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
+    repo.reserveBinding({ sessionId: holderId, kind: 'concern', concernId: 'c1' });
+    mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(holderId);
+    sessions.set(holderId, { ...target, id: holderId });
+    let routed = 0;
+    const router: NeoRouter = async () =>
+      routed++ === 0
+        ? { choice: { concernId: 'c1', sessionId: holderId, signal: 'embedding', confidence: 0.9 } }
+        : { choice: null };
+    const registry = createOperationRegistry([
+      createNeoIntakeOperation(db, repo, undefined, router),
+    ]);
+    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
+      value: { ok: true, created: true },
+    });
+    mailbox.db.exec('DELETE FROM neo_routing_log');
+    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
+      value: { ok: true, created: false },
+    });
+  });
+
   test('same-ID concurrent retries preserve one prompt and one delivery job', async () => {
     const receipts = await Promise.all([invoke(), invoke(), invoke()]);
     expect(receipts.map((receipt) => receipt.kind === 'completed' && receipt.value)).toEqual([

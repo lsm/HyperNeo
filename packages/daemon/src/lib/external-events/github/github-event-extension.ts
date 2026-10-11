@@ -141,6 +141,7 @@ interface GitHubEventExtensionOptions {
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
+  subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
 }
 
 interface GitHubTokenStatus {
@@ -2933,7 +2934,25 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    const subscribedPullRequestNumbers = this.options.subscribedPullRequests?.(watched) ?? [];
+    for (const prNumber of cursor.subscribedPullRequestNumbers ?? []) {
+      if (
+        !subscribedPullRequestNumbers.includes(prNumber) &&
+        !recentPullRequestNumbers.includes(prNumber)
+      ) {
+        delete mergeConflictStates[prNumber];
+        delete recentPullRequestHeadShas[prNumber];
+        delete recentPullRequestHeadRepos[prNumber];
+      }
+    }
+    const trackedPullRequestNumbers = [
+      ...new Set([
+        ...subscribedPullRequestNumbers,
+        ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
+      ]),
+    ];
+    const missingPullRequests = new Set<number>();
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -2976,6 +2995,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         break;
       }
+      if (mergeResponse.status === 404) {
+        missingPullRequests.add(prNumber);
+        continue;
+      }
       if (!mergeResponse.ok) {
         const errorText = await mergeResponse.text();
         if (
@@ -3006,7 +3029,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const pullDetail = asPollingObject(await mergeResponse.json());
       if (pullDetail.state !== 'open') {
         delete mergeConflictStates[prNumber];
+        if (subscribedPullRequestNumbers.includes(prNumber))
+          delete recentPullRequestHeadShas[prNumber];
         continue;
+      }
+      const detailHeadSha = headShaFromPullRequest(pullDetail);
+      if (subscribedPullRequestNumbers.includes(prNumber) && detailHeadSha) {
+        recentPullRequestHeadShas[prNumber] = detailHeadSha;
+        recentPullRequestHeadRepos[prNumber] = headRepoFromPullRequest(pullDetail, watched);
       }
       const mergeable = typeof pullDetail.mergeable === 'boolean' ? pullDetail.mergeable : null;
       const mergeableState =
@@ -3041,7 +3071,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
+      if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3179,7 +3210,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
+      if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         reactionsFullyPolled = false;
@@ -3279,7 +3311,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    const trackedPrSet = new Set(recentPullRequestNumbers);
+    const trackedPrSet = new Set(trackedPullRequestNumbers);
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }
@@ -3336,6 +3368,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       etags,
       processedPages,
       recentPullRequestNumbers,
+      subscribedPullRequestNumbers,
       recentPullRequestHeadShas,
       recentPullRequestHeadRepos,
       checkRunEtags,
