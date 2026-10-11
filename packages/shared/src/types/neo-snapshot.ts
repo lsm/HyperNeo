@@ -67,7 +67,7 @@ export interface NeoAskItem {
   text: string;
   state: 'pending' | 'met' | 'needs_you';
   evidence: string | null;
-  check: 'coding.pr_merged' | null;
+  check: 'coding.pr_merged' | 'life-admin.confirmed' | null;
   metBy: 'neo' | 'daemon' | 'human' | null;
   removed: boolean;
   addedAt: number | null;
