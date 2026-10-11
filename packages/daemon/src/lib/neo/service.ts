@@ -1310,11 +1310,15 @@ export class NeoService {
   private loadSessionNoticeGroups(): void {
     const root = this.repo.getBindingForConcern(null)?.sessionId;
     if (!root) return;
-    this.sessionNoticeGroups = savedNeoSessionNoticeGroups(
-      this.db
-        .getSDKMessageRepo()
-        .getLatestSDKMessagesByType(root, 'system', 'session_notices', NEO_SESSION_GROUPS_MAX)
-    );
+    try {
+      this.sessionNoticeGroups = savedNeoSessionNoticeGroups(
+        this.db
+          .getSDKMessageRepo()
+          .getLatestSDKMessagesByType(root, 'system', 'session_notices', NEO_SESSION_GROUPS_MAX)
+      );
+    } catch (error) {
+      this.log.warn('Neo session notice groups could not be reloaded', error);
+    }
   }
 
   private postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): void {

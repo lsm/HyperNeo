@@ -156,10 +156,11 @@ export function planNeoSessionNoticeGroup(
 ): { open: NeoSessionNotice[]; closed: NeoSessionNoticeGroup | null } {
   const first = open[0];
   const last = open.at(-1);
-  if (!first || !last || now - last.at < NEO_SESSION_GROUP_MS)
-    return { open: [...open, ...added], closed: null };
+  const full = open.length + added.length > NEO_SESSION_NOTICES_MAX;
+  if (!first || !last || (now - last.at < NEO_SESSION_GROUP_MS && !full))
+    return { open: [...open, ...added].slice(-NEO_SESSION_NOTICES_MAX), closed: null };
   return {
-    open: [...added],
+    open: added.slice(-NEO_SESSION_NOTICES_MAX),
     closed: {
       id: `neo-session-notices:${first.at}:${first.key}`,
       at: first.at,

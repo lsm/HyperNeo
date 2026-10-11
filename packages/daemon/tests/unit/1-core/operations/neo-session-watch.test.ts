@@ -218,6 +218,14 @@ describe('planNeoSessionNoticeGroup', () => {
     });
   });
 
+  test('a group that would pass the notice cap closes early and the new notices start the next', () => {
+    const open = Array.from({ length: NEO_SESSION_NOTICES_MAX }, (_, index) => notice(now + index));
+    const added = [notice(now + 30, { kind: 'failed' })];
+    const grouped = planNeoSessionNoticeGroup(open, added, now + 30);
+    expect(grouped.open).toEqual(added);
+    expect(grouped.closed?.notices).toEqual(open);
+  });
+
   test('nothing open and nothing new leaves nothing to close', () => {
     expect(planNeoSessionNoticeGroup([], [], now)).toEqual({ open: [], closed: null });
   });
