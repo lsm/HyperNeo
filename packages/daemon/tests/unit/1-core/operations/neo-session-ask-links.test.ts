@@ -10,6 +10,7 @@ import {
   keepNeoSessionPrs,
   linkNeoSessionsToAsks,
   NEO_SESSION_PR_READS_MAX,
+  NEO_SESSION_PR_RECHECK_MS,
   neoAskPrKeys,
   planNeoHeldSessionNotices,
   planNeoSessionPrReads,
@@ -57,10 +58,38 @@ describe('planNeoSessionPrReads', () => {
       listed('new', { lastActivityAt: 5 }),
       listed('stuck', { status: 'needs_you', lastActivityAt: 0 }),
     ];
-    const plan = planNeoSessionPrReads(sessions, new Map([[sessions[0]!.key, []]]), [sessions[1]!]);
+    const checked = new Map([[sessions[0]!.key, 100]]);
+    const plan = planNeoSessionPrReads(
+      sessions,
+      new Map([[sessions[0]!.key, []]]),
+      [sessions[1]!],
+      checked,
+      100
+    );
     expect(plan.map((session) => session.title)).toEqual(['stuck', 'new', 'old']);
     const many = Array.from({ length: NEO_SESSION_PR_READS_MAX + 3 }, (_, i) => listed(`s${i}`));
-    expect(planNeoSessionPrReads(many, new Map(), [])).toHaveLength(NEO_SESSION_PR_READS_MAX);
+    expect(planNeoSessionPrReads(many, new Map(), [], new Map(), 0)).toHaveLength(
+      NEO_SESSION_PR_READS_MAX
+    );
+  });
+
+  test('reads a session that came back with no PRs again after a while, not one with PRs', () => {
+    const empty = listed('empty');
+    const found = listed('found');
+    const known = new Map([
+      [empty.key, []],
+      [found.key, ['https://github.com/o/r/pull/1']],
+    ]);
+    const checked = new Map([
+      [empty.key, 0],
+      [found.key, 0],
+    ]);
+    expect(planNeoSessionPrReads([empty, found], known, [], checked, 1)).toEqual([]);
+    expect(
+      planNeoSessionPrReads([empty, found], known, [], checked, NEO_SESSION_PR_RECHECK_MS).map(
+        (session) => session.title
+      )
+    ).toEqual(['empty']);
   });
 });
 
@@ -375,6 +404,27 @@ describe('NeoService session ask links', () => {
           open: { link: 'codex://threads/t1', remoteLink: null, sessionId: null, daemon: null },
         },
       ],
+    });
+  });
+
+  test('a linked session already waiting when the daemon starts puts its ask in attention', async () => {
+    openAsk(`Land ${pr(12)}`);
+    const at = Date.now() - 1_000;
+    sessions = [
+      {
+        ref,
+        title: 'Ship the fix',
+        place: { machine: 'laptop', folder: '/repo', name: 'repo' },
+        status: 'running',
+        lastActivityAt: at,
+        link: 'codex://threads/t1',
+      },
+    ];
+    status = { status: 'needs_you', lastActivityAt: at, openedPrs: [pr(12)] };
+    await service.refreshDriverWork();
+    expect((await askViews())[0]).toMatchObject({
+      group: 'attention',
+      sessions: [{ key, kind: 'needs_you' }],
     });
   });
 

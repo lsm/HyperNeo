@@ -317,6 +317,7 @@ export class NeoService {
   private readonly askEvidenceReads = new Map<string, number>();
   private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
   private sessionPrs = new Map<string, string[]>();
+  private sessionPrsCheckedAt = new Map<string, number>();
   private heldSessionNotices = new Map<string, NeoSessionNotice>();
   askSessions = new Map<string, NeoAskSessionView[]>();
   sessionNotices: NeoSessionNotice[] = [];
@@ -1379,9 +1380,18 @@ export class NeoService {
     .pipe(
       (
         listed: { sessions: NeoListedSession[]; complete: boolean },
-        plan: ReturnType<typeof planNeoSessionWatch>
-      ) => ({ sessions: planNeoSessionPrReads(listed.sessions, this.sessionPrs, plan.reads) }),
-      ['listed', 'plan'],
+        plan: ReturnType<typeof planNeoSessionWatch>,
+        now: number
+      ) => ({
+        sessions: planNeoSessionPrReads(
+          listed.sessions,
+          this.sessionPrs,
+          plan.reads,
+          this.sessionPrsCheckedAt,
+          now
+        ),
+      }),
+      ['listed', 'plan', 'now'],
       'prReads'
     )
     .pipe(
@@ -1413,6 +1423,12 @@ export class NeoService {
         );
         return {
           details: reads.slice(0, plan.reads.length).map((read) => read?.detail ?? null),
+          statuses: new Map(
+            prReads.sessions.flatMap((session, index) => {
+              const detail = reads[plan.reads.length + index]?.detail;
+              return detail ? [[session.key, detail.status] as const] : [];
+            })
+          ),
           found: new Map(
             sessions.flatMap((session, index) => {
               const opened = reads[index]?.opened;
@@ -1491,7 +1507,9 @@ export class NeoService {
       (
         listed: { sessions: NeoListedSession[]; complete: boolean },
         plan: ReturnType<typeof planNeoSessionWatch>,
-        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }
+        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
+        read: { statuses: ReadonlyMap<string, WorkStatus>; found: ReadonlyMap<string, unknown> },
+        now: number
       ) => {
         const keep = new Set(listed.sessions.map((session) => session.key));
         if (listed.complete)
@@ -1501,8 +1519,15 @@ export class NeoService {
         plan.reads.forEach((session, index) =>
           this.sessionsSeen.set(session.key, notices.planned[index].seen)
         );
+        for (const [key, status] of read.statuses) {
+          const seen = this.sessionsSeen.get(key);
+          if (seen) this.sessionsSeen.set(key, { ...seen, status });
+        }
+        for (const key of read.found.keys()) this.sessionPrsCheckedAt.set(key, now);
+        for (const key of [...this.sessionPrsCheckedAt.keys()])
+          if (!this.sessionsSeen.has(key)) this.sessionPrsCheckedAt.delete(key);
       },
-      ['listed', 'plan', 'notices']
+      ['listed', 'plan', 'notices', 'read', 'now']
     )
     .pipe(
       (

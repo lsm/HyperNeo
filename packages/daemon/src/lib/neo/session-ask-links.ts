@@ -8,6 +8,7 @@ import { extractNeoAskRefs } from './packs/coding/ask-prs.ts';
 import type { NeoListedSession, NeoSessionNotice } from './session-watch.ts';
 
 export const NEO_SESSION_PR_READS_MAX = 10;
+export const NEO_SESSION_PR_RECHECK_MS = 10 * 60_000;
 const LINKED_ASKS: ReadonlySet<NeoAsk['status']> = new Set(['open', 'waiting', 'blocked']);
 
 export type NeoSessionAskLink = { askId: string; key: string };
@@ -17,13 +18,18 @@ const needsHuman = (status: WorkStatus) => status === 'needs_you' || status === 
 
 export function planNeoSessionPrReads(
   listed: readonly NeoListedSession[],
-  known: ReadonlyMap<string, unknown>,
-  reading: readonly NeoListedSession[]
+  known: ReadonlyMap<string, readonly string[]>,
+  reading: readonly NeoListedSession[],
+  checkedAt: ReadonlyMap<string, number>,
+  now: number
 ): NeoListedSession[] {
   const read = new Set(reading.map((session) => session.key));
   const rank = (session: NeoListedSession) => (needsHuman(session.status) ? 0 : 1);
+  const due = (key: string) =>
+    !known.has(key) ||
+    (!known.get(key)?.length && now - (checkedAt.get(key) ?? 0) >= NEO_SESSION_PR_RECHECK_MS);
   return listed
-    .filter((session) => !known.has(session.key) && !read.has(session.key))
+    .filter((session) => due(session.key) && !read.has(session.key))
     .sort((a, b) => rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt)
     .slice(0, NEO_SESSION_PR_READS_MAX);
 }
