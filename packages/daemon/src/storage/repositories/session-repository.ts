@@ -130,6 +130,21 @@ export class SessionRepository {
     }
   }
 
+  listProcessingSessionIds(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id FROM sessions
+            WHERE status = 'active'
+              AND json_valid(processing_state)
+              AND json_extract(processing_state, '$.status') = 'processing'
+              AND NOT (json_valid(session_context)
+                AND json_extract(session_context, '$.spaceId') IS NOT NULL)`
+        )
+        .all() as Array<{ id: string }>
+    ).map((row) => row.id);
+  }
+
   getSession(id: string): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;

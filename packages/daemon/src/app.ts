@@ -57,6 +57,13 @@ import {
   type SessionEventDeliveryDeps,
 } from './lib/external-events/session-event-delivery.ts';
 import { endClosedPrSubscriptions } from './lib/external-events/session-subscription-close.ts';
+import { deliverMessage } from './lib/agent/message-delivery.ts';
+import {
+  RESTART_RECOVERY_NOTE,
+  recoverRestartCutTurns,
+} from './lib/agent/restart-turn-recovery.ts';
+import { renderAddress } from './lib/mailbox/address.ts';
+import { handoffPromptToMailbox } from './lib/mailbox/handoff.ts';
 import { SESSION_EVENT_SCOPE } from './lib/external-events/session-external-event-store.ts';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
@@ -435,6 +442,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
@@ -828,6 +836,50 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       { subscriberName: 'session-external-events', namespaceId: SESSION_EVENT_SCOPE }
     );
+    void recoverRestartCutTurns(cutOffSessionIds, {
+      readEvidence: (sessionId) => db.getSDKMessageRepo().readRestartRecoveryEvidence(sessionId),
+      hasActiveDelivery: (sessionId, uuid) =>
+        db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).has(uuid),
+      resend: (sessionId, uuid, enqueueDelivery) => {
+        const reopenedId = db.getSDKMessageRepo().markDeliveryRetryableByUuid(sessionId, uuid);
+        if (!reopenedId) return false;
+        void internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [reopenedId],
+            status: 'enqueued',
+          })
+          .catch(() => {});
+        if (enqueueDelivery)
+          deliverMessage(db.getJobQueueRepo(), sessionId, uuid, { origin: 'recovery' });
+        return true;
+      },
+      sendNote: async (sessionId, promptUuid) => {
+        const outcome = await handoffPromptToMailbox({
+          to: renderAddress({ kind: 'session', sessionId }),
+          origin: 'recovery',
+          messageUuid: `restart-recovery:${promptUuid}`,
+          deliveryMode: 'immediate',
+          message: {
+            type: 'user',
+            message: { role: 'user', content: RESTART_RECOVERY_NOTE },
+            parent_tool_use_id: null,
+            inputKind: 'system',
+          },
+          jobQueue: db.getJobQueueRepo(),
+        });
+        if (outcome.kind !== 'rejected') return true;
+        logError(
+          `[Daemon] Restart recovery note for session ${sessionId} was rejected: ${outcome.reason}`
+        );
+        return false;
+      },
+    })
+      .then((results) => {
+        const acted = results.filter((result) => result.resumed).length;
+        if (acted > 0) logInfo(`[Daemon] Resumed ${acted} session turn(s) cut off by the restart`);
+      })
+      .catch((error) => logError('[Daemon] Restart turn recovery failed:', error));
     const extensionConfigStore = new ExternalEventExtensionConfigStore(db.getDatabase());
     const sourceConfigTables: Record<string, string[]> = {
       github: ['space_github_watched_repos'],
