@@ -21,7 +21,6 @@ let target: SpaceTask;
 let dependency: SpaceTask;
 let runId: string;
 let replacementRunId: string;
-let emit: ReturnType<typeof mock>;
 let cleanup: ReturnType<typeof mock>;
 beforeEach(() => {
   db = new Database(':memory:');
@@ -43,16 +42,14 @@ beforeEach(() => {
   manager = new SpaceTaskManager(db, spaceId);
   target = tasks.createTask({ spaceId, title: 'Original', description: '' });
   dependency = tasks.createTask({ spaceId, title: 'Dependency', description: '' });
-  emit = mock(async (_space: string, _task: SpaceTask) => {});
   cleanup = mock(async (_space: string, taskId: string, fields: UpdateSpaceTaskParams) =>
     tasks.updateTask(taskId, fields)
   );
 });
 afterEach(() => db.close());
-function updater(withRuntime = true, publish = emit) {
+function updater(withRuntime = true) {
   return createSpaceTaskFieldUpdater({
     getTaskManager: () => manager,
-    emitTaskUpdated: publish,
     ...(withRuntime ? { blockExecution: cleanup } : {}),
   });
 }
@@ -107,7 +104,6 @@ test.each(['unmet', 'met', 'no-runtime'] as const)(
     });
     expect(writes).toHaveLength(mode === 'met' ? 2 : 1);
     expect(outcome.task.workflowRunId).toBe(mode === 'unmet' ? runId : replacementRunId);
-    expect(emit).not.toHaveBeenCalled();
     if (mode === 'unmet')
       expect(cleanup.mock.calls[0][2]).toEqual({
         status: 'blocked',
@@ -123,7 +119,6 @@ test('manager graph rejection does not partially persist metadata', async () => 
     updater()(spaceId, target.id, { title: 'Must not persist', dependsOn: ['missing'] })
   ).rejects.toThrow('Dependency task not found in space');
   expect(tasks.getTask(target.id)?.title).toBe('Original');
-  expect(emit).not.toHaveBeenCalled();
   expect(cleanup).not.toHaveBeenCalled();
 });
 
@@ -150,14 +145,12 @@ test('a field edit that adds a dependency leaves running dependents alone', asyn
     dependsOn: [target.id],
     status: 'in_progress',
   });
-  const publish = mock(async (_space: string, _task: SpaceTask) => {});
-  const outcome = await updater(true, publish)(spaceId, target.id, {
+  const outcome = await updater(true)(spaceId, target.id, {
     title: 'Requested',
     dependsOn: [dependency.id],
   });
   expect(outcome.task).toMatchObject({ title: 'Requested', dependsOn: [dependency.id] });
   expect(tasks.getTask(dependent.id)?.status).toBe('in_progress');
-  expect(publish.mock.calls.map((call) => call[1].id)).not.toContain(dependent.id);
 });
 
 test('pure completion selection defers pointer write and reports caller event ownership', async () => {

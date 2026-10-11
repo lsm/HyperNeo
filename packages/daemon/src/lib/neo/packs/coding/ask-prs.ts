@@ -2,6 +2,11 @@ import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import {
+  GITHUB_REF_PATH,
+  githubGraphqlArgs,
+  parseGitHubRefUrl,
+} from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 
@@ -17,8 +22,7 @@ export type NeoRefState = {
 };
 export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState[]>;
 
-const REF_PATH = /github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/(\d+)/;
-const REF_URL = new RegExp(`https://${REF_PATH.source}`, 'g');
+const REF_URL = new RegExp(`https://${GITHUB_REF_PATH.source}`, 'g');
 const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const NEO_ASK_REF_MAX = 10;
@@ -59,8 +63,7 @@ const NEO_REF_MISSING_MS = 60 * 60_000;
 const refKey = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
 
 export function neoRefFromUrl(url: string): NeoRef | null {
-  const [, owner, repo, number] = REF_PATH.exec(url) ?? [null];
-  return owner && repo && number ? { owner, repo, number: Number(number) } : null;
+  return parseGitHubRefUrl(url);
 }
 
 export function extractNeoAskRefs(
@@ -177,24 +180,9 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
   if (done) return done;
   const gone = missing.get(key);
   if (gone !== undefined && Date.now() - gone < NEO_REF_MISSING_MS) return null;
-  const outcome = await runGhJson(
-    [
-      'gh',
-      'api',
-      'graphql',
-      '-f',
-      `query=${REF_QUERY}`,
-      '-f',
-      `o=${ref.owner}`,
-      '-f',
-      `n=${ref.repo}`,
-      '-F',
-      `p=${ref.number}`,
-    ],
-    homedir(),
-    spawnImpl,
-    { resourceHint: 'graphql' }
-  );
+  const outcome = await runGhJson(githubGraphqlArgs(REF_QUERY, ref), homedir(), spawnImpl, {
+    resourceHint: 'graphql',
+  });
   const parsed = outcome.ok ? GhRefSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) {
     if (!outcome.ok && NOT_A_REF.test(outcome.error)) missing.set(key, Date.now());
