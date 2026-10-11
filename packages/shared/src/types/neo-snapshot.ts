@@ -107,6 +107,8 @@ export interface NeoWorkPr {
   review: 'approved' | 'changes_requested' | 'none';
   blockers?: string[];
   createdAt?: number;
+  title?: string;
+  branch?: string;
 }
 
 export type NeoWorkPrVerdict = 'done' | 'failed' | 'waiting' | 'ready' | 'pending';

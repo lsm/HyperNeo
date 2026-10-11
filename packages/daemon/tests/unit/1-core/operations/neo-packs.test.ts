@@ -329,6 +329,7 @@ describe('readNeoCardPrs', () => {
               claim: 'mentioned' as const,
               claimedAt: 0,
               cardCreatedAt: 0,
+              score: null,
             },
           ],
           replace: () => {},

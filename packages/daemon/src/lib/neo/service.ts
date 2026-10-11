@@ -1149,7 +1149,7 @@ export class NeoService {
 
   private async reclaimCardPrs(): Promise<void> {
     const works = this.workPrClaims
-      .unclaimedCards()
+      .cardsToReclaim()
       .flatMap((id) => this.repo.getWork(id) ?? [])
       .sort((a, b) => a.createdAt - b.createdAt);
     for (const work of works) {

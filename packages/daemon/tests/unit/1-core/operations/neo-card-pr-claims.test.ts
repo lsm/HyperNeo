@@ -5,9 +5,11 @@ import {
   beatsNeoPrClaim,
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
+  neoPrMatchScore,
   planNeoCardPrCandidates,
   planNeoCardPrOwnership,
   planNeoPrCedes,
+  scoreNeoCardPrs,
   type NeoPrClaim,
   type NeoPrClaimRow,
 } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
@@ -26,6 +28,7 @@ const claim = (overrides: Partial<NeoPrClaimRow>): NeoPrClaimRow => ({
   claim: 'mentioned',
   claimedAt: 100,
   cardCreatedAt: 10,
+  score: 1,
   ...overrides,
 });
 const pr = (n: number, createdAt?: number): NeoWorkPr => ({
@@ -54,14 +57,68 @@ describe('planNeoCardPrCandidates', () => {
   });
 });
 
+describe('neoPrMatchScore', () => {
+  const startup = {
+    title: 'fix(desktop): get past the startup splash',
+    branch: 'fix/desktop-startup-daemon-attach',
+  };
+  test.each<[string, string, { title?: string; branch?: string }, number]>([
+    ['counts words the card and the PR share', 'Desktop startup hangs', startup, 2],
+    ['ignores case, plurals and punctuation', 'DESKTOP Icons!', { title: 'desktop icon' }, 2],
+    [
+      'scores one for a single shared word, so two cards with it tie',
+      'desktop app',
+      { title: 'desktop thing' },
+      1,
+    ],
+    ['gives an all-filler title nothing', 'fix the chore', { title: 'fix: the chore for this' }, 0],
+    ['gives a PR without a title or branch nothing', 'Desktop startup', {}, 0],
+  ])('%s', (_label, card, pr, score) => {
+    expect(neoPrMatchScore(card, pr)).toBe(score);
+  });
+});
+
+describe('scoreNeoCardPrs', () => {
+  test('scores only mentions this read fetched, keeping earlier scores otherwise', () => {
+    const card = { title: 'Desktop icons', instruction: 'Refresh the icons.' };
+    const item = (n: number, overrides = {}) => ({
+      url: pull(n),
+      claim: 'mentioned' as const,
+      claimedAt: 1,
+      claimed: false,
+      score: null,
+      ...overrides,
+    });
+    expect(
+      scoreNeoCardPrs(
+        card,
+        [item(1), item(2, { claim: 'branch' }), item(3, { score: 4 })],
+        [
+          { ...pr(1), title: 'Regenerate desktop icons' },
+          { ...pr(2), title: 'Desktop icons' },
+        ]
+      ).map((owned) => owned.score)
+    ).toEqual([2, null, 4]);
+  });
+});
+
 describe('beatsNeoPrClaim', () => {
-  const mention = { claim: 'mentioned' as const, claimedAt: 100, cardCreatedAt: 10 };
-  type Ranked = Partial<{ claim: NeoPrClaim; claimedAt: number; cardCreatedAt: number }>;
+  const mention = { claim: 'mentioned' as const, claimedAt: 100, cardCreatedAt: 10, score: 1 };
+  type Ranked = Partial<{
+    claim: NeoPrClaim;
+    claimedAt: number;
+    cardCreatedAt: number;
+    score: number | null;
+  }>;
   test.each<[string, Ranked, Ranked, boolean]>([
     ['a branch claim beats a mention', { claim: 'branch', claimedAt: 500 }, {}, true],
     ['a named claim beats a mention', { claim: 'named', claimedAt: 500 }, {}, true],
     ['an earlier mention beats a later one', { claimedAt: 50 }, {}, true],
     ['a later mention does not', { claimedAt: 150 }, {}, false],
+    ['a better-matching mention beats an earlier one', { claimedAt: 150, score: 2 }, {}, true],
+    ['a worse-matching mention loses even when earlier', { claimedAt: 50, score: 0 }, {}, false],
+    ['an unscored mention beats no mention', { claimedAt: 50, score: null }, {}, false],
+    ['a mention not yet scored is not beaten', { claimedAt: 50 }, { score: null }, false],
     ['a same-time mention from an older card does', { cardCreatedAt: 5 }, {}, true],
     [
       'two branch claims go to the older card',
@@ -77,16 +134,28 @@ describe('beatsNeoPrClaim', () => {
 
 describe('keepNeoUnbeatenPrs', () => {
   const card = { id: 'me', createdAt: 20 };
-  const mention = { url: pull(2), claim: 'mentioned' as const, claimedAt: 100, claimed: false };
+  const mention = {
+    url: pull(2),
+    claim: 'mentioned' as const,
+    claimedAt: 100,
+    claimed: false,
+    score: 1,
+  };
   const key = pull(2).toLowerCase();
   test.each<[string, NeoPrClaimRow[], number]>([
     ['no rival', [], 1],
     ['a rival branch claim beats a mention', [claim({ urlKey: key, claim: 'branch' })], 0],
     ['a later rival mention does not', [claim({ urlKey: key, claimedAt: 200 })], 1],
+    [
+      'a later rival that matches better does',
+      [claim({ urlKey: key, claimedAt: 200, score: 3 })],
+      0,
+    ],
     ['a rival rejection does not', [claim({ urlKey: key, claim: 'rejected' })], 1],
     ['my own row is not a rival', [claim({ workId: 'me', urlKey: key, claim: 'branch' })], 1],
   ])('%s', (_label, claims, kept) => {
-    expect(keepNeoUnbeatenPrs(card, [mention], claims)).toHaveLength(kept);
+    const { owned, beaten } = keepNeoUnbeatenPrs(card, [mention], claims);
+    expect([owned.length, beaten.length]).toEqual([kept, 1 - kept]);
   });
 });
 
@@ -126,7 +195,7 @@ describe('planNeoCardPrOwnership', () => {
         rivals,
         300
       )
-    ).toEqual([{ url: pull(1), claim: 'branch', claimedAt: 300, claimed: false }]);
+    ).toEqual([{ url: pull(1), claim: 'branch', claimedAt: 300, claimed: false, score: null }]);
   });
 
   test('a mention it rejected before stays rejected unless the brief or branch now claims it', () => {
@@ -135,14 +204,14 @@ describe('planNeoCardPrOwnership', () => {
       []
     );
     expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'named' }], rows, 300)).toEqual([
-      { url: pull(1), claim: 'named', claimedAt: 300, claimed: false },
+      { url: pull(1), claim: 'named', claimedAt: 300, claimed: false, score: null },
     ]);
   });
 
   test('another card’s rejected mention is no claim at all', () => {
     const rows = [claim({ claim: 'rejected', claimedAt: 1 })];
     expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'mentioned' }], rows, 300)).toEqual(
-      [{ url: pull(1), claim: 'mentioned', claimedAt: 300, claimed: false }]
+      [{ url: pull(1), claim: 'mentioned', claimedAt: 300, claimed: false, score: null }]
     );
   });
 
@@ -152,7 +221,7 @@ describe('planNeoCardPrOwnership', () => {
       claim({ claimedAt: 60, cardCreatedAt: 5 }),
     ];
     expect(planNeoCardPrOwnership(card, [{ url: pull(1), claim: 'mentioned' }], rows, 300)).toEqual(
-      [{ url: pull(1), claim: 'branch', claimedAt: 40, claimed: true }]
+      [{ url: pull(1), claim: 'branch', claimedAt: 40, claimed: true, score: 1 }]
     );
   });
 });
@@ -164,6 +233,7 @@ describe('keepNeoCardPrReads', () => {
     claim: 'mentioned' as const,
     claimedAt: 200,
     claimed: false,
+    score: null,
     ...overrides,
   });
   test('a new mention stays only if the PR was opened after the card started', () => {
@@ -225,6 +295,7 @@ describe('NeoWorkPrClaimRepository', () => {
           claim: 'rejected',
           claimedAt: 4,
           cardCreatedAt: 20,
+          score: null,
         },
       ]);
       repo.replace('a', [{ url: pull(1), claim: 'branch', claimedAt: 9 }]);
@@ -236,6 +307,7 @@ describe('NeoWorkPrClaimRepository', () => {
             claim: 'branch',
             claimedAt: 1,
             cardCreatedAt: 10,
+            score: null,
           },
           {
             workId: 'b',
@@ -243,6 +315,7 @@ describe('NeoWorkPrClaimRepository', () => {
             claim: 'mentioned',
             claimedAt: 3,
             cardCreatedAt: 20,
+            score: null,
           },
         ])
       );
@@ -274,9 +347,10 @@ describe('NeoWorkPrClaimRepository settled cards', () => {
         { url: pull(2), claim: 'branch', claimedAt: 1 },
         { url: pull(3), claim: 'mentioned', claimedAt: 1 },
       ]);
-      expect(repo.unclaimedCards()).toEqual(['a']);
+      expect(repo.cardsToReclaim()).toEqual(['a', 'b']);
       repo.drop('b', pull(2).toLowerCase(), 'mentioned');
       repo.drop('b', pull(3).toLowerCase(), 'mentioned');
+      expect(repo.cardsToReclaim()).toEqual(['a']);
       expect(repo.forUrls([pull(2), pull(3)]).map((row) => row.urlKey)).toEqual([
         pull(2).toLowerCase(),
       ]);
@@ -397,7 +471,9 @@ describe('readNeoCardPrs', () => {
     expect(reads).toBe(0);
     expect(recorded).toEqual([[pr(1)]]);
     expect(readFlags).toEqual([false]);
-    expect(replaced).toEqual([[{ url: pull(1), claim: 'mentioned', claimedAt: 5, claimed: true }]]);
+    expect(replaced).toEqual([
+      [{ url: pull(1), claim: 'mentioned', claimedAt: 5, claimed: true, score: 1 }],
+    ]);
     expect(result).toEqual({ row: { ...stored, prs: [pr(1)], revision: 2 }, ok: true });
   });
 
@@ -453,7 +529,7 @@ describe('readNeoCardPrs', () => {
     expect(recorded.at(-1)).toEqual(['other', [pr(1)], false]);
   });
 
-  test('a read does not claim a PR a rival won while it was reading', async () => {
+  test('a read rejects a mention of a PR a rival won while it was reading', async () => {
     const rival = claim({ urlKey: pull(2).toLowerCase(), claim: 'branch' });
     let lookups = 0;
     const replaced: unknown[][] = [];
@@ -477,7 +553,92 @@ describe('readNeoCardPrs', () => {
       null,
       1_000
     );
-    expect(replaced).toEqual([[]]);
+    expect(replaced.map((claims) => claims.map((item) => (item as NeoPrClaimRow).claim))).toEqual([
+      ['rejected'],
+    ]);
     expect(recorded).toEqual([[]]);
+  });
+
+  test('two cards in one session that mention both PRs each keep the one matching their task', async () => {
+    const rows: NeoPrClaimRow[] = [];
+    const prs = [
+      {
+        ...pr(64, 50),
+        title: 'fix(desktop): get past the startup splash and surface failures',
+        branch: 'fix/desktop-startup-daemon-attach',
+      },
+      {
+        ...pr(65, 60),
+        title: 'chore(desktop): regenerate app icons from the HyperNeo favicon',
+        branch: 'chore/desktop-icon-refresh',
+      },
+    ];
+    const stored = new Map<string, NeoWorkPr[]>();
+    const deps = {
+      readPrs: async () => prs,
+      prCandidates: async () => [
+        { url: pull(64), claim: 'mentioned' as const },
+        { url: pull(65), claim: 'mentioned' as const },
+      ],
+      claims: {
+        forUrls: () => rows,
+        replace: (
+          workId: string,
+          claims: readonly {
+            url: string;
+            claim: NeoPrClaimRow['claim'];
+            claimedAt: number;
+            score?: number | null;
+          }[]
+        ) => {
+          rows.splice(0, rows.length, ...rows.filter((row) => row.workId !== workId));
+          rows.push(
+            ...claims.map((item) =>
+              claim({
+                workId,
+                urlKey: item.url.toLowerCase(),
+                claim: item.claim,
+                claimedAt: item.claimedAt,
+                cardCreatedAt: workId === 'startup' ? 10 : 20,
+                score: item.score ?? null,
+              })
+            )
+          );
+        },
+        drop: (workId: string, urlKey: string) =>
+          rows.splice(
+            rows.findIndex((row) => row.workId === workId && row.urlKey === urlKey),
+            1
+          ),
+      },
+      workPrs: {
+        get: (id: string) =>
+          stored.has(id) ? ({ workId: id, prs: stored.get(id) } as NeoWorkPrRow) : null,
+        list: () => [],
+        recordFailedRead: () => {},
+      },
+      record: (id: string, next: readonly NeoWorkPr[]) => {
+        stored.set(id, [...next]);
+        return { workId: id, prs: [...next] } as NeoWorkPrRow;
+      },
+    };
+    const startup = {
+      id: 'startup',
+      createdAt: 10,
+      title: 'Desktop startup',
+      instruction: 'The desktop app hangs on the startup splash; attach to the daemon.',
+      report: null,
+    } as NeoWork;
+    const icons = {
+      id: 'icons',
+      createdAt: 20,
+      title: 'Desktop icons',
+      instruction: 'Refresh the desktop app icons from the favicon.',
+      report: null,
+    } as NeoWork;
+    await readNeoCardPrs(deps, startup, null, 1_000);
+    await readNeoCardPrs(deps, icons, null, 2_000);
+    expect(stored.get('startup')?.map((item) => item.url)).toEqual([pull(64)]);
+    expect(stored.get('icons')?.map((item) => item.url)).toEqual([pull(65)]);
   });
 });
