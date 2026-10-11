@@ -1,8 +1,8 @@
 import type { NeoWorkContinue } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../sqlite-compat.ts';
 
-const columns =
-  'work_id AS workId, count, continued_at AS continuedAt, last_message AS lastMessage';
+const columns = `work_id AS workId, count, continued_at AS continuedAt,
+  last_message AS lastMessage, progress, stalled`;
 
 export class NeoWorkContinueRepository {
   constructor(private readonly db: Database) {}
@@ -15,15 +15,17 @@ export class NeoWorkContinueRepository {
     );
   }
 
-  record(workId: string, message: string, at: number): NeoWorkContinue | null {
+  record(workId: string, message: string, at: number, progress: string): NeoWorkContinue | null {
     this.db
       .prepare(
-        `INSERT INTO neo_work_continues(work_id, count, continued_at, last_message)
-           VALUES (?, 1, ?, ?)
+        `INSERT INTO neo_work_continues(work_id, count, continued_at, last_message, progress, stalled)
+           VALUES (?, 1, ?, ?, ?, 0)
            ON CONFLICT(work_id) DO UPDATE SET count = count + 1,
-             continued_at = excluded.continued_at, last_message = excluded.last_message`
+             continued_at = excluded.continued_at, last_message = excluded.last_message,
+             stalled = CASE WHEN progress IS excluded.progress THEN stalled + 1 ELSE 0 END,
+             progress = excluded.progress`
       )
-      .run(workId, at, message);
+      .run(workId, at, message, progress);
     return this.get(workId);
   }
 

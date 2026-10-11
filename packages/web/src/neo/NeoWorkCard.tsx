@@ -1,5 +1,5 @@
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { NEO_WORK_CONTINUE_LIMIT, type NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoCardView } from '@hyperneo/shared/types/neo-snapshot';
 import { useMemo } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
@@ -87,7 +87,6 @@ export function NeoWorkCard({
   const goalText = card.goal;
   const doneWhen = card.doneWhen;
   const continuedCount = card.continued;
-  const isPooled = card.pooled;
   const note =
     work.status === 'proposed'
       ? work.instruction
@@ -301,9 +300,7 @@ export function NeoWorkCard({
       )}
       {presentation === 'detail' && continuedCount > 0 && (
         <p class="mt-1 text-xs text-fg-muted" title={card.continuedMessage ?? undefined}>
-          {isPooled
-            ? `Neo continued it ${continuedCount}`
-            : `Neo continued it ${continuedCount}/${NEO_WORK_CONTINUE_LIMIT}`}
+          {`Neo continued it ${continuedCount}`}
         </p>
       )}
       {presentation === 'detail' && doneWhen && (
