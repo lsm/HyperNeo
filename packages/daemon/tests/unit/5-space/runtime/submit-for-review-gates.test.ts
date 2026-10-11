@@ -4,6 +4,7 @@ import {
   requireDirectReviewSubmitter,
   requireDirectReviewTask,
   requireManagedSubmission,
+  submissionNotManaged,
   requireNoUnownedAttempt,
   requireSubmitterInSpace,
   submittingNodeId,
@@ -25,17 +26,19 @@ const evidence = (t: SpaceTask | null, extra: Record<string, unknown> = {}) => (
 const rpc = { source: 'rpc' as const };
 const mcp = { source: 'mcp' as const, sessionId: 'w' };
 
-describe('requireManagedSubmission', () => {
-  test('defers standalone and direct-owned tasks and rejects archived ones', () => {
-    expect(requireManagedSubmission(evidence(null))).toEqual({ reason: null });
-    expect(requireManagedSubmission(evidence(task({ spaceId: '' })))).toEqual({ reason: null });
+describe('submissionNotManaged', () => {
+  test('hands standalone and direct-owned tasks to the direct path', () => {
+    expect(submissionNotManaged(evidence(null))).toBe(true);
+    expect(submissionNotManaged(evidence(task({ spaceId: '' })))).toBe(true);
     const owned = task({ taskAgentSessionId: 'w' });
-    expect(requireManagedSubmission(evidence(owned, { hasActiveAttempt: true }))).toEqual({
-      reason: null,
-    });
-    expect(requireManagedSubmission(evidence(owned, { frozenReview: true }))).toEqual({
-      reason: null,
-    });
+    expect(submissionNotManaged(evidence(owned, { hasActiveAttempt: true }))).toBe(true);
+    expect(submissionNotManaged(evidence(owned, { frozenReview: true }))).toBe(true);
+    expect(submissionNotManaged(evidence(task(), { hasActiveAttempt: true }))).toBe(false);
+  });
+});
+
+describe('requireManagedSubmission', () => {
+  test('rejects archived tasks and admits the rest', () => {
     expect(requireManagedSubmission(evidence(task({ archivedAt: 1 })))).toEqual({
       reason: { accepted: false, reason: 'review_submission_unavailable' },
     });

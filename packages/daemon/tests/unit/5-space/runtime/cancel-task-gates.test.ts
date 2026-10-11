@@ -5,6 +5,7 @@ import {
   requireDirectCanceller,
   requireDirectCancelTask,
   requireExpectedCancelStatus,
+  cancellationNotManaged,
   requireManagedCancellation,
 } from '../../../../src/lib/tasks/cancel-task';
 import type { DirectTaskAttempt } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -25,47 +26,35 @@ const unavailable: ReturnType<typeof requireManagedCancellation> = {
   reason: { accepted: false, reason: 'cancellation_unavailable' },
 };
 
+describe('cancellationNotManaged', () => {
+  test.each([
+    ['no task', null, { kind: 'plain' as const }, true],
+    ['a standalone task', task({ spaceId: '' }), null, true],
+    ['a direct route', task(), { kind: 'direct' as const, attempt: {} as DirectTaskAttempt }, true],
+    ['a plain route', task(), { kind: 'plain' as const }, false],
+    ['a workflow route', task(), { kind: 'workflow' as const }, false],
+  ] as Array<[string, SpaceTask | null, CancellationRoute | null, boolean]>)(
+    '%s',
+    (_label, t, route, expected) => {
+      expect(cancellationNotManaged(evidence(t), route)).toBe(expected);
+    }
+  );
+});
+
 describe('requireManagedCancellation', () => {
   test.each([
-    ['no task', null, { kind: 'plain' as const }, rpc, { reason: null }],
-    ['a standalone task', task({ spaceId: '' }), null, rpc, { reason: null }],
-    [
-      'a direct route',
-      task(),
-      { kind: 'direct' as const, attempt: {} as DirectTaskAttempt },
-      rpc,
-      { reason: null },
-    ],
-    ['an archived task', task({ archivedAt: 1 }), { kind: 'plain' as const }, rpc, unavailable],
-    [
-      'a cancelled task',
-      task({ status: 'cancelled' }),
-      { kind: 'plain' as const },
-      rpc,
-      unavailable,
-    ],
-    ['done for an agent', task({ status: 'done' }), { kind: 'plain' as const }, mcp, unavailable],
-  ] as Array<
-    [
-      string,
-      SpaceTask | null,
-      CancellationRoute | null,
-      typeof rpc | typeof mcp,
-      ReturnType<typeof requireManagedCancellation>,
-    ]
-  >)('rejects or defers %s', (_label, t, route, caller, expected) => {
-    expect(requireManagedCancellation(evidence(t), route, caller)).toEqual(expected);
+    ['an archived task', task({ archivedAt: 1 }), rpc],
+    ['a cancelled task', task({ status: 'cancelled' }), rpc],
+    ['done for an agent', task({ status: 'done' }), mcp],
+  ] as Array<[string, SpaceTask, typeof rpc | typeof mcp]>)('rejects %s', (_label, t, caller) => {
+    expect(requireManagedCancellation(evidence(t), caller)).toEqual(unavailable);
   });
 
-  test('admits done for a person and an open plain or workflow task', () => {
+  test('admits done for a person and an open task', () => {
     const done = task({ status: 'done' });
-    expect(requireManagedCancellation(evidence(done), { kind: 'plain' }, rpc)).toEqual({
-      value: done,
-    });
+    expect(requireManagedCancellation(evidence(done), rpc)).toEqual({ value: done });
     const open = task();
-    expect(requireManagedCancellation(evidence(open), { kind: 'workflow' }, mcp)).toEqual({
-      value: open,
-    });
+    expect(requireManagedCancellation(evidence(open), mcp)).toEqual({ value: open });
   });
 });
 

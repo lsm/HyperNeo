@@ -80,14 +80,18 @@ function readSubmissionEvidence(
   };
 }
 
-export function requireManagedSubmission(
-  evidence: SubmissionEvidence
-): { value: SpaceTask } | { reason: Ack | null } {
+export function submissionNotManaged(evidence: SubmissionEvidence): boolean {
   const { task } = evidence;
   const directOwned =
     !!task?.taskAgentSessionId && (evidence.hasActiveAttempt || evidence.frozenReview);
-  if (!task?.spaceId || directOwned) return { reason: null };
-  return task.archivedAt ? reject('review_submission_unavailable') : { value: task };
+  return !task?.spaceId || directOwned;
+}
+
+export function requireManagedSubmission(
+  evidence: SubmissionEvidence
+): { value: SpaceTask } | { reason: Ack } {
+  const { task } = evidence;
+  return !task || task.archivedAt ? reject('review_submission_unavailable') : { value: task };
 }
 
 export function requireSubmitterInSpace(
@@ -142,9 +146,12 @@ async function writeManagedSubmission(
   }
 }
 
-const runManagedSubmission = (superpipe({})('submit-managed-space-task') as PipelineAPI)
+const runManagedSubmission = (
+  superpipe({ submissionNotManaged })('submit-managed-space-task') as PipelineAPI
+)
   .input(['db', 'input', 'caller', 'tasks'])
   .pipe(readSubmissionEvidence, ['db', 'input', 'caller'], 'evidence')
+  .pipe('!submissionNotManaged', 'evidence')
   .pipe(requireManagedSubmission, 'evidence', 'result:ack')
   .pipe(requireSubmitterInSpace, ['ack', 'evidence', 'caller', 'tasks'], 'result:ack')
   .pipe(requireNoUnownedAttempt, ['ack', 'evidence'], 'result:ack')
@@ -155,16 +162,15 @@ const runManagedSubmission = (superpipe({})('submit-managed-space-task') as Pipe
   input: Input,
   caller: OperationCaller,
   tasks: ReviewSubmissionDependencies
-) => Promise<Ack | null>;
+) => Promise<Ack | undefined>;
 
 export async function admitManagedSubmission(
   db: Database,
   input: Input,
   caller: OperationCaller,
   tasks: ReviewSubmissionDependencies
-): Promise<{ value: true } | { reason: Ack }> {
-  const ack = await runManagedSubmission(db, input, caller, tasks);
-  return ack ? { reason: ack } : { value: true };
+): Promise<Ack | null> {
+  return (await runManagedSubmission(db, input, caller, tasks)) ?? null;
 }
 
 type DirectReviewTask = SpaceTask & { taskAgentSessionId: string };
