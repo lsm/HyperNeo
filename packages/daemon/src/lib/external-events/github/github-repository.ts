@@ -9,6 +9,7 @@ export interface PollCursor {
   recentPullRequestNumbers?: number[];
   recentPullRequestHeadShas?: Record<number, string>;
   recentPullRequestHeadRepos?: Record<number, string>;
+  subscribedPullRequestNumbers?: number[];
   checkRunEtags?: Record<string, string>;
   checkRunLegacyPrs?: Record<string, number>;
   checkRunPollingEnabledAt?: number;

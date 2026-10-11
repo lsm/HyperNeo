@@ -42,10 +42,10 @@ export function extractNeoWorkPrUrls(
   report: string | null,
   tracked: readonly { url: string }[] = []
 ): string[] {
-  return [...new Set([...tracked.map((pr) => pr.url), ...(report?.match(PR_URL) ?? [])])].slice(
-    0,
-    8
-  );
+  const urls = new Map<string, string>();
+  for (const url of [...tracked.map((pr) => pr.url), ...(report?.match(PR_URL) ?? [])])
+    if (!urls.has(url.toLowerCase())) urls.set(url.toLowerCase(), url);
+  return [...urls.values()].slice(0, 8);
 }
 
 function checkResult(check: GhCheck): NeoWorkPr['checks'] {
@@ -124,12 +124,12 @@ export function neoAskPrEvidence(
   const prs = new Map(
     rows
       .filter((row) => live.some((work) => work.id === row.workId))
-      .flatMap((row) => row.prs.map((pr) => [pr.url, pr] as const))
+      .flatMap((row) => row.prs.map((pr) => [pr.url.toLowerCase(), pr] as const))
   );
   const unread = new Set(
     live.flatMap((work) =>
       extractNeoWorkPrUrls(work.report).filter(
-        (url) => !prs.has(url) && !neoCardDisownsPr(claims, work.id, url)
+        (url) => !prs.has(url.toLowerCase()) && !neoCardDisownsPr(claims, work.id, url)
       )
     )
   );

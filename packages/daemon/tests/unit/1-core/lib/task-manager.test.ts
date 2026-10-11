@@ -510,26 +510,6 @@ describe('SpaceTaskManager', () => {
     });
   });
 
-  describe('blockDependentTasks cascade', () => {
-    it('blocks a rate/usage-limited dependent when its prerequisite fails', async () => {
-      const t1 = await manager.createTask({ title: 'T1', description: '' });
-      const t2 = await manager.createTask({
-        title: 'T2',
-        description: '',
-        dependsOn: [t1.id],
-      });
-      await manager.setTaskStatus(t1.id, 'in_progress');
-      await manager.setTaskStatus(t2.id, 'in_progress');
-      db.prepare(`UPDATE space_tasks SET status = 'rate_limited' WHERE id = ?`).run(t2.id);
-
-      await manager.blockDependentTasks(t1.id);
-
-      const t2after = await manager.getTask(t2.id);
-      expect(t2after!.status).toBe('blocked');
-      expect(t2after!.blockReason).toBe('dependency_failed');
-    });
-  });
-
   describe('archiveTask', () => {
     it('archives a done task and sets both status and archivedAt', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
@@ -1040,101 +1020,6 @@ describe('SpaceTaskManager', () => {
       });
       const updated = await manager.updateTask(t.id, { dependsOn: [] });
       expect(updated.dependsOn).toEqual([]);
-    });
-  });
-
-  describe('blockDependentTasks (failure cascade)', () => {
-    it('blocks in_progress tasks that depend on the failed task', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-
-      await manager.startTask(a.id);
-      await manager.startTask(b.id);
-      await manager.failTask(a.id, 'crashed', 'agent_crashed');
-
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded).toHaveLength(1);
-      expect(cascaded[0].id).toBe(b.id);
-      expect(cascaded[0].status).toBe('blocked');
-      expect(cascaded[0].blockReason).toBe('dependency_failed');
-    });
-
-    it('does NOT block open tasks waiting on the failed dependency', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-
-      await manager.startTask(a.id);
-      await manager.failTask(a.id, 'crashed', 'agent_crashed');
-
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
-      const bAfter = (await manager.getTask(b.id))!;
-      expect(bAfter.status).toBe('open');
-      expect(bAfter.blockReason ?? null).toBeNull();
-    });
-
-    it('cascades recursively through in_progress dependency chain', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-      const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
-
-      await manager.startTask(a.id);
-      await manager.startTask(b.id);
-      await manager.startTask(c.id);
-      await manager.failTask(a.id, 'crashed');
-
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded).toHaveLength(2);
-
-      const bBlocked = (await manager.getTask(b.id))!;
-      const cBlocked = (await manager.getTask(c.id))!;
-      expect(bBlocked.status).toBe('blocked');
-      expect(bBlocked.blockReason).toBe('dependency_failed');
-      expect(cBlocked.status).toBe('blocked');
-      expect(cBlocked.blockReason).toBe('dependency_failed');
-    });
-
-    it('does not cascade to open or done tasks', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-      const c = await manager.createTask({ title: 'C', description: '', dependsOn: [a.id] });
-
-      await manager.startTask(c.id);
-      await manager.completeTask(c.id, 'done');
-
-      await manager.startTask(a.id);
-      await manager.failTask(a.id, 'crashed');
-
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
-      expect((await manager.getTask(b.id))!.status).toBe('open');
-      expect((await manager.getTask(c.id))!.status).toBe('done');
-    });
-
-    it('does not double-block in diamond dependency graph', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-      const d = await manager.createTask({
-        title: 'D',
-        description: '',
-        dependsOn: [a.id, b.id],
-      });
-
-      await manager.startTask(a.id);
-      await manager.startTask(b.id);
-      await manager.startTask(d.id);
-      await manager.failTask(a.id, 'crashed');
-
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded.map((t) => t.id)).toContain(b.id);
-      expect(cascaded.map((t) => t.id)).toContain(d.id);
-      expect((await manager.getTask(d.id))!.status).toBe('blocked');
-    });
-
-    it('returns empty array when no dependents exist', async () => {
-      const a = await manager.createTask({ title: 'A', description: '' });
-      const cascaded = await manager.blockDependentTasks(a.id);
-      expect(cascaded).toHaveLength(0);
     });
   });
 

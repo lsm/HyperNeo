@@ -215,8 +215,31 @@ export function loggedNeoRoute(
   };
 }
 
+export function replayedNeoRoute(
+  asked: { sessionId: string; holder: NeoBinding | null } | null,
+  earlier: ReturnType<NeoRoutingLogRepository['find']>
+): { value: null } | { reason: NeoRouted } {
+  if (!asked) return loggedNeoRoute(earlier);
+  if (earlier && earlier.targetSessionId === asked.sessionId) return loggedNeoRoute(earlier);
+  const holder = asked.holder;
+  return {
+    reason: {
+      choice:
+        holder?.kind === 'concern' && holder.concernId
+          ? {
+              concernId: holder.concernId,
+              sessionId: asked.sessionId,
+              signal: 'embedding',
+              confidence: 1,
+            }
+          : null,
+      fallback: 'replayed',
+    },
+  };
+}
+
 const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
-  .input(['input', 'binding', 'db', 'router'])
+  .input(['input', 'binding', 'db', 'router', 'conversationId', 'repo'])
   .pipe(wantsNeoRoute, ['binding', 'router'], 'result:route')
   .pipe((router: NeoRouter) => router, 'route', 'chosenRouter')
   .pipe(
@@ -225,7 +248,23 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
     ['input', 'db'],
     'earlier'
   )
-  .pipe(loggedNeoRoute, 'earlier', 'result:route')
+  .pipe(
+    (input: IntakeInput, db: Database, conversationId: string, repo: NeoRepository) => {
+      const asked = new NeoConversationAskRepository(db.getDatabase()).find(
+        conversationId,
+        input.requestId
+      );
+      return asked
+        ? {
+            sessionId: asked.askOrigin.sessionId,
+            holder: repo.getBindingBySession(asked.askOrigin.sessionId),
+          }
+        : null;
+    },
+    ['input', 'db', 'conversationId', 'repo'],
+    'asked'
+  )
+  .pipe(replayedNeoRoute, ['asked', 'earlier'], 'result:route')
   .pipe(
     (input: IntakeInput, router: NeoRouter): Promise<NeoRouted> =>
       router(neoAskText(input.content)),
@@ -236,7 +275,9 @@ const routeNeoAsk = (superpipe({})('neo-ask-route') as PipelineAPI)
   input: IntakeInput,
   binding: NeoBinding,
   db: Database,
-  router: NeoRouter | null
+  router: NeoRouter | null,
+  conversationId: string,
+  repo: NeoRepository
 ) => Promise<NeoRouted>;
 
 type IntakeTarget = { binding: NeoBinding; target: Target; conversationId: string };
@@ -293,9 +334,14 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe((admitted: IntakeTarget) => admitted, 'receipt', 'admitted')
   .pipe(
-    (input: IntakeInput, admitted: IntakeTarget, db: Database, router: NeoRouter | null) =>
-      routeNeoAsk(input, admitted.binding, db, router),
-    ['input', 'admitted', 'db', 'router'],
+    (
+      input: IntakeInput,
+      admitted: IntakeTarget,
+      db: Database,
+      router: NeoRouter | null,
+      repo: NeoRepository
+    ) => routeNeoAsk(input, admitted.binding, db, router, admitted.conversationId, repo),
+    ['input', 'admitted', 'db', 'router', 'repo'],
     'route'
   )
   .pipe(

@@ -9,9 +9,10 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
   .pipe(
     (service: NeoService, work: NeoWork, rootId: string) => {
       const retries = service.driverTargets.readRetries(work.id);
-      const id = neoWorkReviewId(work.id, retries);
+      const continued = service.workContinues.get(work.id)?.count ?? 0;
+      const id = neoWorkReviewId(work.id, retries, continued);
       if (service.consultations.get(id)) return { reason: 'already-routed' };
-      if (retries) return { value: { id } };
+      if (retries || continued) return { value: { id } };
       const messages = service.db.getSDKMessageRepo();
       const queued = service.db.getJobQueueRepo().listActiveByPayload('mailbox', {
         'to.sessionId': rootId,

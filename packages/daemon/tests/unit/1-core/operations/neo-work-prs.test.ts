@@ -47,6 +47,13 @@ describe('extractNeoWorkPrUrls', () => {
     expect(extractNeoWorkPrUrls(null)).toEqual([]);
   });
 
+  test('treats links that differ only in case as one pull request', () => {
+    const tracked = [{ url: 'https://github.com/lsm/HyperNeo/pull/1' }];
+    expect(extractNeoWorkPrUrls('Merged https://github.com/lsm/hyperneo/pull/1.', tracked)).toEqual(
+      ['https://github.com/lsm/HyperNeo/pull/1']
+    );
+  });
+
   test('keeps the pull requests a card already tracks ahead of new links', () => {
     const tracked = [{ url: 'https://github.com/lsm/HyperNeo/pull/1' }];
     expect(
@@ -150,6 +157,15 @@ describe('neoAskPrEvidence', () => {
       [pr.url, 'done'],
       [other.url, 'pending'],
     ]);
+  });
+
+  test('counts a reported link in different case as read', () => {
+    expect(
+      neoAskPrEvidence(
+        [{ id: 'w1', status: 'reported', report: `Merged ${merged.url.toLowerCase()}.` }],
+        [{ workId: 'w1', prs: [merged] }]
+      ).map((item) => [item.key, item.state])
+    ).toEqual([[pr.url, 'done']]);
   });
 
   test('holds every live card with no pull request tracked, and each unread one, as pending', () => {
