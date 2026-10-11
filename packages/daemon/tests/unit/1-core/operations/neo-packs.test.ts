@@ -142,9 +142,6 @@ describe('readEvidence', () => {
     workId: 'w1',
     prs,
     revision: 1,
-    delivered: null,
-    deliveredAt: null,
-    reminded: null,
     readAt: readOkAt,
     readOkAt,
   });
@@ -304,9 +301,6 @@ describe('readNeoCardPrs', () => {
     workId: 'w1',
     prs: [open],
     revision: 1,
-    delivered: null,
-    deliveredAt: null,
-    reminded: null,
     readAt: 0,
     readOkAt: 0,
   } as NeoWorkPrRow;

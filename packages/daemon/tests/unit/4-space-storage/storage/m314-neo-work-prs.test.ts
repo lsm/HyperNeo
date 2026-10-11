@@ -46,16 +46,10 @@ describe('NeoWorkPrRepository', () => {
       revision: 1,
       readAt: 10,
       readOkAt: 10,
-      delivered: null,
     });
     expect(prs.record('w1', [pr], 20)).toMatchObject({ revision: 1, readAt: 20 });
-    prs.markDelivered('w1', 'seen', 25);
-    expect(prs.get('w1')).toMatchObject({ delivered: 'seen', deliveredAt: 25, reminded: null });
-    prs.markDelivered('w1', 'seen', 26, true);
-    expect(prs.get('w1')).toMatchObject({ deliveredAt: 26, reminded: 'seen' });
     expect(prs.record('w1', [{ ...pr, checks: 'passing' }], 30)).toMatchObject({
       revision: 2,
-      delivered: 'seen',
       prs: [{ ...pr, checks: 'passing' }],
     });
     expect(prs.listOpen()).toEqual(['w1']);

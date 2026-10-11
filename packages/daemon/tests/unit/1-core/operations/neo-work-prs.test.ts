@@ -6,7 +6,6 @@ import {
   neoAskPrEvidence,
   neoCardDisownsPr,
   neoWorkPrEvidence,
-  neoWorkPrSignature,
   countNeoWorkPrApprovals,
   planNeoWorkPrBlockers,
   readGithubPrs,
@@ -251,7 +250,7 @@ describe('neoWorkPrVerdict', () => {
 });
 
 describe('shouldReadNeoWorkPrs', () => {
-  const stored = { prs: [pr], delivered: null, readAt: 0, readOkAt: 0 };
+  const stored = { prs: [pr], readAt: 0, readOkAt: 0 };
   const late = 2 * 60_000;
 
   test.each<[string, typeof stored | null, string[], number, boolean]>([
@@ -413,15 +412,6 @@ describe('wantsNeoWorkPrBlockers', () => {
     ['one whose base is unknown', pr, undefined, false],
   ])('%s', (_label, at, base, wants) => {
     expect(wantsNeoWorkPrBlockers(at, base)).toBe(wants);
-  });
-});
-
-describe('neoWorkPrSignature', () => {
-  test('changes when blockers appear, and keeps its old form without them', () => {
-    expect(neoWorkPrSignature([pr])).toBe(JSON.stringify([[pr.url, 'OPEN', 'passing', 'none']]));
-    expect(neoWorkPrSignature([{ ...pr, blockers: ['behind dev'] }])).not.toBe(
-      neoWorkPrSignature([pr])
-    );
   });
 });
 

@@ -152,7 +152,6 @@ import {
   extractNeoWorkPrUrls,
   neoAskPrEvidence,
   neoWorkPrEvidence,
-  neoWorkPrSignature,
   requireNeoWorkPrCurrent,
   requireNeoWorkPrDelivery,
   requireNeoWorkPrRefresh,
@@ -2042,7 +2041,6 @@ export class NeoService {
       ) => {
         if (!found.row) return;
         const ready = options.ready ?? false;
-        this.workPrs.markDelivered(work.id, neoWorkPrSignature(found.row.prs), sent.at, ready);
         this.workChecks.markTold(
           work.id,
           neoEvidenceSignature(neoWorkPrEvidence(found.row.prs)),
