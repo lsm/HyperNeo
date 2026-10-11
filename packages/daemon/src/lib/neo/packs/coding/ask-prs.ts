@@ -13,6 +13,7 @@ export type NeoRefState = {
   at: number | null;
   done: boolean;
   closedBy: string | null;
+  duplicate?: true;
 };
 export type NeoRefStateReader = (refs: readonly NeoRef[]) => Promise<NeoRefState[]>;
 
@@ -147,7 +148,9 @@ export function neoAskRefNews(states: readonly NeoRefState[], since: number): Ne
           : 'closed unmerged'
         : ref.done
           ? `closed as completed${ref.closedBy ? ` by ${ref.closedBy}` : ''}`
-          : 'closed as not planned';
+          : ref.duplicate
+            ? 'closed as a duplicate'
+            : 'closed as not planned';
     return [
       {
         key: ref.url,
@@ -206,7 +209,8 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
           kind: 'issue',
           state: found.state,
           at: closed ? Date.parse(found.closedAt ?? '') || null : null,
-          done: closed && found.stateReason !== 'NOT_PLANNED',
+          done: closed && found.stateReason !== 'NOT_PLANNED' && found.stateReason !== 'DUPLICATE',
+          ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
           closedBy:
             found.closedByPullRequestsReferences?.nodes.find((pr) => pr.merged)?.url ?? null,
         };
