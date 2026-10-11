@@ -3676,11 +3676,6 @@ export class SpaceRuntime {
             });
           }
         }
-        const taskManager = this.getOrCreateTaskManager(spaceId);
-        const cascaded = await taskManager.blockDependentTasks(taskId);
-        for (const blocked of cascaded) {
-          await this.safeOnTaskUpdated(spaceId, blocked);
-        }
       } else if (params.status === 'cancelled') {
         for (const settled of await this.settleEndedTask(updated)) {
           await this.safeOnTaskUpdated(spaceId, settled);

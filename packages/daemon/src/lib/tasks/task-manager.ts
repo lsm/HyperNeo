@@ -605,15 +605,10 @@ export class SpaceTaskManager {
     if (depsChanged) {
       const depsMet = await this.areDependenciesMet(updated);
       if (!depsMet && (updated.status === 'in_progress' || isRateOrUsageLimited(updated.status))) {
-        const blocked = await this.setTaskStatus(taskId, 'blocked', {
+        return this.setTaskStatus(taskId, 'blocked', {
           blockReason: 'dependency_added',
           result: 'Dependency added while task was in progress',
         });
-        const cascaded = await this.blockDependentTasks(taskId);
-        if (cascaded.length > 0 && options?.onCascadedTasks) {
-          await options.onCascadedTasks(cascaded);
-        }
-        return blocked;
       } else if (
         depsMet &&
         updated.status === 'blocked' &&

@@ -141,35 +141,24 @@ test('caller performs recovery first; shared field update does not repeat transi
   expect(setStatus.mock.calls[0][1]).toBe('blocked');
 });
 
-test.each(['clear', 'replace', 'reject'] as const)(
-  'mixed cascade %s uses fresh state without replaying metadata',
-  async (mode) => {
-    tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: runId });
-    const dependent = tasks.createTask({
-      spaceId,
-      title: 'Dependent',
-      description: '',
-      dependsOn: [target.id],
-      status: 'in_progress',
-    });
-    const publish = mock(async (_space: string, task: SpaceTask) => {
-      if (task.id !== dependent.id) return;
-      if (mode === 'reject') throw new Error('offline');
-      await manager.updateTask(target.id, {
-        title: 'Concurrent',
-        ...(mode === 'clear' ? { dependsOn: [] } : {}),
-      });
-    });
-    const outcome = await updater(true, publish)(spaceId, target.id, {
-      title: 'Requested',
-      dependsOn: [dependency.id],
-    });
-    expect(outcome.handledByRuntime).toBe(mode !== 'clear');
-    expect(outcome.task.title).toBe(mode === 'reject' ? 'Requested' : 'Concurrent');
-    expect(outcome.task.dependsOn).toEqual(mode === 'clear' ? [] : [dependency.id]);
-    expect(publish).toHaveBeenCalledTimes(1);
-  }
-);
+test('a field edit that adds a dependency leaves running dependents alone', async () => {
+  tasks.updateTask(target.id, { status: 'in_progress', workflowRunId: runId });
+  const dependent = tasks.createTask({
+    spaceId,
+    title: 'Dependent',
+    description: '',
+    dependsOn: [target.id],
+    status: 'in_progress',
+  });
+  const publish = mock(async (_space: string, _task: SpaceTask) => {});
+  const outcome = await updater(true, publish)(spaceId, target.id, {
+    title: 'Requested',
+    dependsOn: [dependency.id],
+  });
+  expect(outcome.task).toMatchObject({ title: 'Requested', dependsOn: [dependency.id] });
+  expect(tasks.getTask(dependent.id)?.status).toBe('in_progress');
+  expect(publish.mock.calls.map((call) => call[1].id)).not.toContain(dependent.id);
+});
 
 test('pure completion selection defers pointer write and reports caller event ownership', async () => {
   const deferred = { workflowRunId: replacementRunId };
