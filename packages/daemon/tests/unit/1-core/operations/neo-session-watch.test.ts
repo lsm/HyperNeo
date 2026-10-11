@@ -399,6 +399,39 @@ describe('refreshDriverWork', () => {
     }
   });
 
+  test('a group still open at shutdown is saved, and a restart reads it back', async () => {
+    let clock = Date.now();
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      listed = [work({ lastActivityAt: clock - 1_000 })];
+      await service.refreshDriverWork();
+      clock += NEO_SESSION_RUN_MS;
+      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
+      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      await service.refreshDriverWork();
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([]);
+
+      service.dispose();
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
+      const restarted = new NeoService(
+        db,
+        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      try {
+        await restarted.recover();
+        expect(restarted.sessionNoticeGroups).toEqual([
+          expect.objectContaining({ notices: [expect.objectContaining({ kind: 'finished' })] }),
+        ]);
+      } finally {
+        restarted.dispose();
+      }
+    } finally {
+      time.mockRestore();
+    }
+  });
+
   test('a minute after the last notice, posts its group once to the Neo conversation', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);

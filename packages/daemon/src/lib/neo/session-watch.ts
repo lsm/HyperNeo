@@ -149,6 +149,20 @@ export function neoSessionNoticeLine(notices: readonly NeoSessionNotice[]): stri
   return [...shown, ...(more > 0 ? [`${more} more`] : [])].join('; ');
 }
 
+export function neoSessionNoticeGroup(
+  notices: readonly NeoSessionNotice[]
+): NeoSessionNoticeGroup | null {
+  const first = notices[0];
+  return first
+    ? {
+        id: `neo-session-notices:${first.at}:${first.key}`,
+        at: first.at,
+        line: neoSessionNoticeLine(notices),
+        notices: [...notices],
+      }
+    : null;
+}
+
 export function planNeoSessionNoticeGroup(
   open: readonly NeoSessionNotice[],
   added: readonly NeoSessionNotice[],
@@ -159,15 +173,7 @@ export function planNeoSessionNoticeGroup(
   const full = open.length + added.length > NEO_SESSION_NOTICES_MAX;
   if (!first || !last || (now - last.at < NEO_SESSION_GROUP_MS && !full))
     return { open: [...open, ...added].slice(-NEO_SESSION_NOTICES_MAX), closed: null };
-  return {
-    open: added.slice(-NEO_SESSION_NOTICES_MAX),
-    closed: {
-      id: `neo-session-notices:${first.at}:${first.key}`,
-      at: first.at,
-      line: neoSessionNoticeLine(open),
-      notices: [...open],
-    },
-  };
+  return { open: added.slice(-NEO_SESSION_NOTICES_MAX), closed: neoSessionNoticeGroup(open) };
 }
 
 export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessionNoticeGroup[] {

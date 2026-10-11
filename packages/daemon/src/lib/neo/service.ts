@@ -171,6 +171,7 @@ import {
   keepNeoSessionNoticeGroups,
   keepNeoSessionNotices,
   listNeoWatchedSessions,
+  neoSessionNoticeGroup,
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
   planNeoSessionWatch,
@@ -784,6 +785,7 @@ export class NeoService {
   }
 
   dispose() {
+    this.flushSessionNoticeGroup();
     this.unsubscribe();
     for (const timer of this.replyRechecks.values()) clearTimeout(timer);
     this.replyRechecks.clear();
@@ -1306,6 +1308,18 @@ export class NeoService {
       ['root', 'added', 'grouped']
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
+
+  private flushSessionNoticeGroup(): void {
+    const group = neoSessionNoticeGroup(this.openSessionNotices);
+    this.openSessionNotices = [];
+    const root = group && this.repo.getBindingForConcern(null)?.sessionId;
+    if (!group || !root) return;
+    try {
+      this.postSessionNoticeGroup(root, group);
+    } catch (error) {
+      this.log.warn('Neo session notice group could not be saved at shutdown', error);
+    }
+  }
 
   private loadSessionNoticeGroups(): void {
     const root = this.repo.getBindingForConcern(null)?.sessionId;
