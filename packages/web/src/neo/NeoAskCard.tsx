@@ -174,7 +174,7 @@ export function NeoAskCard({
     view.scenes.some(
       (scene) => scene.receipt.kind === 'work' && scene.receipt.status === 'proposed'
     );
-  const approval = neoAskApproval(ask, Date.now());
+  const approval = neoAskApproval(ask);
   const target = neoAskOpenTarget(view, drivers);
   const openName = `Open ${ask.title}`;
   const openControl =
