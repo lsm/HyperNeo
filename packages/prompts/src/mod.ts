@@ -65,6 +65,7 @@ import mdneoRecentConversation from './neo/recent-conversation.md' with { type: 
 import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
+import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -351,6 +352,7 @@ const registry: Record<string, string> = {
   'neo/route-classifier.md': mdneoRouteClassifier,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/ask-evidence.md': mdneoAskEvidence,
+  'neo/ask-stalled.md': mdneoAskStalled,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -528,6 +530,7 @@ export const {
   NEO_ROUTE_PROMPT,
   NEO_WAITING_REMINDER,
   NEO_ASK_EVIDENCE,
+  NEO_ASK_STALLED,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,
