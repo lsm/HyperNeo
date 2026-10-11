@@ -15,10 +15,15 @@ export function isNeoTrackedFollowUp(
 ): boolean {
   if (!ask || ask.approvedAt != null || ask.status === 'achieved' || ask.status === 'abandoned')
     return false;
-  if (ask.workIds.some((id) => targets.get(id)?.verb === 'adopt')) return true;
-  return (
-    next?.verb === 'send' && tracked.some((ref) => neoSessionKey(ref) === neoSessionKey(next.ref))
-  );
+  const live = (ref: WorkRef) => tracked.some((item) => neoSessionKey(item) === neoSessionKey(ref));
+  if (
+    ask.workIds.some((id) => {
+      const target = targets.get(id);
+      return target?.verb === 'adopt' && live(target.ref);
+    })
+  )
+    return true;
+  return next?.verb === 'send' && live(next.ref);
 }
 
 export function isNeoAdoptOnlyAsk(ask: Pick<NeoAsk, 'workIds'>, workId: string): boolean {

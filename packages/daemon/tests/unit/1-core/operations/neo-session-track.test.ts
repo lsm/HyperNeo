@@ -58,7 +58,8 @@ describe('isNeoTrackedFollowUp', () => {
   const other = { adapter: 'codex-desktop', id: 't2' };
 
   test('approves an ask that holds an adopted card, or whose new card continues a tracked session', () => {
-    expect(isNeoTrackedFollowUp(open, adopted, undefined, [])).toBe(true);
+    expect(isNeoTrackedFollowUp(open, adopted, undefined, [ref])).toBe(true);
+    expect(isNeoTrackedFollowUp(open, adopted, undefined, [])).toBe(false);
     expect(isNeoTrackedFollowUp(open, new Map(), { verb: 'send', ref }, [ref])).toBe(true);
   });
 
