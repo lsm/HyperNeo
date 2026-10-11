@@ -37,7 +37,7 @@ import {
   neoWorkDoneGoal,
   projectNeoAskCards,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { createNeoOperations, neoAskScope } from '../../../../src/lib/neo/operations.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -177,6 +177,9 @@ describe('neo.ask operations', () => {
       expect(await invoke('neo.snapshot', input, holder)).toMatchObject({
         value: { ok: false, reason: 'This context holder cannot access another concern.' },
       });
+    expect(await invoke('neo.snapshot', { askId: 'missing' }, holder)).toMatchObject({
+      value: { ok: false, reason: 'Ask not found.' },
+    });
   });
 
   test("an ask-scoped read lists the ask's newest cards first, within the snapshot's bounds", async () => {
@@ -1219,5 +1222,13 @@ describe('neoPrompt place resolution', () => {
       expect(prompt).toContain('Never build or guess a folder path yourself.');
       expect(prompt).toContain('using an adapter that can start work');
     }
+  });
+});
+
+describe('neoAskScope', () => {
+  test("admits an ask-scoped read by the ask's own concern, and a missing ask by none", () => {
+    expect(neoAskScope({ concernId: 'c1' })).toBe('c1');
+    expect(neoAskScope({ concernId: null })).toBe(null);
+    expect(neoAskScope(null)).toBe(undefined);
   });
 });

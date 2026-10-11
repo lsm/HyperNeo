@@ -541,6 +541,10 @@ export function requireNeoWorkRetryCaller(work: NeoWork, caller: OperationCaller
   return requireNeoWorkProposer(work, caller, 'retry');
 }
 
+export function neoAskScope(ask: Pick<NeoAsk, 'concernId'> | null): string | null | undefined {
+  return ask ? ask.concernId : undefined;
+}
+
 export function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
@@ -610,7 +614,12 @@ export function createNeoOperations(service: NeoService) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
     const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-    const scope = binding?.kind === 'concern' ? binding.concernId : requested;
+    const scope =
+      binding?.kind === 'concern'
+        ? binding.concernId
+        : focus
+          ? (focus.concernId ?? undefined)
+          : requested;
     const detailed = caller.source === 'rpc' || binding?.kind === 'concern';
     const cardDetail = detailed || !!focus;
     const concerns = service.repo
@@ -773,7 +782,7 @@ export function createNeoOperations(service: NeoService) {
   const read = path(
     'neo.snapshot',
     (input: z.infer<typeof Scope>) =>
-      input.askId ? (service.askRecords.get(input.askId)?.concernId ?? null) : input.concernId,
+      input.askId ? neoAskScope(service.askRecords.get(input.askId)) : input.concernId,
     (input, caller) => snapshot(caller, input.concernId, input.askId)
   );
   const consult = (superpipe({})('neo.concern.consult') as PipelineAPI)
