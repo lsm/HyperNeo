@@ -66,7 +66,9 @@ import {
   readNeoStartFolder,
   requireNeoDriverVerb,
   requireNeoStartFolder,
+  requireNeoWorkRetryable,
   type NeoDriverTarget,
+  type NeoWorkRetryCard,
 } from './driver-work.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { spaceWorkRefForSession } from '../drivers/space-adapter.ts';
@@ -1256,8 +1258,15 @@ export function createNeoOperations(service: NeoService) {
       ['found', 'folder', 'retry'],
       'result:retry'
     )
+    .pipe((work: NeoWork) => ({ card: service.retryCard(work.id) }), 'retry', 'retryCard')
     .pipe(
-      async (work: NeoWork) => ({ value: await service.retryWork(work.id) }),
+      (work: NeoWork, retryCard: { card: NeoWorkRetryCard }) =>
+        requireNeoWorkRetryable(work, retryCard.card, work),
+      ['retry', 'retryCard'],
+      'result:retry'
+    )
+    .pipe(
+      async (work: NeoWork) => ({ value: await service.retryWork(work) }),
       'retry',
       'result:retry'
     )

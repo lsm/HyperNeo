@@ -338,20 +338,29 @@ export function isNeoCardUnconfirmed(
 
 export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 
-export function requireNeoWorkRetryable(
-  work: Pick<NeoWork, 'status' | 'report'>,
-  card: { target: boolean; ref: boolean }
-): { value: true } | { reason: string } {
-  if (work.report?.startsWith(NEO_DRIVER_START_INTERRUPTED))
+export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
+
+export function requireNeoWorkRetryable<T>(
+  work: Pick<NeoWork, 'status'>,
+  card: NeoWorkRetryCard,
+  admitted: T
+): { value: T } | { reason: { ok: false; reason: string } } {
+  if (card.interrupted)
     return {
-      reason:
-        'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+      reason: {
+        ok: false,
+        reason:
+          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
+      },
     };
   return work.status === 'failed' && card.target && !card.ref
-    ? { value: true }
+    ? { value: admitted }
     : {
-        reason:
-          'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
+        reason: {
+          ok: false,
+          reason:
+            'Only a hand-off that failed before it started can be retried; use neo.work.continue for started work.',
+        },
       };
 }
 
