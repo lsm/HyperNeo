@@ -117,6 +117,25 @@ describe('NeoWorkCard with drivers work', () => {
     ]);
   });
 
+  it('offers Close on a card with no result for three days and keeps it openable', () => {
+    const onAction = vi.fn();
+    render(
+      <NeoWorkCard
+        work={work}
+        driver={{ ...driver, status: 'running', abandoned: true }}
+        busy={false}
+        disabled={false}
+        onAction={onAction}
+        onOpen={vi.fn()}
+      />
+    );
+    screen.getByRole('button', { name: 'Close' }).click();
+    expect(onAction).toHaveBeenCalledWith('w1', 'close');
+    expect(screen.getByRole('link', { name: 'Open Bigger font' }).getAttribute('href')).toBe(
+      'codex://threads/t1'
+    );
+  });
+
   it('keeps the summary row openable through the link', () => {
     render(
       <NeoWorkCard
