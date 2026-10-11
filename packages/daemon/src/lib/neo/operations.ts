@@ -85,6 +85,7 @@ import {
 import {
   findNeoSessionNotice,
   isNeoAdoptOnlyAsk,
+  isNeoTrackedFollowUp,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -116,6 +117,7 @@ import { projectNeoCardViews } from './card-views.ts';
 import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
 import { projectNeoAskViews } from './ask-views.ts';
 import { unmutedNeoAskSessions } from './session-ask-links.ts';
+import { NEO_WORK_FOLLOW_MAX_AGE_MS } from './work-follow.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -1190,7 +1192,23 @@ export function createNeoOperations(service: NeoService) {
         ask: { askId?: string },
         receipt: { work: NeoWork }
       ) => {
-        if (input.work?.verb !== 'adopt') return;
+        if (input.work?.verb !== 'adopt') {
+          const owned = ask.askId ? service.askRecords.get(ask.askId) : null;
+          const targets = new Map(
+            (owned?.workIds ?? []).map((id) => [id, service.driverTargets.get(id)] as const)
+          );
+          if (
+            owned &&
+            isNeoTrackedFollowUp(
+              owned,
+              targets,
+              input.work,
+              service.driverTargets.adoptedRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
+            )
+          )
+            service.askRecords.approve(owned.id, Date.now());
+          return;
+        }
         const tracked = service.trackedSessions;
         tracked.delete(neoSessionKey(input.work.ref));
         service.trackedSessions = tracked;
