@@ -40,6 +40,7 @@ import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
 import { QuestionInputScope, type QuestionInputOriginSource } from './question-input-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
+import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -843,12 +844,14 @@ export class QueryRunner {
         const isolated = holderTurn;
         const neo = new NeoRepository(this.ctx.db.getDatabase());
         const consultations = new NeoConsultationRepository(this.ctx.db.getDatabase(), () => {});
+        const asks = new NeoAskRepository(this.ctx.db.getDatabase(), () => {});
         resolveAskOrigin = createNeoAskOriginResolver({
           getBinding: (id) => neo.getBindingBySession(id),
           getPrompts: (id, messageId) =>
             this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, messageId),
           getConsultation: (id) => consultations.get(id),
           getWork: (id) => neo.getWork(id),
+          getAsk: (id) => asks.get(id),
           getRootBinding: () => neo.getBindingForConcern(null),
         });
         queryOptions.mcpServers = {

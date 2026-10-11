@@ -6,6 +6,7 @@ import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
   neoDoneCheckMessageId,
+  neoNeedsYouMessageId,
   neoStallMessageId,
   neoWorkReturnMessageId,
   neoWorkReviewId,
@@ -18,6 +19,7 @@ import {
   type NeoAskOrigin,
   type NeoAskOriginReads,
 } from '../../../../src/lib/neo/ask-origin.ts';
+import { neoAskEvidenceMessageId } from '../../../../src/lib/neo/ask-evidence.ts';
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
@@ -90,6 +92,7 @@ const evidence = (patch: Partial<NeoAskEvidence> = {}): NeoAskEvidence => ({
   envelope: 'request',
   consultation,
   work: null,
+  ask: null,
   root,
   holder,
   workOrigin: root,
@@ -100,6 +103,10 @@ function fixtures() {
   const prompts = new Map<string, SDKMessage[]>();
   const consultations = new Map([[consultation.id, consultation]]);
   const works = new Map([[work.id, work]]);
+  const asks = new Map<
+    string,
+    { id: string; originSessionId: string; originMessageId: string | null }
+  >();
   const key = (input: NeoAskOrigin) => JSON.stringify([input.sessionId, input.messageId]);
   const put = (input: NeoAskOrigin, kind = 'human') =>
     prompts.set(key(input), [prompt(input, kind)]);
@@ -110,9 +117,11 @@ function fixtures() {
     ),
     getConsultation: mock((id: string) => consultations.get(id) ?? null),
     getWork: mock((id: string) => works.get(id) ?? null),
+    getAsk: mock((id: string) => asks.get(id) ?? null),
     getRootBinding: mock(() => root),
   };
   return {
+    asks,
     bindings,
     prompts,
     consultations,
@@ -416,6 +425,38 @@ describe('synchronous bounded ask resolver', () => {
     const check = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
     f.put(check, 'system');
     expect(f.resolve(check)).toBeNull();
+  });
+  test('a needs-you note on running work answers the ask that started it', () => {
+    const f = fixtures();
+    f.put(ask);
+    f.works.set(work.id, { ...work, status: 'queued' });
+    const note = { sessionId: root.sessionId, messageId: neoNeedsYouMessageId(work.id, 7) };
+    f.put(note, 'system');
+    expect(f.resolve(note)).toEqual(ask);
+  });
+  test('an ask evidence note answers the ask it reports on', () => {
+    const f = fixtures();
+    f.put(ask);
+    f.asks.set('a1', { id: 'a1', originSessionId: root.sessionId, originMessageId: ask.messageId });
+    const note = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a1', 'sig') };
+    f.put(note, 'system');
+    expect(f.resolve(note)).toEqual(ask);
+    expect(f.reads.getWork).not.toHaveBeenCalled();
+  });
+  test('an ask evidence note resolves to nothing for an unknown ask or another session', () => {
+    const f = fixtures();
+    f.put(ask);
+    f.asks.set('a1', {
+      id: 'a1',
+      originSessionId: holder.sessionId,
+      originMessageId: ask.messageId,
+    });
+    const unknownAsk = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a2', 's') };
+    const elsewhere = { sessionId: root.sessionId, messageId: neoAskEvidenceMessageId('a1', 's') };
+    f.put(unknownAsk, 'system');
+    f.put(elsewhere, 'system');
+    expect(f.resolve(unknownAsk)).toBeNull();
+    expect(f.resolve(elsewhere)).toBeNull();
   });
   test('cycles stop before rereading and limits do not leak across calls', () => {
     const f = fixtures();
