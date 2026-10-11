@@ -52,7 +52,9 @@ export function neoAskStartedWork(db: Database, sessionId: string, messageId: st
        SELECT 1 FROM neo_consultation_waiters WHERE origin_session_id = ? AND origin_message_id = ?
        UNION ALL
        SELECT 1 FROM neo_work WHERE origin_session_id = ? AND origin_message_id = ?
+       UNION ALL
+       SELECT 1 FROM neo_ask_forwards WHERE from_session_id = ? AND ask_message_id = ?
        LIMIT 1`
     )
-    .get(sessionId, messageId, sessionId, messageId, sessionId, messageId);
+    .get(sessionId, messageId, sessionId, messageId, sessionId, messageId, sessionId, messageId);
 }

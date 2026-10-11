@@ -2,6 +2,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.ask.answer',
   'neo.ask.approve',
   'neo.ask.edit',
+  'neo.ask.forward',
   'neo.ask.open',
   'neo.ask.settle',
   'neo.ask.tick',

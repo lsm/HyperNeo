@@ -27,6 +27,7 @@ import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inv
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -343,6 +344,7 @@ export class NeoService {
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly inputOrigins: NeoInputOriginRepository;
+  readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly pending = new Map<string | null, Promise<string>>();
@@ -562,6 +564,7 @@ export class NeoService {
     });
     const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
     this.inputOrigins = inputOrigins;
+    this.askForwards = new NeoAskForwardRepository(db.getDatabase());
     this.resolveAskOrigin = createNeoAskOriginResolver({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
@@ -2170,6 +2173,16 @@ export class NeoService {
     parent: NeoAskOrigin | null
   ): Promise<void> {
     return this.deliver(originSessionId, messageId, content, originSessionId, parent);
+  }
+
+  deliverForward(
+    sessionId: string,
+    messageId: string,
+    content: string,
+    fromSessionId: string,
+    ask: NeoAskOrigin
+  ): Promise<void> {
+    return this.deliver(sessionId, messageId, content, fromSessionId, ask);
   }
 
   private deliver(

@@ -40,6 +40,7 @@ import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { requireNeoProposal, type NeoProposal } from './agent-work-target.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
+import { createNeoAskForwardOperation, neoForwardedText } from './ask-forward-operation.ts';
 import { createNeoRouter } from './router.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoPublicationReadOperation } from './publication-read-operation.ts';
@@ -1368,6 +1369,23 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPublicationOperation(service.publish),
     createNeoRouteCorrectOperation(service.db, service.repo),
+    createNeoAskForwardOperation({
+      getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
+      resolveAskOrigin: (input) => service.resolveAskOrigin(input),
+      forwards: (ask) => service.askForwards.list(ask),
+      getConcern: (id) => service.repo.getConcern(id),
+      rootSessionId: () => service.repo.getBindingForConcern(null)?.sessionId ?? null,
+      askText: (ask) => {
+        const root = service.repo.getBindingForConcern(null)?.sessionId;
+        return root?.startsWith('neo:')
+          ? neoForwardedText(service.asks.find(root.slice(4), ask.messageId), ask)
+          : null;
+      },
+      open: (concernId) => service.open(concernId),
+      record: (ask, forward) => service.askForwards.record(ask, forward),
+      deliver: (sessionId, messageId, content, from, ask) =>
+        service.deliverForward(sessionId, messageId, content, from, ask),
+    }),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationAskReadOperation(service.repo, service.asks, (sessionId, messageId) =>
       service.db.getSDKMessageRepo().getUserSendStatus(sessionId, messageId)
