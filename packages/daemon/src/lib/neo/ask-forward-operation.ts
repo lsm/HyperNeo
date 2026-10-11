@@ -44,6 +44,7 @@ export interface NeoAskForwardRuntime {
   open(concernId: string): Promise<string>;
   record(ask: NeoAskOrigin, forward: NeoAskForward): boolean;
   unrecord(ask: NeoAskOrigin, hop: number): void;
+  delivered(sessionId: string, messageId: string): boolean;
   deliver(
     sessionId: string,
     messageId: string,
@@ -75,6 +76,16 @@ export function neoForwardedText(
 
 export function neoForwardMessageId(ask: NeoAskOrigin, hop: number): string {
   return `neo-forward:${ask.messageId}:${hop}`;
+}
+
+export function staleNeoForwardHops(
+  ask: NeoAskOrigin,
+  forwards: readonly Pick<NeoAskForward, 'hop' | 'toSessionId'>[],
+  delivered: (sessionId: string, messageId: string) => boolean
+): number[] {
+  return forwards
+    .filter((forward) => !delivered(forward.toSessionId, neoForwardMessageId(ask, forward.hop)))
+    .map((forward) => forward.hop);
 }
 
 export function requireForwardingHolder(
@@ -156,7 +167,18 @@ function createForward(runtime: NeoAskForwardRuntime) {
     .pipe((holder: Holder) => runtime.resolveAskOrigin(holder.input), 'holder', 'resolved')
     .pipe(requireForwardedAsk, 'resolved', 'result:outcome')
     .pipe(take, 'outcome', 'ask')
-    .pipe((ask: NeoAskOrigin) => runtime.forwards(ask), 'ask', 'forwards')
+    .pipe(
+      (ask: NeoAskOrigin) => {
+        const forwards = runtime.forwards(ask);
+        const stale = staleNeoForwardHops(ask, forwards, (sessionId, messageId) =>
+          runtime.delivered(sessionId, messageId)
+        );
+        for (const hop of stale) runtime.unrecord(ask, hop);
+        return forwards.filter((forward) => !stale.includes(forward.hop));
+      },
+      'ask',
+      'forwards'
+    )
     .pipe(planNeoAskForward, ['input', 'holder', 'ask', 'forwards'], 'result:outcome')
     .pipe(take, 'outcome', 'plan')
     .pipe(

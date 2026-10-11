@@ -28,6 +28,7 @@ import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-age
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
+import { neoForwardMessageId } from './ask-forward-operation.ts';
 import { NeoConsultationRepository } from '../../storage/repositories/neo-consultation-repository.ts';
 import { NeoConsultationWaiterRepository } from '../../storage/repositories/neo-consultation-waiter-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
@@ -650,7 +651,8 @@ export class NeoService {
       getRootBinding: () => this.repo.getBindingForConcern(null),
       recentAsks: (conversationId, id) => this.asks.recentFrom(conversationId, id, 5),
       isPublished: (id, messageId) => !!this.publications.findByProducer(id, messageId),
-      startedWork: (id, messageId) => neoAskStartedWork(db, id, messageId),
+      startedWork: (id, messageId) =>
+        neoAskStartedWork(db, id, messageId) || this.forwardedAway(id, messageId),
       turnReply: (id, messageId) => readNeoTurnReply(db, id, messageId),
       hasNudge: (id, nudgeId) => this.hasDelivery(id, nudgeId),
       recheck: (id) => this.scheduleReplyRecheck(id, directReplies),
@@ -2141,7 +2143,18 @@ export class NeoService {
     return ids.some((id) => this.hasDelivery(work.originSessionId, id));
   }
 
-  private hasDelivery(sessionId: string, messageId: string): boolean {
+  forwardedAway(sessionId: string, messageId: string): boolean {
+    const ask = { sessionId, messageId };
+    return this.askForwards
+      .list(ask)
+      .some(
+        (forward) =>
+          forward.fromSessionId === sessionId &&
+          this.hasDelivery(forward.toSessionId, neoForwardMessageId(ask, forward.hop))
+      );
+  }
+
+  hasDelivery(sessionId: string, messageId: string): boolean {
     return (
       this.deliveries.has(`${sessionId}:${messageId}`) ||
       !!this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||

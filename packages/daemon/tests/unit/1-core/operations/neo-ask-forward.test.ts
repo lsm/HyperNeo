@@ -7,8 +7,13 @@ import {
   neoForwardedText,
   planNeoAskForward,
   requireForwardingHolder,
+  staleNeoForwardHops,
 } from '../../../../src/lib/neo/ask-forward-operation.ts';
-import { neoAskStartedWork } from '../../../../src/lib/neo/turn-reply.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
+import {
+  type DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -31,6 +36,22 @@ const caller = (sessionId: string, messageId: string, live = true): OperationCal
   source: 'mcp',
   sessionId,
   neoTurn: { messageId, human: false, isLive: () => live },
+});
+
+describe('staleNeoForwardHops', () => {
+  test('marks the hops whose note never reached its receiver', () => {
+    const forwards = [
+      { hop: 0, toSessionId: pond.sessionId },
+      { hop: 1, toSessionId: root.sessionId },
+    ];
+    expect(
+      staleNeoForwardHops(
+        ask,
+        forwards,
+        (sessionId, id) => sessionId === pond.sessionId && id === 'neo-forward:ask-1:0'
+      )
+    ).toEqual([1]);
+  });
 });
 
 describe('requireForwardingHolder', () => {
@@ -143,6 +164,11 @@ describe('neo.ask.forward', () => {
           1
         );
       },
+      delivered: (sessionId, messageId) =>
+        delivered.some((args) => {
+          const [to, id] = args as [string, string];
+          return to === sessionId && id === messageId;
+        }),
       deliver: async (...args) => {
         if (failDelivery) throw new Error('mailbox handoff rejected');
         delivered.push(args);
@@ -201,6 +227,22 @@ describe('neo.ask.forward', () => {
     expect(delivered).toHaveLength(1);
   });
 
+  test('a hop recorded but never delivered, as after a crash, is dropped and the holder can forward again', async () => {
+    const { invoke, forwards, delivered } = runtime();
+    forwards.push({
+      hop: 0,
+      fromSessionId: garden.sessionId,
+      toSessionId: pond.sessionId,
+      toConcernId: 'pond',
+      forwardedAt: 1,
+    });
+    expect(await invoke(caller(garden.sessionId, 'ask-1'), 'pond')).toMatchObject({
+      value: { ok: true, hop: 0 },
+    });
+    expect(forwards).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+  });
+
   test('refuses a topic that does not exist', async () => {
     const { invoke, delivered } = runtime();
     expect(await invoke(caller(garden.sessionId, 'ask-1'), 'nowhere')).toMatchObject({
@@ -232,20 +274,31 @@ describe('NeoAskForwardRepository', () => {
     expect(repo.list(ask).map((item) => item.hop)).toEqual([0]);
   });
 
-  test('a forwarded ask counts as handled, so the forwarder publishes no reply of its own', async () => {
+  test('the forwarder stops answering an ask only once its forward was delivered', async () => {
     const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      {} as never,
+      { event: () => {} } as never,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
     try {
-      expect(neoAskStartedWork(db, garden.sessionId, 'ask-1')).toBe(false);
-      new NeoAskForwardRepository(db.getDatabase()).record(ask, {
+      service.askForwards.record(ask, {
         hop: 0,
         fromSessionId: garden.sessionId,
         toSessionId: pond.sessionId,
         toConcernId: 'pond',
         forwardedAt: 1,
       });
-      expect(neoAskStartedWork(db, garden.sessionId, 'ask-1')).toBe(true);
-      expect(neoAskStartedWork(db, pond.sessionId, 'ask-1')).toBe(false);
+      expect(service.forwardedAway(garden.sessionId, 'ask-1')).toBe(false);
+      db.getJobQueueRepo().enqueue({
+        queue: 'mailbox',
+        payload: { to: { sessionId: pond.sessionId }, messageUuid: 'neo-forward:ask-1:0' },
+      });
+      expect(service.forwardedAway(garden.sessionId, 'ask-1')).toBe(true);
+      expect(service.forwardedAway(pond.sessionId, 'ask-1')).toBe(false);
     } finally {
+      service.dispose();
       db.close();
     }
   });
