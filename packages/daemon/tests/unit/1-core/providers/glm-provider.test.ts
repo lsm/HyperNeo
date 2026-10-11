@@ -510,7 +510,7 @@ describe('GlmProvider', () => {
       expect(config.envVars).toEqual({
         ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: 'test-key',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: '900000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5',

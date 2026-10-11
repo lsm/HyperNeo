@@ -46,7 +46,7 @@ describe('OpenRouterProvider', () => {
       ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
       ANTHROPIC_AUTH_TOKEN: 'sk-or-test',
       ANTHROPIC_API_KEY: '',
-      API_TIMEOUT_MS: '3000000',
+      API_TIMEOUT_MS: '900000',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-sonnet-4.6',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-4.6',

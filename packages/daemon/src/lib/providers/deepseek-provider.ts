@@ -18,6 +18,7 @@ import {
   ProviderDiscoveryCache,
   providerDiscoveryFingerprint,
 } from './shared/discovery-cache.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 export class DeepSeekProvider implements Provider {
   readonly id = 'deepseek';
@@ -263,7 +264,7 @@ export class DeepSeekProvider implements Provider {
         ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || DeepSeekProvider.BASE_URL,
         ANTHROPIC_AUTH_TOKEN: apiKey,
         ANTHROPIC_API_KEY: '',
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,

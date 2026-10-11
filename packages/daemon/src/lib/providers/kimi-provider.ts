@@ -18,6 +18,7 @@ import {
   ProviderDiscoveryCache,
   providerDiscoveryFingerprint,
 } from './shared/discovery-cache.js';
+import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -617,7 +618,7 @@ export class KimiProvider implements Provider {
         CLAUDE_CODE_SUBAGENT_MODEL: routingModelId,
         ENABLE_TOOL_SEARCH: 'false',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
-        API_TIMEOUT_MS: '3000000',
+        API_TIMEOUT_MS: PROVIDER_REQUEST_TIMEOUT_MS,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       },
       isAnthropicCompatible: true,
