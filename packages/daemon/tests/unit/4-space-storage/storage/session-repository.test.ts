@@ -735,9 +735,24 @@ describe('SessionRepository', () => {
       expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
     });
 
-    it('marks only turns still processing at startup as interrupted', () => {
+    it('marks turns still processing or cooling down at startup as interrupted', () => {
       const states = {
         busy: { status: 'processing', messageId: 'm1', phase: 'thinking' },
+        paused: {
+          status: 'rate_limit_cooldown',
+          messageId: 'm5',
+          retryCount: 5,
+          maxRetries: 5,
+          retryAt: 1,
+          manualRetry: true,
+        },
+        cooling: {
+          status: 'rate_limit_cooldown',
+          messageId: 'm3',
+          retryCount: 1,
+          maxRetries: 5,
+          retryAt: 1,
+        },
         idle: { status: 'idle' },
         queued: { status: 'queued', messageId: 'm2' },
         asking: { status: 'waiting_for_input', pendingQuestion: {} },
@@ -746,13 +761,30 @@ describe('SessionRepository', () => {
         repository.createSession(
           createDefaultSession({ id, processingState: JSON.stringify(state) })
         );
-      expect(repository.markRestartInterruptedTurns()).toBe(1);
+      const spaceCooldown = { status: 'rate_limit_cooldown', messageId: 'm4', retryAt: 9 };
+      repository.createSession({
+        ...createDefaultSession({
+          id: 'space-cooling',
+          processingState: JSON.stringify(spaceCooldown),
+        }),
+        context: { spaceId: 'space-1' },
+      });
+      expect(repository.markRestartInterruptedTurns()).toBe(2);
+      expect(JSON.parse(repository.getSession('space-cooling')?.processingState ?? '{}')).toEqual(
+        spaceCooldown
+      );
       expect(JSON.parse(repository.getSession('busy')?.processingState ?? '{}')).toEqual({
         status: 'interrupted',
         reason: 'restart',
         messageId: 'm1',
       });
-      for (const id of ['idle', 'queued', 'asking'])
+      expect(JSON.parse(repository.getSession('cooling')?.processingState ?? '{}')).toEqual({
+        status: 'interrupted',
+        reason: 'restart',
+        messageId: 'm3',
+        resumeAt: 1,
+      });
+      for (const id of ['idle', 'queued', 'asking', 'paused'])
         expect(JSON.parse(repository.getSession(id)?.processingState ?? '{}')).toEqual(
           states[id as keyof typeof states]
         );

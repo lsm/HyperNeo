@@ -636,6 +636,21 @@ export class RateLimitWatchdog {
       );
       this.startupRetries = 0;
       this.startupExhausted = true;
+      await this.stateManager
+        .setRateLimitCooldown(
+          {
+            retryCount: this.retryCount,
+            maxRetries: this.config.maxAutoRetries,
+            retryAt: Date.now(),
+            messageId: this.lastUserMessage?.uuid,
+            exhaustedCycles: this.exhaustedRetryCycles,
+            manualRetry: true,
+          },
+          queryGeneration
+        )
+        .catch((err: unknown) =>
+          this.logger.warn('Failed to persist the manual-retry pause:', err)
+        );
       return;
     }
     this.logger.warn(
@@ -763,6 +778,7 @@ export class RateLimitWatchdog {
                 retryAt: Date.now(),
                 messageId: this.lastUserMessage?.uuid,
                 exhaustedCycles: this.exhaustedRetryCycles,
+                manualRetry: true,
               },
               queryGeneration
             );

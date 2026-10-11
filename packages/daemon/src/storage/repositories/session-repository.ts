@@ -206,15 +206,59 @@ export class SessionRepository {
     return this.db
       .prepare(
         `UPDATE sessions
-         SET processing_state = json_object(
-           'status', 'interrupted',
-           'reason', 'restart',
-           'messageId', json_extract(processing_state, '$.messageId')
-         )
+         SET processing_state = CASE json_extract(processing_state, '$.status')
+           WHEN 'processing' THEN json_object(
+             'status', 'interrupted',
+             'reason', 'restart',
+             'messageId', json_extract(processing_state, '$.messageId')
+           )
+           ELSE json_object(
+             'status', 'interrupted',
+             'reason', 'restart',
+             'messageId', json_extract(processing_state, '$.messageId'),
+             'resumeAt', json_extract(processing_state, '$.retryAt')
+           )
+         END
          WHERE json_valid(processing_state)
-           AND json_extract(processing_state, '$.status') = 'processing'`
+           AND (json_extract(processing_state, '$.status') = 'processing'
+             OR (json_extract(processing_state, '$.status') = 'rate_limit_cooldown'
+               AND json_type(processing_state, '$.retryAt') IN ('integer', 'real')
+               AND COALESCE(json_extract(processing_state, '$.manualRetry'), 0) = 0
+               AND NOT (json_valid(session_context)
+                 AND json_extract(session_context, '$.spaceId') IS NOT NULL)))`
       )
       .run().changes;
+  }
+
+  listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
+    return (
+      this.db
+        .prepare(
+          `SELECT id, json_extract(processing_state, '$.resumeAt') AS resume_at FROM sessions
+            WHERE status = 'active'
+              AND json_valid(processing_state)
+              AND json_extract(processing_state, '$.status') = 'interrupted'
+              AND json_extract(processing_state, '$.reason') = 'restart'
+              AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
+        )
+        .all() as Array<{ id: string; resume_at: number }>
+    ).map((row) => ({ sessionId: row.id, resumeAt: row.resume_at }));
+  }
+
+  takeRestartCooldownResume(sessionId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE sessions
+           SET processing_state = json_remove(processing_state, '$.resumeAt')
+           WHERE id = ?
+             AND json_valid(processing_state)
+             AND json_extract(processing_state, '$.status') = 'interrupted'
+             AND json_extract(processing_state, '$.reason') = 'restart'
+             AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
+        )
+        .run(sessionId).changes > 0
+    );
   }
 
   clearAcpSessionIds(): void {
