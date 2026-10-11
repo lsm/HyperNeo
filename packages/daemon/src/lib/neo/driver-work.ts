@@ -596,6 +596,18 @@ export function decideStuckReminder(
   };
 }
 
+export function isNeoReceiptAbandoned(
+  workStatus: string | null,
+  queuedSince: number | null,
+  now: number
+): boolean {
+  return (
+    workStatus === 'queued' &&
+    queuedSince !== null &&
+    !!decideStuckReminder(queuedSince, now)?.abandoned
+  );
+}
+
 export function driverStuckNote(
   work: Pick<NeoWork, 'id' | 'title'>,
   goal: NeoWorkGoal | null,

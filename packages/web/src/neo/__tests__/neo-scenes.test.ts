@@ -287,6 +287,7 @@ describe('describeNeoDriverScenes', () => {
       { kind: 'work', ...work('r', 'queued', 2) },
       { kind: 'work', ...work('f', 'queued', 3) },
       { kind: 'work', ...work('s', 'queued', 4) },
+      { kind: 'work', ...work('a', 'queued', 6) },
       { kind: 'work', ...work('done', 'reported', 5) },
     ] as NeoBoardReceipt[]);
     const described = describeNeoDriverScenes(
@@ -296,6 +297,7 @@ describe('describeNeoDriverScenes', () => {
         ['r', { ...driver, workId: 'r', status: 'running' }],
         ['f', { ...driver, workId: 'f', status: 'done' }],
         ['s', { ...driver, workId: 's', status: 'stopped' }],
+        ['a', { ...driver, workId: 'a', status: 'done', abandoned: true }],
         ['done', { ...driver, workId: 'done', status: 'done' }],
       ])
     );
@@ -304,6 +306,7 @@ describe('describeNeoDriverScenes', () => {
       ['r', 'running', 'Running in Codex Desktop on laptop'],
       ['f', 'running', 'Idle in Codex Desktop on laptop · Neo is checking'],
       ['s', 'outcomes', 'Stopped in Codex Desktop on laptop'],
+      ['a', 'attention', 'No result from Codex Desktop on laptop in 3 days · close it?'],
       ['done', 'outcomes', 'Response ready'],
     ]);
   });

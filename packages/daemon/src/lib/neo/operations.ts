@@ -200,6 +200,7 @@ const Snapshot = z.union([
           uncheckedSince: z.number().optional(),
           retryable: z.literal(true).optional(),
           unconfirmed: z.literal(true).optional(),
+          abandoned: z.literal(true).optional(),
         })
       )
       .max(100)

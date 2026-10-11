@@ -3,6 +3,7 @@ import { WorkStatusSchema, type WorkRef, type WorkStatus } from '../../lib/drive
 import {
   NeoDriverTargetSchema,
   type DriverSent,
+  isNeoReceiptAbandoned,
   isNeoReceiptUnconfirmed,
   type NeoDriverTarget,
 } from '../../lib/neo/driver-work.ts';
@@ -209,7 +210,8 @@ export class NeoWorkDriverTargetRepository {
         `SELECT work_id AS workId, target, ref, live_status AS status, link,
                 remote_link AS remoteLink, started_at AS startedAt, input_before AS inputBefore,
                 (SELECT status FROM neo_work WHERE id = work_id) AS workStatus,
-                (SELECT created_at FROM neo_work WHERE id = work_id) AS workCreatedAt
+                (SELECT created_at FROM neo_work WHERE id = work_id) AS workCreatedAt,
+                (SELECT updated_at FROM neo_work WHERE id = work_id) AS workUpdatedAt
            FROM neo_work_driver_targets WHERE work_id IN (SELECT value FROM json_each(?))`
       )
       .all(JSON.stringify(workIds)) as Array<{
@@ -223,6 +225,7 @@ export class NeoWorkDriverTargetRepository {
       inputBefore: number | null;
       workStatus: string | null;
       workCreatedAt: number | null;
+      workUpdatedAt: number | null;
     }>;
     return rows.flatMap((row) => {
       const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
@@ -236,7 +239,7 @@ export class NeoWorkDriverTargetRepository {
         (target.data.verb === 'send'
           ? (target.data.ref.daemon ?? null)
           : (target.data.place.daemon ?? null));
-      const status = WorkStatusSchema.safeParse(row.status);
+      const status = WorkStatusSchema.safeParse(row.workStatus === 'cancelled' ? null : row.status);
       return [
         {
           workId: row.workId,
@@ -250,6 +253,9 @@ export class NeoWorkDriverTargetRepository {
             now
           )
             ? { unconfirmed: true as const }
+            : {}),
+          ...(isNeoReceiptAbandoned(row.workStatus, row.workUpdatedAt, now)
+            ? { abandoned: true as const }
             : {}),
         },
       ];
