@@ -16,8 +16,7 @@ import {
   openNeoNewTopic,
 } from '../../../../src/lib/neo/router.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
+import { createTables } from '../../../../src/storage/schema/index.ts';
 import { Database as Sqlite } from '../../../../src/storage/sqlite-compat.ts';
 import type { NeoRoute } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 
@@ -311,46 +310,57 @@ describe('chooseNeoRoute with a new subject', () => {
     });
   });
 
-  test('saves the topic once and opens its holder', async () => {
+  const topicDb = () => {
     const db = new Sqlite(':memory:');
-    createNeoTables(db);
-    runMigration283(db);
-    const repo = new NeoRepository(db);
+    createTables(db);
+    return { db, repo: new NeoRepository(db) };
+  };
+
+  test('saves the topic once and reopens the same holder on a retry', async () => {
+    const { db, repo } = topicDb();
     const opened: string[] = [];
     const open = async (id: string) => {
       opened.push(id);
       return `neo:${id}`;
     };
-    const topic = neoNewTopic('Plan the garden', 't1');
-    expect(await openNeoNewTopic(repo, open, topic)).toEqual({
-      concernId: 't1',
-      sessionId: 'neo:t1',
+    const topic = neoNewTopic('Plan the garden', 'request-1');
+    const holder = {
+      concernId: 'request-1',
+      sessionId: 'neo:request-1',
       title: 'Plan the garden',
       summary: 'Plan the garden',
-    });
-    expect(repo.getConcern('t1')).toMatchObject({ title: 'Plan the garden', context: '' });
-    expect(await openNeoNewTopic(repo, open, topic)).toBeNull();
-    expect(opened).toEqual(['t1']);
+    };
+    expect(await openNeoNewTopic(repo, open, topic)).toEqual(holder);
+    expect(await openNeoNewTopic(repo, open, { ...topic, title: 'Other' })).toEqual(holder);
+    expect(repo.listConcerns().map((concern) => concern.id)).toEqual(['request-1']);
+    expect(opened).toEqual(['request-1', 'request-1']);
     db.close();
   });
 
   test('drops a topic whose holder cannot be opened, so the message stays with main Neo', async () => {
-    const db = new Sqlite(':memory:');
-    createNeoTables(db);
-    runMigration283(db);
-    const repo = new NeoRepository(db);
-    const failed = await openNeoNewTopic(
-      repo,
-      async () => {
-        throw new Error('session could not be created');
-      },
-      neoNewTopic('Plan the garden', 't2')
+    const { db, repo } = topicDb();
+    expect(
+      await openNeoNewTopic(
+        repo,
+        async () => {
+          throw new Error('provider unavailable');
+        },
+        neoNewTopic('Plan the garden', 't2')
+      )
+    ).toBeNull();
+    expect(
+      await openNeoNewTopic(
+        repo,
+        async (id) => {
+          repo.reserveBinding({ sessionId: `neo:${id}`, concernId: id, kind: 'concern' });
+          throw new Error('session could not be created');
+        },
+        neoNewTopic('Plan the pond', 't3')
+      )
+    ).toBeNull();
+    expect([repo.getConcern('t2'), repo.getConcern('t3'), repo.getBindingForConcern('t3')]).toEqual(
+      [null, null, null]
     );
-    expect(failed).toBeNull();
-    expect(repo.getConcern('t2')).toBeNull();
-    repo.saveConcern({ id: 'bound', title: 'Bound', summary: '', context: '' }, 0);
-    repo.reserveBinding({ sessionId: 'neo:bound', concernId: 'bound', kind: 'concern' });
-    expect(repo.discardUnboundConcern('bound')).toBe(false);
     db.close();
   });
 

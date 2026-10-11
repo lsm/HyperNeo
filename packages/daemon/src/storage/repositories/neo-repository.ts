@@ -71,13 +71,19 @@ export class NeoRepository {
     return row as NeoConcern | null;
   }
 
-  discardUnboundConcern(id: string): boolean {
-    const result = this.db
-      .prepare(`DELETE FROM neo_concerns WHERE id = ?
-        AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)`)
-      .run(id, id);
-    if (result.changes > 0) this.notify();
-    return result.changes > 0;
+  discardUnopenedConcern(id: string): boolean {
+    const removed = this.db.transaction(() => {
+      this.db
+        .prepare(`DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'concern'
+          AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_session_bindings.session_id)`)
+        .run(id);
+      return this.db
+        .prepare(`DELETE FROM neo_concerns WHERE id = ?
+          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)`)
+        .run(id, id).changes;
+    })();
+    if (removed > 0) this.notify();
+    return removed > 0;
   }
 
   reserveBinding(binding: NeoBinding): boolean {

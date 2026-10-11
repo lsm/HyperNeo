@@ -49,16 +49,17 @@ export function neoNewTopic(
 }
 
 export async function openNeoNewTopic(
-  repo: Pick<NeoRepository, 'saveConcern' | 'discardUnboundConcern'>,
+  repo: Pick<NeoRepository, 'saveConcern' | 'getConcern' | 'discardUnopenedConcern'>,
   openHolder: (concernId: string) => Promise<string>,
   topic: { id: string; title: string; summary: string }
 ): Promise<NeoHolder | null> {
-  if (!repo.saveConcern({ ...topic, context: '' }, 0)) return null;
+  const saved = repo.saveConcern({ ...topic, context: '' }, 0) ?? repo.getConcern(topic.id);
+  if (!saved) return null;
   try {
-    const sessionId = await openHolder(topic.id);
-    return { concernId: topic.id, sessionId, title: topic.title, summary: topic.summary };
+    const sessionId = await openHolder(saved.id);
+    return { concernId: saved.id, sessionId, title: saved.title, summary: saved.summary };
   } catch {
-    repo.discardUnboundConcern(topic.id);
+    repo.discardUnopenedConcern(saved.id);
     return null;
   }
 }
@@ -109,7 +110,7 @@ export interface NeoRouterDeps {
   embed(text: string): Promise<Float32Array | null>;
   classify?(text: string, options: readonly NeoHolder[], context: string): Promise<NeoRouteVerdict>;
   inbox?(): Promise<NeoHolder | null>;
-  newTopic?(text: string): Promise<NeoHolder | null>;
+  newTopic?(text: string, key?: string): Promise<NeoHolder | null>;
   inboxRunnable?(): Promise<boolean>;
 }
 
@@ -337,7 +338,7 @@ export function chooseNeoRoute(text: string, deps: NeoRouterDeps): Promise<NeoRo
   return runNeoRoute(text, deps);
 }
 
-export type NeoRouter = (text: string) => Promise<NeoRouted>;
+export type NeoRouter = (text: string, requestId?: string) => Promise<NeoRouted>;
 
 export function createNeoRouter(
   db: Database,
@@ -405,7 +406,8 @@ export function createNeoRouter(
         }
       : undefined,
     newTopic: openHolder
-      ? (text) => openNeoNewTopic(repo, openHolder, neoNewTopic(text, crypto.randomUUID()))
+      ? (text, key) =>
+          openNeoNewTopic(repo, openHolder, neoNewTopic(text, key ?? crypto.randomUUID()))
       : undefined,
     inboxRunnable: async () => {
       if (process.env.NODE_ENV === 'test') return true;
@@ -417,5 +419,10 @@ export function createNeoRouter(
         .catch(() => false);
     },
   };
-  return (text) => chooseNeoRoute(text, deps);
+  const newTopic = deps.newTopic;
+  return (text, requestId) =>
+    chooseNeoRoute(text, {
+      ...deps,
+      newTopic: newTopic && ((ask) => newTopic(ask, requestId)),
+    });
 }
