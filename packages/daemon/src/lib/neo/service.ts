@@ -205,6 +205,7 @@ import {
   planNeoAskEvidenceNote,
   requireNeoAskEvidenceDue,
 } from './ask-evidence.ts';
+import { neoAskStalledNote, requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import {
   extractNeoCardRefs,
   readGithubRefStates,
@@ -245,6 +246,7 @@ const dispatchNeoConsultationWaiter = (
   .endAsync('admission');
 
 const NEO_STALLED_TURN_SETTLE_MS = 20_000;
+const NEO_WORK_REPORT_LIMIT = 12_000;
 
 type NeoWorkPrCard = {
   ask: NeoAsk | null;
@@ -911,17 +913,13 @@ export class NeoService {
     const current = this.workPending.get(id);
     if (current) return current;
     const operation = this.startReservedWork(id)
-      .catch((error) => {
+      .catch(async (error) => {
         const work = this.repo.getWork(id);
         if (work?.status === 'queued')
-          this.repo.transitionWork(id, work, {
-            status: 'failed',
-            report:
-              `Could not start the execution: ${error instanceof Error ? error.message : String(error)}`.slice(
-                0,
-                12000
-              ),
-          });
+          await this.failWork(
+            work,
+            `Could not start the execution: ${error instanceof Error ? error.message : String(error)}`
+          ).catch((returnError) => this.log.warn('Returning a failed start failed', returnError));
         throw error;
       })
       .finally(() => this.workPending.delete(id));
@@ -959,12 +957,10 @@ export class NeoService {
       await this.deliver(work.sessionId, work.id, brief, work.originSessionId);
       return;
     }
-    const failed = this.repo.transitionWork(id, work, {
-      status: 'failed',
-      report:
-        'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.',
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(
+      work,
+      'Neo did not choose where this work runs. Ask Neo again and say which project, Space or chat it belongs to.'
+    );
   }
 
   async continueWork(id: string, message: string, now = Date.now()): Promise<NeoContinueResult> {
@@ -1046,11 +1042,10 @@ export class NeoService {
     if (work.status === 'queued') {
       if (this.driverTargets.readRef(work.id)) return;
       this.driverTargets.recordStartInterrupted(work.id);
-      const interrupted = this.repo.transitionWork(work.id, work, {
-        status: 'failed',
-        report: `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`,
-      });
-      if (interrupted) await this.returnReport(interrupted);
+      await this.failWork(
+        work,
+        `${NEO_DRIVER_START_INTERRUPTED} ${target.verb === 'start' ? target.adapter : target.ref.adapter} confirmed it. It may still have started; check work.find before trying again.`
+      );
       return;
     }
     const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
@@ -1091,11 +1086,7 @@ export class NeoService {
       });
       return;
     }
-    const failed = this.repo.transitionWork(queued.id, queued, {
-      status: 'failed',
-      report: `Could not start the execution: ${result.failure}`.slice(0, 12000),
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(queued, `Could not start the execution: ${result.failure}`);
   }
 
   retryCard(workId: string): NeoWorkRetryCard {
@@ -1134,20 +1125,20 @@ export class NeoService {
 
   private async failUnavailableTarget(work: NeoWork, reason: string): Promise<void> {
     if (work.status !== 'queued') return;
-    const failed = this.repo.transitionWork(work.id, work, {
-      status: 'failed',
-      report: `The chosen execution chat is no longer available: ${reason}.`,
-    });
-    if (failed) await this.returnReport(failed);
+    await this.failWork(work, `The chosen execution chat is no longer available: ${reason}.`);
   }
 
   private async failErroredTurn(work: NeoWork): Promise<void> {
     if (!work.sessionId) return;
     const failure = this.db.getSDKMessageRepo().getTurnErrorResultSubtype(work.sessionId, work.id);
     if (!failure) return;
+    await this.failWork(work, `The chat stopped with an error before reporting: ${failure}.`);
+  }
+
+  private async failWork(work: NeoWork, report: string): Promise<void> {
     const failed = this.repo.transitionWork(work.id, work, {
       status: 'failed',
-      report: `The chat stopped with an error before reporting: ${failure}.`,
+      report: report.slice(0, NEO_WORK_REPORT_LIMIT),
     });
     if (failed) await this.returnReport(failed);
   }
@@ -1184,15 +1175,20 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    const works = this.repo.listWork();
-    for (const work of works) {
-      const ref = work.status === 'queued' ? this.driverTargets.readRef(work.id) : null;
-      if (!ref) continue;
+    const cards = this.driverTargets
+      .cardRefs(Date.now() - NEO_WORK_FOLLOW_MAX_AGE_MS)
+      .flatMap((card) => {
+        const work = this.repo.getWork(card.workId);
+        return work ? [{ work, ref: card.ref }] : [];
+      });
+    for (const { work, ref } of cards) {
+      if (work.status !== 'queued') continue;
       await this.settleDriverWork(work, ref).catch((error) =>
         this.log.warn('Driver work refresh pending', error)
       );
     }
-    for (const work of works.filter((item) => item.status === 'reported')) {
+    for (const { work } of cards) {
+      if (work.status !== 'reported') continue;
       await this.followWork(work, Date.now()).catch((error) =>
         this.log.warn('Reported work follow-up pending', error)
       );
@@ -1208,10 +1204,13 @@ export class NeoService {
       } catch (error) {
         this.log.warn('Neo ask ticks pending', error);
       }
-    }
-    for (const ask of this.askRecords.listLive()) {
       await this.checkAskEvidence(ask, Date.now()).catch((error) =>
         this.log.warn('Ask evidence check pending', error)
+      );
+    }
+    for (const ask of this.askRecords.listLive()) {
+      await this.noteAskStall(ask, Date.now()).catch((error) =>
+        this.log.warn('Ask stall note pending', error)
       );
     }
     if (this.watching || this.disposed) return;
@@ -1437,6 +1436,50 @@ export class NeoService {
     this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);
     this.announceSessionNoticeGroup(group);
   }
+
+  private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
+    .input(['ask', 'now'])
+    .pipe(
+      (ask: NeoAsk) => ({
+        cards: ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
+        session: !!this.db.getSession(ask.originSessionId),
+        newer:
+          this.workSupersessions
+            .list(ask.workIds)
+            .flatMap((row) => this.askRecords.forWork(row.supersededBy) ?? [])
+            .find((other) => other.id !== ask.id)?.id ?? null,
+      }),
+      'ask',
+      'read'
+    )
+    .pipe(requireNeoAskStalled, ['ask', 'read', 'now'], 'result:stall')
+    .pipe(
+      (ask: NeoAsk, signature: string) => ({ id: neoAskEvidenceMessageId(ask.id, signature) }),
+      ['ask', 'stall'],
+      'note'
+    )
+    .pipe(
+      (ask: NeoAsk, note: { id: string }) =>
+        requireNeoAskStallUntold(this.hasDelivery(ask.originSessionId, note.id)),
+      ['ask', 'note'],
+      'result:stall'
+    )
+    .pipe(
+      async (
+        ask: NeoAsk,
+        read: { cards: NeoWork[]; newer: string | null },
+        note: { id: string }
+      ) => {
+        await this.deliver(
+          ask.originSessionId,
+          note.id,
+          neoAskStalledNote(ask, read.cards, read.newer),
+          ask.originSessionId
+        );
+      },
+      ['ask', 'read', 'note']
+    )
+    .endAsync('stall') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
     .input(['ask', 'now'])
@@ -1687,7 +1730,7 @@ export class NeoService {
     transition: (work, settled) =>
       this.repo.transitionWork(work.id, work, {
         status: settled.status,
-        report: settled.report.slice(0, 12000),
+        report: settled.report.slice(0, NEO_WORK_REPORT_LIMIT),
       }),
     anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),

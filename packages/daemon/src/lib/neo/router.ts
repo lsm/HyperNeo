@@ -21,6 +21,7 @@ const RECENT_TURNS = 20;
 const TURNS_CHARS = 3_000;
 const TURN_TEXT_CHARS = 300;
 const TOPIC_SUMMARY_CHARS = 160;
+const PROFILE_VECTOR_LIMIT = 256;
 export const NEO_INBOX_ID = 'inbox';
 export const NEO_INBOX_SUMMARY = 'Self-contained one-off questions that need no continuing topic.';
 const INBOX_CHOICE: NeoHolder = {
@@ -112,9 +113,18 @@ export function neoHolderProfile(holder: NeoHolder, asks: readonly string[]): st
 
 async function profileVector(profile: string, deps: NeoRouterDeps): Promise<Float32Array | null> {
   const cached = profileVectors.get(profile);
-  if (cached) return cached;
+  if (cached) {
+    profileVectors.delete(profile);
+    profileVectors.set(profile, cached);
+    return cached;
+  }
   const vector = await deps.embed(profile);
-  if (vector) profileVectors.set(profile, vector);
+  if (!vector) return null;
+  profileVectors.set(profile, vector);
+  for (const stale of profileVectors.keys()) {
+    if (profileVectors.size <= PROFILE_VECTOR_LIMIT) break;
+    profileVectors.delete(stale);
+  }
   return vector;
 }
 

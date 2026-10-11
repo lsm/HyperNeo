@@ -73,3 +73,22 @@ export function resolveTopicFromInterest(
       return null;
   }
 }
+
+export function pullRequestNumbersOfTopics(
+  topics: readonly string[],
+  owner: string,
+  repo: string
+): number[] {
+  const numbers = new Set<number>();
+  for (const topic of topics) {
+    const parsed = parseGitHubTopic(topic);
+    if (
+      parsed?.resource === 'pull_request' &&
+      /^\d+$/.test(parsed.entity) &&
+      parsed.owner.toLowerCase() === owner.toLowerCase() &&
+      parsed.repo.toLowerCase() === repo.toLowerCase()
+    )
+      numbers.add(Number(parsed.entity));
+  }
+  return [...numbers];
+}

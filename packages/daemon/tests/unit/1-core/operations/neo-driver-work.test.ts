@@ -1,4 +1,5 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { z } from 'zod';
 import {
@@ -32,10 +33,13 @@ import {
   readNeoStartFolder,
   requireNeoStartFolder,
 } from '../../../../src/lib/neo/driver-work.ts';
+import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   createNeoOperations,
   requireNeoExecutionChoice,
+  requireNeoWorkContinuation,
+  requireNeoWorkRetryCaller,
 } from '../../../../src/lib/neo/operations.ts';
 import { NEO_WORK_CLOSED_DONE } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
@@ -67,6 +71,28 @@ const sendTarget: NeoDriverTarget = {
   ref: { adapter: 'hyperneo', id: 's1' },
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
+
+describe('requireNeoWorkRetryCaller', () => {
+  test('refuses another Neo session in words about retrying, not continuing', () => {
+    const work = { id: 'w1', originSessionId: 'neo:root' } as NeoWork;
+    const other = { source: 'mcp' as const, sessionId: 'neo:other' };
+    expect(requireNeoWorkRetryCaller(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can retry it.',
+      },
+    });
+    expect(requireNeoWorkContinuation(work, other)).toEqual({
+      reason: {
+        ok: false,
+        reason: 'Only the Neo session that proposed this work or the user can continue it.',
+      },
+    });
+    expect(requireNeoWorkRetryCaller(work, { source: 'mcp', sessionId: 'neo:root' })).toEqual({
+      value: work,
+    });
+  });
+});
 
 describe('requireNeoWorkRetryable', () => {
   test.each<
@@ -268,6 +294,14 @@ describe('withWorkGoal', () => {
       doneWhen: 'd'.repeat(2000),
     });
     expect(longest.length).toBeLessThanOrEqual(20000);
+    const merging = withWorkGoal('i'.repeat(16000), {
+      workId: 'w1',
+      goal: 'g'.repeat(1000),
+      doneWhen: `merged ${'d'.repeat(1993)}`,
+    });
+    expect(merging.length).toBeLessThanOrEqual(20000);
+    expect(merging).toContain('mergeStateStatus,mergeable');
+    expect(merging.endsWith(NEO_WORK_GOAL_REMAINING)).toBe(true);
     expect(withWorkGoal('Build it.', { workId: 'w1', goal: null, doneWhen: null })).toBe(
       'Build it.'
     );
@@ -315,6 +349,23 @@ describe('driverWorkCaller', () => {
       sessionId: 'neo:root',
       role: 'neo',
     });
+  });
+});
+
+describe('readDriverNeedsYou', () => {
+  test('parses one status reply once, however many readers read it', () => {
+    let statusReads = 0;
+    const status = {
+      get status() {
+        statusReads += 1;
+        return 'needs_you';
+      },
+      lastActivityAt: 7,
+    };
+    const outcome = { kind: 'completed' as const, value: { ok: true, value: status } };
+    expect(readDriverNeedsYou(outcome)).toEqual({ needsYou: true, since: 7, lastReply: undefined });
+    expect(readDriverNeedsYou(outcome)?.needsYou).toBe(true);
+    expect(statusReads).toBe(1);
   });
 });
 
@@ -604,6 +655,26 @@ describe('Neo work with a drivers target', () => {
       await service.cancel('work-1');
       expect(calls.map((call) => call.name)).toEqual(['work.start', 'work.stop']);
       expect(service.repo.getWork('work-1')?.status).toBe('cancelled');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the minute pass settles driver cards without loading every stored card', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service, calls } = await setup({ ok: true, value: { ref } }, undefined, () => ({
+      ok: true,
+      value: { status: 'running', lastActivityAt: 0 },
+    }));
+    try {
+      await service.start('work-1');
+      Object.assign(service.repo, {
+        listWork: () => {
+          throw new Error('the minute pass must not list every card');
+        },
+      });
+      await service.refreshDriverWork();
+      expect(calls.map((call) => call.name)).toContain('work.status');
     } finally {
       db.close();
     }
@@ -914,6 +985,37 @@ describe('Neo work with a drivers target', () => {
     }
   });
 
+  test('flags a card abandoned after the last stuck step, and a cancelled card has no live status', async () => {
+    const { db, service } = await setup(
+      { ok: true, value: { delivered: true } },
+      undefined,
+      () => ({
+        ok: true,
+        value: { status: 'running', lastActivityAt: Date.now(), recentInputs: [] },
+      }),
+      sendTarget
+    );
+    db.createSession(createTestSession('neo:root'));
+    Object.assign(service, { deliver: async () => {} });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.driverTargets.receipts(['work-1'])[0].abandoned).toBeUndefined();
+
+      now += NEO_WORK_STUCK_STEPS_MS[NEO_WORK_STUCK_STEPS_MS.length - 1];
+      expect(service.driverTargets.receipts(['work-1'], now)[0].abandoned).toBe(true);
+
+      await service.cancel('work-1');
+      const cancelled = service.driverTargets.receipts(['work-1'], now)[0];
+      expect([cancelled.status, cancelled.abandoned]).toEqual([null, undefined]);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('marks a card unconfirmed when it shows its session without its message seen landing', async () => {
     const { db, service } = await setup(
       { ok: true, value: { delivered: true } },
@@ -1132,6 +1234,55 @@ describe('Neo work with a drivers target', () => {
       quietFor(31 * 60_000);
       await service.refreshDriverWork();
       expect(notes).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a life-admin confirmation ticks the ask item that names it', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const reply: unknown = {
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: Date.now() + 1_000,
+        lastReply:
+          'Reordered the water filters.\nConfirmation: id=<msg-1>; from=orders@amazon.com; subject=Your order is confirmed',
+      },
+    };
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    db.updateGlobalSettings({ neo: { packs: ['coding', 'life-admin'] } });
+    service.askRecords.open(
+      {
+        id: 'ask-work-1',
+        requestKey: 'neo:root:work-1',
+        concernId: null,
+        originSessionId: 'neo:root',
+        originMessageId: 'ask-1',
+        title: 'Reorder the water filters',
+        ask: 'Reorder the water filters',
+        doneWhen: '- an order confirmation from Amazon',
+        doneSource: 'human',
+        pack: 'life-admin',
+      },
+      [{ text: 'Order confirmation from Amazon arrives', check: 'life-admin.confirmed' }]
+    );
+    service.askRecords.link('ask-work-1', 'work-1');
+    service.workGoals.record('work-1', 'Reorder the water filters', '- an order confirmation');
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      const ask = service.askRecords.get('ask-work-1');
+      expect(ask?.doneItems).toEqual([
+        expect.objectContaining({
+          text: 'Order confirmation from Amazon arrives',
+          state: 'met',
+          metBy: 'daemon',
+          evidence: expect.stringContaining('orders@amazon.com'),
+        }),
+      ]);
     } finally {
       db.close();
     }
@@ -1955,6 +2106,36 @@ describe('Neo work with a drivers target', () => {
     });
   });
 
+  test('tells Neo once when no card under an open ask is running any more', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const { db, service } = await setup({ ok: true, value: { ref } });
+    db.createSession(createTestSession('neo:root'));
+    fileUnderAsk(service);
+    service.repo.transitionWork('work-1', service.repo.getWork('work-1')!, { status: 'cancelled' });
+    const notes: string[] = [];
+    const delivered = new Set<string>();
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string, content: string) => {
+        delivered.add(messageId);
+        if (content.includes('No work is running for this ask')) notes.push(messageId);
+      },
+      hasDelivery: (_session: string, messageId: string) => delivered.has(messageId),
+    });
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await service.refreshDriverWork();
+      expect(notes).toEqual([]);
+      now += 2 * 60 * 60_000;
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(notes).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+
   test('tells the proposing session once each time started work comes to need the user', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const at = (status: string, lastActivityAt: number) => ({
@@ -2417,6 +2598,29 @@ describe('Neo work with a drivers target', () => {
         status: 'failed',
         report: expect.stringContaining('check work.find'),
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a start that throws fails the card and returns its report', async () => {
+    const { db, service } = await setup({ ok: true, value: { ref: null } });
+    const returned: Array<{ status: string; report: string | null }> = [];
+    Object.assign(service, {
+      returnReport: async (work: { status: string; report: string | null }) => {
+        returned.push({ status: work.status, report: work.report });
+      },
+      startReservedWork: async (id: string) => {
+        const proposed = service.repo.getWork(id);
+        if (proposed) service.repo.transitionWork(id, proposed, { status: 'queued' });
+        throw new Error('adapter crashed');
+      },
+    });
+    try {
+      await expect(service.start('work-1')).rejects.toThrow('adapter crashed');
+      expect(returned).toEqual([
+        { status: 'failed', report: 'Could not start the execution: adapter crashed' },
+      ]);
     } finally {
       db.close();
     }

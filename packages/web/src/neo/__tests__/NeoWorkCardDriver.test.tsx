@@ -50,6 +50,12 @@ describe('neoWorkDriverLabel', () => {
     );
   });
 
+  it('asks the human to close a card with no result for three days', () => {
+    expect(neoWorkDriverLabel({ ...driver, daemon: null, status: 'done', abandoned: true })).toBe(
+      'No result from Codex Desktop in 3 days · close it?'
+    );
+  });
+
   it('says when Neo could not confirm the session got its message', () => {
     expect(
       neoWorkDriverLabel({ ...driver, daemon: null, status: 'running', unconfirmed: true })
@@ -109,6 +115,25 @@ describe('NeoWorkCard with drivers work', () => {
       'codex://threads/t1',
       'Answer in Codex',
     ]);
+  });
+
+  it('offers Close on a card with no result for three days and keeps it openable', () => {
+    const onAction = vi.fn();
+    render(
+      <NeoWorkCard
+        work={work}
+        driver={{ ...driver, status: 'running', abandoned: true }}
+        busy={false}
+        disabled={false}
+        onAction={onAction}
+        onOpen={vi.fn()}
+      />
+    );
+    screen.getByRole('button', { name: 'Close' }).click();
+    expect(onAction).toHaveBeenCalledWith('w1', 'close');
+    expect(screen.getByRole('link', { name: 'Open Bigger font' }).getAttribute('href')).toBe(
+      'codex://threads/t1'
+    );
   });
 
   it('keeps the summary row openable through the link', () => {

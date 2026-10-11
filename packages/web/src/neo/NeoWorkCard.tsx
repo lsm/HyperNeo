@@ -22,7 +22,7 @@ import {
 } from './NeoCardParts.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoWorkQuestion } from './NeoWorkQuestion.tsx';
-import { neoWorkMeta, neoWorkPrimaryAction } from './work-actions.ts';
+import { neoWorkMeta, neoWorkOpenLabel, neoWorkPrimaryAction } from './work-actions.ts';
 import { neoWorkDriverLabel, neoWorkDriverLogo } from './work-driver.ts';
 import { neoWorkPrInProgress, neoWorkPrLabel, neoWorkPrSetback } from './work-prs.ts';
 
@@ -209,6 +209,25 @@ export function NeoWorkCard({
         <NeoIcon name="retry" class="!h-3.5 !w-3.5" />
         {busy ? 'Retrying…' : primary.label}
       </button>
+    ) : primary.kind === 'close' ? (
+      <>
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={() => onAction(work.id, 'close')}
+          class={neoPrimaryClass}
+        >
+          {busy ? 'Closing…' : primary.label}
+        </button>
+        {primary.link ? (
+          <a href={primary.link} class={neoSecondaryClass} aria-label={`Open ${work.title}`}>
+            <NeoAppMark logo={neoWorkDriverLogo(driver)} />
+            {neoWorkOpenLabel(driver)}
+          </a>
+        ) : (
+          chatButton
+        )}
+      </>
     ) : answering ? (
       <button type="button" onClick={() => onOpen!(work.id)} class={neoPrimaryClass}>
         <NeoIcon name="external" class="!h-3.5 !w-3.5" />

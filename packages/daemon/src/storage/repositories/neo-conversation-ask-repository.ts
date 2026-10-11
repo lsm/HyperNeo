@@ -180,6 +180,14 @@ export class NeoConversationAskRepository {
     return read({ conversationId, after, limit, before }, this.db);
   }
 
+  find(conversationId: string, requestId: string): NeoConversationAsk | null {
+    const row = this.db
+      .prepare(`SELECT ${columns} FROM neo_conversation_asks
+      WHERE conversation_id = ? AND request_id = ?`)
+      .get(conversationId, requestId) as Row | null;
+    return row ? decode(row) : null;
+  }
+
   newestFrom(conversationId: string, sessionId: string): NeoConversationAsk | null {
     const row = this.db
       .prepare(`SELECT ${columns} FROM neo_conversation_asks
