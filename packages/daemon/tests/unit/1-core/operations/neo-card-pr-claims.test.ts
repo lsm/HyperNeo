@@ -253,7 +253,7 @@ describe('keepNeoCardPrReads', () => {
     score: null,
     ...overrides,
   });
-  test('a new mention stays only if the PR was opened after the card started', () => {
+  test('a new mention of a finished PR stays only if the PR was opened after the card started', () => {
     const sorted = keepNeoCardPrReads(
       card,
       [
@@ -264,12 +264,24 @@ describe('keepNeoCardPrReads', () => {
         owned(5, { claim: 'named' }),
         owned(6, { claimed: true }),
       ],
-      [pr(1, 50), pr(2, 150), pr(3), pr(5, 50), pr(6, 50)]
+      [{ ...pr(1, 50), state: 'MERGED' }, pr(2, 150), pr(3), pr(5, 50), pr(6, 50)]
     );
     const urls = (items: { url: string }[]) => items.map((item) => item.url);
     expect(urls(sorted.kept)).toEqual([pull(2), pull(3), pull(5), pull(6)]);
     expect(urls(sorted.rejected)).toEqual([pull(1)]);
     expect(urls(sorted.pending)).toEqual([pull(4)]);
+  });
+
+  test('an open PR the report names stays even when the session opened it before the card', () => {
+    const merged = { ...pr(1, 50), state: 'MERGED' as const };
+    const closed = { ...pr(3, 50), state: 'CLOSED' as const };
+    const sorted = keepNeoCardPrReads(
+      card,
+      [owned(1), owned(2), owned(3)],
+      [merged, pr(2, 50), closed]
+    );
+    expect(sorted.kept.map((item) => item.url)).toEqual([pull(2)]);
+    expect(sorted.rejected.map((item) => item.url)).toEqual([pull(1), pull(3)]);
   });
 
   test('a new mention this read could not fetch stays unclaimed until a read dates it', () => {
@@ -420,13 +432,13 @@ describe('NeoWorkPrRepository.replacePrs', () => {
 });
 
 describe('readNeoCardPrs', () => {
-  test('rejects a mention of a PR older than the card once, then stops reading it', async () => {
+  test('rejects a mention of a merged PR older than the card once, then stops reading it', async () => {
     const rows: NeoPrClaimRow[] = [];
     let reads = 0;
     const deps = {
       readPrs: async () => {
         reads++;
-        return [pr(7, 5)];
+        return [{ ...pr(7, 5), state: 'MERGED' as const }];
       },
       prCandidates: async () => [{ url: pull(7), claim: 'mentioned' as const }],
       claims: {
