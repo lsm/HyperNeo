@@ -108,7 +108,9 @@ describe('neoForwardedText', () => {
     );
     expect(neoForwardedText(null, ask)).toBe(null);
   });
+});
 
+describe('neoForwardContent', () => {
   test('tells the first receiver it may still forward to main, and the last one nothing', () => {
     expect(neoForwardContent('Garden', 0, 'Fix the pond pump')).toContain('forward it to main');
     expect(neoForwardContent('Pond', 1, 'Fix the pond pump')).not.toContain('forward it to main');
