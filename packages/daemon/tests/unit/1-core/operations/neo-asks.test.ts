@@ -442,6 +442,50 @@ describe('neo.ask operations', () => {
     ).toMatchObject({ value: { ok: false } });
   });
 
+  test('a decision Neo settles waiting on becomes a needs_you item it cannot drop', async () => {
+    const askId = await openAsk();
+    for (const itemId of ['i1', 'i2'])
+      await invoke('neo.ask.tick', { askId, itemId, state: 'met', evidence: 'PR #12 merged.' });
+    const waiting = {
+      id: askId,
+      outcome: 'waiting',
+      summary: 'Decide whether to assign #6545.',
+      evidence: 'Nobody owns #6545 yet.',
+    };
+    expect(await invoke('neo.ask.settle', waiting)).toMatchObject({
+      value: {
+        ok: true,
+        ask: {
+          status: 'waiting',
+          waitingItem: 'i3',
+          doneItems: [
+            expect.anything(),
+            expect.anything(),
+            expect.objectContaining({
+              id: 'i3',
+              text: 'Decide whether to assign #6545.',
+              state: 'needs_you',
+              evidence: 'Nobody owns #6545 yet.',
+            }),
+          ],
+        },
+      },
+    });
+    for (const outcome of ['achieved', 'abandoned'])
+      expect(
+        await invoke('neo.ask.settle', { ...waiting, outcome, summary: 'Done.' })
+      ).toMatchObject({ value: { ok: false, reason: expect.stringMatching(/i3/) } });
+    await invoke('neo.ask.settle', { ...waiting, summary: 'Still deciding #6545.' });
+    expect(service.askRecords.get(askId)?.doneItems).toHaveLength(3);
+    expect(
+      await invoke(
+        'neo.ask.settle',
+        { id: askId, outcome: 'abandoned', evidence: 'Dropped by the user.' },
+        { source: 'rpc', principal: 'local' }
+      )
+    ).toMatchObject({ value: { ok: true, ask: { status: 'abandoned' } } });
+  });
+
   test('the user can close an ask as done even with items still open', async () => {
     const askId = await openAsk();
     expect(
