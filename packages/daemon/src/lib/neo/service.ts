@@ -7,7 +7,6 @@ import {
   NEO_WORK_RETURNED_RETRY,
 } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import type { NeoConsultation, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
@@ -190,15 +189,11 @@ import {
   type NeoReminderListing,
 } from './waiting-reminders.ts';
 import {
-  keepNeoSessionNoticeGroups,
   keepNeoSessionNotices,
   listNeoWatchedSessions,
-  neoSessionNoticeGroup,
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
   planNeoSessionWatch,
-  savedNeoSessionNoticeGroups,
-  NEO_SESSION_GROUPS_MAX,
   NEO_SESSION_WATCH_LIMIT,
   type NeoListedSession,
   type NeoSessionNotice,
@@ -232,6 +227,7 @@ import {
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { planNeoNeedsYou } from './needs-you.ts';
+import { NeoSessionWatcher } from './session-watcher.ts';
 import {
   NEO_WORK_FOLLOW_MAX_AGE_MS,
   planNeoWorkFollow,
@@ -316,14 +312,20 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
+  get sessionNotices(): NeoSessionNotice[] {
+    return this.sessionWatcher.sessionNotices;
+  }
+
+  get sessionNoticeGroups(): NeoSessionNoticeGroup[] {
+    return this.sessionWatcher.sessionNoticeGroups;
+  }
+
   private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
   private sessionPrs = new Map<string, string[]>();
   private sessionPrsCheckedAt = new Map<string, number>();
   private heldSessionNotices = new Map<string, NeoSessionNotice>();
   askSessions = new Map<string, NeoAskSessionView[]>();
-  sessionNotices: NeoSessionNotice[] = [];
-  sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
-  private openSessionNotices: NeoSessionNotice[] = [];
+  readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
@@ -340,7 +342,6 @@ export class NeoService {
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly announceSessionNotice: (notice: NeoSessionNotice) => void;
-  private readonly announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   private readonly pending = new Map<string | null, Promise<string>>();
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -506,10 +507,15 @@ export class NeoService {
     readonly publishSettings?: (settings: GlobalSettings) => void
   ) {
     this.announceSessionNotice = (notice) => hub.event('neo.session.notice', notice);
-    this.announceSessionNoticeGroup = (group) => hub.event('neo.session.notices', { group });
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
     };
+    this.sessionWatcher = new NeoSessionWatcher({
+      db,
+      rootSessionId: () => this.repo.getBindingForConcern(null)?.sessionId,
+      announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
+      log: this.log,
+    });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -882,7 +888,7 @@ export class NeoService {
     this.processingStatus.clear();
     this.interruptedSessions.clear();
     if (this.watching) await this.watching;
-    this.flushSessionNoticeGroup();
+    this.sessionWatcher.flushSessionNoticeGroup();
   }
 
   private scheduleReplyRecheck(sessionId: string, runtime: NeoDirectReplyRuntime): void {
@@ -1171,7 +1177,7 @@ export class NeoService {
   }
 
   async recover(): Promise<void> {
-    this.loadSessionNoticeGroups();
+    this.sessionWatcher.loadSessionNoticeGroups();
     await this.recoverConsultations();
     for (const work of this.repo.listWork()) {
       try {
@@ -1462,7 +1468,7 @@ export class NeoService {
     )
     .pipe(
       (added: { notices: NeoSessionNotice[] }, now: number) =>
-        planNeoSessionNoticeGroup(this.openSessionNotices, added.notices, now),
+        planNeoSessionNoticeGroup(this.sessionWatcher.openSessionNotices, added.notices, now),
       ['added', 'now'],
       'grouped'
     )
@@ -1508,59 +1514,18 @@ export class NeoService {
         const moved = JSON.stringify([...askSessions]) !== JSON.stringify([...this.askSessions]);
         this.sessionPrs = linked.prs;
         this.askSessions = askSessions;
-        this.openSessionNotices = grouped.open;
-        this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
+        this.sessionWatcher.openSessionNotices = grouped.open;
+        this.sessionWatcher.sessionNotices = keepNeoSessionNotices(
+          this.sessionWatcher.sessionNotices,
+          added.notices
+        );
         for (const notice of added.notices) this.announceSessionNotice(notice);
-        for (const group of grouped.closed) this.postSessionNoticeGroup(root, group);
+        for (const group of grouped.closed) this.sessionWatcher.postSessionNoticeGroup(root, group);
         if (added.notices.length || grouped.closed.length || moved) this.notifyChanged();
       },
       ['root', 'listed', 'linked', 'added', 'grouped']
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
-
-  private flushSessionNoticeGroup(): void {
-    const group = neoSessionNoticeGroup(this.openSessionNotices);
-    this.openSessionNotices = [];
-    const root = group && this.repo.getBindingForConcern(null)?.sessionId;
-    if (!group || !root) return;
-    try {
-      this.postSessionNoticeGroup(root, group);
-    } catch (error) {
-      this.log.warn('Neo session notice group could not be saved at shutdown', error);
-    }
-  }
-
-  private loadSessionNoticeGroups(): void {
-    const root = this.repo.getBindingForConcern(null)?.sessionId;
-    if (!root) return;
-    try {
-      this.sessionNoticeGroups = savedNeoSessionNoticeGroups(
-        this.db
-          .getSDKMessageRepo()
-          .getLatestSDKMessagesByType(root, 'system', 'session_notices', NEO_SESSION_GROUPS_MAX)
-      );
-    } catch (error) {
-      this.log.warn('Neo session notice groups could not be reloaded', error);
-    }
-  }
-
-  private postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): void {
-    if (this.sessionNoticeGroups.some((kept) => kept.id === group.id)) return;
-    const saved = this.db.getSDKMessageRepo().saveSDKMessage(root, {
-      type: 'system',
-      subtype: 'session_notices',
-      uuid: group.id,
-      session_id: root,
-      content: group.line,
-      group,
-    } as unknown as SDKMessage);
-    if (!saved) {
-      this.log.warn(`Neo session notice group ${group.id} could not be saved`);
-      return;
-    }
-    this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);
-    this.announceSessionNoticeGroup(group);
-  }
 
   private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
     .input(['ask', 'now'])
