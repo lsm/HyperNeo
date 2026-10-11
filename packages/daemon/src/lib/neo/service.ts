@@ -174,6 +174,8 @@ import {
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
   planNeoSessionWatch,
+  savedNeoSessionNoticeGroups,
+  NEO_SESSION_GROUPS_MAX,
   type NeoListedSession,
   type NeoSessionNotice,
   type NeoSessionNoticeGroup,
@@ -1112,6 +1114,7 @@ export class NeoService {
   }
 
   async recover(): Promise<void> {
+    this.loadSessionNoticeGroups();
     await this.recoverConsultations();
     for (const work of this.repo.listWork()) {
       try {
@@ -1303,6 +1306,16 @@ export class NeoService {
       ['root', 'added', 'grouped']
     )
     .endAsync('root') as (now: number) => Promise<unknown>;
+
+  private loadSessionNoticeGroups(): void {
+    const root = this.repo.getBindingForConcern(null)?.sessionId;
+    if (!root) return;
+    this.sessionNoticeGroups = savedNeoSessionNoticeGroups(
+      this.db
+        .getSDKMessageRepo()
+        .getLatestSDKMessagesByType(root, 'system', 'session_notices', NEO_SESSION_GROUPS_MAX)
+    );
+  }
 
   private postSessionNoticeGroup(root: string, group: NeoSessionNoticeGroup): void {
     this.sessionNoticeGroups = keepNeoSessionNoticeGroups(this.sessionNoticeGroups, group);

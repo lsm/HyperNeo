@@ -17,6 +17,7 @@ import {
   planNeoSessionNotice,
   planNeoSessionNoticeGroup,
   planNeoSessionWatch,
+  savedNeoSessionNoticeGroups,
   type NeoListedSession,
   type NeoSessionNotice,
   type NeoSessionSeen,
@@ -235,6 +236,38 @@ describe('keepNeoSessionNoticeGroups', () => {
   });
 });
 
+describe('savedNeoSessionNoticeGroups', () => {
+  test('reads the group off each saved row and skips rows without one', () => {
+    const group = { id: 'g1', at: now, line: 'Codex · x finished', notices: [notice(now)] };
+    expect(
+      savedNeoSessionNoticeGroups([{ group }, { group: { id: 'g2' } }, null, { type: 'system' }])
+    ).toEqual([group]);
+  });
+});
+
+describe('getLatestSDKMessagesByType', () => {
+  test('returns the newest rows of one subtype, oldest first', async () => {
+    const db = await createTestDb();
+    try {
+      db.createSession(createTestSession('neo:root'));
+      const repo = db.getSDKMessageRepo();
+      for (const id of ['g1', 'g2', 'g3'])
+        repo.saveSDKMessage('neo:root', {
+          type: 'system',
+          subtype: 'session_notices',
+          uuid: id,
+          session_id: 'neo:root',
+        } as never);
+      const ids = repo
+        .getLatestSDKMessagesByType('neo:root', 'system', 'session_notices', 2)
+        .map((row) => (row as { uuid?: string }).uuid);
+      expect(ids).toEqual(['g2', 'g3']);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('refreshDriverWork', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
@@ -407,6 +440,19 @@ describe('refreshDriverWork', () => {
         sessionNoticeGroups: service.sessionNoticeGroups,
       });
       expect('value' in snapshot && snapshot.value).not.toHaveProperty('sessionNotices');
+
+      const restarted = new NeoService(
+        db,
+        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        new InternalEventBus<DaemonInternalEventMap>()
+      );
+      try {
+        await restarted.recover();
+        expect(restarted.sessionNoticeGroups).toEqual(service.sessionNoticeGroups);
+      } finally {
+        restarted.dispose();
+      }
     } finally {
       time.mockRestore();
     }

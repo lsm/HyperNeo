@@ -169,6 +169,19 @@ export function planNeoSessionNoticeGroup(
   };
 }
 
+export function savedNeoSessionNoticeGroups(rows: readonly unknown[]): NeoSessionNoticeGroup[] {
+  return rows.flatMap((row) => {
+    const group = (row as { group?: Partial<NeoSessionNoticeGroup> } | null)?.group;
+    return group &&
+      typeof group.id === 'string' &&
+      typeof group.at === 'number' &&
+      typeof group.line === 'string' &&
+      Array.isArray(group.notices)
+      ? [group as NeoSessionNoticeGroup]
+      : [];
+  });
+}
+
 export function keepNeoSessionNoticeGroups(
   kept: readonly NeoSessionNoticeGroup[],
   closed: NeoSessionNoticeGroup | null

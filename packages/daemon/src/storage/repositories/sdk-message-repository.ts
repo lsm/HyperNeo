@@ -1264,6 +1264,22 @@ export class SDKMessageRepository {
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
   }
 
+  getLatestSDKMessagesByType(
+    sessionId: string,
+    messageType: string,
+    messageSubtype: string,
+    limit: number
+  ): SDKMessage[] {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = ? AND message_subtype = ?
+          ORDER BY timestamp DESC, rowid DESC LIMIT ?`
+      )
+      .all(sessionId, messageType, messageSubtype, limit) as Record<string, unknown>[];
+    return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage).reverse();
+  }
+
   getLastSDKMessage(sessionId: string): (SDKMessage & { dbId: string; timestamp: number }) | null {
     const stmt = this.db.prepare(
       `SELECT id, sdk_message, timestamp FROM sdk_messages
