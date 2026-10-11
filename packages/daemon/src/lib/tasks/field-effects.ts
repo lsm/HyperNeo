@@ -8,7 +8,6 @@ import { requireDependencyExecutionBlock } from '../space/tools/update-task-fiel
 const log = new Logger('SpaceTaskFields');
 export interface SpaceTaskFieldEffects {
   getTaskManager: (spaceId: string) => Pick<SpaceTaskManager, 'getTask' | 'updateTask'>;
-  emitTaskUpdated: (spaceId: string, task: SpaceTask) => void | Promise<void>;
   blockExecution?: (
     spaceId: string,
     taskId: string,
@@ -47,7 +46,7 @@ export function selectSpaceTaskFieldWrite(
 }
 
 export async function publishSpaceTaskFieldUpdate(
-  emit: SpaceTaskFieldEffects['emitTaskUpdated'],
+  emit: (spaceId: string, task: SpaceTask) => void | Promise<void>,
   spaceId: string,
   task: SpaceTask
 ) {
@@ -61,7 +60,6 @@ export async function publishSpaceTaskFieldUpdate(
 
 export async function persistSpaceTaskFields(
   getTaskManager: SpaceTaskFieldEffects['getTaskManager'],
-  emit: SpaceTaskFieldEffects['emitTaskUpdated'],
   blockExecution: SpaceTaskFieldEffects['blockExecution'],
   spaceId: string,
   taskId: string,
@@ -80,9 +78,6 @@ export async function persistSpaceTaskFields(
         workflowRunId: prepared.workflowRunId,
         taskAgentSessionId: prepared.taskAgentSessionId,
       };
-    },
-    onCascadedTasks: async (tasks) => {
-      for (const task of tasks) await publishSpaceTaskFieldUpdate(emit, spaceId, task);
     },
   });
   const task = await manager.getTask(taskId);
@@ -130,7 +125,7 @@ export function createSpaceTaskFieldUpdater(dependencies: SpaceTaskFieldEffects)
     .input(['spaceId', 'taskId', 'fields'])
     .pipe(
       persistSpaceTaskFields,
-      ['getTaskManager', 'emitTaskUpdated', 'blockExecution', 'spaceId', 'taskId', 'fields'],
+      ['getTaskManager', 'blockExecution', 'spaceId', 'taskId', 'fields'],
       'state'
     )
     .pipe(selectSpaceTaskFieldCompletion, ['state', 'blockExecution', 'getTaskManager'], 'complete')
