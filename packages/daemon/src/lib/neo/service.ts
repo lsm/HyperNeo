@@ -212,6 +212,7 @@ import {
   neoAskPrKeys,
   type NeoAskPrs,
   type NeoSessionAskLink,
+  planNeoHeldSessionNotices,
   planNeoSessionPrReads,
 } from './session-ask-links.ts';
 import {
@@ -316,6 +317,7 @@ export class NeoService {
   private readonly askEvidenceReads = new Map<string, number>();
   private readonly sessionsSeen = new Map<string, NeoSessionSeen>();
   private sessionPrs = new Map<string, string[]>();
+  private heldSessionNotices = new Map<string, NeoSessionNotice>();
   askSessions = new Map<string, NeoAskSessionView[]>();
   sessionNotices: NeoSessionNotice[] = [];
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
@@ -1460,12 +1462,17 @@ export class NeoService {
         notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
         linked: { links: NeoSessionAskLink[] }
       ) => {
-        const shown = new Set(linked.links.map((link) => link.key));
-        return {
-          notices: notices.planned.flatMap((item) =>
-            item.notice && !shown.has(item.notice.key) ? [item.notice] : []
-          ),
-        };
+        const planned = new Map(
+          notices.planned.flatMap((item) => (item.notice ? [[item.notice.key, item] as const] : []))
+        );
+        const next = planNeoHeldSessionNotices(
+          this.heldSessionNotices,
+          [...planned.values()].flatMap((item) => (item.notice ? [item.notice] : [])),
+          new Set(linked.links.map((link) => link.key)),
+          (key) => planned.get(key)?.seen.status ?? this.sessionsSeen.get(key)?.status
+        );
+        this.heldSessionNotices = next.held;
+        return { notices: next.notices };
       },
       ['notices', 'linked'],
       'added'

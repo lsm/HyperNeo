@@ -5,7 +5,7 @@ import { githubUrlKey } from '../github/parse-pr-url.ts';
 import { neoSessionOpenTarget } from './card-views.ts';
 import type { NeoEvidence } from './evidence.ts';
 import { extractNeoAskRefs } from './packs/coding/ask-prs.ts';
-import type { NeoListedSession } from './session-watch.ts';
+import type { NeoListedSession, NeoSessionNotice } from './session-watch.ts';
 
 export const NEO_SESSION_PR_READS_MAX = 10;
 const LINKED_ASKS: ReadonlySet<NeoAsk['status']> = new Set(['open', 'waiting', 'blocked']);
@@ -86,4 +86,25 @@ export function describeNeoAskSessions(
     ]);
   }
   return views;
+}
+
+export function planNeoHeldSessionNotices(
+  held: ReadonlyMap<string, NeoSessionNotice>,
+  planned: readonly NeoSessionNotice[],
+  linked: ReadonlySet<string>,
+  statusOf: (key: string) => WorkStatus | undefined
+): { notices: NeoSessionNotice[]; held: Map<string, NeoSessionNotice> } {
+  const next = new Map(
+    [...held].filter(([key, notice]) => statusOf(key) === notice.kind && linked.has(key))
+  );
+  const released = [...held.values()].filter(
+    (notice) => statusOf(notice.key) === notice.kind && !linked.has(notice.key)
+  );
+  for (const notice of planned) if (linked.has(notice.key)) next.set(notice.key, notice);
+  const fresh = planned.filter((notice) => !linked.has(notice.key));
+  const posted = new Set(fresh.map((notice) => notice.key));
+  return {
+    notices: [...released.filter((notice) => !posted.has(notice.key)), ...fresh],
+    held: next,
+  };
 }

@@ -11,6 +11,7 @@ import {
   linkNeoSessionsToAsks,
   NEO_SESSION_PR_READS_MAX,
   neoAskPrKeys,
+  planNeoHeldSessionNotices,
   planNeoSessionPrReads,
 } from '../../../../src/lib/neo/session-ask-links.ts';
 import { type NeoListedSession, neoSessionKey } from '../../../../src/lib/neo/session-watch.ts';
@@ -123,6 +124,36 @@ describe('linkNeoSessionsToAsks', () => {
       { askId: 'owned', key: 's1' },
       { askId: 'named', key: 's2' },
     ]);
+  });
+});
+
+describe('planNeoHeldSessionNotices', () => {
+  const notice = (key: string, kind: 'needs_you' | 'failed') => ({
+    key,
+    ref: { adapter: 'codex-desktop', id: key },
+    title: key,
+    kind,
+    at: 1,
+  });
+
+  test('holds a linked session notice and posts it once the link ends while it still applies', () => {
+    const first = planNeoHeldSessionNotices(
+      new Map(),
+      [notice('a', 'needs_you'), notice('b', 'failed')],
+      new Set(['a']),
+      (key) => (key === 'a' ? 'needs_you' : 'failed')
+    );
+    expect(first.notices.map((item) => item.key)).toEqual(['b']);
+    expect([...first.held.keys()]).toEqual(['a']);
+    const settled = planNeoHeldSessionNotices(first.held, [], new Set(), () => 'needs_you');
+    expect(settled.notices.map((item) => item.key)).toEqual(['a']);
+    expect(settled.held.size).toBe(0);
+  });
+
+  test('drops a held notice once the session no longer needs the human or is gone', () => {
+    const held = new Map([['a', notice('a', 'needs_you')]]);
+    expect(planNeoHeldSessionNotices(held, [], new Set(['a']), () => 'running').held.size).toBe(0);
+    expect(planNeoHeldSessionNotices(held, [], new Set(), () => undefined).notices).toEqual([]);
   });
 });
 
