@@ -50,6 +50,8 @@ const GhRefSchema = z.object({
 });
 const settled = new Map<string, NeoRefState>();
 const kinds = new Map<string, string | null>();
+const unanswered = new Map<string, number>();
+const NEO_REF_RETRY_MS = 10 * 60_000;
 const missing = new Map<string, number>();
 const NEO_REF_MISSING_MS = 60 * 60_000;
 
@@ -117,9 +119,16 @@ export async function readNeoPrRefUrls(
   refs: readonly NeoRef[],
   readStates: NeoRefStateReader
 ): Promise<string[]> {
-  for (const ref of refs.filter((item) => !kinds.has(refKey(item)))) {
+  const now = Date.now();
+  const open = refs.filter(
+    (item) =>
+      !kinds.has(refKey(item)) &&
+      now - (unanswered.get(refKey(item)) ?? -Infinity) >= NEO_REF_RETRY_MS
+  );
+  for (const ref of open) {
     const [state] = await readStates([ref]);
     if (state) kinds.set(refKey(ref), state.kind === 'pr' ? state.url : null);
+    else unanswered.set(refKey(ref), now);
   }
   return refs.flatMap((ref) => kinds.get(refKey(ref)) ?? []);
 }

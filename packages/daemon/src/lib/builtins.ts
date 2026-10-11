@@ -47,6 +47,16 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
     env: {},
     enabled: false,
   },
+  {
+    name: 'chrome-devtools-user',
+    description:
+      'Browser automation via Chrome DevTools MCP attached to the user’s own Chrome (auto-connect). Sees the user’s logins; used by the Neo life-admin pack.',
+    sourceType: 'stdio',
+    command: 'bunx',
+    args: ['chrome-devtools-mcp@latest', '--autoConnect'],
+    env: {},
+    enabled: false,
+  },
 ] as const;
 
 export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
@@ -65,6 +75,15 @@ export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
     description:
       'Browser automation and DevTools integration via Chrome DevTools MCP. Runs in isolated mode.',
     appMcpServerName: 'chrome-devtools',
+    enabled: false,
+  },
+  {
+    kind: 'mcp_server',
+    name: 'chrome-devtools-user-mcp',
+    displayName: 'Chrome DevTools (your Chrome)',
+    description:
+      'Browser automation via Chrome DevTools MCP attached to the user’s own Chrome after its consent prompt. Sees the user’s logins; used by the Neo life-admin pack.',
+    appMcpServerName: 'chrome-devtools-user',
     enabled: false,
   },
   {

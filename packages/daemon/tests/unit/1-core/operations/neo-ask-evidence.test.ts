@@ -144,6 +144,27 @@ describe('readNeoPrRefUrls', () => {
     expect(asked).toEqual(['7001', '7002']);
   });
 
+  test('waits ten minutes before asking again about a ref GitHub gave no answer for', async () => {
+    let reads = 0;
+    const read = async (): Promise<NeoRefState[]> => {
+      reads++;
+      return [];
+    };
+    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7201 }];
+    let now = 1_000_000;
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
+      expect(reads).toBe(1);
+      now += 10 * 60_000;
+      await readNeoPrRefUrls(refs, read);
+      expect(reads).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('keeps the answer under the cited ref when the repository was renamed', async () => {
     let reads = 0;
     const read = async (): Promise<NeoRefState[]> => {

@@ -10,17 +10,20 @@ import {
   neoCardPrsFresh,
   readNeoCardPrs,
 } from '../../../../src/lib/neo/packs/coding/pack.ts';
+import { createLifeAdminPack } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { planNeoCardPrCandidates } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import {
   NEO_DEFAULT_PACKS,
   neoPackBriefs,
+  neoPackAskReportEvidence,
   neoPackChecks,
   neoPackFragment,
   neoPacks,
   planNeoPackTicks,
   readNeoPackEvidence,
   requireNeoAskPack,
+  requireNeoEvidenceRefresh,
   requireNeoPackTickable,
 } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
@@ -215,8 +218,18 @@ describe('readNeoPackEvidence', () => {
   });
 });
 
-const merged: NeoEvidence = { key: 'pr/1', state: 'done', summary: 'merged', blockers: [] };
-const open: NeoEvidence = { ...merged, key: 'pr/2', state: 'pending', summary: 'open' };
+const merged: NeoEvidence = {
+  key: 'https://github.com/lsm/HyperNeo/pull/1',
+  state: 'done',
+  summary: 'merged',
+  blockers: [],
+};
+const open: NeoEvidence = {
+  ...merged,
+  key: 'https://github.com/lsm/HyperNeo/pull/2',
+  state: 'pending',
+  summary: 'open',
+};
 const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
   id: 'i1',
   text: 'Fix merged to dev',
@@ -230,10 +243,21 @@ const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
 });
 
 describe('codingPrMergedCheck', () => {
+  const confirmation: NeoEvidence = {
+    key: 'confirmation:<msg-1>',
+    state: 'done',
+    summary: 'orders@amazon.com',
+    blockers: [],
+  };
   test.each<[string, NeoEvidence[], ReturnType<typeof codingPrMergedCheck>]>([
-    ['every tracked pull request merged', [merged], { value: 'Merged: pr/1' }],
+    [
+      'every tracked pull request merged',
+      [merged],
+      { value: 'Merged: https://github.com/lsm/HyperNeo/pull/1' },
+    ],
     ['one still open', [merged, open], { reason: 'not_merged' }],
     ['no pull requests', [], { reason: 'not_merged' }],
+    ['only another pack evidence, all done', [confirmation], { reason: 'not_merged' }],
   ])('%s', (_label, evidence, gate) => {
     expect(codingPrMergedCheck(item(), evidence)).toEqual(gate);
   });
@@ -260,13 +284,13 @@ describe('planNeoPackTicks', () => {
       'a merged item on a live ask',
       ask([item()]),
       [merged],
-      [{ id: 'i1', evidence: 'Merged: pr/1' }],
+      [{ id: 'i1', evidence: 'Merged: https://github.com/lsm/HyperNeo/pull/1' }],
     ],
     [
       'a waiting ask too',
       ask([item()], 'waiting'),
       [merged],
-      [{ id: 'i1', evidence: 'Merged: pr/1' }],
+      [{ id: 'i1', evidence: 'Merged: https://github.com/lsm/HyperNeo/pull/1' }],
     ],
     ['an item already met', ask([item({ state: 'met' })]), [merged], []],
     ['a removed item', ask([item({ removed: true })]), [merged], []],
@@ -457,5 +481,100 @@ describe('cachedNeoCardPrRead', () => {
       ok: false,
     });
     expect(cachedNeoCardPrRead(null)).toEqual({ row: null, ok: true });
+  });
+});
+
+describe('neoPackAskReportEvidence', () => {
+  const works = [
+    { report: 'Confirmation: id=<msg-1>; from=orders@amazon.com', createdAt: 0 },
+  ] as NeoWork[];
+  const packs = [
+    createCodingPack({
+      prUrls: async () => [],
+      runningPrUrls: async () => [],
+      readPrs: async () => [],
+      workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
+      record: () => null,
+    }),
+    createLifeAdminPack(),
+  ];
+
+  test('a packed ask reads only its own pack report evidence', () => {
+    expect(neoPackAskReportEvidence(packs, { pack: 'coding' } as NeoAsk, works)).toEqual([]);
+    expect(neoPackAskReportEvidence(packs, { pack: 'life-admin' } as NeoAsk, works)).toEqual([
+      { key: 'confirmation:<msg-1>', state: 'done', summary: 'orders@amazon.com', blockers: [] },
+    ]);
+    expect(neoPackAskReportEvidence(packs, { pack: null } as NeoAsk, works)).toHaveLength(1);
+  });
+});
+
+describe('requireNeoEvidenceRefresh', () => {
+  const refresh = (
+    overrides: Partial<{ status: string; report: string | null; updatedAt: number }> = {}
+  ) => ({
+    work: { status: 'reported', report: 'the work', updatedAt: 5 * 60_000, ...overrides },
+  });
+  const due = { readAt: 0 };
+  const fresh = { readAt: 19 * 60_000 };
+
+  test.each<[string, ReturnType<typeof refresh>, object, unknown]>([
+    [
+      'a due pull request row',
+      refresh(),
+      { goal: true, session: true, row: due, packEvidence: false, toldAt: null },
+      { value: expect.objectContaining({ row: due }) },
+    ],
+    [
+      'a card whose ask pack reads evidence, with no pull request row',
+      refresh(),
+      { goal: true, session: true, row: null, packEvidence: true, toldAt: null },
+      { value: expect.objectContaining({ row: null }) },
+    ],
+    [
+      'a pack card told recently whose report has not changed',
+      refresh(),
+      { goal: true, session: true, row: null, packEvidence: true, toldAt: 19 * 60_000 },
+      { reason: 'not_due' },
+    ],
+    [
+      'a pack card whose report changed after it was told',
+      refresh({ updatedAt: 21 * 60_000 }),
+      { goal: true, session: true, row: null, packEvidence: true, toldAt: 19 * 60_000 },
+      { value: expect.objectContaining({ row: null }) },
+    ],
+    [
+      'a card with neither a row nor an evidence-reading pack',
+      refresh(),
+      { goal: true, session: true, row: null, packEvidence: false, toldAt: null },
+      { reason: 'not_due' },
+    ],
+    [
+      'a pack card without a goal',
+      refresh(),
+      { goal: false, session: true, row: null, packEvidence: true, toldAt: null },
+      { reason: 'not_due' },
+    ],
+    [
+      'a pack card whose origin session is gone',
+      refresh(),
+      { goal: true, session: false, row: null, packEvidence: true, toldAt: null },
+      { reason: 'not_due' },
+    ],
+    [
+      'a pack card still working',
+      refresh({ status: 'queued' }),
+      { goal: true, session: true, row: null, packEvidence: true, toldAt: null },
+      { reason: 'not_due' },
+    ],
+    [
+      'a row not yet due with no evidence-reading pack',
+      refresh(),
+      { goal: true, session: true, row: fresh, packEvidence: false, toldAt: null },
+      { reason: 'not_due' },
+    ],
+  ])('admits %s', (_label, current, card, gate) => {
+    expect(requireNeoEvidenceRefresh(current, card as never, 20 * 60_000, 'closed: done')).toEqual(
+      gate
+    );
   });
 });
