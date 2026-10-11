@@ -277,10 +277,16 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
 type DriverStatusReply = z.infer<typeof DriverStatusSchema>;
 type DriverStatus = Extract<DriverStatusReply, { ok: true }>['value'];
 
+const parsedStatusReplies = new WeakMap<OperationOutcome, DriverStatusReply | null>();
+
 function parseDriverStatusReply(outcome: OperationOutcome): DriverStatusReply | null {
   if (outcome.kind !== 'completed') return null;
+  const cached = parsedStatusReplies.get(outcome);
+  if (cached !== undefined) return cached;
   const reply = DriverStatusSchema.safeParse(outcome.value);
-  return reply.success ? reply.data : null;
+  const parsed = reply.success ? reply.data : null;
+  parsedStatusReplies.set(outcome, parsed);
+  return parsed;
 }
 
 function parseDriverStatus(outcome: OperationOutcome): DriverStatus | null {
