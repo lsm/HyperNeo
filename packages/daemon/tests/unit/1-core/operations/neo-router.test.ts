@@ -14,6 +14,7 @@ import {
   pickNeoHolder,
   renderNeoRouteContext,
   runnableNeoHolders,
+  scoreNeoHolders,
 } from '../../../../src/lib/neo/router.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -329,5 +330,31 @@ describe('neo.message.send with a router', () => {
     await send(holder.sessionId, ask(4), 'weather tomorrow?');
     expect(calls).toEqual([]);
     expect(delivered(holder.sessionId, ask(4))).toBe(1);
+  });
+});
+
+describe('scoreNeoHolders', () => {
+  test('keeps a bounded number of holder profile vectors, dropping the least recently used', async () => {
+    const prefix = `cap-${Date.now()}`;
+    const holders: NeoHolder[] = Array.from({ length: 257 }, (_, index) => ({
+      concernId: `c${index}`,
+      sessionId: `s${index}`,
+      title: `${prefix} topic ${index}`,
+      summary: '',
+    }));
+    const embedded: string[] = [];
+    const deps = {
+      recentAsks: () => [],
+      embed: async (text: string) => {
+        embedded.push(text);
+        return new Float32Array([1, 0]);
+      },
+    } as unknown as NeoRouterDeps;
+
+    await scoreNeoHolders('ask', holders, deps);
+    embedded.length = 0;
+    await scoreNeoHolders('ask', [holders[256], holders[0]], deps);
+
+    expect(embedded).toEqual(['ask', `${prefix} topic 0`]);
   });
 });
