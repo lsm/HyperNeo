@@ -108,7 +108,8 @@ import {
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoSavedRules } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
-import { NeoCardViewSchema } from './card-view-schema.ts';
+import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
+import { projectNeoAskViews } from './ask-views.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -279,6 +280,7 @@ const SnapshotOk = z.object({
     .optional(),
   asks: z.array(NeoAskSchema).optional(),
   cards: z.array(NeoCardViewSchema).max(100).optional(),
+  askViews: z.array(NeoAskViewSchema).optional(),
   waitingOnHuman: z
     .object({
       note: z.string(),
@@ -696,6 +698,7 @@ export function createNeoOperations(service: NeoService) {
       asks,
       workPrs,
       cards,
+      askViews: projectNeoAskViews(asks, cards, workPrs),
       workResources: visibleWork.map((item) => ({
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
