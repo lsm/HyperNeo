@@ -1371,9 +1371,9 @@ export class NeoService {
       'listed'
     )
     .pipe(
-      (listed: { sessions: NeoListedSession[]; complete: boolean }, now: number) =>
-        planNeoSessionWatch(listed.sessions, this.sessionsSeen, now),
-      ['listed', 'now'],
+      (listed: { sessions: NeoListedSession[]; complete: boolean }) =>
+        planNeoSessionWatch(listed.sessions, this.sessionsSeen),
+      'listed',
       'plan'
     )
     .pipe(

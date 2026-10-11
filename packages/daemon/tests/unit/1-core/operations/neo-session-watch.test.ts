@@ -6,12 +6,12 @@ import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   keepNeoSessionNoticeGroups,
+  latestNeoSessionNoticeGroups,
   keepNeoSessionNotices,
   listNeoWatchedSessions,
   NEO_SESSION_GROUP_MS,
   NEO_SESSION_GROUPS_MAX,
   NEO_SESSION_NOTICES_MAX,
-  NEO_SESSION_RUN_MS,
   NEO_SESSION_GROUP_NOTICES_MAX,
   neoSessionKey,
   neoSessionNoticeLine,
@@ -23,6 +23,7 @@ import {
   savedNeoSessionNoticeGroups,
   type NeoListedSession,
   type NeoSessionNotice,
+  type NeoSessionNoticeGroup,
   type NeoSessionSeen,
 } from '../../../../src/lib/neo/session-watch.ts';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
@@ -38,6 +39,7 @@ import {
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const now = 10_000_000;
+const RUN_MS = 3 * 60_000;
 const ref = { adapter: 'codex-desktop', id: 't1' };
 const work = (overrides: Partial<PlaceGroup['work'][number]> = {}): PlaceGroup['work'][number] => ({
   ref,
@@ -95,13 +97,9 @@ describe('listNeoWatchedSessions', () => {
       now
     );
     expect(listed?.remoteLink).toBe(remoteLink);
-    const running: NeoSessionSeen = {
-      listed: 'x',
-      status: 'running',
-      runningSince: now - NEO_SESSION_RUN_MS,
-    };
+    const running: NeoSessionSeen = { listed: 'x', status: 'running' };
     expect(
-      planNeoSessionNotice(listed!, running, { status: 'done', lastInputAt: null }, now).notice
+      planNeoSessionNotice(listed!, running, { status: 'failed', lastInputAt: null }, now).notice
     ).toMatchObject({ link: 'claude://claude.ai/epitaxy/c1', remoteLink });
   });
 
@@ -124,34 +122,26 @@ describe('planNeoSessionMutes', () => {
 describe('planNeoSessionWatch', () => {
   test('takes a first sighting as a baseline and reads only sessions that changed', () => {
     const seen = new Map<string, NeoSessionSeen>([
-      ['same', { listed: 'running:1', status: 'running', runningSince: 0 }],
-      [session.key, { listed: 'running:5', status: 'running', runningSince: 0 }],
+      ['same', { listed: 'running:1', status: 'running' }],
+      [session.key, { listed: 'running:5', status: 'running' }],
     ]);
     const fresh = { ...session, key: 'fresh' };
     const same = { ...session, key: 'same', lastActivityAt: 1 };
-    const plan = planNeoSessionWatch([fresh, same, session], seen, now);
+    const plan = planNeoSessionWatch([fresh, same, session], seen);
     expect(plan.baseline).toEqual([
-      [
-        'fresh',
-        { listed: `running:${session.lastActivityAt}`, status: 'running', runningSince: now },
-      ],
+      ['fresh', { listed: `running:${session.lastActivityAt}`, status: 'running' }],
     ]);
     expect(plan.reads.map((item) => item.key)).toEqual([session.key]);
   });
 });
 
 describe('planNeoSessionNotice', () => {
-  const running: NeoSessionSeen = {
-    listed: 'x',
-    status: 'running',
-    runningSince: now - NEO_SESSION_RUN_MS,
-  };
+  const running: NeoSessionSeen = { listed: 'x', status: 'running' };
   const read = (status: WorkStatus, lastInputAt: number | null = null) => ({ status, lastInputAt });
   test.each<[string, NeoSessionSeen, ReturnType<typeof read> | null, string | null]>([
     ['a session that now needs the human', running, read('needs_you'), 'needs_you'],
     ['a session that failed', running, read('failed'), 'failed'],
-    ['a long run that finished', running, read('done'), 'finished'],
-    ['a short run that finished', { ...running, runningSince: now - 60_000 }, read('done'), null],
+    ['a session that went idle', running, read('done'), null],
     ['a session the human just wrote to', running, read('needs_you', now - 30_000), null],
     [
       'a session already needing the human',
@@ -174,15 +164,6 @@ describe('planNeoSessionNotice', () => {
   test('holds a notice the human may be answering, and reads the session again next pass', () => {
     const planned = planNeoSessionNotice(session, running, read('needs_you', now - 30_000), now);
     expect(planned).toEqual({ seen: running, notice: null });
-  });
-
-  test('keeps when a run started while it goes on', () => {
-    const idle: NeoSessionSeen = { listed: 'x', status: 'done', runningSince: null };
-    const started = planNeoSessionNotice(session, idle, read('running'), now).seen;
-    expect(started.runningSince).toBe(now);
-    expect(planNeoSessionNotice(session, started, read('running'), now + 5).seen.runningSince).toBe(
-      now
-    );
   });
 });
 
@@ -279,6 +260,41 @@ describe('planNeoSessionNoticeGroup', () => {
 
   test('nothing open and nothing new leaves nothing to close', () => {
     expect(planNeoSessionNoticeGroup([], [], now)).toEqual({ open: [], closed: [] });
+  });
+});
+
+describe('latestNeoSessionNoticeGroups', () => {
+  const at = (key: string, kind: NeoSessionNotice['kind'], time: number): NeoSessionNotice => ({
+    key,
+    ref: { adapter: 'codex-desktop', id: key },
+    title: key,
+    kind,
+    at: time,
+  });
+  const group = (id: string, notices: NeoSessionNotice[]): NeoSessionNoticeGroup => ({
+    id,
+    at: notices[0]!.at,
+    line: notices.map((item) => item.key).join('; '),
+    notices,
+  });
+
+  test('shows each session once, in its newest notice, and drops groups left empty', () => {
+    const shown = latestNeoSessionNoticeGroups([
+      group('g1', [at('a', 'needs_you', 1), at('b', 'failed', 2)]),
+      group('g2', [at('a', 'failed', 3)]),
+      group('g3', [at('c', 'needs_you', 4), at('c', 'failed', 5)]),
+    ]);
+    expect(shown.map((item) => [item.id, item.notices.map((n) => `${n.key}:${n.kind}`)])).toEqual([
+      ['g1', ['b:failed']],
+      ['g2', ['a:failed']],
+      ['g3', ['c:failed']],
+    ]);
+    expect(shown[0]!.line).toBe('Codex · b failed');
+  });
+
+  test('keeps a group untouched when none of its sessions comes again', () => {
+    const only = group('g1', [at('a', 'needs_you', 1)]);
+    expect(latestNeoSessionNoticeGroups([only])).toEqual([only]);
   });
 });
 
@@ -416,7 +432,7 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
+      clock += RUN_MS;
       listed = [];
       unreachable = [{ source: 'codex-desktop', reason: 'locked' }];
       await service.refreshDriverWork();
@@ -424,8 +440,8 @@ describe('refreshDriverWork', () => {
       more = true;
       await service.refreshDriverWork();
       more = false;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
     } finally {
@@ -433,7 +449,7 @@ describe('refreshDriverWork', () => {
     }
   });
 
-  test('tells once when a session the human runs finishes a long run', async () => {
+  test('tells once when a session the human runs fails', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);
     try {
@@ -441,15 +457,15 @@ describe('refreshDriverWork', () => {
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toEqual([]);
 
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       const notices = events.filter(([name]) => name === 'neo.session.notice');
       expect(notices).toEqual([
         [
           'neo.session.notice',
-          expect.objectContaining({ kind: 'finished', title: 'Quiet-model research' }),
+          expect.objectContaining({ kind: 'failed', title: 'Quiet-model research' }),
         ],
       ]);
       expect(service.sessionNotices).toHaveLength(1);
@@ -464,9 +480,9 @@ describe('refreshDriverWork', () => {
   const openFinishedGroup = async (advance: (ms: number) => void, at: () => number) => {
     listed = [work({ lastActivityAt: at() - 1_000 })];
     await service.refreshDriverWork();
-    advance(NEO_SESSION_RUN_MS);
-    listed = [work({ status: 'done', lastActivityAt: at() - 1_000 })];
-    status = { status: 'done', lastActivityAt: at() - 1_000 };
+    advance(RUN_MS);
+    listed = [work({ status: 'failed', lastActivityAt: at() - 1_000 })];
+    status = { status: 'failed', lastActivityAt: at() - 1_000 };
     await service.refreshDriverWork();
     advance(NEO_SESSION_GROUP_MS);
   };
@@ -484,7 +500,7 @@ describe('refreshDriverWork', () => {
       await Promise.all([service.refreshDriverWork(), service.refreshDriverWork()]);
       expect(events.filter(([name]) => name === 'neo.session.notices')).toHaveLength(1);
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
-        expect.objectContaining({ content: 'Codex · Quiet-model research finished · Open' }),
+        expect.objectContaining({ content: 'Codex · Quiet-model research failed · Open' }),
       ]);
     } finally {
       time.mockRestore();
@@ -497,9 +513,9 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       let release = () => {};
       hold = new Promise((resolve) => {
         release = resolve;
@@ -512,7 +528,7 @@ describe('refreshDriverWork', () => {
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
         expect.objectContaining({
           group: expect.objectContaining({
-            notices: [expect.objectContaining({ kind: 'finished' })],
+            notices: [expect.objectContaining({ kind: 'failed' })],
           }),
         }),
       ]);
@@ -569,9 +585,9 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([]);
 
@@ -586,7 +602,7 @@ describe('refreshDriverWork', () => {
       try {
         await restarted.recover();
         expect(restarted.sessionNoticeGroups).toEqual([
-          expect.objectContaining({ notices: [expect.objectContaining({ kind: 'finished' })] }),
+          expect.objectContaining({ notices: [expect.objectContaining({ kind: 'failed' })] }),
         ]);
       } finally {
         restarted.dispose();
@@ -612,9 +628,9 @@ describe('refreshDriverWork', () => {
       });
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toEqual([]);
 
@@ -622,9 +638,9 @@ describe('refreshDriverWork', () => {
       listed = [work({ lastActivityAt: clock - 500 })];
       status = { status: 'running', lastActivityAt: clock - 500 };
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notice')).toHaveLength(1);
     } finally {
@@ -638,9 +654,9 @@ describe('refreshDriverWork', () => {
     try {
       listed = [work({ lastActivityAt: clock - 1_000 })];
       await service.refreshDriverWork();
-      clock += NEO_SESSION_RUN_MS;
-      listed = [work({ status: 'done', lastActivityAt: clock - 1_000 })];
-      status = { status: 'done', lastActivityAt: clock - 1_000 };
+      clock += RUN_MS;
+      listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
+      status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
 
@@ -653,8 +669,8 @@ describe('refreshDriverWork', () => {
           'neo.session.notices',
           {
             group: expect.objectContaining({
-              line: 'Codex · Quiet-model research finished · Open',
-              notices: [expect.objectContaining({ kind: 'finished' })],
+              line: 'Codex · Quiet-model research failed · Open',
+              notices: [expect.objectContaining({ kind: 'failed' })],
             }),
           },
         ],
