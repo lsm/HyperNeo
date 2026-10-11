@@ -1,16 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence';
-import {
-  neoWorkPrEvidence,
-  neoWorkPrSignature,
-} from '../../../../src/lib/neo/packs/coding/work-prs';
+import { neoWorkPrEvidence } from '../../../../src/lib/neo/packs/coding/work-prs';
 import { NeoWorkCheckRepository } from '../../../../src/storage/repositories/neo-work-check-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
 import { runMigration320 } from '../../../../src/storage/schema/m320-neo-work-checks';
 import { runMigration323 } from '../../../../src/storage/schema/m323-neo-work-check-evidence';
 import { Database } from '../../../../src/storage/sqlite-compat';
+
+const legacySignature = (prs: readonly NeoWorkPr[]) =>
+  JSON.stringify(
+    prs.map(({ url, state, checks, review, blockers }) => [
+      url,
+      state,
+      checks,
+      review,
+      ...(blockers?.length ? [blockers] : []),
+    ])
+  );
 
 const pr: NeoWorkPr = {
   url: 'https://github.com/lsm/HyperNeo/pull/42',
@@ -86,7 +94,7 @@ describe('runMigration323 against the live evidence signature', () => {
            VALUES ('w1', ?, 1, 1, 0, 0)`
       ).run(JSON.stringify(prs));
       const checks = new NeoWorkCheckRepository(db);
-      checks.markTold('w1', neoWorkPrSignature(prs as NeoWorkPr[]), 1);
+      checks.markTold('w1', legacySignature(prs as NeoWorkPr[]), 1);
       runMigration323(db);
       expect(checks.get('w1')?.signature).toBe(
         neoEvidenceSignature(neoWorkPrEvidence(prs as NeoWorkPr[]))

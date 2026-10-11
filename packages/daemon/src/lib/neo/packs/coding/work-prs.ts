@@ -93,17 +93,6 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
 export const isNeoWorkPrWaiting = (prs: readonly NeoWorkPr[]) =>
   prs.some((pr) => neoWorkPrVerdict(pr) === 'waiting');
 
-export const neoWorkPrSignature = (prs: readonly NeoWorkPr[]) =>
-  JSON.stringify(
-    prs.map(({ url, state, checks, review, blockers }) => [
-      url,
-      state,
-      checks,
-      review,
-      ...(blockers?.length ? [blockers] : []),
-    ])
-  );
-
 export function neoWorkPrEvidence(prs: readonly NeoWorkPr[]): NeoEvidence[] {
   return prs.map((pr) => ({
     key: pr.url,
@@ -160,9 +149,6 @@ export function neoAskPrEvidence(
 
 type StoredPrs = {
   prs: readonly NeoWorkPr[];
-  delivered: string | null;
-  deliveredAt?: number | null;
-  reminded?: string | null;
   readAt: number;
   readOkAt: number;
 };

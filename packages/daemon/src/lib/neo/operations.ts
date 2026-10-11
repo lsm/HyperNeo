@@ -984,18 +984,25 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: z.infer<typeof Propose>, caller: OperationCaller) => {
+      (input: z.infer<typeof Propose>) => {
         const works = input.supersedes === undefined ? service.repo.listWork(input.concernId) : [];
         const superseded = new Set(
           service.workSupersessions.list(works.map((work) => work.id)).map((row) => row.workId)
         );
-        return requireNeoWorkSupersedeDecision(
-          input,
-          neoWorkSupersedeCandidates(works, superseded, input.concernId, Date.now()),
-          caller
-        );
+        return {
+          candidates: neoWorkSupersedeCandidates(works, superseded, input.concernId, Date.now()),
+        };
       },
-      ['input', 'admission'],
+      'input',
+      'supersede'
+    )
+    .pipe(
+      (
+        input: z.infer<typeof Propose>,
+        supersede: { candidates: { id: string; title: string }[] },
+        caller: OperationCaller
+      ) => requireNeoWorkSupersedeDecision(input, supersede.candidates, caller),
+      ['input', 'supersede', 'admission'],
       'result:admission'
     )
     .pipe(

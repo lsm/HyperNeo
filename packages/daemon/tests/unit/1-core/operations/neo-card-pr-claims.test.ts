@@ -428,9 +428,6 @@ describe('readNeoCardPrs', () => {
       workId: 'me',
       prs: [pr(1), pr(2)],
       revision: 1,
-      delivered: null,
-      deliveredAt: null,
-      reminded: null,
       readAt: 1_000,
       readOkAt: 1_000,
     } as NeoWorkPrRow;
@@ -482,9 +479,6 @@ describe('readNeoCardPrs', () => {
       workId: 'other',
       prs: [pr(1), pr(2)],
       revision: 1,
-      delivered: null,
-      deliveredAt: null,
-      reminded: null,
       readAt: 1,
       readOkAt: 1,
     };
