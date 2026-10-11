@@ -35,6 +35,7 @@ import {
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
 import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
+import { SESSION_EVENT_SCOPE } from '../session-external-event-store.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -1064,6 +1065,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!this.context) return false;
     const global = await this.context.config.getGlobalConfig(this.sourceId);
     return global.globallyEnabled && global.capabilities.webhooks !== false;
+  }
+
+  async watchSessionRepo(owner: string, repo: string): Promise<void> {
+    const context = this.context;
+    if (!context) return;
+    const existing = this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, owner, repo);
+    if (existing?.enabled && existing.pollingEnabled) return;
+    this.repo.upsertWatchedRepo({
+      spaceId: SESSION_EVENT_SCOPE,
+      owner,
+      repo,
+      enabled: true,
+      pollingEnabled: true,
+      webhookEnabled: false,
+    });
+    if (this.getPollIntervalMs() <= 0) return;
+    await this.enablePollingCapability(context);
+    this.ensurePollingActive();
   }
 
   async refreshPollingInterval(): Promise<void> {

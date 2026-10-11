@@ -1,26 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
-import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository';
-import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
-import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import {
   createSubscriptionOperations,
   type SubscriptionDependencies,
   type SubscriptionSlot,
 } from '../../../../src/lib/external-events/subscription-operations';
 import type { OperationCaller, OperationDefinition } from '../../../../src/lib/operations/registry';
-import { createSpaceTables } from '../../helpers/space-test-db';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SessionEventSubscriptionRepository } from '../../../../src/storage/repositories/session-event-subscription-repository';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentSubscriptionRepository } from '../../../../src/storage/repositories/space-agent-subscription-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceSessionEventSubscriptionRepository } from '../../../../src/storage/repositories/space-session-event-subscription-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { runMigration329 } from '../../../../src/storage/schema/m329-session-event-subscriptions';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTestSession } from '../../../helpers/database';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
 let sessions: SessionRepository;
@@ -29,6 +29,7 @@ let agents: SpaceLongHorizonAgentRepository;
 let agentSubscriptions: SpaceAgentSubscriptionRepository;
 let sessionSubscriptions: SpaceSessionEventSubscriptionRepository;
 let unscopedSubscriptions: SessionEventSubscriptionRepository;
+let watchedRepos: string[];
 let sessionRefreshed: string[];
 let auditLogRepo: McpAuditLogRepository;
 let operations: Map<string, OperationDefinition>;
@@ -160,6 +161,7 @@ beforeEach(() => {
   sessionSubscriptions = new SpaceSessionEventSubscriptionRepository(db);
   runMigration329(db);
   unscopedSubscriptions = new SessionEventSubscriptionRepository(db);
+  watchedRepos = [];
   sessionRefreshed = [];
   registered = [];
   unregistered = [];
@@ -193,6 +195,9 @@ beforeEach(() => {
     }),
     sessionSubscriptions,
     unscopedSessionSubscriptions: unscopedSubscriptions,
+    watchSessionRepo: async (owner, repo) => {
+      watchedRepos.push(`${owner}/${repo}`);
+    },
     refreshSessionSubscription: (_spaceId, subscriptionId) => {
       sessionRefreshed.push(subscriptionId);
       return refreshOutcome;
@@ -804,6 +809,17 @@ describe('a session outside any Space', () => {
     expect(unscopedSubscriptions.listBySession('s-plain')).toEqual([]);
     expect(sessionSubscriptions.listBySpace(SPACE)).toEqual([]);
     expect(sessionRefreshed).toEqual([]);
+  });
+
+  test('a PR subscription watches its repo, and a wildcard owner or repo does not', async () => {
+    const caller = plainSession('s-watch');
+    await runParsed('event.external.subscribe', { prUrl: PR }, caller);
+    await runParsed(
+      'event.external.subscribe',
+      { topicPattern: 'github/*/widgets/pull_request/*.review_*' },
+      caller
+    );
+    expect(watchedRepos).toEqual(['Acme/Widgets']);
   });
 
   test('a Neo-bound session subscribes the same way', async () => {
