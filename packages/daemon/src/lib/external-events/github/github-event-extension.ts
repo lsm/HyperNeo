@@ -1378,6 +1378,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
+  private seedKnownLogin(
+    stored: { login: string; fingerprint: string } | undefined,
+    token: string | undefined
+  ): void {
+    if (this.knownLogin || !stored || stored.fingerprint !== credentialFingerprint(token)) return;
+    this.knownLogin = {
+      login: stored.login,
+      generation: this.credentialGeneration,
+      fingerprint: stored.fingerprint,
+    };
+  }
+
+  private knownLoginFor(
+    token: string | undefined
+  ): { login: string; fingerprint: string } | undefined {
+    const login = this.knownTokenLogin();
+    const fingerprint = credentialFingerprint(token);
+    return login && fingerprint !== 'none' ? { login, fingerprint } : undefined;
+  }
+
   private knownTokenLogin(): string {
     const cached = this.cachedTokenStatus()?.login;
     if (cached) return cached;
@@ -2427,6 +2447,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let pullsFetchedResumedPage = false;
 
     const token = await this.resolveToken();
+    this.seedKnownLogin(cursor.selfLogin, token);
     this.pollCycleCredentialFingerprint = credentialFingerprint(token);
     for (const endpoint of endpoints) {
       const page = processedPages[endpoint.key] ?? 1;
@@ -3322,6 +3343,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       lastPollCredentialFingerprint: accessible
         ? credentialFingerprint(token)
         : cursor.lastPollCredentialFingerprint,
+      selfLogin: this.knownLoginFor(token) ?? cursor.selfLogin,
     };
     if (accessible) {
       this.repo.updatePollCursor(watched.id, cursorPayload);

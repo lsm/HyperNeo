@@ -29,6 +29,7 @@ export interface PollCursor {
   lastPartialPollError?: string | null;
   lastReactionPollAt?: number | null;
   lastPollCredentialFingerprint?: string;
+  selfLogin?: { login: string; fingerprint: string };
 }
 
 export interface GitHubWatchedRepo {
