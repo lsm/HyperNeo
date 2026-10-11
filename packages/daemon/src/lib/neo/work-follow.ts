@@ -57,6 +57,13 @@ export function planNeoWorkFollowLive(read: {
   return live ? { status: live.status, link: live.link, remoteLink: live.remoteLink } : null;
 }
 
+export function requireNeoWorkFollowAnswered(
+  live: { status: WorkStatus } | null,
+  ref: WorkRef
+): Gate<WorkRef> {
+  return live?.status === 'needs_you' ? { reason: null } : { value: ref };
+}
+
 export function planNeoWorkFollow(
   work: Pick<NeoWork, 'updatedAt' | 'report'>,
   read: { outcome: OperationOutcome },

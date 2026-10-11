@@ -5,6 +5,7 @@ import {
   planNeoWorkFollow,
   planNeoWorkFollowLive,
   requireNeoWorkFollow,
+  requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
 } from '../../../../src/lib/neo/work-follow.ts';
 
@@ -74,6 +75,19 @@ describe('requireNeoWorkFollowUp', () => {
       reason: null,
     });
     expect(requireNeoWorkFollowUp(work, { ...card, goal: false })).toEqual({ reason: null });
+  });
+});
+
+describe('requireNeoWorkFollowAnswered', () => {
+  test.each<[string, { status: 'done' | 'needs_you' | 'running' } | null, boolean]>([
+    ['a session that finished', { status: 'done' }, true],
+    ['a session still working', { status: 'running' }, true],
+    ['a session that could not be read', null, true],
+    ['a session waiting on the user', { status: 'needs_you' }, false],
+  ])('%s', (_label, live, follows) => {
+    expect(requireNeoWorkFollowAnswered(live, ref)).toEqual(
+      follows ? { value: ref } : { reason: null }
+    );
   });
 });
 

@@ -222,6 +222,7 @@ import {
   planNeoWorkFollow,
   planNeoWorkFollowLive,
   requireNeoWorkFollow,
+  requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
 } from './work-follow.ts';
 
@@ -366,6 +367,20 @@ export class NeoService {
       },
       ['work', 'live', 'now']
     )
+    .pipe(
+      async (
+        work: NeoWork,
+        ref: WorkRef,
+        live: ReturnType<typeof planNeoWorkFollowLive>,
+        read: { outcome: OperationOutcome }
+      ) => {
+        if (live?.status !== 'needs_you') return;
+        const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
+        if (queued) await this.noteDriverNeedsYou(queued, ref, read.outcome);
+      },
+      ['work', 'follow', 'live', 'read']
+    )
+    .pipe(requireNeoWorkFollowAnswered, ['live', 'follow'], 'result:follow')
     .pipe(requireNeoWorkFollowUp, ['work', 'card'], 'result:follow')
     .pipe(planNeoWorkFollow, ['work', 'read', 'card'], 'result:follow')
     .pipe(
@@ -1739,11 +1754,14 @@ export class NeoService {
       await this.noteDriverNeedsYou(work, ref, outcome);
     },
     forgetActivity: (workId) => this.activitySeen.delete(workId),
-    transition: (work, settled) =>
-      this.repo.transitionWork(work.id, work, {
+    transition: (work, settled) => {
+      const moved = this.repo.transitionWork(work.id, work, {
         status: settled.status,
         report: settled.report.slice(0, NEO_WORK_REPORT_LIMIT),
-      }),
+      });
+      if (moved) this.driverTargets.recordNeedsYouSince(work.id, null);
+      return moved;
+    },
     anchorFollow: (workId, at) => this.driverTargets.recordFollowAnchor(workId, at),
     returnReport: (work) => this.returnReport(work),
   };
