@@ -9,14 +9,7 @@ export interface NeoAskCheckRow {
 export class NeoAskCheckRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_ask_checks' AND type = 'table'")
-      .get();
-  }
-
   get(askId: string): NeoAskCheckRow | null {
-    if (!this.hasTable()) return null;
     return (
       (this.db
         .prepare(
@@ -27,7 +20,6 @@ export class NeoAskCheckRepository {
   }
 
   markTold(askId: string, signature: string, at: number): void {
-    if (!this.hasTable()) return;
     this.db
       .prepare(
         `INSERT INTO neo_ask_checks(ask_id, signature, told_at) VALUES (?, ?, ?)

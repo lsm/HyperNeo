@@ -65,6 +65,5 @@ describe('NeoWorkDriverTargetRepository.readCard', () => {
     });
     expect(repo.readCard('broken')?.target).toBeNull();
     expect(repo.readCard('missing')).toBeNull();
-    expect(new NeoWorkDriverTargetRepository(new Database(':memory:')).readCard('w1')).toBeNull();
   });
 });

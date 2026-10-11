@@ -6,16 +6,8 @@ const columns = 'work_id AS workId, superseded_by AS supersededBy, superseded_at
 export class NeoWorkSupersessionRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE name = 'neo_work_supersessions' AND type = 'table'"
-      )
-      .get();
-  }
-
   record(workId: string, supersededBy: string, at: number): void {
-    if (!this.hasTable() || workId === supersededBy) return;
+    if (workId === supersededBy) return;
     this.db
       .prepare(
         `INSERT INTO neo_work_supersessions(work_id, superseded_by, superseded_at)
@@ -28,7 +20,7 @@ export class NeoWorkSupersessionRepository {
   }
 
   list(workIds: readonly string[]): NeoWorkSupersession[] {
-    if (!this.hasTable() || workIds.length === 0) return [];
+    if (workIds.length === 0) return [];
     return this.db
       .prepare(
         `SELECT ${columns} FROM neo_work_supersessions

@@ -7,14 +7,7 @@ const columns =
 export class NeoWorkContinueRepository {
   constructor(private readonly db: Database) {}
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_work_continues' AND type = 'table'")
-      .get();
-  }
-
   get(workId: string): NeoWorkContinue | null {
-    if (!this.hasTable()) return null;
     return (
       (this.db
         .prepare(`SELECT ${columns} FROM neo_work_continues WHERE work_id = ?`)
@@ -23,7 +16,6 @@ export class NeoWorkContinueRepository {
   }
 
   record(workId: string, message: string, at: number): NeoWorkContinue | null {
-    if (!this.hasTable()) return null;
     this.db
       .prepare(
         `INSERT INTO neo_work_continues(work_id, count, continued_at, last_message)
@@ -36,7 +28,7 @@ export class NeoWorkContinueRepository {
   }
 
   list(workIds: readonly string[]): NeoWorkContinue[] {
-    if (!this.hasTable() || workIds.length === 0) return [];
+    if (workIds.length === 0) return [];
     return this.db
       .prepare(
         `SELECT ${columns} FROM neo_work_continues WHERE work_id IN (SELECT value FROM json_each(?))`

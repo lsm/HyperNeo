@@ -60,10 +60,4 @@ describe('NeoWorkPrRepository', () => {
     prs.record('w1', [{ ...pr, state: 'MERGED' }], 40);
     expect(prs.listOpen()).toEqual([]);
   });
-
-  test('reads nothing before the migration has run', () => {
-    const prs = new NeoWorkPrRepository(withWork());
-    expect(prs.record('w1', [pr], 1)).toBe(null);
-    expect(prs.listOpen()).toEqual([]);
-  });
 });

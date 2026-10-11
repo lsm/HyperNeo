@@ -37,6 +37,37 @@ import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consult
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
+import { runMigration307 } from '../../../../src/storage/schema/m307-neo-work-goals.ts';
+import { runMigration308 } from '../../../../src/storage/schema/m308-neo-work-continues.ts';
+import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
+import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs.ts';
+import { runMigration316 } from '../../../../src/storage/schema/m316-neo-ask-evidence.ts';
+import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders.ts';
+import { runMigration318 } from '../../../../src/storage/schema/m318-neo-ask-items.ts';
+import { runMigration320 } from '../../../../src/storage/schema/m320-neo-work-checks.ts';
+import { runMigration322 } from '../../../../src/storage/schema/m322-neo-ask-reminders.ts';
+import { runMigration323 } from '../../../../src/storage/schema/m323-neo-work-check-evidence.ts';
+import { runMigration324 } from '../../../../src/storage/schema/m324-neo-ask-pack.ts';
+import { runMigration325 } from '../../../../src/storage/schema/m325-neo-ask-checks.ts';
+import { runMigration326 } from '../../../../src/storage/schema/m326-neo-ask-approved.ts';
+import { runMigration327 } from '../../../../src/storage/schema/m327-neo-ask-approved-continues.ts';
+import { runMigration328 } from '../../../../src/storage/schema/m328-neo-ask-item-check-kinds.ts';
+import { runMigration330 } from '../../../../src/storage/schema/m330-neo-ask-waiting-item.ts';
+import { runMigration332 } from '../../../../src/storage/schema/m332-neo-work-supersessions.ts';
+import { runMigration333 } from '../../../../src/storage/schema/m333-neo-work-pr-claims.ts';
+import { runMigration335 } from '../../../../src/storage/schema/m335-neo-work-prs-drop-delivered.ts';
+import { runMigration336 } from '../../../../src/storage/schema/m336-neo-work-pr-claim-scores.ts';
+import { runMigration337 } from '../../../../src/storage/schema/m337-neo-ask-item-check-kind-life-admin.ts';
+import { runMigration293 } from '../../../../src/storage/schema/m293-neo-work-driver-targets.ts';
+import { runMigration294 } from '../../../../src/storage/schema/m294-neo-work-driver-started-at.ts';
+import { runMigration295 } from '../../../../src/storage/schema/m295-neo-work-driver-notified.ts';
+import { runMigration296 } from '../../../../src/storage/schema/m296-neo-work-driver-live.ts';
+import { runMigration309 } from '../../../../src/storage/schema/m309-neo-work-driver-remote-link.ts';
+import { runMigration310 } from '../../../../src/storage/schema/m310-neo-work-driver-sent.ts';
+import { runMigration311 } from '../../../../src/storage/schema/m311-neo-work-driver-retries.ts';
+import { runMigration321 } from '../../../../src/storage/schema/m321-neo-work-driver-follow-anchor.ts';
+import { runMigration334 } from '../../../../src/storage/schema/m334-neo-driver-start-interrupted.ts';
+import { runMigration338 } from '../../../../src/storage/schema/m338-neo-driver-checked-at.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const root: NeoBinding = {
@@ -581,6 +612,37 @@ describe('real SQLite ask lineage facade', () => {
     runMigration283(mailbox.db);
     runMigration285(mailbox.db);
     runMigration289(mailbox.db);
+    runMigration307(mailbox.db);
+    runMigration308(mailbox.db);
+    runMigration313(mailbox.db);
+    runMigration314(mailbox.db);
+    runMigration316(mailbox.db);
+    runMigration317(mailbox.db);
+    runMigration318(mailbox.db);
+    runMigration320(mailbox.db);
+    runMigration322(mailbox.db);
+    runMigration323(mailbox.db);
+    runMigration324(mailbox.db);
+    runMigration325(mailbox.db);
+    runMigration326(mailbox.db);
+    runMigration327(mailbox.db);
+    runMigration328(mailbox.db);
+    runMigration330(mailbox.db);
+    runMigration332(mailbox.db);
+    runMigration333(mailbox.db);
+    runMigration335(mailbox.db);
+    runMigration336(mailbox.db);
+    runMigration337(mailbox.db);
+    runMigration293(mailbox.db);
+    runMigration294(mailbox.db);
+    runMigration295(mailbox.db);
+    runMigration296(mailbox.db);
+    runMigration309(mailbox.db);
+    runMigration310(mailbox.db);
+    runMigration311(mailbox.db);
+    runMigration321(mailbox.db);
+    runMigration334(mailbox.db);
+    runMigration338(mailbox.db);
     db = {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,

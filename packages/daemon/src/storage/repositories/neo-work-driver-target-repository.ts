@@ -39,16 +39,7 @@ export class NeoWorkDriverTargetRepository {
     })();
   }
 
-  private hasTable(): boolean {
-    return !!this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE name = 'neo_work_driver_targets' AND type = 'table'"
-      )
-      .get();
-  }
-
   get(workId: string): NeoDriverTarget | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT target FROM neo_work_driver_targets WHERE work_id = ?')
       .get(workId) as { target: string } | null | undefined;
@@ -58,7 +49,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readCard(workId: string): NeoDriverTargetCard | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare(
         `SELECT target, ref, follow_anchor AS followAnchor, live_status AS liveStatus,
@@ -94,7 +84,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   cardRefs(reportedSince: number): { workId: string; ref: WorkRef }[] {
-    if (!this.hasTable()) return [];
     const rows = this.db
       .prepare(`SELECT t.work_id AS workId, t.ref FROM neo_work_driver_targets t
         JOIN neo_work w ON w.id = t.work_id
@@ -105,7 +94,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readRef(workId: string): WorkRef | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT ref FROM neo_work_driver_targets WHERE work_id = ? AND ref IS NOT NULL')
       .get(workId) as { ref: string } | null | undefined;
@@ -147,7 +135,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readStartedAt(workId: string): number | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT started_at AS startedAt FROM neo_work_driver_targets WHERE work_id = ?')
       .get(workId) as { startedAt: number | null } | null | undefined;
@@ -155,7 +142,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readSent(workId: string): DriverSent | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare(
         `SELECT input_before AS inputBefore, sent_opening AS opening
@@ -168,7 +154,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readRetries(workId: string): number {
-    if (!this.hasTable()) return 0;
     const row = this.db
       .prepare('SELECT retries FROM neo_work_driver_targets WHERE work_id = ?')
       .get(workId) as { retries: number } | null | undefined;
@@ -213,7 +198,6 @@ export class NeoWorkDriverTargetRepository {
   }
 
   readNeedsYouSince(workId: string): number | null {
-    if (!this.hasTable()) return null;
     const row = this.db
       .prepare('SELECT needs_you_since AS since FROM neo_work_driver_targets WHERE work_id = ?')
       .get(workId) as { since: number | null } | null | undefined;
@@ -266,7 +250,7 @@ export class NeoWorkDriverTargetRepository {
   }
 
   receipts(workIds: readonly string[], now = Date.now()): NeoWorkDriverReceipt[] {
-    if (!this.hasTable() || workIds.length === 0) return [];
+    if (workIds.length === 0) return [];
     const rows = this.db
       .prepare(
         `SELECT work_id AS workId, target, ref, live_status AS status, link,
