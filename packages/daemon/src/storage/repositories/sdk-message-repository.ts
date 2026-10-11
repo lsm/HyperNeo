@@ -1914,6 +1914,41 @@ export class SDKMessageRepository {
     }
   }
 
+  readRestartRecoveryEvidence(
+    sessionId: string
+  ): { promptUuid: string; workedAfter: boolean } | null {
+    const prompt = this.db
+      .prepare(
+        `SELECT sdk_uuid AS uuid, timestamp FROM sdk_messages
+          WHERE session_id = ? AND send_status = 'consumed' AND message_type = 'user'
+            AND sdk_uuid IS NOT NULL AND parent_tool_use_id IS NULL
+            AND NOT (json_valid(sdk_message)
+              AND json_type(sdk_message, '$.message.content') = 'array'
+              AND json_extract(sdk_message, '$.message.content[0].type') = 'tool_result')
+          ORDER BY timestamp DESC, id DESC LIMIT 1`
+      )
+      .get(sessionId) as { uuid: string; timestamp: string } | undefined;
+    if (!prompt) return null;
+    const worked = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'assistant' AND timestamp > ? LIMIT 1`
+      )
+      .get(sessionId, prompt.timestamp);
+    return { promptUuid: prompt.uuid, workedAfter: !!worked };
+  }
+
+  requeueConsumedPrompt(sessionId: string, uuid: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued'
+            WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user' AND send_status = 'consumed'`
+        )
+        .run(sessionId, uuid).changes > 0
+    );
+  }
+
   getDeliveryContent(
     sessionId: string,
     uuid: string
