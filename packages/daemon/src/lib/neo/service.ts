@@ -56,6 +56,7 @@ import {
   neoAskEvidenceMessageId,
   neoAskParent,
   neoConsultationParent,
+  neoReviewWorkId,
   neoWorkParent,
   type NeoAskOrigin,
   neoNeedsYouMessageId,
@@ -1774,7 +1775,7 @@ export class NeoService {
           requestId,
           content,
           item.originSessionId,
-          neoConsultationParent(item)
+          this.consultationParent(item)
         );
         return;
       }
@@ -1803,7 +1804,7 @@ export class NeoService {
         `neo-consult:${id}:reply`,
         content,
         item.sessionId,
-        neoConsultationParent(item)
+        this.consultationParent(item)
       );
     }
     this.consultations.returned(id);
@@ -2105,6 +2106,11 @@ export class NeoService {
       input,
       driverWorkCaller(work)
     );
+  }
+
+  private consultationParent(item: NeoConsultation): NeoAskOrigin | null {
+    const reviewed = neoReviewWorkId(item.id);
+    return neoConsultationParent(item, reviewed ? this.repo.getWork(reviewed) : null);
   }
 
   private deliverToOrigin(

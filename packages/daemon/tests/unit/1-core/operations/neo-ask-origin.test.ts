@@ -13,6 +13,8 @@ import {
   neoWorkReturnMessageId,
   neoWorkReviewId,
   neoNudgeMessageId,
+  neoConsultationParent,
+  neoReviewWorkId,
   readNeoAskEvidence,
   requireNeoAskCoordinator,
   requireNeoAskReference,
@@ -200,6 +202,26 @@ describe('stamped ask origins', () => {
     f.put(orphan, 'system');
     expect(f.resolve(orphan)).toBeNull();
     expect([...f.stamps.keys()]).toEqual([]);
+  });
+});
+
+describe('neoConsultationParent', () => {
+  const reviewed = { id: 'w1', originSessionId: holder.sessionId, originMessageId: 'holder-ask' };
+  test('a consultation with an origin message is stamped with it', () => {
+    expect(neoConsultationParent(consultation)).toEqual({
+      sessionId: consultation.originSessionId,
+      messageId: consultation.originMessageId,
+    });
+  });
+  test('an internal review has no origin message, so it takes the reviewed card origin', () => {
+    const review = { ...consultation, id: neoWorkReviewId('w1', 2, 1), originMessageId: null };
+    expect(neoReviewWorkId(review.id)).toBe('w1');
+    expect(neoConsultationParent(review, reviewed)).toEqual({
+      sessionId: holder.sessionId,
+      messageId: 'holder-ask',
+    });
+    expect(neoConsultationParent(review, { ...reviewed, id: 'w2' })).toBeNull();
+    expect(neoConsultationParent({ ...review, id: 'plain' }, reviewed)).toBeNull();
   });
 });
 
