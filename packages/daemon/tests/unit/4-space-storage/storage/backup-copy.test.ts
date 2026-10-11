@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -78,6 +78,24 @@ describe('streamCopyFile', () => {
       streamCopyFile(source, destination);
 
       expect(readFileSync(destination).equals(bytes)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('streamCopyFile permissions', () => {
+  it('gives the copy the source file mode', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'backup-copy-mode-'));
+    try {
+      const source = join(dir, 'source.db');
+      const destination = join(dir, 'copy.db');
+      writeFileSync(source, Buffer.alloc(4096));
+      chmodSync(source, 0o600);
+
+      streamCopyFile(source, destination);
+
+      expect(statSync(destination).mode & 0o777).toBe(0o600);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

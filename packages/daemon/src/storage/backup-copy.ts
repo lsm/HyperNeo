@@ -1,5 +1,13 @@
 import * as fs from 'node:fs';
-import { closeSync, fsyncSync, openSync, readSync, writeSync } from 'node:fs';
+import {
+  closeSync,
+  fchmodSync,
+  fstatSync,
+  fsyncSync,
+  openSync,
+  readSync,
+  writeSync,
+} from 'node:fs';
 
 export const STREAM_COPY_MIN_BYTES = 1024 ** 3;
 export const STREAM_COPY_KEEP_MAX = 3;
@@ -33,8 +41,10 @@ export function freeBytesAt(path: string): number {
 export function streamCopyFile(source: string, destination: string): void {
   const input = openSync(source, 'r');
   try {
-    const output = openSync(destination, 'w');
+    const mode = fstatSync(input).mode & 0o777;
+    const output = openSync(destination, 'w', mode);
     try {
+      fchmodSync(output, mode);
       const chunk = Buffer.allocUnsafe(STREAM_COPY_CHUNK_BYTES);
       let position = 0;
       for (;;) {

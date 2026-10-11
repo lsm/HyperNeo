@@ -341,7 +341,9 @@ A full-copy backup (`vacuum-into`, `checkpoint-copy`) frees room before it is wr
 backups up front only when the volume lacks room for the copy plus a reserve (the larger of
 1 GiB and 10% of the database), never touching the two newest; afterwards a background rotation
 keeps at most 3 and drops the oldest while free space stays under twice the database size,
-never the newest. If there is still no room it falls through to the strategies below. Releases before
+never the newest. Those up-front deletions run synchronously during startup, before the server
+binds, so on APFS each drifted clone can add about a minute to that start. If there is still no
+room it falls through to the strategies below. The copy keeps the database file's permissions. Releases before
 this layout stored backups flat in `backups/` — those are not auto-pruned; remove them
 manually after upgrading.
 
