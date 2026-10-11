@@ -183,6 +183,63 @@ describe('neoAskOpenTarget', () => {
 });
 
 describe('NeoAskCard', () => {
+  it('lists the linked sessions with their app, state and how to open them', () => {
+    const openSession = vi.fn();
+    const view = describeAsk(ask('a', 'waiting', []), [], {
+      sessions: [
+        {
+          key: 'claude',
+          title: 'Fix the login bug',
+          adapter: 'claude-desktop',
+          status: 'running',
+          kind: 'needs_you',
+          open: {
+            link: 'claude://claude.ai/epitaxy/x',
+            remoteLink: null,
+            sessionId: null,
+            daemon: null,
+          },
+        },
+        {
+          key: 'local',
+          title: 'Review the docs',
+          adapter: 'hyperneo',
+          status: 'failed',
+          kind: 'failed',
+          open: { link: '/session/s1', remoteLink: null, sessionId: 's1', daemon: null },
+        },
+        {
+          key: 'codex',
+          title: 'Bump the deps',
+          adapter: 'codex-desktop',
+          status: 'running',
+          kind: null,
+          open: { link: null, remoteLink: null, sessionId: null, daemon: null },
+        },
+      ],
+    });
+    const card = render(<NeoAskCard view={view} onOpenSession={openSession} />);
+    const rows = [...card.container.querySelectorAll('[data-ask-session]')].map((row) => [
+      row.tagName,
+      row.textContent,
+    ]);
+    expect(rows).toEqual([
+      ['A', 'Fix the login bugClaude Code · Needs you'],
+      ['BUTTON', 'Review the docsHyperNeo · Failed'],
+      ['DIV', 'Bump the depsCodex · Running'],
+    ]);
+    expect(card.getByRole('link', { name: 'Open Fix the login bug' }).getAttribute('href')).toBe(
+      'claude://claude.ai/epitaxy/x'
+    );
+    fireEvent.click(card.getByRole('button', { name: 'Open Review the docs' }));
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('s1', 'Review the docs');
+  });
+
+  it('shows no session rows when the ask has none', () => {
+    const card = render(<NeoAskCard view={describeAsk(ask('a', 'open', []), [])} />);
+    expect(card.container.querySelector('[data-ask-session]')).toBeNull();
+  });
+
   it('shows progress and names its card, and keeps the done definition and the full card behind Details', () => {
     const view = describeAsk(ask('a', 'waiting', ['a1', 'a2']), scenes.running.slice(0, 1));
     const card = render(<NeoAskCard view={view} renderCard={() => <p>Step card</p>} />);

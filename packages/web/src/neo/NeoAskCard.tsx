@@ -1,4 +1,4 @@
-import type { NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAskItem, NeoAskSessionView } from '@hyperneo/shared/types/neo-snapshot';
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -23,7 +23,7 @@ import {
 } from './neo-asks.ts';
 import type { NeoScene, NeoSceneCards } from './neo-scenes.ts';
 import { neoCardOpenLabel } from './card-view.ts';
-import { neoAppLogo } from './work-driver.ts';
+import { neoAppLabel, neoAppLogo, neoSessionLink } from './work-driver.ts';
 
 const tones = {
   attention: 'text-warning bg-warning/10',
@@ -55,6 +55,80 @@ function StepRow({ scene, done }: { scene: NeoScene; done: boolean }) {
         </span>
         <span class="block truncate text-xs text-fg-faint">{scene.label}</span>
       </span>
+    </div>
+  );
+}
+
+const sessionStates: Record<NeoAskSessionView['status'], string> = {
+  queued: 'Queued',
+  running: 'Running',
+  needs_you: 'Needs you',
+  done: 'Idle',
+  failed: 'Failed',
+  stopped: 'Stopped',
+};
+
+function SessionRow({
+  session,
+  onOpenSession,
+}: {
+  session: NeoAskSessionView;
+  onOpenSession?: (sessionId: string, title: string) => void;
+}) {
+  const state =
+    session.kind === 'needs_you'
+      ? 'Needs you'
+      : session.kind === 'failed'
+        ? 'Failed'
+        : sessionStates[session.status];
+  const local = session.open.sessionId && !session.open.daemon ? session.open.sessionId : null;
+  const link = local ? null : neoSessionLink(session.open.link, session.open.daemon);
+  const body = (
+    <>
+      <NeoAppMark logo={neoAppLogo(session.adapter)} />
+      <span class="min-w-0 flex-1">
+        <span class="line-clamp-2 break-words" title={session.title}>
+          {session.title}
+        </span>
+        <span
+          class={`block truncate text-xs ${
+            session.kind === 'needs_you'
+              ? 'text-warning'
+              : session.kind === 'failed'
+                ? 'text-danger'
+                : 'text-fg-faint'
+          }`}
+        >
+          {neoAppLabel(session.adapter)} · {state}
+        </span>
+      </span>
+    </>
+  );
+  const rowClass = 'flex w-full min-w-0 items-start gap-2 text-left text-sm';
+  if (local && onOpenSession)
+    return (
+      <button
+        type="button"
+        data-ask-session={session.key}
+        class={`${rowClass} hover:text-accent`}
+        aria-label={`Open ${session.title}`}
+        onClick={() => onOpenSession(local, session.title)}
+      >
+        {body}
+      </button>
+    );
+  return link ? (
+    <a
+      data-ask-session={session.key}
+      href={link}
+      class={`${rowClass} hover:text-accent`}
+      aria-label={`Open ${session.title}`}
+    >
+      {body}
+    </a>
+  ) : (
+    <div data-ask-session={session.key} class={rowClass}>
+      {body}
     </div>
   );
 }
@@ -142,6 +216,7 @@ export function NeoAskCard({
   onDone,
   onApprove,
   onOpen,
+  onOpenSession,
   renderCard,
 }: {
   view: NeoAskView;
@@ -151,6 +226,7 @@ export function NeoAskCard({
   onDone?: (itemId: string) => void;
   onApprove?: () => void;
   onOpen?: (workId: string) => void;
+  onOpenSession?: (sessionId: string, title: string) => void;
   renderCard?: (scene: NeoScene) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
@@ -260,6 +336,13 @@ export function NeoAskCard({
               <StepRow key={scene.ref.id} scene={scene} done={view.doneIds.has(scene.ref.id)} />
             )
           )}
+        </div>
+      )}
+      {view.sessions.length > 0 && (
+        <div class="mt-3 space-y-2 border-l-2 border-line pl-3" aria-label="Linked sessions">
+          {view.sessions.map((session) => (
+            <SessionRow key={session.key} session={session} onOpenSession={onOpenSession} />
+          ))}
         </div>
       )}
       {open && (
