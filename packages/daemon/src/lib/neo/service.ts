@@ -218,6 +218,7 @@ import {
   planNeoWorkFollow,
   planNeoWorkFollowLive,
   requireNeoWorkFollow,
+  requireNeoWorkFollowAnswered,
   requireNeoWorkFollowUp,
 } from './work-follow.ts';
 
@@ -359,6 +360,20 @@ export class NeoService {
       },
       ['work', 'live', 'now']
     )
+    .pipe(
+      async (
+        work: NeoWork,
+        ref: WorkRef,
+        live: ReturnType<typeof planNeoWorkFollowLive>,
+        read: { outcome: OperationOutcome }
+      ) => {
+        if (live?.status !== 'needs_you') return;
+        const queued = this.repo.transitionWork(work.id, work, { status: 'queued' });
+        if (queued) await this.noteDriverNeedsYou(queued, ref, read.outcome);
+      },
+      ['work', 'follow', 'live', 'read']
+    )
+    .pipe(requireNeoWorkFollowAnswered, ['live', 'follow'], 'result:follow')
     .pipe(requireNeoWorkFollowUp, ['work', 'card'], 'result:follow')
     .pipe(planNeoWorkFollow, ['work', 'read', 'card'], 'result:follow')
     .pipe(

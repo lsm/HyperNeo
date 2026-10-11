@@ -1825,6 +1825,39 @@ describe('Neo work with a drivers target', () => {
     });
   });
 
+  test('a reported card whose session later waits on the user goes back to needing you', async () => {
+    const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
+    const at = (status: string, lastActivityAt: number) => ({
+      ok: true,
+      value: { status, lastActivityAt, lastReply: 'Merge it for me?' },
+    });
+    const done = Date.now() + 1_000;
+    const asked = done + 5_000;
+    let reply: unknown = at('done', done);
+    const { db, service } = await setup({ ok: true, value: { ref } }, undefined, () => reply);
+    db.createSession(createTestSession('neo:root'));
+    service.workGoals.record('work-1', 'Ship it', '- merged to dev');
+    fileUnderAsk(service);
+    const notes: string[] = [];
+    Object.assign(service, {
+      deliver: async (_target: string, messageId: string) => {
+        notes.push(messageId);
+      },
+    });
+    try {
+      await service.start('work-1');
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('reported');
+      reply = at('needs_you', asked);
+      await service.refreshDriverWork();
+      await service.refreshDriverWork();
+      expect(service.repo.getWork('work-1')?.status).toBe('queued');
+      expect(notes.filter((id) => id.includes('needs-you'))).toEqual([`work-1:needs-you:${asked}`]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('tells the proposing session once each time started work comes to need the user', async () => {
     const ref = { adapter: 'codex-desktop', daemon: 'laptop', id: 't1' };
     const at = (status: string, lastActivityAt: number) => ({
