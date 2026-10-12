@@ -214,6 +214,10 @@ export function NeoLive() {
       />
     ) : null;
   }
+  const liveDraft = useRef(draft);
+  liveDraft.current = draft;
+  const liveSession = useRef(neo.sessionId);
+  liveSession.current = neo.sessionId;
   function writeDraft(text: string) {
     setDraft(text);
     if (currentScope.current === sceneScope) inputDraft.setContent(text);
@@ -550,6 +554,7 @@ export function NeoLive() {
                 const sessionId = neo.sessionId;
                 if (!sessionId) return false;
                 const images = await readNeoAskImages(ask, () => connectionManager.getHub());
+                if (liveSession.current !== sessionId) return false;
                 if (!images) {
                   neo.setError('Could not load this message’s photos. Please try again.');
                   return false;
@@ -561,7 +566,7 @@ export function NeoLive() {
                   return false;
                 }
                 const text = publicAskText(ask.content);
-                writeDraft([draft?.trim(), text].filter(Boolean).join('\n\n'));
+                writeDraft([liveDraft.current?.trim(), text].filter(Boolean).join('\n\n'));
               }}
               onLoadEarlierPublic={() => {
                 const element = scroll.current;
