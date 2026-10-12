@@ -394,6 +394,11 @@ describe('planNeoWorkPrBlockers', () => {
       { ...base, mergeState: 'CLEAN', detail: unsigned },
       [],
     ],
+    [
+      'unresolved threads on a pull request GitHub calls unstable',
+      { ...base, mergeState: 'UNSTABLE', detail: { commits: [], unresolved: 1 } },
+      ['1 unresolved review thread'],
+    ],
     ['a branch behind its base', { ...base, mergeState: 'BEHIND', detail: null }, ['behind dev']],
     ['conflicts', { ...base, mergeState: 'DIRTY', detail: null }, ['merge conflicts with dev']],
     [
@@ -423,7 +428,8 @@ describe('wantsNeoWorkPrBlockers', () => {
     ['an open green pull request', pr, 'dev', true],
     ['one without checks', { ...pr, checks: 'none' }, 'dev', true],
     ['one still running CI', { ...pr, checks: 'pending' }, 'dev', false],
-    ['one with changes requested', { ...pr, review: 'changes_requested' }, 'dev', false],
+    ['one with changes requested', { ...pr, review: 'changes_requested' }, 'dev', true],
+    ['one with failing CI', { ...pr, checks: 'failing' }, 'dev', true],
     ['a merged one', { ...pr, state: 'MERGED' }, 'dev', false],
     ['one whose base is unknown', pr, undefined, false],
   ])('%s', (_label, at, base, wants) => {

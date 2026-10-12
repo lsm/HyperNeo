@@ -102,7 +102,9 @@ describe('atomic public ask intake primitive', () => {
       messageUuid: requestId,
       origin: 'chat',
       released: true,
+      priority: 1,
     });
+    expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)[0].priority).toBe(1);
   });
 
   test('identical retries keep the original public time/sequence and prompt/job receipt', () => {

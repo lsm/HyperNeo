@@ -69,6 +69,8 @@ import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
+import mdneoCardPrAttention from './neo/card-pr-attention.md' with { type: 'text' };
+import mdneoCardPrAttentionNeo from './neo/card-pr-attention-neo.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -79,6 +81,8 @@ import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.m
 };
 import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
 import mdneoSystemRootClarify from './neo/system/root-clarify.md' with { type: 'text' };
+import mdneoSystemRootLookUp from './neo/system/root-look-up.md' with { type: 'text' };
+import mdneoSystemHolderLookUp from './neo/system/holder-look-up.md' with { type: 'text' };
 import mdneoSystemRootConsultationReturn from './neo/system/root-consultation-return.md' with {
   type: 'text',
 };
@@ -362,12 +366,16 @@ const registry: Record<string, string> = {
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-idle.md': mdneoAskIdle,
   'neo/ask-stalled.md': mdneoAskStalled,
+  'neo/card-pr-attention.md': mdneoCardPrAttention,
+  'neo/card-pr-attention-neo.md': mdneoCardPrAttentionNeo,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
   'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
   'neo/system/prompt.md': mdneoSystemPrompt,
   'neo/system/root-clarify.md': mdneoSystemRootClarify,
+  'neo/system/root-look-up.md': mdneoSystemRootLookUp,
+  'neo/system/holder-look-up.md': mdneoSystemHolderLookUp,
   'neo/system/root-consultation-return.md': mdneoSystemRootConsultationReturn,
   'neo/system/root-operations.md': mdneoSystemRootOperations,
   'neo/system/root-role.md': mdneoSystemRootRole,
@@ -544,6 +552,8 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,
   NEO_ASK_STALLED,
+  NEO_CARD_PR_ATTENTION,
+  NEO_CARD_PR_ATTENTION_NEO,
   NEO_ASK_IDLE,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
@@ -551,6 +561,8 @@ export const {
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SYSTEM_PROMPT,
   NEO_ROOT_CLARIFY,
+  NEO_ROOT_LOOK_UP,
+  NEO_HOLDER_LOOK_UP,
   NEO_ROOT_CONSULTATION_RETURN,
   NEO_ROOT_OPERATIONS,
   NEO_ROOT_ROLE,

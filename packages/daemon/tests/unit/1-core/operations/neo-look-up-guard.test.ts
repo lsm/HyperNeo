@@ -7,6 +7,7 @@ import {
   bashDenial,
   decideLookUp,
   isSecretPath,
+  NEO_ROOT_LOOKUP_COMMANDS,
   neoLookUpDenial,
   neoLookUpGuard,
   neoSecretReadRules,
@@ -121,6 +122,15 @@ describe('bashDenial', () => {
     'gh run list --limit 3 | gh pr checks 12',
   ])('allows read-only look-up %s', (command) => {
     expect(bashDenial(command, scope)).toBeNull();
+  });
+
+  test('limits root Neo to gh reads, with no repository commands', () => {
+    const root = { ...scope, commands: NEO_ROOT_LOOKUP_COMMANDS };
+    expect(bashDenial('gh pr checks 12 --repo fictional/app', root)).toBeNull();
+    expect(bashDenial('cd ~/focus/app && git log --oneline -5', root)).toContain(
+      'is not a read-only look-up command'
+    );
+    expect(bashDenial('git blame README.md', root)).toContain('is not a read-only look-up command');
   });
 
   test.each([

@@ -16,6 +16,8 @@ import type { JobQueueRepository } from './job-queue-repository.ts';
 import type { SDKMessageRepository } from './sdk-message-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
 
+const NEO_HUMAN_DELIVERY_PRIORITY = 1;
+
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 type IntakePrompt = SDKUserMessage & { inputKind?: unknown };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -132,7 +134,7 @@ function commitNeoIntake(
       sessionId: ask.askOrigin.sessionId,
       message,
       hold,
-      delivery: { origin: 'chat' },
+      delivery: { origin: 'chat', priority: NEO_HUMAN_DELIVERY_PRIORITY },
       deferPostSaveSideEffects: (effect) => {
         publish = effect;
       },

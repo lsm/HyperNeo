@@ -305,6 +305,10 @@ export function planNeoAskItems(input: {
   };
 }
 
+export function isNeoAskHandedOver(caller: OperationCaller): boolean {
+  return caller.source === 'mcp' && !!caller.neoTurn?.human && caller.neoTurn.isLive();
+}
+
 export function requireNeoAskReceipt(
   input: Opening,
   opened: { ask: NeoAsk | null }
@@ -726,6 +730,17 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     )
     .pipe(requireNeoAskReceipt, ['opening', 'opened'], 'result:admission')
     .pipe(
+      (receipt: AskReceipt, caller: OperationCaller): AskReceipt =>
+        isNeoAskHandedOver(caller) && receipt.ask.approvedAt == null
+          ? {
+              ...receipt,
+              ask: service.askRecords.approve(receipt.ask.id, Date.now()) ?? receipt.ask,
+            }
+          : receipt,
+      ['admission', 'caller'],
+      'admission'
+    )
+    .pipe(
       (receipt: AskReceipt): AskOpened => {
         const packBriefing = service.packBriefing(receipt.ask);
         return packBriefing ? { ...receipt, packBriefing } : receipt;
@@ -990,7 +1005,7 @@ export function createNeoAskOperations(service: NeoService, admit: NeoAdmit) {
     defineOperation({
       name: 'neo.ask.open',
       description:
-        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. Propose every work item for this request with its askId. Reuse requestKey only to retry this input.',
+        'Record what the human asked for and what done means for it, from the current live input, before proposing its work. ask is the request in their words; doneItems is the checklist that finishes it, one checkable outcome per item; a plain doneWhen still works and its bullet lines become the items; doneSource is "human" when the human said it, or the id of the standing rule it came from. pack optionally names the enabled domain pack this ask works under (coding for software work in git repositories); its guidance comes back as packBriefing, and neo.pack.read {id} returns it in full. Propose every work item for this request with its askId. An ask opened in a turn the human sent is approved at once, because they handed the work over: its work items start without a Start click, and the approval never covers deploying to production, deleting data or other destructive steps. Reuse requestKey only to retry this input.',
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
