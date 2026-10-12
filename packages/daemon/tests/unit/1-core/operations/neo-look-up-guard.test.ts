@@ -191,6 +191,8 @@ describe('the tiered Neo tool rule', () => {
     ['rm -rf src', 'deleting outside your own folder'],
     ['git clean -fd', 'deleting outside your own folder'],
     ['git -C ~/focus/app clean -fd', 'deleting outside your own folder'],
+    ['find ~/focus/app -name "*.tmp" -exec rm -rf {} +', 'deleting outside your own folder'],
+    ['rsync -a --delete empty/ ~/focus/app/', 'deleting outside your own folder'],
   ])('refuses the shared-state action %s', (command, why) => {
     expect(reason('Bash', { command }, project)).toContain(why);
   });
@@ -201,6 +203,16 @@ describe('the tiered Neo tool rule', () => {
     ["git log --grep='launchctl kickstart' --oneline", { kind: 'allow' }],
     ["echo 'git push later' > /scratch/todo.md", { kind: 'allow' }],
     ['dd if=/dev/zero of=disk.img bs=1 count=1', { kind: 'nudge' }],
+    ['git branch --show-current', { kind: 'allow' }],
+    ['git branch -a', { kind: 'allow' }],
+    ['git tag -l', { kind: 'allow' }],
+    ['git worktree list', { kind: 'allow' }],
+    ['git stash list', { kind: 'allow' }],
+    ['git add -n .', { kind: 'allow' }],
+    ['git branch try-it', { kind: 'nudge' }],
+    ['git branch -v -D old', { kind: 'nudge' }],
+    ['git tag -a v1 -m release', { kind: 'nudge' }],
+    ['git commit -n -m wip', { kind: 'nudge' }],
   ])('reads a word like kill or push only in command position: %s', (command, expected) => {
     expect(verdict('Bash', { command }, project)).toEqual(expected);
   });

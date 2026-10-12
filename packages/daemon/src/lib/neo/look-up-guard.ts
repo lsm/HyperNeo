@@ -564,8 +564,79 @@ function commandWords(words: readonly string[]): string[] {
   return words.slice(start);
 }
 
+const GIT_LIST_FLAGS = new Set([
+  '-l',
+  '--list',
+  '--show-current',
+  '-a',
+  '--all',
+  '-r',
+  '--remotes',
+  '-v',
+  '-vv',
+  '--verbose',
+  '--contains',
+  '--no-contains',
+  '--merged',
+  '--no-merged',
+  '--points-at',
+  '--format',
+  '--sort',
+  '-n',
+]);
+
+const GIT_REF_CHANGE_FLAGS: Record<string, ReadonlySet<string>> = {
+  branch: new Set([
+    '-d',
+    '-D',
+    '--delete',
+    '-m',
+    '-M',
+    '--move',
+    '-c',
+    '-C',
+    '--copy',
+    '-f',
+    '--force',
+    '-u',
+    '--set-upstream-to',
+    '--unset-upstream',
+    '--edit-description',
+  ]),
+  tag: new Set([
+    '-a',
+    '--annotate',
+    '-s',
+    '--sign',
+    '-u',
+    '-m',
+    '-F',
+    '-e',
+    '-d',
+    '--delete',
+    '-f',
+    '--force',
+  ]),
+};
+
+function gitReadOnly(verb: string | undefined, rest: readonly string[]): boolean {
+  if (rest.includes('--dry-run')) return true;
+  if (rest.includes('-n') && ['add', 'clean', 'rm', 'mv'].includes(verb ?? '')) return true;
+  const flags = rest.filter((word) => word.startsWith('-'));
+  const names = rest.filter((word) => !word.startsWith('-'));
+  if (verb === 'branch' || verb === 'tag') {
+    const changing = GIT_REF_CHANGE_FLAGS[verb];
+    if (flags.some((flag) => changing.has(flag.split('=')[0]))) return false;
+    return !names.length || flags.some((flag) => GIT_LIST_FLAGS.has(flag.split('=')[0]));
+  }
+  if (verb === 'worktree') return names[0] === 'list';
+  if (verb === 'stash') return names[0] === 'list' || names[0] === 'show';
+  return false;
+}
+
 function gitChange(words: readonly string[], dir: string): LocalChange | null {
-  const { verb, dir: inside } = gitVerb(words);
+  const { verb, at, dir: inside } = gitVerb(words);
+  if (gitReadOnly(verb, words.slice(at + 1))) return null;
   const where = inside ?? dir;
   if (GIT_DELETES.has(verb ?? '')) return { delete: true, targets: [where] };
   return GIT_CHANGES.has(verb ?? '') ? { delete: false, targets: [where] } : null;
@@ -582,8 +653,18 @@ function localChange(words: readonly string[], dir: string): LocalChange | null 
   }
   if (name === 'sed' && rest.some((word) => /^(-i|--in-place)/.test(word)))
     return { delete: false, targets: targets(args.slice(1)) };
-  if (name === 'find' && rest.includes('-delete'))
+  if (
+    name === 'find' &&
+    rest.some(
+      (word, index) =>
+        word === '-delete' ||
+        (['-exec', '-execdir', '-ok', '-okdir'].includes(word) &&
+          DELETES.has(rest[index + 1] ?? ''))
+    )
+  )
     return { delete: true, targets: targets(args.slice(0, 1)) };
+  if (name === 'rsync' && rest.some((word) => word.startsWith('--delete')))
+    return { delete: true, targets: targets(args.slice(-1)) };
   if (DELETES.has(name)) return { delete: true, targets: targets(args) };
   if (LAST_TARGET.has(name)) return { delete: false, targets: targets(args.slice(-1)) };
   if (ALL_TARGETS.has(name)) return { delete: false, targets: targets(args) };
